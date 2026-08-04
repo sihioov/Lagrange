@@ -1,0 +1,48 @@
+# --- Lagrange Station root ignore rules --------------------------------------
+
+# OMC planning/state, drafts, evidence (must stay untracked per plan)
+.omo/
+
+# Secrets & credentials — never commit
+*.env
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Rust build artifacts
+target/
+**/target/
+
+# Node
+node_modules/
+**/node_modules/
+npm-debug.log*
+.next/
+out/
+dist/
+
+# Python / uv
+.venv/
+**/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Data (large binary artifacts; design §15-16 keep Raw/NT catalog outside Git)
+data/raw/
+data/nautilus_catalog/
+*.parquet
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,6 @@
+# Toolchain pin: Rust 1.97.1
+# Approved 2026-08-04 (draft line 40): NT 1.231.0's tested contract is Rust 1.97.1.
+# rustup auto-selects this toolchain for every cargo/rustc invocation under this root.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
