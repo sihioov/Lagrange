@@ -53,7 +53,8 @@ fi
 
 # --- Node --------------------------------------------------------------------
 if [ -f "$root/package.json" ]; then
-  range="$(node -e "const p=require('$root/package.json'); process.stdout.write((p.engines&&p.engines.node)||'')" 2>/dev/null || true)"
+# engines.node parsed with sed: static check must not depend on node or on host path translation (host vs container/WSL).
+  range="$(sed -n 's/.*"node"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$root/package.json" | head -n1)"
   if [ -z "$range" ]; then
     drifts+=("package.json: engines.node missing (approved: '$APPROVED_NODE')")
   elif [ "$range" != "$APPROVED_NODE" ]; then
