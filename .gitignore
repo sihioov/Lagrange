@@ -14,6 +14,10 @@ credentials/
 *.key
 *.p12
 *.pfx
+# Re-include the deployment secret *skeleton* dir only; its own
+# deploy/secrets/.gitignore keeps real values ignored and commits only
+# *.example placeholders + README.
+!deploy/secrets/
 
 # Rust build artifacts
 target/
