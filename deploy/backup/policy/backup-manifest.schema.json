@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://lagrange.local/deploy/backup/policy/backup-manifest.schema.json",
+  "title": "Lagrange Station backup manifest",
+  "description": "Contract for one backup set covering PostgreSQL base backups (db_base), WAL archives (db_wal), and Raw/Curated/Artifact incremental file backups. File paths are relative to the directory containing this manifest and must never escape it. Secrets must never appear in any archive; they are recovered via deploy/backup/runbooks/secret-recovery.md. scripts/backup/validate-policy.* enforces the enforceable subset of this schema plus the retention/storage/secret rules from backup-policy.json; this file is the canonical machine-readable contract.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "backup_set_id",
+    "created_at",
+    "classes",
+    "restore_policy",
+    "secret_exclusion"
+  ],
+  "properties": {
+    "manifest_version": { "const": "1.0" },
+    "backup_set_id": { "type": "string", "minLength": 1 },
+    "created_at": { "$ref": "#/definitions/utcTimestamp" },
+    "host": { "type": "string" },
+    "scope": { "enum": ["full", "db_only", "files_only"] },
+    "classes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/backupClass" }
+    },
+    "restore_policy": { "$ref": "#/definitions/restorePolicy" },
+    "secret_exclusion": { "$ref": "#/definitions/secretExclusion" }
+  },
+  "definitions": {
+    "utcTimestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "backupClass": {
+      "type": "object",
+      "required": [
+        "class",
+        "kind",
+        "backup_id",
+        "completed_at",
+        "retention_days",
+        "storage",
+        "files"
+      ],
+      "properties": {
+        "class": {
+          "enum": ["db_base", "db_wal", "file_raw", "file_curated", "file_artifact"]
+        },
+        "kind": { "enum": ["db", "file"] },
+        "dataset": { "enum": ["raw", "curated", "artifact"] },
+        "backup_id": { "type": "string", "minLength": 1 },
+        "started_at": { "$ref": "#/definitions/utcTimestamp" },
+        "completed_at": { "$ref": "#/definitions/utcTimestamp" },
+        "retention_days": { "type": "integer", "minimum": 1 },
+        "expires_at": { "$ref": "#/definitions/utcTimestamp" },
+        "incremental_from": { "type": ["string", "null"] },
+        "storage": {
+          "type": "object",
+          "required": ["encryption", "location"],
+          "properties": {
+            "encryption": { "enum": ["required", "allowed", "none"] },
+            "reference": { "type": "boolean" },
+            "location": { "type": "string", "minLength": 1 }
+          }
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^((?![.][.]/|(?i)[a-z]:[\\\\/]|/)[^/\\\\]+(/[^/\\\\]+)*)$"
+              },
+              "sha256": { "$ref": "#/definitions/sha256" },
+              "size_bytes": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "restorePolicy": {
+      "type": "object",
+      "required": ["isolated_target_required", "assertions"],
+      "properties": {
+        "isolated_target_required": { "const": true },
+        "assertions": {
+          "type": "object",
+          "required": ["premember", "prelive"],
+          "properties": {
+            "premember": { "$ref": "#/definitions/gateAssertion" },
+            "prelive": { "$ref": "#/definitions/gateAssertion" }
+          }
+        }
+      }
+    },
+    "gateAssertion": {
+      "type": "object",
+      "required": ["required_classes", "full_restore"],
+      "properties": {
+        "required_classes": {
+          "type": "array",
+          "items": { "enum": ["db_base", "db_wal", "file_raw", "file_curated", "file_artifact"] }
+        },
+        "full_restore": { "const": true },
+        "startup_mode": { "enum": ["normal", "reconciliation_only"] }
+      }
+    },
+    "secretExclusion": {
+      "type": "object",
+      "required": ["policy", "marker_scan"],
+      "properties": {
+        "policy": { "type": "string", "minLength": 1 },
+        "marker_scan": { "const": true }
+      }
+    }
+  }
+}

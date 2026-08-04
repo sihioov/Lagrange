@@ -1,0 +1,56 @@
+{
+  "policy_version": "1.0",
+  "description": "Enforced Lagrange Station backup policy. scripts/backup/validate-policy.* rejects any backup set that violates these rules, BEFORE any restore starts. Retention floors are minimums: a class may retain longer but never shorter. Storage encryption: db classes are always required (DB archives may contain row data derived from entitlements); file classes may use content-addressed references but must not be unencrypted-referenced plaintext of secrets. Secrets never enter any archive; they follow deploy/backup/runbooks/secret-recovery.md.",
+  "required_classes": ["db_base", "db_wal", "file_raw", "file_curated", "file_artifact"],
+  "retention_days_min": {
+    "db_base": 7,
+    "db_wal": 14,
+    "file_raw": 30,
+    "file_curated": 90,
+    "file_artifact": 180
+  },
+  "storage_rules": {
+    "db_base": { "encryption": "required", "reference_allowed": false },
+    "db_wal": { "encryption": "required", "reference_allowed": false },
+    "file_raw": { "encryption": "allowed", "reference_allowed": true },
+    "file_curated": { "encryption": "allowed", "reference_allowed": true },
+    "file_artifact": { "encryption": "allowed", "reference_allowed": true }
+  },
+  "secret_markers": [
+    "LAGRANGE_SECRET_MARKER",
+    "kis_app_secret",
+    "kis_app_key",
+    "KIS_APP_SECRET",
+    "KIS_APP_KEY",
+    "BEGIN OPENSSH PRIVATE KEY",
+    "BEGIN RSA PRIVATE KEY",
+    "BEGIN EC PRIVATE KEY",
+    "AUTH0_CLIENT_SECRET",
+    "LAGRANGE_MASTER_KEY"
+  ],
+  "forbidden_path_segments": [
+    "secrets/",
+    "credentials/",
+    ".env",
+    "kis-credentials",
+    "id_rsa",
+    "id_ed25519"
+  ],
+  "gates": {
+    "default": {
+      "required_classes": ["db_base", "db_wal", "file_raw", "file_curated", "file_artifact"],
+      "mode": "complete",
+      "startup_mode": null
+    },
+    "premember": {
+      "required_classes": ["db_base", "db_wal", "file_raw", "file_curated", "file_artifact"],
+      "mode": "full_restore",
+      "startup_mode": null
+    },
+    "prelive": {
+      "required_classes": ["db_base", "db_wal", "file_raw", "file_curated", "file_artifact"],
+      "mode": "full_restore",
+      "startup_mode": "reconciliation_only"
+    }
+  }
+}
