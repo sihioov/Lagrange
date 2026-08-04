@@ -1,0 +1,8 @@
+[package]
+name = "lagrange-risk-gateway"
+description = "Lagrange Station persisted risk gatekeeper before broker submission."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]

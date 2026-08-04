@@ -1,0 +1,8 @@
+[package]
+name = "lagrange-auth"
+description = "Lagrange Station authentication and authorization (Auth0 OIDC, sessions, RBAC)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]

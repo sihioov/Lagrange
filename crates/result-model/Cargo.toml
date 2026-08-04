@@ -1,0 +1,8 @@
+[package]
+name = "lagrange-result-model"
+description = "Lagrange Station common result model and warning/error envelopes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]

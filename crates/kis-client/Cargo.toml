@@ -1,0 +1,8 @@
+[package]
+name = "lagrange-kis-client"
+description = "Lagrange Station KIS broker adapter (Phase 3, owner-only)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]

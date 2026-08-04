@@ -1,0 +1,28 @@
+# Lagrange Station — Rust workspace manifest (Todo 1 bootstrap).
+# Pins: Rust 1.97.1 via rust-toolchain.toml; edition 2024; resolver 3.
+# Approved dependency lines (draft 2026-08-04 line 40) are consumed by later
+# todos and pinned by Cargo.lock when first referenced:
+#   - Axum 0.8.x            (crates/auth, crates/risk-gateway, apps/api-server)
+#   - SQLx 0.9.x            (crates/job-queue, crates/market-data, ...)
+#   - Polars 0.54.x         (crates/factor-engine, crates/selector)
+# Skeleton crates intentionally have NO dependencies yet (Todo 1 is topology only).
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/domain",
+    "crates/auth",
+    "crates/market-data",
+    "crates/factor-engine",
+    "crates/selector",
+    "crates/portfolio-model",
+    "crates/job-queue",
+    "crates/result-model",
+    "crates/risk-gateway",
+    "crates/kis-client",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"

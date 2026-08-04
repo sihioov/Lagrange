@@ -1,0 +1,8 @@
+[package]
+name = "lagrange-domain"
+description = "Lagrange Station domain contracts: branded IDs, timestamps, fixed-point money, typed errors."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
