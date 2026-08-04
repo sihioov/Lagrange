@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "provider": "krx",
+  "entitlement_id": "ent_krx_2026_0001",
+  "contract_document": {
+    "document_hash": {
+      "algorithm": "SHA-256",
+      "hex": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "document_reference": "vault://krx-entitlements/ent_krx_2026_0001.pdf"
+  },
+  "covered_datasets": ["krx_eod_bars", "krx_instruments", "krx_calendar"],
+  "covered_uses": [
+    "dataset",
+    "factor",
+    "recommendation",
+    "backtest",
+    "report",
+    "benchmark",
+    "paper_view",
+    "payload",
+    "download"
+  ],
+  "covered_users": ["usr_a", "usr_b", "usr_c", "usr_d", "usr_e"],
+  "effective_from": "2026-01-01",
+  "effective_until": "2026-12-31",
+  "lifecycle": "ACTIVE"
+}

@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lagrange.local/schemas/data-rights/krx.schema.json",
+  "title": "KRX data entitlement metadata (redacted)",
+  "description": "Redacted metadata for a KRX data-rights entitlement. Stores NO contract contents - only a document hash and a storage reference - plus the covered datasets/uses/users, the effective window, and the lifecycle. Rights are never inferred from an API key or credential.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "provider",
+    "entitlement_id",
+    "contract_document",
+    "covered_datasets",
+    "covered_uses",
+    "covered_users",
+    "effective_from",
+    "effective_until",
+    "lifecycle"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "provider": {
+      "const": "krx"
+    },
+    "entitlement_id": {
+      "type": "string",
+      "pattern": "^ent_[A-Za-z0-9_-]+$"
+    },
+    "contract_document": {
+      "description": "Reference to the signed contract document. The document itself is never stored here.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_hash", "document_reference"],
+      "properties": {
+        "document_hash": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "hex"],
+          "properties": {
+            "algorithm": {
+              "const": "SHA-256"
+            },
+            "hex": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "document_reference": {
+          "description": "Storage/vault key or URL of the signed contract document - never its contents.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_\\-./:]+$"
+        }
+      }
+    },
+    "covered_datasets": {
+      "description": "KR-derived datasets the entitlement covers (e.g. krx_eod_bars, krx_instruments, krx_calendar).",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^krx_[a-z0-9_]+$"
+      }
+    },
+    "covered_uses": {
+      "description": "Member-visible KR-derived uses the entitlement covers.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "dataset",
+          "factor",
+          "recommendation",
+          "backtest",
+          "report",
+          "benchmark",
+          "paper_view",
+          "payload",
+          "download"
+        ]
+      }
+    },
+    "covered_users": {
+      "description": "User ids covered by the contract (redacted placeholders in committed fixtures).",
+      "type": "array",
+      "minItems": 0,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^usr_[A-Za-z0-9_-]+$"
+      }
+    },
+    "effective_from": {
+      "description": "Inclusive start of the entitlement window (YYYY-MM-DD).",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "effective_until": {
+      "description": "Inclusive end of the entitlement window (YYYY-MM-DD).",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "lifecycle": {
+      "enum": ["PENDING", "ACTIVE", "EXPIRED", "REVOKED"]
+    }
+  }
+}
