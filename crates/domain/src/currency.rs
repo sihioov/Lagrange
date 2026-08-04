@@ -119,6 +119,14 @@ impl Venue {
             Self::Kis => "KIS",
         }
     }
+
+    /// IANA timezone of the venue's trading sessions.
+    pub fn timezone(&self) -> crate::time::Zone {
+        match self {
+            Self::Krx | Self::Kis => crate::time::Zone::SEOUL,
+            Self::Arca | Self::Nyse | Self::Nasdaq => crate::time::Zone::NEW_YORK,
+        }
+    }
 }
 
 impl fmt::Display for Venue {

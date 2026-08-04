@@ -17,6 +17,8 @@ pub mod fixed;
 pub mod hash;
 pub mod ids;
 pub mod instrument;
+pub mod provenance;
+pub mod time;
 pub mod version;
 
 pub use currency::{Currency, Venue};
@@ -32,4 +34,6 @@ pub use ids::{
     ProvenanceId, RunId, SessionId, StrategyId, UniverseSnapshotId, UserId,
 };
 pub use instrument::{AssetClass, InstrumentId};
+pub use provenance::{Engine, RandomSeed, RunProvenance};
+pub use time::{TradingDate, UtcTimestamp, VenueTimestamp, Zone};
 pub use version::{FactorVersion, SemVer, StrategyVersion};
