@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "dataset_id": "kr-etf-daily-2020-01-31-split-dividend",
+  "variant": "corporate-actions",
+  "currency": "KRW",
+  "note": "Synthetic corporate actions for the 2020-01-31 fixture window. Split adjusts holdings on ex-date preserving total value; dividend credits cash on pay-date (design 6.8; requirements AT-10 window).",
+  "actions": [
+    {
+      "instrument": "069500.KRX",
+      "type": "split",
+      "ratio": "2:1",
+      "split_factor": 2,
+      "ex_date": "2020-02-03",
+      "announced_at": "2020-01-22T06:00:00Z",
+      "value_preserving": true,
+      "adjustment_note": "pre-split close 10300 equals post-split 2 x 5150 on ex-date open basis"
+    },
+    {
+      "instrument": "069500.KRX",
+      "type": "cash_dividend",
+      "amount_per_share": "150.00",
+      "currency": "KRW",
+      "ex_date": "2020-02-03",
+      "pay_date": "2020-02-14",
+      "announced_at": "2020-01-23T06:00:00Z",
+      "tax_withholding_pct": "15.4",
+      "note": "dividend credited to cash on pay_date 2020-02-14, never on ex_date"
+    }
+  ],
+  "invariants": {
+    "split_value_preserved_on_ex_date": true,
+    "dividend_cash_credited_on_pay_date": true,
+    "announced_at_not_before_ex_date": true
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "semantics_id": "kr-etf-t-close-to-t-plus-1-open",
+  "semantics_version": 1,
+  "schema_version": 1,
+  "source": "synthetic",
+  "description": "Machine-readable encoding of the documented T-close -> T+1-open execution model (requirements AT-02; design sections 6.5/17.2). A signal computed from the 2020-01-31 close must only fill at the next KRX session open, and must never touch that session's high/low/close.",
+  "signal_session": {
+    "date": "2020-01-31",
+    "weekday": "Friday",
+    "is_krx_session": true,
+    "close_price": 10300,
+    "close_utc": "2020-01-31T06:30:00Z"
+  },
+  "next_krx_session": {
+    "date": "2020-02-03",
+    "weekday": "Monday",
+    "is_krx_session": true,
+    "open_price": 10300,
+    "open_utc": "2020-02-03T00:00:00Z"
+  },
+  "session_gap": {
+    "calendar_days": 3,
+    "skipped_calendar_days": ["2020-02-01", "2020-02-02"],
+    "skipped_sessions": 2,
+    "reason": "weekend"
+  },
+  "execution_model": {
+    "signal_at": "T_close",
+    "executes_at": "T_plus_1_open",
+    "execution_price_source": "next_krx_session.open",
+    "slippage_model": "raw_open_plus_configured_slippage_bps",
+    "never_uses": [
+      "signal_day_close_as_fill_price",
+      "execution_day_high",
+      "execution_day_low",
+      "execution_day_close"
+    ]
+  },
+  "cross_checks_for_todo9": [
+    {"given_session": "2020-01-23", "expected_next_session": "2020-01-28", "reason": "weekend plus Seollal holiday break 2020-01-24/27"},
+    {"given_session": "2020-01-31", "expected_next_session": "2020-02-03", "reason": "weekend"}
+  ],
+  "event_order_for_todo13": ["close(T)", "pending_target(T+1)", "open(T+1)", "close(T+1)"],
+  "for_todos": ["9", "13", "14", "31"]
+}

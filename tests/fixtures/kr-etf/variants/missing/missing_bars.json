@@ -1,0 +1,46 @@
+{
+  "dataset_id": "kr-etf-daily-2020-01-31-missing-bar",
+  "schema_version": 1,
+  "variant": "missing",
+  "scenario": "AT-05 - required-universe instrument missing the 2020-01-31 daily bar",
+  "currency": "KRW",
+  "instruments": [
+    {"symbol": "069500.KRX", "lot_size": 100, "currency": "KRW"},
+    {"symbol": "229200.KRX", "lot_size": 100, "currency": "KRW"},
+    {"symbol": "114260.KRX", "lot_size": 100, "currency": "KRW"}
+  ],
+  "bars": [
+    {"instrument": "069500.KRX", "date": "2020-01-20", "open": 10150, "high": 10280, "low": 10100, "close": 10250, "volume": 1200000, "value": 12300000000},
+    {"instrument": "069500.KRX", "date": "2020-01-21", "open": 10240, "high": 10320, "low": 10190, "close": 10290, "volume": 1150000, "value": 11833500000},
+    {"instrument": "069500.KRX", "date": "2020-01-22", "open": 10280, "high": 10310, "low": 10160, "close": 10190, "volume": 1300000, "value": 13247000000},
+    {"instrument": "069500.KRX", "date": "2020-01-23", "open": 10200, "high": 10240, "low": 10080, "close": 10120, "volume": 1400000, "value": 14168000000},
+    {"instrument": "069500.KRX", "date": "2020-01-28", "open": 10100, "high": 10160, "low": 10020, "close": 10050, "volume": 1250000, "value": 12562500000},
+    {"instrument": "069500.KRX", "date": "2020-01-29", "open": 10060, "high": 10220, "low": 10040, "close": 10180, "volume": 1100000, "value": 11198000000},
+    {"instrument": "069500.KRX", "date": "2020-01-30", "open": 10190, "high": 10300, "low": 10150, "close": 10260, "volume": 1180000, "value": 12106800000},
+    {"instrument": "069500.KRX", "date": "2020-02-03", "open": 10300, "high": 10420, "low": 10280, "close": 10380, "volume": 1240000, "value": 12871200000},
+    {"instrument": "229200.KRX", "date": "2020-01-20", "open": 8480, "high": 8560, "low": 8450, "close": 8530, "volume": 900000, "value": 7677000000},
+    {"instrument": "229200.KRX", "date": "2020-01-21", "open": 8520, "high": 8600, "low": 8500, "close": 8580, "volume": 870000, "value": 7464600000},
+    {"instrument": "229200.KRX", "date": "2020-01-22", "open": 8570, "high": 8610, "low": 8480, "close": 8500, "volume": 950000, "value": 8075000000},
+    {"instrument": "229200.KRX", "date": "2020-01-23", "open": 8510, "high": 8540, "low": 8420, "close": 8450, "volume": 980000, "value": 8281000000},
+    {"instrument": "229200.KRX", "date": "2020-01-28", "open": 8440, "high": 8490, "low": 8380, "close": 8410, "volume": 860000, "value": 7232600000},
+    {"instrument": "229200.KRX", "date": "2020-01-29", "open": 8420, "high": 8520, "low": 8400, "close": 8500, "volume": 820000, "value": 6970000000},
+    {"instrument": "229200.KRX", "date": "2020-01-30", "open": 8510, "high": 8580, "low": 8480, "close": 8550, "volume": 890000, "value": 7609500000},
+    {"instrument": "229200.KRX", "date": "2020-01-31", "open": 8560, "high": 8600, "low": 8520, "close": 8580, "volume": 910000, "value": 7807800000},
+    {"instrument": "229200.KRX", "date": "2020-02-03", "open": 8500, "high": 8620, "low": 8480, "close": 8560, "volume": 930000, "value": 7960800000},
+    {"instrument": "114260.KRX", "date": "2020-01-20", "open": 5010, "high": 5040, "low": 4990, "close": 5030, "volume": 1600000, "value": 8048000000},
+    {"instrument": "114260.KRX", "date": "2020-01-21", "open": 5030, "high": 5060, "low": 5010, "close": 5040, "volume": 1550000, "value": 7812000000},
+    {"instrument": "114260.KRX", "date": "2020-01-22", "open": 5040, "high": 5070, "low": 5010, "close": 5020, "volume": 1650000, "value": 8283000000},
+    {"instrument": "114260.KRX", "date": "2020-01-23", "open": 5020, "high": 5040, "low": 4990, "close": 5010, "volume": 1700000, "value": 8517000000},
+    {"instrument": "114260.KRX", "date": "2020-01-28", "open": 5010, "high": 5030, "low": 4990, "close": 5000, "volume": 1600000, "value": 8000000000},
+    {"instrument": "114260.KRX", "date": "2020-01-29", "open": 5000, "high": 5040, "low": 4990, "close": 5030, "volume": 1580000, "value": 7947400000},
+    {"instrument": "114260.KRX", "date": "2020-01-30", "open": 5030, "high": 5060, "low": 5020, "close": 5050, "volume": 1620000, "value": 8181000000},
+    {"instrument": "114260.KRX", "date": "2020-01-31", "open": 5050, "high": 5070, "low": 5030, "close": 5060, "volume": 1640000, "value": 8298400000},
+    {"instrument": "114260.KRX", "date": "2020-02-03", "open": 5050, "high": 5090, "low": 5040, "close": 5080, "volume": 1670000, "value": 8483600000}
+  ],
+  "missing": {
+    "instrument": "069500.KRX",
+    "date": "2020-01-31",
+    "expected": "required-universe daily bar",
+    "policy_hint": "AT-05: required-universe missing bars must WARN or BLOCK recommendation/backtest/Paper per quality policy (Todo 11); never silently succeed."
+  }
+}

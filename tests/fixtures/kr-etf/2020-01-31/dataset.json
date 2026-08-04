@@ -1,0 +1,28 @@
+{
+  "dataset_id": "kr-etf-daily-2020-01-31",
+  "dataset_version": "1.0.0",
+  "schema_version": 1,
+  "source": "synthetic",
+  "rights": "SYNTHETIC_ONLY",
+  "rights_note": "Fabricated values only. No licensed KRX data, no real market payloads; real ticker codes are public identifiers used solely for universe shape.",
+  "currency": "KRW",
+  "price_unit": "KRW per share",
+  "timezone": "Asia/Seoul",
+  "random_seed": 42,
+  "instruments": [
+    {"symbol": "069500.KRX", "name": "SYNTHETIC-KODEX200", "lot_size": 100, "currency": "KRW", "kind": "equity-etf"},
+    {"symbol": "229200.KRX", "name": "SYNTHETIC-KODEX-KOSPI200", "lot_size": 100, "currency": "KRW", "kind": "equity-etf"},
+    {"symbol": "114260.KRX", "name": "SYNTHETIC-KODEX-STBOND", "lot_size": 100, "currency": "KRW", "kind": "equity-etf"}
+  ],
+  "coverage": {"first_date": "2020-01-20", "last_date": "2020-02-03", "sessions": 9},
+  "bar_fields": ["instrument", "date", "open", "high", "low", "close", "volume", "value"],
+  "invariants": {
+    "high_ge_max_open_close": true,
+    "low_le_min_open_close": true,
+    "volume_nonnegative": true,
+    "value_positive": true,
+    "price_positive_integer_krw": true
+  },
+  "purpose": "Canonical seed dataset for T-close -> T+1-open semantics (AT-02), event ordering (Todo 13), and the Phase 0 golden run (Todo 14). Extended by later synthetic generators for history depth.",
+  "history_depth_note": "Seed history of 9 sessions; Todo 14 extends to 200+ sessions with the same synthetic generator contract."
+}

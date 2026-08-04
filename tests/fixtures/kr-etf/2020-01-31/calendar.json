@@ -1,0 +1,30 @@
+{
+  "calendar_id": "krx-2020-01-synthetic",
+  "schema_version": 1,
+  "source": "synthetic",
+  "timezone": "Asia/Seoul",
+  "utc_offset": "+09:00",
+  "session_times_local": {"open": "09:00:00", "close": "15:30:00"},
+  "session_times_utc": {"open": "00:00:00", "close": "06:30:00"},
+  "sessions": [
+    {"date": "2020-01-20", "weekday": "Monday", "open_utc": "2020-01-20T00:00:00Z", "close_utc": "2020-01-20T06:30:00Z"},
+    {"date": "2020-01-21", "weekday": "Tuesday", "open_utc": "2020-01-21T00:00:00Z", "close_utc": "2020-01-21T06:30:00Z"},
+    {"date": "2020-01-22", "weekday": "Wednesday", "open_utc": "2020-01-22T00:00:00Z", "close_utc": "2020-01-22T06:30:00Z"},
+    {"date": "2020-01-23", "weekday": "Thursday", "open_utc": "2020-01-23T00:00:00Z", "close_utc": "2020-01-23T06:30:00Z"},
+    {"date": "2020-01-28", "weekday": "Tuesday", "open_utc": "2020-01-28T00:00:00Z", "close_utc": "2020-01-28T06:30:00Z"},
+    {"date": "2020-01-29", "weekday": "Wednesday", "open_utc": "2020-01-29T00:00:00Z", "close_utc": "2020-01-29T06:30:00Z"},
+    {"date": "2020-01-30", "weekday": "Thursday", "open_utc": "2020-01-30T00:00:00Z", "close_utc": "2020-01-30T06:30:00Z"},
+    {"date": "2020-01-31", "weekday": "Friday", "open_utc": "2020-01-31T00:00:00Z", "close_utc": "2020-01-31T06:30:00Z"},
+    {"date": "2020-02-03", "weekday": "Monday", "open_utc": "2020-02-03T00:00:00Z", "close_utc": "2020-02-03T06:30:00Z"}
+  ],
+  "holidays": [
+    {"date": "2020-01-24", "weekday": "Friday", "type": "holiday", "reason": "Seollal (lunar new year) break"},
+    {"date": "2020-01-27", "weekday": "Monday", "type": "holiday", "reason": "Seollal substitute holiday"}
+  ],
+  "next_session_of": {
+    "2020-01-23": "2020-01-28",
+    "2020-01-31": "2020-02-03"
+  },
+  "holiday_note": "The Seollal break and next_session_of mapping are encoded data properties: Todo 9 must build the real KRX calendar and agree with these values.",
+  "no_dst_note": "Asia/Seoul has no DST; fixed +09:00 offset."
+}
