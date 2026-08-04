@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# verify-all.sh - POSIX twin of scripts/verify-all.ps1 for CI / clean containers.
+# Fails fast (exit 1) on the first failing gate. The NT/uv gate is REPORTED as
+# BLOCKED_ENVIRONMENT (documented, non-fatal) when uv cannot resolve the approved
+# pins against the package index - it is never silently skipped or faked.
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root" || exit 1
+blocked=""
+step=0
+
+step=$((step+1)); echo; echo "[$step] check-pins (approved toolchain/package pins)"
+bash "$root/scripts/check-pins.sh" || { echo "FAILED: check-pins"; exit 1; }
+
+step=$((step+1)); echo; echo "[$step] committed lockfiles (Cargo.lock, package-lock.json)"
+for lf in Cargo.lock package-lock.json; do
+  [ -f "$root/$lf" ] || { echo "FAILED: missing committed lockfile $lf"; exit 1; }
+done
+echo "Cargo.lock and package-lock.json present"
+
+step=$((step+1)); echo; echo "[$step] cargo fmt --all --check"
+cargo fmt --all --check || { echo "FAILED: cargo fmt --all --check"; exit 1; }
+
+step=$((step+1)); echo; echo "[$step] cargo clippy --workspace --all-targets --all-features -- -D warnings"
+cargo clippy --workspace --all-targets --all-features -- -D warnings || { echo "FAILED: cargo clippy -D warnings"; exit 1; }
+
+step=$((step+1)); echo; echo "[$step] cargo test --workspace"
+cargo test --workspace || { echo "FAILED: cargo test --workspace"; exit 1; }
+
+step=$((step+1)); echo; echo "[$step] npm run lint --workspaces --if-present"
+npm run lint --workspaces --if-present || { echo "FAILED: npm lint"; exit 1; }
+
+step=$((step+1)); echo; echo "[$step] npm run typecheck --workspaces --if-present"
+npm run typecheck --workspaces --if-present || { echo "FAILED: npm typecheck"; exit 1; }
+
+step=$((step+1)); echo; echo "[$step] npm test --workspaces --if-present"
+npm test --workspaces --if-present || { echo "FAILED: npm test"; exit 1; }
+
+step=$((step+1)); echo; echo "[$step] uv run --project nt pytest -q"
+uv_out="$(uv run --project nt pytest -q 2>&1)"
+uv_code=$?
+if [ "$uv_code" -ne 0 ]; then
+  if printf '%s' "$uv_out" | grep -q 'No solution found when resolving dependencies'; then
+    echo "BLOCKED_ENVIRONMENT: uv cannot resolve approved nt pins (polars 0.54.x unavailable on package index); uv.lock not generated."
+    echo "Exact error:"
+    printf '%s\n' "$uv_out"
+    blocked="nt/uv: polars 0.54.x unavailable on package index (see .omo/evidence)"
+  else
+    echo "FAILED: uv run --project nt pytest -q"
+    printf '%s\n' "$uv_out"
+    exit 1
+  fi
+fi
+
+if [ -n "$blocked" ]; then
+  echo; echo "VERIFY-ALL COMPLETE: all runnable gates OK. BLOCKED_ENVIRONMENT reported: $blocked"
+else
+  echo; echo "ALL GATES PASSED"
+fi
+exit 0
