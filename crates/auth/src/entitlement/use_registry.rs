@@ -80,7 +80,14 @@ impl KrUse {
 
     /// True for the five Owner-only development paths.
     pub const fn is_owner_development(self) -> bool {
-        matches!(self, Self::DevIngest | Self::DevCurate | Self::DevFactor | Self::DevBacktest | Self::DevReport)
+        matches!(
+            self,
+            Self::DevIngest
+                | Self::DevCurate
+                | Self::DevFactor
+                | Self::DevBacktest
+                | Self::DevReport
+        )
     }
 }
 
@@ -155,7 +162,9 @@ impl KrMemberSurface {
 
     pub const fn layer(self) -> Layer {
         match self {
-            Self::DatasetQuery | Self::FactorView | Self::PaperView | Self::ApiPayload => Layer::Api,
+            Self::DatasetQuery | Self::FactorView | Self::PaperView | Self::ApiPayload => {
+                Layer::Api
+            }
             Self::Recommendation | Self::BacktestRun => Layer::Scheduler,
             Self::ReportView | Self::BenchmarkView => Layer::Report,
             Self::ArtifactDownload => Layer::Artifact,
@@ -211,7 +220,10 @@ impl KrUseRegistry {
 
     /// The Member-visible surface corresponding to `use_kind`, if any.
     pub fn surface_for(&self, use_kind: KrUse) -> Option<KrMemberSurface> {
-        KrMemberSurface::ALL.iter().copied().find(|s| s.use_kind() == use_kind)
+        KrMemberSurface::ALL
+            .iter()
+            .copied()
+            .find(|s| s.use_kind() == use_kind)
     }
 }
 
@@ -241,7 +253,10 @@ mod tests {
         let r = KrUseRegistry::standard();
         for surface in KrMemberSurface::ALL {
             let use_kind = surface.use_kind();
-            assert!(use_kind.is_member_visible(), "{surface:?} must be member-visible");
+            assert!(
+                use_kind.is_member_visible(),
+                "{surface:?} must be member-visible"
+            );
             assert!(r.contains(use_kind), "{surface:?} must be registered");
             assert_eq!(r.surface_for(use_kind), Some(surface));
         }

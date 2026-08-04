@@ -6,14 +6,12 @@
 //! entitlement. Rights are never inferred from credentials or API keys - an explicit
 //! entitlement record is the only source of permission.
 
-use std::collections::BTreeMap;
-
+use crate::entitlement::EntitlementState;
 use crate::entitlement::date::CalendarDate;
-use crate::entitlement::entitlement::Entitlement;
 use crate::entitlement::error::{DenialCode, DenialReason, EntitlementDenied};
 use crate::entitlement::identity::{Actor, DatasetId, EntitlementId, UserId};
+use crate::entitlement::record::Entitlement;
 use crate::entitlement::use_registry::{KrMemberSurface, KrUse, KrUseRegistry};
-use crate::entitlement::EntitlementState;
 
 /// An access request: who (actor), what dataset, on which date.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,7 +61,10 @@ impl EntitlementService {
     }
 
     pub fn with_registry(registry: KrUseRegistry, entitlements: Vec<Entitlement>) -> Self {
-        Self { registry, entitlements }
+        Self {
+            registry,
+            entitlements,
+        }
     }
 
     pub fn entitlements(&self) -> &[Entitlement] {
@@ -75,49 +76,133 @@ impl EntitlementService {
     }
 
     /// Authorize a Member-visible (or any registered) KR-derived use. Fails closed.
-    pub fn authorize_use(&self, use_kind: KrUse, req: &AccessRequest) -> Result<Grant, EntitlementDenied> {
-        if !self.registry.contains(use_kind) {
-            // Unknown/unsupported use: deny (fail closed) rather than guess.
-            return Err(EntitlementDenied {
-                code: DenialCode::DataEntitlementRequired,
-                dataset: req.dataset.clone(),
+    pub fn authorize_use(
+        &self,
+        use_kind: KrUse,
+        req: &AccessRequest,
+    ) -> Result<Grant, EntitlementDenied> {
+        if !self.registry.contains(use_kind) || !use_kind.is_member_visible() {
+            // Unknown or non-member use: deny (fail closed) rather than guess.
+            return Err(denied(
+                DenialCode::DataEntitlementRequired,
+                DenialReason::NoEntitlementRecord,
+                None,
                 use_kind,
-                state: None,
-                reason: DenialReason::NoEntitlementRecord,
-            });
+                req,
+            ));
         }
-        if use_kind.is_owner_development() {
-            // Dev uses must go through `authorize_owner_dev`; using `authorize_use`
-            // for them is a caller error - deny (fail closed).
-            return Err(EntitlementDenied {
-                code: DenialCode::OwnerOnlyDevelopmentPath,
-                dataset: req.dataset.clone(),
+
+        let candidates = self.candidates_for(&req.dataset);
+        if candidates.is_empty() {
+            return Err(denied(
+                DenialCode::DataEntitlementRequired,
+                DenialReason::NoEntitlementRecord,
+                None,
                 use_kind,
-                state: None,
-                reason: DenialReason::OwnerOnlyDevelopmentPath,
-            });
+                req,
+            ));
         }
-        let _ = (use_kind, req);
-        todo!("authorize_use: not implemented (red phase)")
+
+        // Pass 1 - allow when an ACTIVE entitlement covers dataset, user, and use.
+        for e in &candidates {
+            if e.status_on(req.as_of) == EntitlementState::Active
+                && (e.covered_users.contains(&req.actor.user_id) || req.actor.is_owner())
+                && e.covered_uses.contains(&use_kind)
+            {
+                return Ok(Grant {
+                    entitlement_id: e.id.clone(),
+                    dataset: req.dataset.clone(),
+                    use_kind,
+                    actor: req.actor.user_id.clone(),
+                    granted_on: req.as_of,
+                    effective_until: e.effective_until,
+                });
+            }
+        }
+
+        // Pass 2 - explain the denial from the closest candidate.
+        let best = candidates
+            .iter()
+            .max_by_key(|e| {
+                (
+                    e.status_on(req.as_of) == EntitlementState::Active,
+                    e.covered_users.contains(&req.actor.user_id) || req.actor.is_owner(),
+                    e.covered_uses.contains(&use_kind),
+                )
+            })
+            .expect("candidates is non-empty");
+        let state = best.status_on(req.as_of);
+        let reason = if !best.covered_uses.contains(&use_kind) {
+            DenialReason::UseNotCovered
+        } else if !best.covered_users.contains(&req.actor.user_id) && !req.actor.is_owner() {
+            DenialReason::UserNotCovered
+        } else {
+            DenialReason::EntitlementNotActive(state)
+        };
+        Err(denied(
+            DenialCode::DataEntitlementRequired,
+            reason,
+            Some(state),
+            use_kind,
+            req,
+        ))
     }
 
     /// Authorize an Owner-only development path. Allowed for the Owner in **any**
     /// entitlement state; denied for Members.
-    pub fn authorize_owner_dev(&self, dev_use: KrUse, req: &AccessRequest) -> Result<OwnerDevGrant, EntitlementDenied> {
-        let _ = (dev_use, req);
-        todo!("authorize_owner_dev: not implemented (red phase)")
+    pub fn authorize_owner_dev(
+        &self,
+        dev_use: KrUse,
+        req: &AccessRequest,
+    ) -> Result<OwnerDevGrant, EntitlementDenied> {
+        if !self.registry.contains(dev_use) || !dev_use.is_owner_development() {
+            return Err(denied(
+                DenialCode::OwnerOnlyDevelopmentPath,
+                DenialReason::OwnerOnlyDevelopmentPath,
+                None,
+                dev_use,
+                req,
+            ));
+        }
+        if !req.actor.is_owner() {
+            return Err(denied(
+                DenialCode::OwnerOnlyDevelopmentPath,
+                DenialReason::OwnerOnlyDevelopmentPath,
+                None,
+                dev_use,
+                req,
+            ));
+        }
+        Ok(OwnerDevGrant {
+            dataset: req.dataset.clone(),
+            use_kind: dev_use,
+            actor: req.actor.user_id.clone(),
+            granted_on: req.as_of,
+        })
     }
 
     /// Convenience: gate a Member-visible surface through the same service.
-    pub fn surface(&self, surface: KrMemberSurface, req: &AccessRequest) -> Result<Grant, EntitlementDenied> {
+    pub fn surface(
+        &self,
+        surface: KrMemberSurface,
+        req: &AccessRequest,
+    ) -> Result<Grant, EntitlementDenied> {
         self.authorize_use(surface.use_kind(), req)
     }
 
     /// Summary used by diagnostics: which entitlement would govern `dataset`, and
     /// in which state, on `as_of`.
-    pub fn governing_state(&self, dataset: &DatasetId, as_of: CalendarDate) -> Option<(EntitlementId, EntitlementState)> {
-        let candidates = self.candidates_for(dataset);
-        let best = candidates.into_iter().max_by_key(|e| self.relevance_score(e, dataset, as_of))?;
+    pub fn governing_state(
+        &self,
+        dataset: &DatasetId,
+        as_of: CalendarDate,
+    ) -> Option<(EntitlementId, EntitlementState)> {
+        let best = self.candidates_for(dataset).into_iter().max_by_key(|e| {
+            (
+                e.status_on(as_of) == EntitlementState::Active,
+                e.effective_until,
+            )
+        })?;
         Some((best.id.clone(), best.status_on(as_of)))
     }
 
@@ -128,28 +213,29 @@ impl EntitlementService {
             .filter(|e| e.covered_datasets.contains(dataset))
             .collect()
     }
+}
 
-    /// Deterministic ranking of a candidate for explaining a denial: prefer the
-    /// entitlement that is active and covers the most request dimensions.
-    pub(crate) fn relevance_score(&self, e: &Entitlement, dataset: &DatasetId, as_of: CalendarDate) -> (u8, u8, u8) {
-        let _ = (e, dataset, as_of);
-        (0, 0, 0)
-    }
-
-    /// Lookup map used by `governing_state` diagnostics.
-    pub fn entitlement_map(&self) -> BTreeMap<EntitlementId, EntitlementState> {
-        self.entitlements
-            .iter()
-            .map(|e| (e.id.clone(), e.lifecycle))
-            .collect()
+fn denied(
+    code: DenialCode,
+    reason: DenialReason,
+    state: Option<EntitlementState>,
+    use_kind: KrUse,
+    req: &AccessRequest,
+) -> EntitlementDenied {
+    EntitlementDenied {
+        code,
+        dataset: req.dataset.clone(),
+        use_kind,
+        state,
+        reason,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entitlement::entitlement::{ContractRef, DocumentHash};
     use crate::entitlement::identity::{DataProvider, Role};
+    use crate::entitlement::record::{ContractRef, DocumentHash};
 
     fn hex(c: char) -> String {
         c.to_string().repeat(64)
@@ -199,7 +285,9 @@ mod tests {
         let as_of = member_req("2026-06-15");
         // Every listed (member-visible) use is permitted for a covered member.
         for use_kind in KrUseRegistry::standard().member_visible() {
-            let grant = svc.authorize_use(*use_kind, &as_of).expect("listed use must be allowed");
+            let grant = svc
+                .authorize_use(*use_kind, &as_of)
+                .expect("listed use must be allowed");
             assert_eq!(grant.entitlement_id, EntitlementId::new("ent_active"));
         }
     }
@@ -211,11 +299,20 @@ mod tests {
             ("ent_expired", EntitlementState::Expired),
             ("ent_revoked", EntitlementState::Revoked),
         ] {
-            let svc = EntitlementService::new(vec![entitlement(id, lifecycle, "2026-01-01", "2026-12-31")]);
+            let svc = EntitlementService::new(vec![entitlement(
+                id,
+                lifecycle,
+                "2026-01-01",
+                "2026-12-31",
+            )]);
             let as_of = member_req("2026-06-15");
             for use_kind in KrUseRegistry::standard().member_visible() {
                 let denied = svc.authorize_use(*use_kind, &as_of).expect_err("must deny");
-                assert_eq!(denied.code, DenialCode::DataEntitlementRequired, "{id} {use_kind:?}");
+                assert_eq!(
+                    denied.code,
+                    DenialCode::DataEntitlementRequired,
+                    "{id} {use_kind:?}"
+                );
             }
         }
     }
@@ -224,7 +321,9 @@ mod tests {
     fn no_entitlement_fails_closed() {
         let svc = EntitlementService::new(vec![]);
         let as_of = member_req("2026-06-15");
-        let denied = svc.authorize_use(KrUse::Recommendation, &as_of).unwrap_err();
+        let denied = svc
+            .authorize_use(KrUse::Recommendation, &as_of)
+            .unwrap_err();
         assert_eq!(denied.code, DenialCode::DataEntitlementRequired);
         assert_eq!(denied.reason, DenialReason::NoEntitlementRecord);
         assert_eq!(denied.state, None);
@@ -238,10 +337,20 @@ mod tests {
             ("ent_expired", EntitlementState::Expired),
             ("ent_revoked", EntitlementState::Revoked),
         ] {
-            let svc = EntitlementService::new(vec![entitlement(id, lifecycle, "2026-01-01", "2026-12-31")]);
-            let as_of = req(Actor::owner("own_1"), DatasetId::krx_eod_bars(), "2026-06-15");
+            let svc = EntitlementService::new(vec![entitlement(
+                id,
+                lifecycle,
+                "2026-01-01",
+                "2026-12-31",
+            )]);
+            let as_of = req(
+                Actor::owner("own_1"),
+                DatasetId::krx_eod_bars(),
+                "2026-06-15",
+            );
             for dev_use in KrUseRegistry::standard().owner_development() {
-                svc.authorize_owner_dev(*dev_use, &as_of).expect("owner dev must be allowed");
+                svc.authorize_owner_dev(*dev_use, &as_of)
+                    .expect("owner dev must be allowed");
             }
         }
     }
@@ -263,7 +372,12 @@ mod tests {
 
     #[test]
     fn active_denies_uncovered_user_and_unlisted_use() {
-        let mut partial = entitlement("ent_partial", EntitlementState::Active, "2026-01-01", "2026-12-31");
+        let mut partial = entitlement(
+            "ent_partial",
+            EntitlementState::Active,
+            "2026-01-01",
+            "2026-12-31",
+        );
         partial.covered_uses = [KrUse::Recommendation].into_iter().collect();
         let svc = EntitlementService::new(vec![partial]);
         // Covered user, but use not listed in the contract -> denied.
@@ -273,8 +387,14 @@ mod tests {
         assert_eq!(denied.code, DenialCode::DataEntitlementRequired);
         assert_eq!(denied.reason, DenialReason::UseNotCovered);
         // Uncovered user (even for a listed use) -> denied.
-        let other = req(Actor::member("usr_z"), DatasetId::krx_eod_bars(), "2026-06-15");
-        let denied = svc.authorize_use(KrUse::Recommendation, &other).unwrap_err();
+        let other = req(
+            Actor::member("usr_z"),
+            DatasetId::krx_eod_bars(),
+            "2026-06-15",
+        );
+        let denied = svc
+            .authorize_use(KrUse::Recommendation, &other)
+            .unwrap_err();
         assert_eq!(denied.code, DenialCode::DataEntitlementRequired);
         assert_eq!(denied.reason, DenialReason::UserNotCovered);
     }
@@ -288,8 +408,14 @@ mod tests {
             "2026-01-01",
             "2026-12-31",
         )]);
-        let as_of = req(Actor::owner("own_1"), DatasetId::krx_eod_bars(), "2026-06-15");
-        let denied = svc.authorize_use(KrUse::Recommendation, &as_of).unwrap_err();
+        let as_of = req(
+            Actor::owner("own_1"),
+            DatasetId::krx_eod_bars(),
+            "2026-06-15",
+        );
+        let denied = svc
+            .authorize_use(KrUse::Recommendation, &as_of)
+            .unwrap_err();
         assert_eq!(denied.code, DenialCode::DataEntitlementRequired);
         let _ = Role::Owner; // role enumerated for clarity
     }

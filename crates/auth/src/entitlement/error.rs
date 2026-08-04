@@ -89,9 +89,18 @@ impl fmt::Display for TransitionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidTransition { from, to } => {
-                write!(f, "invalid entitlement transition {} -> {}", from.as_str(), to.as_str())
+                write!(
+                    f,
+                    "invalid entitlement transition {} -> {}",
+                    from.as_str(),
+                    to.as_str()
+                )
             }
-            Self::OutsideEffectiveWindow { on, effective_from, effective_until } => {
+            Self::OutsideEffectiveWindow {
+                on,
+                effective_from,
+                effective_until,
+            } => {
                 write!(
                     f,
                     "activation date {on} outside effective window [{effective_from}, {effective_until}]"
@@ -111,8 +120,14 @@ mod tests {
 
     #[test]
     fn denial_code_stable_strings() {
-        assert_eq!(DenialCode::DataEntitlementRequired.as_str(), "DATA_ENTITLEMENT_REQUIRED");
-        assert_eq!(DenialCode::OwnerOnlyDevelopmentPath.as_str(), "OWNER_ONLY_DEVELOPMENT_PATH");
+        assert_eq!(
+            DenialCode::DataEntitlementRequired.as_str(),
+            "DATA_ENTITLEMENT_REQUIRED"
+        );
+        assert_eq!(
+            DenialCode::OwnerOnlyDevelopmentPath.as_str(),
+            "OWNER_ONLY_DEVELOPMENT_PATH"
+        );
     }
 
     #[test]

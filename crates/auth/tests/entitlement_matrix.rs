@@ -51,7 +51,10 @@ fn entitlement_matrix() {
 
     println!();
     println!("KRX data-entitlement gate matrix (as_of = {as_of})");
-    println!("{:<9} {:<16} {:<7} {:<10}", "STATE", "USE", "ROLE", "DECISION");
+    println!(
+        "{:<9} {:<16} {:<7} {:<10}",
+        "STATE", "USE", "ROLE", "DECISION"
+    );
 
     let mut failures: Vec<String> = Vec::new();
     let expect = |failures: &mut Vec<String>, ok: bool, label: String| {
@@ -79,14 +82,26 @@ fn entitlement_matrix() {
                 Ok(_) => "allowed".to_owned(),
                 Err(e) => format!("denied({})", e.code),
             };
-            println!("{label:<9} {:<16} {:<7} {member_row}", use_kind.as_str(), "member");
-            println!("{label:<9} {:<16} {:<7} {owner_row}", use_kind.as_str(), "owner");
+            println!(
+                "{label:<9} {:<16} {:<7} {member_row}",
+                use_kind.as_str(),
+                "member"
+            );
+            println!(
+                "{label:<9} {:<16} {:<7} {owner_row}",
+                use_kind.as_str(),
+                "owner"
+            );
 
             // Assert the fail-closed contract.
             let allowed = member_outcome.is_ok();
             match lifecycle {
                 EntitlementState::Active => {
-                    expect(&mut failures, allowed, format!("ACTIVE member {use_kind:?} must be allowed"));
+                    expect(
+                        &mut failures,
+                        allowed,
+                        format!("ACTIVE member {use_kind:?} must be allowed"),
+                    );
                     let denied_code = owner_outcome.as_ref().err().map(|e| e.code);
                     expect(
                         &mut failures,
@@ -94,13 +109,21 @@ fn entitlement_matrix() {
                         format!("ACTIVE owner {use_kind:?} must be allowed"),
                     );
                 }
-                EntitlementState::Pending | EntitlementState::Expired | EntitlementState::Revoked => {
-                    expect(&mut failures, !allowed, format!("{label} member {use_kind:?} must be denied"));
+                EntitlementState::Pending
+                | EntitlementState::Expired
+                | EntitlementState::Revoked => {
+                    expect(
+                        &mut failures,
+                        !allowed,
+                        format!("{label} member {use_kind:?} must be denied"),
+                    );
                     if let Err(e) = &member_outcome {
                         expect(
                             &mut failures,
                             e.code.as_str() == "DATA_ENTITLEMENT_REQUIRED",
-                            format!("{label} member {use_kind:?} must deny with DATA_ENTITLEMENT_REQUIRED"),
+                            format!(
+                                "{label} member {use_kind:?} must deny with DATA_ENTITLEMENT_REQUIRED"
+                            ),
                         );
                     }
                     let owner_denied = owner_outcome.as_ref().err().map(|e| e.code);
@@ -130,13 +153,21 @@ fn entitlement_matrix() {
                 "{label:<9} {:<16} {:<7} {}",
                 dev_use.as_str(),
                 "owner",
-                if owner_outcome.is_ok() { "allowed" } else { "denied" }
+                if owner_outcome.is_ok() {
+                    "allowed"
+                } else {
+                    "denied"
+                }
             );
             println!(
                 "{label:<9} {:<16} {:<7} {}",
                 dev_use.as_str(),
                 "member",
-                if member_outcome.is_ok() { "allowed" } else { "denied" }
+                if member_outcome.is_ok() {
+                    "allowed"
+                } else {
+                    "denied"
+                }
             );
             expect(
                 &mut failures,
@@ -147,7 +178,9 @@ fn entitlement_matrix() {
             expect(
                 &mut failures,
                 member_denied == Some("OWNER_ONLY_DEVELOPMENT_PATH"),
-                format!("{label} member dev path {dev_use:?} must be denied with OWNER_ONLY_DEVELOPMENT_PATH"),
+                format!(
+                    "{label} member dev path {dev_use:?} must be denied with OWNER_ONLY_DEVELOPMENT_PATH"
+                ),
             );
         }
     }

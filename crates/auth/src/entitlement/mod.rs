@@ -12,18 +12,18 @@
 
 pub mod audit;
 pub mod date;
-pub mod entitlement;
 pub mod error;
 pub mod identity;
+pub mod record;
 pub mod service;
 pub mod state;
 pub mod use_registry;
 
-pub use audit::{audit_event_for, AuditDecision, AuditEvent, AuditLog};
+pub use audit::{AuditDecision, AuditEvent, AuditLog, audit_event_for};
 pub use date::{CalendarDate, DateError};
-pub use entitlement::{ContractRef, DocumentHash, Entitlement, EntitlementBuilder};
 pub use error::{DenialCode, DenialReason, EntitlementDenied, TransitionError};
 pub use identity::{Actor, DataProvider, DatasetId, EntitlementId, Role, UserId};
+pub use record::{ContractRef, DocumentHash, Entitlement, EntitlementBuilder};
 pub use service::{AccessRequest, EntitlementService, Grant, OwnerDevGrant};
 pub use state::EntitlementState;
 pub use use_registry::{KrMemberSurface, KrUse, KrUseRegistry, Layer};

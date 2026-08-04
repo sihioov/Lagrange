@@ -9,7 +9,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// A civil calendar date with `Ord` semantics on the day count.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct CalendarDate {
     days: i64,
 }
@@ -149,12 +149,6 @@ impl CalendarDate {
         Self {
             days: self.days + n,
         }
-    }
-}
-
-impl Default for CalendarDate {
-    fn default() -> Self {
-        Self { days: 0 } // 1970-01-01
     }
 }
 

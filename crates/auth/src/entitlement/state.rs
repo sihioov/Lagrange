@@ -34,7 +34,7 @@ impl EntitlementState {
 
 /// Typed transition table. `EXPIRED` and `REVOKED` are terminal; `Pending → Active`
 /// additionally requires the transition date to fall inside the effective window
-/// (checked by [`crate::entitlement::entitlement::Entitlement::transition`]).
+/// (checked by [`crate::entitlement::record::Entitlement::transition`]).
 pub(crate) const fn is_allowed_transition(from: EntitlementState, to: EntitlementState) -> bool {
     matches!(
         (from, to),
@@ -62,7 +62,11 @@ mod tests {
     #[test]
     fn only_active_allows_member_access() {
         assert!(EntitlementState::Active.allows_member_access());
-        for s in [EntitlementState::Pending, EntitlementState::Expired, EntitlementState::Revoked] {
+        for s in [
+            EntitlementState::Pending,
+            EntitlementState::Expired,
+            EntitlementState::Revoked,
+        ] {
             assert!(!s.allows_member_access(), "{:?} must fail closed", s);
         }
     }

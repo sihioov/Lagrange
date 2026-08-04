@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use crate::entitlement::date::CalendarDate;
 use crate::entitlement::error::TransitionError;
 use crate::entitlement::identity::{DataProvider, DatasetId, EntitlementId, UserId};
-use crate::entitlement::state::{is_allowed_transition, EntitlementState};
+use crate::entitlement::state::{EntitlementState, is_allowed_transition};
 use crate::entitlement::use_registry::KrUse;
 
 /// Hash of the signed contract document. The document itself stays outside Git
@@ -26,7 +26,10 @@ impl DocumentHash {
     pub fn sha256(hex: impl Into<String>) -> Self {
         let hex = hex.into();
         assert!(
-            hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
             "sha256 hex must be exactly 64 lowercase hex characters"
         );
         Self {
@@ -78,21 +81,38 @@ impl Entitlement {
     /// - a date before `effective_from` is always `PENDING`;
     /// - a date after `effective_until` is always `EXPIRED`;
     /// - otherwise the persisted lifecycle (only `ACTIVE` grants).
-    pub fn status_on(&self, _date: CalendarDate) -> EntitlementState {
-        todo!("status_on: not implemented (red phase)")
+    pub fn status_on(&self, date: CalendarDate) -> EntitlementState {
+        match self.lifecycle {
+            EntitlementState::Revoked | EntitlementState::Expired => self.lifecycle,
+            EntitlementState::Pending | EntitlementState::Active => {
+                if date < self.effective_from {
+                    EntitlementState::Pending
+                } else if date > self.effective_until {
+                    EntitlementState::Expired
+                } else {
+                    self.lifecycle
+                }
+            }
+        }
     }
 
     /// Typed lifecycle transition, applied on `date`:
     /// `Pending -> Active | Expired | Revoked`, `Active -> Expired | Revoked`.
     /// `Pending -> Active` requires `on` inside the effective window.
-    pub fn transition(&mut self, to: EntitlementState, on: CalendarDate) -> Result<(), TransitionError> {
+    pub fn transition(
+        &mut self,
+        to: EntitlementState,
+        on: CalendarDate,
+    ) -> Result<(), TransitionError> {
         if !is_allowed_transition(self.lifecycle, to) {
             return Err(TransitionError::InvalidTransition {
                 from: self.lifecycle,
                 to,
             });
         }
-        if to == EntitlementState::Active && !(self.effective_from <= on && on <= self.effective_until) {
+        if to == EntitlementState::Active
+            && !(self.effective_from <= on && on <= self.effective_until)
+        {
             return Err(TransitionError::OutsideEffectiveWindow {
                 on,
                 effective_from: self.effective_from,
@@ -184,8 +204,12 @@ impl EntitlementBuilder {
             provider: self.provider.expect("builder: provider is required"),
             contract: self.contract.expect("builder: contract is required"),
             lifecycle: self.lifecycle,
-            effective_from: self.effective_from.expect("builder: effective_from is required"),
-            effective_until: self.effective_until.expect("builder: effective_until is required"),
+            effective_from: self
+                .effective_from
+                .expect("builder: effective_from is required"),
+            effective_until: self
+                .effective_until
+                .expect("builder: effective_until is required"),
             covered_datasets: self.covered_datasets,
             covered_uses: self.covered_uses,
             covered_users: self.covered_users,
@@ -244,10 +268,26 @@ mod tests {
     #[test]
     fn covers_is_set_containment() {
         let e = sample();
-        assert!(e.covers(&DatasetId::krx_eod_bars(), &UserId::new("usr_a"), KrUse::Report));
-        assert!(!e.covers(&DatasetId::krx_eod_bars(), &UserId::new("usr_b"), KrUse::Report)); // user not covered
-        assert!(!e.covers(&DatasetId::krx_eod_bars(), &UserId::new("usr_a"), KrUse::Download)); // use not covered
-        assert!(!e.covers(&DatasetId::new("krx_calendar"), &UserId::new("usr_a"), KrUse::Report)); // dataset not covered
+        assert!(e.covers(
+            &DatasetId::krx_eod_bars(),
+            &UserId::new("usr_a"),
+            KrUse::Report
+        ));
+        assert!(!e.covers(
+            &DatasetId::krx_eod_bars(),
+            &UserId::new("usr_b"),
+            KrUse::Report
+        )); // user not covered
+        assert!(!e.covers(
+            &DatasetId::krx_eod_bars(),
+            &UserId::new("usr_a"),
+            KrUse::Download
+        )); // use not covered
+        assert!(!e.covers(
+            &DatasetId::new("krx_calendar"),
+            &UserId::new("usr_a"),
+            KrUse::Report
+        )); // dataset not covered
     }
 
     // --- RED PHASE: lifecycle semantics (fail closed) ----------------------------
@@ -256,21 +296,39 @@ mod tests {
     fn status_on_fail_closed_before_and_after_window() {
         let mut e = sample();
         // Active lifecycle: inside window -> ACTIVE
-        assert_eq!(e.status_on(CalendarDate::parse("2026-06-15").unwrap()), EntitlementState::Active);
+        assert_eq!(
+            e.status_on(CalendarDate::parse("2026-06-15").unwrap()),
+            EntitlementState::Active
+        );
         // Fail closed: before effective_from -> PENDING
-        assert_eq!(e.status_on(CalendarDate::parse("2025-12-31").unwrap()), EntitlementState::Pending);
+        assert_eq!(
+            e.status_on(CalendarDate::parse("2025-12-31").unwrap()),
+            EntitlementState::Pending
+        );
         // Fail closed: after effective_until -> EXPIRED
-        assert_eq!(e.status_on(CalendarDate::parse("2027-01-01").unwrap()), EntitlementState::Expired);
+        assert_eq!(
+            e.status_on(CalendarDate::parse("2027-01-01").unwrap()),
+            EntitlementState::Expired
+        );
 
         // Pending lifecycle inside window stays PENDING (awaiting activation).
         e.lifecycle = EntitlementState::Pending;
-        assert_eq!(e.status_on(CalendarDate::parse("2026-06-15").unwrap()), EntitlementState::Pending);
+        assert_eq!(
+            e.status_on(CalendarDate::parse("2026-06-15").unwrap()),
+            EntitlementState::Pending
+        );
 
         // Terminal states never revive.
         e.lifecycle = EntitlementState::Revoked;
-        assert_eq!(e.status_on(CalendarDate::parse("2026-06-15").unwrap()), EntitlementState::Revoked);
+        assert_eq!(
+            e.status_on(CalendarDate::parse("2026-06-15").unwrap()),
+            EntitlementState::Revoked
+        );
         e.lifecycle = EntitlementState::Expired;
-        assert_eq!(e.status_on(CalendarDate::parse("2026-06-15").unwrap()), EntitlementState::Expired);
+        assert_eq!(
+            e.status_on(CalendarDate::parse("2026-06-15").unwrap()),
+            EntitlementState::Expired
+        );
     }
 
     #[test]
@@ -278,18 +336,29 @@ mod tests {
         // Pending -> Active inside window.
         let mut e = sample();
         e.lifecycle = EntitlementState::Pending;
-        e.transition(EntitlementState::Active, CalendarDate::parse("2026-03-01").unwrap())
-            .unwrap();
+        e.transition(
+            EntitlementState::Active,
+            CalendarDate::parse("2026-03-01").unwrap(),
+        )
+        .unwrap();
         assert_eq!(e.lifecycle, EntitlementState::Active);
 
         // Active -> Revoked.
-        e.transition(EntitlementState::Revoked, CalendarDate::parse("2026-03-02").unwrap()).unwrap();
+        e.transition(
+            EntitlementState::Revoked,
+            CalendarDate::parse("2026-03-02").unwrap(),
+        )
+        .unwrap();
         assert_eq!(e.lifecycle, EntitlementState::Revoked);
 
         // Pending -> Expired (window lapsed without activation).
         let mut e2 = sample();
         e2.lifecycle = EntitlementState::Pending;
-        e2.transition(EntitlementState::Expired, CalendarDate::parse("2027-01-02").unwrap()).unwrap();
+        e2.transition(
+            EntitlementState::Expired,
+            CalendarDate::parse("2027-01-02").unwrap(),
+        )
+        .unwrap();
         assert_eq!(e2.lifecycle, EntitlementState::Expired);
     }
 
@@ -298,9 +367,15 @@ mod tests {
         let mut e = sample();
         e.lifecycle = EntitlementState::Pending;
         let err = e
-            .transition(EntitlementState::Active, CalendarDate::parse("2027-06-01").unwrap())
+            .transition(
+                EntitlementState::Active,
+                CalendarDate::parse("2027-06-01").unwrap(),
+            )
             .unwrap_err();
-        assert!(matches!(err, TransitionError::OutsideEffectiveWindow { .. }));
+        assert!(matches!(
+            err,
+            TransitionError::OutsideEffectiveWindow { .. }
+        ));
         assert_eq!(e.lifecycle, EntitlementState::Pending); // unchanged on failure
     }
 
@@ -310,8 +385,13 @@ mod tests {
             let mut e = sample();
             e.lifecycle = terminal;
             for target in [EntitlementState::Active, EntitlementState::Pending] {
-                let err = e.transition(target, CalendarDate::parse("2026-06-15").unwrap()).unwrap_err();
-                assert!(matches!(err, TransitionError::InvalidTransition { .. }), "{terminal:?}->{target:?}");
+                let err = e
+                    .transition(target, CalendarDate::parse("2026-06-15").unwrap())
+                    .unwrap_err();
+                assert!(
+                    matches!(err, TransitionError::InvalidTransition { .. }),
+                    "{terminal:?}->{target:?}"
+                );
             }
         }
     }
@@ -320,7 +400,10 @@ mod tests {
     fn active_cannot_return_to_pending() {
         let mut e = sample();
         let err = e
-            .transition(EntitlementState::Pending, CalendarDate::parse("2026-06-15").unwrap())
+            .transition(
+                EntitlementState::Pending,
+                CalendarDate::parse("2026-06-15").unwrap(),
+            )
             .unwrap_err();
         assert!(matches!(err, TransitionError::InvalidTransition { .. }));
     }
