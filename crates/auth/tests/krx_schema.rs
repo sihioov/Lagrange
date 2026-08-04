@@ -17,8 +17,7 @@ const EXAMPLE_PATH: &str = concat!(
 );
 
 fn read(path: &str) -> String {
-    fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("missing config file {path}: {e}"))
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("missing config file {path}: {e}"))
 }
 
 #[test]
@@ -47,8 +46,14 @@ fn schema_requires_redacted_entitlement_metadata() {
         assert!(raw.contains(needle), "schema missing {needle}");
     }
     // Redaction: contract contents are never part of the schema.
-    assert!(!raw.contains("\"contents\""), "schema must not admit contract contents");
-    assert!(!raw.contains("\"terms\""), "schema must not admit contract terms");
+    assert!(
+        !raw.contains("\"contents\""),
+        "schema must not admit contract contents"
+    );
+    assert!(
+        !raw.contains("\"terms\""),
+        "schema must not admit contract terms"
+    );
 }
 
 #[test]
@@ -62,15 +67,18 @@ fn example_metadata_is_valid_shape_and_redacted() {
     ] {
         assert!(raw.contains(needle), "example missing {needle}");
     }
-    assert!(!raw.contains("\"contents\""), "example must not carry contract contents");
+    assert!(
+        !raw.contains("\"contents\""),
+        "example must not carry contract contents"
+    );
 
     // The committed placeholder hash must still satisfy the 64-hex pattern.
     let hex_marker = "\"hex\": \"";
-    let start = raw.find(hex_marker).expect("hash hex present")
-        + hex_marker.len();
+    let start = raw.find(hex_marker).expect("hash hex present") + hex_marker.len();
     let hex = &raw[start..start + 64];
     assert!(
-        hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        hex.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
         "example hash must be 64 lowercase hex chars"
     );
 }
@@ -89,10 +97,22 @@ fn covered_uses_match_the_rust_registry() {
         "payload",
         "download",
     ] {
-        assert!(raw.contains(&format!("\"{use_kind}\"")), "schema enum missing {use_kind}");
+        assert!(
+            raw.contains(&format!("\"{use_kind}\"")),
+            "schema enum missing {use_kind}"
+        );
     }
     // Dev uses are deliberately absent: Owner-only development is not an entitlement.
-    for dev_use in ["dev_ingest", "dev_curate", "dev_factor", "dev_backtest", "dev_report"] {
-        assert!(!raw.contains(dev_use), "dev use {dev_use} must not be an entitlement use");
+    for dev_use in [
+        "dev_ingest",
+        "dev_curate",
+        "dev_factor",
+        "dev_backtest",
+        "dev_report",
+    ] {
+        assert!(
+            !raw.contains(dev_use),
+            "dev use {dev_use} must not be an entitlement use"
+        );
     }
 }

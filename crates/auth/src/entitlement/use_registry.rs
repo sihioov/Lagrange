@@ -98,7 +98,7 @@ impl std::fmt::Display for KrUse {
 }
 
 /// The layer that consumes a Member-visible surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Layer {
     Api,
     Scheduler,
