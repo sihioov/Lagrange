@@ -93,7 +93,7 @@ impl<'de> Deserialize<'de> for Currency {
 ///
 /// Serde uses lowercase codes (`"krx"`) on the wire; [`Venue::from_str`] and
 /// [`fmt::Display`] are case-insensitive/uppercase respectively.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Venue {
     /// Korea Exchange — primary venue of the fixed Korean ETF universe.

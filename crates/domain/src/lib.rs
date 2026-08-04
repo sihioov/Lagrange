@@ -14,6 +14,10 @@
 pub mod currency;
 pub mod error;
 pub mod fixed;
+pub mod hash;
+pub mod ids;
+pub mod instrument;
+pub mod version;
 
 pub use currency::{Currency, Venue};
 pub use error::DomainError;
@@ -21,3 +25,11 @@ pub use fixed::{
     FixedPoint, Money, Price, Quantity, Weight, MAX_SCALE, MONEY_SCALE, PRICE_SCALE,
     QUANTITY_SCALE, WEIGHT_SCALE,
 };
+pub use hash::{CodeCommit, ContentHash};
+pub use ids::{
+    ArtifactId, BatchId, ConfigId, CorrelationId, DatasetId, DatasetVersionId, FactorId,
+    FillId, IdempotencyKey, JobAttemptId, JobId, OrderId, PaperAccountId, PositionId,
+    ProvenanceId, RunId, SessionId, StrategyId, UniverseSnapshotId, UserId,
+};
+pub use instrument::{AssetClass, InstrumentId};
+pub use version::{FactorVersion, SemVer, StrategyVersion};
