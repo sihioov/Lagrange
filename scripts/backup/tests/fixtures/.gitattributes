@@ -1,0 +1,4 @@
+# Fixture archive bytes are content-addressed: each file's sha256 is recorded in the
+# backup manifests and re-verified by scripts/backup/validate-policy.*. Git must never
+# normalize line endings or bytes here, or clean clones would fail hash verification.
+* -text

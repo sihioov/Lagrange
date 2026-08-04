@@ -1,0 +1,99 @@
+{
+  "manifest_version": "1.0",
+  "backup_set_id": "lagrange-synthetic-incomplete-missing-hash-20260805T000000Z",
+  "created_at": "2026-08-05T00:00:00Z",
+  "host": "lagrange-ci-synthetic",
+  "scope": "full",
+  "classes": [
+    {
+      "class": "db_base",
+      "kind": "db",
+      "backup_id": "base-20260805T000000Z",
+      "started_at": "2026-08-05T00:00:00Z",
+      "completed_at": "2026-08-05T00:01:00Z",
+      "retention_days": 14,
+      "expires_at": "2026-08-19T00:01:00Z",
+      "storage": { "encryption": "required", "location": "backup://lagrange/db/base/2026-08-05T00-00-00Z" },
+      "files": [
+        { "path": "pg/base/2026-08-05T00-00-00Z/base.tar.gz", "sha256": "eea57b7bb11f16be4318c1e38f824751f9dc790ccb4adf300da8733944a2b3e2" }
+      ]
+    },
+    {
+      "class": "db_wal",
+      "kind": "db",
+      "backup_id": "wal-20260805T000000Z",
+      "started_at": "2026-08-05T00:00:00Z",
+      "completed_at": "2026-08-05T00:01:00Z",
+      "retention_days": 14,
+      "expires_at": "2026-08-19T00:01:00Z",
+      "storage": { "encryption": "required", "location": "backup://lagrange/db/wal/2026-08-05T00-00-00Z" },
+      "files": [
+        { "path": "pg/wal/2026-08-05T00-00-00Z/000000010000000000000001.wal", "sha256": "5937a93a5096e46c6e9a22c6d9672391945383f9c2c390f24a4de24f92510741" },
+        { "path": "pg/wal/2026-08-05T00-00-00Z/000000010000000000000002.wal", "sha256": "6225af484346ab1d773eabc473d2d99725c6eef6319608780cc72c3ee54c73fd" }
+      ]
+    },
+    {
+      "class": "file_raw",
+      "kind": "file",
+      "dataset": "raw",
+      "backup_id": "raw-20260805T000000Z",
+      "started_at": "2026-08-05T00:00:00Z",
+      "completed_at": "2026-08-05T00:02:00Z",
+      "retention_days": 90,
+      "expires_at": "2026-11-03T00:02:00Z",
+      "incremental_from": null,
+      "storage": { "encryption": "allowed", "reference": true, "location": "backup://lagrange/files/raw/2026-08-05T00-02-00Z" },
+      "files": [
+        { "path": "files/raw/2026-08-05T00-02-00Z/raw-2026-08-05T00-02-00Z.increment", "sha256": "f52b6b60b66a539ab00c92d915c84748a7423305a5072f41d6113d3fd730d9a8" }
+      ]
+    },
+    {
+      "class": "file_curated",
+      "kind": "file",
+      "dataset": "curated",
+      "backup_id": "curated-20260805T000000Z",
+      "started_at": "2026-08-05T00:00:00Z",
+      "completed_at": "2026-08-05T00:02:00Z",
+      "retention_days": 180,
+      "expires_at": "2027-02-01T00:02:00Z",
+      "incremental_from": null,
+      "storage": { "encryption": "allowed", "reference": true, "location": "backup://lagrange/files/curated/2026-08-05T00-02-00Z" },
+      "files": [
+        { "path": "files/curated/2026-08-05T00-02-00Z/curated-2026-08-05T00-02-00Z.increment", "sha256": "21243bfdd0c153827a741446dc0275083c93849d9d5615130b44549a43677ea8" }
+      ]
+    },
+    {
+      "class": "file_artifact",
+      "kind": "file",
+      "dataset": "artifact",
+      "backup_id": "artifact-20260805T000000Z",
+      "started_at": "2026-08-05T00:00:00Z",
+      "completed_at": "2026-08-05T00:03:00Z",
+      "retention_days": 365,
+      "expires_at": "2027-08-05T00:03:00Z",
+      "incremental_from": null,
+      "storage": { "encryption": "allowed", "reference": true, "location": "backup://lagrange/files/artifact/2026-08-05T00-03-00Z" },
+      "files": [
+        { "path": "files/artifact/2026-08-05T00-03-00Z/artifact-2026-08-05T00-03-00Z.increment" }
+      ]
+    }
+  ],
+  "restore_policy": {
+    "isolated_target_required": true,
+    "assertions": {
+      "premember": {
+        "required_classes": ["db_base", "db_wal", "file_raw", "file_curated", "file_artifact"],
+        "full_restore": true
+      },
+      "prelive": {
+        "required_classes": ["db_base", "db_wal", "file_raw", "file_curated", "file_artifact"],
+        "full_restore": true,
+        "startup_mode": "reconciliation_only"
+      }
+    }
+  },
+  "secret_exclusion": {
+    "policy": "Secrets never enter ordinary backup archives. Recover via deploy/backup/runbooks/secret-recovery.md.",
+    "marker_scan": true
+  }
+}
