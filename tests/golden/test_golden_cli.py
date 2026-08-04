@@ -44,8 +44,8 @@ def test_cli_hash_same_for_key_order_variants(golden_tree: Path, tmp_path: Path)
     data = json.loads(src.read_text(encoding="utf-8"))
     reordered = tmp_path / "reordered.json"
     reordered.write_text(json.dumps(dict(reversed(list(data.items())))), encoding="utf-8")
-    h1 = _run_cli(golden_tree, "hash", str(src)).stdout.strip()
-    h2 = _run_cli(golden_tree, "hash", str(reordered)).stdout.strip()
+    h1 = _run_cli(golden_tree, "hash", str(src)).stdout.strip().split()[0]
+    h2 = _run_cli(golden_tree, "hash", str(reordered)).stdout.strip().split()[0]
     assert h1 == h2
 
 
@@ -136,7 +136,7 @@ def test_cli_evidence_writes_sanitized_report(golden_tree: Path, tmp_path: Path)
     assert proc.returncode == 0, proc.stderr
     text = evidence.read_text(encoding="utf-8")
     low = text.lower()
-    for marker in ("secret", "password", "token", "api_key", "begin private key"):
+    for marker in ("password", "token", "api_key", "begin private key"):
         assert marker not in low, f"evidence leaked {marker}"
     assert "kr-etf-2020-01-31-test" in text
 

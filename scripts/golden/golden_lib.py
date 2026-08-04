@@ -334,7 +334,13 @@ def _build_entry(entry: dict[str, Any], base_dir: Path, output_dir: Path, sectio
 
 
 def _relative_posix(path: Path, base: Path) -> str:
-    return os.path.relpath(path.resolve(), base.resolve()).replace("\\", "/")
+    try:
+        return os.path.relpath(path.resolve(), base.resolve()).replace("\\", "/")
+    except ValueError as exc:
+        raise GoldenManifestError(
+            f"cannot express {path} relative to manifest location {base} "
+            "(different drives/roots); write the manifest inside the config's tree"
+        ) from exc
 
 
 def serialize_manifest(manifest: dict[str, Any]) -> bytes:

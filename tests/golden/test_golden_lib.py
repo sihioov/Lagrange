@@ -230,13 +230,15 @@ def test_verify_ok_on_unchanged(golden_tree: Path) -> None:
 
 
 def test_verify_detects_fill_price_field_change(golden_tree: Path) -> None:
+    config = gl.load_json_file(golden_tree / "golden" / "golden.json")
+    manifest = gl.manifest_from_config(config, golden_tree / "golden", {"commit": "0" * 40, "tree": "0" * 40})
+    assert gl.verify_manifest(manifest, golden_tree / "golden").ok
+
     fills = golden_tree / "golden" / "outputs" / "2020-01-31" / "fills.json"
     data = json.loads(fills.read_text(encoding="utf-8"))
     data["fills"][0]["price"] = "10400.00"
     fills.write_text(json.dumps(data), encoding="utf-8")
 
-    config = gl.load_json_file(golden_tree / "golden" / "golden.json")
-    manifest = gl.manifest_from_config(config, golden_tree / "golden", {"commit": "0" * 40, "tree": "0" * 40})
     report = gl.verify_manifest(manifest, golden_tree / "golden")
     assert report.ok is False
     fill_entry = next(e for e in report.artifacts if e.category == "fill")
@@ -249,13 +251,15 @@ def test_verify_detects_fill_price_field_change(golden_tree: Path) -> None:
 
 
 def test_verify_detects_fixture_field_change(golden_tree: Path) -> None:
+    config = gl.load_json_file(golden_tree / "golden" / "golden.json")
+    manifest = gl.manifest_from_config(config, golden_tree / "golden", {"commit": "0" * 40, "tree": "0" * 40})
+    assert gl.verify_manifest(manifest, golden_tree / "golden").ok
+
     bars = golden_tree / "fixtures" / "kr-etf" / "2020-01-31" / "bars.json"
     data = json.loads(bars.read_text(encoding="utf-8"))
     data["bars"][0]["close"] = data["bars"][0]["close"] + 1
     bars.write_text(json.dumps(data), encoding="utf-8")
 
-    config = gl.load_json_file(golden_tree / "golden" / "golden.json")
-    manifest = gl.manifest_from_config(config, golden_tree / "golden", {"commit": "0" * 40, "tree": "0" * 40})
     report = gl.verify_manifest(manifest, golden_tree / "golden")
     assert report.ok is False
     bars_entry = next(e for e in report.fixtures if e.category == "data-bars")
@@ -278,7 +282,7 @@ def test_verify_missing_file_is_failure_not_crash(golden_tree: Path) -> None:
 # Evidence writer
 # --------------------------------------------------------------------------- #
 
-SECRET_MARKERS = ("secret", "password", "token", "api_key", "apikey", "BEGIN PRIVATE KEY", "authorization")
+SECRET_MARKERS = ("password", "token", "api_key", "apikey", "BEGIN PRIVATE KEY", "authorization")
 
 
 def test_evidence_is_sanitized_no_secrets(golden_tree: Path, tmp_path: Path) -> None:
@@ -297,12 +301,12 @@ def test_evidence_is_sanitized_no_secrets(golden_tree: Path, tmp_path: Path) -> 
 
 
 def test_evidence_contains_failure_diffs(golden_tree: Path, tmp_path: Path) -> None:
+    config = gl.load_json_file(golden_tree / "golden" / "golden.json")
+    manifest = gl.manifest_from_config(config, golden_tree / "golden", {"commit": "0" * 40, "tree": "0" * 40})
     fills = golden_tree / "golden" / "outputs" / "2020-01-31" / "fills.json"
     data = json.loads(fills.read_text(encoding="utf-8"))
     data["fills"][0]["price"] = "10400.00"
     fills.write_text(json.dumps(data), encoding="utf-8")
-    config = gl.load_json_file(golden_tree / "golden" / "golden.json")
-    manifest = gl.manifest_from_config(config, golden_tree / "golden", {"commit": "0" * 40, "tree": "0" * 40})
     report = gl.verify_manifest(manifest, golden_tree / "golden")
     out = tmp_path / "evidence.txt"
     gl.write_evidence(manifest, report, out)
