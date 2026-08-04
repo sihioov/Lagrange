@@ -1,6 +1,9 @@
 # Lagrange Station — NautilusTrader uv project (Todo 1 bootstrap).
-# Approved pins (draft 2026-08-04 line 40): NautilusTrader 1.231.0 (final 1.x
-# official release; tested contract CPython 3.12 / Rust 1.97.1), Polars 0.54.x.
+# Pins: NautilusTrader 1.231.0 (final 1.x official release; tested contract
+# CPython 3.12 / Rust 1.97.1). No Python polars pin: ADR-0001 removed it because
+# PyPI has no polars 0.54.x release and NT 1.231.0 provides its own data stack
+# (pandas + pyarrow). Rust polars 0.54.x remains approved for crates/factor-engine
+# and crates/selector (see docs/decisions/0001-python-polars-pin-correction.md).
 # Layout: nt/strategies, nt/custom-data, nt/backtest-worker, nt/paper-runner,
 # nt/live-node. Pins enforced by check-pins.* and uv.lock.
 
@@ -11,7 +14,6 @@ description = "Lagrange Station NautilusTrader workspace: strategies, custom-dat
 requires-python = ">=3.12"
 dependencies = [
     "nautilus_trader==1.231.0",
-    "polars>=0.54,<0.55",
 ]
 
 [dependency-groups]
