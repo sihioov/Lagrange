@@ -1,0 +1,9 @@
+# Backup artifacts are never committed.
+# Layout only — keep .gitkeep placeholders for empty dirs.
+postgres/*
+files/*
+manifests/*
+scripts/*
+!**/.gitkeep
+!**/*.example
+!README.md
