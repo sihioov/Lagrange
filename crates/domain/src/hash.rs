@@ -153,12 +153,18 @@ mod tests {
         // uppercase hex is accepted and normalized to lowercase
         let upper = format!("sha256:{}", "A".repeat(64));
         let lower = format!("sha256:{}", "a".repeat(64));
-        assert_eq!(ContentHash::parse(&upper).unwrap(), ContentHash::parse(&lower).unwrap());
+        assert_eq!(
+            ContentHash::parse(&upper).unwrap(),
+            ContentHash::parse(&lower).unwrap()
+        );
     }
 
     #[test]
     fn code_commit_validation() {
-        assert_eq!(CodeCommit::parse("ABCDEF123").unwrap().as_str(), "abcdef123");
+        assert_eq!(
+            CodeCommit::parse("ABCDEF123").unwrap().as_str(),
+            "abcdef123"
+        );
         assert!(matches!(
             CodeCommit::parse("xyz"),
             Err(DomainError::InvalidCodeCommit { .. })

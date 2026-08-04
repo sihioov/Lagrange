@@ -88,7 +88,13 @@ fn warning_severity_round_trip() {
         WarningSeverity::Critical,
     ] {
         let json = serde_json::to_string(&severity).unwrap();
-        assert_eq!(serde_json::from_str::<WarningSeverity>(&json).unwrap(), severity);
+        assert_eq!(
+            serde_json::from_str::<WarningSeverity>(&json).unwrap(),
+            severity
+        );
     }
-    assert_eq!(serde_json::to_string(&WarningSeverity::Critical).unwrap(), "\"critical\"");
+    assert_eq!(
+        serde_json::to_string(&WarningSeverity::Critical).unwrap(),
+        "\"critical\""
+    );
 }

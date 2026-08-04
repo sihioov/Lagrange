@@ -51,7 +51,10 @@ fn valid_fixture_round_trips_byte_equivalently() {
     let re_serialized = serde_json::to_string(&typed).expect("serialize typed contracts");
     let re_parsed: Value = serde_json::from_str(&re_serialized).expect("parse re-serialized");
 
-    assert_eq!(original, re_parsed, "typed round-trip must preserve every field");
+    assert_eq!(
+        original, re_parsed,
+        "typed round-trip must preserve every field"
+    );
 
     // Byte equivalence after canonicalization.
     assert_eq!(
@@ -68,15 +71,24 @@ fn invalid_fixture_is_rejected_as_typed_errors() {
 
     let err = Price::parse(value["negative_price"].as_str().unwrap())
         .expect_err("negative price must be rejected");
-    assert!(matches!(err, DomainError::NonPositivePrice { .. }), "got: {err}");
+    assert!(
+        matches!(err, DomainError::NonPositivePrice { .. }),
+        "got: {err}"
+    );
 
     let err = Quantity::parse(value["negative_quantity"].as_str().unwrap())
         .expect_err("negative quantity must be rejected");
-    assert!(matches!(err, DomainError::NegativeQuantity { .. }), "got: {err}");
+    assert!(
+        matches!(err, DomainError::NegativeQuantity { .. }),
+        "got: {err}"
+    );
 
     let err = Weight::parse(value["weight_over_one"].as_str().unwrap())
         .expect_err("weight over 1 must be rejected");
-    assert!(matches!(err, DomainError::WeightOutOfRange { .. }), "got: {err}");
+    assert!(
+        matches!(err, DomainError::WeightOutOfRange { .. }),
+        "got: {err}"
+    );
 
     let negative_money = &value["money_negative"];
     let err = Money::parse(
@@ -84,11 +96,17 @@ fn invalid_fixture_is_rejected_as_typed_errors() {
         Currency::from_code(negative_money["currency"].as_str().unwrap()).expect("valid currency"),
     )
     .expect_err("negative money must be rejected");
-    assert!(matches!(err, DomainError::NegativeMoney { .. }), "got: {err}");
+    assert!(
+        matches!(err, DomainError::NegativeMoney { .. }),
+        "got: {err}"
+    );
 
     let err = Currency::from_code(value["bad_currency"].as_str().unwrap())
         .expect_err("bad currency must be rejected");
-    assert!(matches!(err, DomainError::InvalidCurrency { .. }), "got: {err}");
+    assert!(
+        matches!(err, DomainError::InvalidCurrency { .. }),
+        "got: {err}"
+    );
 
     let err = InstrumentId::parse(value["bad_instrument"].as_str().unwrap())
         .expect_err("bad instrument must be rejected");

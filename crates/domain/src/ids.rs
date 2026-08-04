@@ -233,7 +233,10 @@ mod tests {
         let s = id.to_string();
         let back: RunId = s.parse().unwrap();
         assert_eq!(back, id);
-        assert!(matches!("not-a-uuid".parse::<RunId>(), Err(DomainError::InvalidId { .. })));
+        assert!(matches!(
+            "not-a-uuid".parse::<RunId>(),
+            Err(DomainError::InvalidId { .. })
+        ));
         let json = serde_json::to_string(&id).unwrap();
         let again: RunId = serde_json::from_str(&json).unwrap();
         assert_eq!(again, id);
@@ -241,14 +244,31 @@ mod tests {
 
     #[test]
     fn slug_ids_validate() {
-        assert_eq!(StrategyId::parse("dual-momentum").unwrap().as_str(), "dual-momentum");
-        assert_eq!(DatasetVersionId::parse("kr-etf-daily-20260804.1").unwrap().as_str(), "kr-etf-daily-20260804.1");
+        assert_eq!(
+            StrategyId::parse("dual-momentum").unwrap().as_str(),
+            "dual-momentum"
+        );
+        assert_eq!(
+            DatasetVersionId::parse("kr-etf-daily-20260804.1")
+                .unwrap()
+                .as_str(),
+            "kr-etf-daily-20260804.1"
+        );
         assert!(matches!(
             StrategyId::parse("Dual Momentum!"),
             Err(DomainError::InvalidId { .. })
         ));
-        assert!(matches!(FactorId::parse("-leading-dash"), Err(DomainError::InvalidId { .. })));
-        assert!(matches!(FactorId::parse("trailing-"), Err(DomainError::InvalidId { .. })));
-        assert!(matches!(FactorId::parse(""), Err(DomainError::InvalidId { .. })));
+        assert!(matches!(
+            FactorId::parse("-leading-dash"),
+            Err(DomainError::InvalidId { .. })
+        ));
+        assert!(matches!(
+            FactorId::parse("trailing-"),
+            Err(DomainError::InvalidId { .. })
+        ));
+        assert!(matches!(
+            FactorId::parse(""),
+            Err(DomainError::InvalidId { .. })
+        ));
     }
 }

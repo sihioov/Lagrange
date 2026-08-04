@@ -47,7 +47,8 @@ impl InstrumentId {
         let valid = !b.is_empty()
             && b.len() <= 12
             && (b[0].is_ascii_uppercase() || b[0].is_ascii_digit())
-            && b.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+            && b.iter()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
         if valid {
             Ok(Self {
                 symbol: symbol.to_owned(),

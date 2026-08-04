@@ -10,8 +10,9 @@
 use chrono::{DateTime, NaiveDate, Utc};
 
 use domain::{
-    Currency, DomainError, FixedPoint, InstrumentId, Money, Price, Quantity, ReportedStat, RunId,
-    StrategyId, TradingDate, UtcTimestamp, Venue, VenueTimestamp, Weight, MONEY_SCALE, WEIGHT_SCALE,
+    Currency, DomainError, FixedPoint, InstrumentId, MONEY_SCALE, Money, Price, Quantity,
+    ReportedStat, RunId, StrategyId, TradingDate, UtcTimestamp, Venue, VenueTimestamp,
+    WEIGHT_SCALE, Weight,
 };
 
 fn naive_utc(year: i32, month: u32, day: u32, h: u32, m: u32, s: u32) -> chrono::NaiveDateTime {
@@ -37,18 +38,27 @@ fn rejects_invalid_financial_values() {
     assert!(matches!(err, DomainError::NonFiniteMetric { .. }));
     let err = ReportedStat::from_f64(f64::INFINITY).expect_err("infinite metric must be rejected");
     assert!(matches!(err, DomainError::NonFiniteMetric { .. }));
-    let err = ReportedStat::from_f64(f64::NEG_INFINITY).expect_err("infinite metric must be rejected");
+    let err =
+        ReportedStat::from_f64(f64::NEG_INFINITY).expect_err("infinite metric must be rejected");
     assert!(matches!(err, DomainError::NonFiniteMetric { .. }));
 
     // Currency mismatch -> typed rejection on add and sub.
     let krw = Money::parse("100.0000", Currency::KRW).expect("valid money");
     let usd = Money::parse("1.0000", Currency::USD).expect("valid money");
-    assert!(matches!(krw.checked_add(&usd).expect_err("currency mismatch"), DomainError::CurrencyMismatch { .. }));
-    assert!(matches!(krw.checked_sub(&usd).expect_err("currency mismatch"), DomainError::CurrencyMismatch { .. }));
+    assert!(matches!(
+        krw.checked_add(&usd).expect_err("currency mismatch"),
+        DomainError::CurrencyMismatch { .. }
+    ));
+    assert!(matches!(
+        krw.checked_sub(&usd).expect_err("currency mismatch"),
+        DomainError::CurrencyMismatch { .. }
+    ));
 
     // Money cannot go negative -> typed rejection.
     let five = Money::parse("5.0000", Currency::KRW).expect("valid money");
-    let err = five.checked_sub(&krw).expect_err("5 - 100 must be rejected");
+    let err = five
+        .checked_sub(&krw)
+        .expect_err("5 - 100 must be rejected");
     assert!(matches!(err, DomainError::NegativeMoney { .. }));
 
     // Negative quantity -> typed rejection.
@@ -81,13 +91,17 @@ fn rejects_invalid_financial_values() {
         Currency::KRW,
     )
     .expect("max money");
-    let err = huge.checked_add(&huge).expect_err("overflow must be rejected");
+    let err = huge
+        .checked_add(&huge)
+        .expect_err("overflow must be rejected");
     assert!(matches!(err, DomainError::Overflow { .. }));
 
     // Division by zero -> typed rejection.
     let one = FixedPoint::from_i128(1, 0).expect("one");
     let zero = FixedPoint::from_i128(0, 0).expect("zero");
-    let err = one.checked_div(&zero, 4).expect_err("division by zero must be rejected");
+    let err = one
+        .checked_div(&zero, 4)
+        .expect_err("division by zero must be rejected");
     assert!(matches!(err, DomainError::DivisionByZero));
 
     // Invalid branded identifiers -> typed rejection.
@@ -127,7 +141,10 @@ fn round_trip() {
     assert_eq!(serde_json::to_string(&back).expect("re-serialize"), json);
 
     // Non-canonical input is canonicalized on parse (34570.5 -> 34570.5000).
-    assert_eq!(Price::parse("34570.5").expect("valid").as_decimal_string(), "34570.5000");
+    assert_eq!(
+        Price::parse("34570.5").expect("valid").as_decimal_string(),
+        "34570.5000"
+    );
 
     // Money serializes as { amount: string, currency: string }.
     let m = Money::parse("3457000.0000", Currency::KRW).expect("valid money");
@@ -141,7 +158,10 @@ fn round_trip() {
     let q = Quantity::parse("100").expect("valid quantity");
     assert_eq!(serde_json::to_string(&q).expect("serialize"), "\"100\"");
     let w = Weight::parse("0.400000").expect("valid weight");
-    assert_eq!(serde_json::to_string(&w).expect("serialize"), "\"0.400000\"");
+    assert_eq!(
+        serde_json::to_string(&w).expect("serialize"),
+        "\"0.400000\""
+    );
 
     // UtcTimestamp serializes as RFC3339 UTC.
     let utc = DateTime::from_naive_utc_and_offset(naive_utc(2026, 8, 4, 15, 0, 0), Utc);
@@ -163,14 +183,23 @@ fn round_trip() {
 
     // TradingDate serializes as an ISO calendar date (no time component).
     let td = TradingDate::new(2026, 8, 5).expect("valid date");
-    assert_eq!(serde_json::to_string(&td).expect("serialize"), "\"2026-08-05\"");
+    assert_eq!(
+        serde_json::to_string(&td).expect("serialize"),
+        "\"2026-08-05\""
+    );
 
     // Branded IDs round-trip through JSON as strings.
     let sid = StrategyId::parse("dual-momentum").expect("valid slug");
-    assert_eq!(serde_json::to_string(&sid).expect("serialize"), "\"dual-momentum\"");
+    assert_eq!(
+        serde_json::to_string(&sid).expect("serialize"),
+        "\"dual-momentum\""
+    );
     let uid = RunId::generate();
     let ju = serde_json::to_string(&uid).expect("serialize");
-    assert_eq!(serde_json::from_str::<RunId>(&ju).expect("deserialize"), uid);
+    assert_eq!(
+        serde_json::from_str::<RunId>(&ju).expect("deserialize"),
+        uid
+    );
 
     // Typed DomainError round-trips with its tagged code (typed, not a bare string).
     let err = DomainError::CurrencyMismatch {
@@ -178,7 +207,10 @@ fn round_trip() {
         right: Currency::USD,
     };
     let je = serde_json::to_string(&err).expect("serialize");
-    assert_eq!(je, r#"{"code":"currency_mismatch","left":"KRW","right":"USD"}"#);
+    assert_eq!(
+        je,
+        r#"{"code":"currency_mismatch","left":"KRW","right":"USD"}"#
+    );
     let back: DomainError = serde_json::from_str(&je).expect("deserialize");
     assert_eq!(back, err);
 

@@ -6,8 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use domain::ids::CorrelationId;
 use domain::DomainError;
+use domain::ids::CorrelationId;
 
 /// Severity of a structured warning attached to a result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

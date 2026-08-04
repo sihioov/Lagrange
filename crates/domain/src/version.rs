@@ -73,7 +73,10 @@ impl SemVer {
     }
 }
 
-fn parse_segment(part: Option<&str>, invalid: &dyn Fn() -> DomainError) -> Result<u64, DomainError> {
+fn parse_segment(
+    part: Option<&str>,
+    invalid: &dyn Fn() -> DomainError,
+) -> Result<u64, DomainError> {
     let part = part.ok_or_else(invalid)?;
     if part.is_empty() || (part.len() > 1 && part.starts_with('0')) {
         return Err(invalid());

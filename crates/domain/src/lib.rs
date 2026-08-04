@@ -26,14 +26,14 @@ pub mod version;
 pub use currency::{Currency, Venue};
 pub use error::DomainError;
 pub use fixed::{
-    FixedPoint, Money, Price, Quantity, Weight, MAX_SCALE, MONEY_SCALE, PRICE_SCALE,
-    QUANTITY_SCALE, WEIGHT_SCALE,
+    FixedPoint, MAX_SCALE, MONEY_SCALE, Money, PRICE_SCALE, Price, QUANTITY_SCALE, Quantity,
+    WEIGHT_SCALE, Weight,
 };
 pub use hash::{CodeCommit, ContentHash};
 pub use ids::{
-    ArtifactId, BatchId, ConfigId, CorrelationId, DatasetId, DatasetVersionId, FactorId,
-    FillId, IdempotencyKey, JobAttemptId, JobId, OrderId, PaperAccountId, PositionId,
-    ProvenanceId, RunId, SessionId, StrategyId, UniverseSnapshotId, UserId,
+    ArtifactId, BatchId, ConfigId, CorrelationId, DatasetId, DatasetVersionId, FactorId, FillId,
+    IdempotencyKey, JobAttemptId, JobId, OrderId, PaperAccountId, PositionId, ProvenanceId, RunId,
+    SessionId, StrategyId, UniverseSnapshotId, UserId,
 };
 pub use instrument::{AssetClass, InstrumentId};
 pub use lifecycle::{

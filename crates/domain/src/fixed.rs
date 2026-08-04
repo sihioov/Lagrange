@@ -46,13 +46,8 @@ fn round_div(num: i128, den: i128) -> i128 {
     let den_abs = den.unsigned_abs();
     let twice = abs_r.saturating_mul(2);
     let sign = if (num < 0) != (den < 0) { -1 } else { 1 };
-    if twice > den_abs {
-        q + sign
-    } else if twice == den_abs && q % 2 != 0 {
-        q + sign
-    } else {
-        q
-    }
+    let round_up = twice > den_abs || (twice == den_abs && q % 2 != 0);
+    if round_up { q + sign } else { q }
 }
 
 /// Fixed-point decimal: an unscaled signed 128-bit mantissa plus a scale.
@@ -121,11 +116,10 @@ impl FixedPoint {
                 value: s.to_owned(),
             });
         }
-        let scale = u8::try_from(frac_part.len())
-            .map_err(|_| DomainError::ScaleExceedsMax {
-                scale: 255,
-                max: MAX_SCALE,
-            })?;
+        let scale = u8::try_from(frac_part.len()).map_err(|_| DomainError::ScaleExceedsMax {
+            scale: 255,
+            max: MAX_SCALE,
+        })?;
         if scale > MAX_SCALE {
             return Err(DomainError::ScaleExceedsMax {
                 scale,
@@ -177,11 +171,12 @@ impl FixedPoint {
         }
         if new_scale > self.scale {
             let factor = pow10(new_scale - self.scale);
-            let bits = self.bits.checked_mul(factor).ok_or_else(|| {
-                DomainError::Overflow {
+            let bits = self
+                .bits
+                .checked_mul(factor)
+                .ok_or_else(|| DomainError::Overflow {
                     operation: "scale increase".to_owned(),
-                }
-            })?;
+                })?;
             return Ok(Self {
                 bits,
                 scale: new_scale,
@@ -194,13 +189,8 @@ impl FixedPoint {
         let abs_r = r.unsigned_abs();
         let half = factor.unsigned_abs() / 2;
         let sign = if self.bits < 0 { -1 } else { 1 };
-        let bits = if abs_r > half {
-            q + sign
-        } else if abs_r == half && q % 2 != 0 {
-            q + sign
-        } else {
-            q
-        };
+        let round_up = abs_r > half || (abs_r == half && q % 2 != 0);
+        let bits = if round_up { q + sign } else { q };
         Ok(Self {
             bits,
             scale: new_scale,
@@ -210,14 +200,12 @@ impl FixedPoint {
     /// Checked addition (operands aligned to the larger scale).
     pub fn checked_add(&self, other: &Self) -> Result<Self, DomainError> {
         let scale = self.scale.max(other.scale);
-        let a = self.to_bits_at(scale).ok_or_else(|| DomainError::Overflow {
+        let a = self.bits_at(scale).ok_or_else(|| DomainError::Overflow {
             operation: "addition scale alignment".to_owned(),
         })?;
-        let b = other
-            .to_bits_at(scale)
-            .ok_or_else(|| DomainError::Overflow {
-                operation: "addition scale alignment".to_owned(),
-            })?;
+        let b = other.bits_at(scale).ok_or_else(|| DomainError::Overflow {
+            operation: "addition scale alignment".to_owned(),
+        })?;
         let bits = a.checked_add(b).ok_or_else(|| DomainError::Overflow {
             operation: "addition".to_owned(),
         })?;
@@ -227,14 +215,12 @@ impl FixedPoint {
     /// Checked subtraction (operands aligned to the larger scale).
     pub fn checked_sub(&self, other: &Self) -> Result<Self, DomainError> {
         let scale = self.scale.max(other.scale);
-        let a = self.to_bits_at(scale).ok_or_else(|| DomainError::Overflow {
+        let a = self.bits_at(scale).ok_or_else(|| DomainError::Overflow {
             operation: "subtraction scale alignment".to_owned(),
         })?;
-        let b = other
-            .to_bits_at(scale)
-            .ok_or_else(|| DomainError::Overflow {
-                operation: "subtraction scale alignment".to_owned(),
-            })?;
+        let b = other.bits_at(scale).ok_or_else(|| DomainError::Overflow {
+            operation: "subtraction scale alignment".to_owned(),
+        })?;
         let bits = a.checked_sub(b).ok_or_else(|| DomainError::Overflow {
             operation: "subtraction".to_owned(),
         })?;
@@ -276,13 +262,16 @@ impl FixedPoint {
             let scale_up = u8::try_from(k).map_err(|_| DomainError::Overflow {
                 operation: "division scale alignment".to_owned(),
             })?;
-            let num = self.bits.checked_mul(pow10_checked(scale_up).ok_or_else(|| {
-                DomainError::Overflow {
+            let num = self
+                .bits
+                .checked_mul(
+                    pow10_checked(scale_up).ok_or_else(|| DomainError::Overflow {
+                        operation: "division scale alignment".to_owned(),
+                    })?,
+                )
+                .ok_or_else(|| DomainError::Overflow {
                     operation: "division scale alignment".to_owned(),
-                }
-            })?).ok_or_else(|| DomainError::Overflow {
-                operation: "division scale alignment".to_owned(),
-            })?;
+                })?;
             (num, other.bits)
         } else {
             let scale_down = u8::try_from(-k).map_err(|_| DomainError::Overflow {
@@ -290,11 +279,11 @@ impl FixedPoint {
             })?;
             let den = other
                 .bits
-                .checked_mul(pow10_checked(scale_down).ok_or_else(|| {
-                    DomainError::Overflow {
+                .checked_mul(
+                    pow10_checked(scale_down).ok_or_else(|| DomainError::Overflow {
                         operation: "division scale alignment".to_owned(),
-                    }
-                })?)
+                    })?,
+                )
                 .ok_or_else(|| DomainError::Overflow {
                     operation: "division scale alignment".to_owned(),
                 })?;
@@ -308,9 +297,12 @@ impl FixedPoint {
 
     /// Checked negation (i128::MIN is not representable).
     pub fn checked_neg(&self) -> Result<Self, DomainError> {
-        let bits = self.bits.checked_neg().ok_or_else(|| DomainError::Overflow {
-            operation: "negation".to_owned(),
-        })?;
+        let bits = self
+            .bits
+            .checked_neg()
+            .ok_or_else(|| DomainError::Overflow {
+                operation: "negation".to_owned(),
+            })?;
         Ok(Self {
             bits,
             scale: self.scale,
@@ -357,7 +349,7 @@ impl FixedPoint {
         self.bits as f64 / 10f64.powi(i32::from(self.scale))
     }
 
-    fn to_bits_at(&self, target_scale: u8) -> Option<i128> {
+    fn bits_at(&self, target_scale: u8) -> Option<i128> {
         debug_assert!(target_scale >= self.scale);
         self.bits.checked_mul(pow10(target_scale - self.scale))
     }
@@ -391,7 +383,7 @@ impl PartialOrd for FixedPoint {
 impl Ord for FixedPoint {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let target = self.scale.max(other.scale);
-        match (self.to_bits_at(target), other.to_bits_at(target)) {
+        match (self.bits_at(target), other.bits_at(target)) {
             (Some(a), Some(b)) => a.cmp(&b),
             // Only reachable with mantissas near i128::MAX and differing
             // scales; fall back to a deterministic float comparison.
@@ -616,7 +608,11 @@ impl Quantity {
     }
 
     /// `quantity * price` in the given currency (`Money` is currency-aware).
-    pub fn checked_mul_price(&self, price: &Price, currency: Currency) -> Result<Money, DomainError> {
+    pub fn checked_mul_price(
+        &self,
+        price: &Price,
+        currency: Currency,
+    ) -> Result<Money, DomainError> {
         let amount = self.inner.checked_mul(&price.inner)?;
         Money::from_fixed(amount, currency)
     }
@@ -686,7 +682,10 @@ impl Money {
                 amount: value.to_string(),
             });
         }
-        Ok(Self { amount: value, currency })
+        Ok(Self {
+            amount: value,
+            currency,
+        })
     }
 
     /// Wraps a fixed-point amount in a currency, rescaling and validating.
@@ -740,7 +739,10 @@ impl Money {
     pub fn checked_add(&self, other: &Self) -> Result<Self, DomainError> {
         self.ensure_same_currency(other)?;
         let amount = self.amount.checked_add(&other.amount)?;
-        Ok(Self { amount, currency: self.currency })
+        Ok(Self {
+            amount,
+            currency: self.currency,
+        })
     }
 
     /// Checked subtraction; rejects currency mismatch and negative cash.
@@ -752,7 +754,10 @@ impl Money {
                 amount: amount.to_string(),
             });
         }
-        Ok(Self { amount, currency: self.currency })
+        Ok(Self {
+            amount,
+            currency: self.currency,
+        })
     }
 
     /// Checked multiplication by a fixed-point factor (e.g. fee rates).
@@ -764,7 +769,10 @@ impl Money {
             });
         }
         let amount = raw.with_scale(MONEY_SCALE)?;
-        Ok(Self { amount, currency: self.currency })
+        Ok(Self {
+            amount,
+            currency: self.currency,
+        })
     }
 
     /// Checked division by a fixed-point divisor, rounded to the canonical scale.
@@ -775,7 +783,10 @@ impl Money {
                 amount: raw.to_string(),
             });
         }
-        Ok(Self { amount: raw, currency: self.currency })
+        Ok(Self {
+            amount: raw,
+            currency: self.currency,
+        })
     }
 
     fn ensure_same_currency(&self, other: &Self) -> Result<(), DomainError> {
@@ -835,19 +846,64 @@ mod tests {
         let a = FixedPoint::parse("1.0").unwrap();
         let b = FixedPoint::parse("1.00").unwrap();
         assert_eq!(a, b);
-        assert_ne!(FixedPoint::parse("12.3").unwrap(), FixedPoint::parse("1.23").unwrap());
+        assert_ne!(
+            FixedPoint::parse("12.3").unwrap(),
+            FixedPoint::parse("1.23").unwrap()
+        );
         assert!(FixedPoint::parse("12.3").unwrap() > FixedPoint::parse("1.23").unwrap());
     }
 
     #[test]
     fn round_half_to_even() {
         // 1.5 -> 2, 2.5 -> 2, -1.5 -> -2, -2.5 -> -2
-        assert_eq!(FixedPoint::parse("1.5").unwrap().with_scale(0).unwrap().to_string(), "2");
-        assert_eq!(FixedPoint::parse("2.5").unwrap().with_scale(0).unwrap().to_string(), "2");
-        assert_eq!(FixedPoint::parse("-1.5").unwrap().with_scale(0).unwrap().to_string(), "-2");
-        assert_eq!(FixedPoint::parse("-2.5").unwrap().with_scale(0).unwrap().to_string(), "-2");
-        assert_eq!(FixedPoint::parse("1.5001").unwrap().with_scale(0).unwrap().to_string(), "2");
-        assert_eq!(FixedPoint::parse("1.4999").unwrap().with_scale(0).unwrap().to_string(), "1");
+        assert_eq!(
+            FixedPoint::parse("1.5")
+                .unwrap()
+                .with_scale(0)
+                .unwrap()
+                .to_string(),
+            "2"
+        );
+        assert_eq!(
+            FixedPoint::parse("2.5")
+                .unwrap()
+                .with_scale(0)
+                .unwrap()
+                .to_string(),
+            "2"
+        );
+        assert_eq!(
+            FixedPoint::parse("-1.5")
+                .unwrap()
+                .with_scale(0)
+                .unwrap()
+                .to_string(),
+            "-2"
+        );
+        assert_eq!(
+            FixedPoint::parse("-2.5")
+                .unwrap()
+                .with_scale(0)
+                .unwrap()
+                .to_string(),
+            "-2"
+        );
+        assert_eq!(
+            FixedPoint::parse("1.5001")
+                .unwrap()
+                .with_scale(0)
+                .unwrap()
+                .to_string(),
+            "2"
+        );
+        assert_eq!(
+            FixedPoint::parse("1.4999")
+                .unwrap()
+                .with_scale(0)
+                .unwrap()
+                .to_string(),
+            "1"
+        );
     }
 
     #[test]
@@ -857,7 +913,11 @@ mod tests {
         assert_eq!(ten.checked_div(&three, 2).unwrap().to_string(), "3.33");
         // 1/2 at scale 0 -> round-half-even -> 0
         assert_eq!(
-            FixedPoint::parse("1").unwrap().checked_div(&FixedPoint::parse("2").unwrap(), 0).unwrap().to_string(),
+            FixedPoint::parse("1")
+                .unwrap()
+                .checked_div(&FixedPoint::parse("2").unwrap(), 0)
+                .unwrap()
+                .to_string(),
             "0"
         );
     }

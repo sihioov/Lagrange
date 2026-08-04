@@ -302,7 +302,8 @@ impl TradingDate {
         let next = if days >= 0 {
             self.0.checked_add_days(chrono::Days::new(days as u64))
         } else {
-            self.0.checked_sub_days(chrono::Days::new(days.unsigned_abs()))
+            self.0
+                .checked_sub_days(chrono::Days::new(days.unsigned_abs()))
         };
         next.map(Self)
             .ok_or_else(|| DomainError::InvalidTradingDate {

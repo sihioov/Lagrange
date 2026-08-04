@@ -45,11 +45,9 @@ impl FromStr for ReportedStat {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = s
-            .parse::<f64>()
-            .map_err(|_| DomainError::NonFiniteMetric {
-                metric: s.to_owned(),
-            })?;
+        let value = s.parse::<f64>().map_err(|_| DomainError::NonFiniteMetric {
+            metric: s.to_owned(),
+        })?;
         Self::from_f64(value)
     }
 }
