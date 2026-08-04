@@ -1,0 +1,11 @@
+{
+  "name": "@lagrange/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lagrange Station web application (Next.js App Router). Skeleton workspace: no product code yet - real lint/typecheck/tests land with Todo 25.",
+  "scripts": {
+    "lint": "node -e \"console.log('@lagrange/web lint: skeleton no-op (real lint lands with Todo 25)')\"",
+    "typecheck": "node -e \"console.log('@lagrange/web typecheck: skeleton no-op (real typecheck lands with Todo 25)')\"",
+    "test": "node -e \"console.log('@lagrange/web test: skeleton no-op (real tests land with Todo 25)')\""
+  }
+}

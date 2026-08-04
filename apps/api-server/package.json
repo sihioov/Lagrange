@@ -1,0 +1,11 @@
+{
+  "name": "@lagrange/api-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lagrange Station API server (Rust Axum). npm workspace exists for generated OpenAPI TypeScript types; no product code yet.",
+  "scripts": {
+    "lint": "node -e \"console.log('@lagrange/api-server lint: skeleton no-op (real lint lands with Todo 24)')\"",
+    "typecheck": "node -e \"console.log('@lagrange/api-server typecheck: skeleton no-op (real typecheck lands with Todo 24)')\"",
+    "test": "node -e \"console.log('@lagrange/api-server test: skeleton no-op (real tests land with Todo 24)')\""
+  }
+}

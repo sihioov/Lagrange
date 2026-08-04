@@ -1,0 +1,17 @@
+{
+  "name": "lagrange-station",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lagrange Station monorepo root - pinned npm workspaces (apps/*). Approved Node lines (draft 2026-08-04): Next 16.3.x and TypeScript 5.x are consumed by apps/web from Todo 25 and pinned via package-lock.json.",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present"
+  }
+}
