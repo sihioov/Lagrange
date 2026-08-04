@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "as_of_date": "2020-01-31",
+  "effective_date": "2020-02-03",
+  "strategy_id": "golden-baseline",
+  "strategy_version": "1.0.0",
+  "currency": "KRW",
+  "seed": 42,
+  "timezone": "Asia/Seoul",
+  "cash_floor": "0.05",
+  "max_weight": "0.45",
+  "weights_sum_le_one": true,
+  "target_portfolio": [
+    {"instrument": "069500.KRX", "rank": 1, "score": "0.85", "target_weight": "0.45", "reason_codes": ["TREND_POSITIVE", "LIQUID"], "excluded": false},
+    {"instrument": "229200.KRX", "rank": 2, "score": "0.72", "target_weight": "0.30", "reason_codes": ["MOMENTUM_POSITIVE"], "excluded": false},
+    {"instrument": "114260.KRX", "rank": 3, "score": "0.55", "target_weight": "0.20", "reason_codes": ["STABLE"], "excluded": false},
+    {"instrument": "CASH", "rank": null, "score": null, "target_weight": "0.05", "reason_codes": ["CASH_FLOOR"], "excluded": false}
+  ]
+}

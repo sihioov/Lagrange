@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "strategy_id": "golden-baseline",
+  "strategy_version": "1.0.0",
+  "currency": "KRW",
+  "total_return_pct": "0.56",
+  "max_drawdown_pct": "0.00",
+  "sharpe": "0.00",
+  "num_fills": 3,
+  "total_fees": "3000.00",
+  "final_equity": "10056000.00",
+  "finite": true,
+  "nan_free": true,
+  "note": "Synthetic approved metrics over a 2-point window; sharpe placeholder finite value. Real runs compute metrics with full history."
+}

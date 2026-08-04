@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "strategy_id": "golden-baseline",
+  "strategy_version": "1.0.0",
+  "fill_model": {
+    "price_source": "NEXT_SESSION_OPEN",
+    "slippage_bps": 0,
+    "note": "AT-02: fill price equals next KRX session raw open plus configured slippage; never the signal-day close or the execution day's high/low/close."
+  },
+  "fills": [
+    {"fill_id": "fill-2020-02-03-0001", "order_id": "ord-2020-02-03-0001", "instrument": "069500.KRX", "side": "BUY", "quantity": 400, "price": "10300.00", "ts": "2020-02-03T00:00:00.000Z", "source": "NEXT_SESSION_OPEN", "slippage_bps": 0},
+    {"fill_id": "fill-2020-02-03-0002", "order_id": "ord-2020-02-03-0002", "instrument": "229200.KRX", "side": "BUY", "quantity": 300, "price": "8500.00", "ts": "2020-02-03T00:00:00.000Z", "source": "NEXT_SESSION_OPEN", "slippage_bps": 0},
+    {"fill_id": "fill-2020-02-03-0003", "order_id": "ord-2020-02-03-0003", "instrument": "114260.KRX", "side": "BUY", "quantity": 300, "price": "5050.00", "ts": "2020-02-03T00:00:00.000Z", "source": "NEXT_SESSION_OPEN", "slippage_bps": 0}
+  ]
+}

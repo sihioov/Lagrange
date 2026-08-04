@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "strategy_id": "golden-baseline",
+  "strategy_version": "1.0.0",
+  "currency": "KRW",
+  "cost_profile": {"commission_bps": 2, "minimum_commission": "1000.00", "tax_bps": 0, "slippage_bps": 0},
+  "total_fees": "3000.00",
+  "items": [
+    {"fill_id": "fill-2020-02-03-0001", "type": "commission", "amount": "1000.00", "basis": "max(4120000.00 x 2bps, 1000.00)"},
+    {"fill_id": "fill-2020-02-03-0002", "type": "commission", "amount": "1000.00", "basis": "max(2550000.00 x 2bps, 1000.00)"},
+    {"fill_id": "fill-2020-02-03-0003", "type": "commission", "amount": "1000.00", "basis": "max(1515000.00 x 2bps, 1000.00)"}
+  ]
+}

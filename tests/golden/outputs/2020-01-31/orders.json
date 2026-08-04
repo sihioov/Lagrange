@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "strategy_id": "golden-baseline",
+  "strategy_version": "1.0.0",
+  "execution_window": "NEXT_SESSION_OPEN",
+  "orders": [
+    {"order_id": "ord-2020-02-03-0001", "instrument": "069500.KRX", "side": "BUY", "quantity": 400, "order_type": "MARKET", "created_ts": "2020-01-31T06:30:00Z", "execution_ts_target": "2020-02-03T00:00:00Z", "state": "FILLED"},
+    {"order_id": "ord-2020-02-03-0002", "instrument": "229200.KRX", "side": "BUY", "quantity": 300, "order_type": "MARKET", "created_ts": "2020-01-31T06:30:00Z", "execution_ts_target": "2020-02-03T00:00:00Z", "state": "FILLED"},
+    {"order_id": "ord-2020-02-03-0003", "instrument": "114260.KRX", "side": "BUY", "quantity": 300, "order_type": "MARKET", "created_ts": "2020-01-31T06:30:00Z", "execution_ts_target": "2020-02-03T00:00:00Z", "state": "FILLED"}
+  ],
+  "quantity_note": "Integer lots (lot_size 100); target value / next-session-open rounded down to lot."
+}

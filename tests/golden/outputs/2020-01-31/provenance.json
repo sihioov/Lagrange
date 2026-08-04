@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "run_id": "golden-run-2020-01-31-0001",
+  "synthetic_run": true,
+  "note": "Approved synthetic golden run artifacts. Real runs (Todo 14) record actual engine provenance; this artifact is the pinned approved baseline.",
+  "engine": "nautilustrader",
+  "engine_version": "1.231.0",
+  "strategy_id": "golden-baseline",
+  "strategy_version": "1.0.0",
+  "dataset_version": "kr-etf-daily-2020-01-31.1",
+  "config_hash": "sha256:c0bc7616254e91b922dc854439ed1358ac228b45f9c58e0af2625f9a93fb30b0",
+  "code_commit": "0000000000000000000000000000000000000000",
+  "random_seed": 42,
+  "timezone": "Asia/Seoul",
+  "signals": [
+    {"date": "2020-01-31", "action": "close_signal", "signal_ts": "2020-01-31T06:30:00Z", "executed_at": "2020-02-03T00:00:00Z", "execution_price_source": "next_krx_session.open"}
+  ]
+}

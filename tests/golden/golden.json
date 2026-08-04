@@ -1,0 +1,31 @@
+{
+  "golden_id": "kr-etf-2020-01-31-v1",
+  "manifest_version": "1",
+  "versions": {
+    "data": {"id": "kr-etf-daily-2020-01-31", "version": "1.0.0", "source": "synthetic"},
+    "strategy": {"id": "golden-baseline", "version": "1.0.0"},
+    "engine": {"name": "nautilustrader", "version": "1.231.0"},
+    "config": {"id": "golden-config-v1"},
+    "seed": 42,
+    "timezone": "Asia/Seoul"
+  },
+  "fixtures": [
+    {"path": "../fixtures/kr-etf/2020-01-31/dataset.json", "category": "data-dataset"},
+    {"path": "../fixtures/kr-etf/2020-01-31/bars.json", "category": "data-bars"},
+    {"path": "../fixtures/kr-etf/2020-01-31/calendar.json", "category": "data-calendar"},
+    {"path": "../fixtures/kr-etf/2020-01-31/corporate-actions.json", "category": "data-corporate-actions"},
+    {"path": "../fixtures/kr-etf/2020-01-31/session-semantics.json", "category": "data-session-semantics"},
+    {"path": "../fixtures/kr-etf/variants/corrupt/corrupt_bars.bin", "category": "data-corrupt-bytes"},
+    {"path": "../fixtures/kr-etf/variants/missing/missing_bars.json", "category": "data-missing-bars"},
+    {"path": "../fixtures/kr-etf/variants/split-dividend/actions.json", "category": "data-split-dividend"}
+  ],
+  "artifacts": [
+    {"path": "outputs/2020-01-31/recommendation.json", "category": "recommendation"},
+    {"path": "outputs/2020-01-31/orders.json", "category": "order"},
+    {"path": "outputs/2020-01-31/fills.json", "category": "fill"},
+    {"path": "outputs/2020-01-31/equity.json", "category": "equity"},
+    {"path": "outputs/2020-01-31/fees.json", "category": "fee"},
+    {"path": "outputs/2020-01-31/metrics.json", "category": "metric"},
+    {"path": "outputs/2020-01-31/provenance.json", "category": "provenance"}
+  ]
+}

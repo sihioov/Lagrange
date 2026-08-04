@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "strategy_id": "golden-baseline",
+  "strategy_version": "1.0.0",
+  "currency": "KRW",
+  "initial_cash": "10000000.00",
+  "equity_note": "Daily equity = cash + sum(position shares x session close). Fees are cash debits.",
+  "points": [
+    {"date": "2020-01-31", "cash": "10000000.00", "positions_value": "0.00", "equity": "10000000.00"},
+    {"date": "2020-02-03", "cash": "1812000.00", "positions_value": "8244000.00", "equity": "10056000.00"}
+  ]
+}
