@@ -4,7 +4,9 @@
 # todos and pinned by Cargo.lock when first referenced:
 #   - Axum 0.8.x            (crates/auth, crates/risk-gateway, apps/api-server)
 #   - SQLx 0.9.x            (crates/job-queue, crates/market-data, ...)
-#   - Polars 0.54.x         (crates/factor-engine, crates/selector)
+#   - Polars 0.54.x (RUST line only)  (crates/factor-engine, crates/selector;
+#     the PYTHON polars pin was removed by ADR-0001 - PyPI has no 0.54.x release
+#     and NT 1.231.0 provides pandas/pyarrow; see docs/decisions/)
 # Skeleton crates intentionally have NO dependencies yet (Todo 1 is topology only).
 
 [workspace]

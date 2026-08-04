@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # check-pins.sh — POSIX twin of scripts/check-pins.ps1 for CI / clean containers.
-# Approved pins (draft 2026-08-04 line 40): Rust 1.97.1, CPython 3.12, Node >=24 <25,
-# nautilus_trader==1.231.0, polars>=0.54,<0.55.
+# Approved pins (draft 2026-08-04 line 40, as amended by ADR-0001): Rust 1.97.1,
+# CPython 3.12, Node >=24 <25, nautilus_trader==1.231.0.
+# ADR-0001 removed the Python polars pin (PyPI has no 0.54.x release; NT 1.231.0
+# provides its own pandas/pyarrow data stack). Rust polars 0.54.x remains an
+# approved dependency line for crates/factor-engine and crates/selector, pinned by
+# Cargo.lock when first consumed - it is NOT asserted here.
 # Two-sided drift detection: pin FILE vs approved constant, and installed toolchain vs pin FILE.
 # `--manifest-only` validates only the checked-in pin files against the approved
 # constants (no installed toolchain required) - used by tests/foundation/test_pins.sh.
@@ -86,13 +90,11 @@ else
   drifts+=("package.json: missing (no node pin)")
 fi
 
-# --- NautilusTrader / Polars pins (nt project) --------------------------------
+# --- NautilusTrader pin (nt project) -----------------------------------------
+# Python polars pin intentionally absent: see ADR-0001.
 if [ -f "$root/nt/pyproject.toml" ]; then
-  content="$(cat "$root/nt/pyproject.toml")"
-  grep -Eq 'nautilus[_\-]trader[[:space:]]*==[[:space:]]*1\.231\.0' <<<"$content" \
+  grep -Eq 'nautilus[_\-]trader[[:space:]]*==[[:space:]]*1\.231\.0' "$root/nt/pyproject.toml" \
     || drifts+=("nt/pyproject.toml: nautilus_trader not pinned to 1.231.0")
-  grep -Eq 'polars[[:space:]]*>=[[:space:]]*0\.54[^[:space:]]*,[[:space:]]*<[[:space:]]*0\.55' <<<"$content" \
-    || drifts+=("nt/pyproject.toml: polars not pinned to >=0.54,<0.55")
 else
   drifts+=("nt/pyproject.toml: missing (no NT pin)")
 fi

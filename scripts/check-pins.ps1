@@ -1,7 +1,11 @@
 #!/usr/bin/env pwsh
 # check-pins.ps1 — assert every pinned toolchain/package matches the APPROVED lines.
-# Approved pins (draft 2026-08-04 line 40): Rust 1.97.1, CPython 3.12, Node >=24 <25,
-# nautilus_trader==1.231.0, polars>=0.54,<0.55.
+# Approved pins (draft 2026-08-04 line 40, as amended by ADR-0001): Rust 1.97.1,
+# CPython 3.12, Node >=24 <25, nautilus_trader==1.231.0.
+# ADR-0001 removed the Python polars pin (PyPI has no 0.54.x release; NT 1.231.0
+# provides its own pandas/pyarrow data stack). Rust polars 0.54.x remains an
+# approved dependency line for crates/factor-engine and crates/selector, pinned by
+# Cargo.lock when first consumed - it is NOT asserted here.
 # Two-sided drift detection:
 #   (A) the pin FILE must still hold the approved constant (catches file edits);
 #   (B) the INSTALLED toolchain must match the pin file (catches toolchain drift).
@@ -21,7 +25,6 @@ $APPROVED_RUST = '1.97.1'
 $APPROVED_PY  = '3.12'
 $APPROVED_NODE = '>=24 <25'
 $APPROVED_NT  = 'nautilus_trader==1.231.0'
-$APPROVED_POLARS = 'polars>=0.54,<0.55'
 
 function Invoke-ToolVersion([string]$Command, [string[]]$Arguments) {
     try {
@@ -123,7 +126,8 @@ if (-not (Test-Path $pj)) {
     }
 }
 
-# --- NautilusTrader / Polars pins (nt project) --------------------------------
+# --- NautilusTrader pin (nt project) -----------------------------------------
+# Python polars pin intentionally absent: see ADR-0001.
 $nt = Join-Path $root 'nt\pyproject.toml'
 if (-not (Test-Path $nt)) {
     $drifts += 'nt/pyproject.toml: missing (no NT pin)'
@@ -131,9 +135,6 @@ if (-not (Test-Path $nt)) {
     $content = Get-Content $nt -Raw
     if ($content -notmatch 'nautilus[_\-]trader\s*==\s*1\.231\.0') {
         $drifts += "nt/pyproject.toml: nautilus_trader not pinned to $APPROVED_NT"
-    }
-    if ($content -notmatch 'polars\s*>=\s*0\.54[^\r\n]*<\s*0\.55') {
-        $drifts += "nt/pyproject.toml: polars not pinned to $APPROVED_POLARS"
     }
 }
 
