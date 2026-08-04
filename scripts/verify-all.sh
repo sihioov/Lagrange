@@ -18,6 +18,9 @@ for lf in Cargo.lock package-lock.json; do
 done
 echo "Cargo.lock and package-lock.json present"
 
+step=$((step+1)); echo; echo "[$step] validate-foundation (documented workspace topology)"
+bash "$root/scripts/validate-foundation.sh" || { echo "FAILED: validate-foundation"; exit 1; }
+
 step=$((step+1)); echo; echo "[$step] cargo fmt --all --check"
 cargo fmt --all --check || { echo "FAILED: cargo fmt --all --check"; exit 1; }
 

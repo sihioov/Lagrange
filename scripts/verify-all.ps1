@@ -31,6 +31,10 @@ foreach ($lf in @('Cargo.lock', 'package-lock.json')) {
 }
 Write-Host 'Cargo.lock and package-lock.json present'
 
+Step 'validate-foundation (documented workspace topology)'
+$foundOut = & "$root\scripts\validate-foundation.ps1" 2>&1
+if ($LASTEXITCODE -ne 0) { Fail 'validate-foundation' $foundOut }
+
 Step 'cargo fmt --all --check'
 cargo fmt --all --check 2>&1
 if ($LASTEXITCODE -ne 0) { Fail 'cargo fmt --all --check' $null }

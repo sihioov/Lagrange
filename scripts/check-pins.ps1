@@ -5,9 +5,13 @@
 # Two-sided drift detection:
 #   (A) the pin FILE must still hold the approved constant (catches file edits);
 #   (B) the INSTALLED toolchain must match the pin file (catches toolchain drift).
+# -ManifestOnly skips (B): validates the checked-in pin files against the approved
+# constants without requiring any toolchain to be installed (CI/clean-container mode).
 # Exit 0 when all pins hold; exit 1 NAMING every drifting field otherwise.
 # Run from anywhere in the repo; root is resolved as the parent of scripts/.
 # Twin script: scripts/check-pins.sh (CI / clean containers).
+
+param([switch]$ManifestOnly)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -41,17 +45,19 @@ if (-not (Test-Path $rt)) {
         if ($pin -ne $APPROVED_RUST) {
             $drifts += "rust-toolchain.toml: approved rust pin is $APPROVED_RUST but channel is $pin"
         }
-        # Installed toolchain probe; fall back to `stable` when the pinned one is absent.
-        $out = Invoke-ToolVersion 'rustc' @('--version')
-        $am = [regex]::Match($out, 'rustc (\d+\.\d+\.\d+)')
-        if (-not $am.Success) {
-            $out = Invoke-ToolVersion 'rustc' @('+stable', '--version')
+        if (-not $ManifestOnly) {
+            # Installed toolchain probe; fall back to `stable` when the pinned one is absent.
+            $out = Invoke-ToolVersion 'rustc' @('--version')
             $am = [regex]::Match($out, 'rustc (\d+\.\d+\.\d+)')
-        }
-        if (-not $am.Success) {
-            $drifts += "rustc: could not read installed version (raw: '$out')"
-        } elseif ($am.Groups[1].Value -ne $pin) {
-            $drifts += "rustc: pin $pin (rust-toolchain.toml) but installed $($am.Groups[1].Value)"
+            if (-not $am.Success) {
+                $out = Invoke-ToolVersion 'rustc' @('+stable', '--version')
+                $am = [regex]::Match($out, 'rustc (\d+\.\d+\.\d+)')
+            }
+            if (-not $am.Success) {
+                $drifts += "rustc: could not read installed version (raw: '$out')"
+            } elseif ($am.Groups[1].Value -ne $pin) {
+                $drifts += "rustc: pin $pin (rust-toolchain.toml) but installed $($am.Groups[1].Value)"
+            }
         }
     }
 }
@@ -65,15 +71,17 @@ if (-not (Test-Path $pv)) {
     if ($pin -ne $APPROVED_PY) {
         $drifts += ".python-version: approved python pin is $APPROVED_PY but file says $pin"
     }
-    $out = Invoke-ToolVersion 'python' @('--version')
-    $am = [regex]::Match($out, 'Python (\d+\.\d+\.\d+)')
-    if (-not $am.Success) {
-        $drifts += "python: could not read installed version (raw: '$out')"
-    } else {
-        $actual = $am.Groups[1].Value
-        # .python-version may hold a minor pin like "3.12"; treat it as a prefix match.
-        if ($actual -ne $pin -and -not $actual.StartsWith($pin + '.')) {
-            $drifts += "python: pin $pin (.python-version) but installed $actual"
+    if (-not $ManifestOnly) {
+        $out = Invoke-ToolVersion 'python' @('--version')
+        $am = [regex]::Match($out, 'Python (\d+\.\d+\.\d+)')
+        if (-not $am.Success) {
+            $drifts += "python: could not read installed version (raw: '$out')"
+        } else {
+            $actual = $am.Groups[1].Value
+            # .python-version may hold a minor pin like "3.12"; treat it as a prefix match.
+            if ($actual -ne $pin -and -not $actual.StartsWith($pin + '.')) {
+                $drifts += "python: pin $pin (.python-version) but installed $actual"
+            }
         }
     }
 }
@@ -95,20 +103,22 @@ if (-not (Test-Path $pj)) {
     } elseif ($range.ToString().Trim() -ne $APPROVED_NODE) {
         $drifts += "package.json: approved engines.node is '$APPROVED_NODE' but found '$($range.ToString().Trim())'"
     }
-    $out = Invoke-ToolVersion 'node' @('--version')
-    $am = [regex]::Match($out, 'v(\d+)\.(\d+)\.(\d+)')
-    if (-not $am.Success) {
-        $drifts += "node: could not read installed version (raw: '$out')"
-    } elseif ($range) {
-        $major = [int]$am.Groups[1].Value
-        $minMajor = $null; $maxMajor = $null
-        if ($range.ToString() -match '>=\s*(\d+)') { $minMajor = [int]$Matches[1] }
-        if ($range.ToString() -match '<\s*(\d+)')  { $maxMajor = [int]$Matches[1] }
-        $ok = $true
-        if ($null -ne $minMajor -and $major -lt $minMajor) { $ok = $false }
-        if ($null -ne $maxMajor -and $major -ge $maxMajor) { $ok = $false }
-        if (-not $ok) {
-            $drifts += "node: engines '$($range.ToString())' (package.json) but installed $($am.Groups[1].Value).$($am.Groups[2].Value).$($am.Groups[3].Value)"
+    if (-not $ManifestOnly) {
+        $out = Invoke-ToolVersion 'node' @('--version')
+        $am = [regex]::Match($out, 'v(\d+)\.(\d+)\.(\d+)')
+        if (-not $am.Success) {
+            $drifts += "node: could not read installed version (raw: '$out')"
+        } elseif ($range) {
+            $major = [int]$am.Groups[1].Value
+            $minMajor = $null; $maxMajor = $null
+            if ($range.ToString() -match '>=\s*(\d+)') { $minMajor = [int]$Matches[1] }
+            if ($range.ToString() -match '<\s*(\d+)')  { $maxMajor = [int]$Matches[1] }
+            $ok = $true
+            if ($null -ne $minMajor -and $major -lt $minMajor) { $ok = $false }
+            if ($null -ne $maxMajor -and $major -ge $maxMajor) { $ok = $false }
+            if (-not $ok) {
+                $drifts += "node: engines '$($range.ToString())' (package.json) but installed $($am.Groups[1].Value).$($am.Groups[2].Value).$($am.Groups[3].Value)"
+            }
         }
     }
 }
