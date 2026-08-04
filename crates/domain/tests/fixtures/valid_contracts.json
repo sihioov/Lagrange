@@ -1,0 +1,18 @@
+{
+  "price": "34570.0000",
+  "quantity": "100",
+  "weight": "0.400000",
+  "money": { "amount": "3457000.0000", "currency": "KRW" },
+  "instrument_id": "069500.KRX",
+  "trading_date": "2026-08-05",
+  "utc_timestamp": "2026-08-04T15:00:00Z",
+  "venue_timestamp": { "venue": "krx", "local": "2026-08-05T00:00:00+09:00" },
+  "strategy_id": "dual_momentum",
+  "strategy_version": "1.2.0",
+  "factor_id": "momentum_12m",
+  "factor_version": "1.0.0",
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "job_status": "queued",
+  "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "reported_stat": 1.234
+}

@@ -1,0 +1,8 @@
+{
+  "negative_price": "-100.0000",
+  "negative_quantity": "-1",
+  "weight_over_one": "1.000001",
+  "money_negative": { "amount": "-5.0000", "currency": "KRW" },
+  "bad_currency": "kRw",
+  "bad_instrument": "069500.NOPE"
+}

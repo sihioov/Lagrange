@@ -1,8 +1,18 @@
 [package]
-name = "lagrange-domain"
+name = "domain"
 description = "Lagrange Station domain contracts: branded IDs, timestamps, fixed-point money, typed errors."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono-tz = "0.10"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+sha2 = "0.10"
+
+[dev-dependencies]
+serde_json = "1.0"
+proptest = "1.0"
