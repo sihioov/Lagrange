@@ -1,5 +1,5 @@
 [package]
-name = "lagrange-market-data"
+name = "market-data"
 description = "Lagrange Station market-data domain: instruments, calendars, bars, quality, curation."
 version.workspace = true
 edition.workspace = true

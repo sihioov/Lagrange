@@ -1,5 +1,5 @@
 [package]
-name = "lagrange-job-queue"
+name = "job-queue"
 description = "Lagrange Station PostgreSQL job queue: leases, attempts, cancellation, orphan recovery."
 version.workspace = true
 edition.workspace = true

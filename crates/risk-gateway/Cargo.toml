@@ -1,5 +1,5 @@
 [package]
-name = "lagrange-risk-gateway"
+name = "risk-gateway"
 description = "Lagrange Station persisted risk gatekeeper before broker submission."
 version.workspace = true
 edition.workspace = true

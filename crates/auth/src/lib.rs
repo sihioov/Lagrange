@@ -1,4 +1,4 @@
-//! `lagrange-auth` - Lagrange Station authentication and authorization (Auth0 OIDC, sessions, RBAC).
+//! `auth` - Lagrange Station authentication and authorization (Auth0 OIDC, sessions, RBAC).
 //!
 //! Todo 5 implements the **KRX market-data entitlement gate**: the `data_entitlements`
 //! lifecycle (`PENDING | ACTIVE | EXPIRED | REVOKED`) with typed transitions, and the

@@ -1,5 +1,5 @@
 [package]
-name = "lagrange-kis-client"
+name = "kis-client"
 description = "Lagrange Station KIS broker adapter (Phase 3, owner-only)."
 version.workspace = true
 edition.workspace = true

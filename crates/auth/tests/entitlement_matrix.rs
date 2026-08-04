@@ -1,4 +1,4 @@
-//! Manual QA channel: `cargo test -p lagrange-auth entitlement_matrix -- --nocapture`
+//! Manual QA channel: `cargo test -p auth entitlement_matrix -- --nocapture`
 //!
 //! Prints the (state x use x role -> allowed/denied) matrix for the KRX
 //! entitlement gate and asserts the fail-closed contract:
@@ -9,7 +9,7 @@
 //! - any state + Owner-only dev path    -> allowed
 //! - Member + dev path                  -> denied (`OWNER_ONLY_DEVELOPMENT_PATH`)
 
-use lagrange_auth::entitlement::{
+use auth::entitlement::{
     AccessRequest, Actor, CalendarDate, ContractRef, DataProvider, DatasetId, DocumentHash,
     Entitlement, EntitlementId, EntitlementService, EntitlementState, KrUseRegistry, Role, UserId,
 };

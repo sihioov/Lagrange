@@ -1,5 +1,5 @@
 [package]
-name = "lagrange-auth"
+name = "auth"
 description = "Lagrange Station authentication and authorization (Auth0 OIDC, sessions, RBAC)."
 version.workspace = true
 edition.workspace = true

@@ -3,7 +3,7 @@
 //! (report/benchmark), artifact (download) - gates through the **same**
 //! [`EntitlementService`], and every denial is auditable.
 
-use lagrange_auth::entitlement::{
+use auth::entitlement::{
     AccessRequest, Actor, AuditDecision, AuditLog, CalendarDate, ContractRef, DataProvider,
     DatasetId, DocumentHash, Entitlement, EntitlementId, EntitlementService, EntitlementState,
     KrMemberSurface, KrUseRegistry, Layer, UserId, audit_event_for,
@@ -71,7 +71,7 @@ fn expired_denies_every_surface_with_typed_code_and_audits_each() {
     assert!(audit.events().iter().all(|e| {
         matches!(
             e.decision,
-            AuditDecision::Denied(lagrange_auth::entitlement::DenialCode::DataEntitlementRequired)
+            AuditDecision::Denied(auth::entitlement::DenialCode::DataEntitlementRequired)
         )
     }));
 }

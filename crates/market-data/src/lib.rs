@@ -1,4 +1,4 @@
-//! `lagrange-market-data` - Lagrange Station market-data domain: instruments, calendars, bars, quality, curation.
+//! `market-data` - Lagrange Station market-data domain: instruments, calendars, bars, quality, curation.
 //!
 //! Skeleton crate created by Todo 1 (workspace bootstrap). No product behavior
 //! yet; the crate's documented contracts are implemented by its own todo.

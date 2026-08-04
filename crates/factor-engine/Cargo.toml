@@ -1,5 +1,5 @@
 [package]
-name = "lagrange-factor-engine"
+name = "factor-engine"
 description = "Lagrange Station research factors (Polars lazy) with deterministic snapshots."
 version.workspace = true
 edition.workspace = true

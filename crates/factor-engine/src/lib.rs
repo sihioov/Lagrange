@@ -1,4 +1,4 @@
-//! `lagrange-factor-engine` - Lagrange Station research factors (Polars lazy) with deterministic snapshots.
+//! `factor-engine` - Lagrange Station research factors (Polars lazy) with deterministic snapshots.
 //!
 //! Skeleton crate created by Todo 1 (workspace bootstrap). No product behavior
 //! yet; the crate's documented contracts are implemented by its own todo.

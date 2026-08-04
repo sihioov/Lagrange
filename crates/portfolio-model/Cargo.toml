@@ -1,5 +1,5 @@
 [package]
-name = "lagrange-portfolio-model"
+name = "portfolio-model"
 description = "Lagrange Station shared sizing, costs, and replayable ledger invariants."
 version.workspace = true
 edition.workspace = true

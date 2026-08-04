@@ -1,5 +1,5 @@
 [package]
-name = "lagrange-selector"
+name = "selector"
 description = "Lagrange Station fixed-universe selector and constrained target portfolios."
 version.workspace = true
 edition.workspace = true

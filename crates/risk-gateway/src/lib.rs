@@ -1,4 +1,4 @@
-//! `lagrange-risk-gateway` - Lagrange Station persisted risk gatekeeper before broker submission.
+//! `risk-gateway` - Lagrange Station persisted risk gatekeeper before broker submission.
 //!
 //! Skeleton crate created by Todo 1 (workspace bootstrap). No product behavior
 //! yet; the crate's documented contracts are implemented by its own todo.
