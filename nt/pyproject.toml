@@ -1,0 +1,23 @@
+# Lagrange Station — NautilusTrader uv project (Todo 1 bootstrap).
+# Approved pins (draft 2026-08-04 line 40): NautilusTrader 1.231.0 (final 1.x
+# official release; tested contract CPython 3.12 / Rust 1.97.1), Polars 0.54.x.
+# Layout: nt/strategies, nt/custom-data, nt/backtest-worker, nt/paper-runner,
+# nt/live-node. Pins enforced by check-pins.* and uv.lock.
+
+[project]
+name = "lagrange-nt"
+version = "0.1.0"
+description = "Lagrange Station NautilusTrader workspace: strategies, custom-data, backtest-worker, paper-runner, live-node."
+requires-python = ">=3.12"
+dependencies = [
+    "nautilus_trader==1.231.0",
+    "polars>=0.54,<0.55",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<9",
+]
+
+[tool.uv]
+package = false
