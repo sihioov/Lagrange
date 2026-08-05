@@ -844,6 +844,24 @@ fn missing_manifest_blocks() {
 }
 
 #[test]
+fn empty_version_blocks() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let curated = CurateStore::new(temp.path().join("data"));
+    // A version directory that exists but contains no bar partitions.
+    let _ = fs::create_dir_all(curated.dataset_dir(&ds(), 1));
+    write_manifest(&curated, 1, 0);
+    let report = gate(&curated, policy(&["069500"], "2020-02-03", 0))
+        .validate_dataset(&ds(), 1)
+        .expect("validation runs");
+    assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
+    assert!(has_issue(
+        &report,
+        IssueCode::EmptyDataset,
+        Severity::Blocking
+    ));
+}
+
+#[test]
 fn revalidation_is_identical() {
     let temp = tempfile::tempdir().expect("temp dir");
     let (curated, _) = curate_golden(temp.path());
