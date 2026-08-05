@@ -68,6 +68,12 @@ fn identical_builds_hash_identically() {
     );
     assert_eq!(a.hash.as_str(), b.hash.as_str());
     assert_eq!(a.hash.as_str(), a.compute_hash().expect("hash").as_str());
+    println!(
+        "=== IDENTICAL BUILDS hash={} bytes={} (equal rebuild {}) ===",
+        a.hash.as_str(),
+        a.canonical_bytes().expect("bytes").len(),
+        a.hash == b.hash
+    );
 }
 
 #[test]
@@ -116,6 +122,12 @@ fn changed_factor_version_changes_hash() {
         base.hash.as_str(),
         v2.hash.as_str(),
         "version change must alter the hash"
+    );
+    println!(
+        "=== VERSION CHANGE base={} v1.0.1={} (different {}) ===",
+        base.hash.as_str(),
+        v2.hash.as_str(),
+        base.hash != v2.hash
     );
 }
 
