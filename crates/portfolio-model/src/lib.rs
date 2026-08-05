@@ -10,7 +10,8 @@
 //! - [`cost`]: versioned `KRX_ETF_DEFAULT | CUSTOM` commission/tax/slippage
 //!   profiles with the documented `CostModel` breakdown interface.
 //! - [`ledger`]: the canonical order/fill/cash/position/daily-equity
-//!   transitions and deterministic replay (implemented in its own todo).
+//!   transitions and deterministic replay (one implementation for backtest,
+//!   Paper, and Live — never mode-specific arithmetic).
 //! - [`persistence`]: the DB-manifest seam (Todo 3); the ledger core is
 //!   deliberately DB-free.
 
