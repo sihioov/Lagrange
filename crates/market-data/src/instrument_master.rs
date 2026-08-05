@@ -201,19 +201,20 @@ impl InstrumentMaster {
 
     /// Registers a canonical instrument, validating its listing window.
     pub fn register_instrument(&mut self, instrument: Instrument) -> Result<(), MasterError> {
-        if let Some(delisted_at) = instrument.delisted_at {
-            if delisted_at < instrument.listed_at {
-                return Err(MasterError::InvalidListingInterval {
-                    id: instrument.instrument_id.to_string(),
-                });
-            }
+        if let Some(delisted_at) = instrument.delisted_at
+            && delisted_at < instrument.listed_at
+        {
+            return Err(MasterError::InvalidListingInterval {
+                id: instrument.instrument_id.to_string(),
+            });
         }
         if self.instruments.contains_key(&instrument.instrument_id) {
             return Err(MasterError::UnknownInstrument {
                 id: format!("duplicate registration of {}", instrument.instrument_id),
             });
         }
-        self.instruments.insert(instrument.instrument_id.clone(), instrument);
+        self.instruments
+            .insert(instrument.instrument_id.clone(), instrument);
         Ok(())
     }
 
@@ -221,9 +222,11 @@ impl InstrumentMaster {
     /// with any existing alias of the same `(namespace, symbol)`.
     pub fn register_alias(&mut self, alias: InstrumentAlias) -> Result<(), MasterError> {
         validate_alias_interval(&alias)?;
-        for existing in self.aliases.iter().filter(|a| {
-            a.namespace == alias.namespace && a.symbol == alias.symbol
-        }) {
+        for existing in self
+            .aliases
+            .iter()
+            .filter(|a| a.namespace == alias.namespace && a.symbol == alias.symbol)
+        {
             if intervals_overlap(
                 existing.effective_from,
                 existing.effective_until,
@@ -325,9 +328,7 @@ impl InstrumentMaster {
     ) -> Result<InstrumentId, MasterError> {
         self.aliases
             .iter()
-            .find(|a| {
-                a.namespace == namespace && a.symbol == symbol && alias_active_at(a, date)
-            })
+            .find(|a| a.namespace == namespace && a.symbol == symbol && alias_active_at(a, date))
             .map(|a| a.instrument.clone())
             .ok_or_else(|| MasterError::UnknownAlias {
                 namespace,
@@ -343,12 +344,12 @@ impl InstrumentMaster {
         instrument: &InstrumentId,
         date: TradingDate,
     ) -> Result<&Instrument, MasterError> {
-        let record = self
-            .instruments
-            .get(instrument)
-            .ok_or_else(|| MasterError::UnknownInstrument {
-                id: instrument.to_string(),
-            })?;
+        let record =
+            self.instruments
+                .get(instrument)
+                .ok_or_else(|| MasterError::UnknownInstrument {
+                    id: instrument.to_string(),
+                })?;
         if !record.is_listed_on(date) {
             let reason = if date < record.listed_at {
                 ListingReason::NotYetListed
@@ -386,15 +387,15 @@ impl InstrumentMaster {
 }
 
 fn validate_alias_interval(alias: &InstrumentAlias) -> Result<(), MasterError> {
-    if let Some(until) = alias.effective_until {
-        if until < alias.effective_from {
-            return Err(MasterError::InvalidAliasInterval {
-                namespace: alias.namespace,
-                symbol: alias.symbol.clone(),
-                from: alias.effective_from.to_iso(),
-                until: until.to_iso(),
-            });
-        }
+    if let Some(until) = alias.effective_until
+        && until < alias.effective_from
+    {
+        return Err(MasterError::InvalidAliasInterval {
+            namespace: alias.namespace,
+            symbol: alias.symbol.clone(),
+            from: alias.effective_from.to_iso(),
+            until: until.to_iso(),
+        });
     }
     Ok(())
 }

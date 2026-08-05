@@ -28,9 +28,7 @@ use chrono::Datelike;
 use chrono::NaiveTime;
 use serde::{Deserialize, Serialize};
 
-use domain::{
-    ContentHash, TradingDate, UtcTimestamp, Venue, VenueTimestamp, Zone,
-};
+use domain::{ContentHash, TradingDate, UtcTimestamp, Venue, VenueTimestamp, Zone};
 
 /// The KRX session window (local wall-clock times).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,13 +105,9 @@ pub struct KrCalendarSpec {
 impl KrCalendarSpec {
     /// The v2 2020 KRX calendar spec: the documented v1 set plus one
     /// additional closure (a correction), published at `published_at`.
-    pub fn krx_2020_v2_with_additional_holiday(
-        extra: Holiday,
-        published_at: UtcTimestamp,
-    ) -> Self {
+    pub fn krx_2020_v2_with_additional_holiday(extra: Holiday, published_at: UtcTimestamp) -> Self {
         let v1 = krx_2020();
-        let mut sessions: Vec<TradingDate> =
-            v1.sessions().filter(|d| *d != extra.date).collect();
+        let mut sessions: Vec<TradingDate> = v1.sessions().filter(|d| *d != extra.date).collect();
         sessions.sort_unstable();
         let mut holidays = v1.holidays().to_vec();
         holidays.push(extra);
@@ -306,15 +300,17 @@ impl KrCalendar {
         year: i32,
         month: u32,
     ) -> Result<TradingDate, CalendarError> {
-        let month_start = TradingDate::new(year, month, 1).map_err(|_| {
-            CalendarError::OutsideCoveredRange {
+        let month_start =
+            TradingDate::new(year, month, 1).map_err(|_| CalendarError::OutsideCoveredRange {
                 calendar_id: self.provenance.calendar_id.clone(),
                 date: format!("{year:04}-{month:02}-01"),
                 direction: "month",
-            }
-        })?;
+            })?;
         self.sessions
-            .range((std::ops::Bound::Included(month_start), std::ops::Bound::Unbounded))
+            .range((
+                std::ops::Bound::Included(month_start),
+                std::ops::Bound::Unbounded,
+            ))
             .take_while(|d| d.as_naive_date().month() == month)
             .last()
             .copied()
@@ -331,15 +327,17 @@ impl KrCalendar {
         year: i32,
         month: u32,
     ) -> Result<TradingDate, CalendarError> {
-        let month_start = TradingDate::new(year, month, 1).map_err(|_| {
-            CalendarError::OutsideCoveredRange {
+        let month_start =
+            TradingDate::new(year, month, 1).map_err(|_| CalendarError::OutsideCoveredRange {
                 calendar_id: self.provenance.calendar_id.clone(),
                 date: format!("{year:04}-{month:02}-01"),
                 direction: "month",
-            }
-        })?;
+            })?;
         self.sessions
-            .range((std::ops::Bound::Included(month_start), std::ops::Bound::Unbounded))
+            .range((
+                std::ops::Bound::Included(month_start),
+                std::ops::Bound::Unbounded,
+            ))
             .take_while(|d| d.as_naive_date().month() == month)
             .next()
             .copied()
@@ -375,21 +373,23 @@ impl KrCalendar {
     fn session_open_venue(&self, date: TradingDate) -> Result<VenueTimestamp, CalendarError> {
         self.check_session(date)?;
         let naive = date.as_naive_date().and_time(self.session_times.open);
-        VenueTimestamp::from_naive_local(self.venue, naive)
-            .map_err(|_| CalendarError::NotASession {
+        VenueTimestamp::from_naive_local(self.venue, naive).map_err(|_| {
+            CalendarError::NotASession {
                 calendar_id: self.provenance.calendar_id.clone(),
                 date: date.to_iso(),
-            })
+            }
+        })
     }
 
     fn session_close_venue(&self, date: TradingDate) -> Result<VenueTimestamp, CalendarError> {
         self.check_session(date)?;
         let naive = date.as_naive_date().and_time(self.session_times.close);
-        VenueTimestamp::from_naive_local(self.venue, naive)
-            .map_err(|_| CalendarError::NotASession {
+        VenueTimestamp::from_naive_local(self.venue, naive).map_err(|_| {
+            CalendarError::NotASession {
                 calendar_id: self.provenance.calendar_id.clone(),
                 date: date.to_iso(),
-            })
+            }
+        })
     }
 
     fn check_session(&self, date: TradingDate) -> Result<(), CalendarError> {

@@ -205,7 +205,9 @@ fn ticker_change_keeps_identity_and_appends_alias_history() {
     assert_eq!(instrument.instrument_id, canonical);
     assert_eq!(instrument.venue, Venue::Krx);
     assert_eq!(
-        master.resolve(AliasNamespace::Kis, "069500", change_date).unwrap(),
+        master
+            .resolve(AliasNamespace::Kis, "069500", change_date)
+            .unwrap(),
         canonical
     );
 
@@ -268,15 +270,12 @@ fn delisted_and_not_yet_listed_symbols_excluded() {
             ..
         })
     ));
-    assert_eq!(master.instrument_on(&active, date).unwrap().instrument_id, active);
-    assert!(matches!(
-        master.instrument_on(&delisted, d("2019-06-01")),
-        Ok(_)
-    ));
-    assert!(matches!(
-        master.instrument_on(&future, d("2020-06-01")),
-        Ok(_)
-    ));
+    assert_eq!(
+        master.instrument_on(&active, date).unwrap().instrument_id,
+        active
+    );
+    assert!(master.instrument_on(&delisted, d("2019-06-01")).is_ok());
+    assert!(master.instrument_on(&future, d("2020-06-01")).is_ok());
 
     // Enumeration excludes invalid instruments on the date.
     let active_ids: Vec<InstrumentId> = master

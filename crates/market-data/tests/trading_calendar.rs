@@ -15,8 +15,7 @@
 use std::path::Path;
 
 use market_data::calendar::{
-    CalendarError, CalendarProvenance, Holiday, KrCalendar, KrCalendarSpec, SessionTimes,
-    krx_2020,
+    CalendarError, CalendarProvenance, Holiday, KrCalendar, KrCalendarSpec, SessionTimes, krx_2020,
 };
 use market_data::instrument_master::{AliasNamespace, seed_universe};
 
@@ -40,7 +39,10 @@ fn next_trading_day_2020_01_31_is_2020_02_03() {
     // The 2020-01-31 (Friday) close signal fills at the next KRX session,
     // which is 2020-02-03 (Monday) per the Todo 6 fixture semantics.
     let cal = krx_2020();
-    assert_eq!(cal.next_trading_day(d("2020-01-31")).unwrap(), d("2020-02-03"));
+    assert_eq!(
+        cal.next_trading_day(d("2020-01-31")).unwrap(),
+        d("2020-02-03")
+    );
 }
 
 #[test]
@@ -49,7 +51,10 @@ fn seollal_break_next_session() {
     // (2020-01-24 Friday holiday, 2020-01-27 Monday substitute holiday),
     // so the next session is 2020-01-28 (Tuesday).
     let cal = krx_2020();
-    assert_eq!(cal.next_trading_day(d("2020-01-23")).unwrap(), d("2020-01-28"));
+    assert_eq!(
+        cal.next_trading_day(d("2020-01-23")).unwrap(),
+        d("2020-01-28")
+    );
     assert!(!cal.is_session(d("2020-01-24")));
     assert!(!cal.is_session(d("2020-01-27")));
 }
@@ -75,7 +80,10 @@ fn sessions_are_explicit_data_not_weekday_inference() {
         (d("2020-10-09"), "hangul day"),
         (d("2020-12-25"), "christmas"),
     ] {
-        assert!(!cal.is_session(date), "{date} must not be a session ({_reason})");
+        assert!(
+            !cal.is_session(date),
+            "{date} must not be a session ({_reason})"
+        );
     }
 
     // Weekends are not sessions.
@@ -127,9 +135,15 @@ fn timezone_aware_open_close_instants() {
 fn previous_trading_day() {
     let cal = krx_2020();
     // Back over the weekend.
-    assert_eq!(cal.previous_trading_day(d("2020-02-03")).unwrap(), d("2020-01-31"));
+    assert_eq!(
+        cal.previous_trading_day(d("2020-02-03")).unwrap(),
+        d("2020-01-31")
+    );
     // Back over the Seollal break.
-    assert_eq!(cal.previous_trading_day(d("2020-01-28")).unwrap(), d("2020-01-23"));
+    assert_eq!(
+        cal.previous_trading_day(d("2020-01-28")).unwrap(),
+        d("2020-01-23")
+    );
 }
 
 #[test]
@@ -168,12 +182,18 @@ fn calendar_agrees_with_todo6_fixture() {
     // Every session listed in the fixture is a session in the calendar.
     for session in fixture["sessions"].as_array().unwrap() {
         let date = d(session["date"].as_str().unwrap());
-        assert!(cal.is_session(date), "fixture session {date} must be a session");
+        assert!(
+            cal.is_session(date),
+            "fixture session {date} must be a session"
+        );
     }
     // Every fixture holiday is not a session.
     for holiday in fixture["holidays"].as_array().unwrap() {
         let date = d(holiday["date"].as_str().unwrap());
-        assert!(!cal.is_session(date), "fixture holiday {date} must not be a session");
+        assert!(
+            !cal.is_session(date),
+            "fixture holiday {date} must not be a session"
+        );
     }
     // The fixture's next_session_of mapping holds exactly.
     let next_of = fixture["next_session_of"].as_object().unwrap();
@@ -238,7 +258,10 @@ fn calendar_correction_creates_new_version_not_mutation() {
     assert_ne!(v2.provenance().content_hash, v1.provenance().content_hash);
     assert!(!v2.is_session(d("2020-06-05")));
     // The correction changes the next session...
-    assert_eq!(v2.next_trading_day(d("2020-06-04")).unwrap(), d("2020-06-08"));
+    assert_eq!(
+        v2.next_trading_day(d("2020-06-04")).unwrap(),
+        d("2020-06-08")
+    );
     // ...while the published v1 calendar is unchanged (no in-place mutation).
     assert!(v1.is_session(d("2020-06-05")));
     assert_eq!(v1.next_trading_day(d("2020-06-05")).unwrap(), before);
@@ -312,7 +335,12 @@ fn provenance_round_trip() {
     assert_eq!(value["source"], "krx-official-calendar-2020-v1");
     assert_eq!(value["version"], 1);
     assert_eq!(value["timezone"], "Asia/Seoul");
-    assert!(value["content_hash"].as_str().unwrap().starts_with("sha256:"));
+    assert!(
+        value["content_hash"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
 }
 
 #[test]
