@@ -15,10 +15,18 @@
 //! - [`redact`] - secret/redaction scan for logs (never expose provider keys/data).
 
 pub mod contract;
+pub mod entitlement;
+pub mod ingest;
+pub mod provider;
 pub mod storage;
+pub mod validate;
 
 pub use contract::{
     ALL_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, RequestMetadata,
     ResponseKind, StoredFile,
+};
+pub use ingest::{IngestError, IngestOutcome, IngestRequest, ingest_bundle};
+pub use provider::{
+    CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
 };
 pub use storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};

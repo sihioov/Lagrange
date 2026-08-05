@@ -12,7 +12,7 @@ use std::fs;
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{ALL_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KRX, ResponseKind};
 use market_data::provider::{
-    CredentialRef, EodProvider, FetchRequest, KrxProvider, KrxMode, ProviderError, RecordedBundle,
+    CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
 };
 
 const GOOD_BUNDLE: &str = concat!(
@@ -50,20 +50,42 @@ fn recorded_bundle_delivers_four_envelopes_with_contract_fields() {
     let req = request(now);
     let envelopes = provider.fetch(&req).expect("synthetic fetch succeeds");
 
-    assert_eq!(envelopes.len(), 4, "all four licensed response classes expected");
+    assert_eq!(
+        envelopes.len(),
+        4,
+        "all four licensed response classes expected"
+    );
     let kinds: Vec<ResponseKind> = envelopes.iter().map(|e| e.kind).collect();
     for k in ALL_RESPONSE_KINDS {
         assert!(kinds.contains(&k), "missing response kind {k:?}");
     }
 
     for env in &envelopes {
-        assert_eq!(env.batch_id, req.batch_id, "envelope must carry the request batch id");
-        assert_eq!(env.retrieved_at.to_rfc3339(), now, "retrieval time must be the request clock");
+        assert_eq!(
+            env.batch_id, req.batch_id,
+            "envelope must carry the request batch id"
+        );
+        assert_eq!(
+            env.retrieved_at.to_rfc3339(),
+            now,
+            "retrieval time must be the request clock"
+        );
         assert_eq!(env.request.mode, FetchMode::Synthetic);
-        assert!(!env.bytes.is_empty(), "recorded response bytes must be present");
+        assert!(
+            !env.bytes.is_empty(),
+            "recorded response bytes must be present"
+        );
         assert_eq!(env.content_hash, ContentHash::from_bytes(&env.bytes));
-        assert!(!env.file_name.contains('/'), "file name must be a plain name: {}", env.file_name);
-        assert!(!env.file_name.contains('\\'), "file name must be a plain name: {}", env.file_name);
+        assert!(
+            !env.file_name.contains('/'),
+            "file name must be a plain name: {}",
+            env.file_name
+        );
+        assert!(
+            !env.file_name.contains('\\'),
+            "file name must be a plain name: {}",
+            env.file_name
+        );
     }
 }
 
@@ -76,20 +98,39 @@ fn hashes_are_deterministic_across_fetches() {
     let hashes = |envelopes: &[market_data::RawEnvelope]| -> Vec<ContentHash> {
         envelopes.iter().map(|e| e.content_hash.clone()).collect()
     };
-    assert_eq!(hashes(&first), hashes(&second), "same bundle must hash identically");
+    assert_eq!(
+        hashes(&first),
+        hashes(&second),
+        "same bundle must hash identically"
+    );
 }
 
 #[test]
 fn request_metadata_records_endpoint_query_and_redacted_headers() {
     let provider = synthetic(GOOD_BUNDLE);
-    let envelopes = provider.fetch(&request("2026-08-05T06:00:00Z")).expect("fetch");
-    let bars = envelopes.iter().find(|e| e.kind == ResponseKind::Bars).expect("bars envelope");
+    let envelopes = provider
+        .fetch(&request("2026-08-05T06:00:00Z"))
+        .expect("fetch");
+    let bars = envelopes
+        .iter()
+        .find(|e| e.kind == ResponseKind::Bars)
+        .expect("bars envelope");
     assert_eq!(bars.request.endpoint, "krx.eod.bars.v1");
-    assert!(bars.request.query.contains(&("market".to_owned(), "KR".to_owned())));
+    assert!(
+        bars.request
+            .query
+            .contains(&("market".to_owned(), "KR".to_owned()))
+    );
     // Headers carried into the envelope MUST be redacted placeholders.
     for (name, value) in &bars.request.headers {
-        assert!(!name.to_ascii_lowercase().contains("key"), "header name must be redacted: {name}");
-        assert!(!name.to_ascii_lowercase().contains("auth"), "header name must be redacted: {name}");
+        assert!(
+            !name.to_ascii_lowercase().contains("key"),
+            "header name must be redacted: {name}"
+        );
+        assert!(
+            !name.to_ascii_lowercase().contains("auth"),
+            "header name must be redacted: {name}"
+        );
         assert!(
             value == "redacted" || value.is_empty(),
             "header value must be redacted, got {value:?}"
@@ -104,7 +145,13 @@ fn timeout_simulation_returns_typed_timeout() {
         .fetch(&request("2026-08-05T06:00:00Z"))
         .expect_err("simulated timeout must fail");
     assert!(
-        matches!(err, ProviderError::EndpointTimeout { kind: ResponseKind::Bars, .. }),
+        matches!(
+            err,
+            ProviderError::EndpointTimeout {
+                kind: ResponseKind::Bars,
+                ..
+            }
+        ),
         "expected typed EndpointTimeout for bars, got {err:?}"
     );
 }
@@ -121,7 +168,10 @@ fn credentialed_mode_without_credentials_returns_typed_failure() {
         .fetch(&request("2026-08-05T06:00:00Z"))
         .expect_err("credentialed mode without credentials must fail");
     match &err {
-        ProviderError::CredentialsUnavailable { credential_ref, detail } => {
+        ProviderError::CredentialsUnavailable {
+            credential_ref,
+            detail,
+        } => {
             assert!(credential_ref.contains("KRX_CREDENTIAL_REF"));
             assert!(!detail.is_empty());
         }
@@ -138,7 +188,10 @@ fn unsafe_file_name_rejected_as_typed_provider_error() {
     match &err {
         ProviderError::UnsafeFileName { kind, file_name } => {
             assert_eq!(*kind, ResponseKind::Bars);
-            assert!(file_name.contains(".."), "error must name the offending file: {file_name}");
+            assert!(
+                file_name.contains(".."),
+                "error must name the offending file: {file_name}"
+            );
         }
         other => panic!("expected UnsafeFileName, got {other:?}"),
     }
@@ -149,7 +202,10 @@ fn malformed_bundle_manifest_returns_typed_error() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(dir.path().join("bundle.json"), b"{ not json").expect("write bad bundle");
     let err = RecordedBundle::open(dir.path()).expect_err("bad bundle.json must fail typed");
-    assert!(matches!(err, ProviderError::Io { .. }), "expected typed Io error, got {err:?}");
+    assert!(
+        matches!(err, ProviderError::Io { .. }),
+        "expected typed Io error, got {err:?}"
+    );
 }
 
 #[test]
