@@ -120,7 +120,9 @@ def test_registered_with_rust_backend_and_arrow_roundtrip(events):
     batch = inst.to_arrow()
     assert batch.schema.field("ts_event").type == pa_int64()
     assert batch.num_rows == 1
-    restored = SessionOpenEvent.from_arrow(batch.to_table())
+    import pyarrow as pa
+
+    restored = SessionOpenEvent.from_arrow(pa.Table.from_batches([batch]))
     assert restored == [inst]
 
 
