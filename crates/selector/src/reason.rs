@@ -28,6 +28,21 @@ pub enum ReasonCode {
     CashFloorApplied,
 }
 
+impl ReasonCode {
+    /// The stable wire value (mirrors the serde representation).
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::SelectedTopN => "SELECTED_TOP_N",
+            Self::ExcludedMandatoryFactorNull => "EXCLUDED_MANDATORY_FACTOR_NULL",
+            Self::NotSelectedBeyondTopN => "NOT_SELECTED_BEYOND_TOP_N",
+            Self::WeightCappedAtMax => "WEIGHT_CAPPED_AT_MAX",
+            Self::WeightRoundingResidueToCash => "WEIGHT_ROUNDING_RESIDUE_TO_CASH",
+            Self::AllCashNoEligible => "ALL_CASH_NO_ELIGIBLE",
+            Self::CashFloorApplied => "CASH_FLOOR_APPLIED",
+        }
+    }
+}
+
 /// One structured evidence item: code + params + localized text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reason {
