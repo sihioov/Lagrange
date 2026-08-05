@@ -218,14 +218,16 @@ fn event_order_proof_for_2020_01_31_fixture() {
     let close_t = ts("2020-01-31T06:30:00Z");
     let open_t1 = ts("2020-02-03T00:00:00Z");
     let close_t1 = ts("2020-02-03T06:30:00Z");
-    assert_eq!(stream[13].ts_event(), close_t); // close(T) = 14th event
-    assert_eq!(stream[14].ts_event(), open_t1); // open(T+1)
-    assert_eq!(stream[15].ts_event(), close_t1); // close(T+1)
+    // Per session the stream is [open(00:00Z), close(06:30Z)] so close(T) is
+    // event index 15, open(T+1) index 16 and close(T+1) index 17.
+    assert_eq!(stream[15].ts_event(), close_t); // close(T)
+    assert_eq!(stream[16].ts_event(), open_t1); // open(T+1)
+    assert_eq!(stream[17].ts_event(), close_t1); // close(T+1)
 
     // Event order invariant: close(T) -> pending target(T+1) -> open(T+1) -> close(T+1).
-    assert!(matches!(stream[13], LagrangeEvent::Close(_)));
-    assert!(matches!(stream[14], LagrangeEvent::Open(_)));
     assert!(matches!(stream[15], LagrangeEvent::Close(_)));
+    assert!(matches!(stream[16], LagrangeEvent::Open(_)));
+    assert!(matches!(stream[17], LagrangeEvent::Close(_)));
     assert!(close_t < open_t1 && open_t1 < close_t1);
 
     // Pending-target window: the strategy stores PendingTarget(effective_date =
@@ -233,7 +235,7 @@ fn event_order_proof_for_2020_01_31_fixture() {
     // The weekend gap makes the window 65.5 hours: 2020-01-31T06:30:00Z .. 2020-02-03T00:00:00Z.
     let gap_ns = open_t1.as_datetime() - close_t.as_datetime();
     assert_eq!(gap_ns.num_hours(), 65);
-    assert_eq!(gap_ns.num_minutes(), 30);
+    assert_eq!(gap_ns.num_minutes(), 3930); // 65h 30m
     let pending_ts = ts("2020-01-31T06:30:01Z"); // any instant in (close(T), open(T+1)]
     assert!(close_t < pending_ts && pending_ts <= open_t1);
 
@@ -250,12 +252,13 @@ fn event_order_proof_for_2020_01_31_fixture() {
         .expect("close(T+1) present");
     assert!(open_idx < close_t1_idx);
 
-    // Every instrument's stream begins with a close and ends with a close.
+    // Every instrument's stream begins with an open and ends with a close
+    // (per session: open 00:00Z then close 06:30Z).
     for symbol in ["229200.KRX", "114260.KRX"] {
         let bars = read_bars(&curated.bars_path("kr", symbol, 2020, 1)).expect("bars read");
         let stream = build_event_stream(&bars);
         assert_eq!(stream.len(), 18);
-        assert!(matches!(stream.first(), Some(LagrangeEvent::Close(_))));
+        assert!(matches!(stream.first(), Some(LagrangeEvent::Open(_))));
         assert!(matches!(stream.last(), Some(LagrangeEvent::Close(_))));
         // Strictly increasing per-instrument ts_event (deterministic ordering).
         for pair in stream.windows(2) {
