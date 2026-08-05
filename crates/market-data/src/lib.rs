@@ -13,10 +13,20 @@
 //! - [`entitlement`] - Todo 5 gate wiring: non-ACTIVE batches are Owner-only and
 //!   Member reads fail with `DATA_ENTITLEMENT_REQUIRED`.
 //! - [`redact`] - secret/redaction scan for logs (never expose provider keys/data).
+//!
+//! Todo 9 delivers the **canonical instrument master with KRX/KIS/provider
+//! aliases** ([`instrument_master`]):
+//!
+//! - canonical `InstrumentId = {symbol}.KRX` (design §6.4); a ticker change
+//!   remaps the alias and appends versioned alias history — the canonical
+//!   identity is never silently changed;
+//! - venue/currency/price/size/lot metadata and listing/delisting status with
+//!   effective dates (requirements §8.2, FR-DATA-002).
 
 pub mod contract;
 pub mod entitlement;
 pub mod ingest;
+pub mod instrument_master;
 pub mod provider;
 pub mod redact;
 pub mod storage;
