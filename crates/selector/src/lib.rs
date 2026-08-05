@@ -21,12 +21,16 @@
 //!
 //! Todo 16 (target portfolios) builds directly on the published snapshot.
 
+pub mod builder;
+pub mod eligibility;
 pub mod error;
 pub mod publish;
 pub mod reason;
 pub mod spec;
 pub mod universe;
 
+pub use builder::{PreparedUniverse, UniverseBuilder};
+pub use eligibility::{EligibilityFilter, EligibilityOutcome, EligibleInstrument, Exclusion};
 pub use error::SelectorError;
 pub use publish::{ProductKind, PublishedSnapshot, UniversePublisher};
 pub use universe::{
