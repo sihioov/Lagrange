@@ -171,20 +171,37 @@ fn date_to_days(date: TradingDate) -> i32 {
     (date.as_naive_date() - epoch).num_days() as i32
 }
 
-fn days_to_date(days: i32) -> TradingDate {
+fn days_to_date_checked(days: i32, col: &str) -> Result<TradingDate, CurateError> {
     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch");
     let naive = epoch + Duration::days(i64::from(days));
-    TradingDate::new(naive.year(), naive.month(), naive.day()).expect("valid date from parquet")
+    TradingDate::new(naive.year(), naive.month(), naive.day()).map_err(|e| CurateError::StoreIo {
+        context: format!("{col} parse"),
+        detail: e.to_string(),
+    })
 }
 
 fn ts_to_micros(ts: UtcTimestamp) -> i64 {
     ts.as_datetime().timestamp_micros()
 }
 
-fn micros_to_ts(micros: i64) -> UtcTimestamp {
-    UtcTimestamp::from_datetime(
-        chrono::DateTime::from_timestamp_micros(micros).expect("valid timestamp from parquet"),
-    )
+fn ts_at_checked(
+    batch: &arrow::record_batch::RecordBatch,
+    col: &str,
+    i: usize,
+) -> Result<UtcTimestamp, CurateError> {
+    let array = batch
+        .column_by_name(col)
+        .expect("schema column present")
+        .as_any()
+        .downcast_ref::<TimestampMicrosecondArray>()
+        .expect("timestamp(us) column");
+    let micros = array.value(i);
+    let dt =
+        chrono::DateTime::from_timestamp_micros(micros).ok_or_else(|| CurateError::StoreIo {
+            context: format!("{col} parse"),
+            detail: format!("timestamp {micros} is out of range"),
+        })?;
+    Ok(UtcTimestamp::from_datetime(dt))
 }
 
 fn fixed_to_decimal(value: &FixedPoint, scale: u8) -> i128 {
@@ -524,21 +541,25 @@ fn i64_opt_at(batch: &arrow::record_batch::RecordBatch, col: &str, i: usize) -> 
     }
 }
 
-fn date_at(batch: &arrow::record_batch::RecordBatch, col: &str, i: usize) -> TradingDate {
+fn date_at(
+    batch: &arrow::record_batch::RecordBatch,
+    col: &str,
+    i: usize,
+) -> Result<TradingDate, CurateError> {
     let array = batch
         .column_by_name(col)
         .expect("schema column present")
         .as_any()
         .downcast_ref::<Date32Array>()
         .expect("date32 column");
-    days_to_date(array.value(i))
+    days_to_date_checked(array.value(i), col)
 }
 
 fn date_opt_at(
     batch: &arrow::record_batch::RecordBatch,
     col: &str,
     i: usize,
-) -> Option<TradingDate> {
+) -> Result<Option<TradingDate>, CurateError> {
     let array = batch
         .column_by_name(col)
         .expect("schema column present")
@@ -546,23 +567,19 @@ fn date_opt_at(
         .downcast_ref::<Date32Array>()
         .expect("date32 column");
     if array.is_null(i) {
-        None
+        Ok(None)
     } else {
-        Some(days_to_date(array.value(i)))
+        Ok(Some(days_to_date_checked(array.value(i), col)?))
     }
 }
 
-fn ts_at(batch: &arrow::record_batch::RecordBatch, col: &str, i: usize) -> UtcTimestamp {
-    let array = batch
-        .column_by_name(col)
-        .expect("schema column present")
-        .as_any()
-        .downcast_ref::<TimestampMicrosecondArray>()
-        .expect("timestamp(us) column");
-    micros_to_ts(array.value(i))
-}
-
-fn price_at(batch: &arrow::record_batch::RecordBatch, col: &str, i: usize) -> Price {
+fn price_at_checked(
+    batch: &arrow::record_batch::RecordBatch,
+    col: &str,
+    i: usize,
+    instrument: &str,
+    date: &str,
+) -> Result<Price, CurateError> {
     let array = batch
         .column_by_name(col)
         .expect("schema column present")
@@ -570,7 +587,24 @@ fn price_at(batch: &arrow::record_batch::RecordBatch, col: &str, i: usize) -> Pr
         .downcast_ref::<Decimal128Array>()
         .expect("decimal column");
     let value = decimal_to_fixed(array.value(i), PRICE_SCALE);
-    Price::from_fixed(value).expect("curated price is positive by construction")
+    Price::from_fixed(value).map_err(|_| CurateError::NonPositivePrice {
+        instrument: instrument.to_owned(),
+        date: date.to_owned(),
+        field: col.to_owned(),
+        value: value.to_string(),
+    })
+}
+
+fn currency_at_checked(
+    batch: &arrow::record_batch::RecordBatch,
+    col: &str,
+    i: usize,
+) -> Result<Currency, CurateError> {
+    let code = str_at(batch, col, i);
+    Currency::from_code(code).map_err(|e| CurateError::StoreIo {
+        context: format!("{col} parse"),
+        detail: format!("unknown currency {code:?}: {e}"),
+    })
 }
 
 fn fixed_at(
@@ -626,30 +660,38 @@ fn str_opt_at<'a>(
 }
 
 /// Reads the raw bars table back into typed rows.
+///
+/// Value-safe: non-positive prices, unknown currencies, and malformed dates
+/// or timestamps are typed [`CurateError`]s — this reader never panics on
+/// on-disk values (Todo 11: the quality gate classifies, it does not crash).
 pub fn read_bars(path: &Path) -> Result<Vec<CuratedBar>, CurateError> {
     let mut rows = Vec::new();
     for batch in read_batches(path)? {
         for i in 0..batch.num_rows() {
-            rows.push(CuratedBar {
-                instrument_id: InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(
-                    |e| CurateError::StoreIo {
+            let instrument_id =
+                InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(|e| {
+                    CurateError::StoreIo {
                         context: "instrument_id parse".to_owned(),
                         detail: e.to_string(),
-                    },
-                )?,
-                trading_date: date_at(&batch, "trading_date", i),
-                market_open_ts: ts_at(&batch, "market_open_ts", i),
-                market_close_ts: ts_at(&batch, "market_close_ts", i),
-                open: price_at(&batch, "open", i),
-                high: price_at(&batch, "high", i),
-                low: price_at(&batch, "low", i),
-                close: price_at(&batch, "close", i),
+                    }
+                })?;
+            let trading_date = date_at(&batch, "trading_date", i)?;
+            let instrument = instrument_id.to_string();
+            let date = trading_date.to_iso();
+            rows.push(CuratedBar {
+                instrument_id,
+                trading_date,
+                market_open_ts: ts_at_checked(&batch, "market_open_ts", i)?,
+                market_close_ts: ts_at_checked(&batch, "market_close_ts", i)?,
+                open: price_at_checked(&batch, "open", i, &instrument, &date)?,
+                high: price_at_checked(&batch, "high", i, &instrument, &date)?,
+                low: price_at_checked(&batch, "low", i, &instrument, &date)?,
+                close: price_at_checked(&batch, "close", i, &instrument, &date)?,
                 volume: i64_at(&batch, "volume", i),
                 trading_value: i64_opt_at(&batch, "trading_value", i),
-                currency: Currency::from_code(str_at(&batch, "currency", i))
-                    .expect("curated currency is valid by construction"),
+                currency: currency_at_checked(&batch, "currency", i)?,
                 source: str_at(&batch, "source", i).to_owned(),
-                ingested_at: ts_at(&batch, "ingested_at", i),
+                ingested_at: ts_at_checked(&batch, "ingested_at", i)?,
                 batch_id: str_at(&batch, "batch_id", i)
                     .parse::<BatchId>()
                     .map_err(|e| CurateError::StoreIo {
@@ -668,35 +710,47 @@ pub fn read_bars(path: &Path) -> Result<Vec<CuratedBar>, CurateError> {
     Ok(rows)
 }
 
-/// Reads the adjusted bars table back into typed rows.
+/// Reads the adjusted bars table back into typed rows (value-safe, see
+/// [`read_bars`]).
 pub fn read_adjusted_bars(path: &Path) -> Result<Vec<AdjustmentBar>, CurateError> {
     let mut rows = Vec::new();
     for batch in read_batches(path)? {
         for i in 0..batch.num_rows() {
-            rows.push(AdjustmentBar {
-                instrument_id: InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(
-                    |e| CurateError::StoreIo {
+            let instrument_id =
+                InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(|e| {
+                    CurateError::StoreIo {
                         context: "instrument_id parse".to_owned(),
                         detail: e.to_string(),
-                    },
-                )?,
-                trading_date: date_at(&batch, "trading_date", i),
-                market_open_ts: ts_at(&batch, "market_open_ts", i),
-                market_close_ts: ts_at(&batch, "market_close_ts", i),
-                open: price_at(&batch, "open", i),
-                high: price_at(&batch, "high", i),
-                low: price_at(&batch, "low", i),
-                close: price_at(&batch, "close", i),
+                    }
+                })?;
+            let trading_date = date_at(&batch, "trading_date", i)?;
+            let instrument = instrument_id.to_string();
+            let date = trading_date.to_iso();
+            let adjustment_kind = AdjustmentKind::parse(str_at(&batch, "adjustment_kind", i))
+                .ok_or_else(|| CurateError::StoreIo {
+                    context: "adjustment_kind parse".to_owned(),
+                    detail: format!(
+                        "unknown adjustment kind {:?}",
+                        str_at(&batch, "adjustment_kind", i)
+                    ),
+                })?;
+            rows.push(AdjustmentBar {
+                instrument_id,
+                trading_date,
+                market_open_ts: ts_at_checked(&batch, "market_open_ts", i)?,
+                market_close_ts: ts_at_checked(&batch, "market_close_ts", i)?,
+                open: price_at_checked(&batch, "open", i, &instrument, &date)?,
+                high: price_at_checked(&batch, "high", i, &instrument, &date)?,
+                low: price_at_checked(&batch, "low", i, &instrument, &date)?,
+                close: price_at_checked(&batch, "close", i, &instrument, &date)?,
                 volume: i64_at(&batch, "volume", i),
                 trading_value: i64_opt_at(&batch, "trading_value", i),
-                adjustment_kind: AdjustmentKind::parse(str_at(&batch, "adjustment_kind", i))
-                    .expect("curated adjustment kind is valid by construction"),
+                adjustment_kind,
                 adjustment_factor: fixed_at(&batch, "adjustment_factor", i, FACTOR_SCALE),
                 adjustment_events: str_at(&batch, "adjustment_events", i).to_owned(),
-                currency: Currency::from_code(str_at(&batch, "currency", i))
-                    .expect("curated currency is valid by construction"),
+                currency: currency_at_checked(&batch, "currency", i)?,
                 source: str_at(&batch, "source", i).to_owned(),
-                ingested_at: ts_at(&batch, "ingested_at", i),
+                ingested_at: ts_at_checked(&batch, "ingested_at", i)?,
                 batch_id: str_at(&batch, "batch_id", i)
                     .parse::<BatchId>()
                     .map_err(|e| CurateError::StoreIo {
@@ -715,36 +769,47 @@ pub fn read_adjusted_bars(path: &Path) -> Result<Vec<AdjustmentBar>, CurateError
     Ok(rows)
 }
 
-/// Reads the corporate-actions table back into typed rows.
+/// Reads the corporate-actions table back into typed rows (value-safe, see
+/// [`read_bars`]).
 pub fn read_corporate_actions(path: &Path) -> Result<Vec<CorporateAction>, CurateError> {
     let mut rows = Vec::new();
     for batch in read_batches(path)? {
         for i in 0..batch.num_rows() {
-            let currency = Currency::from_code(str_at(&batch, "currency", i))
-                .expect("curated currency is valid by construction");
-            rows.push(CorporateAction {
-                instrument_id: InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(
-                    |e| CurateError::StoreIo {
+            let instrument_id =
+                InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(|e| {
+                    CurateError::StoreIo {
                         context: "instrument_id parse".to_owned(),
                         detail: e.to_string(),
-                    },
-                )?,
-                event_type: CorporateActionType::parse(str_at(&batch, "event_type", i))
-                    .expect("curated event type is valid by construction"),
-                ex_date: date_at(&batch, "ex_date", i),
-                record_date: date_opt_at(&batch, "record_date", i),
-                pay_date: date_opt_at(&batch, "pay_date", i),
+                    }
+                })?;
+            let ex_date = date_at(&batch, "ex_date", i)?;
+            let currency = currency_at_checked(&batch, "currency", i)?;
+            let event_type = CorporateActionType::parse(str_at(&batch, "event_type", i))
+                .ok_or_else(|| CurateError::StoreIo {
+                    context: "event_type parse".to_owned(),
+                    detail: format!("unknown event type {:?}", str_at(&batch, "event_type", i)),
+                })?;
+            let amount_per_share = match fixed_opt_at(&batch, "amount_per_share", i, PRICE_SCALE) {
+                Some(f) => Some(domain::Money::from_fixed(f, currency).map_err(|e| {
+                    CurateError::StoreIo {
+                        context: "amount_per_share parse".to_owned(),
+                        detail: e.to_string(),
+                    }
+                })?),
+                None => None,
+            };
+            rows.push(CorporateAction {
+                instrument_id,
+                event_type,
+                ex_date,
+                record_date: date_opt_at(&batch, "record_date", i)?,
+                pay_date: date_opt_at(&batch, "pay_date", i)?,
                 ratio: str_opt_at(&batch, "ratio", i).map(str::to_owned),
                 split_factor: fixed_opt_at(&batch, "split_factor", i, FACTOR_SCALE),
-                amount_per_share: fixed_opt_at(&batch, "amount_per_share", i, PRICE_SCALE).map(
-                    |f| {
-                        domain::Money::from_fixed(f, currency)
-                            .expect("curated amount is non-negative by construction")
-                    },
-                ),
+                amount_per_share,
                 tax_withholding_pct: fixed_opt_at(&batch, "tax_withholding_pct", i, TAX_SCALE),
                 currency,
-                announced_at: ts_at(&batch, "announced_at", i),
+                announced_at: ts_at_checked(&batch, "announced_at", i)?,
                 source: str_at(&batch, "source", i).to_owned(),
                 batch_id: str_at(&batch, "batch_id", i)
                     .parse::<BatchId>()
@@ -758,7 +823,7 @@ pub fn read_corporate_actions(path: &Path) -> Result<Vec<CorporateAction>, Curat
                         detail: e.to_string(),
                     }
                 })?,
-                ingested_at: ts_at(&batch, "ingested_at", i),
+                ingested_at: ts_at_checked(&batch, "ingested_at", i)?,
             });
         }
     }

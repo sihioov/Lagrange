@@ -46,6 +46,7 @@ pub mod entitlement;
 pub mod ingest;
 pub mod instrument_master;
 pub mod provider;
+pub mod quality;
 pub mod redact;
 pub mod storage;
 pub mod validate;
@@ -61,7 +62,7 @@ pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{CuratedBar, CuratedSchema};
 pub use curate::{
     Capability, CurateError, CurateOutcome, CurateRequest, CurateStore, DatasetManifest,
-    SourceBatchRef, curate_batch,
+    SourceBatchRef, curate_batch, dataset_manifest_hash,
 };
 pub use ingest::{IngestError, IngestOutcome, IngestRequest, ingest_bundle};
 pub use instrument_master::{
@@ -70,5 +71,9 @@ pub use instrument_master::{
 };
 pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
+};
+pub use quality::{
+    DataUse, DataUseDenial, ExclusionRecord, FreshnessPolicy, IssueCode, OptionalExclusion,
+    QualityError, QualityGate, QualityIssue, QualityPolicy, QualityReport, Severity,
 };
 pub use storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};

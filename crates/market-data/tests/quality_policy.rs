@@ -33,7 +33,7 @@ use serde_json::json;
 use market_data::contract::{FetchMode, RawEnvelope, RequestMetadata, ResponseKind};
 use market_data::curate::adjust::{AdjustmentBar, AdjustmentKind};
 use market_data::curate::schema::{
-    PRICE_PRECISION, PRICE_SCALE, CuratedSchema, write_adjusted_bars, write_bars,
+    CuratedSchema, PRICE_PRECISION, PRICE_SCALE, write_adjusted_bars, write_bars,
 };
 use market_data::curate::{CurateRequest, CurateStore, curate_batch, dataset_manifest_hash};
 use market_data::quality::{
@@ -50,7 +50,8 @@ const GOLDEN_BARS: &[u8] = include_bytes!("../../../tests/fixtures/kr-etf/2020-0
 const EMPTY_ACTIONS: &[u8] =
     include_bytes!("../../../tests/fixtures/kr-etf/contract/corporate-actions-response.json");
 /// The Todo 6 AT-05 fixture: 069500 missing the 2020-01-31 daily bar.
-const MISSING_BARS: &[u8] = include_bytes!("../../../tests/fixtures/kr-etf/variants/missing/missing_bars.json");
+const MISSING_BARS: &[u8] =
+    include_bytes!("../../../tests/fixtures/kr-etf/variants/missing/missing_bars.json");
 
 /// A curation clock after every fixture `announced_at` (fixtures are 2020).
 fn now() -> UtcTimestamp {
@@ -153,11 +154,15 @@ fn policy(required: &[&str], reference: &str, stale_grace: u32) -> QualityPolicy
     }
 }
 
-fn gate<'a>(curated: &'a CurateStore, policy: QualityPolicy) -> QualityGate<'a> {
-    QualityGate::new(curated, &krx_2020(), &seed_universe(), "kr", policy)
+fn gate(curated: &CurateStore, policy: QualityPolicy) -> QualityGate {
+    QualityGate::new(curated.clone(), krx_2020(), seed_universe(), "kr", policy)
 }
 
-fn has_issue(report: &market_data::quality::QualityReport, code: IssueCode, severity: Severity) -> bool {
+fn has_issue(
+    report: &market_data::quality::QualityReport,
+    code: IssueCode,
+    severity: Severity,
+) -> bool {
     report
         .issues
         .iter()
@@ -175,15 +180,26 @@ fn make_bar(
     volume: i64,
 ) -> market_data::CuratedBar {
     let trading_date = TradingDate::parse(date).expect("valid trading date");
+    let calendar = krx_2020();
+    let (market_open_ts, market_close_ts) = match calendar.session_open_utc(trading_date) {
+        Ok(open_ts) => (
+            open_ts,
+            calendar
+                .session_close_utc(trading_date)
+                .expect("session close"),
+        ),
+        // Non-session dates (session-conformance fixtures) carry a placeholder
+        // instant; the session check fires before timestamps are compared.
+        Err(_) => (
+            UtcTimestamp::parse_rfc3339("2020-01-01T00:00:00Z").expect("ts"),
+            UtcTimestamp::parse_rfc3339("2020-01-01T06:30:00Z").expect("ts"),
+        ),
+    };
     market_data::CuratedBar {
         instrument_id: InstrumentId::parse(&format!("{symbol}.KRX")).expect("valid id"),
         trading_date,
-        market_open_ts: krx_2020()
-            .session_open_utc(trading_date)
-            .expect("session open"),
-        market_close_ts: krx_2020()
-            .session_close_utc(trading_date)
-            .expect("session close"),
+        market_open_ts,
+        market_close_ts,
         open: Price::parse(&open.to_string()).expect("price"),
         high: Price::parse(&high.to_string()).expect("price"),
         low: Price::parse(&low.to_string()).expect("price"),
@@ -235,8 +251,11 @@ fn fabricate_version(
 ) -> DatasetManifest {
     let _ = fs::create_dir_all(curated.dataset_dir(&ds(), version));
     write_bars(&curated.bars_path("kr", symbol, year, version), &bars).expect("bars write");
-    write_adjusted_bars(&curated.adjusted_bars_path("kr", symbol, year, version), &adjusted)
-        .expect("adjusted write");
+    write_adjusted_bars(
+        &curated.adjusted_bars_path("kr", symbol, year, version),
+        &adjusted,
+    )
+    .expect("adjusted write");
     write_adjusted_bars(
         &curated.total_return_bars_path("kr", symbol, year, version),
         &[],
@@ -298,27 +317,28 @@ fn write_bars_with_zero_open(path: &Path) {
         .with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8)
         .expect("decimal params");
     rest.append_value(10000i128);
-    let batch = RecordBatch::try_new(
-        Arc::new(CuratedSchema::bars()),
-        vec![
-            Arc::new(StringArray::from(vec!["069500.KRX"])),
-            Arc::new(Date32Array::from(vec![days])),
-            Arc::new(TimestampMicrosecondArray::from(vec![0])),
-            Arc::new(TimestampMicrosecondArray::from(vec![0])),
-            Arc::new(open.finish()),
-            Arc::new(rest.finish()),
-            Arc::new(rest.finish()),
-            Arc::new(rest.finish()),
-            Arc::new(Int64Array::from(vec![1000i64])),
-            Arc::new(Int64Array::from(vec![10_000_000i64])),
-            Arc::new(StringArray::from(vec!["KRW"])),
-            Arc::new(StringArray::from(vec!["krx"])),
-            Arc::new(TimestampMicrosecondArray::from(vec![0])),
-            Arc::new(StringArray::from(vec![BatchId::generate().to_string()])),
-            Arc::new(StringArray::from(vec![ContentHash::from_bytes(b"x").as_str()])),
-        ],
-    )
-    .expect("zero-open batch builds");
+    let rest_array = rest.finish();
+    let columns: Vec<Arc<dyn arrow::array::Array>> = vec![
+        Arc::new(StringArray::from(vec!["069500.KRX"])),
+        Arc::new(Date32Array::from(vec![days])),
+        Arc::new(TimestampMicrosecondArray::from(vec![0])),
+        Arc::new(TimestampMicrosecondArray::from(vec![0])),
+        Arc::new(open.finish()),
+        Arc::new(rest_array.clone()),
+        Arc::new(rest_array.clone()),
+        Arc::new(rest_array),
+        Arc::new(Int64Array::from(vec![1000i64])),
+        Arc::new(Int64Array::from(vec![10_000_000i64])),
+        Arc::new(StringArray::from(vec!["KRW"])),
+        Arc::new(StringArray::from(vec!["krx"])),
+        Arc::new(TimestampMicrosecondArray::from(vec![0])),
+        Arc::new(StringArray::from(vec![BatchId::generate().to_string()])),
+        Arc::new(StringArray::from(vec![
+            ContentHash::from_bytes(b"x").as_str(),
+        ])),
+    ];
+    let batch = RecordBatch::try_new(Arc::new(CuratedSchema::bars()), columns)
+        .expect("zero-open batch builds");
     write_parquet(path, Arc::new(CuratedSchema::bars()), batch);
 }
 
@@ -337,9 +357,12 @@ fn write_parquet(path: &Path, schema: Arc<Schema>, batch: RecordBatch) {
 fn complete_dataset_is_ready_and_permits_all_uses() {
     let temp = tempfile::tempdir().expect("temp dir");
     let (curated, _) = curate_golden(temp.path());
-    let report = gate(&curated, policy(&["069500", "229200", "114260"], "2020-02-03", 0))
-        .validate_dataset(&ds(), 1)
-        .expect("validation runs");
+    let report = gate(
+        &curated,
+        policy(&["069500", "229200", "114260"], "2020-02-03", 0),
+    )
+    .validate_dataset(&ds(), 1)
+    .expect("validation runs");
     assert_eq!(report.state, DataState::Ready, "{:?}", report.issues);
     assert!(report.issues.is_empty(), "{:?}", report.issues);
     assert!(report.exclusions.is_empty());
@@ -364,13 +387,32 @@ fn complete_dataset_is_ready_and_permits_all_uses() {
 fn duplicate_trading_date_blocks() {
     let temp = tempfile::tempdir().expect("temp dir");
     let curated = CurateStore::new(temp.path().join("data"));
-    let bar = make_bar("069500", "2020-02-03", 10300, 10420, 10280, 10380, 1_240_000);
-    fabricate_version(&curated, 1, "069500.KRX", 2020, vec![bar.clone(), bar], vec![]);
+    let bar = make_bar(
+        "069500",
+        "2020-02-03",
+        10300,
+        10420,
+        10280,
+        10380,
+        1_240_000,
+    );
+    fabricate_version(
+        &curated,
+        1,
+        "069500.KRX",
+        2020,
+        vec![bar.clone(), bar],
+        vec![],
+    );
     let report = gate(&curated, policy(&["069500"], "2020-02-03", 0))
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::DuplicateDate, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::DuplicateDate,
+        Severity::Blocking
+    ));
 }
 
 #[test]
@@ -384,7 +426,11 @@ fn impossible_ohlc_blocks() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::ImpossibleOhlc, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::ImpossibleOhlc,
+        Severity::Blocking
+    ));
 }
 
 #[test]
@@ -398,7 +444,11 @@ fn non_positive_price_blocks_without_panic() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::NonPositivePrice, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::NonPositivePrice,
+        Severity::Blocking
+    ));
 }
 
 #[test]
@@ -412,7 +462,11 @@ fn bar_on_non_session_date_blocks() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::NotASession, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::NotASession,
+        Severity::Blocking
+    ));
 }
 
 #[test]
@@ -426,7 +480,11 @@ fn timestamp_mismatch_blocks() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::TimestampMismatch, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::TimestampMismatch,
+        Severity::Blocking
+    ));
 }
 
 #[test]
@@ -439,7 +497,11 @@ fn negative_volume_blocks() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::NegativeVolume, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::NegativeVolume,
+        Severity::Blocking
+    ));
 }
 
 #[test]
@@ -466,7 +528,11 @@ fn currency_mismatch_blocks() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::CurrencyMismatch, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::CurrencyMismatch,
+        Severity::Blocking
+    ));
 }
 
 #[test]
@@ -479,7 +545,11 @@ fn bar_for_unknown_instrument_blocks() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::UnknownInstrument, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::UnknownInstrument,
+        Severity::Blocking
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -502,7 +572,11 @@ fn suspicious_close_move_warns() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Warning, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::SuspiciousMove, Severity::Warning));
+    assert!(has_issue(
+        &report,
+        IssueCode::SuspiciousMove,
+        Severity::Warning
+    ));
 }
 
 #[test]
@@ -517,7 +591,11 @@ fn suspicious_split_warns_without_action_record() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Warning, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::SuspiciousSplit, Severity::Warning));
+    assert!(has_issue(
+        &report,
+        IssueCode::SuspiciousSplit,
+        Severity::Warning
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -528,9 +606,12 @@ fn suspicious_split_warns_without_action_record() {
 fn at05_missing_required_bar_blocks_downstream() {
     let temp = tempfile::tempdir().expect("temp dir");
     let (curated, _) = curate(temp.path(), MISSING_BARS, EMPTY_ACTIONS);
-    let report = gate(&curated, policy(&["069500", "229200", "114260"], "2020-02-03", 0))
-        .validate_dataset(&ds(), 1)
-        .expect("validation runs");
+    let report = gate(
+        &curated,
+        policy(&["069500", "229200", "114260"], "2020-02-03", 0),
+    )
+    .validate_dataset(&ds(), 1)
+    .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
     let missing: Vec<&QualityIssue> = report
         .issues
@@ -539,7 +620,11 @@ fn at05_missing_required_bar_blocks_downstream() {
         .collect();
     assert_eq!(missing.len(), 1, "{:?}", report.issues);
     assert_eq!(
-        missing[0].instrument.as_ref().map(ToString::to_string).as_deref(),
+        missing[0]
+            .instrument
+            .as_ref()
+            .map(ToString::to_string)
+            .as_deref(),
         Some("069500.KRX")
     );
     assert_eq!(
@@ -559,7 +644,9 @@ fn at05_missing_required_bar_blocks_downstream() {
             .expect_err("blocked dataset must deny every use");
         assert_eq!(denial.use_case, use_case);
         assert!(
-            denial.blocking_issues.contains(&IssueCode::MissingRequiredBar),
+            denial
+                .blocking_issues
+                .contains(&IssueCode::MissingRequiredBar),
             "{:?}",
             denial.blocking_issues
         );
@@ -624,8 +711,15 @@ fn at05_optional_missing_without_policy_blocks() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::MissingOptionalBar, Severity::Blocking));
-    assert!(report.exclusions.is_empty(), "no exclusion without a policy");
+    assert!(has_issue(
+        &report,
+        IssueCode::MissingOptionalBar,
+        Severity::Blocking
+    ));
+    assert!(
+        report.exclusions.is_empty(),
+        "no exclusion without a policy"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -647,7 +741,11 @@ fn corrupt_parquet_blocks_without_panic() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::CorruptParquet, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::CorruptParquet,
+        Severity::Blocking
+    ));
 }
 
 #[test]
@@ -661,7 +759,11 @@ fn schema_mismatch_blocks() {
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::SchemaMismatch, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::SchemaMismatch,
+        Severity::Blocking
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -679,12 +781,18 @@ fn tampered_manifest_hash_blocks() {
         content_hash: ContentHash::from_bytes(b"tampered"),
         ..write_manifest(&curated, 1, 1)
     };
-    curated.write_dataset_manifest(&tampered).expect("tamper write");
+    curated
+        .write_dataset_manifest(&tampered)
+        .expect("tamper write");
     let report = gate(&curated, policy(&["069500"], "2020-02-03", 0))
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::ManifestHashMismatch, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::ManifestHashMismatch,
+        Severity::Blocking
+    ));
 }
 
 #[test]
@@ -693,17 +801,27 @@ fn manifest_bar_count_mismatch_blocks() {
     let curated = CurateStore::new(temp.path().join("data"));
     let bar = make_bar("069500", "2020-02-03", 10300, 10420, 10280, 10380, 100);
     fabricate_version(&curated, 1, "069500.KRX", 2020, vec![bar], vec![]);
-    // Declares 99 bars but only 1 exists on disk.
-    let mismatched = DatasetManifest {
-        bar_count: 99,
-        ..write_manifest(&curated, 1, 1)
-    };
-    curated.write_dataset_manifest(&mismatched).expect("mismatch write");
+    // Declares 99 bars but only 1 exists on disk (hash kept valid so the
+    // count inconsistency itself is what blocks).
+    let mut mismatch = write_manifest(&curated, 1, 1);
+    mismatch.bar_count = 99;
+    let hash = dataset_manifest_hash(&mismatch).expect("hash");
+    curated
+        .write_dataset_manifest(&DatasetManifest {
+            bar_count: 99,
+            content_hash: hash,
+            ..mismatch
+        })
+        .expect("mismatch write");
     let report = gate(&curated, policy(&["069500"], "2020-02-03", 0))
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::ManifestCorrupt, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::ManifestCorrupt,
+        Severity::Blocking
+    ));
 }
 
 #[test]
@@ -712,24 +830,27 @@ fn missing_manifest_blocks() {
     let curated = CurateStore::new(temp.path().join("data"));
     let bar = make_bar("069500", "2020-02-03", 10300, 10420, 10280, 10380, 100);
     let _ = fs::create_dir_all(curated.dataset_dir(&ds(), 1));
-    write_bars(
-        &curated.bars_path("kr", "069500.KRX", 2020, 1),
-        &[bar],
-    )
-    .expect("bars write");
+    write_bars(&curated.bars_path("kr", "069500.KRX", 2020, 1), &[bar]).expect("bars write");
     // No manifest.json was written for this version.
     let report = gate(&curated, policy(&["069500"], "2020-02-03", 0))
         .validate_dataset(&ds(), 1)
         .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
-    assert!(has_issue(&report, IssueCode::ManifestCorrupt, Severity::Blocking));
+    assert!(has_issue(
+        &report,
+        IssueCode::ManifestCorrupt,
+        Severity::Blocking
+    ));
 }
 
 #[test]
 fn revalidation_is_identical() {
     let temp = tempfile::tempdir().expect("temp dir");
     let (curated, _) = curate_golden(temp.path());
-    let gate = gate(&curated, policy(&["069500", "229200", "114260"], "2020-02-03", 0));
+    let gate = gate(
+        &curated,
+        policy(&["069500", "229200", "114260"], "2020-02-03", 0),
+    );
     let first = gate.validate_dataset(&ds(), 1).expect("first run");
     let second = gate.validate_dataset(&ds(), 1).expect("second run");
     assert_eq!(first, second, "re-validation must be byte-identical");
@@ -742,7 +863,10 @@ fn correction_creates_new_version_and_preserves_old() {
     let temp = tempfile::tempdir().expect("temp dir");
     let (curated, v1_outcome) = curate_golden(temp.path());
     assert_eq!(v1_outcome.dataset_version, 1);
-    let gate = gate(&curated, policy(&["069500", "229200", "114260"], "2020-02-03", 0));
+    let gate = gate(
+        &curated,
+        policy(&["069500", "229200", "114260"], "2020-02-03", 0),
+    );
     let v1_report = gate.validate_dataset(&ds(), 1).expect("v1 validation");
     assert_eq!(v1_report.state, DataState::Ready);
     let v1_manifest_hash = v1_outcome.manifest.content_hash.clone();
@@ -755,7 +879,10 @@ fn correction_creates_new_version_and_preserves_old() {
         serde_json::to_vec(&value).expect("corrected fixture serializes")
     };
     let (_, v2_outcome) = curate(temp.path(), &corrected, EMPTY_ACTIONS);
-    assert_eq!(v2_outcome.dataset_version, 2, "correction must bump the version");
+    assert_eq!(
+        v2_outcome.dataset_version, 2,
+        "correction must bump the version"
+    );
 
     // The new version carries a NEW content hash; the old version's manifest
     // hash and quality report are untouched.

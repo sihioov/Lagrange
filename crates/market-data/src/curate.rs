@@ -556,7 +556,7 @@ pub fn curate_batch(
         action_count: actions.len() as u64,
         content_hash: ContentHash::from_bytes(b"placeholder"),
     };
-    let content_hash = manifest_content_hash(&manifest)?;
+    let content_hash = dataset_manifest_hash(&manifest)?;
     let manifest = DatasetManifest {
         content_hash,
         ..manifest
@@ -575,8 +575,9 @@ pub fn curate_batch(
 }
 
 /// The canonical bytes a manifest's content hash covers (everything except
-/// the hash field itself).
-fn manifest_content_hash(manifest: &DatasetManifest) -> Result<ContentHash, CurateError> {
+/// the hash field itself). Public so consumers (Todo 11 quality gate) can
+/// verify an on-disk manifest's immutability.
+pub fn dataset_manifest_hash(manifest: &DatasetManifest) -> Result<ContentHash, CurateError> {
     #[derive(Serialize)]
     struct Canonical<'a> {
         dataset_id: &'a DatasetId,
