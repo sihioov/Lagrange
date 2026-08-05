@@ -265,10 +265,10 @@ impl UniversePublisher {
                     reason: format!("not in instrument master on {effective_from}"),
                 });
             }
-            Err(MasterError::NotListed { .. }) => {
+            Err(MasterError::NotListed { reason, .. }) => {
                 return Err(UniverseError::InactiveInstrument {
                     id: id.clone(),
-                    reason: "not listed on the effective date".to_owned(),
+                    reason: format!("not listed on the effective date ({reason})"),
                 });
             }
             Err(other) => {

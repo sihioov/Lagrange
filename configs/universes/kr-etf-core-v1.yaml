@@ -1,0 +1,40 @@
+# Fixed Korean ETF universe v1 (plan Todo 12) — source of truth for the fixed
+# 11-instrument KRW ETF universe.
+#
+# Membership is declared by EXACT canonical InstrumentId={symbol}.KRX entries.
+# At publication (crates/selector UniversePublisher), every id is resolved
+# against the KRX instrument master and the Todo 5 entitlement gate; a blocked
+# id (inactive / unsupported / duplicated / unlicensed) blocks the whole
+# publication with a typed error naming the instrument + reason — the system
+# NEVER substitutes a different product automatically.
+#
+# Eligibility profile: unleveraged, non-inverse, ETF only (platform scope
+# forbids leverage and shorting). Benchmark: 069500.KRX (a member).
+# Base currency: KRW. The source_snapshot records the KRX reference the ids
+# were resolved from; metadata/names are resolved from KRX at build time.
+universe:
+  id: kr-etf-core-v1
+  base_currency: KRW
+  effective_from: "2020-01-31"
+  effective_until: null
+  benchmark: "069500.KRX"
+  eligibility:
+    unleveraged: true
+    non_inverse: true
+    asset_class: etf
+  instruments:
+    - id: "069500.KRX"
+    - id: "102110.KRX"
+    - id: "229200.KRX"
+    - id: "143850.KRX"
+    - id: "133690.KRX"
+    - id: "195930.KRX"
+    - id: "192090.KRX"
+    - id: "148070.KRX"
+    - id: "114260.KRX"
+    - id: "153130.KRX"
+    - id: "132030.KRX"
+  source_snapshot:
+    source: krx-reference-2019-v1
+    version: "1.0"
+    captured_at: "2019-12-31"
