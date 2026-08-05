@@ -18,8 +18,11 @@ use market_data::calendar::{
     CalendarError, CalendarProvenance, Holiday, KrCalendar, KrCalendarSpec, SessionTimes,
     krx_2020,
 };
+use market_data::instrument_master::{AliasNamespace, seed_universe};
 
-use domain::{ContentHash, TradingDate, UtcTimestamp, Venue, Zone};
+use domain::{
+    ContentHash, Currency, InstrumentId, Quantity, TradingDate, UtcTimestamp, Venue, Zone,
+};
 
 fn d(s: &str) -> TradingDate {
     TradingDate::parse(s).unwrap()
@@ -244,15 +247,6 @@ fn calendar_correction_creates_new_version_not_mutation() {
 #[test]
 fn build_rejects_holiday_that_is_also_a_session() {
     // A date cannot be both an explicit holiday and an explicit session.
-    let spec = KrCalendarSpec::krx_2020_v2_with_additional_holiday(
-        Holiday {
-            date: d("2020-06-05"),
-            reason: "conflicting record".to_owned(),
-        },
-        UtcTimestamp::parse_rfc3339("2020-06-01T00:00:00Z").unwrap(),
-    );
-    // The v2 spec builder already removes the date from sessions; a raw spec
-    // that lists the same date in both must be rejected at build time.
     let raw = KrCalendarSpec {
         calendar_id: "krx-2020-conflict".to_owned(),
         timezone: Zone::SEOUL,
@@ -356,4 +350,54 @@ fn content_hash_deterministic_across_builds() {
     .clone();
     assert_eq!(h1, h2);
     let _ = ContentHash::parse(h1.as_str()).unwrap();
+}
+
+#[test]
+fn qa_resolve_069500_through_krx_and_kis() {
+    // Manual QA channel (plan Todo 9): resolve 069500 through KRX and KIS
+    // aliases on an effective date and print the canonical identity +
+    // metadata + the timezone-aware open/close instants of the next KRX
+    // session 2020-02-03.
+    let master = seed_universe();
+    let date = d("2020-01-31");
+    let canonical = master
+        .resolve(AliasNamespace::Krx, "069500", date)
+        .expect("KRX alias must resolve");
+    let via_kis = master
+        .resolve(AliasNamespace::Kis, "069500", date)
+        .expect("KIS alias must resolve");
+    assert_eq!(canonical, via_kis);
+
+    let instrument = master.instrument_on(&canonical, date).unwrap();
+    let cal = krx_2020();
+    let next = cal.next_trading_day(date).unwrap();
+    let open_utc = cal.session_open_utc(next).unwrap();
+    let close_utc = cal.session_close_utc(next).unwrap();
+    let open_local = cal.session_open_local(next).unwrap();
+    let close_local = cal.session_close_local(next).unwrap();
+
+    println!("== manual QA: resolve 069500 through KRX and KIS on {date} ==");
+    println!("krx alias 069500   -> canonical: {canonical}");
+    println!("kis alias 069500   -> canonical: {via_kis}");
+    println!("venue:              {}", instrument.venue);
+    println!("currency:           {}", instrument.currency);
+    println!("lot_size:           {}", instrument.lot_size);
+    println!("size_increment:     {}", instrument.size_increment);
+    println!("price_increment:    {}", instrument.price_increment);
+    println!("status:             {}", instrument.status);
+    println!("next session after {date}: {next}");
+    println!("session open  (utc):  {open_utc}");
+    println!("session close (utc):  {close_utc}");
+    println!("session open  (local): {open_local}");
+    println!("session close (local): {close_local}");
+
+    assert_eq!(canonical, InstrumentId::parse("069500.KRX").unwrap());
+    assert_eq!(instrument.venue, Venue::Krx);
+    assert_eq!(instrument.currency, Currency::KRW);
+    assert_eq!(instrument.lot_size, Quantity::parse("100").unwrap());
+    assert_eq!(next, d("2020-02-03"));
+    assert_eq!(open_utc.to_rfc3339(), "2020-02-03T00:00:00Z");
+    assert_eq!(close_utc.to_rfc3339(), "2020-02-03T06:30:00Z");
+    assert_eq!(open_local.to_rfc3339(), "2020-02-03T09:00:00+09:00");
+    assert_eq!(close_local.to_rfc3339(), "2020-02-03T15:30:00+09:00");
 }

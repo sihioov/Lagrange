@@ -15,14 +15,20 @@
 //! - [`redact`] - secret/redaction scan for logs (never expose provider keys/data).
 //!
 //! Todo 9 delivers the **canonical instrument master with KRX/KIS/provider
-//! aliases** ([`instrument_master`]):
+//! aliases** ([`instrument_master`]) and the **versioned KRX trading
+//! calendar** ([`calendar`]):
 //!
 //! - canonical `InstrumentId = {symbol}.KRX` (design §6.4); a ticker change
 //!   remaps the alias and appends versioned alias history — the canonical
 //!   identity is never silently changed;
 //! - venue/currency/price/size/lot metadata and listing/delisting status with
-//!   effective dates (requirements §8.2, FR-DATA-002).
+//!   effective dates (requirements §8.2, FR-DATA-002);
+//! - Asia/Seoul calendar with explicit sessions 09:00-15:30 KST, explicit
+//!   holiday data with source/version/hash provenance, last/next trading-day
+//!   queries, holiday month-end handling, and timezone-aware open/close
+//!   instants (FR-DATA-003/005).
 
+pub mod calendar;
 pub mod contract;
 pub mod entitlement;
 pub mod ingest;
