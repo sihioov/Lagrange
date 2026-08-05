@@ -1,0 +1,17 @@
+{
+  "dataset_id": "kr-etf-daily-2020-01-31",
+  "schema_version": 1,
+  "source": "synthetic",
+  "rights": "SYNTHETIC_ONLY",
+  "currency": "KRW",
+  "instruments": [
+    {"symbol": "069500.KRX", "lot_size": 100, "currency": "KRW"},
+    {"symbol": "229200.KRX", "lot_size": 100, "currency": "KRW"}
+  ],
+  "bars": [
+    {"instrument": "069500.KRX", "date": "2020-01-30", "open": 10190, "high": 10300, "low": 10150, "close": 10260, "volume": 1180000, "value": 12106800000},
+    {"instrument": "069500.KRX", "date": "2020-01-31", "open": 10270, "high": 10340, "low": 10230, "close": 10300, "volume": 1220000, "value": 12566000000},
+    {"instrument": "229200.KRX", "date": "2020-01-30", "open": 8510, "high": 8580, "low": 8480, "close": 8550, "volume": 890000, "value": 7609500000},
+    {"instrument": "229200.KRX", "date": "2020-01-31", "open": 8560, "high": 8600, "low": 8520, "close": 8580, "volume": 910000, "value": 7807800000}
+  ]
+}

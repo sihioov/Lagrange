@@ -1,0 +1,18 @@
+{
+  "provider": "krx",
+  "market": "kr",
+  "schema_version": 1,
+  "source": "synthetic",
+  "date": "2020-01-31",
+  "simulate": null,
+  "note": "Failure-mode fixture: provider-supplied file name contains a Windows path traversal sequence. Must be rejected with a typed UnsafeFileName error and no bytes written.",
+  "responses": [
+    {
+      "kind": "bars",
+      "file": "..\\..\\evil.json",
+      "endpoint": "krx.eod.bars.v1",
+      "query": [["market", "KR"]],
+      "headers": []
+    }
+  ]
+}

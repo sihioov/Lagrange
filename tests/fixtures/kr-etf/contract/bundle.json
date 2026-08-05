@@ -1,0 +1,39 @@
+{
+  "provider": "krx",
+  "market": "kr",
+  "schema_version": 1,
+  "source": "synthetic",
+  "date": "2020-01-31",
+  "simulate": null,
+  "note": "Recorded synthetic contract bundle (FR-DATA-001). Fabricated values only - no licensed KRX data, no real market payloads. Real ticker codes are public identifiers used solely for universe shape. Headers are redacted placeholders.",
+  "responses": [
+    {
+      "kind": "bars",
+      "file": "bars-response.json",
+      "endpoint": "krx.eod.bars.v1",
+      "query": [["market", "KR"], ["date", "2020-01-31"]],
+      "headers": [["X-Data-License", "redacted"], ["X-Consumer", "redacted"]]
+    },
+    {
+      "kind": "reference",
+      "file": "reference-response.json",
+      "endpoint": "krx.instrument.reference.v1",
+      "query": [["market", "KR"]],
+      "headers": [["X-Data-License", "redacted"]]
+    },
+    {
+      "kind": "calendar",
+      "file": "calendar-response.json",
+      "endpoint": "krx.calendar.v1",
+      "query": [["market", "KR"], ["date", "2020-01-31"]],
+      "headers": [["X-Data-License", "redacted"]]
+    },
+    {
+      "kind": "corporate_actions",
+      "file": "corporate-actions-response.json",
+      "endpoint": "krx.corporate-actions.v1",
+      "query": [["market", "KR"], ["date", "2020-01-31"]],
+      "headers": [["X-Data-License", "redacted"]]
+    }
+  ]
+}

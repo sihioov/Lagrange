@@ -1,0 +1,18 @@
+{
+  "provider": "krx",
+  "market": "kr",
+  "schema_version": 1,
+  "source": "synthetic",
+  "date": "2020-01-31",
+  "simulate": "timeout",
+  "note": "Failure-mode fixture: simulates an endpoint timeout on the bars request. The provider returns a typed EndpointTimeout before any file is read or stored.",
+  "responses": [
+    {
+      "kind": "bars",
+      "file": "bars-response.json",
+      "endpoint": "krx.eod.bars.v1",
+      "query": [["market", "KR"]],
+      "headers": []
+    }
+  ]
+}

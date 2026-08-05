@@ -1,0 +1,15 @@
+{
+  "calendar_id": "krx-2020-01-synthetic",
+  "schema_version": 1,
+  "source": "synthetic",
+  "timezone": "Asia/Seoul",
+  "utc_offset": "+09:00",
+  "session_times_local": {"open": "09:00:00", "close": "15:30:00"},
+  "session_times_utc": {"open": "00:00:00", "close": "06:30:00"},
+  "sessions": [
+    {"date": "2020-01-30", "weekday": "Thursday", "open_utc": "2020-01-30T00:00:00Z", "close_utc": "2020-01-30T06:30:00Z"},
+    {"date": "2020-01-31", "weekday": "Friday", "open_utc": "2020-01-31T00:00:00Z", "close_utc": "2020-01-31T06:30:00Z"}
+  ],
+  "holidays": [],
+  "no_dst_note": "Asia/Seoul has no DST; fixed +09:00 offset."
+}

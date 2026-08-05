@@ -1,0 +1,10 @@
+{
+  "dataset_id": "kr-etf-reference-2020-01-31",
+  "schema_version": 1,
+  "source": "synthetic",
+  "timezone": "Asia/Seoul",
+  "instruments": [
+    {"symbol": "069500.KRX", "name": "SYNTHETIC-KODEX200", "lot_size": 100, "currency": "KRW", "kind": "equity-etf"},
+    {"symbol": "229200.KRX", "name": "SYNTHETIC-KODEX-KOSPI200", "lot_size": 100, "currency": "KRW", "kind": "equity-etf"}
+  ]
+}
