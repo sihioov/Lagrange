@@ -22,13 +22,9 @@ hex = "0.4"
 ring = "0.17"
 chrono = "0.4"
 email_address = "0.2"
+async-trait = "0.1"
 url = "2.5"
-
-[features]
-# The Auth0 protocol simulator (a fake OIDC provider used to prove the full
-# login contract without a real tenant). Enabled for this crate's own tests via
-# `cfg(test)` and opt-in by downstream crates (apps/api-server/auth dev-deps).
-testkit = []
+subtle = "2"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
