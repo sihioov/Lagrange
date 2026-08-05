@@ -7,7 +7,7 @@
 use auth::clock::FakeClock;
 use auth::entitlement::Role;
 use auth::invites::RedeemedIdentity;
-use auth::sessions::{SessionError, SessionInfo, SessionService, InMemorySessionStore};
+use auth::sessions::{InMemorySessionStore, SessionError, SessionInfo, SessionService};
 use auth::stepup::{StepUpDenial, require_owner_step_up};
 use std::sync::Arc;
 
@@ -22,12 +22,7 @@ fn identity(user: &str, role: Role) -> RedeemedIdentity {
     }
 }
 
-async fn issued_session(
-    user: &str,
-    role: Role,
-    auth_time: i64,
-    amr: &[&str],
-) -> SessionInfo {
+async fn issued_session(user: &str, role: Role, auth_time: i64, amr: &[&str]) -> SessionInfo {
     let store = Arc::new(InMemorySessionStore::default());
     let audit = Arc::new(auth::audit::InMemoryAuthAudit::default());
     let svc = SessionService::new(store, Arc::new(FakeClock(NOW)), audit);
@@ -79,10 +74,22 @@ async fn member_denied_even_with_fresh_mfa() {
 async fn expired_session_cannot_reach_step_up_at_all() {
     let store = Arc::new(InMemorySessionStore::default());
     let audit = Arc::new(auth::audit::InMemoryAuthAudit::default());
-    let mut clock = FakeClock(NOW);
-    let svc = SessionService::new(store, Arc::new(clock), audit);
-    let issued = svc.issue(&identity("own_1", Role::Owner), NOW, vec!["mfa".to_string()]).await.unwrap();
-    clock.advance(1801);
-    let err = svc.validate(&issued.cookie_value).await.expect_err("expired");
-    assert!(matches!(err, SessionError::Expired), "short session forces re-login, not step-up");
+    let early = SessionService::new(store.clone(), Arc::new(FakeClock(NOW)), audit.clone());
+    let issued = early
+        .issue(
+            &identity("own_1", Role::Owner),
+            NOW,
+            vec!["mfa".to_string()],
+        )
+        .await
+        .unwrap();
+    let late = SessionService::new(store, Arc::new(FakeClock(NOW + 1801)), audit);
+    let err = late
+        .validate(&issued.cookie_value)
+        .await
+        .expect_err("expired");
+    assert!(
+        matches!(err, SessionError::Expired),
+        "short session forces re-login, not step-up"
+    );
 }

@@ -41,8 +41,19 @@
 //!   immutable identity key; sessions are short, opaque, revocable, and
 //!   CSRF-protected; Owner-sensitive actions require fresh MFA (`auth_time`/`amr`).
 
+pub mod audit;
+pub mod clock;
+pub mod csrf;
 pub mod entitlement;
+pub mod invites;
 pub mod oidc;
+pub mod service;
+pub mod sessions;
 pub mod simulator;
+pub mod stepup;
 
 mod testkey;
+
+pub use audit::{AuthAudit, AuthAuditEvent, AuthAuditKind, InMemoryAuthAudit, NoopAudit};
+pub use clock::{Clock, FakeClock, SystemClock};
+pub use service::{AuthError, AuthService};
