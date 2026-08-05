@@ -195,7 +195,7 @@ fn callback_with_wrong_state_is_denied() {
     };
     let req = authorize(&cfg);
     let pen = pending("expected-state", "nonce-x", "verifier-x");
-    let code = sim.issue_code(&req, json!({}), &req.pkce.verifier);
+    let code = sim.issue_code(json!({}), &req.pkce.verifier);
     let err = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
@@ -219,7 +219,7 @@ fn callback_with_expired_pending_auth_is_denied() {
         transport: Arc::new(sim.clone()),
     };
     let req = authorize(&cfg);
-    let code = sim.issue_code(&req, json!({}), &req.pkce.verifier);
+    let code = sim.issue_code(json!({}), &req.pkce.verifier);
     let stale = PendingAuth {
         state: req.state.clone(),
         nonce: req.nonce.clone(),
