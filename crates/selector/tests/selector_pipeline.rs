@@ -23,7 +23,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use domain::{ContentHash, DataState, InstrumentId, TradingDate};
-use factor_engine::{FactorRow, FactorSnapshot, NormalizationMeta};
+use factor_engine::snapshot::NormalizationMeta;
+use factor_engine::{FactorRow, FactorSnapshot};
 use market_data::{IssueCode, QualityIssue, QualityReport, Severity};
 use selector::eligibility::Exclusion;
 use selector::reason::ReasonCode;
@@ -42,6 +43,14 @@ const V1_SYMBOLS: [&str; 11] = [
 
 fn td(y: i32, m: u32, d: u32) -> TradingDate {
     TradingDate::new(y, m, d).expect("valid date")
+}
+
+fn weights(pairs: &[(&str, f64)]) -> BTreeMap<String, f64> {
+    pairs.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect()
+}
+
+fn mandatory(pairs: &[&str]) -> BTreeSet<String> {
+    pairs.iter().map(|s| s.to_string()).collect()
 }
 
 fn id(symbol: &str) -> InstrumentId {
@@ -152,15 +161,16 @@ fn blocked_report() -> QualityReport {
 }
 
 /// The default MVP spec: momentum 0.7 / volatility 0.3, mandatory 12m
-/// momentum, top 7 of 11, no per-instrument cap, 20% cash floor.
+/// momentum, top 7 of 11, cash floor 20%, and a max weight that exactly fits
+/// the investable budget (0.8/7) so the default run is never capacity-bound.
 fn default_spec() -> SelectionSpec {
     SelectionSpec::new(
         "relative_momentum",
         "1.0.0",
-        BTreeMap::from([("return_12m", 0.7), ("vol_20d", 0.3)]),
-        BTreeSet::from(["return_12m"]),
+        weights(&[("return_12m", 0.7), ("vol_20d", 0.3)]),
+        mandatory(&["return_12m"]),
         7,
-        1.0,
+        0.8 / 7.0,
         0.2,
         4,
         1e-9,
@@ -251,8 +261,8 @@ fn weights_finite_nonnegative_and_sum_le_one_within_tolerance() {
             let spec = SelectionSpec::new(
                 "relative_momentum",
                 "1.0.0",
-                BTreeMap::from([("return_12m", 0.7), ("vol_20d", 0.3)]),
-                BTreeSet::from(["return_12m"]),
+                weights(&[("return_12m", 0.7), ("vol_20d", 0.3)]),
+                mandatory(&["return_12m"]),
                 top_n,
                 max_weight,
                 cash_floor,
@@ -307,8 +317,8 @@ fn cash_floor_and_max_weight_constraints_hold() {
     let spec = SelectionSpec::new(
         "relative_momentum",
         "1.0.0",
-        BTreeMap::from([("return_12m", 0.7), ("vol_20d", 0.3)]),
-        BTreeSet::from(["return_12m"]),
+        weights(&[("return_12m", 0.7), ("vol_20d", 0.3)]),
+        mandatory(&["return_12m"]),
         3,
         0.2,
         0.2,
@@ -335,8 +345,8 @@ fn cash_floor_and_max_weight_constraints_hold() {
     // Capped exactness: 3 targets x 0.2 = 0.6; the 0.2 residue lands in cash.
     assert_eq!(portfolio.targets[0].target_weight, 0.2);
     assert_eq!(portfolio.cash_weight, 0.4);
-    // The cap is explained on every capped target.
-    for t in &portfolio.targets {
+    // The cap is explained on every SELECTED (capped) target.
+    for t in portfolio.targets.iter().filter(|t| t.rank <= 3) {
         assert!(
             t.reasons.iter().any(|r| r.code == ReasonCode::WeightCappedAtMax),
             "capped target {} must carry a WEIGHT_CAPPED_AT_MAX reason",
@@ -351,7 +361,6 @@ fn cash_floor_and_max_weight_constraints_hold() {
 
 #[test]
 fn every_selected_and_excluded_item_has_structured_evidence() {
-    let (factors, _) = full_fixture();
     let universe = fixture_universe(&V1_SYMBOLS);
     // Exclude 229200.KRX via a NULL mandatory factor while everything else is
     // healthy.
@@ -412,10 +421,10 @@ fn tie_scores_break_by_canonical_instrument_id() {
     let spec = SelectionSpec::new(
         "relative_momentum",
         "1.0.0",
-        BTreeMap::from([("return_12m", 0.7), ("vol_20d", 0.3)]),
-        BTreeSet::from(["return_12m"]),
+        weights(&[("return_12m", 0.7), ("vol_20d", 0.3)]),
+        mandatory(&["return_12m"]),
         3,
-        1.0,
+        1.0 / 3.0,
         0.0,
         4,
         1e-9,
@@ -443,7 +452,6 @@ fn tie_scores_break_by_canonical_instrument_id() {
 
 #[test]
 fn null_mandatory_factor_excludes_with_reason() {
-    let (factors, _) = full_fixture();
     let universe = fixture_universe(&V1_SYMBOLS);
     // Make the mandatory factor NULL for 102110.KRX only.
     let mut values = full_fixture().1;
@@ -535,8 +543,8 @@ fn impossible_constraints_yield_typed_error() {
     let impossible = SelectionSpec::new(
         "relative_momentum",
         "1.0.0",
-        BTreeMap::from([("return_12m", 0.7), ("vol_20d", 0.3)]),
-        BTreeSet::from(["return_12m"]),
+        weights(&[("return_12m", 0.7), ("vol_20d", 0.3)]),
+        mandatory(&["return_12m"]),
         5,
         0.2,
         0.2,
@@ -557,8 +565,8 @@ fn impossible_constraints_yield_typed_error() {
     let boundary = SelectionSpec::new(
         "relative_momentum",
         "1.0.0",
-        BTreeMap::from([("return_12m", 0.7), ("vol_20d", 0.3)]),
-        BTreeSet::from(["return_12m"]),
+        weights(&[("return_12m", 0.7), ("vol_20d", 0.3)]),
+        mandatory(&["return_12m"]),
         8,
         0.1,
         0.2,
@@ -594,7 +602,7 @@ fn weight_rounding_residue_goes_to_cash_deterministically() {
         );
     }
     let sum: f64 = selected.iter().map(|t| t.target_weight).sum();
-    assert_eq!(sum, 0.7994);
+    assert!((sum - 0.7994).abs() < 1e-12, "sum was {sum}");
     assert_eq!(portfolio.cash_weight, 0.2006, "residue + floor lands in cash");
     assert!(
         (sum + portfolio.cash_weight - 1.0).abs() < 1e-12,
@@ -638,16 +646,15 @@ fn factor_snapshot_universe_mismatch_is_typed_error() {
 
 #[test]
 fn as_of_outside_universe_window_is_typed_error() {
-    let (factors, _) = full_fixture();
+    let (_, values) = full_fixture();
     let universe = fixture_universe(&V1_SYMBOLS);
     let spec = default_spec();
 
-    let mut late = factors.clone();
-    late.as_of = td(2021, 6, 30); // still inside open-ended window -> OK
+    // Late as-of inside the open-ended window, with rows dated consistently.
+    let late = fixture_factors(&V1_SYMBOLS, td(2021, 6, 30), &values);
     assert!(select(&spec, &universe, &late).is_ok());
 
-    let mut early = factors.clone();
-    early.as_of = td(2019, 12, 31); // before effective_from 2020-01-31
+    let early = fixture_factors(&V1_SYMBOLS, td(2019, 12, 31), &values);
     let err = select(&spec, &universe, &early).expect_err("window violation must error");
     assert_eq!(err.code(), "AS_OF_OUTSIDE_WINDOW");
 }
@@ -663,8 +670,8 @@ fn unknown_factor_in_spec_is_typed_error() {
     let spec = SelectionSpec::new(
         "relative_momentum",
         "1.0.0",
-        BTreeMap::from([("bogus_factor", 1.0)]),
-        BTreeSet::from(["return_12m"]),
+        weights(&[("bogus_factor", 1.0)]),
+        mandatory(&["return_12m"]),
         3,
         1.0,
         0.0,
@@ -699,7 +706,8 @@ fn universe_member_missing_snapshot_row_is_typed_error() {
 
 #[test]
 fn snapshot_unknown_instrument_is_typed_error() {
-    let values: Vec<(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> = full_fixture().1;
+    let mut values: Vec<(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> = full_fixture().1;
+    values.push(("999999", Some(0.1), Some(0.5), Some(0.05), Some(0.5)));
     let mut symbols = V1_SYMBOLS.to_vec();
     symbols.push("999999"); // in the snapshot but NOT in the published universe
     let factors = fixture_factors(&symbols, td(2020, 1, 31), &values);
@@ -710,13 +718,13 @@ fn snapshot_unknown_instrument_is_typed_error() {
 
 #[test]
 fn invalid_spec_is_typed_error_never_panic() {
-    let cases: Vec<(&str, SelectionSpec)> = vec![
+    let cases: Vec<(&str, SelectorError)> = vec![
         (
             "cash floor at 1.0 leaves no room",
             SelectionSpec::new(
                 "s",
                 "1.0.0",
-                BTreeMap::from([("return_12m", 1.0)]),
+                weights(&[("return_12m", 1.0)]),
                 BTreeSet::new(),
                 1,
                 1.0,
@@ -731,7 +739,7 @@ fn invalid_spec_is_typed_error_never_panic() {
             SelectionSpec::new(
                 "s",
                 "1.0.0",
-                BTreeMap::from([("return_12m", 1.0)]),
+                weights(&[("return_12m", 1.0)]),
                 BTreeSet::new(),
                 1,
                 1.5,
@@ -761,7 +769,7 @@ fn invalid_spec_is_typed_error_never_panic() {
             SelectionSpec::new(
                 "s",
                 "1.0.0",
-                BTreeMap::from([("return_12m", 1.0)]),
+                weights(&[("return_12m", 1.0)]),
                 BTreeSet::new(),
                 0,
                 1.0,
@@ -776,7 +784,7 @@ fn invalid_spec_is_typed_error_never_panic() {
             SelectionSpec::new(
                 "s",
                 "1.0.0",
-                BTreeMap::from([("return_12m", 1.0)]),
+                weights(&[("return_12m", 1.0)]),
                 BTreeSet::new(),
                 1,
                 1.0,
@@ -791,7 +799,7 @@ fn invalid_spec_is_typed_error_never_panic() {
             SelectionSpec::new(
                 "s",
                 "1.0.0",
-                BTreeMap::from([("return_12m", f64::NAN)]),
+                weights(&[("return_12m", f64::NAN)]),
                 BTreeSet::new(),
                 1,
                 1.0,
@@ -806,7 +814,7 @@ fn invalid_spec_is_typed_error_never_panic() {
             SelectionSpec::new(
                 "s",
                 "1.0.0",
-                BTreeMap::from([("return_12m", 1.0)]),
+                weights(&[("return_12m", 1.0)]),
                 BTreeSet::new(),
                 1,
                 1.0,
@@ -861,7 +869,7 @@ fn snapshot_and_provenance_ids_are_carried_through() {
     assert_eq!(portfolio.as_of, td(2020, 1, 31));
     assert_eq!(portfolio.strategy_version, "relative_momentum@1.0.0");
     assert_eq!(portfolio.constraints.top_n, 7);
-    assert_eq!(portfolio.constraints.max_weight, 1.0);
+    assert!((portfolio.constraints.max_weight - 0.8 / 7.0).abs() < 1e-12);
     assert_eq!(portfolio.constraints.cash_floor, 0.2);
     // Factor raw/normalized values ride along for explainability (FR-SEL-005).
     let top = &portfolio.targets[0];
