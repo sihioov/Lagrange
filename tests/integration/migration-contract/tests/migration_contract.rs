@@ -11,9 +11,13 @@
 //!
 //! Every test requires `DATABASE_URL` to point at a SUPERVISOR connection to a
 //! DISPOSABLE PostgreSQL 18 cluster, e.g.
-//! `postgres://postgres@127.0.0.1:54329/postgres` (trust auth). Without the
-//! variable the tests skip, so `cargo test --workspace` stays green on hosts
-//! that have no database at all.
+//! `postgres://postgres@127.0.0.1:54329/postgres` (trust auth). Both tests are
+//! gated `#[ignore = "requires disposable PostgreSQL 18 (Todo 3 blocked)"]`, so
+//! `cargo test --workspace` stays green (they report as ignored) on hosts that
+//! have no database at all; run them with `cargo test -p migration-contract
+//! -- --ignored` once PG18 is available. The `require_db_url()` skip below is
+//! kept as a second line of defense so an ignored-but-forced run without a
+//! cluster fails as a clean SKIP rather than a connection error.
 //!
 //! Covered contract (acceptance for plan Todo 3):
 //!   - `sqlx migrate run` applies all migrations; a second run is a no-op.
@@ -79,11 +83,34 @@ const TENANT_TABLES: &[&str] = &[
 
 const PUBLIC_JOB_STATUSES: [&str; 5] = ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"];
 
-fn pg_code(err: &sqlx::Error) -> Option<&str> {
+fn pg_code(err: &sqlx::Error) -> Option<String> {
     match err {
-        sqlx::Error::Database(e) => e.code().as_deref(),
+        // sqlx 0.9's `DatabaseError::code()` returns `Option<Cow<'_, str>>`;
+        // materialize an owned String so the error code outlives `err`.
+        sqlx::Error::Database(e) => e.code().map(|c| c.into_owned()),
         _ => None,
     }
+}
+
+/// Audit point for dynamic DDL. `CREATE/DROP DATABASE` and
+/// `GRANT CONNECT ON DATABASE` take database *identifiers*, which PostgreSQL
+/// cannot express as bind parameters, so these statements must be assembled
+/// dynamically. Injection is impossible: the only interpolated value is the
+/// database name produced by `fresh_db_name()` (`contract_{pid}_{ts}`) and
+/// asserted to contain only `[a-z0-9_]` in `create_contract_db` before any
+/// statement is built. `AssertSqlSafe` records that audit for sqlx 0.9's
+/// compile-time SQL audit.
+fn ddl_for(db: &str, statement: &str) -> sqlx::AssertSqlSafe<String> {
+    sqlx::AssertSqlSafe(statement.replace("{db}", db))
+}
+
+/// Number of rows in sqlx's bookkeeping table — the count of applied
+/// migrations. sqlx 0.9's `Migrator::run`/`undo` return `()` (0.8 returned a
+/// count), so the contract asserts on this table instead.
+async fn applied_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM _sqlx_migrations")
+        .fetch_one(pool)
+        .await
 }
 
 /// Rewrite a superuser URL (`postgres://user[:pw]@host:port/db`) for a role
@@ -117,10 +144,7 @@ fn fresh_db_name() -> String {
 }
 
 async fn admin_pool(url: &str) -> Result<PgPool, Box<dyn Error>> {
-    Ok(PgPoolOptions::new()
-        .max_connections(3)
-        .connect(url)
-        .await?)
+    Ok(PgPoolOptions::new().max_connections(3).connect(url).await?)
 }
 
 /// Create a brand-new database on the disposable cluster, bootstrap roles and
@@ -128,22 +152,24 @@ async fn admin_pool(url: &str) -> Result<PgPool, Box<dyn Error>> {
 async fn create_contract_db(super_url: &str) -> Result<(String, PgPool), Box<dyn Error>> {
     let db = fresh_db_name();
     assert!(
-        db.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+        db.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
         "generated database name must be a safe identifier"
     );
     let admin = admin_pool(super_url).await?;
-    sqlx::query(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
+    sqlx::query(ddl_for(&db, "DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
         .execute(&admin)
         .await?;
-    sqlx::query(&format!("CREATE DATABASE {db}"))
+    sqlx::query(ddl_for(&db, "CREATE DATABASE {db}"))
         .execute(&admin)
         .await?;
     drop(admin);
 
     let super_new = admin_pool(&conn_url(super_url, "postgres", &db)).await?;
     sqlx::raw_sql(BOOTSTRAP_SQL).execute(&super_new).await?;
-    sqlx::raw_sql(&format!(
-        "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, audit_writer"
+    sqlx::raw_sql(ddl_for(
+        &db,
+        "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, audit_writer",
     ))
     .execute(&super_new)
     .await?;
@@ -159,7 +185,7 @@ async fn create_contract_db(super_url: &str) -> Result<(String, PgPool), Box<dyn
 /// Drop the disposable database, terminating any remaining connections.
 async fn drop_contract_db(super_url: &str, db: &str) -> Result<(), Box<dyn Error>> {
     let admin = admin_pool(super_url).await?;
-    sqlx::query(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
+    sqlx::query(ddl_for(db, "DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
         .execute(&admin)
         .await?;
     Ok(())
@@ -176,9 +202,7 @@ fn require_db_url() -> Result<String, Box<dyn Error>> {
     match env::var("DATABASE_URL").ok().filter(|s| !s.is_empty()) {
         Some(url) => Ok(url),
         None => {
-            eprintln!(
-                "SKIP: DATABASE_URL not set - no disposable PostgreSQL cluster available"
-            );
+            eprintln!("SKIP: DATABASE_URL not set - no disposable PostgreSQL cluster available");
             Err("DATABASE_URL not set".into())
         }
     }
@@ -187,7 +211,12 @@ fn require_db_url() -> Result<String, Box<dyn Error>> {
 /// Full contract: migrate run -> no-op re-run -> five-state CHECK -> ORPHANED
 /// attempt -> ownership columns -> role invariants -> app-role denials ->
 /// audit append-only -> worker capability -> hash/unique/check constraints.
+///
+/// Gated `#[ignore]`: requires a live disposable PostgreSQL 18 cluster; runs
+/// only via `cargo test -p migration-contract -- --ignored` once PG18 is
+/// available (Todo 3 is BLOCKED on that).
 #[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 (Todo 3 blocked)"]
 async fn migration_contract_full() {
     let super_url = match require_db_url() {
         Ok(u) => u,
@@ -215,22 +244,35 @@ async fn full_contract_body(
     // ------------------------------------------------------------------
     let expected = MIGRATOR.migrations.len();
     assert!(expected > 0, "migrator must embed at least one migration");
-    let applied = MIGRATOR.run(owner).await?;
-    assert_eq!(applied, expected, "first run must apply all {expected} migrations");
-    let applied_again = MIGRATOR.run(owner).await?;
-    assert_eq!(applied_again, 0, "second run must be a no-op");
+    MIGRATOR.run(owner).await?;
+    let applied = applied_count(owner).await? as usize;
+    assert_eq!(
+        applied, expected,
+        "first run must apply all {expected} migrations"
+    );
+    MIGRATOR.run(owner).await?;
+    let applied_again = applied_count(owner).await? as usize;
+    assert_eq!(applied_again, applied, "second run must be a no-op");
 
     // Tables exist.
     let jobs_class: Option<String> =
         sqlx::query_scalar::<_, Option<String>>("SELECT to_regclass('public.jobs')::text")
             .fetch_one(owner)
             .await?;
-    assert_eq!(jobs_class.as_deref(), Some("jobs"), "public.jobs must exist");
+    assert_eq!(
+        jobs_class.as_deref(),
+        Some("jobs"),
+        "public.jobs must exist"
+    );
     let attempts_class: Option<String> =
         sqlx::query_scalar::<_, Option<String>>("SELECT to_regclass('public.job_attempts')::text")
             .fetch_one(owner)
             .await?;
-    assert_eq!(attempts_class.as_deref(), Some("job_attempts"), "public.job_attempts must exist");
+    assert_eq!(
+        attempts_class.as_deref(),
+        Some("job_attempts"),
+        "public.job_attempts must exist"
+    );
 
     // ------------------------------------------------------------------
     // 2. Ownership columns on every tenant table (design §7.3).
@@ -259,24 +301,24 @@ async fn full_contract_body(
     // 3. Role invariants: every table owned by migration_owner; serving
     //    roles have no BYPASSRLS.
     // ------------------------------------------------------------------
-    let owners: HashSet<String> =
-        sqlx::query_scalar::<_, String>("SELECT tableowner FROM pg_tables WHERE schemaname = 'public'")
-            .fetch_all(owner)
-            .await?
-            .into_iter()
-            .collect();
+    let owners: HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT tableowner FROM pg_tables WHERE schemaname = 'public'",
+    )
+    .fetch_all(owner)
+    .await?
+    .into_iter()
+    .collect();
     assert!(!owners.is_empty(), "at least one table must exist");
     assert!(
         owners.iter().all(|o| o == "migration_owner"),
         "all tables must be owned by migration_owner, got {owners:?}"
     );
     for role in ["app", "worker", "audit_writer"] {
-        let bypass: bool = sqlx::query_scalar::<_, bool>(
-            "SELECT rolbypassrls FROM pg_roles WHERE rolname = $1",
-        )
-        .bind(role)
-        .fetch_one(owner)
-        .await?;
+        let bypass: bool =
+            sqlx::query_scalar::<_, bool>("SELECT rolbypassrls FROM pg_roles WHERE rolname = $1")
+                .bind(role)
+                .fetch_one(owner)
+                .await?;
         assert!(!bypass, "role {role} must not have BYPASSRLS");
     }
 
@@ -309,7 +351,7 @@ async fn full_contract_body(
     .await
     .unwrap_err();
     assert_eq!(
-        pg_code(&sixth),
+        pg_code(&sixth).as_deref(),
         Some("23514"),
         "a sixth public jobs.status (ORPHANED) must be rejected by CHECK"
     );
@@ -320,7 +362,10 @@ async fn full_contract_body(
     .fetch_one(owner)
     .await?;
     for s in PUBLIC_JOB_STATUSES {
-        assert!(checkdef.contains(s), "jobs_status_check must list {s}, got {checkdef}");
+        assert!(
+            checkdef.contains(s),
+            "jobs_status_check must list {s}, got {checkdef}"
+        );
     }
     assert!(
         !checkdef.contains("ORPHANED"),
@@ -330,11 +375,10 @@ async fn full_contract_body(
     // ------------------------------------------------------------------
     // 5. job_attempts.outcome includes ORPHANED (attempt-level only).
     // ------------------------------------------------------------------
-    let job_id: Uuid = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM jobs ORDER BY created_at LIMIT 1",
-    )
-    .fetch_one(owner)
-    .await?;
+    let job_id: Uuid =
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM jobs ORDER BY created_at LIMIT 1")
+            .fetch_one(owner)
+            .await?;
     sqlx::query(
         "INSERT INTO job_attempts (job_id, attempt_no, outcome, claimed_by) \
          VALUES ($1, 1, 'ORPHANED', 'worker-probe')",
@@ -350,7 +394,7 @@ async fn full_contract_body(
     .await
     .unwrap_err();
     assert_eq!(
-        pg_code(&canceled_attempt),
+        pg_code(&canceled_attempt).as_deref(),
         Some("23514"),
         "CANCELED is not an attempt-level outcome; ORPHANED covers worker death"
     );
@@ -362,7 +406,7 @@ async fn full_contract_body(
     .await
     .unwrap_err();
     assert_eq!(
-        pg_code(&dup_attempt),
+        pg_code(&dup_attempt).as_deref(),
         Some("23505"),
         "attempt_no must be unique per job"
     );
@@ -379,44 +423,67 @@ async fn full_contract_body(
     .bind(uid)
     .fetch_one(&app)
     .await?;
-    assert!(acc.as_bytes().len() == 16, "app must be able to insert tenant rows");
+    assert!(
+        acc.as_bytes().len() == 16,
+        "app must be able to insert tenant rows"
+    );
 
     // Denial: ALTER TABLE (no ownership, no schema CREATE).
     let ddl = sqlx::query("ALTER TABLE jobs ADD COLUMN hacked_by_app text")
         .execute(&app)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&ddl), Some("42501"), "app role must not ALTER TABLE");
+    assert_eq!(
+        pg_code(&ddl).as_deref(),
+        Some("42501"),
+        "app role must not ALTER TABLE"
+    );
     let create_table = sqlx::query("CREATE TABLE app_hack (id integer)")
         .execute(&app)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&create_table), Some("42501"), "app role must not CREATE TABLE");
+    assert_eq!(
+        pg_code(&create_table).as_deref(),
+        Some("42501"),
+        "app role must not CREATE TABLE"
+    );
 
     // Denial: TRUNCATE audit_logs.
     let truncate = sqlx::query("TRUNCATE TABLE audit_logs")
         .execute(&app)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&truncate), Some("42501"), "app role must not TRUNCATE audit_logs");
+    assert_eq!(
+        pg_code(&truncate).as_deref(),
+        Some("42501"),
+        "app role must not TRUNCATE audit_logs"
+    );
 
     // Denial: audit rows are append-only for app (SELECT only).
     let upd = sqlx::query("UPDATE audit_logs SET reason = 'tampered'")
         .execute(&app)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&upd), Some("42501"), "app role must not UPDATE audit_logs");
+    assert_eq!(
+        pg_code(&upd).as_deref(),
+        Some("42501"),
+        "app role must not UPDATE audit_logs"
+    );
     let del = sqlx::query("DELETE FROM audit_logs")
         .execute(&app)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&del), Some("42501"), "app role must not DELETE audit_logs");
+    assert_eq!(
+        pg_code(&del).as_deref(),
+        Some("42501"),
+        "app role must not DELETE audit_logs"
+    );
     let app_audit_insert = sqlx::query("INSERT INTO audit_logs (action) VALUES ('probe')")
         .execute(&app)
         .await
         .unwrap_err();
     assert_eq!(
-        pg_code(&app_audit_insert),
+        pg_code(&app_audit_insert).as_deref(),
         Some("42501"),
         "audit_logs is write-restricted to audit_writer"
     );
@@ -430,7 +497,7 @@ async fn full_contract_body(
     .await
     .unwrap_err();
     assert_eq!(
-        pg_code(&cross_owner),
+        pg_code(&cross_owner).as_deref(),
         Some("42501"),
         "app role must not INSERT into system-owned shared tables (cross-owner insert)"
     );
@@ -440,7 +507,11 @@ async fn full_contract_body(
         .execute(&app)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&shared_update), Some("42501"), "shared dataset rows are read-only");
+    assert_eq!(
+        pg_code(&shared_update).as_deref(),
+        Some("42501"),
+        "shared dataset rows are read-only"
+    );
 
     // Denial: sixth status via app role too.
     let app_sixth = sqlx::query(
@@ -450,7 +521,11 @@ async fn full_contract_body(
     .execute(&app)
     .await
     .unwrap_err();
-    assert_eq!(pg_code(&app_sixth), Some("23514"), "sixth status denied for app too");
+    assert_eq!(
+        pg_code(&app_sixth).as_deref(),
+        Some("23514"),
+        "sixth status denied for app too"
+    );
 
     // ------------------------------------------------------------------
     // 7. audit_writer: append-only writer of audit_logs, nothing else.
@@ -463,25 +538,39 @@ async fn full_contract_body(
         .execute(&aw)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&aw_upd), Some("42501"), "audit_writer must not UPDATE audit rows");
+    assert_eq!(
+        pg_code(&aw_upd).as_deref(),
+        Some("42501"),
+        "audit_writer must not UPDATE audit rows"
+    );
     let aw_del = sqlx::query("DELETE FROM audit_logs")
         .execute(&aw)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&aw_del), Some("42501"), "audit_writer must not DELETE audit rows");
+    assert_eq!(
+        pg_code(&aw_del).as_deref(),
+        Some("42501"),
+        "audit_writer must not DELETE audit rows"
+    );
     let aw_tr = sqlx::query("TRUNCATE TABLE audit_logs")
         .execute(&aw)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&aw_tr), Some("42501"), "audit_writer must not TRUNCATE audit_logs");
-    let aw_tenant = sqlx::query("INSERT INTO accounts (owner_user_id, account_type, name) \
-                                 VALUES ($1, 'PAPER', 'x')")
-        .bind(uid)
-        .execute(&aw)
-        .await
-        .unwrap_err();
     assert_eq!(
-        pg_code(&aw_tenant),
+        pg_code(&aw_tr).as_deref(),
+        Some("42501"),
+        "audit_writer must not TRUNCATE audit_logs"
+    );
+    let aw_tenant = sqlx::query(
+        "INSERT INTO accounts (owner_user_id, account_type, name) \
+                                 VALUES ($1, 'PAPER', 'x')",
+    )
+    .bind(uid)
+    .execute(&aw)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&aw_tenant).as_deref(),
         Some("42501"),
         "audit_writer must not write tenant data (cross-owner insert denied)"
     );
@@ -508,12 +597,20 @@ async fn full_contract_body(
         .execute(&wk)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&wk_audit), Some("42501"), "worker must not write audit_logs");
+    assert_eq!(
+        pg_code(&wk_audit).as_deref(),
+        Some("42501"),
+        "worker must not write audit_logs"
+    );
     let wk_ddl = sqlx::query("ALTER TABLE jobs DROP COLUMN IF EXISTS priority")
         .execute(&wk)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&wk_ddl), Some("42501"), "worker must not DDL");
+    assert_eq!(
+        pg_code(&wk_ddl).as_deref(),
+        Some("42501"),
+        "worker must not DDL"
+    );
     let wk_tenant = sqlx::query(
         "INSERT INTO accounts (owner_user_id, account_type, name) VALUES ($1, 'PAPER', 'y')",
     )
@@ -521,7 +618,11 @@ async fn full_contract_body(
     .execute(&wk)
     .await
     .unwrap_err();
-    assert_eq!(pg_code(&wk_tenant), Some("42501"), "worker must not write tenant data");
+    assert_eq!(
+        pg_code(&wk_tenant).as_deref(),
+        Some("42501"),
+        "worker must not write tenant data"
+    );
 
     // ------------------------------------------------------------------
     // 9. sha256-hash columns enforce `^[0-9a-f]{64}$` (immutable manifests).
@@ -534,7 +635,11 @@ async fn full_contract_body(
     .execute(owner)
     .await
     .unwrap_err();
-    assert_eq!(pg_code(&bad_hash), Some("23514"), "sha256 columns must reject non-hex hashes");
+    assert_eq!(
+        pg_code(&bad_hash).as_deref(),
+        Some("23514"),
+        "sha256 columns must reject non-hex hashes"
+    );
     let good_hash = "a".repeat(64);
     sqlx::query(
         "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
@@ -555,7 +660,7 @@ async fn full_contract_body(
     .await
     .unwrap_err();
     assert_eq!(
-        pg_code(&bad_artifact_hash),
+        pg_code(&bad_artifact_hash).as_deref(),
         Some("23514"),
         "result_artifacts.sha256 must be 64 hex chars"
     );
@@ -584,7 +689,11 @@ async fn full_contract_body(
     .execute(owner)
     .await
     .unwrap_err();
-    assert_eq!(pg_code(&dup_session), Some("23505"), "web_sessions.session_hash must be unique");
+    assert_eq!(
+        pg_code(&dup_session).as_deref(),
+        Some("23505"),
+        "web_sessions.session_hash must be unique"
+    );
 
     // ------------------------------------------------------------------
     // 11. data_entitlements lifecycle CHECK (PENDING|ACTIVE|EXPIRED|REVOKED).
@@ -610,7 +719,7 @@ async fn full_contract_body(
     .await
     .unwrap_err();
     assert_eq!(
-        pg_code(&bad_entitlement),
+        pg_code(&bad_entitlement).as_deref(),
         Some("23514"),
         "data_entitlements.status must be CHECK-enforced"
     );
@@ -623,7 +732,12 @@ async fn full_contract_body(
 
 /// Revert (undo all migrations) then run again in a disposable DB: the schema
 /// must be fully removed by the down scripts and fully restored by re-run.
+///
+/// Gated `#[ignore]`: requires a live disposable PostgreSQL 18 cluster; runs
+/// only via `cargo test -p migration-contract -- --ignored` once PG18 is
+/// available (Todo 3 is BLOCKED on that).
 #[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 (Todo 3 blocked)"]
 async fn revert_and_rerun_in_disposable_db() {
     let super_url = match require_db_url() {
         Ok(u) => u,
@@ -642,32 +756,50 @@ async fn revert_and_rerun_in_disposable_db() {
 
 async fn revert_and_rerun_body(
     super_url: &str,
-    db: &str,
+    _db: &str,
     owner: &PgPool,
 ) -> Result<(), Box<dyn Error>> {
     let expected = MIGRATOR.migrations.len();
-    let applied = MIGRATOR.run(owner).await?;
-    assert_eq!(applied, expected, "fresh DB must apply all {expected} migrations");
+    MIGRATOR.run(owner).await?;
+    let applied = applied_count(owner).await? as usize;
+    assert_eq!(
+        applied, expected,
+        "fresh DB must apply all {expected} migrations"
+    );
 
-    // Undo every migration in reverse order (down scripts must exist).
-    let reverted = MIGRATOR.undo(owner, expected as i64).await?;
-    assert_eq!(reverted, expected as i64, "undo must revert all {expected} migrations");
+    // Undo every migration. sqlx 0.9's `undo` reverts migrations whose version
+    // is > target; target 0 therefore reverts everything (the pre-fix code
+    // passed `expected`, which would have reverted nothing).
+    MIGRATOR.undo(owner, 0).await?;
+    let remaining = applied_count(owner).await?;
+    assert_eq!(remaining, 0, "undo must revert all {expected} migrations");
 
     // Schema objects are gone.
     let jobs_gone: Option<String> =
         sqlx::query_scalar::<_, Option<String>>("SELECT to_regclass('public.jobs')::text")
             .fetch_one(owner)
             .await?;
-    assert!(jobs_gone.is_none(), "after revert, public.jobs must not exist");
+    assert!(
+        jobs_gone.is_none(),
+        "after revert, public.jobs must not exist"
+    );
 
     // Run again from scratch.
-    let applied2 = MIGRATOR.run(owner).await?;
-    assert_eq!(applied2, expected, "re-run after revert must re-apply everything");
+    MIGRATOR.run(owner).await?;
+    let applied2 = applied_count(owner).await? as usize;
+    assert_eq!(
+        applied2, expected,
+        "re-run after revert must re-apply everything"
+    );
     let audit_back: Option<String> =
         sqlx::query_scalar::<_, Option<String>>("SELECT to_regclass('public.audit_logs')::text")
             .fetch_one(owner)
             .await?;
-    assert_eq!(audit_back.as_deref(), Some("audit_logs"), "audit_logs must exist after re-run");
+    assert_eq!(
+        audit_back.as_deref(),
+        Some("audit_logs"),
+        "audit_logs must exist after re-run"
+    );
 
     // Post-revert DB still enforces the five-state contract (deterministic).
     let uid: Uuid = sqlx::query_scalar::<_, Uuid>(
@@ -683,7 +815,11 @@ async fn revert_and_rerun_body(
     .execute(owner)
     .await
     .unwrap_err();
-    assert_eq!(pg_code(&sixth), Some("23514"), "sixth status still rejected after revert+run");
+    assert_eq!(
+        pg_code(&sixth).as_deref(),
+        Some("23514"),
+        "sixth status still rejected after revert+run"
+    );
 
     let _ = super_url;
     Ok(())

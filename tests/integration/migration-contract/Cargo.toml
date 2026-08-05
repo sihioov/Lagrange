@@ -19,7 +19,10 @@ rust-version = "1.97.1"
 publish = false
 
 [dependencies]
-sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "migrate", "macros"] }
+# `uuid` feature is required for `sqlx::types::Uuid` (sqlx 0.9 re-exports the
+# uuid crate's Uuid only behind that feature; the plan's approval line allows
+# uuid 1.x). The crate's assertions bind `Uuid` columns from PG rows.
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "migrate", "macros", "uuid"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [dev-dependencies]
