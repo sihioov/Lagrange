@@ -85,7 +85,6 @@ fn ingest_synthetic_bundle_creates_immutable_batch() {
     let req = request(at);
 
     let outcome = ingest_bundle(&store, &provider, &req, None).expect("ingest succeeds");
-
     assert_eq!(outcome.entry.provider, PROVIDER_KRX);
     assert_eq!(outcome.entry.market, MARKET_KR);
     assert_eq!(outcome.entry.date.to_iso(), "2020-01-31");
@@ -292,7 +291,13 @@ fn active_entitlement_is_referenced_on_the_manifest_row() {
     let service = active_entitlement_service();
     let req = request("2026-08-05T07:00:00Z");
 
-    let outcome = ingest_bundle(&store, &provider, &req, Some(&service)).expect("ingest succeeds");
+    let reference = market_data::entitlement::governing_entitlement_reference(&service, req.date);
+    assert_eq!(
+        reference.as_deref(),
+        Some("vault://krx-entitlements/ent_krx_2026_0001.pdf")
+    );
+    let outcome =
+        ingest_bundle(&store, &provider, &req, reference.as_deref()).expect("ingest succeeds");
     assert_eq!(
         outcome.entry.entitlement_reference.as_deref(),
         Some("vault://krx-entitlements/ent_krx_2026_0001.pdf")

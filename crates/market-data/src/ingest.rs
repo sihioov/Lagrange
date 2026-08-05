@@ -83,14 +83,15 @@ pub struct IngestOutcome {
 /// Runs one delivery: fetch all licensed response classes, validate, persist
 /// as a new immutable batch, append the manifest row.
 ///
-/// `entitlements` supplies the Todo 5 gate snapshot: when the governing
-/// entitlement is ACTIVE on the batch date its contract reference is recorded
-/// on the manifest row (`None` otherwise).
+/// `entitlement_reference` is the governing licensed-data contract reference
+/// recorded on the manifest row (see
+/// [`crate::entitlement::governing_entitlement_reference`]); `None` records an
+/// unlicensed batch.
 pub fn ingest_bundle(
     store: &RawStore,
     provider: &dyn EodProvider,
     req: &IngestRequest,
-    entitlements: Option<&crate::entitlement::EntitlementService>,
+    entitlement_reference: Option<&str>,
 ) -> Result<IngestOutcome, IngestError> {
     let batch_id = BatchId::generate();
     let fetch_req = crate::provider::FetchRequest {
@@ -106,15 +107,12 @@ pub fn ingest_bundle(
         validate_response(env.kind, &env.bytes)?;
     }
 
-    let entitlement_reference = entitlements
-        .and_then(|service| crate::entitlement::governing_entitlement_reference(service, req.date));
-
     let spec = BatchSpec {
         provider: provider.provider_id(),
         market: &req.market,
         date: &req.date,
         batch_id,
-        entitlement_reference: entitlement_reference.as_deref(),
+        entitlement_reference,
         mode: provider.fetch_mode(),
     };
     let entry = store.store_batch(&spec, &envelopes)?;
