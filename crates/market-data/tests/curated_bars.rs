@@ -213,14 +213,15 @@ fn zero_price_rejected() {
 
 #[test]
 fn non_finite_price_rejected() {
-    // serde_json parses 1e999 as f64::INFINITY - the curator must reject it
-    // rather than storing a non-finite value.
+    // 1e999 overflows f64 at the JSON boundary: serde_json refuses to parse
+    // it into a Value, so the pipeline rejects the raw bytes with a typed
+    // error instead of ever curating a non-finite price.
     let temp = tempfile::tempdir().expect("temp dir");
-    let bars = mutated_golden_bars(|v| v["bars"][0]["high"] = json!(1e999));
-    let (raw, entry) = fixture_batch(temp.path(), &bars, EMPTY_ACTIONS);
+    let raw = String::from_utf8_lossy(GOLDEN_BARS).replace("\"high\": 10280", "\"high\": 1e999");
+    let (raw_store, entry) = fixture_batch(temp.path(), raw.as_bytes(), EMPTY_ACTIONS);
     let curated = CurateStore::new(temp.path().join("data"));
     let err = curate_batch(
-        &raw,
+        &raw_store,
         &entry,
         &krx_2020(),
         &seed_universe(),
@@ -232,8 +233,11 @@ fn non_finite_price_rejected() {
             now: now(),
         },
     )
-    .expect_err("non-finite price must be rejected");
-    assert!(matches!(err, CurateError::NonFinitePrice { .. }), "{err}");
+    .expect_err("non-finite price must be rejected at the JSON boundary");
+    assert!(
+        matches!(err, CurateError::MalformedBars { .. }),
+        "expected MalformedBars, got {err}"
+    );
 }
 
 #[test]
@@ -341,7 +345,8 @@ fn unknown_instrument_rejected() {
 fn duplicate_bar_rejected() {
     let temp = tempfile::tempdir().expect("temp dir");
     let bars = mutated_golden_bars(|v| {
-        v["bars"].as_array_mut().expect("array").push(v["bars"][0].clone());
+        let duplicate = v["bars"][0].clone();
+        v["bars"].as_array_mut().expect("array").push(duplicate);
     });
     let (raw, entry) = fixture_batch(temp.path(), &bars, EMPTY_ACTIONS);
     let curated = CurateStore::new(temp.path().join("data"));
@@ -385,26 +390,32 @@ fn curated_schema_matches_documented_fields() {
 fn no_nan_or_negative_prices_in_output() {
     let temp = tempfile::tempdir().expect("temp dir");
     let (_, curated, _, outcome) = curate_golden(temp.path());
-    let path = bars_path(&curated, outcome.dataset_version);
-    let file = File::open(&path).expect("open bars parquet");
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file).expect("read header");
-    // No float columns at all: NaN is structurally impossible in the output.
-    for field in builder.schema().fields() {
-        assert!(
-            !matches!(field.data_type(), DataType::Float32 | DataType::Float64),
-            "column {} must not be a float type (NaN structurally impossible)",
-            field.name()
-        );
+    // Per-symbol partitions (design §7.1): one parquet file per instrument.
+    let mut total = 0usize;
+    for symbol in ["069500.KRX", "229200.KRX", "114260.KRX"] {
+        let path = curated.bars_path("kr", symbol, 2020, outcome.dataset_version);
+        assert!(path.exists(), "partition written for {symbol}");
+        let file = File::open(&path).expect("open bars parquet");
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).expect("read header");
+        // No float columns at all: NaN is structurally impossible in the output.
+        for field in builder.schema().fields() {
+            assert!(
+                !matches!(field.data_type(), DataType::Float32 | DataType::Float64),
+                "column {} must not be a float type (NaN structurally impossible)",
+                field.name()
+            );
+        }
+        let bars = read_bars(&path).expect("bars read back");
+        total += bars.len();
+        for bar in &bars {
+            assert!(bar.open.amount().is_positive());
+            assert!(bar.high.amount().is_positive());
+            assert!(bar.low.amount().is_positive());
+            assert!(bar.close.amount().is_positive());
+            assert!(bar.volume >= 0, "volume non-negative");
+        }
     }
-    let bars = read_bars(&path).expect("bars read back");
-    assert_eq!(bars.len(), 27, "all 27 golden bars curated");
-    for bar in &bars {
-        assert!(bar.open.amount().is_positive());
-        assert!(bar.high.amount().is_positive());
-        assert!(bar.low.amount().is_positive());
-        assert!(bar.close.amount().is_positive());
-        assert!(bar.volume >= 0, "volume non-negative");
-    }
+    assert_eq!(total, 27, "all 27 golden bars curated across partitions");
 }
 
 #[test]

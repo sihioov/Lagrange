@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use market_data::contract::{FetchMode, RawEnvelope, RequestMetadata, ResponseKind};
 use market_data::curate::actions::{
-    CorporateAction, CorporateActionType, DividendCredit, SplitAdjustment, visible_actions,
+    CorporateActionType, DividendCredit, SplitAdjustment, visible_actions,
 };
 use market_data::curate::adjust::{AdjustmentKind, adjusted_series};
 use market_data::curate::{
@@ -135,8 +135,14 @@ fn split_value_preserved_on_ex_date() {
     let pre_price = Price::parse("10300").expect("price");
     let post_qty = Quantity::parse("200").expect("qty");
     let post_price = Price::parse("5150").expect("price");
-    assert!(SplitAdjustment::value_preserved(&pre_qty, &pre_price, &post_qty, &post_price)
-        .expect("value comparison"));
+    assert!(SplitAdjustment::value_preserved(
+        &pre_qty,
+        &pre_price,
+        &post_qty,
+        &post_price,
+        Currency::KRW
+    )
+    .expect("value comparison"));
     assert_eq!(
         SplitAdjustment::apply_to_holdings(&pre_qty, &FixedPoint::parse("2").expect("factor"))
             .expect("holdings adjust"),
@@ -225,7 +231,9 @@ fn dividend_credited_on_pay_date_not_ex_date() {
 fn dividend_without_pay_date_caps_dataset_at_price_return_only() {
     let temp = tempfile::tempdir().expect("temp dir");
     let mut value: Value = serde_json::from_slice(SPLIT_ACTIONS).expect("parses");
-    let div = value["actions"]
+    let div = value
+        .get_mut("actions")
+        .expect("actions array")
         .as_array_mut()
         .expect("array")
         .iter_mut()
@@ -308,14 +316,19 @@ fn future_announced_action_rejected_at_curation() {
     let before_announcement = UtcTimestamp::parse_rfc3339("2020-01-22T05:59:59Z").expect("ts");
     let temp = tempfile::tempdir().expect("temp dir");
     let (raw, entry) = fixture_batch(temp.path(), SPLIT_BARS, SPLIT_ACTIONS);
-    let curated = CurateStore::new(temp.join("data"));
+    let curated = CurateStore::new(temp.path().join("data"));
     let err = curate_batch(
         &raw,
         &entry,
         &krx_2020(),
         &seed_universe(),
         &curated,
-        &CurateRequest { dataset_id: &dataset(), market: "kr", source: "krx", now: before_announcement },
+        &CurateRequest {
+            dataset_id: &dataset(),
+            market: "kr",
+            source: "krx",
+            now: before_announcement,
+        },
     )
     .expect_err("future-announced action must be rejected");
     assert!(
@@ -356,8 +369,13 @@ fn correction_creates_new_dataset_version_old_unchanged() {
 
     // Correction: a second, different batch corrects the close to 10400.
     let mut corrected: Value = serde_json::from_slice(GOLDEN_BARS).expect("parses");
-    for bar in corrected["bars"].as_array_mut().expect("array") {
-        if bar["instrument"] == "069500.KRX" && bar["date"] == "2020-02-03" {
+    for bar in corrected
+        .get_mut("bars")
+        .expect("bars array")
+        .as_array_mut()
+        .expect("array")
+    {
+        if bar["instrument"].as_str() == Some("069500.KRX") && bar["date"] == "2020-02-03" {
             bar["close"] = json!(10400);
         }
     }
@@ -530,26 +548,35 @@ fn qa_curate_split_dividend_fixture_end_to_end() {
         jan_31_tr.adjustment_events
     );
 
-    // Hand-computed reconciliation (fixed-point, scale 4):
-    //   split close = 10300 / 2 = 5150.0000
-    //   total-return factor = (5190 + 150) / 5190 = 5340/5190
-    //   total-return close = 5150 x 5340 / 5190 = 5298.8439
-    //   total-return open  = 5135 x 5340 / 5190 = 5283.4104
+    // Hand-computed reconciliation (fixed-point, deterministic):
+    //   split close = 10300 / 2 = 5150.0000 (exact)
+    //   total-return factor = 0.5 x (5190 + 150) / 5190, composed at scale 8:
+    //     0.50000000 x 1.02890173 = 0.51445086
+    //   total-return close = 10300 x 0.51445086 = 5298.8439 (scale 4)
+    //   total-return open  = 10270 x 0.51445086 = 5283.4103 (scale 4)
     assert_eq!(jan_31_split.close, Price::parse("5150").expect("price"));
-    let tr_factor = FixedPoint::parse("5340")
+    let split_back =
+        SplitAdjustment::back_adjust_factor(&FixedPoint::parse("2").expect("factor"))
+            .expect("back factor");
+    let dividend_factor = FixedPoint::parse("5340")
         .expect("factor num")
         .checked_div(&FixedPoint::parse("5190").expect("factor den"), 8)
         .expect("factor");
-    assert_eq!(jan_31_tr.adjustment_factor, tr_factor);
+    let expected_factor = split_back
+        .checked_mul(&dividend_factor)
+        .expect("factor mul")
+        .with_scale(8)
+        .expect("factor scale");
+    assert_eq!(jan_31_tr.adjustment_factor, expected_factor);
     assert_eq!(
         jan_31_tr.close,
         Price::parse("5298.8439").expect("price"),
-        "total-return close must equal 5150 x 5340/5190 at scale 4"
+        "total-return close must equal 10300 x 0.51445086 at scale 4"
     );
     assert_eq!(
         jan_31_tr.open,
-        Price::parse("5283.4104").expect("price"),
-        "total-return open must equal 5135 x 5340/5190 at scale 4"
+        Price::parse("5283.4103").expect("price"),
+        "total-return open must equal 10270 x 0.51445086 at scale 4"
     );
 
     // The 2020-02-03 bar is on/after both ex-dates: no adjustment applies.
@@ -560,6 +587,14 @@ fn qa_curate_split_dividend_fixture_end_to_end() {
         .expect("feb 03 tr");
     assert_eq!(feb_03_tr.adjustment_factor, FixedPoint::parse("1").expect("factor"));
     assert_eq!(feb_03_tr.close, Price::parse("5190").expect("price"));
+
+    // The versioned adjusted files on disk must round-trip exactly.
+    let split_path = curated.adjusted_bars_path("kr", "069500.KRX", 2020, outcome.dataset_version);
+    let tr_path = curated.total_return_bars_path("kr", "069500.KRX", 2020, outcome.dataset_version);
+    let split_on_disk = market_data::curate::read_adjusted_bars(&split_path).expect("read split file");
+    let tr_on_disk = market_data::curate::read_adjusted_bars(&tr_path).expect("read tr file");
+    assert_eq!(split_on_disk, series.split, "split series round-trips through parquet");
+    assert_eq!(tr_on_disk, series.total_return, "total-return series round-trips through parquet");
 
     // Dividend record carries the configured pay-date (not the ex-date).
     let div = actions
