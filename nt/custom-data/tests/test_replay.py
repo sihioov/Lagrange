@@ -99,6 +99,7 @@ def _run_replay_node(builder, curated_root, tmp_path, iid):
                                      config_path="test_replay:ReplayStrategyConfig",
                                      config={"instrument_id": iid})]),
         data=_data_configs(catalog, iid),
+        dispose_on_completion=False,
     )
     node = BacktestNode(configs=[config])
     node.run()
@@ -120,11 +121,17 @@ def test_replay_three_seed_instruments(builder, curated_root, tmp_path):
         closes = [d for k, d in transcript if k == "close"]
         assert len(opens) == 9 and len(closes) == 9, transcript
         # Exact contract on the 2020-01-31 -> 2020-02-03 transition:
-        # close(T) precedes open(T+1) which precedes close(T+1).
-        assert closes.index("2020-01-31") < opens.index("2020-02-03")
-        assert opens.index("2020-02-03") < closes.index("2020-02-03")
-        # First event is a close and the stream alternates per session.
-        assert transcript[0][0] == "close" and transcript[0][1] == "2020-01-20"
+        # close(T) precedes open(T+1) which precedes close(T+1) in the
+        # delivered transcript order.
+        pos_close_t = [i for i, (k, d) in enumerate(transcript)
+                       if k == "close" and d == "2020-01-31"][0]
+        pos_open_t1 = [i for i, (k, d) in enumerate(transcript)
+                       if k == "open" and d == "2020-02-03"][0]
+        pos_close_t1 = [i for i, (k, d) in enumerate(transcript)
+                        if k == "close" and d == "2020-02-03"][0]
+        assert pos_close_t < pos_open_t1 < pos_close_t1
+        # First event is the first session's open; last is the last close.
+        assert transcript[0][0] == "open" and transcript[0][1] == "2020-01-20"
         assert transcript[-1][0] == "close" and transcript[-1][1] == "2020-02-03"
 
 

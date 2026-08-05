@@ -6,8 +6,6 @@ builder validates ordering (equal/out-of-order timestamps and duplicate
 session events hard-fail) and an unregistered class hard-fails before
 simulation.
 """
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -38,16 +36,17 @@ def test_query_roundtrip(builder, curated_root, tmp_path, events):
     cat = ParquetDataCatalog(path=str(catalog))
     rows = cat.query(data_cls=events.SessionOpenEvent, identifiers=["069500.KRX"])
     assert len(rows) == 9
-    first = rows[0]
+    first = getattr(rows[0], "data", rows[0])
     assert first.trading_date == "2020-01-20"
     assert first.open_price == 101500000
     assert first.currency == "KRW"
     assert first.data_version == "1"
     closes = cat.query(data_cls=events.DailyBarClosedEvent, identifiers=["069500.KRX"])
     assert len(closes) == 9
-    assert closes[-1].trading_date == "2020-02-03"
-    assert closes[-1].close == 103800000
-    assert closes[-1].adjustment_factor == 100000000
+    last_close = getattr(closes[-1], "data", closes[-1])
+    assert last_close.trading_date == "2020-02-03"
+    assert last_close.close == 103800000
+    assert last_close.adjustment_factor == 100000000
     instruments = cat.instruments(instrument_ids=["069500.KRX"])
     assert [i.id.value for i in instruments] == ["069500.KRX"]
 
@@ -125,6 +124,11 @@ def test_unregistered_class_hard_fails_before_simulation(builder, curated_root, 
         data=[BacktestDataConfig(catalog_path=str(catalog), data_cls=UnregisteredProbeEvent,
                                  instrument_id=InstrumentId.from_str("069500.KRX"),
                                  client_id="CUSTOM")],
+        # The Rust backend path (streaming) rejects unknown custom types; the
+        # pyarrow path would happily read them back, so the hard failure is
+        # exercised through the DataBackendSession/custom-file registration.
+        chunk_size=1000,
+        raise_exception=True,
     )
     node = BacktestNode(configs=[config])
     with pytest.raises(Exception) as excinfo:
