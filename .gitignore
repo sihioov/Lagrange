@@ -42,6 +42,7 @@ __pycache__/
 
 # Data (large binary artifacts; design §15-16 keep Raw/NT catalog outside Git)
 data/raw/
+data/curated/
 data/nautilus_catalog/
 *.parquet
 
