@@ -17,15 +17,26 @@ use std::path::{Path, PathBuf};
 
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{
-    FetchMode, RawEnvelope, RequestMetadata, ResponseKind, MARKET_KR, PROVIDER_KRX,
+    FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind,
 };
-use market_data::storage::{RawStore, StoreError};
+use market_data::storage::{BatchSpec, RawStore, StoreError};
 
 fn temp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ls-task8-{tag}-{}", BatchId::generate()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+fn spec<'a>(b: BatchId, d: &'a TradingDate, ent: Option<&'a str>) -> BatchSpec<'a> {
+    BatchSpec {
+        provider: PROVIDER_KRX,
+        market: MARKET_KR,
+        date: d,
+        batch_id: b,
+        entitlement_reference: ent,
+        mode: FetchMode::Synthetic,
+    }
 }
 
 fn date(s: &str) -> TradingDate {
@@ -45,8 +56,21 @@ fn meta(mode: FetchMode) -> RequestMetadata {
     }
 }
 
-fn envelope(batch: BatchId, kind: ResponseKind, name: &str, bytes: &[u8], at: UtcTimestamp) -> RawEnvelope {
-    RawEnvelope::new(batch, kind, name.to_owned(), bytes.to_vec(), at, meta(FetchMode::Synthetic))
+fn envelope(
+    batch: BatchId,
+    kind: ResponseKind,
+    name: &str,
+    bytes: &[u8],
+    at: UtcTimestamp,
+) -> RawEnvelope {
+    RawEnvelope::new(
+        batch,
+        kind,
+        name.to_owned(),
+        bytes.to_vec(),
+        at,
+        meta(FetchMode::Synthetic),
+    )
 }
 
 #[test]
@@ -60,19 +84,25 @@ fn identical_bytes_twice_two_batches_same_hash_first_untouched() {
     let b1 = BatchId::generate();
     let e1 = envelope(b1, ResponseKind::Bars, "bars.json", &bytes, at);
     let entry1 = store
-        .store_batch(PROVIDER_KRX, MARKET_KR, &d, b1, None, FetchMode::Synthetic, &[e1])
+        .store_batch(&spec(b1, &d, None), &[e1])
         .expect("first delivery stores");
 
     let b2 = BatchId::generate();
     let e2 = envelope(b2, ResponseKind::Bars, "bars.json", &bytes, at);
     let entry2 = store
-        .store_batch(PROVIDER_KRX, MARKET_KR, &d, b2, None, FetchMode::Synthetic, &[e2])
+        .store_batch(&spec(b2, &d, None), &[e2])
         .expect("duplicate delivery stores as a new batch");
 
     // Two distinct batches, identical content hash.
-    assert_ne!(entry1.batch_id, entry2.batch_id, "duplicate delivery must create a new batch");
+    assert_ne!(
+        entry1.batch_id, entry2.batch_id,
+        "duplicate delivery must create a new batch"
+    );
     assert_eq!(entry1.files[0].content_hash, entry2.files[0].content_hash);
-    assert_eq!(entry1.files[0].content_hash, ContentHash::from_bytes(&bytes));
+    assert_eq!(
+        entry1.files[0].content_hash,
+        ContentHash::from_bytes(&bytes)
+    );
 
     // First batch untouched: bytes on disk are byte-identical to the delivery.
     let back1 = store
@@ -80,10 +110,15 @@ fn identical_bytes_twice_two_batches_same_hash_first_untouched() {
         .expect("first batch readable after duplicate delivery");
     assert_eq!(back1.len(), 1);
     assert_eq!(back1[0].file_name, "bars.json");
-    assert_eq!(back1[0].bytes, bytes, "first batch bytes must never be modified");
+    assert_eq!(
+        back1[0].bytes, bytes,
+        "first batch bytes must never be modified"
+    );
 
     // Exactly two batch dirs exist under the date partition.
-    let dirs = store.batch_ids(PROVIDER_KRX, MARKET_KR, &d).expect("batch listing");
+    let dirs = store
+        .batch_ids(PROVIDER_KRX, MARKET_KR, &d)
+        .expect("batch listing");
     assert_eq!(dirs.len(), 2, "exactly two batches expected, got {dirs:?}");
     assert!(dirs.contains(&b1));
     assert!(dirs.contains(&b2));
@@ -99,26 +134,38 @@ fn manifest_is_append_only() {
     let b1 = BatchId::generate();
     let e1 = envelope(b1, ResponseKind::Calendar, "calendar.json", b"{}", at);
     store
-        .store_batch(PROVIDER_KRX, MARKET_KR, &d, b1, None, FetchMode::Synthetic, &[e1])
+        .store_batch(&spec(b1, &d, None), &[e1])
         .expect("first delivery");
 
-    let m1 = store.read_manifest(PROVIDER_KRX, MARKET_KR).expect("manifest readable");
+    let m1 = store
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("manifest readable");
     assert_eq!(m1.len(), 1);
 
     let b2 = BatchId::generate();
     let e2 = envelope(b2, ResponseKind::Calendar, "calendar.json", b"{}", at);
     store
-        .store_batch(PROVIDER_KRX, MARKET_KR, &d, b2, None, FetchMode::Synthetic, &[e2])
+        .store_batch(&spec(b2, &d, None), &[e2])
         .expect("second delivery");
 
-    let m2 = store.read_manifest(PROVIDER_KRX, MARKET_KR).expect("manifest readable");
+    let m2 = store
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("manifest readable");
     assert_eq!(m2.len(), 2, "manifest grows by one row per delivery");
-    assert_eq!(m2[0], m1[0], "first manifest row must be byte-identical after append");
+    assert_eq!(
+        m2[0], m1[0],
+        "first manifest row must be byte-identical after append"
+    );
     assert_ne!(m2[1].batch_id, m2[0].batch_id);
 
     // The manifest is a plain JSONL file with one line per batch: append-only, never rewritten.
-    let raw = fs::read_to_string(store.manifest_path(PROVIDER_KRX, MARKET_KR)).expect("manifest file");
-    assert_eq!(raw.lines().count(), 2, "manifest file must hold exactly one line per batch");
+    let raw =
+        fs::read_to_string(store.manifest_path(PROVIDER_KRX, MARKET_KR)).expect("manifest file");
+    assert_eq!(
+        raw.lines().count(),
+        2,
+        "manifest file must hold exactly one line per batch"
+    );
 }
 
 #[test]
@@ -128,12 +175,26 @@ fn manifest_entry_round_trips_through_json() {
     let at = now("2026-08-05T02:00:00Z");
     let d = date("2020-01-31");
     let b1 = BatchId::generate();
-    let e1 = envelope(b1, ResponseKind::CorporateActions, "actions.json", b"[]", at);
+    let e1 = envelope(
+        b1,
+        ResponseKind::CorporateActions,
+        "actions.json",
+        b"[]",
+        at,
+    );
     let entry = store
-        .store_batch(PROVIDER_KRX, MARKET_KR, &d, b1, Some("vault://krx-entitlements/ent_krx_2026_0001.pdf"), FetchMode::Synthetic, &[e1])
+        .store_batch(
+            &spec(
+                b1,
+                &d,
+                Some("vault://krx-entitlements/ent_krx_2026_0001.pdf"),
+            ),
+            &[e1],
+        )
         .expect("stores");
     let json = serde_json::to_string(&entry).expect("serialize");
-    let back: market_data::storage::ManifestEntry = serde_json::from_str(&json).expect("deserialize");
+    let back: market_data::storage::ManifestEntry =
+        serde_json::from_str(&json).expect("deserialize");
     assert_eq!(back, entry);
     assert!(json.contains("entitlement_reference"));
     assert!(json.contains("retrieved_at"));
@@ -163,7 +224,7 @@ fn path_traversal_filenames_rejected_with_no_partial_batch() {
         let b = BatchId::generate();
         let e = envelope(b, ResponseKind::Bars, bad, b"{}", at);
         let err = store
-            .store_batch(PROVIDER_KRX, MARKET_KR, &d, b, None, FetchMode::Synthetic, &[e])
+            .store_batch(&spec(b, &d, None), &[e])
             .expect_err("traversal file name must be rejected");
         assert!(
             matches!(err, StoreError::UnsafeFileName { .. }),
@@ -172,9 +233,19 @@ fn path_traversal_filenames_rejected_with_no_partial_batch() {
     }
 
     // Nothing was written for any rejected delivery.
-    let dirs = store.batch_ids(PROVIDER_KRX, MARKET_KR, &d).expect("batch listing");
-    assert!(dirs.is_empty(), "no batch dirs may exist after rejected deliveries: {dirs:?}");
-    assert!(store.read_manifest(PROVIDER_KRX, MARKET_KR).expect("manifest").is_empty());
+    let dirs = store
+        .batch_ids(PROVIDER_KRX, MARKET_KR, &d)
+        .expect("batch listing");
+    assert!(
+        dirs.is_empty(),
+        "no batch dirs may exist after rejected deliveries: {dirs:?}"
+    );
+    assert!(
+        store
+            .read_manifest(PROVIDER_KRX, MARKET_KR)
+            .expect("manifest")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -191,7 +262,7 @@ fn within_batch_collision_fails_without_partial_batch() {
         envelope(b1, ResponseKind::Bars, "bars.json", b"second", at),
     ];
     let err = store
-        .store_batch(PROVIDER_KRX, MARKET_KR, &d, b1, None, FetchMode::Synthetic, &dup)
+        .store_batch(&spec(b1, &d, None), &dup)
         .expect_err("duplicate file name inside one batch must fail");
     assert!(
         matches!(err, StoreError::FileExists { .. }),
@@ -199,9 +270,19 @@ fn within_batch_collision_fails_without_partial_batch() {
     );
 
     // No partial batch left behind: batch dir removed, manifest untouched.
-    let dirs = store.batch_ids(PROVIDER_KRX, MARKET_KR, &d).expect("batch listing");
-    assert!(dirs.is_empty(), "failed batch must leave no batch dir: {dirs:?}");
-    assert!(store.read_manifest(PROVIDER_KRX, MARKET_KR).expect("manifest").is_empty());
+    let dirs = store
+        .batch_ids(PROVIDER_KRX, MARKET_KR, &d)
+        .expect("batch listing");
+    assert!(
+        dirs.is_empty(),
+        "failed batch must leave no batch dir: {dirs:?}"
+    );
+    assert!(
+        store
+            .read_manifest(PROVIDER_KRX, MARKET_KR)
+            .expect("manifest")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -211,9 +292,15 @@ fn read_detects_tampered_batch() {
     let at = now("2026-08-05T05:00:00Z");
     let d = date("2020-01-31");
     let b1 = BatchId::generate();
-    let e1 = envelope(b1, ResponseKind::Reference, "reference.json", b"{\"ok\":true}", at);
+    let e1 = envelope(
+        b1,
+        ResponseKind::Reference,
+        "reference.json",
+        b"{\"ok\":true}",
+        at,
+    );
     let entry = store
-        .store_batch(PROVIDER_KRX, MARKET_KR, &d, b1, None, FetchMode::Synthetic, &[e1])
+        .store_batch(&spec(b1, &d, None), &[e1])
         .expect("stores");
 
     // Tamper with the stored bytes behind the store's back.
@@ -237,22 +324,46 @@ fn read_detects_tampered_batch() {
 
 #[test]
 fn documented_raw_layout_holds() {
-    let root = temp_root("layout");
+    // Store root is the `data/` dir; raw zone is data/raw/... per System Design 7.1.
+    let base = temp_root("layout");
+    let root = base.join("data");
+    fs::create_dir_all(&root).expect("create data root");
     let store = RawStore::new(&root);
     let d = date("2020-01-31");
     let b1 = BatchId::generate();
 
     let dir = store.batch_dir(PROVIDER_KRX, MARKET_KR, &d, &b1);
     let dir_str = dir.to_string_lossy().replace('\\', "/");
-    assert!(dir_str.contains("data/raw/"), "raw zone root missing: {dir_str}");
-    assert!(dir_str.contains("provider=krx"), "provider partition missing: {dir_str}");
-    assert!(dir_str.contains("market=kr"), "market partition missing: {dir_str}");
-    assert!(dir_str.contains("date=2020-01-31"), "date partition missing: {dir_str}");
-    assert!(dir_str.contains(&format!("batch={b1}")), "batch dir missing: {dir_str}");
+    assert!(
+        dir_str.contains("data/raw/"),
+        "raw zone root missing: {dir_str}"
+    );
+    assert!(
+        dir_str.contains("provider=krx"),
+        "provider partition missing: {dir_str}"
+    );
+    assert!(
+        dir_str.contains("market=kr"),
+        "market partition missing: {dir_str}"
+    );
+    assert!(
+        dir_str.contains("date=2020-01-31"),
+        "date partition missing: {dir_str}"
+    );
+    assert!(
+        dir_str.contains(&format!("batch={b1}")),
+        "batch dir missing: {dir_str}"
+    );
 
     let mpath = store.manifest_path(PROVIDER_KRX, MARKET_KR);
     let mstr = mpath.to_string_lossy().replace('\\', "/");
-    assert!(mstr.contains("manifests"), "manifest must live under data/raw/manifests: {mstr}");
-    assert!(mstr.ends_with("manifest.jsonl"), "manifest must be JSONL: {mstr}");
+    assert!(
+        mstr.contains("manifests"),
+        "manifest must live under data/raw/manifests: {mstr}"
+    );
+    assert!(
+        mstr.ends_with("manifest.jsonl"),
+        "manifest must be JSONL: {mstr}"
+    );
     assert!(Path::new(&root).is_dir(), "temp root must exist");
 }
