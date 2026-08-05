@@ -1,0 +1,25 @@
+# Lagrange Station — migration contract gate (Todo 3).
+#
+# PLAN-COMMAND DEFECT (documented deviation): the plan's QA line for Todo 3 is
+# `cargo test -p api-server --test migration_contract`, but `apps/api-server` is
+# the Node/TypeScript application (see plan Scope: apps/{web,api-server} are the
+# web/API products), NOT a Rust crate. The Rust integration gate that proves the
+# migration contract therefore lives in this dedicated crate, `migration-contract`,
+# added as a ROOT workspace member. It embeds `migrations/` via `sqlx::migrate!`
+# and drives its assertions against a disposable PostgreSQL 18 cluster.
+#
+# SQLx 0.9.x is the approved line (plan draft 2026-08-04 line 40). We intentionally
+# do NOT install sqlx-cli via `cargo install` (it compiles forever on this host);
+# all migrate run/revert behavior is exercised through the embedded Migrator.
+[package]
+name = "migration-contract"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+publish = false
+
+[dependencies]
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "migrate", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
