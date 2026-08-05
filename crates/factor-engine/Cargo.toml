@@ -6,3 +6,18 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+domain = { path = "../domain" }
+market-data = { path = "../market-data" }
+# ADR-0001: the approved Rust polars line is 0.54.x (crates.io only; the
+# Python polars pin was removed - PyPI has no 0.54.x release). default-features
+# = false keeps the build sane: no parquet/io/dtype-heavy extras; factor math
+# needs lazy + rolling windows + std/var + cum-aggregations + rank + Date32.
+polars = { version = "0.54.*", default-features = false, features = ["lazy", "rolling_window", "moment", "cum_agg", "rank", "dtype-date", "fmt", "temporal", "strings"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1"
