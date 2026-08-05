@@ -138,18 +138,24 @@ pub fn adjusted_series(
     bars.sort_by_key(|b| (b.instrument_id.clone(), b.trading_date));
 
     for bar in bars {
-        let instrument_actions = by_instrument.get(&bar.instrument_id).cloned().unwrap_or_default();
-        let (split_factor, split_events) =
-            cumulative_split_factor(&bar, &instrument_actions)?;
+        let instrument_actions = by_instrument
+            .get(&bar.instrument_id)
+            .cloned()
+            .unwrap_or_default();
+        let (split_factor, split_events) = cumulative_split_factor(bar, &instrument_actions)?;
         let (tr_factor, tr_events) = cumulative_total_return_factor(
-            &bar,
+            bar,
             &instrument_actions,
             &close_on,
             &split_factor,
             &split_events,
         )?;
-
-        split_rows.push(adjusted_bar(bar, AdjustmentKind::Split, &split_factor, &split_events)?);
+        split_rows.push(adjusted_bar(
+            bar,
+            AdjustmentKind::Split,
+            &split_factor,
+            &split_events,
+        )?);
         total_return_rows.push(adjusted_bar(
             bar,
             AdjustmentKind::TotalReturn,
@@ -179,12 +185,14 @@ fn cumulative_split_factor(
         if action.ex_date <= bar.trading_date {
             continue;
         }
-        let split_factor = action.split_factor.as_ref().ok_or_else(|| {
-            CurateError::InvalidSplit {
-                instrument: action.instrument_id.to_string(),
-                detail: "split record without split_factor".to_owned(),
-            }
-        })?;
+        let split_factor =
+            action
+                .split_factor
+                .as_ref()
+                .ok_or_else(|| CurateError::InvalidSplit {
+                    instrument: action.instrument_id.to_string(),
+                    detail: "split record without split_factor".to_owned(),
+                })?;
         let back = back_adjust_factor(split_factor)?;
         factor = factor.checked_mul(&back)?.with_scale(FACTOR_SCALE)?;
         events.push(format!(
@@ -234,12 +242,14 @@ fn cumulative_total_return_factor(
         if action.ex_date <= bar.trading_date {
             continue;
         }
-        let amount = action.amount_per_share.as_ref().ok_or_else(|| {
-            CurateError::InvalidDividend {
-                instrument: action.instrument_id.to_string(),
-                detail: "dividend record without amount_per_share".to_owned(),
-            }
-        })?;
+        let amount =
+            action
+                .amount_per_share
+                .as_ref()
+                .ok_or_else(|| CurateError::InvalidDividend {
+                    instrument: action.instrument_id.to_string(),
+                    detail: "dividend record without amount_per_share".to_owned(),
+                })?;
         let close_ex = close_on
             .get(&(bar.instrument_id.clone(), action.ex_date))
             .ok_or_else(|| CurateError::InvalidDividend {
@@ -250,11 +260,8 @@ fn cumulative_total_return_factor(
                 ),
             })?;
         // (close_ex + amount) / close_ex at FACTOR_SCALE.
-        let numerator = close_ex
-            .amount()
-            .checked_add(&amount.amount())?;
-        let reinvest = numerator
-            .checked_div(&close_ex.amount(), FACTOR_SCALE)?;
+        let numerator = close_ex.amount().checked_add(&amount.amount())?;
+        let reinvest = numerator.checked_div(&close_ex.amount(), FACTOR_SCALE)?;
         factor = factor.checked_mul(&reinvest)?.with_scale(FACTOR_SCALE)?;
         events.push(format!(
             "dividend:{}:ex={}:pay={}",
@@ -278,7 +285,9 @@ fn adjusted_bar(
     events: &str,
 ) -> Result<AdjustmentBar, CurateError> {
     let scale_price = |p: &Price| -> Result<Price, CurateError> {
-        Ok(Price::from_fixed(p.amount().checked_mul(factor)?.with_scale(PRICE_SCALE)?)?)
+        Ok(Price::from_fixed(
+            p.amount().checked_mul(factor)?.with_scale(PRICE_SCALE)?,
+        )?)
     };
     Ok(AdjustmentBar {
         instrument_id: bar.instrument_id.clone(),

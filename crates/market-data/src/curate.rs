@@ -37,9 +37,7 @@ pub mod adjust;
 pub mod parse;
 pub mod schema;
 
-pub use self::schema::{
-    read_adjusted_bars, read_bars, read_corporate_actions,
-};
+pub use self::schema::{read_adjusted_bars, read_bars, read_corporate_actions};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -64,9 +62,7 @@ use self::parse::{
     RawActionRow, RawBarsDoc, parse_actions, parse_bars, parse_date, parse_fixed,
     parse_fixed_value, parse_timestamp,
 };
-use self::schema::{
-    CuratedBar, write_adjusted_bars, write_bars, write_corporate_actions,
-};
+use self::schema::{CuratedBar, write_adjusted_bars, write_bars, write_corporate_actions};
 
 /// The dataset capability flag (explicit per version; plan Todo 10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -107,25 +103,58 @@ pub enum CurateError {
     #[error("bar on non-session date: {instrument} {date}")]
     NotASession { instrument: String, date: String },
     #[error("impossible OHLC on {instrument} {date}: {detail}")]
-    ImpossibleOhlc { instrument: String, date: String, detail: String },
+    ImpossibleOhlc {
+        instrument: String,
+        date: String,
+        detail: String,
+    },
     #[error("non-positive price {field} on {instrument} {date}: {value}")]
-    NonPositivePrice { instrument: String, date: String, field: String, value: String },
+    NonPositivePrice {
+        instrument: String,
+        date: String,
+        field: String,
+        value: String,
+    },
     #[error("non-finite price {field} on {instrument} {date}: {value}")]
-    NonFinitePrice { instrument: String, date: String, field: String, value: String },
+    NonFinitePrice {
+        instrument: String,
+        date: String,
+        field: String,
+        value: String,
+    },
     #[error("negative volume on {instrument} {date}: {volume}")]
-    NegativeVolume { instrument: String, date: String, volume: String },
-    #[error("currency conflict for {instrument}: {context} declares {declared}, expected {expected}")]
-    CurrencyConflict { instrument: String, expected: String, declared: String, context: String },
+    NegativeVolume {
+        instrument: String,
+        date: String,
+        volume: String,
+    },
+    #[error(
+        "currency conflict for {instrument}: {context} declares {declared}, expected {expected}"
+    )]
+    CurrencyConflict {
+        instrument: String,
+        expected: String,
+        declared: String,
+        context: String,
+    },
     #[error("duplicate bar {instrument} {date}")]
     DuplicateBar { instrument: String, date: String },
     #[error("action announced in the future: {instrument} announced_at {announced_at}, now {now}")]
-    FutureAnnouncedAction { instrument: String, announced_at: String, now: String },
+    FutureAnnouncedAction {
+        instrument: String,
+        announced_at: String,
+        now: String,
+    },
     #[error("invalid split for {instrument}: {detail}")]
     InvalidSplit { instrument: String, detail: String },
     #[error("invalid dividend for {instrument}: {detail}")]
     InvalidDividend { instrument: String, detail: String },
     #[error("batch {batch_id} already curated as dataset {dataset_id} version {version}")]
-    BatchAlreadyCurated { dataset_id: String, version: u32, batch_id: String },
+    BatchAlreadyCurated {
+        dataset_id: String,
+        version: u32,
+        batch_id: String,
+    },
     #[error("no bars in the batch (dataset {dataset_id})")]
     EmptyBars { dataset_id: String },
     #[error("domain arithmetic failure: {0}")]
@@ -186,7 +215,13 @@ impl CurateStore {
     }
 
     /// The split-adjusted series file next to the raw bars.
-    pub fn adjusted_bars_path(&self, market: &str, symbol: &str, year: i32, version: u32) -> PathBuf {
+    pub fn adjusted_bars_path(
+        &self,
+        market: &str,
+        symbol: &str,
+        year: i32,
+        version: u32,
+    ) -> PathBuf {
         let dir = self
             .bars_path(market, symbol, year, version)
             .parent()
@@ -196,7 +231,13 @@ impl CurateStore {
     }
 
     /// The total-return series file next to the raw bars.
-    pub fn total_return_bars_path(&self, market: &str, symbol: &str, year: i32, version: u32) -> PathBuf {
+    pub fn total_return_bars_path(
+        &self,
+        market: &str,
+        symbol: &str,
+        year: i32,
+        version: u32,
+    ) -> PathBuf {
         let dir = self
             .bars_path(market, symbol, year, version)
             .parent()
@@ -233,9 +274,7 @@ impl CurateStore {
     /// The next dataset version: max existing + 1, or 1 for a fresh dataset.
     pub fn next_version(&self, dataset_id: &DatasetId) -> Result<u32, CurateError> {
         let version_path = self.dataset_dir(dataset_id, 0);
-        let dir = version_path
-            .parent()
-            .expect("dataset dir has a parent");
+        let dir = version_path.parent().expect("dataset dir has a parent");
         if !dir.exists() {
             return Ok(1);
         }
@@ -363,14 +402,17 @@ pub fn curate_batch(
     let dataset_id = req.dataset_id;
 
     // Re-curating an already-curated batch must never duplicate/overwrite.
-    if let Some(latest) = curated.latest_manifest(dataset_id)? {
-        if latest.source_batches.iter().any(|b| b.batch_id == entry.batch_id) {
-            return Err(CurateError::BatchAlreadyCurated {
-                dataset_id: dataset_id.to_string(),
-                version: latest.version,
-                batch_id: entry.batch_id.to_string(),
-            });
-        }
+    if let Some(latest) = curated.latest_manifest(dataset_id)?
+        && latest
+            .source_batches
+            .iter()
+            .any(|b| b.batch_id == entry.batch_id)
+    {
+        return Err(CurateError::BatchAlreadyCurated {
+            dataset_id: dataset_id.to_string(),
+            version: latest.version,
+            batch_id: entry.batch_id.to_string(),
+        });
     }
 
     let files = raw
@@ -410,14 +452,7 @@ pub fn curate_batch(
     let capability = dataset_capability(&actions);
 
     // ---- validate + normalize bars ----
-    let bars = build_bars(
-        &bars_doc,
-        master,
-        calendar,
-        req,
-        entry,
-        bars_meta,
-    )?;
+    let bars = build_bars(&bars_doc, master, calendar, req, entry, bars_meta)?;
     if bars.is_empty() {
         return Err(CurateError::EmptyBars {
             dataset_id: dataset_id.to_string(),
@@ -439,7 +474,10 @@ pub fn curate_batch(
         let mut groups: BTreeMap<(String, i32), Vec<&CuratedBar>> = BTreeMap::new();
         for bar in &bars {
             groups
-                .entry((bar.instrument_id.to_string(), bar.trading_date.as_naive_date().year()))
+                .entry((
+                    bar.instrument_id.to_string(),
+                    bar.trading_date.as_naive_date().year(),
+                ))
                 .or_default()
                 .push(bar);
         }
@@ -476,7 +514,10 @@ pub fn curate_batch(
         let mut action_groups: BTreeMap<(String, i32), Vec<CorporateAction>> = BTreeMap::new();
         for action in &actions {
             action_groups
-                .entry((action.instrument_id.to_string(), action.ex_date.as_naive_date().year()))
+                .entry((
+                    action.instrument_id.to_string(),
+                    action.ex_date.as_naive_date().year(),
+                ))
                 .or_default()
                 .push(action.clone());
         }
@@ -487,9 +528,8 @@ pub fn curate_batch(
         }
         Ok(written)
     };
-    let written = write_guard().map_err(|e| {
+    let written = write_guard().inspect_err(|_| {
         let _ = fs::remove_dir_all(&version_dir);
-        e
     })?;
     let cleanup_on_manifest_failure = |e: CurateError| -> CurateError {
         for path in &written {
@@ -521,7 +561,9 @@ pub fn curate_batch(
         content_hash,
         ..manifest
     };
-    curated.write_dataset_manifest(&manifest).map_err(cleanup_on_manifest_failure)?;
+    curated
+        .write_dataset_manifest(&manifest)
+        .map_err(cleanup_on_manifest_failure)?;
 
     Ok(CurateOutcome {
         dataset_version: version,
@@ -571,11 +613,10 @@ fn build_actions(
 ) -> Result<Vec<CorporateAction>, CurateError> {
     let mut actions = Vec::with_capacity(raw_rows.len());
     for (i, row) in raw_rows.iter().enumerate() {
-        let instrument_id = InstrumentId::parse(&row.instrument).map_err(|_| {
-            CurateError::UnknownInstrument {
+        let instrument_id =
+            InstrumentId::parse(&row.instrument).map_err(|_| CurateError::UnknownInstrument {
                 instrument: row.instrument.clone(),
-            }
-        })?;
+            })?;
         let ex_date = parse_date(row.ex_date.as_ref(), "ex_date", true)?.expect("ex_date required");
         let record = master
             .instrument_on(&instrument_id, ex_date)
@@ -677,7 +718,8 @@ fn build_actions(
                     // Curated, but caps the version at PRICE_RETURN_ONLY.
                 }
                 action.amount_per_share = Some(domain::Money::from_fixed(amount, currency)?);
-                action.tax_withholding_pct = parse_fixed(row.tax_withholding_pct.as_ref(), "tax_withholding_pct")?;
+                action.tax_withholding_pct =
+                    parse_fixed(row.tax_withholding_pct.as_ref(), "tax_withholding_pct")?;
             }
         }
         actions.push(action);
@@ -703,11 +745,10 @@ fn build_bars(
     let mut seen: BTreeSet<(String, TradingDate)> = BTreeSet::new();
     let mut bars = Vec::with_capacity(doc.bars.len());
     for row in &doc.bars {
-        let instrument_id = InstrumentId::parse(&row.instrument).map_err(|_| {
-            CurateError::UnknownInstrument {
+        let instrument_id =
+            InstrumentId::parse(&row.instrument).map_err(|_| CurateError::UnknownInstrument {
                 instrument: row.instrument.clone(),
-            }
-        })?;
+            })?;
         let date = TradingDate::parse(&row.date).map_err(|e| CurateError::MalformedBars {
             reason: format!("invalid bar date {:?}: {e}", row.date),
         })?;
@@ -717,32 +758,34 @@ fn build_bars(
                 date: date.to_iso(),
             });
         }
-        let record = master.instrument_on(&instrument_id, date).map_err(map_master_error)?;
+        let record = master
+            .instrument_on(&instrument_id, date)
+            .map_err(map_master_error)?;
         if !calendar.is_session(date) {
             return Err(CurateError::NotASession {
                 instrument: row.instrument.clone(),
                 date: date.to_iso(),
             });
         }
-        if let Some(declared) = doc.currency {
-            if declared != record.currency {
-                return Err(CurateError::CurrencyConflict {
-                    instrument: row.instrument.clone(),
-                    expected: record.currency.to_string(),
-                    declared: declared.to_string(),
-                    context: "dataset".to_owned(),
-                });
-            }
+        if let Some(declared) = doc.currency
+            && declared != record.currency
+        {
+            return Err(CurateError::CurrencyConflict {
+                instrument: row.instrument.clone(),
+                expected: record.currency.to_string(),
+                declared: declared.to_string(),
+                context: "dataset".to_owned(),
+            });
         }
-        if let Some(declared) = instrument_currency.get(&row.instrument) {
-            if *declared != record.currency {
-                return Err(CurateError::CurrencyConflict {
-                    instrument: row.instrument.clone(),
-                    expected: record.currency.to_string(),
-                    declared: declared.to_string(),
-                    context: format!("instrument {}", row.instrument),
-                });
-            }
+        if let Some(declared) = instrument_currency.get(&row.instrument)
+            && *declared != record.currency
+        {
+            return Err(CurateError::CurrencyConflict {
+                instrument: row.instrument.clone(),
+                expected: record.currency.to_string(),
+                declared: declared.to_string(),
+                context: format!("instrument {}", row.instrument),
+            });
         }
 
         let open = price(row, &row.open, "open")?;
@@ -775,16 +818,20 @@ fn build_bars(
         }
         let trading_value = row.trading_value()?;
 
-        let market_open_ts = calendar.session_open_utc(date).map_err(|_| CurateError::NotASession {
-            instrument: row.instrument.clone(),
-            date: date.to_iso(),
-        })?;
-        let market_close_ts = calendar
-            .session_close_utc(date)
-            .map_err(|_| CurateError::NotASession {
-                instrument: row.instrument.clone(),
-                date: date.to_iso(),
-            })?;
+        let market_open_ts =
+            calendar
+                .session_open_utc(date)
+                .map_err(|_| CurateError::NotASession {
+                    instrument: row.instrument.clone(),
+                    date: date.to_iso(),
+                })?;
+        let market_close_ts =
+            calendar
+                .session_close_utc(date)
+                .map_err(|_| CurateError::NotASession {
+                    instrument: row.instrument.clone(),
+                    date: date.to_iso(),
+                })?;
 
         bars.push(CuratedBar {
             instrument_id,
@@ -812,13 +859,20 @@ fn build_bars(
 fn price(row: &parse::RawBarRow, value: &Value, field: &str) -> Result<FixedPoint, CurateError> {
     let Some(number) = value.as_number() else {
         return Err(CurateError::MalformedBars {
-            reason: format!("bar {} {}: {field} must be a number", row.instrument, row.date),
+            reason: format!(
+                "bar {} {}: {field} must be a number",
+                row.instrument, row.date
+            ),
         });
     };
     if let Some(integer) = number.as_i64() {
-        let parsed = FixedPoint::parse(&integer.to_string()).map_err(|e| CurateError::MalformedBars {
-            reason: format!("bar {} {}: invalid {field} {integer}: {e}", row.instrument, row.date),
-        })?;
+        let parsed =
+            FixedPoint::parse(&integer.to_string()).map_err(|e| CurateError::MalformedBars {
+                reason: format!(
+                    "bar {} {}: invalid {field} {integer}: {e}",
+                    row.instrument, row.date
+                ),
+            })?;
         if !parsed.is_positive() {
             return Err(CurateError::NonPositivePrice {
                 instrument: row.instrument.clone(),
@@ -841,7 +895,10 @@ fn price(row: &parse::RawBarRow, value: &Value, field: &str) -> Result<FixedPoin
         });
     }
     let parsed = FixedPoint::parse(&float.to_string()).map_err(|e| CurateError::MalformedBars {
-        reason: format!("bar {} {}: invalid {field} {float}: {e}", row.instrument, row.date),
+        reason: format!(
+            "bar {} {}: invalid {field} {float}: {e}",
+            row.instrument, row.date
+        ),
     })?;
     if !parsed.is_positive() {
         return Err(CurateError::NonPositivePrice {
@@ -862,7 +919,9 @@ fn parse_volume(value: &Value) -> Result<i64, String> {
     if let Some(integer) = number.as_i64() {
         return Ok(integer);
     }
-    let float = number.as_f64().ok_or_else(|| "volume out of range".to_owned())?;
+    let float = number
+        .as_f64()
+        .ok_or_else(|| "volume out of range".to_owned())?;
     if !float.is_finite() {
         return Err("non-finite volume".to_owned());
     }
@@ -882,6 +941,3 @@ fn map_master_error(e: MasterError) -> CurateError {
         },
     }
 }
-
-
-

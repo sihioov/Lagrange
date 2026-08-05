@@ -51,9 +51,11 @@ impl RawBarRow {
     pub fn trading_value(&self) -> Result<Option<i64>, CurateError> {
         match &self.value {
             None => Ok(None),
-            Some(v) => number_i64(v).map(Some).map_err(|e| CurateError::MalformedBars {
-                reason: format!("bar value: {e}"),
-            }),
+            Some(v) => number_i64(v)
+                .map(Some)
+                .map_err(|e| CurateError::MalformedBars {
+                    reason: format!("bar value: {e}"),
+                }),
         }
     }
 }
@@ -182,19 +184,18 @@ pub fn parse_timestamp(
             reason: format!("missing required field {what:?}"),
         }),
         None => Ok(None),
-        Some(s) => UtcTimestamp::parse_rfc3339(s)
-            .map(Some)
-            .map_err(|e| CurateError::MalformedAction {
-                reason: format!("invalid {what} {s:?}: {e}"),
-            }),
+        Some(s) => {
+            UtcTimestamp::parse_rfc3339(s)
+                .map(Some)
+                .map_err(|e| CurateError::MalformedAction {
+                    reason: format!("invalid {what} {s:?}: {e}"),
+                })
+        }
     }
 }
 
 /// Parses a fixed-point string field.
-pub fn parse_fixed(
-    raw: Option<&String>,
-    what: &str,
-) -> Result<Option<FixedPoint>, CurateError> {
+pub fn parse_fixed(raw: Option<&String>, what: &str) -> Result<Option<FixedPoint>, CurateError> {
     match raw {
         None => Ok(None),
         Some(s) => FixedPoint::parse(s)
@@ -213,13 +214,17 @@ pub fn parse_fixed_value(
 ) -> Result<Option<FixedPoint>, CurateError> {
     match raw {
         None => Ok(None),
-        Some(Value::String(s)) => FixedPoint::parse(s)
+        Some(Value::String(s)) => {
+            FixedPoint::parse(s)
+                .map(Some)
+                .map_err(|e| CurateError::MalformedAction {
+                    reason: format!("invalid {what} {s:?}: {e}"),
+                })
+        }
+        Some(value) => number_to_fixed(value)
             .map(Some)
             .map_err(|e| CurateError::MalformedAction {
-                reason: format!("invalid {what} {s:?}: {e}"),
+                reason: format!("invalid {what} {value}: {e}"),
             }),
-        Some(value) => number_to_fixed(value).map(Some).map_err(|e| CurateError::MalformedAction {
-            reason: format!("invalid {what} {value}: {e}"),
-        }),
     }
 }

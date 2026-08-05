@@ -151,7 +151,11 @@ impl CuratedSchema {
             Field::new("ratio", DataType::Utf8, true),
             Field::new("split_factor", factor_type(), true),
             Field::new("amount_per_share", price_type(), true),
-            Field::new("tax_withholding_pct", DataType::Decimal128(PRICE_PRECISION, TAX_SCALE as i8), true),
+            Field::new(
+                "tax_withholding_pct",
+                DataType::Decimal128(PRICE_PRECISION, TAX_SCALE as i8),
+                true,
+            ),
             Field::new("currency", DataType::Utf8, false),
             Field::new("announced_at", timestamp_type(), false),
             Field::new("source", DataType::Utf8, false),
@@ -178,7 +182,9 @@ fn ts_to_micros(ts: UtcTimestamp) -> i64 {
 }
 
 fn micros_to_ts(micros: i64) -> UtcTimestamp {
-    UtcTimestamp::from_datetime(chrono::DateTime::from_timestamp_micros(micros).expect("valid timestamp from parquet"))
+    UtcTimestamp::from_datetime(
+        chrono::DateTime::from_timestamp_micros(micros).expect("valid timestamp from parquet"),
+    )
 }
 
 fn fixed_to_decimal(value: &FixedPoint, scale: u8) -> i128 {
@@ -198,10 +204,18 @@ pub fn write_bars(path: &Path, rows: &[CuratedBar]) -> Result<(), CurateError> {
     let mut trading_date = Date32Builder::new();
     let mut open_ts = TimestampMicrosecondBuilder::new();
     let mut close_ts = TimestampMicrosecondBuilder::new();
-    let mut open = Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8).expect("valid decimal params");
-    let mut high = Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8).expect("valid decimal params");
-    let mut low = Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8).expect("valid decimal params");
-    let mut close = Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8).expect("valid decimal params");
+    let mut open = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8)
+        .expect("valid decimal params");
+    let mut high = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8)
+        .expect("valid decimal params");
+    let mut low = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8)
+        .expect("valid decimal params");
+    let mut close = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8)
+        .expect("valid decimal params");
     let mut volume = Int64Builder::new();
     let mut trading_value = Int64Builder::new();
     let mut currency = StringBuilder::new();
@@ -257,15 +271,24 @@ pub fn write_adjusted_bars(path: &Path, rows: &[AdjustmentBar]) -> Result<(), Cu
     let mut trading_date = Date32Builder::new();
     let mut open_ts = TimestampMicrosecondBuilder::new();
     let mut close_ts = TimestampMicrosecondBuilder::new();
-    let mut open = Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8).expect("valid decimal params");
-    let mut high = Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8).expect("valid decimal params");
-    let mut low = Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8).expect("valid decimal params");
-    let mut close = Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8).expect("valid decimal params");
+    let mut open = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8)
+        .expect("valid decimal params");
+    let mut high = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8)
+        .expect("valid decimal params");
+    let mut low = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8)
+        .expect("valid decimal params");
+    let mut close = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8)
+        .expect("valid decimal params");
     let mut volume = Int64Builder::new();
     let mut trading_value = Int64Builder::new();
     let mut adjustment_kind = StringBuilder::new();
-    let mut adjustment_factor =
-        Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, FACTOR_SCALE as i8).expect("valid decimal params");
+    let mut adjustment_factor = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, FACTOR_SCALE as i8)
+        .expect("valid decimal params");
     let mut adjustment_events = StringBuilder::new();
     let mut currency = StringBuilder::new();
     let mut source = StringBuilder::new();
@@ -321,22 +344,22 @@ pub fn write_adjusted_bars(path: &Path, rows: &[AdjustmentBar]) -> Result<(), Cu
 }
 
 /// Writes the corporate-actions table to `path`.
-pub fn write_corporate_actions(
-    path: &Path,
-    rows: &[CorporateAction],
-) -> Result<(), CurateError> {
+pub fn write_corporate_actions(path: &Path, rows: &[CorporateAction]) -> Result<(), CurateError> {
     let mut instrument = StringBuilder::new();
     let mut event_type = StringBuilder::new();
     let mut ex_date = Date32Builder::new();
     let mut record_date = Date32Builder::new();
     let mut pay_date = Date32Builder::new();
     let mut ratio = StringBuilder::new();
-    let mut split_factor =
-        Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, FACTOR_SCALE as i8).expect("valid decimal params");
-    let mut amount_per_share =
-        Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8).expect("valid decimal params");
-    let mut tax_withholding_pct =
-        Decimal128Builder::new().with_precision_and_scale(PRICE_PRECISION, TAX_SCALE as i8).expect("valid decimal params");
+    let mut split_factor = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, FACTOR_SCALE as i8)
+        .expect("valid decimal params");
+    let mut amount_per_share = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, PRICE_SCALE as i8)
+        .expect("valid decimal params");
+    let mut tax_withholding_pct = Decimal128Builder::new()
+        .with_precision_and_scale(PRICE_PRECISION, TAX_SCALE as i8)
+        .expect("valid decimal params");
     let mut currency = StringBuilder::new();
     let mut announced_at = TimestampMicrosecondBuilder::new();
     let mut source = StringBuilder::new();
@@ -417,20 +440,20 @@ fn write_record_batch(
         context: format!("create {}", parent.display()),
         detail: e.to_string(),
     })?;
-    let batch = RecordBatch::try_new(Arc::new(schema), columns).map_err(|e| CurateError::StoreIo {
-        context: "record batch".to_owned(),
-        detail: e.to_string(),
-    })?;
+    let batch =
+        RecordBatch::try_new(Arc::new(schema), columns).map_err(|e| CurateError::StoreIo {
+            context: "record batch".to_owned(),
+            detail: e.to_string(),
+        })?;
     let file = File::create(path).map_err(|e| CurateError::StoreIo {
         context: format!("create {}", path.display()),
         detail: e.to_string(),
     })?;
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), None).map_err(|e| {
-        CurateError::StoreIo {
+    let mut writer =
+        ArrowWriter::try_new(file, batch.schema(), None).map_err(|e| CurateError::StoreIo {
             context: "parquet writer".to_owned(),
             detail: e.to_string(),
-        }
-    })?;
+        })?;
     writer.write(&batch).map_err(|e| CurateError::StoreIo {
         context: "parquet write".to_owned(),
         detail: e.to_string(),
@@ -450,16 +473,15 @@ fn read_batches(path: &Path) -> Result<Vec<arrow::record_batch::RecordBatch>, Cu
         context: format!("open {}", path.display()),
         detail: e.to_string(),
     })?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| CurateError::StoreIo {
-        context: format!("read header {}", path.display()),
-        detail: e.to_string(),
-    })?;
-    let reader = builder
-        .build()
-        .map_err(|e| CurateError::StoreIo {
-            context: format!("build reader {}", path.display()),
+    let builder =
+        ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| CurateError::StoreIo {
+            context: format!("read header {}", path.display()),
             detail: e.to_string(),
         })?;
+    let reader = builder.build().map_err(|e| CurateError::StoreIo {
+        context: format!("build reader {}", path.display()),
+        detail: e.to_string(),
+    })?;
     reader
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| CurateError::StoreIo {
@@ -512,7 +534,11 @@ fn date_at(batch: &arrow::record_batch::RecordBatch, col: &str, i: usize) -> Tra
     days_to_date(array.value(i))
 }
 
-fn date_opt_at(batch: &arrow::record_batch::RecordBatch, col: &str, i: usize) -> Option<TradingDate> {
+fn date_opt_at(
+    batch: &arrow::record_batch::RecordBatch,
+    col: &str,
+    i: usize,
+) -> Option<TradingDate> {
     let array = batch
         .column_by_name(col)
         .expect("schema column present")
@@ -547,7 +573,12 @@ fn price_at(batch: &arrow::record_batch::RecordBatch, col: &str, i: usize) -> Pr
     Price::from_fixed(value).expect("curated price is positive by construction")
 }
 
-fn fixed_at(batch: &arrow::record_batch::RecordBatch, col: &str, i: usize, scale: u8) -> FixedPoint {
+fn fixed_at(
+    batch: &arrow::record_batch::RecordBatch,
+    col: &str,
+    i: usize,
+    scale: u8,
+) -> FixedPoint {
     let array = batch
         .column_by_name(col)
         .expect("schema column present")
@@ -600,11 +631,12 @@ pub fn read_bars(path: &Path) -> Result<Vec<CuratedBar>, CurateError> {
     for batch in read_batches(path)? {
         for i in 0..batch.num_rows() {
             rows.push(CuratedBar {
-                instrument_id: InstrumentId::parse(str_at(&batch, "instrument_id", i))
-                    .map_err(|e| CurateError::StoreIo {
+                instrument_id: InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(
+                    |e| CurateError::StoreIo {
                         context: "instrument_id parse".to_owned(),
                         detail: e.to_string(),
-                    })?,
+                    },
+                )?,
                 trading_date: date_at(&batch, "trading_date", i),
                 market_open_ts: ts_at(&batch, "market_open_ts", i),
                 market_close_ts: ts_at(&batch, "market_close_ts", i),
@@ -618,16 +650,18 @@ pub fn read_bars(path: &Path) -> Result<Vec<CuratedBar>, CurateError> {
                     .expect("curated currency is valid by construction"),
                 source: str_at(&batch, "source", i).to_owned(),
                 ingested_at: ts_at(&batch, "ingested_at", i),
-                batch_id: str_at(&batch, "batch_id", i).parse::<BatchId>()
+                batch_id: str_at(&batch, "batch_id", i)
+                    .parse::<BatchId>()
                     .map_err(|e| CurateError::StoreIo {
                         context: "batch_id parse".to_owned(),
                         detail: e.to_string(),
                     })?,
-                raw_hash: ContentHash::parse(str_at(&batch, "raw_hash", i))
-                    .map_err(|e| CurateError::StoreIo {
+                raw_hash: ContentHash::parse(str_at(&batch, "raw_hash", i)).map_err(|e| {
+                    CurateError::StoreIo {
                         context: "raw_hash parse".to_owned(),
                         detail: e.to_string(),
-                    })?,
+                    }
+                })?,
             });
         }
     }
@@ -640,11 +674,12 @@ pub fn read_adjusted_bars(path: &Path) -> Result<Vec<AdjustmentBar>, CurateError
     for batch in read_batches(path)? {
         for i in 0..batch.num_rows() {
             rows.push(AdjustmentBar {
-                instrument_id: InstrumentId::parse(str_at(&batch, "instrument_id", i))
-                    .map_err(|e| CurateError::StoreIo {
+                instrument_id: InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(
+                    |e| CurateError::StoreIo {
                         context: "instrument_id parse".to_owned(),
                         detail: e.to_string(),
-                    })?,
+                    },
+                )?,
                 trading_date: date_at(&batch, "trading_date", i),
                 market_open_ts: ts_at(&batch, "market_open_ts", i),
                 market_close_ts: ts_at(&batch, "market_close_ts", i),
@@ -662,16 +697,18 @@ pub fn read_adjusted_bars(path: &Path) -> Result<Vec<AdjustmentBar>, CurateError
                     .expect("curated currency is valid by construction"),
                 source: str_at(&batch, "source", i).to_owned(),
                 ingested_at: ts_at(&batch, "ingested_at", i),
-                batch_id: str_at(&batch, "batch_id", i).parse::<BatchId>()
+                batch_id: str_at(&batch, "batch_id", i)
+                    .parse::<BatchId>()
                     .map_err(|e| CurateError::StoreIo {
                         context: "batch_id parse".to_owned(),
                         detail: e.to_string(),
                     })?,
-                raw_hash: ContentHash::parse(str_at(&batch, "raw_hash", i))
-                    .map_err(|e| CurateError::StoreIo {
+                raw_hash: ContentHash::parse(str_at(&batch, "raw_hash", i)).map_err(|e| {
+                    CurateError::StoreIo {
                         context: "raw_hash parse".to_owned(),
                         detail: e.to_string(),
-                    })?,
+                    }
+                })?,
             });
         }
     }
@@ -686,11 +723,12 @@ pub fn read_corporate_actions(path: &Path) -> Result<Vec<CorporateAction>, Curat
             let currency = Currency::from_code(str_at(&batch, "currency", i))
                 .expect("curated currency is valid by construction");
             rows.push(CorporateAction {
-                instrument_id: InstrumentId::parse(str_at(&batch, "instrument_id", i))
-                    .map_err(|e| CurateError::StoreIo {
+                instrument_id: InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(
+                    |e| CurateError::StoreIo {
                         context: "instrument_id parse".to_owned(),
                         detail: e.to_string(),
-                    })?,
+                    },
+                )?,
                 event_type: CorporateActionType::parse(str_at(&batch, "event_type", i))
                     .expect("curated event type is valid by construction"),
                 ex_date: date_at(&batch, "ex_date", i),
@@ -698,31 +736,31 @@ pub fn read_corporate_actions(path: &Path) -> Result<Vec<CorporateAction>, Curat
                 pay_date: date_opt_at(&batch, "pay_date", i),
                 ratio: str_opt_at(&batch, "ratio", i).map(str::to_owned),
                 split_factor: fixed_opt_at(&batch, "split_factor", i, FACTOR_SCALE),
-                amount_per_share: fixed_opt_at(&batch, "amount_per_share", i, PRICE_SCALE)
-                    .map(|f| {
+                amount_per_share: fixed_opt_at(&batch, "amount_per_share", i, PRICE_SCALE).map(
+                    |f| {
                         domain::Money::from_fixed(f, currency)
                             .expect("curated amount is non-negative by construction")
-                    }),
+                    },
+                ),
                 tax_withholding_pct: fixed_opt_at(&batch, "tax_withholding_pct", i, TAX_SCALE),
                 currency,
                 announced_at: ts_at(&batch, "announced_at", i),
                 source: str_at(&batch, "source", i).to_owned(),
-                batch_id: str_at(&batch, "batch_id", i).parse::<BatchId>()
+                batch_id: str_at(&batch, "batch_id", i)
+                    .parse::<BatchId>()
                     .map_err(|e| CurateError::StoreIo {
                         context: "batch_id parse".to_owned(),
                         detail: e.to_string(),
                     })?,
-                raw_hash: ContentHash::parse(str_at(&batch, "raw_hash", i))
-                    .map_err(|e| CurateError::StoreIo {
+                raw_hash: ContentHash::parse(str_at(&batch, "raw_hash", i)).map_err(|e| {
+                    CurateError::StoreIo {
                         context: "raw_hash parse".to_owned(),
                         detail: e.to_string(),
-                    })?,
+                    }
+                })?,
                 ingested_at: ts_at(&batch, "ingested_at", i),
             });
         }
     }
     Ok(rows)
 }
-
-
-

@@ -16,14 +16,11 @@ use serde_json::{Value, json};
 
 use market_data::contract::{FetchMode, RawEnvelope, RequestMetadata, ResponseKind};
 use market_data::curate::schema::CuratedSchema;
-use market_data::curate::{
-    CurateError, CurateRequest, CurateStore, curate_batch, read_bars,
-};
+use market_data::curate::{CurateError, CurateRequest, CurateStore, curate_batch, read_bars};
 use market_data::{BatchSpec, ManifestEntry, RawStore, krx_2020, seed_universe};
 
 /// The golden Todo 6 fixture: 3 seed ETFs, 27 bars, no corporate actions.
-const GOLDEN_BARS: &[u8] =
-    include_bytes!("../../../tests/fixtures/kr-etf/2020-01-31/bars.json");
+const GOLDEN_BARS: &[u8] = include_bytes!("../../../tests/fixtures/kr-etf/2020-01-31/bars.json");
 const EMPTY_ACTIONS: &[u8] =
     include_bytes!("../../../tests/fixtures/kr-etf/contract/corporate-actions-response.json");
 
@@ -338,7 +335,10 @@ fn unknown_instrument_rejected() {
         },
     )
     .expect_err("unknown instrument must be rejected");
-    assert!(matches!(err, CurateError::UnknownInstrument { .. }), "{err}");
+    assert!(
+        matches!(err, CurateError::UnknownInstrument { .. }),
+        "{err}"
+    );
 }
 
 #[test]
@@ -425,7 +425,9 @@ fn session_open_close_timestamps_come_from_calendar() {
     let bars = read_bars(&bars_path(&curated, outcome.dataset_version)).expect("bars read back");
     let feb_03 = bars
         .iter()
-        .find(|b| b.instrument_id.to_string() == "069500.KRX" && b.trading_date.to_iso() == "2020-02-03")
+        .find(|b| {
+            b.instrument_id.to_string() == "069500.KRX" && b.trading_date.to_iso() == "2020-02-03"
+        })
         .expect("2020-02-03 bar present");
     // KRX session 09:00-15:30 KST = 00:00-06:30 UTC (design §6.4, Todo 9).
     assert_eq!(
@@ -463,7 +465,9 @@ fn raw_open_preserved_for_execution() {
     let bars = read_bars(&bars_path(&curated, outcome.dataset_version)).expect("bars read back");
     let bar = bars
         .iter()
-        .find(|b| b.instrument_id.to_string() == "069500.KRX" && b.trading_date.to_iso() == "2020-02-03")
+        .find(|b| {
+            b.instrument_id.to_string() == "069500.KRX" && b.trading_date.to_iso() == "2020-02-03"
+        })
         .expect("bar present");
     assert_eq!(bar.open, Price::parse("10300").expect("price"));
 }
@@ -479,7 +483,10 @@ fn bars_carry_batch_and_raw_hash_provenance() {
     assert_eq!(bar.raw_hash, ContentHash::from_bytes(GOLDEN_BARS));
     assert_eq!(bar.ingested_at, now());
     assert_eq!(bar.currency, Currency::KRW);
-    assert_eq!(bar.trading_date, TradingDate::new(2020, 1, 20).expect("date"));
+    assert_eq!(
+        bar.trading_date,
+        TradingDate::new(2020, 1, 20).expect("date")
+    );
 }
 
 #[test]

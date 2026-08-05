@@ -27,14 +27,14 @@
 //!   holiday data with source/version/hash provenance, last/next trading-day
 //!   queries, holiday month-end handling, and timezone-aware open/close
 //!   instants (FR-DATA-003/005).
-
+//!
 //! Todo 10 delivers the **curated zone**: normalized, partitioned, versioned
 //! Curated Parquet with point-in-time corporate actions ([`curate`]):
 //!
-//! - [`curate::curate_batch`] - Raw batch -> curated bars/actions/adjusted
-//!   series under `data/curated/...`, all-or-nothing, versioned per dataset;
-//! - raw OHLCV bars (execution) + split-adjusted and total-return series
-//!   (signals); correction produces a NEW dataset version (old immutable);
+//! - [`curate::curate_batch`]: Raw batch into `data/curated/...` partitions,
+//!   all-or-nothing, one dataset version per curation;
+//! - raw OHLCV bars (execution) plus split-adjusted and total-return series
+//!   (signals); a correction produces a NEW dataset version (old immutable);
 //! - corporate actions with `announced_at` point-in-time visibility (nothing
 //!   exposed before announcement; future-announced actions rejected);
 //! - `PRICE_RETURN_ONLY | TOTAL_RETURN_CAPABLE` capability per version.
@@ -57,12 +57,12 @@ pub use contract::{
     ALL_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, RequestMetadata,
     ResponseKind, StoredFile,
 };
+pub use curate::actions::{CorporateAction, CorporateActionType};
+pub use curate::schema::{CuratedBar, CuratedSchema};
 pub use curate::{
     Capability, CurateError, CurateOutcome, CurateRequest, CurateStore, DatasetManifest,
     SourceBatchRef, curate_batch,
 };
-pub use curate::actions::{CorporateAction, CorporateActionType};
-pub use curate::schema::{CuratedBar, CuratedSchema};
 pub use ingest::{IngestError, IngestOutcome, IngestRequest, ingest_bundle};
 pub use instrument_master::{
     AliasNamespace, Instrument, InstrumentAlias, InstrumentMaster, ListingReason, MasterError,

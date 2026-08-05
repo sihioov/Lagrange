@@ -9,11 +9,14 @@
 //! ex-date). A dataset version is `TOTAL_RETURN_CAPABLE` only when every
 //! dividend carries complete pay-date data.
 
-use domain::{ContentHash, Currency, FixedPoint, InstrumentId, Money, Price, Quantity, TradingDate, UtcTimestamp};
+use domain::{
+    ContentHash, Currency, FixedPoint, InstrumentId, Money, Price, Quantity, TradingDate,
+    UtcTimestamp,
+};
 use serde::{Deserialize, Serialize};
 
-use super::CurateError;
 use super::Capability;
+use super::CurateError;
 
 /// The two corporate-action classes the MVP curates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -84,10 +87,7 @@ pub struct CorporateAction {
 
 /// The actions of a dataset visible as-of `as_of`: only records announced on
 /// or before `as_of` (requirements §8.3 point-in-time; no look-ahead).
-pub fn visible_actions(
-    actions: &[CorporateAction],
-    as_of: UtcTimestamp,
-) -> Vec<CorporateAction> {
+pub fn visible_actions(actions: &[CorporateAction], as_of: UtcTimestamp) -> Vec<CorporateAction> {
     let mut visible: Vec<CorporateAction> = actions
         .iter()
         .filter(|a| a.announced_at <= as_of)
@@ -106,9 +106,9 @@ pub fn visible_actions(
 /// version at price returns (design §9.3: "총수익률 기준" requires the full
 /// cash-flow schedule).
 pub fn dataset_capability(actions: &[CorporateAction]) -> Capability {
-    let incomplete = actions.iter().any(|a| {
-        a.event_type == CorporateActionType::CashDividend && a.pay_date.is_none()
-    });
+    let incomplete = actions
+        .iter()
+        .any(|a| a.event_type == CorporateActionType::CashDividend && a.pay_date.is_none());
     if incomplete {
         Capability::PriceReturnOnly
     } else {
