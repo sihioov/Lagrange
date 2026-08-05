@@ -53,7 +53,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use domain::{ContentHash, DataState, DatasetId, FixedPoint, InstrumentId, TradingDate};
+use domain::{
+    ContentHash, DataState, DatasetId, FixedPoint, InstrumentId, TradingDate, UtcTimestamp,
+};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::{Deserialize, Serialize};
 
@@ -240,6 +242,76 @@ impl QualityReport {
         } else {
             Ok(())
         }
+    }
+}
+
+/// An admin approval attempt against one quality report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminApproval {
+    pub granted_by: String,
+    pub granted_at: UtcTimestamp,
+    pub note: String,
+}
+
+/// The immutable audit record of an approval decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovalAudit {
+    pub dataset_id: DatasetId,
+    pub version: u32,
+    pub report_hash: ContentHash,
+    pub granted_by: String,
+    pub granted_at: UtcTimestamp,
+    pub note: String,
+    pub approved: bool,
+    pub state: DataState,
+    pub reason: String,
+}
+
+/// Applies an admin approval to a report.
+///
+/// Approval only transitions WARNING-class states (`WARNING` -> `READY`). A
+/// structural `BLOCKED` report is ALWAYS rejected: the reason names the
+/// blocking codes and demands a NEW dataset version — approval can never turn
+/// a structural error into `READY` (requirements §8.3, design §16).
+pub fn apply_approval(report: &QualityReport, approval: &AdminApproval) -> ApprovalAudit {
+    let (approved, state, reason) = match report.state {
+        DataState::Blocked => {
+            let codes: Vec<&'static str> = report
+                .issues
+                .iter()
+                .filter(|i| i.severity == Severity::Blocking)
+                .map(|i| i.code.as_str())
+                .collect();
+            (
+                false,
+                DataState::Blocked,
+                format!(
+                    "structural blocking issues require a NEW dataset version, not approval: {}",
+                    codes.join(", ")
+                ),
+            )
+        }
+        DataState::Warning => (
+            true,
+            DataState::Ready,
+            "approval granted: only warning-class issues present".to_owned(),
+        ),
+        DataState::Ready => (
+            false,
+            DataState::Ready,
+            "already READY: approval only transitions WARNING-class states".to_owned(),
+        ),
+    };
+    ApprovalAudit {
+        dataset_id: report.dataset_id.clone(),
+        version: report.version,
+        report_hash: report.content_hash.clone(),
+        granted_by: approval.granted_by.clone(),
+        granted_at: approval.granted_at,
+        note: approval.note.clone(),
+        approved,
+        state,
+        reason,
     }
 }
 

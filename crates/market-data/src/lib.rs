@@ -73,7 +73,8 @@ pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
 };
 pub use quality::{
-    DataUse, DataUseDenial, ExclusionRecord, FreshnessPolicy, IssueCode, OptionalExclusion,
-    QualityError, QualityGate, QualityIssue, QualityPolicy, QualityReport, Severity,
+    AdminApproval, ApprovalAudit, DataUse, DataUseDenial, ExclusionRecord, FreshnessPolicy,
+    IssueCode, OptionalExclusion, QualityError, QualityGate, QualityIssue, QualityPolicy,
+    QualityReport, Severity, apply_approval,
 };
 pub use storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};

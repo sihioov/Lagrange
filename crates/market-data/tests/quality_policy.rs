@@ -999,9 +999,12 @@ fn stale_required_data_returns_typed_data_stale() {
 fn approval_cannot_clear_structural_blocked() {
     let temp = tempfile::tempdir().expect("temp dir");
     let (curated, _) = curate(temp.path(), MISSING_BARS, EMPTY_ACTIONS);
-    let report = gate(&curated, policy(&["069500", "229200", "114260"], "2020-02-03", 0))
-        .validate_dataset(&ds(), 1)
-        .expect("validation runs");
+    let report = gate(
+        &curated,
+        policy(&["069500", "229200", "114260"], "2020-02-03", 0),
+    )
+    .validate_dataset(&ds(), 1)
+    .expect("validation runs");
     assert_eq!(report.state, DataState::Blocked);
     let audit = market_data::quality::apply_approval(
         &report,
@@ -1011,10 +1014,13 @@ fn approval_cannot_clear_structural_blocked() {
             note: "approve anyway".to_owned(),
         },
     );
-    assert!(!audit.approved, "approval must NOT clear a structural BLOCKED");
+    assert!(
+        !audit.approved,
+        "approval must NOT clear a structural BLOCKED"
+    );
     assert_eq!(audit.state, DataState::Blocked);
     assert!(
-        audit.reason.contains("new dataset version"),
+        audit.reason.contains("NEW dataset version"),
         "reason must demand a new dataset version: {}",
         audit.reason
     );
@@ -1065,9 +1071,12 @@ fn approval_transitions_warning_to_ready() {
 fn approval_on_ready_is_a_noop() {
     let temp = tempfile::tempdir().expect("temp dir");
     let (curated, _) = curate_golden(temp.path());
-    let report = gate(&curated, policy(&["069500", "229200", "114260"], "2020-02-03", 0))
-        .validate_dataset(&ds(), 1)
-        .expect("validation runs");
+    let report = gate(
+        &curated,
+        policy(&["069500", "229200", "114260"], "2020-02-03", 0),
+    )
+    .validate_dataset(&ds(), 1)
+    .expect("validation runs");
     assert_eq!(report.state, DataState::Ready);
     let audit = market_data::quality::apply_approval(
         &report,
@@ -1077,7 +1086,10 @@ fn approval_on_ready_is_a_noop() {
             note: "nothing to do".to_owned(),
         },
     );
-    assert!(!audit.approved, "approval only transitions WARNING-class states");
+    assert!(
+        !audit.approved,
+        "approval only transitions WARNING-class states"
+    );
     assert_eq!(audit.state, DataState::Ready);
 }
 
@@ -1085,7 +1097,10 @@ fn approval_on_ready_is_a_noop() {
 fn only_a_new_dataset_version_resolves_structural_blocked() {
     let temp = tempfile::tempdir().expect("temp dir");
     let (curated, _) = curate(temp.path(), MISSING_BARS, EMPTY_ACTIONS);
-    let gate = gate(&curated, policy(&["069500", "229200", "114260"], "2020-02-03", 0));
+    let gate = gate(
+        &curated,
+        policy(&["069500", "229200", "114260"], "2020-02-03", 0),
+    );
     let v1 = gate.validate_dataset(&ds(), 1).expect("v1 validation");
     assert_eq!(v1.state, DataState::Blocked);
 
