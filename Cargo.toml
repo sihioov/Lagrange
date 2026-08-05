@@ -22,9 +22,8 @@ members = [
     "crates/result-model",
     "crates/risk-gateway",
     "crates/kis-client",
-    # TODO 3: the plan QA runs `cargo test -p api-server --test migration_contract`
-    # but apps/api-server is the Node app; the Rust migration gate lives here.
     "tests/integration/migration-contract",
+    "data-pipelines/collectors",
 ]
 
 [workspace.package]

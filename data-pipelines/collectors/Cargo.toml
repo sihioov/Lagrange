@@ -1,0 +1,12 @@
+[package]
+name = "collectors"
+description = "Lagrange Station data collectors: KRX raw ingestion CLI driving the market-data crate."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+market-data = { path = "../../crates/market-data" }
+domain = { path = "../../crates/domain" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
