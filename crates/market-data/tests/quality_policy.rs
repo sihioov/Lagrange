@@ -858,6 +858,138 @@ fn revalidation_is_identical() {
     assert_eq!(first.state, DataState::Ready);
 }
 
+// ---------------------------------------------------------------------------
+// Freshness: DATA_STALE classification (reference date after the last close)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stale_close_blocks_required_universe() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, _) = curate_golden(temp.path());
+    // The golden data's latest close is 2020-02-03; the reference date is
+    // 2020-02-05, so 02-04 and 02-05 are both stale sessions.
+    let report = gate(
+        &curated,
+        policy(&["069500", "229200", "114260"], "2020-02-05", 0),
+    )
+    .validate_dataset(&ds(), 1)
+    .expect("validation runs");
+    assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
+    let stale: Vec<&QualityIssue> = report
+        .issues
+        .iter()
+        .filter(|i| i.code == IssueCode::DataStale)
+        .collect();
+    assert_eq!(stale.len(), 3, "{:?}", report.issues);
+    assert!(
+        stale.iter().all(|i| i.severity == Severity::Blocking),
+        "{:?}",
+        report.issues
+    );
+    for issue in &stale {
+        assert!(
+            issue.detail.contains("2 stale session(s)"),
+            "{}",
+            issue.detail
+        );
+    }
+    let denial = report
+        .permits(DataUse::Backtest)
+        .expect_err("stale required data must block backtest");
+    assert!(denial.blocking_issues.contains(&IssueCode::DataStale));
+}
+
+#[test]
+fn stale_close_warns_for_optional_with_declared_policy() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, _) = curate_golden(temp.path());
+    let p = QualityPolicy {
+        required_universe: BTreeSet::new(),
+        optional_exclusion: Some(OptionalExclusion {
+            reason: "daily recommendation only needs 2020-02-03 data".to_owned(),
+        }),
+        freshness: FreshnessPolicy {
+            reference_date: TradingDate::parse("2020-02-05").expect("date"),
+            max_stale_sessions: 0,
+        },
+        outlier_threshold_pct: 0.20,
+    };
+    let report = gate(&curated, p)
+        .validate_dataset(&ds(), 1)
+        .expect("validation runs");
+    assert_eq!(report.state, DataState::Warning, "{:?}", report.issues);
+    let stale: Vec<&QualityIssue> = report
+        .issues
+        .iter()
+        .filter(|i| i.code == IssueCode::DataStale)
+        .collect();
+    assert!(!stale.is_empty());
+    assert!(
+        stale.iter().all(|i| i.severity == Severity::Warning),
+        "{:?}",
+        report.issues
+    );
+    assert_eq!(report.exclusions.len(), stale.len());
+    for exclusion in &report.exclusions {
+        assert_eq!(
+            exclusion.reason,
+            "daily recommendation only needs 2020-02-03 data"
+        );
+    }
+    assert!(report.permits(DataUse::Recommendation).is_ok());
+}
+
+#[test]
+fn stale_optional_without_policy_blocks() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, _) = curate_golden(temp.path());
+    let report = gate(&curated, policy(&[], "2020-02-05", 0))
+        .validate_dataset(&ds(), 1)
+        .expect("validation runs");
+    assert_eq!(report.state, DataState::Blocked, "{:?}", report.issues);
+    assert!(has_issue(&report, IssueCode::DataStale, Severity::Blocking));
+}
+
+#[test]
+fn stale_within_grace_is_ready() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, _) = curate_golden(temp.path());
+    // Reference 2020-02-04 with a 1-session grace: 02-04 is the only stale
+    // session, so the dataset is still fresh enough to be READY.
+    let report = gate(
+        &curated,
+        policy(&["069500", "229200", "114260"], "2020-02-04", 1),
+    )
+    .validate_dataset(&ds(), 1)
+    .expect("validation runs");
+    assert_eq!(report.state, DataState::Ready, "{:?}", report.issues);
+    assert!(!has_issue(
+        &report,
+        IssueCode::DataStale,
+        Severity::Blocking
+    ));
+}
+
+#[test]
+fn stale_required_data_returns_typed_data_stale() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, _) = curate_golden(temp.path());
+    let report = gate(
+        &curated,
+        policy(&["069500", "229200", "114260"], "2020-02-06", 0),
+    )
+    .validate_dataset(&ds(), 1)
+    .expect("validation runs");
+    let stale = report
+        .issues
+        .iter()
+        .find(|i| i.code == IssueCode::DataStale)
+        .expect("DATA_STALE issue present");
+    assert_eq!(stale.code.as_str(), "DATA_STALE");
+    assert_eq!(stale.severity, Severity::Blocking);
+    assert_eq!(report.state, DataState::Blocked);
+}
+
 #[test]
 fn correction_creates_new_version_and_preserves_old() {
     let temp = tempfile::tempdir().expect("temp dir");
