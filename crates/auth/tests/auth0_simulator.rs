@@ -127,7 +127,7 @@ async fn complete_login(h: &Harness, spec: &LoginSpec<'_>) -> Result<IssuedSessi
         .expect("pending stored");
     let code = h
         .sim
-        .issue_code(&req, claims(&h.sim, &nonce, spec), &req.pkce.verifier);
+        .issue_code(claims(&h.sim, &nonce, spec), &req.pkce.verifier);
     h.auth.complete_login(&code, &state, &h.pending).await
 }
 
@@ -471,7 +471,6 @@ async fn bad_state_nonce_or_code_never_creates_a_session() {
         .unwrap();
     // Provider signs an ID token carrying the WRONG nonce.
     let bad_nonce = h.sim.issue_code(
-        &req,
         claims(
             &h.sim,
             "attacker-nonce",

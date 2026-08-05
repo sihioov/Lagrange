@@ -174,7 +174,7 @@ impl Simulator {
 
     /// "Logs the user in" at the provider: mints a single-use auth code bound
     /// to the verifier and redirect URI, storing the claims to sign later.
-    pub fn issue_code(&self, _req: &AuthorizeRequest, claims: Value, verifier: &str) -> String {
+    pub fn issue_code(&self, claims: Value, verifier: &str) -> String {
         let code = format!("sim-code-{}", random_hex());
         self.codes.lock().unwrap().insert(
             code.clone(),
