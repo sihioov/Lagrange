@@ -16,7 +16,7 @@ def test_adapter_imports_and_subclasses_base(sid, execution_module):
     assert mod.VERSION == "1.0.0"
     adapter_class = getattr(mod, mod.__all__[0])
     assert issubclass(adapter_class, execution_module.TargetExecutionStrategy)
-    config_class = getattr(mod, f"{adapter_class.__name__}Config")
+    config_class = getattr(mod, "".join(part.title() for part in mod.STRATEGY_ID.split("_")) + "Config")
     assert config_class.__name__.endswith("Config")
 
 
@@ -26,7 +26,7 @@ def test_adapter_default_config_matches_package_defaults(sid):
 
     mod = load_adapter(sid)
     adapter_class = getattr(mod, mod.__all__[0])
-    config_class = getattr(mod, f"{adapter_class.__name__}Config")
+    config_class = getattr(mod, "".join(part.title() for part in mod.STRATEGY_ID.split("_")) + "Config")
     cfg = config_class()
     assert cfg.parameters == load_package(sid).PACKAGE["default_parameters"]
     assert cfg.instrument_ids, "at least one instrument"
@@ -71,19 +71,27 @@ def test_buy_and_hold_adapter_executes_golden_target_at_next_open(events, execut
 
 def test_adapter_exits_position_when_target_is_cash(events):
     mod = load_adapter("buy_and_hold")
-    gen = load_target("buy_and_hold")
 
     cfg = mod.BuyAndHoldConfig(instrument_ids=["069500.KRX"])
     strategy = mod.BuyAndHoldAdapter(cfg)
     strategy.positions["069500.KRX"] = 10700  # engine-reported filled position
 
-    portfolio = gen.generate_target(
-        {"benchmark_instrument": "069500.KRX", "target_weight": 0.0,
-         "rebalance_cadence": "none"},
-        {},
-        "2020-02-03",
-        ["069500.KRX"],
-    )
+    # An exit-to-cash target arrives as an empty-targets portfolio (the
+    # schema forbids target_weight 0.0 by design).
+    portfolio = {
+        "strategy_version": "buy_and_hold@1.0.0",
+        "targets": [],
+        "exclusions": [],
+        "cash_weight": 1.0,
+        "portfolio_reasons": [],
+        "as_of": "2020-02-03",
+        "universe_snapshot_id": "",
+        "factor_snapshot_hash": "",
+        "dataset_id": "",
+        "dataset_version": 0,
+        "constraints": {},
+        "portfolio_snapshot_id": "",
+    }
     strategy.set_target_portfolio(portfolio)
     strategy.on_data(make_open(events))
     assert strategy.order_intents == [
@@ -128,7 +136,7 @@ def test_all_adapters_accept_their_own_golden_targets(events, sid):
     gen = load_target(sid)
     golden = load_golden(sid)
     for case in golden["cases"]:
-        cfg_class = getattr(mod, f"{mod.__all__[0]}Config")
+        cfg_class = getattr(mod, "".join(part.title() for part in mod.STRATEGY_ID.split("_")) + "Config")
         cfg = cfg_class(instrument_ids=case.get("universe", ["069500.KRX"]))
         strategy = getattr(mod, mod.__all__[0])(cfg)
         portfolio = gen.generate_target(
