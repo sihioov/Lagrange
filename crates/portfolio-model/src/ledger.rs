@@ -377,6 +377,11 @@ impl LedgerState {
         }
     }
 
+    /// The current positions (integer, never negative; flat = absent).
+    pub fn positions(&self) -> &BTreeMap<InstrumentId, Quantity> {
+        &self.positions
+    }
+
     /// The current position for an instrument (None = flat).
     pub fn position(&self, instrument_id: &InstrumentId) -> Option<&Quantity> {
         self.positions.get(instrument_id)
