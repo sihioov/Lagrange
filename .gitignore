@@ -45,6 +45,7 @@ data/raw/
 data/curated/
 data/nautilus_catalog/
 data/phase0/
+tests/golden/phase0/outputs/summary.json
 *.parquet
 
 # Editor / OS

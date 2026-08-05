@@ -444,7 +444,7 @@ def build_artifacts(strategy: object, catalog: dict, effective: dict, args: argp
         "data_seed": args.seed,
         "catalog_content_hash": catalog["content_hash"],
         "config_hash": hash_bytes(canonical_json_bytes({k: v for k, v in effective.items() if k != "installed_engine_version"})),
-        "code_commit": _git_head(),
+        "code_commit": args.code_commit,
         "random_seed": args.seed,
         "timezone": TIMEZONE,
         "process_model": "one-run-per-process (ADR-005)",
@@ -496,6 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lot-size", type=int, default=100)
     parser.add_argument("--initial-cash", type=str, default="100000000")
     parser.add_argument("--probe-future-fields", action="store_true")
+    parser.add_argument("--code-commit", default=None)
     args = parser.parse_args(argv)
 
     assert_fresh_process()
@@ -503,6 +504,8 @@ def main(argv: list[str] | None = None) -> int:
     import nautilus_trader
     if args.engine_version is None:
         args.engine_version = nautilus_trader.__version__
+    if args.code_commit is None:
+        args.code_commit = _git_head()
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

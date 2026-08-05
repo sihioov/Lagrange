@@ -68,8 +68,17 @@ def _sha256_bytes(data: bytes) -> str:
 
 
 def run_runner(out_dir: Path, *extra_args: str, timeout: int = 600) -> subprocess.CompletedProcess:
-    """Run the isolated phase0 runner in a FRESH process."""
-    cmd = [sys.executable, str(RUNNER), "--out-dir", str(out_dir), *extra_args]
+    """Run the isolated phase0 runner in a FRESH process.
+
+    The run is hermetic: `--code-commit` is pinned to the committed golden
+    provenance so a run reproduces the approved artifacts byte-for-byte
+    (same design as golden.py `--code-override`).
+    """
+    committed = json.loads((OUTPUTS_DIR / "provenance.json").read_text(encoding="utf-8"))
+    cmd = [
+        sys.executable, str(RUNNER), "--out-dir", str(out_dir),
+        "--code-commit", committed["code_commit"], *extra_args,
+    ]
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
         cwd=str(REPO_ROOT), timeout=timeout,
