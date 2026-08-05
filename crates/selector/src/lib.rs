@@ -25,13 +25,17 @@ pub mod builder;
 pub mod eligibility;
 pub mod error;
 pub mod publish;
+pub mod rank;
 pub mod reason;
+pub mod score;
 pub mod spec;
 pub mod universe;
 
 pub use builder::{PreparedUniverse, UniverseBuilder};
 pub use eligibility::{EligibilityFilter, EligibilityOutcome, EligibleInstrument, Exclusion};
 pub use error::SelectorError;
+pub use rank::{RankedInstrument, Ranker};
+pub use score::{ScoreComposer, ScoredInstrument};
 pub use publish::{ProductKind, PublishedSnapshot, UniversePublisher};
 pub use universe::{
     Eligibility, SourceSnapshot, UniverseError, UniverseInstrumentEntry, UniverseManifest,
