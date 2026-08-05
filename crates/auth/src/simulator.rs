@@ -15,9 +15,7 @@
 //! code - no network, no credentials.
 
 use crate::oidc::pkce::random_hex;
-use crate::oidc::{
-    AuthorizeRequest, OidcTransport, TokenRequest, TokenResponse, TransportError, jwks,
-};
+use crate::oidc::{OidcTransport, TokenRequest, TokenResponse, TransportError, jwks};
 use crate::testkey::{TEST_RSA_PRIVATE_PKCS8_DER, TEST_RSA_PUBLIC_SPKI_DER};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
