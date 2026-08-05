@@ -128,9 +128,7 @@ async fn complete_login(h: &Harness, spec: &LoginSpec<'_>) -> Result<IssuedSessi
     let code = h
         .sim
         .issue_code(&req, claims(&h.sim, &nonce, spec), &req.pkce.verifier);
-    h.auth
-        .complete_login(&code, &state, &pending, &h.pending)
-        .await
+    h.auth.complete_login(&code, &state, &h.pending).await
 }
 
 #[tokio::test]
@@ -239,7 +237,7 @@ async fn state_is_single_use_replay_is_denied_and_audited() {
     let state = h.auth.begin_login().unwrap().state;
     let err = h
         .auth
-        .complete_login("code-replay", &state, &pending_stub(&state), &h.pending)
+        .complete_login("code-replay", &state, &h.pending)
         .await;
     assert!(matches!(
         err,
@@ -250,16 +248,6 @@ async fn state_is_single_use_replay_is_denied_and_audited() {
             .has(AuthAuditKind::LoginDenied, Some("PENDING_MISSING"))
     );
     assert!(h.auth.session_info(&issued.cookie_value).await.is_ok());
-}
-
-fn pending_stub(state: &str) -> PendingAuth {
-    PendingAuth {
-        state: state.to_string(),
-        nonce: "n".to_string(),
-        code_verifier: "v".to_string(),
-        created_at_secs: NOW,
-        ttl_secs: 300,
-    }
 }
 
 #[tokio::test]
@@ -511,7 +499,7 @@ async fn bad_state_nonce_or_code_never_creates_a_session() {
         .unwrap();
     let err = h
         .auth
-        .complete_login(&bad_nonce, &req.state, &pending, &h.pending)
+        .complete_login(&bad_nonce, &req.state, &h.pending)
         .await;
     assert!(matches!(
         err,

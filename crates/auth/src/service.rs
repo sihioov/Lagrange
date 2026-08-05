@@ -7,7 +7,7 @@
 
 use crate::audit::{AuthAudit, AuthAuditEvent, AuthAuditKind};
 use crate::invites::{InviteError, InviteService};
-use crate::oidc::{AuthorizeRequest, OidcClient, OidcError, PendingAuth, PendingAuthStore};
+use crate::oidc::{AuthorizeRequest, OidcClient, OidcError, PendingAuthStore};
 use crate::sessions::{IssuedSession, SessionError, SessionInfo, SessionService};
 use std::sync::Arc;
 
@@ -40,16 +40,15 @@ impl AuthService {
     }
 
     /// Step 2: callback validation -> identity resolution -> session issue.
+    /// The pending record is consumed from the store (single-use `state`); the
+    /// caller only needs the opaque `state` it stored at `begin_login`.
     pub async fn complete_login(
         &self,
         code: &str,
         state: &str,
-        pending: &PendingAuth,
         pending_store: &dyn PendingAuthStore,
     ) -> Result<IssuedSession, AuthError> {
         let now = self.sessions.clock.now_epoch_secs();
-        // Consume the pending record first: replay of the same `state` can
-        // never complete a login (single-use by construction).
         let consumed = match pending_store.take(state).await {
             Ok(Some(p)) => p,
             Ok(None) => {
@@ -58,10 +57,6 @@ impl AuthService {
             }
             Err(e) => return Err(AuthError::Oidc(e)),
         };
-        if consumed.state != pending.state || consumed != *pending {
-            self.audit_login_denied(None, "PENDING_MISMATCH", state);
-            return Err(AuthError::Oidc(OidcError::StateMismatch));
-        }
         let claims = match self
             .oidc
             .validate_callback(code, &consumed.state, &consumed, now)
