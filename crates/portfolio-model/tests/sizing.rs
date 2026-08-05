@@ -530,7 +530,7 @@ fn seeded_input(seed: u64) -> (SizingInput, CostProfile) {
     let mut open_prices = BTreeMap::new();
     let mut lot_sizes = BTreeMap::new();
     for (i, id) in instruments.iter().enumerate() {
-        let pos = (next() % 11) as u64 * 50;
+        let pos = (next() % 11) * 50;
         if pos > 0 {
             positions.insert(id.clone(), qty(pos));
         }

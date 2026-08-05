@@ -199,7 +199,7 @@ pub fn plan_rebalance(input: &SizingInput) -> Result<SizingReport, PortfolioErro
             });
         }
     }
-    for (_id, lot) in &input.lot_sizes {
+    for lot in input.lot_sizes.values() {
         if *lot == 0 {
             return Err(PortfolioError::InvalidLotSize { lot_size: *lot });
         }
@@ -463,25 +463,25 @@ pub fn plan_rebalance(input: &SizingInput) -> Result<SizingReport, PortfolioErro
         }
     }
     for p in &pre {
-        if let PreAction::Buy = p.action {
-            if let Some(SizingAction::Buy(q)) = buy_actions.get(&p.instrument_id).cloned() {
-                let exec = input.profile.execution_price(
-                    input
-                        .open_prices
-                        .get(&p.instrument_id)
-                        .expect("validated above"),
-                    Side::Buy,
-                )?;
-                let notional = q.checked_mul_price(&exec, currency)?;
-                let fees = input.profile.estimate(Side::Buy, &q, &exec)?;
-                orders.push(OrderRequest {
-                    instrument_id: p.instrument_id.clone(),
-                    side: Side::Buy,
-                    quantity: q,
-                    order_value: notional,
-                    estimated_fees: fees.cash_fees()?,
-                });
-            }
+        if let PreAction::Buy = p.action
+            && let Some(SizingAction::Buy(q)) = buy_actions.get(&p.instrument_id).cloned()
+        {
+            let exec = input.profile.execution_price(
+                input
+                    .open_prices
+                    .get(&p.instrument_id)
+                    .expect("validated above"),
+                Side::Buy,
+            )?;
+            let notional = q.checked_mul_price(&exec, currency)?;
+            let fees = input.profile.estimate(Side::Buy, &q, &exec)?;
+            orders.push(OrderRequest {
+                instrument_id: p.instrument_id.clone(),
+                side: Side::Buy,
+                quantity: q,
+                order_value: notional,
+                estimated_fees: fees.cash_fees()?,
+            });
         }
     }
 
