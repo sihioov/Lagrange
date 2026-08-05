@@ -174,16 +174,8 @@ fn print_table(portfolio: &TargetPortfolio) {
         portfolio.constraints.tolerance
     );
     println!(
-        "{:>3}  {:<12} {:>9} {:>9} {:>10} {:>10} {:>10}  {:<44} {}",
-        "rk",
-        "instrument",
-        "raw_12m",
-        "norm_12m",
-        "raw_vol",
-        "norm_vol",
-        "score",
-        "reason",
-        "weight"
+        "{:>3}  {:<12} {:>9} {:>9} {:>10} {:>10} {:>10}  {:<44} weight",
+        "rk", "instrument", "raw_12m", "norm_12m", "raw_vol", "norm_vol", "score", "reason",
     );
     for t in &portfolio.targets {
         let f12 = &t.factors["return_12m"];

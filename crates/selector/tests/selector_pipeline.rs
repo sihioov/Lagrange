@@ -41,6 +41,15 @@ const V1_SYMBOLS: [&str; 11] = [
     "153130", "132030",
 ];
 
+/// One fixture instrument: (symbol, raw12, norm12, rawvol, normvol).
+type FactorFixture = (
+    &'static str,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+);
+
 fn td(y: i32, m: u32, d: u32) -> TradingDate {
     TradingDate::new(y, m, d).expect("valid date")
 }
@@ -93,11 +102,7 @@ fn fixture_universe(symbols: &[&str]) -> selector::publish::PublishedSnapshot {
 
 /// A factor snapshot with the two MVP factors `return_12m` and `vol_20d` over
 /// the given per-instrument (raw12, norm12, rawvol, normvol) values on as_of.
-fn fixture_factors(
-    symbols: &[&str],
-    as_of: TradingDate,
-    values: &[(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)],
-) -> FactorSnapshot {
+fn fixture_factors(as_of: TradingDate, values: &[FactorFixture]) -> FactorSnapshot {
     let mut rows = Vec::new();
     for (symbol, raw12, norm12, rawvol, normvol) in values {
         rows.push(FactorRow {
@@ -181,17 +186,8 @@ fn default_spec() -> SelectionSpec {
 }
 
 /// The 11-symbol fixture: distinct, fully-determined scores.
-fn full_fixture() -> (
-    FactorSnapshot,
-    Vec<(
-        &'static str,
-        Option<f64>,
-        Option<f64>,
-        Option<f64>,
-        Option<f64>,
-    )>,
-) {
-    let values: Vec<(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> = vec![
+fn full_fixture() -> (FactorSnapshot, Vec<FactorFixture>) {
+    let values: Vec<FactorFixture> = vec![
         ("069500", Some(0.182), Some(1.5), Some(0.121), Some(-0.4)),
         ("102110", Some(0.121), Some(1.2), Some(0.095), Some(-0.1)),
         ("229200", Some(0.095), Some(0.9), Some(0.141), Some(0.2)),
@@ -204,7 +200,7 @@ fn full_fixture() -> (
         ("153130", Some(-0.101), Some(-1.2), Some(0.098), Some(-0.3)),
         ("132030", Some(-0.135), Some(-1.5), Some(0.115), Some(-0.5)),
     ];
-    let factors = fixture_factors(&V1_SYMBOLS, td(2020, 1, 31), &values);
+    let factors = fixture_factors(td(2020, 1, 31), &values);
     (factors, values)
 }
 
@@ -387,7 +383,7 @@ fn every_selected_and_excluded_item_has_structured_evidence() {
     let mut values = full_fixture().1;
     values[2].1 = None;
     values[2].2 = None;
-    let factors = fixture_factors(&V1_SYMBOLS, td(2020, 1, 31), &values);
+    let factors = fixture_factors(td(2020, 1, 31), &values);
     let portfolio = select(&default_spec(), &universe, &factors).expect("selection succeeds");
 
     for t in &portfolio.targets {
@@ -441,12 +437,12 @@ fn every_selected_and_excluded_item_has_structured_evidence() {
 fn tie_scores_break_by_canonical_instrument_id() {
     // Three instruments with IDENTICAL factor values -> identical scores.
     let symbols = ["069500", "102110", "229200"];
-    let values: Vec<(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> = vec![
+    let values: Vec<FactorFixture> = vec![
         ("069500", Some(0.10), Some(0.5), Some(0.05), Some(0.5)),
         ("102110", Some(0.10), Some(0.5), Some(0.05), Some(0.5)),
         ("229200", Some(0.10), Some(0.5), Some(0.05), Some(0.5)),
     ];
-    let factors = fixture_factors(&symbols, td(2020, 1, 31), &values);
+    let factors = fixture_factors(td(2020, 1, 31), &values);
     let universe = fixture_universe(&symbols);
     let spec = SelectionSpec::new(
         "relative_momentum",
@@ -494,7 +490,7 @@ fn null_mandatory_factor_excludes_with_reason() {
     let mut values = full_fixture().1;
     values[1].1 = None;
     values[1].2 = None;
-    let factors = fixture_factors(&V1_SYMBOLS, td(2020, 1, 31), &values);
+    let factors = fixture_factors(td(2020, 1, 31), &values);
 
     let portfolio = select(&default_spec(), &universe, &factors).expect("selection succeeds");
     assert!(
@@ -551,11 +547,11 @@ fn blocked_dataset_yields_typed_denial_with_no_output() {
 
 #[test]
 fn all_ineligible_universe_yields_deterministic_all_cash() {
-    let all_null: Vec<(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> = V1_SYMBOLS
+    let all_null: Vec<FactorFixture> = V1_SYMBOLS
         .iter()
         .map(|s| (*s, None, None, Some(0.1), Some(0.0)))
         .collect();
-    let factors = fixture_factors(&V1_SYMBOLS, td(2020, 1, 31), &all_null);
+    let factors = fixture_factors(td(2020, 1, 31), &all_null);
     let universe = fixture_universe(&V1_SYMBOLS);
     let spec = default_spec();
 
@@ -724,10 +720,10 @@ fn as_of_outside_universe_window_is_typed_error() {
     let spec = default_spec();
 
     // Late as-of inside the open-ended window, with rows dated consistently.
-    let late = fixture_factors(&V1_SYMBOLS, td(2021, 6, 30), &values);
+    let late = fixture_factors(td(2021, 6, 30), &values);
     assert!(select(&spec, &universe, &late).is_ok());
 
-    let early = fixture_factors(&V1_SYMBOLS, td(2019, 12, 31), &values);
+    let early = fixture_factors(td(2019, 12, 31), &values);
     let err = select(&spec, &universe, &early).expect_err("window violation must error");
     assert_eq!(err.code(), "AS_OF_OUTSIDE_WINDOW");
 }
@@ -759,17 +755,12 @@ fn unknown_factor_in_spec_is_typed_error() {
 #[test]
 fn universe_member_missing_snapshot_row_is_typed_error() {
     // 10 of 11 instruments have rows; 132030.KRX has none on as_of.
-    let values: Vec<(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> = full_fixture()
+    let values: Vec<FactorFixture> = full_fixture()
         .1
         .into_iter()
         .filter(|(s, ..)| *s != "132030")
         .collect();
-    let symbols: Vec<&str> = V1_SYMBOLS
-        .iter()
-        .copied()
-        .filter(|s| *s != "132030")
-        .collect();
-    let factors = fixture_factors(&symbols, td(2020, 1, 31), &values);
+    let factors = fixture_factors(td(2020, 1, 31), &values);
     let universe = fixture_universe(&V1_SYMBOLS);
     let err = select(&default_spec(), &universe, &factors).expect_err("missing row must error");
     assert_eq!(err.code(), "MISSING_FACTOR_ROW");
@@ -783,12 +774,11 @@ fn universe_member_missing_snapshot_row_is_typed_error() {
 
 #[test]
 fn snapshot_unknown_instrument_is_typed_error() {
-    let mut values: Vec<(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> =
-        full_fixture().1;
+    let mut values: Vec<FactorFixture> = full_fixture().1;
     values.push(("999999", Some(0.1), Some(0.5), Some(0.05), Some(0.5)));
     let mut symbols = V1_SYMBOLS.to_vec();
     symbols.push("999999"); // in the snapshot but NOT in the published universe
-    let factors = fixture_factors(&symbols, td(2020, 1, 31), &values);
+    let factors = fixture_factors(td(2020, 1, 31), &values);
     let universe = fixture_universe(&V1_SYMBOLS);
     let err =
         select(&default_spec(), &universe, &factors).expect_err("unknown instrument must error");
