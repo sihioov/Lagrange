@@ -1,0 +1,13 @@
+{
+  "currency": "KRW",
+  "final_equity_raw": 1014063790000,
+  "finite": true,
+  "max_drawdown_pct": "-29.518781",
+  "nan_free": true,
+  "num_fills": 6,
+  "schema_version": 1,
+  "strategy_id": "ma200-trend",
+  "strategy_version": "1.0.0",
+  "total_fees": "0.00",
+  "total_return_pct": "1.406379"
+}

@@ -1,0 +1,28 @@
+{
+  "golden_id": "kr-etf-phase0-next-open-v1",
+  "manifest_version": "1",
+  "versions": {
+    "data": {"id": "kr-etf-daily-phase0-v1", "version": "1.0.0", "source": "synthetic"},
+    "strategy": {"id": "ma200-trend", "version": "1.0.0"},
+    "engine": {"name": "nautilustrader", "version": "1.231.0"},
+    "config": {"id": "golden-config-phase0-v1"},
+    "seed": 42,
+    "timezone": "Asia/Seoul"
+  },
+  "fixtures": [
+    {"path": "../../fixtures/kr-etf/2020-01-31/dataset.json", "category": "data-dataset"},
+    {"path": "../../fixtures/kr-etf/2020-01-31/bars.json", "category": "data-bars"},
+    {"path": "../../fixtures/kr-etf/2020-01-31/calendar.json", "category": "data-calendar"},
+    {"path": "../../fixtures/kr-etf/2020-01-31/corporate-actions.json", "category": "data-corporate-actions"},
+    {"path": "../../fixtures/kr-etf/2020-01-31/session-semantics.json", "category": "data-session-semantics"}
+  ],
+  "artifacts": [
+    {"path": "outputs/recommendation.json", "category": "recommendation"},
+    {"path": "outputs/orders.json", "category": "order"},
+    {"path": "outputs/fills.json", "category": "fill"},
+    {"path": "outputs/equity.json", "category": "equity"},
+    {"path": "outputs/fees.json", "category": "fee"},
+    {"path": "outputs/metrics.json", "category": "metric"},
+    {"path": "outputs/provenance.json", "category": "provenance"}
+  ]
+}

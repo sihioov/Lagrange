@@ -73,6 +73,7 @@ class MA200Trend(Strategy):
         self.cash = self.initial_cash
         self.closes: dict[str, deque] = {}
         self.positions: dict[str, int] = {}
+        self.position_ids: dict[str, object] = {}
         self.pending: dict[str, str] = {}
         self.last_close_date: dict[str, str] = {}
         self.recommendations: list[dict] = []
@@ -84,6 +85,7 @@ class MA200Trend(Strategy):
         for instrument_id in self.instrument_ids:
             self.closes[instrument_id] = deque(maxlen=None)
             self.positions[instrument_id] = 0
+            self.position_ids[instrument_id] = None
             self.pending[instrument_id] = "FLAT"
             self.last_close_date[instrument_id] = None
 
@@ -115,10 +117,11 @@ class MA200Trend(Strategy):
         if self.probe_future_fields:
             self._probe_event_fields(event, "DailyBarClosedEvent")
             return
-        if len(self.closes[instrument_id]) < self.ma_period:
+        recent = list(self.closes[instrument_id])[-self.ma_period:]
+        if len(recent) < self.ma_period:
             self.pending[instrument_id] = "FLAT"
             return
-        ma200 = sum(self.closes[instrument_id]) / self.ma_period
+        ma200 = sum(recent) / self.ma_period
         close = self.closes[instrument_id][-1]
         holding = self.positions[instrument_id] > 0
         if close > ma200 and not holding:
@@ -155,15 +158,18 @@ class MA200Trend(Strategy):
             self._probe_event_fields(event, "SessionOpenEvent")
             return
         target = self.pending[instrument_id]
+        signal_date = None
+        for rec in self.recommendations:
+            if rec["instrument"] == instrument_id and rec["effective_date"] is None:
+                signal_date = rec["signal_date"]
+                rec["effective_date"] = event.trading_date
+                break
         if target == "LONG" and self.positions[instrument_id] == 0:
             quantity = self._target_quantity(instrument_id, event.open_price)
             if quantity > 0:
-                self._submit(instrument_id, OrderSide.BUY, quantity, event)
+                self._submit(instrument_id, OrderSide.BUY, quantity, event, signal_date)
         elif target == "FLAT" and self.positions[instrument_id] > 0:
-            self._submit(instrument_id, OrderSide.SELL, self.positions[instrument_id], event)
-        for rec in self.recommendations:
-            if rec["instrument"] == instrument_id and rec["effective_date"] is None:
-                rec["effective_date"] = event.trading_date
+            self._submit(instrument_id, OrderSide.SELL, self.positions[instrument_id], event, signal_date)
 
     # -- execution ---------------------------------------------------------
 
@@ -173,23 +179,28 @@ class MA200Trend(Strategy):
         shares = int(notional / open_price)
         return (shares // self.lot_size) * self.lot_size
 
-    def _submit(self, instrument_id: str, side, quantity: int, event) -> None:
+    def _submit(self, instrument_id: str, side, quantity: int, event, signal_date: str | None) -> None:
         order = self.order_factory.market(
             InstrumentId.from_str(instrument_id),
             side,
             Quantity.from_int(quantity),
+            reduce_only=(side == OrderSide.SELL),
         )
         self.orders.append({
             "order_id": None,
             "client_order_id": None,
             "instrument": instrument_id,
-            "side": side.to_str() if hasattr(side, "to_str") else str(side),
+            "side": side.name,
             "quantity": quantity,
             "order_type": "MARKET",
+            "signal_date": signal_date,
             "created_date": event.trading_date,
             "state": "SUBMITTED",
         })
-        self.submit_order(order)
+        self.submit_order(
+            order,
+            position_id=self.position_ids.get(instrument_id) if side == OrderSide.SELL else None,
+        )
 
     def on_order_submitted(self, event) -> None:
         for order in self.orders:
@@ -209,12 +220,13 @@ class MA200Trend(Strategy):
         else:
             self.cash += qty * price_raw / 10_000
             self.positions[instrument_id] -= qty
+        self.position_ids[instrument_id] = event.position_id
         self.fills.append({
             "fill_id": f"fill-{instrument_id}-{ts.date().isoformat()}",
             "order_id": f"ord-{instrument_id}-{ts.date().isoformat()}",
             "client_order_id": event.client_order_id.value,
             "instrument": instrument_id,
-            "side": event.order_side.to_str(),
+            "side": event.order_side.name,
             "quantity": qty,
             "price_raw": price_raw,
             "date": ts.date().isoformat(),

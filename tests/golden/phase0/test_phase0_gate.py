@@ -70,7 +70,10 @@ def _sha256_bytes(data: bytes) -> str:
 def run_runner(out_dir: Path, *extra_args: str, timeout: int = 600) -> subprocess.CompletedProcess:
     """Run the isolated phase0 runner in a FRESH process."""
     cmd = [sys.executable, str(RUNNER), "--out-dir", str(out_dir), *extra_args]
-    return subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=timeout)
+    return subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(REPO_ROOT), timeout=timeout,
+    )
 
 
 def artifact_hashes(out_dir: Path) -> dict[str, str]:
@@ -95,13 +98,13 @@ def materialize_golden_tree(tmp: Path) -> Path:
     its own location; drifted-run tests must verify against a COPY so the
     committed golden outputs are never mutated by failure probes.
     """
-    tree = tmp / "phase0"
+    tree = tmp / "golden" / "phase0"
     (tree / "outputs").mkdir(parents=True)
     shutil.copy2(MANIFEST, tree / "manifest.json")
     for name in ARTIFACTS:
         shutil.copy2(OUTPUTS_DIR / name, tree / "outputs" / name)
     fixtures_src = REPO_ROOT / "tests" / "fixtures"
-    shutil.copytree(fixtures_src, tree / "fixtures", dirs_exist_ok=True)
+    shutil.copytree(fixtures_src, tmp / "fixtures", dirs_exist_ok=True)
     return tree
 
 
@@ -238,7 +241,7 @@ def test_strategy_version_drift_fails_golden_gate(tmp_path: Path) -> None:
     assert provenance["strategy_version"] == "9.9.9-drift"
     verify = verify_manifest(tree / "manifest.json")
     assert verify.returncode != 0, "drifted strategy version must fail the gate"
-    assert "provenance.strategy_version" in verify.stdout, verify.stdout
+    assert "strategy_version: 1.0.0 -> 9.9.9-drift" in verify.stdout, verify.stdout
 
 
 def test_engine_version_drift_fails_golden_gate(tmp_path: Path) -> None:
@@ -249,7 +252,7 @@ def test_engine_version_drift_fails_golden_gate(tmp_path: Path) -> None:
     assert provenance["engine_version"] == "9.9.9-drift"
     verify = verify_manifest(tree / "manifest.json")
     assert verify.returncode != 0, "drifted engine version must fail the gate"
-    assert "provenance.engine_version" in verify.stdout, verify.stdout
+    assert "engine_version: 1.231.0 -> 9.9.9-drift" in verify.stdout, verify.stdout
 
 
 # --------------------------------------------------------------------------- #

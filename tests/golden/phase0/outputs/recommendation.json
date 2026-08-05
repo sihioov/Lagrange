@@ -1,0 +1,106 @@
+{
+  "as_of_date": "2021-01-14",
+  "currency": "KRW",
+  "ma_period": 200,
+  "schema_version": 1,
+  "seed": 42,
+  "signals": [
+    {
+      "action": "BUY",
+      "close": 100960000,
+      "effective_date": "2020-11-06",
+      "instrument": "069500.KRX",
+      "ma200_raw": 98527400,
+      "reason_codes": [
+        "MA200_TREND_POSITIVE"
+      ],
+      "signal_date": "2020-11-05",
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "close": 44610000,
+      "effective_date": "2020-11-16",
+      "instrument": "114260.KRX",
+      "ma200_raw": 44508800,
+      "reason_codes": [
+        "MA200_TREND_POSITIVE"
+      ],
+      "signal_date": "2020-11-13",
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "close": 81450000,
+      "effective_date": "2020-11-20",
+      "instrument": "229200.KRX",
+      "ma200_raw": 80359050,
+      "reason_codes": [
+        "MA200_TREND_POSITIVE"
+      ],
+      "signal_date": "2020-11-19",
+      "warmup": false
+    },
+    {
+      "action": "SELL",
+      "close": 82460000,
+      "effective_date": "2021-01-08",
+      "instrument": "229200.KRX",
+      "ma200_raw": 83291850,
+      "reason_codes": [
+        "MA200_TREND_NEGATIVE"
+      ],
+      "signal_date": "2021-01-07",
+      "warmup": false
+    },
+    {
+      "action": "SELL",
+      "close": 45680000,
+      "effective_date": "2021-01-08",
+      "instrument": "114260.KRX",
+      "ma200_raw": 45861400,
+      "reason_codes": [
+        "MA200_TREND_NEGATIVE"
+      ],
+      "signal_date": "2021-01-07",
+      "warmup": false
+    },
+    {
+      "action": "SELL",
+      "close": 103510000,
+      "effective_date": "2021-01-15",
+      "instrument": "069500.KRX",
+      "ma200_raw": 105546950,
+      "reason_codes": [
+        "MA200_TREND_NEGATIVE"
+      ],
+      "signal_date": "2021-01-14",
+      "warmup": false
+    }
+  ],
+  "strategy_id": "ma200-trend",
+  "strategy_version": "1.0.0",
+  "target_portfolio": [
+    {
+      "held": false,
+      "instrument": "069500.KRX",
+      "target_weight": "0.000000"
+    },
+    {
+      "held": false,
+      "instrument": "229200.KRX",
+      "target_weight": "0.000000"
+    },
+    {
+      "held": false,
+      "instrument": "114260.KRX",
+      "target_weight": "0.000000"
+    },
+    {
+      "held": false,
+      "instrument": "CASH",
+      "target_weight": "0.000000"
+    }
+  ],
+  "timezone": "Asia/Seoul"
+}

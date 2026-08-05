@@ -44,6 +44,7 @@ __pycache__/
 data/raw/
 data/curated/
 data/nautilus_catalog/
+data/phase0/
 *.parquet
 
 # Editor / OS

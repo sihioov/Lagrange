@@ -1,0 +1,96 @@
+{
+  "barrier": {
+    "future_field_violations": []
+  },
+  "catalog_content_hash": "sha256:f835858f928063240e21469a0cf628888571891b7f4ef381b0e56aed998e74d8",
+  "code_commit": "f34bf9a969aac5f644583b694fead4610e945550",
+  "config_hash": "sha256:f394b996c3a5837c53bd7db6f1972718e412df192c622d32bb6c2349b38404a1",
+  "data_generator": "synth_data",
+  "data_generator_version": "1.0.0",
+  "data_seed": 42,
+  "dataset_version": "kr-etf-daily-phase0-v1",
+  "engine": "nautilustrader",
+  "engine_version": "1.231.0",
+  "installed_engine_version": "1.231.0",
+  "process_model": "one-run-per-process (ADR-005)",
+  "random_seed": 42,
+  "run_id": "phase0-42-10bps",
+  "schema_version": 1,
+  "signals": [
+    {
+      "action": "BUY",
+      "close": 100960000,
+      "effective_date": "2020-11-06",
+      "instrument": "069500.KRX",
+      "ma200_raw": 98527400,
+      "reason_codes": [
+        "MA200_TREND_POSITIVE"
+      ],
+      "signal_date": "2020-11-05",
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "close": 44610000,
+      "effective_date": "2020-11-16",
+      "instrument": "114260.KRX",
+      "ma200_raw": 44508800,
+      "reason_codes": [
+        "MA200_TREND_POSITIVE"
+      ],
+      "signal_date": "2020-11-13",
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "close": 81450000,
+      "effective_date": "2020-11-20",
+      "instrument": "229200.KRX",
+      "ma200_raw": 80359050,
+      "reason_codes": [
+        "MA200_TREND_POSITIVE"
+      ],
+      "signal_date": "2020-11-19",
+      "warmup": false
+    },
+    {
+      "action": "SELL",
+      "close": 82460000,
+      "effective_date": "2021-01-08",
+      "instrument": "229200.KRX",
+      "ma200_raw": 83291850,
+      "reason_codes": [
+        "MA200_TREND_NEGATIVE"
+      ],
+      "signal_date": "2021-01-07",
+      "warmup": false
+    },
+    {
+      "action": "SELL",
+      "close": 45680000,
+      "effective_date": "2021-01-08",
+      "instrument": "114260.KRX",
+      "ma200_raw": 45861400,
+      "reason_codes": [
+        "MA200_TREND_NEGATIVE"
+      ],
+      "signal_date": "2021-01-07",
+      "warmup": false
+    },
+    {
+      "action": "SELL",
+      "close": 103510000,
+      "effective_date": "2021-01-15",
+      "instrument": "069500.KRX",
+      "ma200_raw": 105546950,
+      "reason_codes": [
+        "MA200_TREND_NEGATIVE"
+      ],
+      "signal_date": "2021-01-14",
+      "warmup": false
+    }
+  ],
+  "strategy_id": "ma200-trend",
+  "strategy_version": "1.0.0",
+  "timezone": "Asia/Seoul"
+}

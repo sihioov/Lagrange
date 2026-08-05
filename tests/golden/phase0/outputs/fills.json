@@ -1,0 +1,132 @@
+{
+  "fill_model": {
+    "note": "AT-02: fill price equals the next KRX session raw open plus the configured slippage bps (buy: ask = open + slippage; sell: bid = open - slippage). The signal-day close and the execution day's high/low/close are never touched.",
+    "price_source": "NEXT_SESSION_OPEN",
+    "slippage_bps": 10
+  },
+  "fills": [
+    {
+      "barrier_held": true,
+      "client_order_id": "O-20201106-000000-001-000-1",
+      "date": "2020-11-06",
+      "fill_id": "fill-069500.KRX-2020-11-06",
+      "instrument": "069500.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-069500.KRX-2020-11-06",
+      "price_raw": 101060960,
+      "quantity": 3300,
+      "side": "BUY",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2020-11-06T00:00:00+00:00"
+    },
+    {
+      "barrier_held": true,
+      "client_order_id": "O-20201116-000000-001-000-2",
+      "date": "2020-11-16",
+      "fill_id": "fill-114260.KRX-2020-11-16",
+      "instrument": "114260.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-114260.KRX-2020-11-16",
+      "price_raw": 44654610,
+      "quantity": 4900,
+      "side": "BUY",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2020-11-16T00:00:00+00:00"
+    },
+    {
+      "barrier_held": true,
+      "client_order_id": "O-20201120-000000-001-000-3",
+      "date": "2020-11-20",
+      "fill_id": "fill-229200.KRX-2020-11-20",
+      "instrument": "229200.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-229200.KRX-2020-11-20",
+      "price_raw": 81531450,
+      "quantity": 1800,
+      "side": "BUY",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2020-11-20T00:00:00+00:00"
+    },
+    {
+      "barrier_held": true,
+      "client_order_id": "O-20210108-000000-001-000-4",
+      "date": "2021-01-08",
+      "fill_id": "fill-229200.KRX-2021-01-08",
+      "instrument": "229200.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-229200.KRX-2021-01-08",
+      "price_raw": 82377540,
+      "quantity": 1800,
+      "side": "SELL",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2021-01-08T00:00:00+00:00"
+    },
+    {
+      "barrier_held": true,
+      "client_order_id": "O-20210108-000000-001-000-5",
+      "date": "2021-01-08",
+      "fill_id": "fill-114260.KRX-2021-01-08",
+      "instrument": "114260.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-114260.KRX-2021-01-08",
+      "price_raw": 45634320,
+      "quantity": 4900,
+      "side": "SELL",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2021-01-08T00:00:00+00:00"
+    },
+    {
+      "barrier_held": true,
+      "client_order_id": "O-20210115-000000-001-000-6",
+      "date": "2021-01-15",
+      "fill_id": "fill-069500.KRX-2021-01-15",
+      "instrument": "069500.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-069500.KRX-2021-01-15",
+      "price_raw": 103406490,
+      "quantity": 3300,
+      "side": "SELL",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2021-01-15T00:00:00+00:00"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "ma200-trend",
+  "strategy_version": "1.0.0"
+}

@@ -1,0 +1,15 @@
+{
+  "cost_profile": {
+    "commission_bps": 0,
+    "minimum_commission": "0.00",
+    "slippage_bps": 10,
+    "tax_bps": 0
+  },
+  "currency": "KRW",
+  "items": [],
+  "note": "Phase 0 gate runs a zero-fee model; the cost model lands in Todo 18.",
+  "schema_version": 1,
+  "strategy_id": "ma200-trend",
+  "strategy_version": "1.0.0",
+  "total_fees": "0.00"
+}
