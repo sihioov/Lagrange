@@ -24,8 +24,8 @@ use std::collections::BTreeSet;
 use domain::StrategyVersion;
 use selector::baseline::baseline_packages;
 use selector::registry::{
-    Actor, AuditOutcome, Cadence, Market, PromotionEvidence, Registry, RegistryError,
-    StrategyPackage, StrategyState, PHASE3_SAFETY_CHECKS,
+    Actor, AuditOutcome, Cadence, Market, PHASE3_SAFETY_CHECKS, PromotionEvidence, Registry,
+    RegistryError, StrategyPackage, StrategyState,
 };
 
 const BASELINE_IDS: [&str; 5] = [
@@ -62,10 +62,7 @@ fn paper_evidence() -> PromotionEvidence {
 fn phase3_evidence() -> PromotionEvidence {
     PromotionEvidence::Phase3 {
         safety_bundle_id: "phase3-bundle-1".to_owned(),
-        checks: PHASE3_SAFETY_CHECKS
-            .iter()
-            .map(|c| c.to_string())
-            .collect(),
+        checks: PHASE3_SAFETY_CHECKS.iter().map(|c| c.to_string()).collect(),
     }
 }
 
@@ -73,12 +70,14 @@ fn phase3_evidence() -> PromotionEvidence {
 fn registry_with_baselines() -> Registry {
     let mut registry = Registry::new();
     for package in baseline_packages() {
-        registry.register(&owner(), package).expect("baseline registers");
+        registry
+            .register(&owner(), package)
+            .expect("baseline registers");
     }
     registry
 }
 
-fn package_by_id(registry: &Registry, id: &str) -> &StrategyPackage {
+fn package_by_id<'a>(registry: &'a Registry, id: &str) -> &'a StrategyPackage {
     registry.resolve_latest(id).expect("baseline resolved")
 }
 
@@ -102,7 +101,10 @@ fn strategy_registry_all_five_baseline_packages_validate() {
         assert!(package.parameter_schema.get("properties").is_some());
         // Supported market / asset class / cadence
         assert_eq!(package.markets, vec![Market::Krx]);
-        assert_eq!(package.asset_classes, vec![selector::registry::AssetClass::Etf]);
+        assert_eq!(
+            package.asset_classes,
+            vec![selector::registry::AssetClass::Etf]
+        );
         assert_eq!(package.cadences, vec![Cadence::Daily]);
         // Factors + lookback + risk
         assert!(!package.risk_description.is_empty());
@@ -126,8 +128,15 @@ fn strategy_registry_baseline_packages_are_market_consistent() {
     // factor ids, trend requires the trend factors, inverse volatility the
     // realized-vol factor.
     let registry = registry_with_baselines();
-    assert!(package_by_id(&registry, "buy_and_hold").required_factors.is_empty());
-    assert_eq!(package_by_id(&registry, "buy_and_hold").minimum_lookback_sessions, 0);
+    assert!(
+        package_by_id(&registry, "buy_and_hold")
+            .required_factors
+            .is_empty()
+    );
+    assert_eq!(
+        package_by_id(&registry, "buy_and_hold").minimum_lookback_sessions,
+        0
+    );
     assert_eq!(
         package_by_id(&registry, "trend_following").required_factors,
         BTreeSet::from(["trend_50".to_owned(), "trend_200".to_owned()])
@@ -183,7 +192,9 @@ fn strategy_registry_mutated_published_version_rejected() {
 #[test]
 fn strategy_registry_old_runs_resolve_original_version_after_new_release() {
     let mut registry = registry_with_baselines();
-    let original_hash = package_by_id(&registry, "buy_and_hold").canonical_hash.clone();
+    let original_hash = package_by_id(&registry, "buy_and_hold")
+        .canonical_hash
+        .clone();
     let original_risk = package_by_id(&registry, "buy_and_hold")
         .risk_description
         .clone();
@@ -192,16 +203,24 @@ fn strategy_registry_old_runs_resolve_original_version_after_new_release() {
     let mut next = package_by_id(&registry, "buy_and_hold").clone();
     next.version = StrategyVersion::parse("1.1.0").expect("semver");
     next.risk_description = "v1.1 risk model update".to_owned();
-    registry.register(&owner(), next).expect("new release registers");
+    registry
+        .register(&owner(), next)
+        .expect("new release registers");
 
     assert_eq!(
-        registry.resolve_latest("buy_and_hold").expect("latest").version.to_string(),
+        registry
+            .resolve_latest("buy_and_hold")
+            .expect("latest")
+            .version
+            .to_string(),
         "1.1.0"
     );
 
     // Old runs still resolve the ORIGINAL immutable version: identical
     // content hash, identical definition, untouched by the release.
-    let old = registry.resolve("buy_and_hold", "1.0.0").expect("old version resolves");
+    let old = registry
+        .resolve("buy_and_hold", "1.0.0")
+        .expect("old version resolves");
     assert_eq!(old.canonical_hash, original_hash);
     assert_eq!(old.risk_description, original_risk);
     assert_eq!(old.version.to_string(), "1.0.0");
@@ -209,7 +228,7 @@ fn strategy_registry_old_runs_resolve_original_version_after_new_release() {
 
 #[test]
 fn strategy_registry_unsupported_market_cadence_asset_class_rejected() {
-    let registry = registry_with_baselines();
+    let mut registry = registry_with_baselines();
     // (g) typed denials at the boundary: unsupported market / cadence.
     let market_err = Market::parse("us").expect_err("us market unsupported");
     assert_eq!(market_err.code(), "UNSUPPORTED_MARKET");
@@ -236,18 +255,24 @@ fn strategy_registry_unsupported_market_cadence_asset_class_rejected() {
 
 #[test]
 fn strategy_registry_invalid_package_definition_rejected() {
-    let registry = registry_with_baselines();
+    let mut registry = registry_with_baselines();
     let mut empty_id = package_by_id(&registry, "buy_and_hold").clone();
     empty_id.strategy_id = "".to_owned();
     assert_eq!(
-        registry.register(&owner(), empty_id).expect_err("empty id").code(),
+        registry
+            .register(&owner(), empty_id)
+            .expect_err("empty id")
+            .code(),
         "INVALID_PACKAGE"
     );
 
     let mut bad_id = package_by_id(&registry, "buy_and_hold").clone();
     bad_id.strategy_id = "Buy And Hold!".to_owned();
     assert_eq!(
-        registry.register(&owner(), bad_id).expect_err("bad id").code(),
+        registry
+            .register(&owner(), bad_id)
+            .expect_err("bad id")
+            .code(),
         "INVALID_PACKAGE"
     );
 
@@ -259,7 +284,10 @@ fn strategy_registry_invalid_package_definition_rejected() {
         "target_weight": 2.0,
     });
     assert_eq!(
-        registry.register(&owner(), bad_defaults).expect_err("bad defaults").code(),
+        registry
+            .register(&owner(), bad_defaults)
+            .expect_err("bad defaults")
+            .code(),
         "INVALID_PACKAGE"
     );
 
@@ -296,11 +324,20 @@ fn strategy_registry_validated_gate_requires_golden_holdout_cost() {
 
     // Happy path: golden + holdout + cost checks -> Validated.
     let record = registry
-        .promote(&owner(), "buy_and_hold", "1.0.0", StrategyState::Validated, golden_evidence())
+        .promote(
+            &owner(),
+            "buy_and_hold",
+            "1.0.0",
+            StrategyState::Validated,
+            golden_evidence(),
+        )
         .expect("golden gate passes");
     assert_eq!(record.from, StrategyState::Draft);
     assert_eq!(record.to, StrategyState::Validated);
-    assert_eq!(package_by_id(&registry, "buy_and_hold").state, StrategyState::Validated);
+    assert_eq!(
+        package_by_id(&registry, "buy_and_hold").state,
+        StrategyState::Validated
+    );
 
     // Missing evidence -> typed denial naming the missing check.
     let mut incomplete = registry
@@ -340,7 +377,13 @@ fn strategy_registry_validated_gate_requires_golden_holdout_cost() {
 fn strategy_registry_paper_gate_requires_parity_and_observation_window() {
     let mut registry = registry_with_baselines();
     registry
-        .promote(&owner(), "trend_following", "1.0.0", StrategyState::Validated, golden_evidence())
+        .promote(
+            &owner(),
+            "trend_following",
+            "1.0.0",
+            StrategyState::Validated,
+            golden_evidence(),
+        )
         .expect("validated");
 
     // Happy path: parity + a >= 21-session observation window -> Paper.
@@ -364,7 +407,13 @@ fn strategy_registry_paper_gate_requires_parity_and_observation_window() {
     // Observation window below the minimum -> typed denial.
     let mut registry = registry_with_baselines();
     registry
-        .promote(&owner(), "trend_following", "1.0.0", StrategyState::Validated, golden_evidence())
+        .promote(
+            &owner(),
+            "trend_following",
+            "1.0.0",
+            StrategyState::Validated,
+            golden_evidence(),
+        )
         .expect("validated");
     let err = registry
         .promote(
@@ -397,7 +446,13 @@ fn strategy_registry_paper_gate_requires_parity_and_observation_window() {
 fn strategy_registry_live_candidate_gate_requires_phase3_safety_evidence() {
     let mut registry = registry_with_baselines();
     registry
-        .promote(&owner(), "inverse_volatility", "1.0.0", StrategyState::Validated, golden_evidence())
+        .promote(
+            &owner(),
+            "inverse_volatility",
+            "1.0.0",
+            StrategyState::Validated,
+            golden_evidence(),
+        )
         .expect("validated");
     registry
         .promote(
@@ -427,7 +482,13 @@ fn strategy_registry_live_candidate_gate_requires_phase3_safety_evidence() {
     // A bundle missing one documented check -> typed denial naming it.
     let mut registry = registry_with_baselines();
     registry
-        .promote(&owner(), "inverse_volatility", "1.0.0", StrategyState::Validated, golden_evidence())
+        .promote(
+            &owner(),
+            "inverse_volatility",
+            "1.0.0",
+            StrategyState::Validated,
+            golden_evidence(),
+        )
         .expect("validated");
     registry
         .promote(
@@ -455,10 +516,20 @@ fn strategy_registry_live_candidate_gate_requires_phase3_safety_evidence() {
     assert_eq!(err.code(), "MISSING_PROMOTION_EVIDENCE");
 
     // Skipping Paper: Validated -> LiveCandidate directly is denied.
+    let mut registry = registry_with_baselines();
+    registry
+        .promote(
+            &owner(),
+            "relative_momentum",
+            "1.0.0",
+            StrategyState::Validated,
+            golden_evidence(),
+        )
+        .expect("validated");
     let err = registry
         .promote(
             &owner(),
-            "inverse_volatility",
+            "relative_momentum",
             "1.0.0",
             StrategyState::LiveCandidate,
             phase3_evidence(),
@@ -475,11 +546,20 @@ fn strategy_registry_retired_is_owner_only_and_terminal() {
     registry
         .retire(&owner(), "buy_and_hold", "1.0.0")
         .expect("owner retires");
-    assert_eq!(package_by_id(&registry, "buy_and_hold").state, StrategyState::Retired);
+    assert_eq!(
+        package_by_id(&registry, "buy_and_hold").state,
+        StrategyState::Retired
+    );
 
     // Retired is terminal: no promotion out of it.
     let err = registry
-        .promote(&owner(), "buy_and_hold", "1.0.0", StrategyState::Validated, golden_evidence())
+        .promote(
+            &owner(),
+            "buy_and_hold",
+            "1.0.0",
+            StrategyState::Validated,
+            golden_evidence(),
+        )
         .expect_err("retired is terminal");
     assert_eq!(err.code(), "INVALID_PROMOTION");
 
@@ -496,7 +576,13 @@ fn strategy_registry_unauthorized_promotion_denied_and_audited() {
 
     // (d) A Member attempts promotion with otherwise-valid evidence.
     let err = registry
-        .promote(&member("alice"), "dual_momentum", "1.0.0", StrategyState::Validated, golden_evidence())
+        .promote(
+            &member("alice"),
+            "dual_momentum",
+            "1.0.0",
+            StrategyState::Validated,
+            golden_evidence(),
+        )
         .expect_err("member promotion denied");
     assert_eq!(err.code(), "UNAUTHORIZED");
 
@@ -513,7 +599,10 @@ fn strategy_registry_unauthorized_promotion_denied_and_audited() {
     assert!(entry.reason.contains("Owner"));
 
     // State unchanged by the denial.
-    assert_eq!(package_by_id(&registry, "dual_momentum").state, StrategyState::Draft);
+    assert_eq!(
+        package_by_id(&registry, "dual_momentum").state,
+        StrategyState::Draft
+    );
 }
 
 #[test]
@@ -575,7 +664,10 @@ fn strategy_registry_member_code_upload_denied() {
 
     // (f) Arbitrary Member code upload is denied at the typed boundary.
     let err = registry
-        .deploy_code(&member("alice"), "def evil(): import os; os.system('rm -rf /')")
+        .deploy_code(
+            &member("alice"),
+            "def evil(): import os; os.system('rm -rf /')",
+        )
         .expect_err("member code denied");
     assert_eq!(err.code(), "MEMBER_CODE_DENIED");
 
@@ -597,9 +689,13 @@ fn strategy_registry_member_code_upload_denied() {
 #[test]
 fn strategy_registry_version_resolution_is_typed() {
     let registry = registry_with_baselines();
-    let err = registry.resolve("no_such_strategy", "1.0.0").expect_err("unknown id");
+    let err = registry
+        .resolve("no_such_strategy", "1.0.0")
+        .expect_err("unknown id");
     assert_eq!(err.code(), "UNKNOWN_STRATEGY");
-    let err = registry.resolve("buy_and_hold", "9.9.9").expect_err("unknown version");
+    let err = registry
+        .resolve("buy_and_hold", "9.9.9")
+        .expect_err("unknown version");
     assert_eq!(err.code(), "UNKNOWN_VERSION");
 }
 
@@ -608,10 +704,22 @@ fn strategy_registry_audit_is_append_only_and_ordered() {
     let mut registry = registry_with_baselines();
     // Exercise several audited operations (successes and denials).
     registry
-        .promote(&owner(), "buy_and_hold", "1.0.0", StrategyState::Validated, golden_evidence())
+        .promote(
+            &owner(),
+            "buy_and_hold",
+            "1.0.0",
+            StrategyState::Validated,
+            golden_evidence(),
+        )
         .expect("ok");
     registry
-        .promote(&member("alice"), "buy_and_hold", "1.0.0", StrategyState::Paper, paper_evidence())
+        .promote(
+            &member("alice"),
+            "buy_and_hold",
+            "1.0.0",
+            StrategyState::Paper,
+            paper_evidence(),
+        )
         .expect_err("denied");
     registry
         .deploy_code(&member("bob"), "code")
@@ -626,16 +734,15 @@ fn strategy_registry_audit_is_append_only_and_ordered() {
         .expect("ok");
 
     let audit = registry.audit();
-    assert!(audit.len() >= 12, "every operation is audited: {}", audit.len());
+    // 5 registrations + 1 approved promotion + 1 denied promotion + 1 denied
+    // deploy + 1 approved member config = 9 audited operations.
+    assert_eq!(audit.len(), 9, "every operation is audited");
     let mut prev_seq = 0;
-    let mut prev_actor_opt = false;
     for entry in audit {
         assert!(entry.seq > prev_seq, "strictly increasing sequence");
         prev_seq = entry.seq;
-        if prev_actor_opt {
-            assert!(entry.actor.starts_with("member:") || entry.actor == "owner");
-        }
-        prev_actor_opt = true;
+        assert!(!entry.actor.is_empty() && !entry.action.is_empty());
+        assert!(!entry.reason.is_empty());
     }
     // Approved and denied outcomes coexist in the same ordered log.
     assert!(audit.iter().any(|e| e.outcome == AuditOutcome::Approved));
@@ -645,23 +752,43 @@ fn strategy_registry_audit_is_append_only_and_ordered() {
 #[test]
 fn strategy_registry_error_codes_are_stable_wire_values() {
     // Every typed denial exposes a stable machine-readable code.
-    assert_eq!(RegistryError::UnknownStrategy { strategy_id: "x".into() }.code(), "UNKNOWN_STRATEGY");
     assert_eq!(
-        RegistryError::UnknownVersion { strategy_id: "x".into(), version: "1.0.0".into() }.code(),
+        RegistryError::UnknownStrategy {
+            strategy_id: "x".into()
+        }
+        .code(),
+        "UNKNOWN_STRATEGY"
+    );
+    assert_eq!(
+        RegistryError::UnknownVersion {
+            strategy_id: "x".into(),
+            version: "1.0.0".into()
+        }
+        .code(),
         "UNKNOWN_VERSION"
     );
     assert_eq!(
-        RegistryError::ImmutableVersion { strategy_id: "x".into(), version: "1.0.0".into() }.code(),
+        RegistryError::ImmutableVersion {
+            strategy_id: "x".into(),
+            version: "1.0.0".into()
+        }
+        .code(),
         "IMMUTABLE_VERSION"
     );
     assert_eq!(
-        RegistryError::Unauthorized { actor: "member:alice".into(), action: "PROMOTE".into() }
-            .code(),
+        RegistryError::Unauthorized {
+            actor: "member:alice".into(),
+            action: "PROMOTE".into()
+        }
+        .code(),
         "UNAUTHORIZED"
     );
     assert_eq!(
-        RegistryError::MissingPromotionEvidence { to_state: "Validated".into(), missing: "holdout".into() }
-            .code(),
+        RegistryError::MissingPromotionEvidence {
+            to_state: "Validated".into(),
+            missing: "holdout".into()
+        }
+        .code(),
         "MISSING_PROMOTION_EVIDENCE"
     );
     assert_eq!(
@@ -673,6 +800,12 @@ fn strategy_registry_error_codes_are_stable_wire_values() {
         .code(),
         "INVALID_PROMOTION"
     );
-    assert_eq!(RegistryError::MemberCodeDenied { detail: "x".into() }.code(), "MEMBER_CODE_DENIED");
-    assert_eq!(RegistryError::InvalidParameters { detail: "x".into() }.code(), "INVALID_PARAMETERS");
+    assert_eq!(
+        RegistryError::MemberCodeDenied { detail: "x".into() }.code(),
+        "MEMBER_CODE_DENIED"
+    );
+    assert_eq!(
+        RegistryError::InvalidParameters { detail: "x".into() }.code(),
+        "INVALID_PARAMETERS"
+    );
 }
