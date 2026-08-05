@@ -990,6 +990,124 @@ fn stale_required_data_returns_typed_data_stale() {
     assert_eq!(report.state, DataState::Blocked);
 }
 
+// ---------------------------------------------------------------------------
+// Admin approval: WARNING-class states only; structural BLOCKED requires a
+// new dataset version
+// ---------------------------------------------------------------------------
+
+#[test]
+fn approval_cannot_clear_structural_blocked() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, _) = curate(temp.path(), MISSING_BARS, EMPTY_ACTIONS);
+    let report = gate(&curated, policy(&["069500", "229200", "114260"], "2020-02-03", 0))
+        .validate_dataset(&ds(), 1)
+        .expect("validation runs");
+    assert_eq!(report.state, DataState::Blocked);
+    let audit = market_data::quality::apply_approval(
+        &report,
+        &market_data::quality::AdminApproval {
+            granted_by: "admin@lagrange".to_owned(),
+            granted_at: now(),
+            note: "approve anyway".to_owned(),
+        },
+    );
+    assert!(!audit.approved, "approval must NOT clear a structural BLOCKED");
+    assert_eq!(audit.state, DataState::Blocked);
+    assert!(
+        audit.reason.contains("new dataset version"),
+        "reason must demand a new dataset version: {}",
+        audit.reason
+    );
+    assert!(
+        audit.reason.contains("MISSING_REQUIRED_BAR"),
+        "reason must name the blocking codes: {}",
+        audit.reason
+    );
+    assert_eq!(audit.report_hash, report.content_hash);
+}
+
+#[test]
+fn approval_transitions_warning_to_ready() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, _) = curate(temp.path(), MISSING_BARS, EMPTY_ACTIONS);
+    let p = QualityPolicy {
+        required_universe: universe(&["229200", "114260"]),
+        optional_exclusion: Some(OptionalExclusion {
+            reason: "trend_following tolerates missing 069500 bars".to_owned(),
+        }),
+        freshness: FreshnessPolicy {
+            reference_date: TradingDate::parse("2020-02-03").expect("date"),
+            max_stale_sessions: 0,
+        },
+        outlier_threshold_pct: 0.20,
+    };
+    let report = gate(&curated, p)
+        .validate_dataset(&ds(), 1)
+        .expect("validation runs");
+    assert_eq!(report.state, DataState::Warning);
+    let audit = market_data::quality::apply_approval(
+        &report,
+        &market_data::quality::AdminApproval {
+            granted_by: "admin@lagrange".to_owned(),
+            granted_at: now(),
+            note: "warning-class issues are acceptable".to_owned(),
+        },
+    );
+    assert!(audit.approved, "WARNING-class states are approvable");
+    assert_eq!(audit.state, DataState::Ready);
+    assert_eq!(audit.dataset_id, ds());
+    assert_eq!(audit.version, 1);
+    assert_eq!(audit.granted_by, "admin@lagrange");
+    assert_eq!(audit.note, "warning-class issues are acceptable");
+}
+
+#[test]
+fn approval_on_ready_is_a_noop() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, _) = curate_golden(temp.path());
+    let report = gate(&curated, policy(&["069500", "229200", "114260"], "2020-02-03", 0))
+        .validate_dataset(&ds(), 1)
+        .expect("validation runs");
+    assert_eq!(report.state, DataState::Ready);
+    let audit = market_data::quality::apply_approval(
+        &report,
+        &market_data::quality::AdminApproval {
+            granted_by: "admin@lagrange".to_owned(),
+            granted_at: now(),
+            note: "nothing to do".to_owned(),
+        },
+    );
+    assert!(!audit.approved, "approval only transitions WARNING-class states");
+    assert_eq!(audit.state, DataState::Ready);
+}
+
+#[test]
+fn only_a_new_dataset_version_resolves_structural_blocked() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, _) = curate(temp.path(), MISSING_BARS, EMPTY_ACTIONS);
+    let gate = gate(&curated, policy(&["069500", "229200", "114260"], "2020-02-03", 0));
+    let v1 = gate.validate_dataset(&ds(), 1).expect("v1 validation");
+    assert_eq!(v1.state, DataState::Blocked);
+
+    let approval = market_data::quality::AdminApproval {
+        granted_by: "admin@lagrange".to_owned(),
+        granted_at: now(),
+        note: "approve anyway".to_owned(),
+    };
+    let denied = market_data::quality::apply_approval(&v1, &approval);
+    assert!(!denied.approved);
+
+    // The corrected dataset (the complete golden bars) curates as version 2.
+    let (_, v2_outcome) = curate(temp.path(), GOLDEN_BARS, EMPTY_ACTIONS);
+    assert_eq!(v2_outcome.dataset_version, 2);
+    let v2 = gate.validate_dataset(&ds(), 2).expect("v2 validation");
+    assert_eq!(v2.state, DataState::Ready, "{:?}", v2.issues);
+
+    // The old version stays BLOCKED: approval cannot rewrite history.
+    let v1_again = gate.validate_dataset(&ds(), 1).expect("v1 re-validation");
+    assert_eq!(v1_again, v1);
+}
+
 #[test]
 fn correction_creates_new_version_and_preserves_old() {
     let temp = tempfile::tempdir().expect("temp dir");
