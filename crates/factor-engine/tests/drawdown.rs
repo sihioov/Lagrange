@@ -4,32 +4,11 @@
 
 mod common;
 
-use common::{MARKET, VERSION, FixtureBar, write_curated};
-use domain::{InstrumentId, TradingDate};
-use factor_engine::bars::Bars;
-use factor_engine::contract::{Factor, FactorContext};
-use factor_engine::factors::DrawdownFactor;
-use factor_engine::snapshot::FrozenUniverse;
-use tempfile::tempdir;
+use common::{FixtureBar, TestCtx, write_curated};
 
-fn ctx_for(dir: &std::path::Path, as_of: &str) -> FactorContext<'_> {
-    let universe = FrozenUniverse::new("universe-test-1", &["DD.KRX"]);
-    let store = market_data::CurateStore::new(dir);
-    let bars = Bars::from_curated(
-        &store,
-        MARKET,
-        "kr-etf-daily-test",
-        VERSION,
-        &universe,
-        TradingDate::parse(as_of).expect("as_of"),
-    )
-    .expect("bars load");
-    FactorContext {
-        as_of: TradingDate::parse(as_of).expect("as_of"),
-        universe: &universe,
-        bars: &bars,
-    }
-}
+use factor_engine::contract::Factor;
+use factor_engine::factors::DrawdownFactor;
+use tempfile::tempdir;
 
 fn nth_value(frame: &factor_engine::contract::FactorFrame, i: usize) -> Option<f64> {
     frame.rows[i].value
@@ -49,8 +28,8 @@ fn drawdown_hand_calculated() {
         })
         .collect();
     write_curated(dir.path(), "DD.KRX", 2020, &bars);
-    let ctx = ctx_for(dir.path(), "2020-01-06");
-    let f = DrawdownFactor.compute(&ctx).expect("compute");
+    let t = TestCtx::new(dir.path(), &["DD.KRX"], "2020-01-06");
+    let f = DrawdownFactor.compute(&t.ctx()).expect("compute");
     assert_eq!(f.rows.len(), 5);
     assert_eq!(nth_value(&f, 0), Some(0.0), "bar 0 at its own high");
     assert_eq!(nth_value(&f, 1), Some(0.0), "bar 1 new high");
@@ -78,15 +57,21 @@ fn drawdown_never_positive_and_metadata() {
         })
         .collect();
     write_curated(dir.path(), "DD.KRX", 2020, &bars);
-    let ctx = ctx_for(dir.path(), "2020-01-06");
-    let f = DrawdownFactor.compute(&ctx).expect("compute");
+    let t = TestCtx::new(dir.path(), &["DD.KRX"], "2020-01-06");
+    let f = DrawdownFactor.compute(&t.ctx()).expect("compute");
     for i in 0..5 {
         let v = nth_value(&f, i).expect("non-null");
-        assert!((-1.0..=0.0).contains(&v), "bar {i} drawdown {v} out of [-1, 0]");
+        assert!(
+            (-1.0..=0.0).contains(&v),
+            "bar {i} drawdown {v} out of [-1, 0]"
+        );
     }
     assert_eq!(DrawdownFactor.id(), "drawdown");
     assert_eq!(DrawdownFactor.version().to_string(), "1.0.0");
-    assert_eq!(DrawdownFactor.lookback(), factor_engine::contract::Lookback::FullHistory);
+    assert_eq!(
+        DrawdownFactor.lookback(),
+        factor_engine::contract::Lookback::FullHistory
+    );
     assert_eq!(
         DrawdownFactor.null_policy(),
         factor_engine::contract::NullPolicy::InsufficientLookback

@@ -2,7 +2,7 @@
 //! MVP factor registry (design §6.5, requirements FR-SEL-002).
 
 use domain::FactorVersion;
-use factor_engine::contract::{Field, Factor, Lookback, NullPolicy};
+use factor_engine::contract::{Factor, Field, Lookback, NullPolicy};
 use factor_engine::factors;
 
 #[test]
@@ -38,11 +38,23 @@ fn every_factor_is_versioned_with_metadata() {
         assert!(!f.required_fields().is_empty(), "{id}: required fields");
         match f.lookback() {
             Lookback::CalendarMonths(m) => assert!(m > 0, "{id} months"),
-            Lookback::TradingDays { window, min_periods } => {
-                assert!(window > 0 && min_periods > 0 && min_periods <= window, "{id} window");
+            Lookback::TradingDays {
+                window,
+                min_periods,
+            } => {
+                assert!(
+                    window > 0 && min_periods > 0 && min_periods <= window,
+                    "{id} window"
+                );
             }
-            Lookback::FixedWindow { window, min_periods } => {
-                assert!(window > 0 && min_periods > 0 && min_periods <= window, "{id} window");
+            Lookback::FixedWindow {
+                window,
+                min_periods,
+            } => {
+                assert!(
+                    window > 0 && min_periods > 0 && min_periods <= window,
+                    "{id} window"
+                );
             }
             Lookback::FullHistory => {}
         }
@@ -60,7 +72,9 @@ fn field_constants_are_documented() {
 fn factor_versions_are_parseable_semver() {
     for f in factors::all_mvp_factors() {
         assert_eq!(
-            FactorVersion::parse(&f.version().to_string()).expect("semver").to_string(),
+            FactorVersion::parse(&f.version().to_string())
+                .expect("semver")
+                .to_string(),
             f.version().to_string()
         );
     }
@@ -69,8 +83,17 @@ fn factor_versions_are_parseable_semver() {
 #[test]
 fn null_policy_is_inspectable() {
     use factors::{AvgValueFactor, DrawdownFactor, MomentumFactor, RealizedVolFactor};
-    assert_eq!(MomentumFactor.null_policy(), NullPolicy::InsufficientLookback);
-    assert_eq!(RealizedVolFactor::new(20).expect("w").null_policy(), NullPolicy::InsufficientLookback);
+    assert_eq!(
+        MomentumFactor.null_policy(),
+        NullPolicy::InsufficientLookback
+    );
+    assert_eq!(
+        RealizedVolFactor::new(20).expect("w").null_policy(),
+        NullPolicy::InsufficientLookback
+    );
     assert_eq!(AvgValueFactor.null_policy(), NullPolicy::StrictWindow);
-    assert_eq!(DrawdownFactor.null_policy(), NullPolicy::InsufficientLookback);
+    assert_eq!(
+        DrawdownFactor.null_policy(),
+        NullPolicy::InsufficientLookback
+    );
 }

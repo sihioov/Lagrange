@@ -1,38 +1,18 @@
 //! Red-phase table-driven tests: 1/3/6/12-month return and 12-minus-1 momentum
 //! against hand-calculated fixtures (monthly bars, close = 100 x 1.1^n).
 //!
-//! Documented semantics: the reference bar is the LAST bar on or before the
-//! calendar target `as_of - N months` (day-of-month clamped to the target
-//! month's last day). No forward fill: a bar after the target is never used.
+//! Documented semantics (month-end convention): the reference bar is the LAST
+//! bar on or before the target month's LAST DAY (`as_of` month minus N).
+//! Insufficient history -> NULL; a missing month falls back to the last bar
+//! before it (no forward fill, no post-as-of leakage).
 
 mod common;
 
-use common::{MARKET, VERSION, monthly_growth_bars, monthly_with_2019, write_curated};
+use common::{TestCtx, monthly_growth_bars, monthly_with_2019, write_curated};
 use domain::{InstrumentId, TradingDate};
-use factor_engine::contract::{Factor, FactorContext};
+use factor_engine::contract::Factor;
 use factor_engine::factors::ReturnFactor;
-use factor_engine::snapshot::FrozenUniverse;
-use factor_engine::bars::Bars;
 use tempfile::tempdir;
-
-fn ctx_with(dir: &std::path::Path, as_of: &str, symbols: &[&str]) -> FactorContext<'_> {
-    let universe = FrozenUniverse::new("universe-test-1", symbols);
-    let store = market_data::CurateStore::new(dir);
-    let bars = Bars::from_curated(
-        &store,
-        MARKET,
-        "kr-etf-daily-test",
-        VERSION,
-        &universe,
-        TradingDate::parse(as_of).expect("as_of"),
-    )
-    .expect("bars load");
-    FactorContext {
-        as_of: TradingDate::parse(as_of).expect("as_of"),
-        universe: &universe,
-        bars: &bars,
-    }
-}
 
 fn value_of(frame: &factor_engine::contract::FactorFrame, symbol: &str, date: &str) -> Option<f64> {
     frame
@@ -42,7 +22,7 @@ fn value_of(frame: &factor_engine::contract::FactorFrame, symbol: &str, date: &s
             r.instrument == InstrumentId::parse(symbol).expect("id")
                 && r.date == TradingDate::parse(date).expect("date")
         })
-        .map(|r| r.value)
+        .and_then(|r| r.value)
 }
 
 fn expect_close(actual: Option<f64>, expected: f64, tol: f64, what: &str) {
@@ -57,22 +37,42 @@ fn expect_close(actual: Option<f64>, expected: f64, tol: f64, what: &str) {
 fn return_1m_hand_calculated() {
     let dir = tempdir().expect("temp");
     write_curated(dir.path(), "FIXTURE.KRX", 2020, &monthly_growth_bars(12));
-    let ctx = ctx_with(dir.path(), "2020-12-31", &["FIXTURE.KRX"]);
-    let f = ReturnFactor::one_month().compute(&ctx).expect("compute");
+    let t = TestCtx::new(dir.path(), &["FIXTURE.KRX"], "2020-12-31");
+    let f = ReturnFactor::one_month()
+        .compute(&t.ctx())
+        .expect("compute");
 
     // 285.3117 / 259.3742 - 1 (exact ratio of the fixture's decimal closes).
-    expect_close(value_of(&f, "FIXTURE.KRX", "2020-12-31"), 285.3117 / 259.3742 - 1.0, 1e-12, "1m @12-31");
+    expect_close(
+        value_of(&f, "FIXTURE.KRX", "2020-12-31"),
+        285.3117 / 259.3742 - 1.0,
+        1e-12,
+        "1m @12-31",
+    );
     // Exact: 121.0000 / 110.0000 - 1 == 0.1 (both closes are exact 4dp values).
-    expect_close(value_of(&f, "FIXTURE.KRX", "2020-03-31"), 0.1, 1e-12, "1m @03-31 (month-end clamp)");
-    expect_close(value_of(&f, "FIXTURE.KRX", "2020-06-30"), 161.0510 / 146.4100 - 1.0, 1e-12, "1m @06-30");
-    // Insufficient history: target 2020-01-28 precedes the first bar 2020-01-31.
-    assert!(
-        value_of(&f, "FIXTURE.KRX", "2020-02-28").is_none(),
-        "1m @02-28 must be NULL (target before first bar)"
+    expect_close(
+        value_of(&f, "FIXTURE.KRX", "2020-03-31"),
+        0.1,
+        1e-12,
+        "1m @03-31 (Feb month-end ref)",
+    );
+    expect_close(
+        value_of(&f, "FIXTURE.KRX", "2020-06-30"),
+        161.0510 / 146.4100 - 1.0,
+        1e-12,
+        "1m @06-30 (May 29 bar <= May month-end)",
+    );
+    // Month-end convention: 1m @02-28 references the January bar (01-31),
+    // i.e. close(Feb 28) / close(Jan 31) - 1 = 0.1.
+    expect_close(
+        value_of(&f, "FIXTURE.KRX", "2020-02-28"),
+        110.0000 / 100.0000 - 1.0,
+        1e-12,
+        "1m @02-28 (Jan month-end ref)",
     );
     assert!(
         value_of(&f, "FIXTURE.KRX", "2020-01-31").is_none(),
-        "1m @01-31 must be NULL (target 2019-12-31 has no bar)"
+        "1m @01-31 must be NULL (no bar in Dec 2019)"
     );
 }
 
@@ -80,16 +80,41 @@ fn return_1m_hand_calculated() {
 fn return_3m_6m_hand_calculated() {
     let dir = tempdir().expect("temp");
     write_curated(dir.path(), "FIXTURE.KRX", 2020, &monthly_growth_bars(12));
-    let ctx = ctx_with(dir.path(), "2020-12-31", &["FIXTURE.KRX"]);
+    let t = TestCtx::new(dir.path(), &["FIXTURE.KRX"], "2020-12-31");
 
-    let f3 = ReturnFactor::three_months().compute(&ctx).expect("compute");
-    expect_close(value_of(&f3, "FIXTURE.KRX", "2020-12-31"), 285.3117 / 214.3589 - 1.0, 1e-12, "3m @12-31");
-    expect_close(value_of(&f3, "FIXTURE.KRX", "2020-06-30"), 161.0510 / 121.0000 - 1.0, 1e-12, "3m @06-30");
-    assert!(value_of(&f3, "FIXTURE.KRX", "2020-02-28").is_none(), "3m @02-28 NULL");
+    let f3 = ReturnFactor::three_months()
+        .compute(&t.ctx())
+        .expect("compute");
+    expect_close(
+        value_of(&f3, "FIXTURE.KRX", "2020-12-31"),
+        285.3117 / 214.3589 - 1.0,
+        1e-12,
+        "3m @12-31 (Sep 30 ref)",
+    );
+    expect_close(
+        value_of(&f3, "FIXTURE.KRX", "2020-06-30"),
+        161.0510 / 121.0000 - 1.0,
+        1e-12,
+        "3m @06-30 (Mar 31 ref)",
+    );
+    assert!(
+        value_of(&f3, "FIXTURE.KRX", "2020-02-28").is_none(),
+        "3m @02-28 NULL (no bar in Nov 2019)"
+    );
 
-    let f6 = ReturnFactor::six_months().compute(&ctx).expect("compute");
-    expect_close(value_of(&f6, "FIXTURE.KRX", "2020-12-31"), 285.3117 / 161.0510 - 1.0, 1e-12, "6m @12-31");
-    expect_close(value_of(&f6, "FIXTURE.KRX", "2020-06-30"), 161.0510 / 100.0000 - 1.0, 1e-12, "6m @06-30");
+    let f6 = ReturnFactor::six_months()
+        .compute(&t.ctx())
+        .expect("compute");
+    expect_close(
+        value_of(&f6, "FIXTURE.KRX", "2020-12-31"),
+        285.3117 / 161.0510 - 1.0,
+        1e-12,
+        "6m @12-31 (Jun 30 ref)",
+    );
+    assert!(
+        value_of(&f6, "FIXTURE.KRX", "2020-06-30").is_none(),
+        "6m @06-30 NULL (no bar in Dec 2019)"
+    );
 }
 
 #[test]
@@ -97,14 +122,29 @@ fn return_12m_hand_calculated() {
     let dir = tempdir().expect("temp");
     write_curated(dir.path(), "FIXTURE.KRX", 2019, &monthly_with_2019());
     write_curated(dir.path(), "FIXTURE.KRX", 2020, &monthly_growth_bars(12));
-    let ctx = ctx_with(dir.path(), "2020-12-31", &["FIXTURE.KRX"]);
-    let f = ReturnFactor::twelve_months().compute(&ctx).expect("compute");
+    let t = TestCtx::new(dir.path(), &["FIXTURE.KRX"], "2020-12-31");
+    let f = ReturnFactor::twelve_months()
+        .compute(&t.ctx())
+        .expect("compute");
 
     // Reference = 2019-12-31 bar (exactly 12 calendar months back).
-    expect_close(value_of(&f, "FIXTURE.KRX", "2020-12-31"), 285.3117 / 90.9091 - 1.0, 1e-12, "12m @12-31");
+    expect_close(
+        value_of(&f, "FIXTURE.KRX", "2020-12-31"),
+        285.3117 / 90.9091 - 1.0,
+        1e-12,
+        "12m @12-31",
+    );
     // Sanity pin: ~1.1^12 - 1 given the 4dp-rounded fixture.
-    expect_close(value_of(&f, "FIXTURE.KRX", "2020-12-31"), 1.1f64.powi(12) - 1.0, 1e-3, "12m ~1.1^12-1");
-    assert!(value_of(&f, "FIXTURE.KRX", "2020-06-30").is_none(), "12m @06-30 NULL (no 2019-06-30 bar)");
+    expect_close(
+        value_of(&f, "FIXTURE.KRX", "2020-12-31"),
+        1.1f64.powi(12) - 1.0,
+        1e-3,
+        "12m ~1.1^12-1",
+    );
+    assert!(
+        value_of(&f, "FIXTURE.KRX", "2020-06-30").is_none(),
+        "12m @06-30 NULL (no 2019-06-30 bar)"
+    );
 }
 
 #[test]
@@ -112,15 +152,33 @@ fn momentum_12_minus_1_hand_calculated() {
     let dir = tempdir().expect("temp");
     write_curated(dir.path(), "FIXTURE.KRX", 2019, &monthly_with_2019());
     write_curated(dir.path(), "FIXTURE.KRX", 2020, &monthly_growth_bars(12));
-    let ctx = ctx_with(dir.path(), "2020-12-31", &["FIXTURE.KRX"]);
-    let f = factor_engine::factors::MomentumFactor.compute(&ctx).expect("compute");
+    let t = TestCtx::new(dir.path(), &["FIXTURE.KRX"], "2020-12-31");
+    let f = factor_engine::factors::MomentumFactor
+        .compute(&t.ctx())
+        .expect("compute");
 
     // momentum = ref_1m / ref_12m - 1 = close(2020-11-30) / close(2019-12-31) - 1.
-    expect_close(value_of(&f, "FIXTURE.KRX", "2020-12-31"), 259.3742 / 90.9091 - 1.0, 1e-12, "momentum @12-31");
+    expect_close(
+        value_of(&f, "FIXTURE.KRX", "2020-12-31"),
+        259.3742 / 90.9091 - 1.0,
+        1e-12,
+        "momentum @12-31",
+    );
     // Sanity: ~1.1^11 - 1 (months 2..12 of the monthly growth).
-    expect_close(value_of(&f, "FIXTURE.KRX", "2020-12-31"), 1.1f64.powi(11) - 1.0, 1e-3, "momentum ~1.1^11-1");
-    assert!(value_of(&f, "FIXTURE.KRX", "2020-06-30").is_none(), "momentum @06-30 NULL (no 12m ref)");
-    assert!(value_of(&f, "FIXTURE.KRX", "2020-02-28").is_none(), "momentum @02-28 NULL (no 1m ref)");
+    expect_close(
+        value_of(&f, "FIXTURE.KRX", "2020-12-31"),
+        1.1f64.powi(11) - 1.0,
+        1e-3,
+        "momentum ~1.1^11-1",
+    );
+    assert!(
+        value_of(&f, "FIXTURE.KRX", "2020-06-30").is_none(),
+        "momentum @06-30 NULL (no 12m ref)"
+    );
+    assert!(
+        value_of(&f, "FIXTURE.KRX", "2020-02-28").is_none(),
+        "momentum @02-28 NULL (no 12m ref)"
+    );
 }
 
 #[test]

@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{MARKET, VERSION, FixtureBar, monthly_growth_bars, write_curated};
+use common::{FixtureBar, MARKET, VERSION, monthly_growth_bars, write_curated};
 use domain::TradingDate;
 use factor_engine::contract::FactorError;
 use factor_engine::snapshot::{FactorSnapshotBuilder, FrozenUniverse};
@@ -29,7 +29,11 @@ fn future_dated_row_is_typed_rejection() {
     .build()
     .expect_err("future-dated row must be rejected");
     match err {
-        FactorError::FutureDatedRow { instrument, date, as_of } => {
+        FactorError::FutureDatedRow {
+            instrument,
+            date,
+            as_of,
+        } => {
             assert_eq!(instrument, "A.KRX");
             assert_eq!(date, "2021-01-29");
             assert_eq!(as_of, "2020-12-31");
@@ -44,7 +48,12 @@ fn future_row_outside_universe_is_never_read() {
     // FUTURE.KRX has a bar after as-of but is NOT in the frozen universe:
     // the engine must not even read it, so the build succeeds.
     write_curated(dir.path(), "A.KRX", 2020, &monthly_growth_bars(12));
-    write_curated(dir.path(), "FUTURE.KRX", 2021, &[FixtureBar::new("2021-06-30", "1.0000")]);
+    write_curated(
+        dir.path(),
+        "FUTURE.KRX",
+        2021,
+        &[FixtureBar::new("2021-06-30", "1.0000")],
+    );
     let universe = FrozenUniverse::new("universe-test-1", &["A.KRX"]);
     let store = CurateStore::new(dir.path());
     let snap = FactorSnapshotBuilder::new(

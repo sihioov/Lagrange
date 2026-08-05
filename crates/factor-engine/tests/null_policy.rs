@@ -4,55 +4,48 @@
 
 mod common;
 
-use common::{MARKET, VERSION, FixtureBar, monthly_growth_bars, write_curated};
-use domain::{InstrumentId, TradingDate};
-use factor_engine::bars::Bars;
-use factor_engine::contract::{Factor, FactorContext, FactorError, FactorFrame, Field, Lookback, NullPolicy};
+use common::{FixtureBar, MARKET, TestCtx, VERSION, monthly_growth_bars, write_curated};
+use domain::TradingDate;
+
+use factor_engine::contract::{
+    Factor, FactorContext, FactorError, FactorFrame, Field, Lookback, NullPolicy,
+};
 use factor_engine::factors::ReturnFactor;
 use factor_engine::normalize::ZScorePolicy;
 use factor_engine::snapshot::{FactorSnapshotBuilder, FrozenUniverse};
 use tempfile::tempdir;
 
-fn bars_ctx(
-    dir: &std::path::Path,
-    symbols: &[&str],
-    as_of: &str,
-) -> (FrozenUniverse, FactorContext<'_>) {
-    let universe = FrozenUniverse::new("universe-test-1", symbols);
-    let store = market_data::CurateStore::new(dir);
-    let bars = Bars::from_curated(
-        &store,
-        MARKET,
-        "kr-etf-daily-test",
-        VERSION,
-        &universe,
-        TradingDate::parse(as_of).expect("as_of"),
-    )
-    .expect("bars load");
-    let ctx = FactorContext {
-        as_of: TradingDate::parse(as_of).expect("as_of"),
-        universe: &universe,
-        bars: &bars,
-    };
-    (universe, ctx)
-}
-
 #[test]
 fn short_lookback_is_typed_null_never_panic() {
     let dir = tempdir().expect("temp");
     write_curated(dir.path(), "SHORT.KRX", 2020, &monthly_growth_bars(2));
-    let (_u, ctx) = bars_ctx(dir.path(), &["SHORT.KRX"], "2020-03-31");
+    let t = TestCtx::new(dir.path(), &["SHORT.KRX"], "2020-03-31");
     // Only 2 bars: 12-month return cannot exist at all - must be NULL, not a panic.
-    let f = ReturnFactor::twelve_months().compute(&ctx).expect("compute");
+    let f = ReturnFactor::twelve_months()
+        .compute(&t.ctx())
+        .expect("compute");
     assert_eq!(f.rows.len(), 2);
-    assert!(f.rows.iter().all(|r| r.value.is_none()), "all 12m values NULL");
-    let f = ReturnFactor::one_month().compute(&ctx).expect("compute");
-    assert!(f.rows[0].value.is_none(), "1m @01-31 NULL");
-    assert!(f.rows[1].value.is_some(), "1m @02-28 has a reference");
+    assert!(
+        f.rows.iter().all(|r| r.value.is_none()),
+        "all 12m values NULL"
+    );
+    let f = ReturnFactor::one_month()
+        .compute(&t.ctx())
+        .expect("compute");
+    assert!(
+        f.rows[0].value.is_none(),
+        "1m @01-31 NULL (no bar in Dec 2019)"
+    );
+    let v = f.rows[1]
+        .value
+        .expect("1m @02-28 references the January bar");
+    assert!((v - 0.1).abs() < 1e-12, "1m @02-28 = {v}");
 }
 
 /// A probe factor that declares a field the input layer does not carry.
 struct HighProbe;
+
+const HIGH_FIELDS: [Field; 1] = [Field::new("high")];
 
 impl Factor for HighProbe {
     fn id(&self) -> &'static str {
@@ -62,7 +55,7 @@ impl Factor for HighProbe {
         domain::FactorVersion::parse("1.0.0").expect("version")
     }
     fn required_fields(&self) -> &[Field] {
-        &[Field::new("high")]
+        &HIGH_FIELDS
     }
     fn lookback(&self) -> Lookback {
         Lookback::FullHistory
@@ -80,7 +73,7 @@ fn missing_required_field_is_typed_error() {
     let dir = tempdir().expect("temp");
     write_curated(dir.path(), "A.KRX", 2020, &monthly_growth_bars(12));
     let universe = FrozenUniverse::new("universe-test-1", &["A.KRX"]);
-    let store = market_data::CurateStore::new(dir);
+    let store = market_data::CurateStore::new(dir.path());
     let err = FactorSnapshotBuilder::new(
         TradingDate::parse("2020-12-31").expect("as_of"),
         universe,
@@ -104,11 +97,14 @@ fn missing_required_field_is_typed_error() {
 #[test]
 fn zero_variance_normalization_is_typed_null() {
     let dir = tempdir().expect("temp");
-    // Two symbols with IDENTICAL series: every cross-section has zero variance.
+    // Three symbols with IDENTICAL series: every cross-section has zero
+    // variance (and meets the min-sample of 3), so the documented
+    // zero-variance policy applies: all normalized values NULL, no panic.
     write_curated(dir.path(), "A.KRX", 2020, &monthly_growth_bars(12));
     write_curated(dir.path(), "B.KRX", 2020, &monthly_growth_bars(12));
-    let universe = FrozenUniverse::new("universe-test-1", &["A.KRX", "B.KRX"]);
-    let store = market_data::CurateStore::new(dir);
+    write_curated(dir.path(), "C.KRX", 2020, &monthly_growth_bars(12));
+    let universe = FrozenUniverse::new("universe-test-1", &["A.KRX", "B.KRX", "C.KRX"]);
+    let store = market_data::CurateStore::new(dir.path());
     let snap = FactorSnapshotBuilder::new(
         TradingDate::parse("2020-12-31").expect("as_of"),
         universe,
@@ -132,7 +128,10 @@ fn zero_variance_normalization_is_typed_null() {
         .iter()
         .filter(|r| r.factor == "return_1m" && r.normalized.is_some())
         .count();
-    assert_eq!(normalized_non_null, 0, "zero variance -> NULL normalized values");
+    assert_eq!(
+        normalized_non_null, 0,
+        "zero variance -> NULL normalized values"
+    );
 }
 
 #[test]
@@ -140,7 +139,7 @@ fn tiny_cross_section_normalization_is_null() {
     let dir = tempdir().expect("temp");
     write_curated(dir.path(), "A.KRX", 2020, &monthly_growth_bars(12));
     let universe = FrozenUniverse::new("universe-test-1", &["A.KRX"]);
-    let store = market_data::CurateStore::new(dir);
+    let store = market_data::CurateStore::new(dir.path());
     let snap = FactorSnapshotBuilder::new(
         TradingDate::parse("2020-12-31").expect("as_of"),
         universe,
@@ -164,14 +163,14 @@ fn tiny_cross_section_normalization_is_null() {
 fn drawdown_and_returns_are_finite_everywhere() {
     let dir = tempdir().expect("temp");
     write_curated(dir.path(), "A.KRX", 2020, &monthly_growth_bars(12));
-    let (_u, ctx) = bars_ctx(dir.path(), &["A.KRX"], "2020-12-31");
+    let t = TestCtx::new(dir.path(), &["A.KRX"], "2020-12-31");
     for f in [
         Box::new(ReturnFactor::one_month()) as Box<dyn Factor>,
         Box::new(ReturnFactor::twelve_months()),
         Box::new(factor_engine::factors::MomentumFactor),
         Box::new(factor_engine::factors::DrawdownFactor),
     ] {
-        let frame = f.compute(&ctx).expect("compute");
+        let frame = f.compute(&t.ctx()).expect("compute");
         for row in &frame.rows {
             if let Some(v) = row.value {
                 assert!(v.is_finite(), "{} non-finite value {v}", f.id());
@@ -189,7 +188,9 @@ fn property_drawdown_bounded_by_min_over_series() {
     let mut rng = 42u64;
     let closes: Vec<i64> = (0..200)
         .map(|_| {
-            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (5_000 + (rng >> 33) % 10_000) as i64
         })
         .collect();
@@ -203,8 +204,10 @@ fn property_drawdown_bounded_by_min_over_series() {
         })
         .collect();
     write_curated(dir.path(), "A.KRX", 2020, &bars);
-    let (_u, ctx) = bars_ctx(dir.path(), &["A.KRX"], "2020-07-18");
-    let f = factor_engine::factors::DrawdownFactor.compute(&ctx).expect("compute");
+    let t = TestCtx::new(dir.path(), &["A.KRX"], "2020-07-18");
+    let f = factor_engine::factors::DrawdownFactor
+        .compute(&t.ctx())
+        .expect("compute");
     let mut running_max = f64::MIN;
     for (i, row) in f.rows.iter().enumerate() {
         let c = closes[i] as f64;
