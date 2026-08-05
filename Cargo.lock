@@ -3034,6 +3034,14 @@ dependencies = [
 [[package]]
 name = "portfolio-model"
 version = "0.1.0"
+dependencies = [
+ "domain",
+ "proptest",
+ "selector",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "potential_utf"

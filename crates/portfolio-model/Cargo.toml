@@ -6,3 +6,11 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+domain = { path = "../domain" }
+selector = { path = "../selector" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+proptest = "1.0"
