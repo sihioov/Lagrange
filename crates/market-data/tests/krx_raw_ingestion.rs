@@ -337,3 +337,54 @@ fn typed_error_plumbing_from_provider_and_store() {
         IngestError::Provider(ProviderError::UnsupportedKind(_))
     ));
 }
+
+#[test]
+fn logs_pass_secret_and_redaction_scan() {
+    // A redactor with the known secret values must scrub every log line before
+    // it is emitted; the scan then proves no secret survives.
+    let mut redactor = market_data::redact::Redactor::new();
+    redactor.add_secret("sk-live-krx-3f2a9c1e");
+    redactor.add_secret("0123456789abcdef0123456789abcdef");
+
+    let leaky = concat!(
+        "collector: ingest date=2020-01-31 endpoint=krx.eod.bars.v1 ",
+        "credential=KRX_CREDENTIAL_REF=sk-live-krx-3f2a9c1e ",
+        "auth=Bearer 0123456789abcdef0123456789abcdef ",
+        "KRX_APP_SECRET=supersecretvalue"
+    );
+    assert!(!redactor.is_clean(leaky), "scan must detect the secrets");
+
+    let redacted = redactor.redact(leaky);
+    assert!(
+        redactor.is_clean(&redacted),
+        "redacted line must pass the scan: {redacted}"
+    );
+    assert!(!redacted.contains("sk-live-krx-3f2a9c1e"));
+    assert!(!redacted.contains("0123456789abcdef0123456789abcdef"));
+    assert!(!redacted.contains("supersecretvalue"));
+    assert!(redacted.contains("[REDACTED]"));
+
+    // A genuine ingest log line (batch ids, hashes, file names) is clean.
+    let root = temp_root("redact");
+    let store = RawStore::new(&root);
+    let recorded = RecordedBundle::open(GOOD_BUNDLE).expect("bundle opens");
+    let provider = KrxProvider::synthetic(recorded);
+    let req = request("2026-08-05T07:00:00Z");
+    let outcome = ingest_bundle(&store, &provider, &req, None).expect("ingest");
+    let log_line = format!(
+        "collector: batch={} provider=krx market=kr date={} files={} hashes={:?}",
+        outcome.batch_id,
+        outcome.entry.date.to_iso(),
+        outcome.entry.files.len(),
+        outcome
+            .entry
+            .files
+            .iter()
+            .map(|f| f.content_hash.to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        redactor.is_clean(&log_line),
+        "ingest log must be clean: {log_line}"
+    );
+}
