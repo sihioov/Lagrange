@@ -1,0 +1,575 @@
+//! Todo 10 red-phase integration tests: point-in-time corporate actions.
+//!
+//! Pins the documented corporate-action behavior (requirements §8.2 action
+//! fields, §8.3 point-in-time rules, §9.2 price policy) BEFORE the curation
+//! pipeline exists: split value preservation on ex-date, pay-date dividend
+//! cash credit, revision -> NEW dataset version with the old version byte
+//! unchanged, nothing visible before `announced_at`, future-announced actions
+//! rejected, and explicit `PRICE_RETURN_ONLY|TOTAL_RETURN_CAPABLE` capability.
+//! Red phase: `market_data::curate` does not exist yet, so this file fails to
+//! compile; the failing transcript is captured in the Todo 10 evidence bundle.
+
+use std::path::Path;
+
+use domain::{
+    BatchId, ContentHash, Currency, DatasetId, FixedPoint, Money, Price, Quantity, TradingDate,
+    UtcTimestamp,
+};
+use serde_json::{Value, json};
+
+use market_data::contract::{FetchMode, RawEnvelope, RequestMetadata, ResponseKind};
+use market_data::curate::actions::{
+    CorporateAction, CorporateActionType, DividendCredit, SplitAdjustment, visible_actions,
+};
+use market_data::curate::adjust::{AdjustmentKind, adjusted_series};
+use market_data::curate::{
+    Capability, CurateError, CurateRequest, CurateStore, curate_batch, read_bars,
+    read_corporate_actions,
+};
+use market_data::{BatchSpec, ManifestEntry, RawStore, krx_2020, seed_universe};
+
+/// Pre-split bars for 069500.KRX (2020-01-20..2020-01-31) plus the post-split
+/// 2020-02-03 bar (2:1 split ex-date; open 5150 = 10300 / 2).
+const SPLIT_BARS: &[u8] =
+    include_bytes!("../../../tests/fixtures/kr-etf/variants/split-dividend/bars.json");
+/// Split (2:1, ex 2020-02-03, announced 2020-01-22T06:00Z) + cash dividend
+/// (150.00 KRW, ex 2020-02-03, pay 2020-02-14, announced 2020-01-23T06:00Z).
+const SPLIT_ACTIONS: &[u8] =
+    include_bytes!("../../../tests/fixtures/kr-etf/variants/split-dividend/actions.json");
+const GOLDEN_BARS: &[u8] =
+    include_bytes!("../../../tests/fixtures/kr-etf/2020-01-31/bars.json");
+const EMPTY_ACTIONS: &[u8] =
+    include_bytes!("../../../tests/fixtures/kr-etf/contract/corporate-actions-response.json");
+
+fn now() -> UtcTimestamp {
+    UtcTimestamp::parse_rfc3339("2020-02-10T00:00:00Z").expect("valid clock")
+}
+
+fn dataset() -> DatasetId {
+    DatasetId::parse("kr-etf-daily").expect("valid dataset id")
+}
+
+fn fixture_batch(root: &Path, bars: &[u8], actions: &[u8]) -> (RawStore, ManifestEntry) {
+    let raw = RawStore::new(root.join("data"));
+    let batch_id = BatchId::generate();
+    let request = RequestMetadata {
+        endpoint: "krx.eod.bars.v1".to_owned(),
+        query: Vec::new(),
+        headers: Vec::new(),
+        mode: FetchMode::Synthetic,
+    };
+    let envelopes = vec![
+        RawEnvelope::new(
+            batch_id,
+            ResponseKind::Bars,
+            "bars.json",
+            bars.to_vec(),
+            now(),
+            request.clone(),
+        ),
+        RawEnvelope::new(
+            batch_id,
+            ResponseKind::CorporateActions,
+            "corporate-actions.json",
+            actions.to_vec(),
+            now(),
+            request,
+        ),
+    ];
+    let spec = BatchSpec {
+        provider: "krx",
+        market: "kr",
+        date: &TradingDate::new(2020, 1, 31).expect("valid date"),
+        batch_id,
+        entitlement_reference: None,
+        mode: FetchMode::Synthetic,
+    };
+    let entry = raw
+        .store_batch(&spec, &envelopes)
+        .expect("fixture batch stores");
+    (raw, entry)
+}
+
+fn bars_path(curated: &CurateStore, version: u32) -> std::path::PathBuf {
+    curated.bars_path("kr", "069500.KRX", 2020, version)
+}
+
+fn actions_path(curated: &CurateStore, version: u32) -> std::path::PathBuf {
+    curated.corporate_actions_path("kr", "069500.KRX", 2020, version)
+}
+
+/// Curates the split+dividend fixture at version 1.
+fn curate_split_fixture(
+    temp: &Path,
+    actions: &[u8],
+    now: UtcTimestamp,
+) -> (CurateStore, market_data::curate::CurateOutcome, ManifestEntry) {
+    let (raw, entry) = fixture_batch(temp, SPLIT_BARS, actions);
+    let curated = CurateStore::new(temp.join("data"));
+    let outcome = curate_batch(
+        &raw,
+        &entry,
+        &krx_2020(),
+        &seed_universe(),
+        &curated,
+        &CurateRequest {
+            dataset_id: &dataset(),
+            market: "kr",
+            source: "krx",
+            now,
+        },
+    )
+    .expect("split fixture curates");
+    (curated, outcome, entry)
+}
+
+// ---------------------------------------------------------------------------
+// Split: value preservation + ex-date holding adjustment
+// ---------------------------------------------------------------------------
+
+#[test]
+fn split_value_preserved_on_ex_date() {
+    // 100 shares at the pre-split close 10300 == 200 shares at the post-split
+    // price 5150 (fixture invariant: pre-split close 10300 = 2 x 5150).
+    let pre_qty = Quantity::parse("100").expect("qty");
+    let pre_price = Price::parse("10300").expect("price");
+    let post_qty = Quantity::parse("200").expect("qty");
+    let post_price = Price::parse("5150").expect("price");
+    assert!(SplitAdjustment::value_preserved(&pre_qty, &pre_price, &post_qty, &post_price)
+        .expect("value comparison"));
+    assert_eq!(
+        SplitAdjustment::apply_to_holdings(&pre_qty, &FixedPoint::parse("2").expect("factor"))
+            .expect("holdings adjust"),
+        post_qty
+    );
+}
+
+#[test]
+fn split_back_adjusts_prices_before_ex_date() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, outcome, _) = curate_split_fixture(temp.path(), SPLIT_ACTIONS, now());
+    let actions = read_corporate_actions(&actions_path(&curated, outcome.dataset_version))
+        .expect("actions read back");
+    let split = actions
+        .iter()
+        .find(|a| a.event_type == CorporateActionType::Split)
+        .expect("split present");
+    assert_eq!(split.ex_date, TradingDate::new(2020, 2, 3).expect("date"));
+    assert_eq!(
+        split.split_factor.expect("factor"),
+        FixedPoint::parse("2").expect("factor")
+    );
+
+    let series = adjusted_series(
+        &read_bars(&bars_path(&curated, outcome.dataset_version)).expect("bars read back"),
+        &visible_actions(&actions, now()),
+    )
+    .expect("adjusted series");
+
+    // 2020-01-31 (pre-ex): raw close 10300 -> split-adjusted 5150.0000.
+    let jan_31 = series
+        .split
+        .iter()
+        .find(|b| b.trading_date.to_iso() == "2020-01-31")
+        .expect("jan 31 bar");
+    assert_eq!(jan_31.close, Price::parse("5150").expect("price"));
+    assert_eq!(jan_31.open, Price::parse("5135").expect("price"));
+    assert_eq!(jan_31.adjustment_kind, AdjustmentKind::Split);
+    assert!(!jan_31.adjustment_events.is_empty());
+
+    // 2020-02-03 (on/after ex-date): raw prices are already post-split.
+    let feb_03 = series
+        .split
+        .iter()
+        .find(|b| b.trading_date.to_iso() == "2020-02-03")
+        .expect("feb 03 bar");
+    assert_eq!(feb_03.close, Price::parse("5190").expect("price"));
+    assert_eq!(feb_03.adjustment_factor, FixedPoint::parse("1").expect("factor"));
+}
+
+// ---------------------------------------------------------------------------
+// Dividend: pay-date cash credit
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dividend_credited_on_pay_date_not_ex_date() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, outcome, _) = curate_split_fixture(temp.path(), SPLIT_ACTIONS, now());
+    let actions = read_corporate_actions(&actions_path(&curated, outcome.dataset_version))
+        .expect("actions read back");
+    let div = actions
+        .iter()
+        .find(|a| a.event_type == CorporateActionType::CashDividend)
+        .expect("dividend present");
+    assert_eq!(div.ex_date, TradingDate::new(2020, 2, 3).expect("date"));
+    assert_eq!(
+        div.pay_date,
+        Some(TradingDate::new(2020, 2, 14).expect("date")),
+        "pay_date must be configured (not derived from ex_date)"
+    );
+    // Cash is credited on the configured pay-date, never on the ex-date.
+    assert_eq!(
+        DividendCredit::credit_date(div).expect("credit date"),
+        TradingDate::new(2020, 2, 14).expect("date")
+    );
+    // 200 post-split shares x 150.00 KRW = 30,000.00 KRW gross.
+    let qty = Quantity::parse("200").expect("qty");
+    let amount = Money::parse("150.00", Currency::KRW).expect("money");
+    assert_eq!(
+        DividendCredit::gross_credit(&qty, &amount).expect("gross credit"),
+        Money::parse("30000.00", Currency::KRW).expect("money")
+    );
+}
+
+#[test]
+fn dividend_without_pay_date_caps_dataset_at_price_return_only() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let mut value: Value = serde_json::from_slice(SPLIT_ACTIONS).expect("parses");
+    let div = value["actions"]
+        .as_array_mut()
+        .expect("array")
+        .iter_mut()
+        .find(|a| a["type"] == "cash_dividend")
+        .expect("dividend record");
+    div.as_object_mut().expect("object").remove("pay_date");
+    let actions = serde_json::to_vec(&value).expect("serializes");
+
+    let (_, outcome, _) = curate_split_fixture(temp.path(), &actions, now());
+    assert_eq!(
+        outcome.capability,
+        Capability::PriceReturnOnly,
+        "missing dividend pay-date data must cap the dataset at price returns"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Point-in-time visibility (no look-ahead)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn action_invisible_before_announced_at_visible_after() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, outcome, _) = curate_split_fixture(temp.path(), SPLIT_ACTIONS, now());
+    let actions = read_corporate_actions(&actions_path(&curated, outcome.dataset_version))
+        .expect("actions read back");
+    assert_eq!(actions.len(), 2);
+
+    let before_split = UtcTimestamp::parse_rfc3339("2020-01-22T05:59:59Z").expect("ts");
+    let at_split = UtcTimestamp::parse_rfc3339("2020-01-22T06:00:00Z").expect("ts");
+    let after_div = UtcTimestamp::parse_rfc3339("2020-01-23T06:00:00Z").expect("ts");
+
+    assert_eq!(
+        visible_actions(&actions, before_split).len(),
+        0,
+        "nothing may be visible before its announced_at"
+    );
+    assert_eq!(visible_actions(&actions, at_split).len(), 1);
+    assert_eq!(visible_actions(&actions, after_div).len(), 2);
+}
+
+#[test]
+fn adjusted_series_as_of_before_announcement_equals_raw() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, outcome, _) = curate_split_fixture(temp.path(), SPLIT_ACTIONS, now());
+    let actions = read_corporate_actions(&actions_path(&curated, outcome.dataset_version))
+        .expect("actions read back");
+    let bars = read_bars(&bars_path(&curated, outcome.dataset_version)).expect("bars read back");
+
+    // As-of before any announcement: no action is visible, so the adjusted
+    // series must equal the raw prices (factor 1.0 everywhere).
+    let as_of = UtcTimestamp::parse_rfc3339("2020-01-22T05:59:59Z").expect("ts");
+    let series = adjusted_series(&bars, &visible_actions(&actions, as_of)).expect("series");
+    assert_eq!(series.split.len(), bars.len());
+    for (adj, raw) in series.split.iter().zip(bars.iter()) {
+        assert_eq!(adj.close, raw.close, "no look-ahead: raw prices untouched");
+        assert_eq!(
+            adj.adjustment_factor,
+            FixedPoint::parse("1").expect("factor"),
+            "factor must be 1.0 when the announcement is not yet visible"
+        );
+    }
+
+    // As-of after the split announcement: the 2:1 split back-adjusts
+    // pre-ex-date prices by 0.5.
+    let as_of = UtcTimestamp::parse_rfc3339("2020-01-22T06:00:00Z").expect("ts");
+    let series = adjusted_series(&bars, &visible_actions(&actions, as_of)).expect("series");
+    let jan_31 = series
+        .split
+        .iter()
+        .find(|b| b.trading_date.to_iso() == "2020-01-31")
+        .expect("jan 31");
+    assert_eq!(jan_31.close, Price::parse("5150").expect("price"));
+}
+
+#[test]
+fn future_announced_action_rejected_at_curation() {
+    // Curate with a clock BEFORE the split's announced_at: the announcement
+    // is in the future and must be rejected, not silently included.
+    let before_announcement = UtcTimestamp::parse_rfc3339("2020-01-22T05:59:59Z").expect("ts");
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (raw, entry) = fixture_batch(temp.path(), SPLIT_BARS, SPLIT_ACTIONS);
+    let curated = CurateStore::new(temp.join("data"));
+    let err = curate_batch(
+        &raw,
+        &entry,
+        &krx_2020(),
+        &seed_universe(),
+        &curated,
+        &CurateRequest { dataset_id: &dataset(), market: "kr", source: "krx", now: before_announcement },
+    )
+    .expect_err("future-announced action must be rejected");
+    assert!(
+        matches!(err, CurateError::FutureAnnouncedAction { .. }),
+        "{err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Revision -> NEW dataset version; the old version is immutable
+// ---------------------------------------------------------------------------
+
+#[test]
+fn correction_creates_new_dataset_version_old_unchanged() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    // Version 1: golden close 10300 for 069500.KRX on 2020-02-03.
+    let (raw1, entry1) = fixture_batch(temp.path(), GOLDEN_BARS, EMPTY_ACTIONS);
+    let curated = CurateStore::new(temp.path().join("data"));
+    let v1 = curate_batch(
+        &raw1,
+        &entry1,
+        &krx_2020(),
+        &seed_universe(),
+        &curated,
+        &CurateRequest { dataset_id: &dataset(), market: "kr", source: "krx", now: now() },
+    )
+    .expect("v1 curates");
+    assert_eq!(v1.dataset_version, 1);
+
+    let v1_path = bars_path(&curated, 1);
+    let v1_bytes_before = std::fs::read(&v1_path).expect("v1 bars readable");
+    let v1_bars_before = read_bars(&v1_path).expect("v1 bars read back");
+    let feb_03_v1 = v1_bars_before
+        .iter()
+        .find(|b| b.instrument_id.to_string() == "069500.KRX" && b.trading_date.to_iso() == "2020-02-03")
+        .expect("bar present");
+    assert_eq!(feb_03_v1.close, Price::parse("10380").expect("price"));
+
+    // Correction: a second, different batch corrects the close to 10400.
+    let mut corrected: Value = serde_json::from_slice(GOLDEN_BARS).expect("parses");
+    for bar in corrected["bars"].as_array_mut().expect("array") {
+        if bar["instrument"] == "069500.KRX" && bar["date"] == "2020-02-03" {
+            bar["close"] = json!(10400);
+        }
+    }
+    let corrected_bytes = serde_json::to_vec(&corrected).expect("serializes");
+    let (raw2, entry2) = fixture_batch(temp.path(), &corrected_bytes, EMPTY_ACTIONS);
+    let v2 = curate_batch(
+        &raw2,
+        &entry2,
+        &krx_2020(),
+        &seed_universe(),
+        &curated,
+        &CurateRequest { dataset_id: &dataset(), market: "kr", source: "krx", now: now() },
+    )
+    .expect("corrected batch curates as a new version");
+    assert_eq!(
+        v2.dataset_version, 2,
+        "correction must produce a NEW dataset version, never a backfill"
+    );
+
+    // The old version's bytes and hash are unchanged.
+    let v1_bytes_after = std::fs::read(&v1_path).expect("v1 bars still readable");
+    assert_eq!(v1_bytes_before, v1_bytes_after, "version 1 parquet immutable");
+    assert_eq!(
+        ContentHash::from_bytes(&v1_bytes_after),
+        ContentHash::from_bytes(&v1_bytes_before),
+        "version 1 content hash unchanged"
+    );
+
+    // The new version carries the corrected close.
+    let v2_bars = read_bars(&bars_path(&curated, 2)).expect("v2 bars read back");
+    let feb_03_v2 = v2_bars
+        .iter()
+        .find(|b| b.instrument_id.to_string() == "069500.KRX" && b.trading_date.to_iso() == "2020-02-03")
+        .expect("bar present");
+    assert_eq!(feb_03_v2.close, Price::parse("10400").expect("price"));
+}
+
+#[test]
+fn duplicate_curation_of_same_batch_rejected() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (raw, entry) = fixture_batch(temp.path(), GOLDEN_BARS, EMPTY_ACTIONS);
+    let curated = CurateStore::new(temp.path().join("data"));
+    curate_batch(
+        &raw,
+        &entry,
+        &krx_2020(),
+        &seed_universe(),
+        &curated,
+        &CurateRequest { dataset_id: &dataset(), market: "kr", source: "krx", now: now() },
+    )
+    .expect("first curation ok");
+    let err = curate_batch(
+        &raw,
+        &entry,
+        &krx_2020(),
+        &seed_universe(),
+        &curated,
+        &CurateRequest { dataset_id: &dataset(), market: "kr", source: "krx", now: now() },
+    )
+    .expect_err("re-curating the same batch must be rejected");
+    assert!(matches!(err, CurateError::BatchAlreadyCurated { .. }), "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// Capability + execution split
+// ---------------------------------------------------------------------------
+
+#[test]
+fn capability_total_return_with_complete_pay_dates() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (_, outcome, _) = curate_split_fixture(temp.path(), SPLIT_ACTIONS, now());
+    assert_eq!(outcome.capability, Capability::TotalReturnCapable);
+    assert_eq!(outcome.actions_written, 2);
+}
+
+#[test]
+fn raw_open_for_execution_vs_adjusted_open_for_signals() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, outcome, _) = curate_split_fixture(temp.path(), SPLIT_ACTIONS, now());
+    let raw_bars = read_bars(&bars_path(&curated, outcome.dataset_version)).expect("bars read");
+    let actions = read_corporate_actions(&actions_path(&curated, outcome.dataset_version))
+        .expect("actions read");
+    let series = adjusted_series(&raw_bars, &actions).expect("series");
+
+    let jan_31_raw = raw_bars
+        .iter()
+        .find(|b| b.trading_date.to_iso() == "2020-01-31")
+        .expect("jan 31 raw");
+    let jan_31_adj = series
+        .split
+        .iter()
+        .find(|b| b.trading_date.to_iso() == "2020-01-31")
+        .expect("jan 31 adjusted");
+
+    // Execution uses the raw open; signals may use the adjusted series.
+    assert_eq!(jan_31_raw.open, Price::parse("10270").expect("price"));
+    assert_eq!(jan_31_adj.open, Price::parse("5135").expect("price"));
+    assert_ne!(jan_31_raw.open, jan_31_adj.open);
+}
+
+// ---------------------------------------------------------------------------
+// QA channel: curate the split+dividend fixture end-to-end
+// ---------------------------------------------------------------------------
+
+#[test]
+fn qa_curate_split_dividend_fixture_end_to_end() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, outcome, entry) = curate_split_fixture(temp.path(), SPLIT_ACTIONS, now());
+    let raw_bars = read_bars(&bars_path(&curated, outcome.dataset_version)).expect("bars read");
+    let actions = read_corporate_actions(&actions_path(&curated, outcome.dataset_version))
+        .expect("actions read");
+    let series = adjusted_series(&raw_bars, &actions).expect("series");
+
+    println!("=== QA: split+dividend fixture curated end-to-end ===");
+    println!("dataset version: {} capability: {}", outcome.dataset_version, outcome.capability);
+    println!("batch: {} bars: {} actions: {}", entry.batch_id, outcome.bars_written, outcome.actions_written);
+
+    let feb_03 = raw_bars
+        .iter()
+        .find(|b| b.trading_date.to_iso() == "2020-02-03")
+        .expect("feb 03 raw");
+    println!(
+        "session 2020-02-03 open: {} close: {} (raw open {})",
+        feb_03.market_open_ts, feb_03.market_close_ts, feb_03.open
+    );
+    assert_eq!(
+        feb_03.market_open_ts,
+        UtcTimestamp::parse_rfc3339("2020-02-03T00:00:00Z").expect("ts")
+    );
+    assert_eq!(
+        feb_03.market_close_ts,
+        UtcTimestamp::parse_rfc3339("2020-02-03T06:30:00Z").expect("ts")
+    );
+
+    let jan_31 = raw_bars
+        .iter()
+        .find(|b| b.trading_date.to_iso() == "2020-01-31")
+        .expect("jan 31 raw");
+    let jan_31_split = series
+        .split
+        .iter()
+        .find(|b| b.trading_date.to_iso() == "2020-01-31")
+        .expect("jan 31 split");
+    let jan_31_tr = series
+        .total_return
+        .iter()
+        .find(|b| b.trading_date.to_iso() == "2020-01-31")
+        .expect("jan 31 total return");
+
+    println!(
+        "2020-01-31 raw OHL: {} {} {} C {} V {}",
+        jan_31.open, jan_31.high, jan_31.low, jan_31.close, jan_31.volume
+    );
+    println!(
+        "2020-01-31 split-adjusted: O {} H {} L {} C {} factor {} events [{}]",
+        jan_31_split.open,
+        jan_31_split.high,
+        jan_31_split.low,
+        jan_31_split.close,
+        jan_31_split.adjustment_factor,
+        jan_31_split.adjustment_events
+    );
+    println!(
+        "2020-01-31 total-return: O {} H {} L {} C {} factor {} events [{}]",
+        jan_31_tr.open,
+        jan_31_tr.high,
+        jan_31_tr.low,
+        jan_31_tr.close,
+        jan_31_tr.adjustment_factor,
+        jan_31_tr.adjustment_events
+    );
+
+    // Hand-computed reconciliation (fixed-point, scale 4):
+    //   split close = 10300 / 2 = 5150.0000
+    //   total-return factor = (5190 + 150) / 5190 = 5340/5190
+    //   total-return close = 5150 x 5340 / 5190 = 5298.8439
+    //   total-return open  = 5135 x 5340 / 5190 = 5283.4104
+    assert_eq!(jan_31_split.close, Price::parse("5150").expect("price"));
+    let tr_factor = FixedPoint::parse("5340")
+        .expect("factor num")
+        .checked_div(&FixedPoint::parse("5190").expect("factor den"), 8)
+        .expect("factor");
+    assert_eq!(jan_31_tr.adjustment_factor, tr_factor);
+    assert_eq!(
+        jan_31_tr.close,
+        Price::parse("5298.8439").expect("price"),
+        "total-return close must equal 5150 x 5340/5190 at scale 4"
+    );
+    assert_eq!(
+        jan_31_tr.open,
+        Price::parse("5283.4104").expect("price"),
+        "total-return open must equal 5135 x 5340/5190 at scale 4"
+    );
+
+    // The 2020-02-03 bar is on/after both ex-dates: no adjustment applies.
+    let feb_03_tr = series
+        .total_return
+        .iter()
+        .find(|b| b.trading_date.to_iso() == "2020-02-03")
+        .expect("feb 03 tr");
+    assert_eq!(feb_03_tr.adjustment_factor, FixedPoint::parse("1").expect("factor"));
+    assert_eq!(feb_03_tr.close, Price::parse("5190").expect("price"));
+
+    // Dividend record carries the configured pay-date (not the ex-date).
+    let div = actions
+        .iter()
+        .find(|a| a.event_type == CorporateActionType::CashDividend)
+        .expect("dividend");
+    assert_eq!(
+        div.pay_date,
+        Some(TradingDate::new(2020, 2, 14).expect("date"))
+    );
+    println!("=== QA end ===");
+}
+
