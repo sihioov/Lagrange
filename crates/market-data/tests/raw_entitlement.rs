@@ -12,7 +12,9 @@ use auth::entitlement::{
     Entitlement, EntitlementId, EntitlementService, EntitlementState, KrUseRegistry, Role, UserId,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
-use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind};
+use market_data::contract::{
+    FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind,
+};
 use market_data::entitlement::{RawAccessError, RawVisibility, raw_visibility, read_batch_gated};
 use market_data::storage::{BatchSpec, ManifestEntry, RawStore};
 
@@ -87,7 +89,10 @@ fn batch_in_store(tag: &str) -> (RawStore, ManifestEntry) {
 #[test]
 fn without_active_entitlement_batch_is_owner_only() {
     let service = EntitlementService::new(vec![]);
-    assert_eq!(raw_visibility(&service, d("2026-06-15")), RawVisibility::OwnerOnly);
+    assert_eq!(
+        raw_visibility(&service, d("2026-06-15")),
+        RawVisibility::OwnerOnly
+    );
 }
 
 #[test]
@@ -108,7 +113,10 @@ fn every_non_active_state_tags_owner_only() {
 
 #[test]
 fn active_entitlement_tags_member_readable() {
-    let service = EntitlementService::new(vec![entitlement("ent_krx_2026_0001", EntitlementState::Active)]);
+    let service = EntitlementService::new(vec![entitlement(
+        "ent_krx_2026_0001",
+        EntitlementState::Active,
+    )]);
     assert_eq!(
         raw_visibility(&service, d("2026-06-15")),
         RawVisibility::MemberReadable
@@ -117,7 +125,10 @@ fn active_entitlement_tags_member_readable() {
 
 #[test]
 fn member_read_of_owner_only_batch_denied_with_data_entitlement_required() {
-    let service = EntitlementService::new(vec![entitlement("ent_krx_2026_0001", EntitlementState::Expired)]);
+    let service = EntitlementService::new(vec![entitlement(
+        "ent_krx_2026_0001",
+        EntitlementState::Expired,
+    )]);
     let (store, entry) = batch_in_store("member-deny");
 
     let err = read_batch_gated(&store, &entry, &service, &member_request())
@@ -140,7 +151,10 @@ fn member_read_denied_with_no_entitlement_at_all() {
     let (store, entry) = batch_in_store("member-none");
     let err = read_batch_gated(&store, &entry, &service, &member_request())
         .expect_err("no entitlement record must deny Members");
-    assert!(matches!(err, RawAccessError::DataEntitlementRequired { .. }));
+    assert!(matches!(
+        err,
+        RawAccessError::DataEntitlementRequired { .. }
+    ));
 }
 
 #[test]
@@ -161,7 +175,10 @@ fn owner_dev_read_allowed_in_any_state() {
 
 #[test]
 fn member_read_allowed_when_entitlement_active() {
-    let service = EntitlementService::new(vec![entitlement("ent_krx_2026_0001", EntitlementState::Active)]);
+    let service = EntitlementService::new(vec![entitlement(
+        "ent_krx_2026_0001",
+        EntitlementState::Active,
+    )]);
     let (store, entry) = batch_in_store("member-ok");
     let files = read_batch_gated(&store, &entry, &service, &member_request())
         .expect("ACTIVE entitlement must allow a Member read");
@@ -172,10 +189,14 @@ fn member_read_allowed_when_entitlement_active() {
 #[test]
 fn expiry_flips_visibility_fail_closed() {
     let mut ent = entitlement("ent_krx_2026_0001", EntitlementState::Active);
-    ent.transition(EntitlementState::Expired, d("2026-06-15")).expect("expire");
+    ent.transition(EntitlementState::Expired, d("2026-06-15"))
+        .expect("expire");
     let service = EntitlementService::new(vec![ent]);
     let (store, entry) = batch_in_store("expiry");
     let err = read_batch_gated(&store, &entry, &service, &member_request())
         .expect_err("expired entitlement must deny Members");
-    assert!(matches!(err, RawAccessError::DataEntitlementRequired { .. }));
+    assert!(matches!(
+        err,
+        RawAccessError::DataEntitlementRequired { .. }
+    ));
 }

@@ -18,6 +18,7 @@ pub mod contract;
 pub mod entitlement;
 pub mod ingest;
 pub mod provider;
+pub mod redact;
 pub mod storage;
 pub mod validate;
 
