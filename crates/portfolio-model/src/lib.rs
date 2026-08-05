@@ -16,11 +16,15 @@
 
 pub mod cost;
 pub mod error;
+pub mod ledger;
+pub mod persistence;
 pub mod side;
 pub mod sizing;
 
 pub use cost::{CostBreakdown, CostProfile, CostProfileId};
 pub use error::PortfolioError;
+pub use ledger::{FillRecord, LedgerEffect, LedgerEvent, LedgerState, OpenOrder};
+pub use persistence::{InMemoryLedgerStore, LedgerStore};
 pub use side::Side;
 pub use sizing::{
     OrderRequest, SizingAction, SizingDecision, SizingInput, SizingReport, SkipReason,

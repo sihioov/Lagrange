@@ -14,7 +14,9 @@
 
 use std::collections::BTreeMap;
 
-use domain::{ContentHash, Currency, FixedPoint, InstrumentId, Money, OrderId, Quantity, TradingDate};
+use domain::{
+    ContentHash, Currency, FixedPoint, InstrumentId, Money, OrderId, Quantity, TradingDate,
+};
 use std::str::FromStr;
 
 use portfolio_model::cost::CostProfile;
@@ -46,52 +48,66 @@ fn parse_order(s: &str) -> OrderId {
     OrderId::from_str(s).expect("valid order id")
 }
 
-/// A fixed, realistic event stream: deposit, two buys, a partial sell, marks.
+/// A fixed, realistic event stream: deposit, two buys, marks.
 fn golden_stream() -> Vec<LedgerEvent> {
-    let mut events = Vec::new();
-    events.push(LedgerEvent::CashDeposit { seq: 1, amount: krw("10000000") });
-    events.push(LedgerEvent::OrderPlaced {
-        seq: 2,
-        order_id: parse_order("00000000-0000-0000-0000-000000000001"),
-        instrument_id: instrument(A),
-        side: Side::Buy,
-        quantity: qty(590),
-    });
-    events.push(LedgerEvent::Fill {
-        seq: 3,
-        fill_id: domain::FillId::from_str("00000000-0000-0000-0000-000000000011").expect("fill"),
-        order_id: parse_order("00000000-0000-0000-0000-000000000001"),
-        instrument_id: instrument(A),
-        side: Side::Buy,
-        quantity: qty(590),
-        price: FixedPoint::parse("10160.1500").expect("price"),
-    });
-    events.push(LedgerEvent::OrderPlaced {
-        seq: 4,
-        order_id: parse_order("00000000-0000-0000-0000-000000000002"),
-        instrument_id: instrument(B),
-        side: Side::Buy,
-        quantity: qty(160),
-    });
-    events.push(LedgerEvent::Fill {
-        seq: 5,
-        fill_id: domain::FillId::from_str("00000000-0000-0000-0000-000000000012").expect("fill"),
-        order_id: parse_order("00000000-0000-0000-0000-000000000002"),
-        instrument_id: instrument(B),
-        side: Side::Buy,
-        quantity: qty(160),
-        price: FixedPoint::parse("24874.8500").expect("price"),
-    });
-    events.push(LedgerEvent::MarkToMarket {
-        seq: 6,
-        date: TradingDate::parse("2026-02-02").expect("date"),
-        prices: BTreeMap::from([
-            (instrument(A), domain::Price::parse("10200.0000").expect("mark")),
-            (instrument(B), domain::Price::parse("24900.0000").expect("mark")),
-            (instrument(C), domain::Price::parse("5900.0000").expect("mark")),
-        ]),
-    });
-    events
+    vec![
+        LedgerEvent::CashDeposit {
+            seq: 1,
+            amount: krw("10000000"),
+        },
+        LedgerEvent::OrderPlaced {
+            seq: 2,
+            order_id: parse_order("00000000-0000-0000-0000-000000000001"),
+            instrument_id: instrument(A),
+            side: Side::Buy,
+            quantity: qty(590),
+        },
+        LedgerEvent::Fill {
+            seq: 3,
+            fill_id: domain::FillId::from_str("00000000-0000-0000-0000-000000000011")
+                .expect("fill"),
+            order_id: parse_order("00000000-0000-0000-0000-000000000001"),
+            instrument_id: instrument(A),
+            side: Side::Buy,
+            quantity: qty(590),
+            price: FixedPoint::parse("10160.1500").expect("price"),
+        },
+        LedgerEvent::OrderPlaced {
+            seq: 4,
+            order_id: parse_order("00000000-0000-0000-0000-000000000002"),
+            instrument_id: instrument(B),
+            side: Side::Buy,
+            quantity: qty(160),
+        },
+        LedgerEvent::Fill {
+            seq: 5,
+            fill_id: domain::FillId::from_str("00000000-0000-0000-0000-000000000012")
+                .expect("fill"),
+            order_id: parse_order("00000000-0000-0000-0000-000000000002"),
+            instrument_id: instrument(B),
+            side: Side::Buy,
+            quantity: qty(160),
+            price: FixedPoint::parse("24874.8500").expect("price"),
+        },
+        LedgerEvent::MarkToMarket {
+            seq: 6,
+            date: TradingDate::parse("2026-02-02").expect("date"),
+            prices: BTreeMap::from([
+                (
+                    instrument(A),
+                    domain::Price::parse("10200.0000").expect("mark"),
+                ),
+                (
+                    instrument(B),
+                    domain::Price::parse("24900.0000").expect("mark"),
+                ),
+                (
+                    instrument(C),
+                    domain::Price::parse("5900.0000").expect("mark"),
+                ),
+            ]),
+        },
+    ]
 }
 
 #[test]
@@ -128,14 +144,24 @@ fn replay_from_snapshot_is_idempotent() {
 #[test]
 fn replay_rejects_the_same_stream_that_apply_rejects() {
     // Malformed streams fail identically whether replayed or applied live.
-    let mut events = golden_stream();
-    let mut bad = events.clone();
-    bad[3] = LedgerEvent::CashDeposit { seq: 3, amount: krw("1") }; // duplicate seq
-    let live = LedgerState::new(krw("10000000"), profile());
-    let err_live = live.apply(bad[3].clone()).expect_err("out-of-order live");
-    let err_replay = LedgerState::replay(krw("10000000"), profile(), &bad).expect_err("out-of-order replay");
-    assert_eq!(format!("{err_live}"), format!("{err_replay}"), "identical typed reject");
-    events[3] = bad[3].clone();
+    let mut bad = golden_stream();
+    // events[2] is seq 3; a second seq-3 event is out of order.
+    bad[3] = LedgerEvent::CashDeposit {
+        seq: 3,
+        amount: krw("1"),
+    };
+    let live = LedgerState::replay(krw("10000000"), profile(), &bad[..3]).expect("prefix replay");
+    let err_live = live
+        .clone()
+        .apply(bad[3].clone())
+        .expect_err("out-of-order live");
+    let err_replay =
+        LedgerState::replay(krw("10000000"), profile(), &bad).expect_err("out-of-order replay");
+    assert_eq!(
+        format!("{err_live}"),
+        format!("{err_replay}"),
+        "identical typed reject"
+    );
 }
 
 #[test]
@@ -143,9 +169,18 @@ fn snapshot_store_round_trips_exactly() {
     let store = InMemoryLedgerStore::new();
     let events = golden_stream();
     let state = LedgerState::replay(krw("10000000"), profile(), &events).expect("replay");
-    assert!(store.load_snapshot("acct-1").expect("missing load").is_none(), "missing is None");
+    assert!(
+        store
+            .load_snapshot("acct-1")
+            .expect("missing load")
+            .is_none(),
+        "missing is None"
+    );
     store.save_snapshot("acct-1", &state).expect("save");
-    let loaded = store.load_snapshot("acct-1").expect("load").expect("present");
+    let loaded = store
+        .load_snapshot("acct-1")
+        .expect("load")
+        .expect("present");
     assert_eq!(loaded, state, "store round-trip is exact");
     assert_eq!(
         loaded.canonical_bytes().expect("bytes"),
@@ -153,7 +188,12 @@ fn snapshot_store_round_trips_exactly() {
         "byte-identical snapshot"
     );
     // Two accounts are isolated.
-    assert!(store.load_snapshot("acct-2").expect("other account").is_none());
+    assert!(
+        store
+            .load_snapshot("acct-2")
+            .expect("other account")
+            .is_none()
+    );
 }
 
 #[test]

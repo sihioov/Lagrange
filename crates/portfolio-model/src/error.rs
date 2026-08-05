@@ -124,4 +124,8 @@ pub enum PortfolioError {
     /// An internal sizing invariant was violated (never user-reachable).
     #[error("internal sizing invariant violated: {detail}")]
     SizingInternal { detail: String },
+
+    /// Canonical serialization failed (never user-reachable).
+    #[error("serialization failed: {detail}")]
+    Serialization { detail: String },
 }
