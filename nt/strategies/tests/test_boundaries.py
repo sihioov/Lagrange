@@ -148,7 +148,13 @@ def test_invalid_package_definitions_rejected(reg):
 def test_audit_is_append_only_and_ordered(reg):
     registry, rm = reg
     audit = registry.audit()
-    assert len(audit) >= 5 * len(STRATEGIES), "every registration is audited"
+    # Every baseline registration is audited (5 approvals) plus every denial
+    # exercised by the tests above.
+    approved_registers = [
+        e for e in audit if e["action"] == "REGISTER" and e["outcome"] == "APPROVED"
+    ]
+    assert len(approved_registers) == len(STRATEGIES), "every registration is audited"
+    assert len(audit) >= len(STRATEGIES)
     seqs = [e["seq"] for e in audit]
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
     assert any(e["outcome"] == "APPROVED" for e in audit)

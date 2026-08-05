@@ -1,0 +1,38 @@
+{
+  "strategy_id": "relative_momentum",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "name": "top_two_equal_weight",
+      "params": {"top_n": 2, "lookback_months": 12},
+      "as_of": "2020-02-03",
+      "universe": ["069500.KRX", "102110.KRX", "229200.KRX"],
+      "factors": {
+        "069500.KRX": {"momentum_12_1": 0.15},
+        "102110.KRX": {"momentum_12_1": 0.10},
+        "229200.KRX": {"momentum_12_1": 0.05}
+      },
+      "expected": {
+        "targets": [
+          {"instrument_id": "069500.KRX", "target_weight": 0.5},
+          {"instrument_id": "102110.KRX", "target_weight": 0.5}
+        ],
+        "cash_weight": 0.0
+      }
+    },
+    {
+      "name": "single_leader",
+      "params": {"top_n": 1, "lookback_months": 12},
+      "as_of": "2020-02-03",
+      "universe": ["069500.KRX", "102110.KRX"],
+      "factors": {
+        "069500.KRX": {"momentum_12_1": 0.02},
+        "102110.KRX": {"momentum_12_1": 0.08}
+      },
+      "expected": {
+        "targets": [{"instrument_id": "102110.KRX", "target_weight": 1.0}],
+        "cash_weight": 0.0
+      }
+    }
+  ]
+}

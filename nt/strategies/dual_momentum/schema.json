@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "absolute_threshold": {
+      "type": "number",
+      "description": "Minimum 12-month return (decimal) of the top risky asset to stay invested."
+    },
+    "lookback_months": {
+      "type": "integer",
+      "enum": [6, 12],
+      "description": "Return lookback in months."
+    }
+  },
+  "required": ["absolute_threshold", "lookback_months"],
+  "additionalProperties": false
+}

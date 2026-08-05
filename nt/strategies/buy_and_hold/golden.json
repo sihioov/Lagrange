@@ -1,0 +1,36 @@
+{
+  "strategy_id": "buy_and_hold",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "name": "hold_benchmark_full",
+      "params": {
+        "benchmark_instrument": "069500.KRX",
+        "target_weight": 1.0,
+        "rebalance_cadence": "none"
+      },
+      "as_of": "2020-02-03",
+      "universe": ["069500.KRX"],
+      "factors": {},
+      "expected": {
+        "targets": [{"instrument_id": "069500.KRX", "target_weight": 1.0}],
+        "cash_weight": 0.0
+      }
+    },
+    {
+      "name": "half_weight_remainder_cash",
+      "params": {
+        "benchmark_instrument": "069500.KRX",
+        "target_weight": 0.5,
+        "rebalance_cadence": "monthly"
+      },
+      "as_of": "2020-02-03",
+      "universe": ["069500.KRX"],
+      "factors": {},
+      "expected": {
+        "targets": [{"instrument_id": "069500.KRX", "target_weight": 0.5}],
+        "cash_weight": 0.5
+      }
+    }
+  ]
+}

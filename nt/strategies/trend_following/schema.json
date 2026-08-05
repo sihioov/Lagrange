@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "benchmark_instrument": {
+      "type": "string",
+      "pattern": "^[0-9]{6}\\.KRX$"
+    },
+    "fast_ma": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 250,
+      "description": "Fast moving-average window (sessions)."
+    },
+    "slow_ma": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 500,
+      "description": "Slow moving-average window (sessions)."
+    }
+  },
+  "required": ["benchmark_instrument", "fast_ma", "slow_ma"],
+  "additionalProperties": false
+}

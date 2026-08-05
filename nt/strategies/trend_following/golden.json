@@ -1,0 +1,40 @@
+{
+  "strategy_id": "trend_following",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "name": "uptrend_long_benchmark",
+      "params": {
+        "benchmark_instrument": "069500.KRX",
+        "fast_ma": 50,
+        "slow_ma": 200
+      },
+      "as_of": "2020-02-03",
+      "universe": ["069500.KRX"],
+      "factors": {
+        "069500.KRX": {"trend_50": 0.004, "trend_200": -0.012}
+      },
+      "expected": {
+        "targets": [{"instrument_id": "069500.KRX", "target_weight": 1.0}],
+        "cash_weight": 0.0
+      }
+    },
+    {
+      "name": "downtrend_defensive_cash",
+      "params": {
+        "benchmark_instrument": "069500.KRX",
+        "fast_ma": 50,
+        "slow_ma": 200
+      },
+      "as_of": "2020-02-03",
+      "universe": ["069500.KRX"],
+      "factors": {
+        "069500.KRX": {"trend_50": -0.005, "trend_200": 0.002}
+      },
+      "expected": {
+        "targets": [],
+        "cash_weight": 1.0
+      }
+    }
+  ]
+}

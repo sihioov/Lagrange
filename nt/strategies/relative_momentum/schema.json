@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "top_n": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Number of highest-momentum ETFs held."
+    },
+    "lookback_months": {
+      "type": "integer",
+      "enum": [6, 12],
+      "description": "Momentum lookback in months."
+    }
+  },
+  "required": ["top_n", "lookback_months"],
+  "additionalProperties": false
+}

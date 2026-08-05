@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "benchmark_instrument": {
+      "type": "string",
+      "pattern": "^[0-9]{6}\\.KRX$",
+      "description": "The canonical KRX ETF id to hold."
+    },
+    "target_weight": {
+      "type": "number",
+      "exclusiveMinimum": 0.0,
+      "maximum": 1.0,
+      "description": "Fraction of equity held in the benchmark."
+    },
+    "rebalance_cadence": {
+      "type": "string",
+      "enum": ["none", "monthly"],
+      "description": "When to re-apply the target (none = hold)."
+    }
+  },
+  "required": ["benchmark_instrument", "target_weight"],
+  "additionalProperties": false
+}

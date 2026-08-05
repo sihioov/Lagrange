@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "vol_window": {
+      "type": "integer",
+      "enum": [20, 60, 120],
+      "description": "Realized-volatility window in sessions."
+    },
+    "max_weight": {
+      "type": "number",
+      "exclusiveMinimum": 0.0,
+      "maximum": 1.0,
+      "description": "Per-instrument weight ceiling."
+    }
+  },
+  "required": ["vol_window", "max_weight"],
+  "additionalProperties": false
+}

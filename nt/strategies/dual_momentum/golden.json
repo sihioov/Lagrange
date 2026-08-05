@@ -1,0 +1,34 @@
+{
+  "strategy_id": "dual_momentum",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "name": "absolute_momentum_passed",
+      "params": {"absolute_threshold": 0.0, "lookback_months": 12},
+      "as_of": "2020-02-03",
+      "universe": ["069500.KRX", "102110.KRX"],
+      "factors": {
+        "069500.KRX": {"return_12m": 0.12},
+        "102110.KRX": {"return_12m": 0.05}
+      },
+      "expected": {
+        "targets": [{"instrument_id": "069500.KRX", "target_weight": 1.0}],
+        "cash_weight": 0.0
+      }
+    },
+    {
+      "name": "defensive_cash",
+      "params": {"absolute_threshold": 0.0, "lookback_months": 12},
+      "as_of": "2020-02-03",
+      "universe": ["069500.KRX", "102110.KRX"],
+      "factors": {
+        "069500.KRX": {"return_12m": -0.03},
+        "102110.KRX": {"return_12m": -0.08}
+      },
+      "expected": {
+        "targets": [],
+        "cash_weight": 1.0
+      }
+    }
+  ]
+}

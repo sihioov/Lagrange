@@ -1,0 +1,25 @@
+{
+  "strategy_id": "inverse_volatility",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "name": "inverse_vol_capped",
+      "params": {"vol_window": 60, "max_weight": 0.3},
+      "as_of": "2020-02-03",
+      "universe": ["069500.KRX", "102110.KRX", "229200.KRX"],
+      "factors": {
+        "069500.KRX": {"vol_60": 0.15},
+        "102110.KRX": {"vol_60": 0.30},
+        "229200.KRX": {"vol_60": 0.20}
+      },
+      "expected": {
+        "targets": [
+          {"instrument_id": "069500.KRX", "target_weight": 0.3},
+          {"instrument_id": "102110.KRX", "target_weight": 0.2222},
+          {"instrument_id": "229200.KRX", "target_weight": 0.3}
+        ],
+        "cash_weight": 0.1778
+      }
+    }
+  ]
+}

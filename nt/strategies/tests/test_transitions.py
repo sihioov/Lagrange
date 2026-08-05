@@ -115,8 +115,17 @@ def test_live_candidate_gate_requires_phase3_safety(reg, registry_module):
         )
     assert exc.value.code == "MISSING_PROMOTION_EVIDENCE"
     assert "kill_switch" in str(exc.value)
+    # Skipping Paper: a Validated-only strategy promoted straight to
+    # LiveCandidate is denied.
+    fresh = registry_module.Registry()
+    for sid in STRATEGIES:
+        fresh.register(registry_module.Actor.owner(), load_package(sid).PACKAGE)
+    fresh.promote(
+        registry_module.Actor.owner(), "inverse_volatility", "1.0.0",
+        registry_module.StrategyState.VALIDATED, golden,
+    )
     with pytest.raises(Exception) as exc:
-        reg.promote(
+        fresh.promote(
             registry_module.Actor.owner(), "inverse_volatility", "1.0.0",
             registry_module.StrategyState.LIVE_CANDIDATE,
             registry_module.PromotionEvidence.phase3("bundle",
