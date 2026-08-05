@@ -20,16 +20,13 @@
 //! canonical `data/curated` zone (idempotent) so the Python catalog builder
 //! consumes it read-only.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use domain::{BatchId, ContentHash, Currency, DatasetId, InstrumentId, TradingDate, UtcTimestamp};
-use serde_json::{Value, json};
+use domain::{BatchId, Currency, DatasetId, InstrumentId, TradingDate, UtcTimestamp};
 
 use market_data::contract::{FetchMode, RawEnvelope, RequestMetadata, ResponseKind};
 use market_data::curate::{CurateRequest, CurateStore, curate_batch, read_bars};
-use market_data::instrument_master::InstrumentMaster;
-use market_data::{KrCalendar, ManifestEntry, RawStore, krx_2020, seed_universe};
+use market_data::{ManifestEntry, RawStore, krx_2020, seed_universe};
 
 /// The golden Todo 6 fixture: 3 seed ETFs, 27 bars, no corporate actions.
 const GOLDEN_BARS: &[u8] = include_bytes!("../../../tests/fixtures/kr-etf/2020-01-31/bars.json");
@@ -109,9 +106,6 @@ fn curate_golden_into(curated_root: &Path) -> (RawStore, CurateStore, ManifestEn
 // ---------------------------------------------------------------------------
 // Lagrange event contract (mirrors nt/custom-data/session_events.py)
 // ---------------------------------------------------------------------------
-
-/// Fixed-point price scale of curated prices / event price fields (KRW/10^4).
-const PRICE_SCALE: u8 = 4;
 
 /// `SessionOpenEvent`: instrument_id, trading_date, session_open_ts,
 /// open_price, currency, data_version.  Structurally carries NO high/low/close
@@ -330,11 +324,18 @@ fn canonical_curated_zone_materialized_idempotently() {
     }
 
     // The zone exists and holds the documented partition layout.
-    assert!(manifest_path.exists(), "manifest missing at {manifest_path:?}");
+    assert!(
+        manifest_path.exists(),
+        "manifest missing at {manifest_path:?}"
+    );
     for symbol in ["069500.KRX", "229200.KRX", "114260.KRX"] {
         let bars = curated.bars_path("kr", symbol, 2020, 1);
         assert!(bars.exists(), "missing {bars:?}");
         assert!(curated.adjusted_bars_path("kr", symbol, 2020, 1).exists());
-        assert!(curated.total_return_bars_path("kr", symbol, 2020, 1).exists());
+        assert!(
+            curated
+                .total_return_bars_path("kr", symbol, 2020, 1)
+                .exists()
+        );
     }
 }

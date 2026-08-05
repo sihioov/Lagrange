@@ -27,9 +27,9 @@ CUSTOM_DATA_DIR = Path(__file__).resolve().parents[1]  # nt/custom-data
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_BARS = REPO_ROOT / "tests" / "fixtures" / "kr-etf" / "2020-01-31" / "bars.json"
 
-# Fix Python module resolution for the hyphenated package.
-if str(CUSTOM_DATA_DIR) not in sys.path:
-    sys.path.insert(0, str(CUSTOM_DATA_DIR))
+# Make the hyphenated package importable as "custom-data" (parent on path).
+if str(CUSTOM_DATA_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(CUSTOM_DATA_DIR.parent))
 
 SESSION_OPEN_UTC = timezone.utc  # market_open_ts = session date 00:00:00Z
 SESSION_CLOSE_UTC = timezone.utc  # market_close_ts = session date 06:30:00Z
@@ -127,6 +127,7 @@ def bars_table(rows: list[dict]) -> pa.Table:
             pa.field("raw_hash", pa.string(), nullable=False),
         ]
     )
+    rows = [{**r, "trading_date": date.fromisoformat(r["trading_date"])} for r in rows]
     return pa.Table.from_pylist(rows, schema=schema)
 
 
@@ -162,6 +163,7 @@ def adjusted_table(rows: list[dict]) -> pa.Table:
             pa.field("raw_hash", pa.string(), nullable=False),
         ]
     )
+    rows = [{**r, "trading_date": date.fromisoformat(r["trading_date"])} for r in rows]
     return pa.Table.from_pylist(rows, schema=schema)
 
 
@@ -192,7 +194,6 @@ def write_curated_fixture(root: Path, bars: list[dict] | None = None,
         adj_sub = adj_table.filter(pa.array(row_mask))
         part = (
             root
-            / "data"
             / "curated"
             / "bars"
             / "market=kr"

@@ -165,7 +165,7 @@ def _read_curated_rows(curated_root: Path) -> list[dict[str, Any]]:
 
     Partition layout: data/curated/bars/market={m}/symbol={s}/year={y}/version={v}/.
     """
-    bars_dir = curated_root / "data" / "curated" / "bars"
+    bars_dir = curated_root / "curated" / "bars"
     if not bars_dir.is_dir():
         raise CatalogBuilderError(f"curated bars zone missing: {bars_dir}")
     rows: list[dict[str, Any]] = []

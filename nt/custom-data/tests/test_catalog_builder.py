@@ -76,7 +76,7 @@ def test_builder_accepts_only_documented_schema(builder, tmp_path):
     root = tmp_path / "bad-curated"
     rows = golden_bars_rows()[:1]
     table = bars_table(rows).drop_columns(["raw_hash"])
-    part = root / "data" / "curated" / "bars" / "market=kr" / "symbol=069500.KRX" / "year=2020" / "version=1"
+    part = root / "curated" / "bars" / "market=kr" / "symbol=069500.KRX" / "year=2020" / "version=1"
     part.mkdir(parents=True)
     import pyarrow.parquet as pq
 
