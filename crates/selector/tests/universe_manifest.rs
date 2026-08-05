@@ -26,7 +26,9 @@ use market_data::{
     Instrument, InstrumentMaster, IssueCode, QualityIssue, QualityReport, Severity, seed_universe,
 };
 use selector::publish::{ProductKind, PublishedSnapshot, UniversePublisher};
-use selector::universe::{Eligibility, SourceSnapshot, UniverseError, UniverseManifest, parse_manifest};
+use selector::universe::{
+    Eligibility, SourceSnapshot, UniverseError, UniverseManifest, parse_manifest,
+};
 use tempfile::TempDir;
 
 /// The fixed v1 universe (plan Todo 12): exact canonical IDs, manifest order.
@@ -192,7 +194,11 @@ fn parses_fixed_v1_manifest_to_exactly_11_unique_krw_etfs_plus_benchmark() {
         .expect("v1 universe publishes");
 
     // Exactly 11 unique instruments.
-    assert_eq!(snapshot.instruments.len(), 11, "exactly 11 unique instruments");
+    assert_eq!(
+        snapshot.instruments.len(),
+        11,
+        "exactly 11 unique instruments"
+    );
     for symbol in V1_SYMBOLS {
         assert!(
             snapshot.instruments.contains(&id(symbol)),
@@ -322,9 +328,9 @@ fn inactive_id_not_in_master_blocks_naming_instrument() {
         .copied()
         .filter(|s| *s != "102110")
         .collect();
-    let manifest = parse_manifest(&yaml(&missing, "069500", true, true, "etf", "1.0"))
-        .expect("parses without 102110");
-    // The master has no 102110.KRX record -> publication must name it.
+    // The manifest (source of truth) still lists 102110.KRX; the master has
+    // no record for it -> publication must name it, never substitute.
+    let manifest = parse_manifest(&load_v1_manifest()).expect("v1 manifest parses");
     assert_block(
         publisher(master_with(&missing), active_entitlements()).publish(&manifest),
         &["102110.KRX", "not in instrument master"],
@@ -398,7 +404,11 @@ fn unsupported_leveraged_product_blocks_naming_instrument() {
         .expect("parses with leveraged product");
     let master = master_with(&symbols);
     let kinds = BTreeMap::from([(id("122630"), ProductKind::Leveraged)]);
-    let p = UniversePublisher::with_product_kinds(master, EntitlementService::new(active_entitlements()), kinds);
+    let p = UniversePublisher::with_product_kinds(
+        master,
+        EntitlementService::new(active_entitlements()),
+        kinds,
+    );
     assert_block(
         p.publish(&manifest),
         &["122630.KRX", "leveraged"],
@@ -414,7 +424,11 @@ fn unsupported_inverse_product_blocks_naming_instrument() {
         .expect("parses with inverse product");
     let master = master_with(&symbols);
     let kinds = BTreeMap::from([(id("233160"), ProductKind::Inverse)]);
-    let p = UniversePublisher::with_product_kinds(master, EntitlementService::new(active_entitlements()), kinds);
+    let p = UniversePublisher::with_product_kinds(
+        master,
+        EntitlementService::new(active_entitlements()),
+        kinds,
+    );
     assert_block(
         p.publish(&manifest),
         &["233160.KRX", "inverse"],
@@ -444,8 +458,15 @@ fn benchmark_not_in_universe_blocks() {
         .copied()
         .filter(|s| *s != "069500")
         .collect();
-    let manifest = parse_manifest(&yaml(&without_benchmark, "069500", true, true, "etf", "1.0"))
-        .expect("parses without benchmark member");
+    let manifest = parse_manifest(&yaml(
+        &without_benchmark,
+        "069500",
+        true,
+        true,
+        "etf",
+        "1.0",
+    ))
+    .expect("parses without benchmark member");
     assert_block(
         publisher(master_with(&without_benchmark), active_entitlements()).publish(&manifest),
         &["069500.KRX", "benchmark"],
@@ -455,8 +476,8 @@ fn benchmark_not_in_universe_blocks() {
 
 #[test]
 fn empty_instruments_blocks() {
-    let manifest = parse_manifest(&yaml(&[], "069500", true, true, "etf", "1.0"))
-        .expect("parses empty list");
+    let manifest =
+        parse_manifest(&yaml(&[], "069500", true, true, "etf", "1.0")).expect("parses empty list");
     match publisher(seed_master(), active_entitlements()).publish(&manifest) {
         Err(UniverseError::EmptyUniverse) => {}
         other => panic!("expected EmptyUniverse, got {other:?}"),
