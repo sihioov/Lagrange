@@ -6,3 +6,29 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# Todo 22: confidential OIDC/session core. Hand-rolled minimal crypto/protocol
+# core (PKCE S256, RS256 JWT/JWKS validation, opaque session hashing) over
+# small primitives instead of a heavy oauth2/JWT framework; every primitive is
+# already pinned by the workspace lock (ring serves rustls; sha2/base64/hex
+# serve the ingest/parquet stack; rand is shared). axum stays OUT of this
+# crate: `apps/api-server/auth` owns the Axum router.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+rand = "0.9"
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+ring = "0.17"
+chrono = "0.4"
+email_address = "0.2"
+url = "2.5"
+
+[features]
+# The Auth0 protocol simulator (a fake OIDC provider used to prove the full
+# login contract without a real tenant). Enabled for this crate's own tests via
+# `cfg(test)` and opt-in by downstream crates (apps/api-server/auth dev-deps).
+testkit = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
