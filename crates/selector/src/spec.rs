@@ -80,15 +80,21 @@ impl SelectionSpec {
                 return Err(invalid("factor ids must not be empty".to_owned()));
             }
             if !weight.is_finite() {
-                return Err(invalid(format!("factor {factor} weight {weight} is not finite")));
+                return Err(invalid(format!(
+                    "factor {factor} weight {weight} is not finite"
+                )));
             }
             if *weight < 0.0 {
-                return Err(invalid(format!("factor {factor} weight {weight} is negative")));
+                return Err(invalid(format!(
+                    "factor {factor} weight {weight} is negative"
+                )));
             }
             total += *weight;
         }
         if total <= 0.0 {
-            return Err(invalid("factor weights must sum to a positive value".to_owned()));
+            return Err(invalid(
+                "factor weights must sum to a positive value".to_owned(),
+            ));
         }
         for factor in &self.mandatory_factors {
             if factor.is_empty() {

@@ -76,16 +76,35 @@ fn param<'a>(params: &'a BTreeMap<String, String>, key: &str) -> &'a str {
 pub fn localize(code: ReasonCode, params: &BTreeMap<String, String>) -> (String, String) {
     match code {
         ReasonCode::SelectedTopN => (
-            format!("상위 {}개 이내 선정 (순위 {})", param(params, "top_n"), param(params, "rank")),
-            format!("Ranked {} within top {}", param(params, "rank"), param(params, "top_n")),
+            format!(
+                "상위 {}개 이내 선정 (순위 {})",
+                param(params, "top_n"),
+                param(params, "rank")
+            ),
+            format!(
+                "Ranked {} within top {}",
+                param(params, "rank"),
+                param(params, "top_n")
+            ),
         ),
         ReasonCode::ExcludedMandatoryFactorNull => (
             format!("필수 팩터 {} 결측(NULL)으로 제외", param(params, "factor")),
-            format!("Excluded: mandatory factor {} is NULL", param(params, "factor")),
+            format!(
+                "Excluded: mandatory factor {} is NULL",
+                param(params, "factor")
+            ),
         ),
         ReasonCode::NotSelectedBeyondTopN => (
-            format!("순위 {} — 상위 {} 밖", param(params, "rank"), param(params, "top_n")),
-            format!("Rank {} is beyond top {}", param(params, "rank"), param(params, "top_n")),
+            format!(
+                "순위 {} — 상위 {} 밖",
+                param(params, "rank"),
+                param(params, "top_n")
+            ),
+            format!(
+                "Rank {} is beyond top {}",
+                param(params, "rank"),
+                param(params, "top_n")
+            ),
         ),
         ReasonCode::WeightCappedAtMax => (
             format!("최대 비중 {} 상한 적용", param(params, "max_weight")),
@@ -93,7 +112,10 @@ pub fn localize(code: ReasonCode, params: &BTreeMap<String, String>) -> (String,
         ),
         ReasonCode::WeightRoundingResidueToCash => (
             format!("반올림 잔여 {}을 현금으로 배분", param(params, "residue")),
-            format!("Rounding residue {} allocated to cash", param(params, "residue")),
+            format!(
+                "Rounding residue {} allocated to cash",
+                param(params, "residue")
+            ),
         ),
         ReasonCode::AllCashNoEligible => (
             "선정 가능한 종목이 없어 전액 현금 유지".to_owned(),

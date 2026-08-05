@@ -58,7 +58,9 @@ fn id(symbol: &str) -> InstrumentId {
 }
 
 fn universe_hash() -> String {
-    ContentHash::from_bytes(b"universe-fixture").as_str().to_owned()
+    ContentHash::from_bytes(b"universe-fixture")
+        .as_str()
+        .to_owned()
 }
 
 /// A published-style universe snapshot over the given symbols (all fields
@@ -179,7 +181,16 @@ fn default_spec() -> SelectionSpec {
 }
 
 /// The 11-symbol fixture: distinct, fully-determined scores.
-fn full_fixture() -> (FactorSnapshot, Vec<(&'static str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)>) {
+fn full_fixture() -> (
+    FactorSnapshot,
+    Vec<(
+        &'static str,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+    )>,
+) {
     let values: Vec<(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> = vec![
         ("069500", Some(0.182), Some(1.5), Some(0.121), Some(-0.4)),
         ("102110", Some(0.121), Some(1.2), Some(0.095), Some(-0.1)),
@@ -197,7 +208,11 @@ fn full_fixture() -> (FactorSnapshot, Vec<(&'static str, Option<f64>, Option<f64
     (factors, values)
 }
 
-fn select(spec: &SelectionSpec, universe: &selector::publish::PublishedSnapshot, factors: &FactorSnapshot) -> Result<TargetPortfolio, SelectorError> {
+fn select(
+    spec: &SelectionSpec,
+    universe: &selector::publish::PublishedSnapshot,
+    factors: &FactorSnapshot,
+) -> Result<TargetPortfolio, SelectorError> {
     select_targets(spec, &ready_report(), universe, factors)
 }
 
@@ -238,7 +253,10 @@ fn ranking_is_monotone_contiguous_and_deterministic() {
 
     let ranks: Vec<usize> = portfolio.targets.iter().map(|t| t.rank).collect();
     let expected: Vec<usize> = (1..=V1_SYMBOLS.len()).collect();
-    assert_eq!(ranks, expected, "all eligible instruments carry contiguous ranks 1..=N");
+    assert_eq!(
+        ranks, expected,
+        "all eligible instruments carry contiguous ranks 1..=N"
+    );
     // Scores are non-increasing down the rank order.
     let scores: Vec<f64> = portfolio.targets.iter().map(|t| t.score).collect();
     for pair in scores.windows(2) {
@@ -348,7 +366,9 @@ fn cash_floor_and_max_weight_constraints_hold() {
     // The cap is explained on every SELECTED (capped) target.
     for t in portfolio.targets.iter().filter(|t| t.rank <= 3) {
         assert!(
-            t.reasons.iter().any(|r| r.code == ReasonCode::WeightCappedAtMax),
+            t.reasons
+                .iter()
+                .any(|r| r.code == ReasonCode::WeightCappedAtMax),
             "capped target {} must carry a WEIGHT_CAPPED_AT_MAX reason",
             t.instrument_id
         );
@@ -371,13 +391,21 @@ fn every_selected_and_excluded_item_has_structured_evidence() {
     let portfolio = select(&default_spec(), &universe, &factors).expect("selection succeeds");
 
     for t in &portfolio.targets {
-        assert!(!t.reasons.is_empty(), "{} must carry reasons", t.instrument_id);
+        assert!(
+            !t.reasons.is_empty(),
+            "{} must carry reasons",
+            t.instrument_id
+        );
         for r in &t.reasons {
             assert!(!r.text_ko.is_empty(), "reason {r:?} must have ko text");
             assert!(!r.text_en.is_empty(), "reason {r:?} must have en text");
         }
     }
-    assert_eq!(portfolio.exclusions.len(), 1, "exactly one exclusion expected");
+    assert_eq!(
+        portfolio.exclusions.len(),
+        1,
+        "exactly one exclusion expected"
+    );
     let ex = &portfolio.exclusions[0];
     assert_eq!(ex.instrument, id("229200"));
     assert_eq!(ex.reason.code, ReasonCode::ExcludedMandatoryFactorNull);
@@ -394,7 +422,9 @@ fn every_selected_and_excluded_item_has_structured_evidence() {
     // Unselected instruments still carry an explanation.
     for t in portfolio.targets.iter().filter(|t| t.rank > 7) {
         assert!(
-            t.reasons.iter().any(|r| r.code == ReasonCode::NotSelectedBeyondTopN),
+            t.reasons
+                .iter()
+                .any(|r| r.code == ReasonCode::NotSelectedBeyondTopN),
             "rank > top_n must be explained ({} rank {})",
             t.instrument_id,
             t.rank
@@ -432,7 +462,11 @@ fn tie_scores_break_by_canonical_instrument_id() {
     .expect("spec validates");
 
     let portfolio = select(&spec, &universe, &factors).expect("selection succeeds");
-    let ordered: Vec<String> = portfolio.targets.iter().map(|t| t.instrument_id.as_str()).collect();
+    let ordered: Vec<String> = portfolio
+        .targets
+        .iter()
+        .map(|t| t.instrument_id.as_str())
+        .collect();
     // Canonical id order breaks the tie: 069500 < 102110 < 229200.
     assert_eq!(ordered, vec!["069500.KRX", "102110.KRX", "229200.KRX"]);
     let scores: Vec<f64> = portfolio.targets.iter().map(|t| t.score).collect();
@@ -442,7 +476,10 @@ fn tie_scores_break_by_canonical_instrument_id() {
     );
     // Rerun: identical tie-break.
     let again = select(&spec, &universe, &factors).expect("rerun succeeds");
-    assert_eq!(again.targets[0].instrument_id, portfolio.targets[0].instrument_id);
+    assert_eq!(
+        again.targets[0].instrument_id,
+        portfolio.targets[0].instrument_id
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -461,7 +498,10 @@ fn null_mandatory_factor_excludes_with_reason() {
 
     let portfolio = select(&default_spec(), &universe, &factors).expect("selection succeeds");
     assert!(
-        portfolio.targets.iter().all(|t| t.instrument_id != id("102110")),
+        portfolio
+            .targets
+            .iter()
+            .all(|t| t.instrument_id != id("102110")),
         "NULL mandatory factor must exclude 102110.KRX"
     );
     let ex = portfolio
@@ -487,10 +527,17 @@ fn blocked_dataset_yields_typed_denial_with_no_output() {
         .expect_err("BLOCKED dataset must deny selection");
     assert_eq!(err.code(), "DATA_BLOCKED", "typed dataset-state denial");
     match &err {
-        SelectorError::DataBlocked { dataset_id, state, blocking_issues } => {
+        SelectorError::DataBlocked {
+            dataset_id,
+            state,
+            blocking_issues,
+        } => {
             assert_eq!(dataset_id, "kr-etf-daily");
             assert_eq!(state, "blocked");
-            assert!(blocking_issues.contains("MISSING_REQUIRED_BAR"), "{blocking_issues}");
+            assert!(
+                blocking_issues.contains("MISSING_REQUIRED_BAR"),
+                "{blocking_issues}"
+            );
         }
         other => panic!("expected DataBlocked, got {other:?}"),
     }
@@ -521,10 +568,16 @@ fn all_ineligible_universe_yields_deterministic_all_cash() {
     );
     assert_eq!(a.cash_weight, 1.0, "portfolio is fully cash");
     assert!(
-        a.portfolio_reasons.iter().any(|r| r.code == ReasonCode::AllCashNoEligible),
+        a.portfolio_reasons
+            .iter()
+            .any(|r| r.code == ReasonCode::AllCashNoEligible),
         "all-cash outcome must be explained"
     );
-    assert_eq!(a.exclusions.len(), V1_SYMBOLS.len(), "every member is excluded");
+    assert_eq!(
+        a.exclusions.len(),
+        V1_SYMBOLS.len(),
+        "every member is excluded"
+    );
     for ex in &a.exclusions {
         assert_eq!(ex.reason.code, ReasonCode::ExcludedMandatoryFactorNull);
     }
@@ -552,11 +605,15 @@ fn impossible_constraints_yield_typed_error() {
         1e-9,
     )
     .expect("spec validates");
-    let err = select(&impossible, &universe, &factors).expect_err("impossible constraints must error");
+    let err =
+        select(&impossible, &universe, &factors).expect_err("impossible constraints must error");
     assert_eq!(err.code(), "CONSTRAINTS_IMPOSSIBLE");
     match &err {
         SelectorError::ImpossibleConstraints { detail } => {
-            assert!(detail.contains("0.2"), "detail must name the max weight: {detail}");
+            assert!(
+                detail.contains("0.2"),
+                "detail must name the max weight: {detail}"
+            );
         }
         other => panic!("expected ImpossibleConstraints, got {other:?}"),
     }
@@ -576,7 +633,10 @@ fn impossible_constraints_yield_typed_error() {
     .expect("spec validates");
     let portfolio = select(&boundary, &universe, &factors).expect("boundary fits exactly");
     let sum: f64 = portfolio.targets.iter().map(|t| t.target_weight).sum();
-    assert!((sum - 0.8).abs() <= 1e-9, "boundary invests exactly 0.8, got {sum}");
+    assert!(
+        (sum - 0.8).abs() <= 1e-9,
+        "boundary invests exactly 0.8, got {sum}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -603,7 +663,10 @@ fn weight_rounding_residue_goes_to_cash_deterministically() {
     }
     let sum: f64 = selected.iter().map(|t| t.target_weight).sum();
     assert!((sum - 0.7994).abs() < 1e-12, "sum was {sum}");
-    assert_eq!(portfolio.cash_weight, 0.2006, "residue + floor lands in cash");
+    assert_eq!(
+        portfolio.cash_weight, 0.2006,
+        "residue + floor lands in cash"
+    );
     assert!(
         (sum + portfolio.cash_weight - 1.0).abs() < 1e-12,
         "targets + cash must still equal 1"
@@ -618,8 +681,16 @@ fn weight_rounding_residue_goes_to_cash_deterministically() {
     // Determinism of the residue allocation.
     let again = select(&default_spec(), &universe, &factors).expect("rerun succeeds");
     assert_eq!(
-        again.targets.iter().map(|t| t.target_weight).collect::<Vec<_>>(),
-        portfolio.targets.iter().map(|t| t.target_weight).collect::<Vec<_>>()
+        again
+            .targets
+            .iter()
+            .map(|t| t.target_weight)
+            .collect::<Vec<_>>(),
+        portfolio
+            .targets
+            .iter()
+            .map(|t| t.target_weight)
+            .collect::<Vec<_>>()
     );
     assert_eq!(again.cash_weight, portfolio.cash_weight);
 }
@@ -635,7 +706,9 @@ fn factor_snapshot_universe_mismatch_is_typed_error() {
     let spec = default_spec();
 
     let mut mismatched = factors.clone();
-    mismatched.universe_snapshot_id = ContentHash::from_bytes(b"other-universe").as_str().to_owned();
+    mismatched.universe_snapshot_id = ContentHash::from_bytes(b"other-universe")
+        .as_str()
+        .to_owned();
     let err = select(&spec, &universe, &mismatched).expect_err("mismatch must error");
     assert_eq!(err.code(), "UNIVERSE_MISMATCH");
     match &err {
@@ -691,7 +764,11 @@ fn universe_member_missing_snapshot_row_is_typed_error() {
         .into_iter()
         .filter(|(s, ..)| *s != "132030")
         .collect();
-    let symbols: Vec<&str> = V1_SYMBOLS.iter().copied().filter(|s| *s != "132030").collect();
+    let symbols: Vec<&str> = V1_SYMBOLS
+        .iter()
+        .copied()
+        .filter(|s| *s != "132030")
+        .collect();
     let factors = fixture_factors(&symbols, td(2020, 1, 31), &values);
     let universe = fixture_universe(&V1_SYMBOLS);
     let err = select(&default_spec(), &universe, &factors).expect_err("missing row must error");
@@ -706,13 +783,15 @@ fn universe_member_missing_snapshot_row_is_typed_error() {
 
 #[test]
 fn snapshot_unknown_instrument_is_typed_error() {
-    let mut values: Vec<(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> = full_fixture().1;
+    let mut values: Vec<(&str, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> =
+        full_fixture().1;
     values.push(("999999", Some(0.1), Some(0.5), Some(0.05), Some(0.5)));
     let mut symbols = V1_SYMBOLS.to_vec();
     symbols.push("999999"); // in the snapshot but NOT in the published universe
     let factors = fixture_factors(&symbols, td(2020, 1, 31), &values);
     let universe = fixture_universe(&V1_SYMBOLS);
-    let err = select(&default_spec(), &universe, &factors).expect_err("unknown instrument must error");
+    let err =
+        select(&default_spec(), &universe, &factors).expect_err("unknown instrument must error");
     assert_eq!(err.code(), "UNKNOWN_SNAPSHOT_INSTRUMENT");
 }
 
@@ -844,7 +923,14 @@ fn portfolio_output_contains_no_order_vocabulary() {
     let universe = fixture_universe(&V1_SYMBOLS);
     let portfolio = select(&default_spec(), &universe, &factors).expect("selection succeeds");
     let json = serde_json::to_string(&portfolio).expect("serializes");
-    for forbidden in ["\"order\"", "order_id", "\"side\"", "\"quantity\"", "\"qty\"", "\"price\""] {
+    for forbidden in [
+        "\"order\"",
+        "order_id",
+        "\"side\"",
+        "\"quantity\"",
+        "\"qty\"",
+        "\"price\"",
+    ] {
         assert!(
             !json.contains(forbidden),
             "target portfolio must never carry order vocabulary, found {forbidden} in {json}"

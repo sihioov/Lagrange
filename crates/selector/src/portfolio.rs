@@ -66,7 +66,10 @@ impl PortfolioConstraints {
                 weights: BTreeMap::new(),
                 cash_weight: 1.0,
                 target_reasons: BTreeMap::new(),
-                portfolio_reasons: vec![Reason::new(ReasonCode::AllCashNoEligible, BTreeMap::new())],
+                portfolio_reasons: vec![Reason::new(
+                    ReasonCode::AllCashNoEligible,
+                    BTreeMap::new(),
+                )],
             });
         }
 

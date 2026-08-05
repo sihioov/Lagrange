@@ -10,7 +10,9 @@
 pub enum SelectorError {
     /// The required dataset is `BLOCKED` (Todo 11 quality gate): the
     /// documented fail-closed denial for recommendation use.
-    #[error("dataset {dataset_id} is {state}: recommendation blocked (DATA_BLOCKED; {blocking_issues})")]
+    #[error(
+        "dataset {dataset_id} is {state}: recommendation blocked (DATA_BLOCKED; {blocking_issues})"
+    )]
     DataBlocked {
         dataset_id: String,
         state: String,
@@ -26,7 +28,9 @@ pub enum SelectorError {
     },
     /// Stale-state guard: the factor snapshot was frozen over a different
     /// universe than the published snapshot being selected on.
-    #[error("factor snapshot universe {snapshot_universe} does not match published universe {published_universe}")]
+    #[error(
+        "factor snapshot universe {snapshot_universe} does not match published universe {published_universe}"
+    )]
     UniverseMismatch {
         snapshot_universe: String,
         published_universe: String,
@@ -36,7 +40,9 @@ pub enum SelectorError {
     MissingFactorRow { instrument: String, date: String },
     /// A factor snapshot row on the as-of date names an instrument outside
     /// the published universe.
-    #[error("factor snapshot row on {date} for {instrument}, which is not a member of the published universe")]
+    #[error(
+        "factor snapshot row on {date} for {instrument}, which is not a member of the published universe"
+    )]
     UnknownSnapshotInstrument { instrument: String, date: String },
     /// The spec references a factor the snapshot does not carry.
     #[error("selection spec references unknown factor {factor} (snapshot carries {known})")]

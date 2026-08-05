@@ -70,9 +70,12 @@ fn ready_report() -> QualityReport {
 fn real_universe() -> PublishedSnapshot {
     let yaml = fs::read_to_string(manifest_path()).expect("v1 manifest reads");
     let manifest = parse_manifest(&yaml).expect("v1 manifest parses");
-    UniversePublisher::new(seed_universe(), EntitlementService::new(vec![active_entitlement()]))
-        .publish(&manifest)
-        .expect("v1 universe publishes")
+    UniversePublisher::new(
+        seed_universe(),
+        EntitlementService::new(vec![active_entitlement()]),
+    )
+    .publish(&manifest)
+    .expect("v1 universe publishes")
 }
 
 /// Synthetic factor values over the REAL universe (ids + snapshot id are
@@ -97,14 +100,18 @@ fn fixture_factors(universe: &PublishedSnapshot) -> FactorSnapshot {
     for (symbol, raw12, norm12, rawvol, normvol) in values {
         rows.push(FactorRow {
             date: as_of.to_iso(),
-            instrument: InstrumentId::parse(&format!("{symbol}.KRX")).expect("valid id").as_str(),
+            instrument: InstrumentId::parse(&format!("{symbol}.KRX"))
+                .expect("valid id")
+                .as_str(),
             factor: "return_12m".to_owned(),
             raw: Some(raw12),
             normalized: Some(norm12),
         });
         rows.push(FactorRow {
             date: as_of.to_iso(),
-            instrument: InstrumentId::parse(&format!("{symbol}.KRX")).expect("valid id").as_str(),
+            instrument: InstrumentId::parse(&format!("{symbol}.KRX"))
+                .expect("valid id")
+                .as_str(),
             factor: "vol_20d".to_owned(),
             raw: Some(rawvol),
             normalized: Some(normvol),
@@ -151,11 +158,11 @@ fn run() -> TargetPortfolio {
 }
 
 fn print_table(portfolio: &TargetPortfolio) {
-    println!("=== Lagrange Station selector QA (as-of {}) ===", portfolio.as_of.to_iso());
     println!(
-        "universe_snapshot_id: {}",
-        portfolio.universe_snapshot_id
+        "=== Lagrange Station selector QA (as-of {}) ===",
+        portfolio.as_of.to_iso()
     );
+    println!("universe_snapshot_id: {}", portfolio.universe_snapshot_id);
     println!("factor_snapshot_hash: {}", portfolio.factor_snapshot_hash);
     println!("strategy: {}", portfolio.strategy_version);
     println!(
@@ -168,12 +175,24 @@ fn print_table(portfolio: &TargetPortfolio) {
     );
     println!(
         "{:>3}  {:<12} {:>9} {:>9} {:>10} {:>10} {:>10}  {:<44} {}",
-        "rk", "instrument", "raw_12m", "norm_12m", "raw_vol", "norm_vol", "score", "reason", "weight"
+        "rk",
+        "instrument",
+        "raw_12m",
+        "norm_12m",
+        "raw_vol",
+        "norm_vol",
+        "score",
+        "reason",
+        "weight"
     );
     for t in &portfolio.targets {
         let f12 = &t.factors["return_12m"];
         let fvol = &t.factors["vol_20d"];
-        let reasons: Vec<String> = t.reasons.iter().map(|r| format!("{}:{}", r.code.as_str(), r.text_en)).collect();
+        let reasons: Vec<String> = t
+            .reasons
+            .iter()
+            .map(|r| format!("{}:{}", r.code.as_str(), r.text_en))
+            .collect();
         println!(
             "{:>3}  {:<12} {:>9} {:>9} {:>10} {:>10} {:>10.6}  {:<44} {:.4}",
             t.rank,
@@ -209,9 +228,18 @@ fn print_table(portfolio: &TargetPortfolio) {
     println!("portfolio_snapshot_id: {}", portfolio.portfolio_snapshot_id);
     println!(
         "sum(targets) + cash = {:.8} + {:.8} = {:.8}",
-        portfolio.targets.iter().map(|t| t.target_weight).sum::<f64>(),
+        portfolio
+            .targets
+            .iter()
+            .map(|t| t.target_weight)
+            .sum::<f64>(),
         portfolio.cash_weight,
-        portfolio.targets.iter().map(|t| t.target_weight).sum::<f64>() + portfolio.cash_weight
+        portfolio
+            .targets
+            .iter()
+            .map(|t| t.target_weight)
+            .sum::<f64>()
+            + portfolio.cash_weight
     );
 }
 
@@ -226,9 +254,11 @@ fn fmt_opt(v: Option<f64>) -> String {
 fn qa_ranks_full_seed_universe_and_reruns_byte_identical() {
     let universe = real_universe();
     assert_eq!(universe.instruments.len(), 11);
-    assert!(V1_SYMBOLS.iter().all(|s| universe
-        .instruments
-        .contains(&InstrumentId::parse(&format!("{s}.KRX")).expect("valid id"))));
+    assert!(V1_SYMBOLS.iter().all(|s| {
+        universe
+            .instruments
+            .contains(&InstrumentId::parse(&format!("{s}.KRX")).expect("valid id"))
+    }));
 
     let a = run();
     let b = run();

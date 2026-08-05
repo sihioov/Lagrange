@@ -59,11 +59,7 @@ impl ScoreComposer {
         for eligible in &outcome.eligible {
             let mut score = 0.0;
             for (factor, weight) in &spec.factor_weights {
-                if let Some(value) = eligible
-                    .factors
-                    .get(factor)
-                    .and_then(|ev| ev.normalized)
-                {
+                if let Some(value) = eligible.factors.get(factor).and_then(|ev| ev.normalized) {
                     score += weight * value;
                 }
             }

@@ -97,10 +97,7 @@ impl EligibilityFilter {
             let key = (row.instrument.clone(), row.factor.clone());
             if !seen.insert(key.clone()) {
                 return Err(SelectorError::Internal {
-                    detail: format!(
-                        "duplicate factor row for {} {} on {}",
-                        key.0, key.1, as_of
-                    ),
+                    detail: format!("duplicate factor row for {} {} on {}", key.0, key.1, as_of),
                 });
             }
             evidence.entry(key.0.clone()).or_default().insert(
