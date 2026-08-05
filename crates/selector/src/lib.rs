@@ -43,6 +43,7 @@
 //! execution layers (backtest / Paper / Live) translate target weights into
 //! orders (design §6.6: "Selector는 주문을 직접 만들지 않는다").
 
+pub mod baseline;
 pub mod builder;
 pub mod eligibility;
 pub mod error;
@@ -50,6 +51,7 @@ pub mod portfolio;
 pub mod publish;
 pub mod rank;
 pub mod reason;
+pub mod registry;
 pub mod score;
 pub mod spec;
 pub mod target;
