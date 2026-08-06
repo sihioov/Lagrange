@@ -18,7 +18,6 @@
 use std::collections::BTreeMap;
 
 use domain::{Currency, FixedPoint, InstrumentId, Money, UtcTimestamp};
-use serde::Serialize;
 
 use crate::backtest::{
     BacktestResult, BacktestSummary, BenchmarkPoint, CashLedgerEntry, DrawdownPoint, EquityPoint,
