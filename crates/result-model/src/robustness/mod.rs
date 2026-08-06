@@ -25,6 +25,7 @@
 //!   deltas and non-finite values).
 
 pub mod cost;
+pub mod delay;
 pub mod error;
 pub mod holdout;
 pub mod lineage;
@@ -32,6 +33,7 @@ pub mod replay;
 pub mod split;
 
 pub use cost::{CostStressProfile, stress_cost};
+pub use delay::delay_execution;
 pub use error::RobustnessError;
 pub use holdout::{HoldoutBarrier, PeriodSplit, SplitResult, select_equity_series};
 pub use lineage::{

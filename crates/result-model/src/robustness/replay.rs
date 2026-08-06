@@ -115,7 +115,13 @@ pub fn replay(spec: ReplaySpec) -> Result<BacktestResult, RobustnessError> {
             marked += position_qty * mark;
         }
         equity.push((date.clone(), marked));
-        cash_entries.push((date.clone(), cash));
+        // Cash entries are close-of-day: one entry per date holding the
+        // day's FINAL cash (the ledger check reconciles each entry against
+        // every fill/fee up to and including that date).
+        match cash_entries.last_mut() {
+            Some((last_date, last_cash)) if *last_date == date => *last_cash = cash,
+            _ => cash_entries.push((date.clone(), cash)),
+        }
     }
 
     // position snapshots: one row per (date, held instrument), date-ordered
