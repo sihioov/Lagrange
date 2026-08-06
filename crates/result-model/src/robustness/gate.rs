@@ -305,8 +305,8 @@ pub fn load_golden_set(
         if actual != entry.sha256 {
             return Err(RobustnessError::Replay {
                 detail: format!(
-                    "committed golden artifact {} does not match its manifest: expected {} got {}",
-                    entry.path, entry.sha256, actual
+                    "committed golden artifact {} ({}) does not match its manifest: expected {} got {}",
+                    entry.id, entry.path, entry.sha256, actual
                 ),
             });
         }
