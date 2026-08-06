@@ -144,7 +144,10 @@ async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn
                 continue;
             }
         };
-        match sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&pool).await {
+        match sqlx::query_scalar::<_, i32>("SELECT 1")
+            .fetch_one(&pool)
+            .await
+        {
             Ok(_) => return Ok(pool),
             Err(e) => {
                 last = Some(e);
@@ -191,9 +194,15 @@ where
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
         }
-        eprintln!("{label}: attempt {} failed ({last:?}); retrying with a fresh DB", attempt + 1);
+        eprintln!(
+            "{label}: attempt {} failed ({last:?}); retrying with a fresh DB",
+            attempt + 1
+        );
     }
-    panic!("{label} FAILED after 3 attempts: {}", last.unwrap_or_default());
+    panic!(
+        "{label} FAILED after 3 attempts: {}",
+        last.unwrap_or_default()
+    );
 }
 
 async fn admin_pool(url: &str) -> Result<PgPool, Box<dyn Error>> {
@@ -219,7 +228,9 @@ async fn create_scratch_db(super_url: &str) -> Result<(String, PgPool), Box<dyn 
     drop(admin);
 
     let super_new = connect_with_retry(&conn_url(super_url, "postgres", &db), 3).await?;
-    sqlx::raw_sql(ROLE_BOOTSTRAP_SQL).execute(&super_new).await?;
+    sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
+        .execute(&super_new)
+        .await?;
     sqlx::raw_sql(ddl_for(
         &db,
         "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, audit_writer",
@@ -286,7 +297,7 @@ fn long_lease_config() -> QueueConfig {
     }
 }
 
-fn submit<'a>(owner: Uuid, key: Option<&'a str>, max_attempts: i32, tag: i64) -> SubmitJob {
+fn submit(owner: Uuid, key: Option<&str>, max_attempts: i32, tag: i64) -> SubmitJob {
     SubmitJob {
         owner_user_id: owner,
         job_type: "backtest".to_string(),
@@ -302,10 +313,7 @@ async fn count(pool: &PgPool, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
 
-async fn claim_and_settle_loop(
-    queue: &JobQueue,
-    worker_id: &str,
-) -> Result<usize, Box<dyn Error>> {
+async fn claim_and_settle_loop(queue: &JobQueue, worker_id: &str) -> Result<usize, Box<dyn Error>> {
     let mut claimed = 0usize;
     loop {
         match queue.claim_next(worker_id).await? {
@@ -330,14 +338,13 @@ async fn two_workers_drain_100_jobs_without_duplicate_ownership() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("two-worker drain", &super_url, |s, d, p| Box::pin(two_workers_body(s, d, p))).await;
+    run_test("two-worker drain", &super_url, |s, d, p| {
+        Box::pin(two_workers_body(s, d, p))
+    })
+    .await;
 }
 
-async fn two_workers_body(
-    super_url: &str,
-    db: &str,
-    pool: &PgPool,
-) -> Result<(), Box<dyn Error>> {
+async fn two_workers_body(super_url: &str, db: &str, pool: &PgPool) -> Result<(), Box<dyn Error>> {
     let owner = insert_test_user(pool, "sub-pool").await?;
 
     // Separate pools per worker: each worker is an independent database
@@ -366,7 +373,11 @@ async fn two_workers_body(
     );
     let a = a?;
     let b = b?;
-    assert_eq!(a + b, 100, "both workers together must claim exactly 100 jobs");
+    assert_eq!(
+        a + b,
+        100,
+        "both workers together must claim exactly 100 jobs"
+    );
 
     // Exactly 100 attempts - one per job, no duplicates.
     assert_eq!(count(pool, "SELECT count(*) FROM job_attempts").await, 100);
@@ -383,13 +394,21 @@ async fn two_workers_body(
     );
     // Every job reached SUCCEEDED, none is left RUNNING or QUEUED.
     assert_eq!(
-        count(pool, "SELECT count(*) FROM jobs WHERE status <> 'SUCCEEDED'").await,
+        count(
+            pool,
+            "SELECT count(*) FROM jobs WHERE status <> 'SUCCEEDED'"
+        )
+        .await,
         0,
         "all jobs must be SUCCEEDED after the drain"
     );
     // Every attempt is terminal SUCCEEDED, owned by exactly one of the workers.
     assert_eq!(
-        count(pool, "SELECT count(*) FROM job_attempts WHERE outcome <> 'SUCCEEDED'").await,
+        count(
+            pool,
+            "SELECT count(*) FROM job_attempts WHERE outcome <> 'SUCCEEDED'"
+        )
+        .await,
         0,
         "every attempt must settle SUCCEEDED"
     );
@@ -402,7 +421,10 @@ async fn two_workers_body(
         0,
         "every attempt must be owned by one of the two workers"
     );
-    assert!(a > 0 && b > 0, "both workers must claim at least one job: a={a} b={b}");
+    assert!(
+        a > 0 && b > 0,
+        "both workers must claim at least one job: a={a} b={b}"
+    );
     // attempt_count matches: each job was claimed exactly once.
     assert_eq!(
         count(pool, "SELECT count(*) FROM jobs WHERE attempt_count <> 1").await,
@@ -423,7 +445,10 @@ async fn duplicate_idempotency_key_returns_same_job() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("idempotency", &super_url, |_s, _d, p| Box::pin(idempotency_body(p))).await;
+    run_test("idempotency", &super_url, |_s, _d, p| {
+        Box::pin(idempotency_body(p))
+    })
+    .await;
 }
 
 async fn idempotency_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -435,10 +460,17 @@ async fn idempotency_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     // Serial duplicates return the same job id and do not create rows.
     for _ in 0..5 {
         let same = q.submit(submit(owner, Some("k1"), 3, 1)).await?;
-        assert_eq!(same.id, first.id, "serial duplicate must return the same job");
+        assert_eq!(
+            same.id, first.id,
+            "serial duplicate must return the same job"
+        );
     }
     assert_eq!(
-        count(pool, "SELECT count(*) FROM jobs WHERE idempotency_key = 'k1'").await,
+        count(
+            pool,
+            "SELECT count(*) FROM jobs WHERE idempotency_key = 'k1'"
+        )
+        .await,
         1,
         "duplicate key must not create extra rows"
     );
@@ -452,10 +484,17 @@ async fn idempotency_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     }
     for h in handles {
         let job = h.await.expect("submit task panicked")?;
-        assert_eq!(job.id, first.id, "concurrent duplicate must return the same job");
+        assert_eq!(
+            job.id, first.id,
+            "concurrent duplicate must return the same job"
+        );
     }
     assert_eq!(
-        count(pool, "SELECT count(*) FROM jobs WHERE idempotency_key = 'k1'").await,
+        count(
+            pool,
+            "SELECT count(*) FROM jobs WHERE idempotency_key = 'k1'"
+        )
+        .await,
         1,
         "concurrent duplicates must not create extra rows"
     );
@@ -467,11 +506,21 @@ async fn idempotency_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
 
     // Re-submitting after completion returns the SAME job unchanged (AT-03:
     // "identical input twice -> existing run reused"), never a re-run.
-    let claim = q.claim_next("worker-a").await?.expect("job must be claimable");
+    let claim = q
+        .claim_next("worker-a")
+        .await?
+        .expect("job must be claimable");
     let _ = q.settle_success(&claim).await?;
     let done = q.submit(submit(owner, Some("k1"), 3, 1)).await?;
-    assert_eq!(done.id, first.id, "post-completion re-submit returns the same job");
-    assert_eq!(done.status, JobStatus::Succeeded, "re-submit must not restart the job");
+    assert_eq!(
+        done.id, first.id,
+        "post-completion re-submit returns the same job"
+    );
+    assert_eq!(
+        done.status,
+        JobStatus::Succeeded,
+        "re-submit must not restart the job"
+    );
 
     // Jobs without a key are never deduplicated.
     let unkeyed_a = q.submit(submit(owner, None, 3, 3)).await?;
@@ -490,7 +539,10 @@ async fn submit_validates_malformed_input() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("submit validation", &super_url, |_s, _d, p| Box::pin(validate_body(p))).await;
+    run_test("submit validation", &super_url, |_s, _d, p| {
+        Box::pin(validate_body(p))
+    })
+    .await;
 }
 
 async fn validate_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -499,16 +551,29 @@ async fn validate_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
 
     let mut bad_type = submit(owner, None, 3, 1);
     bad_type.job_type = String::new();
-    assert!(q.submit(bad_type).await.is_err(), "empty job_type must be rejected");
+    assert!(
+        q.submit(bad_type).await.is_err(),
+        "empty job_type must be rejected"
+    );
 
     let bad_attempts = submit(owner, None, 0, 1);
-    assert!(q.submit(bad_attempts).await.is_err(), "max_attempts < 1 must be rejected");
+    assert!(
+        q.submit(bad_attempts).await.is_err(),
+        "max_attempts < 1 must be rejected"
+    );
 
     let mut bad_payload = submit(owner, None, 3, 1);
     bad_payload.payload = serde_json::json!([1, 2, 3]);
-    assert!(q.submit(bad_payload).await.is_err(), "non-object payload must be rejected");
+    assert!(
+        q.submit(bad_payload).await.is_err(),
+        "non-object payload must be rejected"
+    );
 
-    assert_eq!(count(pool, "SELECT count(*) FROM jobs").await, 0, "no rows may land");
+    assert_eq!(
+        count(pool, "SELECT count(*) FROM jobs").await,
+        0,
+        "no rows may land"
+    );
     Ok(())
 }
 
@@ -523,7 +588,10 @@ async fn api_db_available_while_job_running() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("api availability", &super_url, |s, d, p| Box::pin(api_available_body(s, d, p))).await;
+    run_test("api availability", &super_url, |s, d, p| {
+        Box::pin(api_available_body(s, d, p))
+    })
+    .await;
 }
 
 async fn api_available_body(
@@ -534,7 +602,10 @@ async fn api_available_body(
     let owner = insert_test_user(pool, "sub-pool").await?;
     let q = JobQueue::new(pool.clone(), None, fast_config());
     let _job = q.submit(submit(owner, None, 3, 1)).await?;
-    let claim = q.claim_next("worker-a").await?.expect("job must be claimable");
+    let claim = q
+        .claim_next("worker-a")
+        .await?
+        .expect("job must be claimable");
     assert_eq!(claim.job.status, JobStatus::Running);
     assert_eq!(claim.attempt.outcome, job_queue::AttemptOutcome::Running);
 
@@ -566,7 +637,10 @@ async fn api_available_body(
 
     // Settle normally afterwards; the second job is still claimable.
     let _ = q.settle_success(&claim).await?;
-    let c2 = q.claim_next("worker-a").await?.expect("second job claimable");
+    let c2 = q
+        .claim_next("worker-a")
+        .await?
+        .expect("second job claimable");
     let _ = q.settle_success(&c2).await?;
     Ok(())
 }
@@ -582,7 +656,10 @@ async fn heartbeat_extends_lease_and_expired_lease_is_lost() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("heartbeat", &super_url, |_s, _d, p| Box::pin(heartbeat_body(p))).await;
+    run_test("heartbeat", &super_url, |_s, _d, p| {
+        Box::pin(heartbeat_body(p))
+    })
+    .await;
 }
 
 async fn heartbeat_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -647,7 +724,10 @@ async fn queue_operates_under_production_roles() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("production roles", &super_url, |s, d, p| Box::pin(roles_body(s, d, p))).await;
+    run_test("production roles", &super_url, |s, d, p| {
+        Box::pin(roles_body(s, d, p))
+    })
+    .await;
 }
 
 async fn roles_body(super_url: &str, db: &str, pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -660,7 +740,10 @@ async fn roles_body(super_url: &str, db: &str, pool: &PgPool) -> Result<(), Box<
 
     // app submits; worker claims and settles the full lifecycle.
     let job = api.submit(submit(owner, Some("role-k"), 3, 1)).await?;
-    let claim = w.claim_next("role-worker").await?.expect("worker must claim");
+    let claim = w
+        .claim_next("role-worker")
+        .await?
+        .expect("worker must claim");
     assert_eq!(claim.job.id, job.id);
     let _ = w.settle_success(&claim).await?;
     assert_eq!(api.get_by_id(job.id).await?.status, JobStatus::Succeeded);
@@ -689,7 +772,6 @@ async fn roles_body(super_url: &str, db: &str, pool: &PgPool) -> Result<(), Box<
 #[allow(unused_imports)]
 use sqlx::Row as _Row;
 
-
 // ---------------------------------------------------------------------------
 // (c) Cancellation: audited requests, cooperative worker response, and the
 //     settle-after-cancel race. CANCELED is a JOB status only; the attempt of
@@ -713,7 +795,10 @@ async fn cancel_queued_job_is_audited_and_terminal() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("queued cancel", &super_url, |_s, _d, p| Box::pin(cancel_queued_body(p))).await;
+    run_test("queued cancel", &super_url, |_s, _d, p| {
+        Box::pin(cancel_queued_body(p))
+    })
+    .await;
 }
 
 async fn cancel_queued_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -748,7 +833,10 @@ async fn cancel_queued_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     assert_eq!(audit_rows(pool, job.id).await.len(), 1);
     // Canceling a nonexistent job is a typed error.
     let ghost = Uuid::new_v4();
-    assert!(matches!(q.request_cancel(ghost, &actor).await, Err(job_queue::QueueError::JobNotFound(_))));
+    assert!(matches!(
+        q.request_cancel(ghost, &actor).await,
+        Err(job_queue::QueueError::JobNotFound(_))
+    ));
     Ok(())
 }
 
@@ -758,7 +846,10 @@ async fn cancel_running_job_is_cooperative_and_audited() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("running cancel", &super_url, |_s, _d, p| Box::pin(cancel_running_body(p))).await;
+    run_test("running cancel", &super_url, |_s, _d, p| {
+        Box::pin(cancel_running_body(p))
+    })
+    .await;
 }
 
 async fn cancel_running_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -777,21 +868,30 @@ async fn cancel_running_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
         other => panic!("running cancel must cancel, got {other:?}"),
     }
     assert_eq!(audit_rows(pool, job.id).await.len(), 1);
-    assert!(q.check_canceled(job.id).await?, "checkpoint must observe the cancel");
+    assert!(
+        q.check_canceled(job.id).await?,
+        "checkpoint must observe the cancel"
+    );
 
     // Cooperative response: the worker aborts and records its own attempt as
     // FAILED('canceled'); the JOB stays CANCELED, never FAILED.
-    let aborted = q.settle_aborted(&claim, "observed cancel checkpoint").await?;
+    let aborted = q
+        .settle_aborted(&claim, "observed cancel checkpoint")
+        .await?;
     assert_eq!(aborted.status, JobStatus::Canceled);
-    let attempt: (String, Option<String>) =
-        sqlx::query_as("SELECT outcome, error_code FROM job_attempts WHERE job_id = $1 AND attempt_no = 1")
-            .bind(job.id)
-            .fetch_one(pool)
-            .await?;
+    let attempt: (String, Option<String>) = sqlx::query_as(
+        "SELECT outcome, error_code FROM job_attempts WHERE job_id = $1 AND attempt_no = 1",
+    )
+    .bind(job.id)
+    .fetch_one(pool)
+    .await?;
     assert_eq!(attempt.0, "FAILED");
     assert_eq!(attempt.1.as_deref(), Some("canceled"));
     // No retry may ever follow a cancel.
-    assert!(q.claim_next("worker-a").await?.is_none(), "canceled job must never be claimable");
+    assert!(
+        q.claim_next("worker-a").await?.is_none(),
+        "canceled job must never be claimable"
+    );
     assert_eq!(q.get_by_id(job.id).await?.status, JobStatus::Canceled);
     Ok(())
 }
@@ -802,7 +902,10 @@ async fn settle_after_cancel_marks_attempt_canceled() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("settle/cancel race", &super_url, |_s, _d, p| Box::pin(settle_cancel_race_body(p))).await;
+    run_test("settle/cancel race", &super_url, |_s, _d, p| {
+        Box::pin(settle_cancel_race_body(p))
+    })
+    .await;
 }
 
 async fn settle_cancel_race_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -818,12 +921,16 @@ async fn settle_cancel_race_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
         SettleResult::Canceled(j) => assert_eq!(j.status, JobStatus::Canceled),
         other => panic!("settle after cancel must yield Canceled, got {other:?}"),
     }
-    let (outcome, code): (String, Option<String>) =
-        sqlx::query_as("SELECT outcome, error_code FROM job_attempts WHERE job_id = $1 AND attempt_no = 1")
-            .bind(job.id)
-            .fetch_one(pool)
-            .await?;
-    assert_eq!(outcome, "FAILED", "canceled work must never settle SUCCEEDED");
+    let (outcome, code): (String, Option<String>) = sqlx::query_as(
+        "SELECT outcome, error_code FROM job_attempts WHERE job_id = $1 AND attempt_no = 1",
+    )
+    .bind(job.id)
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(
+        outcome, "FAILED",
+        "canceled work must never settle SUCCEEDED"
+    );
     assert_eq!(code.as_deref(), Some("canceled"));
 
     // Settle wins the race: the cancel is a no-op on the terminal job.
@@ -853,7 +960,10 @@ async fn transient_failure_requeues_with_backoff_then_succeeds() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("transient retry", &super_url, |_s, _d, p| Box::pin(transient_retry_body(p))).await;
+    run_test("transient retry", &super_url, |_s, _d, p| {
+        Box::pin(transient_retry_body(p))
+    })
+    .await;
 }
 
 async fn transient_retry_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -862,27 +972,44 @@ async fn transient_retry_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
 
     let job = q.submit(submit(owner, None, 3, 1)).await?;
     let claim = q.claim_next("worker-a").await?.expect("claimable");
-    match q.settle_failure(&claim, ErrorClass::Transient, "e_boom", "transient glitch").await? {
+    match q
+        .settle_failure(&claim, ErrorClass::Transient, "e_boom", "transient glitch")
+        .await?
+    {
         SettleResult::Committed(j) => {
-            assert_eq!(j.status, JobStatus::Queued, "transient failure must requeue");
-            assert!(j.locked_by.is_none() && j.locked_at.is_none(), "requeue releases the claim");
+            assert_eq!(
+                j.status,
+                JobStatus::Queued,
+                "transient failure must requeue"
+            );
+            assert!(
+                j.locked_by.is_none() && j.locked_at.is_none(),
+                "requeue releases the claim"
+            );
             assert!(j.available_at > j.created_at, "requeue applies a backoff");
         }
         other => panic!("transient failure must requeue, got {other:?}"),
     }
     // Attempt 1 is recorded FAILED with the error.
-    let (outcome, code): (String, Option<String>) =
-        sqlx::query_as("SELECT outcome, error_code FROM job_attempts WHERE job_id = $1 AND attempt_no = 1")
-            .bind(job.id)
-            .fetch_one(pool)
-            .await?;
+    let (outcome, code): (String, Option<String>) = sqlx::query_as(
+        "SELECT outcome, error_code FROM job_attempts WHERE job_id = $1 AND attempt_no = 1",
+    )
+    .bind(job.id)
+    .fetch_one(pool)
+    .await?;
     assert_eq!(outcome, "FAILED");
     assert_eq!(code.as_deref(), Some("e_boom"));
     // Backoff: not claimable immediately...
-    assert!(q.claim_next("worker-a").await?.is_none(), "backoff must delay the retry");
+    assert!(
+        q.claim_next("worker-a").await?.is_none(),
+        "backoff must delay the retry"
+    );
     // ...then claimable after the backoff elapses.
     tokio::time::sleep(Duration::from_millis(700)).await;
-    let claim2 = q.claim_next("worker-a").await?.expect("retry claim after backoff");
+    let claim2 = q
+        .claim_next("worker-a")
+        .await?
+        .expect("retry claim after backoff");
     assert_eq!(claim2.attempt.attempt_no, 2, "retry must be attempt 2");
     match q.settle_success(&claim2).await? {
         SettleResult::Committed(j) => assert_eq!(j.status, JobStatus::Succeeded),
@@ -905,7 +1032,10 @@ async fn retry_exhaustion_ends_failed() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("retry exhaustion", &super_url, |_s, _d, p| Box::pin(exhaustion_body(p))).await;
+    run_test("retry exhaustion", &super_url, |_s, _d, p| {
+        Box::pin(exhaustion_body(p))
+    })
+    .await;
 }
 
 async fn exhaustion_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -914,13 +1044,23 @@ async fn exhaustion_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
 
     let job = q.submit(submit(owner, None, 2, 1)).await?; // max_attempts = 2
     for attempt in 1..=2 {
-        let claim = q.claim_next("worker-a").await?.expect("claim for attempt {attempt}");
-        match q.settle_failure(&claim, ErrorClass::Transient, "e_boom", "keeps failing").await? {
+        let claim = q
+            .claim_next("worker-a")
+            .await?
+            .expect("claim for attempt {attempt}");
+        match q
+            .settle_failure(&claim, ErrorClass::Transient, "e_boom", "keeps failing")
+            .await?
+        {
             SettleResult::Committed(j) => {
                 if attempt == 1 {
                     assert_eq!(j.status, JobStatus::Queued);
                 } else {
-                    assert_eq!(j.status, JobStatus::Failed, "retry exhaustion must resolve FAILED");
+                    assert_eq!(
+                        j.status,
+                        JobStatus::Failed,
+                        "retry exhaustion must resolve FAILED"
+                    );
                     assert_eq!(j.error_code.as_deref(), Some("e_boom"));
                 }
             }
@@ -931,7 +1071,10 @@ async fn exhaustion_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     let final_job = q.get_by_id(job.id).await?;
     assert_eq!(final_job.status, JobStatus::Failed);
     assert_eq!(final_job.attempt_count, 2);
-    assert!(q.claim_next("worker-a").await?.is_none(), "exhausted job must not be claimable");
+    assert!(
+        q.claim_next("worker-a").await?.is_none(),
+        "exhausted job must not be claimable"
+    );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM job_attempts WHERE job_id = $1")
             .bind(job.id)
@@ -949,7 +1092,10 @@ async fn input_data_integrity_errors_never_retry() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("no-retry classes", &super_url, |_s, _d, p| Box::pin(no_retry_body(p))).await;
+    run_test("no-retry classes", &super_url, |_s, _d, p| {
+        Box::pin(no_retry_body(p))
+    })
+    .await;
 }
 
 async fn no_retry_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -974,18 +1120,29 @@ async fn no_retry_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
             .await?
         {
             SettleResult::Committed(j) => {
-                assert_eq!(j.status, JobStatus::Failed, "{class:?} must fail immediately");
+                assert_eq!(
+                    j.status,
+                    JobStatus::Failed,
+                    "{class:?} must fail immediately"
+                );
                 assert_eq!(j.error_code.as_deref(), Some("e_noretry"));
             }
             other => panic!("{class:?} must settle to FAILED, got {other:?}"),
         }
-        assert_eq!(q.get_by_id(job.id).await?.attempt_count, 1, "{class:?} must not retry");
+        assert_eq!(
+            q.get_by_id(job.id).await?.attempt_count,
+            1,
+            "{class:?} must not retry"
+        );
         assert!(
             q.claim_next("worker-a").await?.is_none(),
             "{class:?} failure must leave nothing claimable"
         );
     }
-    assert_eq!(count(pool, "SELECT count(*) FROM jobs WHERE status <> 'FAILED'").await, 0);
+    assert_eq!(
+        count(pool, "SELECT count(*) FROM jobs WHERE status <> 'FAILED'").await,
+        0
+    );
     Ok(())
 }
 
@@ -1012,7 +1169,10 @@ async fn worker_death_orphans_attempt_and_requeues_once() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("orphan requeue", &super_url, |_s, _d, p| Box::pin(orphan_requeue_body(p))).await;
+    run_test("orphan requeue", &super_url, |_s, _d, p| {
+        Box::pin(orphan_requeue_body(p))
+    })
+    .await;
 }
 
 async fn orphan_requeue_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -1038,7 +1198,10 @@ async fn orphan_requeue_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     let swept = q.get_by_id(job.id).await?;
     assert_eq!(swept.status, JobStatus::Queued);
     assert!(swept.locked_by.is_none());
-    assert_eq!(swept.attempt_count, 1, "orphan must not consume the next attempt");
+    assert_eq!(
+        swept.attempt_count, 1,
+        "orphan must not consume the next attempt"
+    );
     assert!(
         count(pool, "SELECT count(*) FROM jobs WHERE status = 'ORPHANED'").await == 0,
         "ORPHANED must never appear as a job status"
@@ -1051,7 +1214,10 @@ async fn orphan_requeue_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
 
     // The requeued job is claimable by ANY worker (worker-b) as attempt 2.
     tokio::time::sleep(Duration::from_millis(700)).await; // past backoff
-    let claim2 = q.claim_next("worker-b").await?.expect("requeued job claimable");
+    let claim2 = q
+        .claim_next("worker-b")
+        .await?
+        .expect("requeued job claimable");
     assert_eq!(claim2.attempt.attempt_no, 2);
     assert_eq!(claim2.job.status, JobStatus::Running);
     let _ = q.settle_success(&claim2).await?;
@@ -1065,7 +1231,10 @@ async fn orphan_exhaustion_resolves_failed() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("orphan exhaustion", &super_url, |_s, _d, p| Box::pin(orphan_exhaust_body(p))).await;
+    run_test("orphan exhaustion", &super_url, |_s, _d, p| {
+        Box::pin(orphan_exhaust_body(p))
+    })
+    .await;
 }
 
 async fn orphan_exhaust_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -1106,7 +1275,10 @@ async fn zombie_worker_cannot_settle_after_sweep() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("zombie settle", &super_url, |_s, _d, p| Box::pin(zombie_body(p))).await;
+    run_test("zombie settle", &super_url, |_s, _d, p| {
+        Box::pin(zombie_body(p))
+    })
+    .await;
 }
 
 async fn zombie_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -1120,10 +1292,13 @@ async fn zombie_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
 
     // The zombie's settle and heartbeat are both rejected; the ORPHANED
     // attempt is never rewritten.
-    assert!(matches!(
-        q.settle_success(&claim).await,
-        Err(job_queue::QueueError::StaleClaim(_))
-    ), "zombie settle must be rejected as StaleClaim");
+    assert!(
+        matches!(
+            q.settle_success(&claim).await,
+            Err(job_queue::QueueError::StaleClaim(_))
+        ),
+        "zombie settle must be rejected as StaleClaim"
+    );
     assert_eq!(q.heartbeat(&claim).await?, HeartbeatStatus::LeaseLost);
     let rows = attempt_rows(pool, job.id).await;
     assert_eq!(rows[0].1, "ORPHANED", "orphaned attempt stays immutable");
@@ -1143,7 +1318,10 @@ async fn sweep_finalizes_orphan_of_canceled_job_without_requeue() {
         Ok(u) => u,
         Err(_) => return,
     };
-    run_test("sweep canceled", &super_url, |_s, _d, p| Box::pin(sweep_canceled_body(p))).await;
+    run_test("sweep canceled", &super_url, |_s, _d, p| {
+        Box::pin(sweep_canceled_body(p))
+    })
+    .await;
 }
 
 async fn sweep_canceled_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -1160,7 +1338,10 @@ async fn sweep_canceled_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     tokio::time::sleep(Duration::from_millis(1500)).await;
     let report = q.sweep().await?;
     assert_eq!(report.attempts_orphaned, 1);
-    assert_eq!(report.jobs_requeued, 0, "canceled job must never be requeued");
+    assert_eq!(
+        report.jobs_requeued, 0,
+        "canceled job must never be requeued"
+    );
 
     let rows = attempt_rows(pool, job.id).await;
     assert_eq!(rows[0].1, "ORPHANED");

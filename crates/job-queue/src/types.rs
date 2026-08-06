@@ -304,7 +304,9 @@ macro_rules! impl_text_enum {
         }
 
         impl<'r> sqlx::Decode<'r, sqlx::Postgres> for $ty {
-            fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+            fn decode(
+                value: sqlx::postgres::PgValueRef<'r>,
+            ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
                 let s = <&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
                 ($parse)(s).ok_or_else(|| format!("unknown enum value {s:?}").into())
             }

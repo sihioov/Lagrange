@@ -214,11 +214,11 @@ impl JobQueue {
         .ok_or_else(|| QueueError::Internal("claimed job vanished under row lock".into()))?;
 
         let attempt: crate::types::JobAttempt = sqlx::query_as(insert_attempt_returning())
-                .bind(job.id)
-                .bind(job.attempt_count)
-                .bind(worker_id)
-                .fetch_one(&mut *tx)
-                .await?;
+            .bind(job.id)
+            .bind(job.attempt_count)
+            .bind(worker_id)
+            .fetch_one(&mut *tx)
+            .await?;
 
         let locked_at = job
             .locked_at
@@ -253,11 +253,10 @@ impl JobQueue {
         if rows.rows_affected() == 1 {
             return Ok(HeartbeatStatus::Extended);
         }
-        let status: Option<JobStatus> =
-            sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
-                .bind(claim.job.id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
+            .bind(claim.job.id)
+            .fetch_optional(&self.pool)
+            .await?;
         match status {
             Some(JobStatus::Canceled) => Ok(HeartbeatStatus::Canceled),
             Some(_) => Ok(HeartbeatStatus::LeaseLost),
@@ -294,8 +293,7 @@ impl JobQueue {
                 Ok(SettleResult::Committed(job))
             }
             None => {
-                let result =
-                    settle_canceled_race(&mut tx, claim, "job canceled by request").await;
+                let result = settle_canceled_race(&mut tx, claim, "job canceled by request").await;
                 match result {
                     Ok(SettleResult::Canceled(job)) => {
                         tx.commit().await?;
@@ -330,21 +328,19 @@ fn validate_submit(job: &SubmitJob) -> Result<(), QueueError> {
         ));
     }
     if job.max_attempts < 1 {
-        return Err(QueueError::InvalidInput(
-            "max_attempts must be >= 1".into(),
-        ));
+        return Err(QueueError::InvalidInput("max_attempts must be >= 1".into()));
     }
     if !job.payload.is_object() {
         return Err(QueueError::InvalidInput(
             "payload must be a JSON object".into(),
         ));
     }
-    if let Some(key) = &job.idempotency_key {
-        if key.is_empty() || key.len() > 128 {
-            return Err(QueueError::InvalidInput(
-                "idempotency_key must be 1..=128 chars".into(),
-            ));
-        }
+    if let Some(key) = &job.idempotency_key
+        && (key.is_empty() || key.len() > 128)
+    {
+        return Err(QueueError::InvalidInput(
+            "idempotency_key must be 1..=128 chars".into(),
+        ));
     }
     Ok(())
 }
@@ -392,8 +388,14 @@ async fn settle_canceled_race(
         .await?;
     match status {
         Some(JobStatus::Canceled) => {
-            finalize_attempt(tx, claim, AttemptOutcome::Failed, Some("canceled"), Some(reason))
-                .await?;
+            finalize_attempt(
+                tx,
+                claim,
+                AttemptOutcome::Failed,
+                Some("canceled"),
+                Some(reason),
+            )
+            .await?;
             let job: Job = sqlx::query_as(select_job("WHERE id = $1"))
                 .bind(claim.job.id)
                 .fetch_one(&mut **tx)
@@ -410,185 +412,192 @@ async fn settle_canceled_race(
 
 impl JobQueue {
     /// Request cancellation of a job. QUEUED/RUNNING -> CANCELED in one short
-/// transaction, then an append-only `audit_logs` row (`job.canceled` with
-/// actor and before/after status) written through the audit-writer pool.
-/// Terminal jobs are returned as [`CancelResult::AlreadyTerminal`] with no
-/// side effects; the request is refused with
-/// [`QueueError::AuditUnavailable`] when no audit pool was configured —
-/// cancellation is audited by contract, so an un-auditable cancel never
-/// happens. The RUNNING worker is never interrupted: it observes the cancel
-/// through [`JobQueue::check_canceled`] and aborts cooperatively.
-pub async fn request_cancel(
-    &self,
-    job_id: Uuid,
-    actor: &AuditActor,
-) -> Result<CancelResult, QueueError> {
-    let audit = self.audit.as_ref().ok_or(QueueError::AuditUnavailable)?;
-    let mut tx = self.pool.begin().await?;
-    let before: Option<JobStatus> =
-        sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1 FOR UPDATE")
-            .bind(job_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let Some(before) = before else {
-        tx.rollback().await?;
-        return Err(QueueError::JobNotFound(job_id));
-    };
-    if before.is_terminal() {
-        tx.rollback().await?;
-        return Ok(CancelResult::AlreadyTerminal(self.get_by_id(job_id).await?));
-    }
-    let job: Job = sqlx::query_as(update_job_returning(
-        "SET status = 'CANCELED', finished_at = now(), updated_at = now()
+    /// transaction, then an append-only `audit_logs` row (`job.canceled` with
+    /// actor and before/after status) written through the audit-writer pool.
+    /// Terminal jobs are returned as [`CancelResult::AlreadyTerminal`] with no
+    /// side effects; the request is refused with
+    /// [`QueueError::AuditUnavailable`] when no audit pool was configured —
+    /// cancellation is audited by contract, so an un-auditable cancel never
+    /// happens. The RUNNING worker is never interrupted: it observes the cancel
+    /// through [`JobQueue::check_canceled`] and aborts cooperatively.
+    pub async fn request_cancel(
+        &self,
+        job_id: Uuid,
+        actor: &AuditActor,
+    ) -> Result<CancelResult, QueueError> {
+        let audit = self.audit.as_ref().ok_or(QueueError::AuditUnavailable)?;
+        let mut tx = self.pool.begin().await?;
+        let before: Option<JobStatus> =
+            sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1 FOR UPDATE")
+                .bind(job_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some(before) = before else {
+            tx.rollback().await?;
+            return Err(QueueError::JobNotFound(job_id));
+        };
+        if before.is_terminal() {
+            tx.rollback().await?;
+            return Ok(CancelResult::AlreadyTerminal(self.get_by_id(job_id).await?));
+        }
+        let job: Job = sqlx::query_as(update_job_returning(
+            "SET status = 'CANCELED', finished_at = now(), updated_at = now()
          WHERE id = $1 AND status IN ('QUEUED', 'RUNNING')",
-    ))
-    .bind(job_id)
-    .fetch_one(&mut *tx)
-    .await?;
-    tx.commit().await?;
+        ))
+        .bind(job_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
 
-    sqlx::query(
-        "INSERT INTO audit_logs
+        sqlx::query(
+            "INSERT INTO audit_logs
              (action, actor_role, actor_user_id, target_type, target_id,
               before_json, after_json, reason, correlation_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-    )
-    .bind("job.canceled")
-    .bind(&actor.role)
-    .bind(actor.user_id)
-    .bind("job")
-    .bind(job_id.to_string())
-    .bind(serde_json::json!({ "status": before.as_str() }))
-    .bind(serde_json::json!({ "status": "CANCELED" }))
-    .bind("cooperative cancel request")
-    .bind(&actor.correlation_id)
-    .execute(audit)
-    .await?;
-    Ok(CancelResult::Canceled(job))
-}
-
-/// Cooperative cancel checkpoint: `true` once a cancel request won for this
-/// job. Workers poll this between work steps (never mid-transaction).
-pub async fn check_canceled(&self, job_id: Uuid) -> Result<bool, QueueError> {
-    let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
-        .bind(job_id)
-        .fetch_optional(&self.pool)
+        )
+        .bind("job.canceled")
+        .bind(&actor.role)
+        .bind(actor.user_id)
+        .bind("job")
+        .bind(job_id.to_string())
+        .bind(serde_json::json!({ "status": before.as_str() }))
+        .bind(serde_json::json!({ "status": "CANCELED" }))
+        .bind("cooperative cancel request")
+        .bind(&actor.correlation_id)
+        .execute(audit)
         .await?;
-    Ok(status == Some(JobStatus::Canceled))
-}
-
-/// Worker response to an observed cancel checkpoint: the attempt is recorded
-/// `FAILED(error_code='canceled')` and the job stays CANCELED (canceled work
-/// is never exposed as a result, FR-BT-009). Only valid once the job IS
-/// CANCELED — a stale/foreign claim yields [`QueueError::StaleClaim`].
-pub async fn settle_aborted(&self, claim: &ClaimedJob, reason: &str) -> Result<Job, QueueError> {
-    let mut tx = self.pool.begin().await?;
-    let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
-        .bind(claim.job.id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    if status != Some(JobStatus::Canceled) {
-        tx.rollback().await?;
-        return Err(QueueError::StaleClaim(claim.job.id));
+        Ok(CancelResult::Canceled(job))
     }
-    finalize_attempt(
-        &mut tx,
-        claim,
-        AttemptOutcome::Failed,
-        Some("canceled"),
-        Some(reason),
-    )
-    .await?;
-    tx.commit().await?;
-    self.get_by_id(claim.job.id).await
-}
 
-/// Settle a claim as FAILED under the design §6.8 retry policy:
-///
-/// * [`ErrorClass::Transient`] with attempts remaining: requeue QUEUED with
-///   exponential backoff (`available_at = now() + base * 2^(attempt-1)`).
-/// * Anything else — input, blocked data, integrity, determinism — or
-///   attempts exhausted: the job resolves FAILED immediately, carrying the
-///   worker's error code/message. Non-retryable classes NEVER retry, no
-///   matter how many attempts remain.
-///
-/// One short transaction (job + attempt), guarded like
-/// [`JobQueue::settle_success`]; a cancel that won meanwhile resolves to
-/// [`SettleResult::Canceled`].
-pub async fn settle_failure(
-    &self,
-    claim: &ClaimedJob,
-    class: ErrorClass,
-    code: &str,
-    message: &str,
-) -> Result<SettleResult, QueueError> {
-    let mut tx = self.pool.begin().await?;
-    let requeued: Option<Job> = if class.retryable() {
-        sqlx::query_as(update_job_returning(
-            "SET status = 'QUEUED', locked_by = NULL, locked_at = NULL,
+    /// Cooperative cancel checkpoint: `true` once a cancel request won for this
+    /// job. Workers poll this between work steps (never mid-transaction).
+    pub async fn check_canceled(&self, job_id: Uuid) -> Result<bool, QueueError> {
+        let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(status == Some(JobStatus::Canceled))
+    }
+
+    /// Worker response to an observed cancel checkpoint: the attempt is recorded
+    /// `FAILED(error_code='canceled')` and the job stays CANCELED (canceled work
+    /// is never exposed as a result, FR-BT-009). Only valid once the job IS
+    /// CANCELED — a stale/foreign claim yields [`QueueError::StaleClaim`].
+    pub async fn settle_aborted(
+        &self,
+        claim: &ClaimedJob,
+        reason: &str,
+    ) -> Result<Job, QueueError> {
+        let mut tx = self.pool.begin().await?;
+        let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
+            .bind(claim.job.id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if status != Some(JobStatus::Canceled) {
+            tx.rollback().await?;
+            return Err(QueueError::StaleClaim(claim.job.id));
+        }
+        finalize_attempt(
+            &mut tx,
+            claim,
+            AttemptOutcome::Failed,
+            Some("canceled"),
+            Some(reason),
+        )
+        .await?;
+        tx.commit().await?;
+        self.get_by_id(claim.job.id).await
+    }
+
+    /// Settle a claim as FAILED under the design §6.8 retry policy:
+    ///
+    /// * [`ErrorClass::Transient`] with attempts remaining: requeue QUEUED with
+    ///   exponential backoff (`available_at = now() + base * 2^(attempt-1)`).
+    /// * Anything else — input, blocked data, integrity, determinism — or
+    ///   attempts exhausted: the job resolves FAILED immediately, carrying the
+    ///   worker's error code/message. Non-retryable classes NEVER retry, no
+    ///   matter how many attempts remain.
+    ///
+    /// One short transaction (job + attempt), guarded like
+    /// [`JobQueue::settle_success`]; a cancel that won meanwhile resolves to
+    /// [`SettleResult::Canceled`].
+    pub async fn settle_failure(
+        &self,
+        claim: &ClaimedJob,
+        class: ErrorClass,
+        code: &str,
+        message: &str,
+    ) -> Result<SettleResult, QueueError> {
+        let mut tx = self.pool.begin().await?;
+        let requeued: Option<Job> = if class.retryable() {
+            sqlx::query_as(update_job_returning(
+                "SET status = 'QUEUED', locked_by = NULL, locked_at = NULL,
                  available_at = now() + make_interval(secs => $3),
                  error_code = NULL, error_message = NULL, updated_at = now()
              WHERE id = $1 AND status = 'RUNNING' AND locked_by = $2
                AND attempt_count < max_attempts",
-        ))
-        .bind(claim.job.id)
-        .bind(&claim.worker_id)
-        .bind(backoff_seconds(self.config.backoff_base, claim.job.attempt_count))
-        .fetch_optional(&mut *tx)
-        .await?
-    } else {
-        None
-    };
-    let job = match requeued {
-        Some(job) => Some(job),
-        None => {
-        sqlx::query_as(update_job_returning(
-                "SET status = 'FAILED', finished_at = now(), locked_by = NULL,
-                     locked_at = NULL, error_code = $3, error_message = $4, updated_at = now()
-                 WHERE id = $1 AND status = 'RUNNING' AND locked_by = $2",
             ))
             .bind(claim.job.id)
             .bind(&claim.worker_id)
-            .bind(code)
-            .bind(message)
+            .bind(backoff_seconds(
+                self.config.backoff_base,
+                claim.job.attempt_count,
+            ))
             .fetch_optional(&mut *tx)
             .await?
-        }
-    };
-    match job {
-        Some(job) => {
-            finalize_attempt(
-                &mut tx,
-                claim,
-                AttemptOutcome::Failed,
-                Some(code),
-                Some(message),
-            )
-            .await?;
-            tx.commit().await?;
-            Ok(SettleResult::Committed(job))
-        }
-        None => {
-            let result = settle_canceled_race(&mut tx, claim, "job canceled by request").await;
-            match result {
-                Ok(SettleResult::Canceled(job)) => {
-                    tx.commit().await?;
-                    Ok(SettleResult::Canceled(job))
-                }
-                Ok(other) => {
-                    tx.rollback().await?;
-                    Err(QueueError::Internal(format!(
-                        "unexpected settle outcome {other:?}"
-                    )))
-                }
-                Err(e) => {
-                    tx.rollback().await?;
-                    Err(e)
+        } else {
+            None
+        };
+        let job = match requeued {
+            Some(job) => Some(job),
+            None => {
+                sqlx::query_as(update_job_returning(
+                    "SET status = 'FAILED', finished_at = now(), locked_by = NULL,
+                     locked_at = NULL, error_code = $3, error_message = $4, updated_at = now()
+                 WHERE id = $1 AND status = 'RUNNING' AND locked_by = $2",
+                ))
+                .bind(claim.job.id)
+                .bind(&claim.worker_id)
+                .bind(code)
+                .bind(message)
+                .fetch_optional(&mut *tx)
+                .await?
+            }
+        };
+        match job {
+            Some(job) => {
+                finalize_attempt(
+                    &mut tx,
+                    claim,
+                    AttemptOutcome::Failed,
+                    Some(code),
+                    Some(message),
+                )
+                .await?;
+                tx.commit().await?;
+                Ok(SettleResult::Committed(job))
+            }
+            None => {
+                let result = settle_canceled_race(&mut tx, claim, "job canceled by request").await;
+                match result {
+                    Ok(SettleResult::Canceled(job)) => {
+                        tx.commit().await?;
+                        Ok(SettleResult::Canceled(job))
+                    }
+                    Ok(other) => {
+                        tx.rollback().await?;
+                        Err(QueueError::Internal(format!(
+                            "unexpected settle outcome {other:?}"
+                        )))
+                    }
+                    Err(e) => {
+                        tx.rollback().await?;
+                        Err(e)
+                    }
                 }
             }
         }
     }
-}
 }
 
 /// Exponential backoff in seconds for the attempt that just failed
