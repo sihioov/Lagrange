@@ -2,10 +2,15 @@
   "name": "@lagrange/api-server",
   "version": "0.1.0",
   "private": true,
-  "description": "Lagrange Station API server (Rust Axum). npm workspace exists for generated OpenAPI TypeScript types; no product code yet.",
+  "description": "Lagrange Station API server (Rust Axum). The npm workspace owns the OpenAPI contract: openapi.json is the versioned spec generated from scripts/openapi-spec.mjs, linted by openapi:check, and consumed as TypeScript types by apps/web.",
   "scripts": {
-    "lint": "node -e \"console.log('@lagrange/api-server lint: skeleton no-op (real lint lands with Todo 24)')\"",
-    "typecheck": "node -e \"console.log('@lagrange/api-server typecheck: skeleton no-op (real typecheck lands with Todo 24)')\"",
-    "test": "node -e \"console.log('@lagrange/api-server test: skeleton no-op (real tests land with Todo 24)')\""
+    "openapi:check": "node scripts/openapi-check.mjs",
+    "lint": "npm run openapi:check",
+    "typecheck": "node -e \"console.log('@lagrange/api-server typecheck: TS types are checked by openapi:check')\"",
+    "test": "node -e \"console.log('@lagrange/api-server test: contract tests run via cargo test -p api-server')\""
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.8.0",
+    "typescript": "^5.9.0"
   }
 }

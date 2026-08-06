@@ -1,0 +1,5227 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Lagrange Station API",
+    "version": "1.0.0",
+    "description": "Versioned REST/OpenAPI contract for Lagrange Station. Common rules (design §12.1): `/api/v1` prefix, JSON bodies, cursor pagination, `X-Request-Id` correlation in/out, the typed `{error:{code,message,request_id,details?}}` envelope, and Idempotency-Key on every mutating route. No database/NT/provider models leak into payloads."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "auth",
+      "description": "Session, CSRF, and Owner step-up"
+    },
+    {
+      "name": "strategies",
+      "description": "Strategy catalog and schema-bound user configs"
+    },
+    {
+      "name": "recommendations",
+      "description": "Recommendation runs (entitlement-gated)"
+    },
+    {
+      "name": "backtests",
+      "description": "Backtest orchestration and results"
+    },
+    {
+      "name": "paper",
+      "description": "Paper accounts and ledger views"
+    },
+    {
+      "name": "admin",
+      "description": "Owner-only operational surface (audited)"
+    },
+    {
+      "name": "licensing",
+      "description": "KR data entitlement status"
+    },
+    {
+      "name": "artifacts",
+      "description": "Authorized result artifacts"
+    }
+  ],
+  "paths": {
+    "/api/v1/auth/session": {
+      "get": {
+        "operationId": "get__api_v1_auth_session",
+        "summary": "GET /api/v1/auth/session",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "post__api_v1_auth_logout",
+        "summary": "POST /api/v1/auth/logout",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "natural": true,
+            "note": "idempotent by nature; no key required"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/csrf": {
+      "get": {
+        "operationId": "get__api_v1_auth_csrf",
+        "summary": "GET /api/v1/auth/csrf",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "natural": true,
+            "note": "idempotent by nature; no key required"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/step-up-check": {
+      "get": {
+        "operationId": "get__api_v1_auth_step_up_check",
+        "summary": "GET /api/v1/auth/step-up-check",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/strategies": {
+      "get": {
+        "operationId": "get__api_v1_strategies",
+        "summary": "GET /api/v1/strategies",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/strategies/{strategy_id}": {
+      "get": {
+        "operationId": "get__api_v1_strategies__strategy_id_",
+        "summary": "GET /api/v1/strategies/{strategy_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/strategies/{strategy_id}/configs": {
+      "post": {
+        "operationId": "post__api_v1_strategies__strategy_id__configs",
+        "summary": "POST /api/v1/strategies/{strategy_id}/configs",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewStrategyConfigBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/strategy-configs/{config_id}": {
+      "get": {
+        "operationId": "get__api_v1_strategy_configs__config_id_",
+        "summary": "GET /api/v1/strategy-configs/{config_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "config_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/recommendations/runs": {
+      "post": {
+        "operationId": "post__api_v1_recommendations_runs",
+        "summary": "POST /api/v1/recommendations/runs",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "recommendation",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecommendationRunBody"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "get__api_v1_recommendations_runs",
+        "summary": "GET /api/v1/recommendations/runs",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "recommendation",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/recommendations/runs/{run_id}": {
+      "get": {
+        "operationId": "get__api_v1_recommendations_runs__run_id_",
+        "summary": "GET /api/v1/recommendations/runs/{run_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "recommendation",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/recommendations/latest": {
+      "get": {
+        "operationId": "get__api_v1_recommendations_latest",
+        "summary": "GET /api/v1/recommendations/latest",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "strategy_config_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "recommendation",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/backtests": {
+      "post": {
+        "operationId": "post__api_v1_backtests",
+        "summary": "POST /api/v1/backtests",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "DATASET_BLOCKED",
+            "DATA_STALE",
+            "BACKTEST_CAPACITY_EXCEEDED",
+            "RESULT_INTEGRITY_FAILED",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "INVALID_DECIMAL",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestBody"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "get__api_v1_backtests",
+        "summary": "GET /api/v1/backtests",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "DATASET_BLOCKED",
+            "DATA_STALE",
+            "BACKTEST_CAPACITY_EXCEEDED",
+            "RESULT_INTEGRITY_FAILED",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "INVALID_DECIMAL",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/backtests/{run_id}": {
+      "get": {
+        "operationId": "get__api_v1_backtests__run_id_",
+        "summary": "GET /api/v1/backtests/{run_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "DATASET_BLOCKED",
+            "DATA_STALE",
+            "BACKTEST_CAPACITY_EXCEEDED",
+            "RESULT_INTEGRITY_FAILED",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "INVALID_DECIMAL",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/backtests/{run_id}/cancel": {
+      "post": {
+        "operationId": "post__api_v1_backtests__run_id__cancel",
+        "summary": "POST /api/v1/backtests/{run_id}/cancel",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "DATASET_BLOCKED",
+            "DATA_STALE",
+            "BACKTEST_CAPACITY_EXCEEDED",
+            "RESULT_INTEGRITY_FAILED",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "INVALID_DECIMAL",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/backtests/{run_id}/metrics": {
+      "get": {
+        "operationId": "get__api_v1_backtests__run_id__metrics",
+        "summary": "GET /api/v1/backtests/{run_id}/metrics",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "DATASET_BLOCKED",
+            "DATA_STALE",
+            "BACKTEST_CAPACITY_EXCEEDED",
+            "RESULT_INTEGRITY_FAILED",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "INVALID_DECIMAL",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/backtests/{run_id}/equity": {
+      "get": {
+        "operationId": "get__api_v1_backtests__run_id__equity",
+        "summary": "GET /api/v1/backtests/{run_id}/equity",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "DATASET_BLOCKED",
+            "DATA_STALE",
+            "BACKTEST_CAPACITY_EXCEEDED",
+            "RESULT_INTEGRITY_FAILED",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "INVALID_DECIMAL",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/backtests/{run_id}/trades": {
+      "get": {
+        "operationId": "get__api_v1_backtests__run_id__trades",
+        "summary": "GET /api/v1/backtests/{run_id}/trades",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "DATASET_BLOCKED",
+            "DATA_STALE",
+            "BACKTEST_CAPACITY_EXCEEDED",
+            "RESULT_INTEGRITY_FAILED",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "INVALID_DECIMAL",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/backtests/{run_id}/robustness": {
+      "post": {
+        "operationId": "post__api_v1_backtests__run_id__robustness",
+        "summary": "POST /api/v1/backtests/{run_id}/robustness",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "DATASET_BLOCKED",
+            "DATA_STALE",
+            "BACKTEST_CAPACITY_EXCEEDED",
+            "RESULT_INTEGRITY_FAILED",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "INVALID_DECIMAL",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/backtests/compare": {
+      "post": {
+        "operationId": "post__api_v1_backtests_compare",
+        "summary": "POST /api/v1/backtests/compare",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "backtest",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "DATASET_BLOCKED",
+            "DATA_STALE",
+            "BACKTEST_CAPACITY_EXCEEDED",
+            "RESULT_INTEGRITY_FAILED",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "INVALID_DECIMAL",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/paper/accounts": {
+      "post": {
+        "operationId": "post__api_v1_paper_accounts",
+        "summary": "POST /api/v1/paper/accounts",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "paper_view",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewAccountBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/paper/accounts/{account_id}": {
+      "get": {
+        "operationId": "get__api_v1_paper_accounts__account_id_",
+        "summary": "GET /api/v1/paper/accounts/{account_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "paper_view",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/paper/accounts/{account_id}/bind-strategy": {
+      "post": {
+        "operationId": "post__api_v1_paper_accounts__account_id__bind_strategy",
+        "summary": "POST /api/v1/paper/accounts/{account_id}/bind-strategy",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "paper_view",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindStrategyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/paper/accounts/{account_id}/orders": {
+      "get": {
+        "operationId": "get__api_v1_paper_accounts__account_id__orders",
+        "summary": "GET /api/v1/paper/accounts/{account_id}/orders",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "paper_view",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/paper/accounts/{account_id}/positions": {
+      "get": {
+        "operationId": "get__api_v1_paper_accounts__account_id__positions",
+        "summary": "GET /api/v1/paper/accounts/{account_id}/positions",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "paper_view",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/paper/accounts/{account_id}/equity": {
+      "get": {
+        "operationId": "get__api_v1_paper_accounts__account_id__equity",
+        "summary": "GET /api/v1/paper/accounts/{account_id}/equity",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "paper_view",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/admin/datasets": {
+      "get": {
+        "operationId": "get__api_v1_admin_datasets",
+        "summary": "GET /api/v1/admin/datasets",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/admin/datasets/{dataset_id}/approve": {
+      "post": {
+        "operationId": "post__api_v1_admin_datasets__dataset_id__approve",
+        "summary": "POST /api/v1/admin/datasets/{dataset_id}/approve",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/datasets/{dataset_id}/block": {
+      "post": {
+        "operationId": "post__api_v1_admin_datasets__dataset_id__block",
+        "summary": "POST /api/v1/admin/datasets/{dataset_id}/block",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/jobs": {
+      "get": {
+        "operationId": "get__api_v1_admin_jobs",
+        "summary": "GET /api/v1/admin/jobs",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/admin/jobs/{job_id}/retry": {
+      "post": {
+        "operationId": "post__api_v1_admin_jobs__job_id__retry",
+        "summary": "POST /api/v1/admin/jobs/{job_id}/retry",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/workers": {
+      "get": {
+        "operationId": "get__api_v1_admin_workers",
+        "summary": "GET /api/v1/admin/workers",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/admin/audit-logs": {
+      "get": {
+        "operationId": "get__api_v1_admin_audit_logs",
+        "summary": "GET /api/v1/admin/audit-logs",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/admin/live/connections": {
+      "post": {
+        "operationId": "post__api_v1_admin_live_connections",
+        "summary": "POST /api/v1/admin/live/connections",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "NOT_IMPLEMENTED"
+          ],
+          "phase": "3"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/live/nodes/{node_id}/start": {
+      "post": {
+        "operationId": "post__api_v1_admin_live_nodes__node_id__start",
+        "summary": "POST /api/v1/admin/live/nodes/{node_id}/start",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "NOT_IMPLEMENTED"
+          ],
+          "phase": "3"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/live/nodes/{node_id}/stop": {
+      "post": {
+        "operationId": "post__api_v1_admin_live_nodes__node_id__stop",
+        "summary": "POST /api/v1/admin/live/nodes/{node_id}/stop",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "NOT_IMPLEMENTED"
+          ],
+          "phase": "3"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/live/kill-switch/enable": {
+      "post": {
+        "operationId": "post__api_v1_admin_live_kill_switch_enable",
+        "summary": "POST /api/v1/admin/live/kill-switch/enable",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "NOT_IMPLEMENTED"
+          ],
+          "phase": "3"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/live/kill-switch/disable": {
+      "post": {
+        "operationId": "post__api_v1_admin_live_kill_switch_disable",
+        "summary": "POST /api/v1/admin/live/kill-switch/disable",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "NOT_IMPLEMENTED"
+          ],
+          "phase": "3"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/live/reconciliation": {
+      "get": {
+        "operationId": "get__api_v1_admin_live_reconciliation",
+        "summary": "GET /api/v1/admin/live/reconciliation",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "FORBIDDEN",
+            "NOT_IMPLEMENTED"
+          ],
+          "phase": "3"
+        }
+      }
+    },
+    "/api/v1/licensing-status": {
+      "get": {
+        "operationId": "get__api_v1_licensing_status",
+        "summary": "GET /api/v1/licensing-status",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "get__api_v1_artifacts__artifact_id_",
+        "summary": "GET /api/v1/artifacts/{artifact_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "download",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/artifacts/{artifact_id}/download": {
+      "get": {
+        "operationId": "get__api_v1_artifacts__artifact_id__download",
+        "summary": "GET /api/v1/artifacts/{artifact_id}/download",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "download",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE"
+          ],
+          "phase": "current"
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "X-Request-Id echoed into the envelope"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/Error"
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "SESSION_UNKNOWN",
+          "SESSION_EXPIRED",
+          "FORBIDDEN",
+          "DATA_ENTITLEMENT_REQUIRED",
+          "OWNER_ONLY_DEVELOPMENT_PATH",
+          "CSRF_DENIED",
+          "STEP_UP_NOT_OWNER",
+          "STEP_UP_MFA_REQUIRED",
+          "STEP_UP_AUTH_TIME_ABSENT",
+          "STEP_UP_AUTH_TIME_STALE",
+          "RESOURCE_NOT_FOUND",
+          "INVALID_PARAMETER",
+          "INVALID_DATE",
+          "INVALID_DECIMAL",
+          "INVALID_CURSOR",
+          "IDEMPOTENCY_KEY_REQUIRED",
+          "IDEMPOTENCY_KEY_MISMATCH",
+          "DUPLICATE_RESOURCE",
+          "PAYLOAD_TOO_LARGE",
+          "DATASET_BLOCKED",
+          "DATA_STALE",
+          "INVALID_STRATEGY_PARAMETER",
+          "UNSUPPORTED_MARKET_CURRENCY",
+          "BACKTEST_CAPACITY_EXCEEDED",
+          "RESULT_INTEGRITY_FAILED",
+          "LIVE_RECONCILIATION_REQUIRED",
+          "RISK_LIMIT_EXCEEDED",
+          "ORDER_STATE_UNKNOWN",
+          "NOT_IMPLEMENTED",
+          "INTERNAL"
+        ]
+      },
+      "Page": {
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "opaque signed cursor; null when the last page"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Strategy": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "state"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "risk_description": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "Draft",
+              "Validated",
+              "Paper",
+              "LiveCandidate",
+              "Retired"
+            ]
+          },
+          "latest_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "StrategyConfig": {
+        "type": "object",
+        "required": [
+          "id",
+          "strategy_id",
+          "strategy_version",
+          "config",
+          "is_active"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "strategy_id": {
+            "type": "string"
+          },
+          "strategy_version": {
+            "type": "string"
+          },
+          "config": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "schema-bound parameters only; code is never accepted"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NewStrategyConfigBody": {
+        "type": "object",
+        "required": [
+          "strategy_version",
+          "config"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "strategy_version": {
+            "type": "string"
+          },
+          "config": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "is_active": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "RecommendationItem": {
+        "type": "object",
+        "required": [
+          "instrument_id",
+          "excluded"
+        ],
+        "properties": {
+          "instrument_id": {
+            "type": "string",
+            "example": "069500.KRX"
+          },
+          "rank": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "target_weight": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "decimal string (scale 6)"
+          },
+          "excluded": {
+            "type": "boolean"
+          },
+          "exclusion_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "factors": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "RecommendationRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "as_of",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "strategy_config_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "as_of": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "SUCCEEDED",
+              "FAILED",
+              "BLOCKED"
+            ]
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecommendationItem"
+            }
+          }
+        }
+      },
+      "RecommendationRunBody": {
+        "type": "object",
+        "required": [
+          "strategy_config_id",
+          "as_of"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "as_of": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          }
+        }
+      },
+      "BacktestRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "strategy_id",
+          "strategy_version",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "strategy_id": {
+            "type": "string"
+          },
+          "strategy_version": {
+            "type": "string"
+          },
+          "dataset_version": {
+            "type": "string"
+          },
+          "engine": {
+            "type": "string"
+          },
+          "engine_version": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "RUNNING",
+              "SUCCEEDED",
+              "FAILED",
+              "CANCELED"
+            ]
+          },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "config_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "benchmark": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "end_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "BacktestBody": {
+        "type": "object",
+        "required": [
+          "strategy_config_id",
+          "dataset_version_id",
+          "start_date",
+          "end_date",
+          "initial_cash",
+          "benchmark",
+          "cost_profile_id",
+          "execution_profile"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dataset_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "start_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "end_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "initial_cash": {
+            "type": "object",
+            "required": [
+              "currency",
+              "amount"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "currency": {
+                "type": "string",
+                "enum": [
+                  "KRW"
+                ],
+                "description": "KRW first; unsupported currencies are 422 UNSUPPORTED_MARKET_CURRENCY"
+              },
+              "amount": {
+                "type": "string",
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "fixed-point decimal string"
+              }
+            }
+          },
+          "benchmark": {
+            "type": "string",
+            "example": "069500.KRX",
+            "description": "member of the fixed Korean ETF v1 universe"
+          },
+          "cost_profile_id": {
+            "type": "string"
+          },
+          "execution_profile": {
+            "type": "string",
+            "example": "daily-close-next-open@1"
+          },
+          "robustness": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "Metric": {
+        "type": "object",
+        "required": [
+          "metric_key",
+          "metric_value"
+        ],
+        "properties": {
+          "metric_key": {
+            "type": "string"
+          },
+          "metric_value": {
+            "type": "string",
+            "description": "decimal string"
+          }
+        }
+      },
+      "Artifact": {
+        "type": "object",
+        "required": [
+          "id",
+          "run_id",
+          "artifact_type",
+          "row_count",
+          "sha256",
+          "size_bytes",
+          "download_path"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "artifact_type": {
+            "type": "string",
+            "enum": [
+              "EQUITY_CURVE",
+              "DRAWDOWN_CURVE",
+              "MONTHLY_RETURNS",
+              "ORDERS",
+              "FILLS",
+              "POSITIONS",
+              "CASH_LEDGER",
+              "FEES",
+              "BENCHMARK"
+            ]
+          },
+          "row_count": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size_bytes": {
+            "type": "integer"
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "download_path": {
+            "type": "string",
+            "description": "versioned API path; never a filesystem URL"
+          }
+        }
+      },
+      "Equity": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "artifact",
+          "summary"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "artifact": {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "Trade": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "artifact_type",
+          "artifact"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "artifact_type": {
+            "type": "string"
+          },
+          "artifact": {
+            "$ref": "#/components/schemas/Artifact"
+          }
+        }
+      },
+      "Compare": {
+        "type": "object",
+        "required": [
+          "run_ids",
+          "runs",
+          "deltas"
+        ],
+        "properties": {
+          "run_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "run_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "strategy_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "deltas": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "description": "decimal string difference"
+            }
+          }
+        }
+      },
+      "CompareBody": {
+        "type": "object",
+        "required": [
+          "run_ids"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "run_ids": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "Cancel": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "status"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CANCEL_REQUESTED"
+            ]
+          }
+        }
+      },
+      "Robustness": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "job_id",
+          "status"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED"
+            ]
+          }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "required": [
+          "id",
+          "account_type",
+          "name",
+          "currency",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "account_type": {
+            "type": "string",
+            "enum": [
+              "PAPER"
+            ],
+            "description": "LIVE accounts are Phase 3 Owner-only and never creatable via this route"
+          },
+          "name": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "KRW"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "SUSPENDED",
+              "CLOSED"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NewAccountBody": {
+        "type": "object",
+        "required": [
+          "name",
+          "currency"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "KRW"
+            ]
+          }
+        }
+      },
+      "BindStrategy": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "strategy_config_id",
+          "bound_at"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bound_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BindStrategyBody": {
+        "type": "object",
+        "required": [
+          "strategy_config_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "Order": {
+        "type": "object",
+        "required": [
+          "id",
+          "order_ref",
+          "instrument_id",
+          "side",
+          "quantity",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "order_ref": {
+            "type": "string"
+          },
+          "instrument_id": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "BUY",
+              "SELL"
+            ]
+          },
+          "quantity": {
+            "type": "string",
+            "description": "decimal string (scale 4)"
+          },
+          "price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Position": {
+        "type": "object",
+        "required": [
+          "instrument_id",
+          "quantity"
+        ],
+        "properties": {
+          "instrument_id": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "string"
+          },
+          "avg_price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EquityPoint": {
+        "type": "object",
+        "required": [
+          "trading_date",
+          "equity",
+          "cash",
+          "positions_value",
+          "currency"
+        ],
+        "properties": {
+          "trading_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "equity": {
+            "type": "string"
+          },
+          "cash": {
+            "type": "string"
+          },
+          "positions_value": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminDataset": {
+        "type": "object",
+        "required": [
+          "id",
+          "dataset_id",
+          "version",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dataset_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "READY",
+              "WARNING",
+              "BLOCKED"
+            ]
+          },
+          "manifest_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "blocking_issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "issue_code": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "DatasetVerdict": {
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "version",
+          "status",
+          "verdict",
+          "reason"
+        ],
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "Job": {
+        "type": "object",
+        "required": [
+          "id",
+          "job_type",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_type": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "SUCCEEDED",
+              "FAILED",
+              "CANCELED"
+            ]
+          },
+          "priority": {
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attempt_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Worker": {
+        "type": "object",
+        "required": [
+          "worker_id",
+          "active_job_count"
+        ],
+        "properties": {
+          "worker_id": {
+            "type": "string"
+          },
+          "last_heartbeat_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "active_job_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "AuditEntry": {
+        "type": "object",
+        "required": [
+          "id",
+          "action",
+          "actor_role",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "action": {
+            "type": "string"
+          },
+          "actor_role": {
+            "type": "string"
+          },
+          "actor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "target_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LicensingStatus": {
+        "type": "object",
+        "required": [
+          "as_of",
+          "datasets"
+        ],
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "datasets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "dataset_id",
+                "use_kind",
+                "state",
+                "covered"
+              ],
+              "properties": {
+                "dataset_id": {
+                  "type": "string"
+                },
+                "use_kind": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "PENDING",
+                    "ACTIVE",
+                    "EXPIRED",
+                    "REVOKED"
+                  ]
+                },
+                "effective_from": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "effective_until": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "covered": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "role",
+          "expires_at_secs"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "member"
+            ]
+          },
+          "expires_at_secs": {
+            "type": "integer"
+          },
+          "auth_time_secs": {
+            "type": "integer"
+          }
+        }
+      },
+      "EmptyBody": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "responses": {
+      "Error400": {
+        "description": "400 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Error401": {
+        "description": "401 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Error403": {
+        "description": "403 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Error404": {
+        "description": "404 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Error409": {
+        "description": "409 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Error413": {
+        "description": "413 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Error422": {
+        "description": "422 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Error429": {
+        "description": "429 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Error500": {
+        "description": "500 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Error501": {
+        "description": "501 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-lagrange_session",
+        "description": "Opaque first-party session cookie issued by the auth router"
+      }
+    }
+  },
+  "security": [
+    {
+      "sessionCookie": []
+    }
+  ]
+}
