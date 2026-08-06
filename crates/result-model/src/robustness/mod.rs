@@ -24,6 +24,7 @@
 //!   strategies + AT-03/04/05/06 core evidence; rejects unapproved golden
 //!   deltas and non-finite values).
 
+pub mod benchmark;
 pub mod cost;
 pub mod delay;
 pub mod error;
@@ -32,6 +33,7 @@ pub mod lineage;
 pub mod replay;
 pub mod split;
 
+pub use benchmark::{BenchmarkComparison, compare_benchmark};
 pub use cost::{CostStressProfile, stress_cost};
 pub use delay::delay_execution;
 pub use error::RobustnessError;
