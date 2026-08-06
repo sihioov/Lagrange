@@ -1,12 +1,17 @@
-//! `job-queue` - Lagrange Station PostgreSQL job queue: leases, attempts, cancellation, orphan recovery.
+//! `job-queue` - Lagrange Station PostgreSQL job queue: leased claims,
+//! immutable attempts, cooperative cancellation, and orphan recovery.
 //!
-//! Skeleton crate created by Todo 1 (workspace bootstrap). No product behavior
-//! yet; the crate's documented contracts are implemented by its own todo.
+//! Design §6.8 + requirements NFR-REL-001..003 / FR-BT-008/009, on the frozen
+//! T3 schema (`jobs` five-state `jobs_status_check`, `job_attempts` with
+//! attempt-level `ORPHANED` and `UNIQUE(job_id, attempt_no)`). See
+//! [`queue`] for the lease/cancel/sweep semantics.
+//!
+//! Package name is `job-queue` (underscore form `job_queue` in `use` paths).
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn skeleton_compiles() {
-        assert_eq!(1 + 1, 2);
-    }
-}
+pub mod error;
+pub mod queue;
+pub mod types;
+
+pub use error::QueueError;
+pub use queue::{CancelResult, HeartbeatStatus, JobQueue, QueueConfig, SettleResult};
+pub use types::{AttemptOutcome, ClaimedJob, ErrorClass, Job, JobAttempt, JobStatus, SubmitJob, SweepReport};
