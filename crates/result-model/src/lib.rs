@@ -3,11 +3,21 @@
 //! The typed warning/error envelope shared by every downstream todo: the API
 //! (design §12.1 `code`, `message`, `correlation_id`, `details`), the backtest
 //! worker normalizer (design §6.10 `warnings`), reports, and Paper/Live.
+//! Plus the normalized [`BacktestResult`] common model (design §6.10) and the
+//! T3 database manifest writer (plan Todo 20).
 
 use serde::{Deserialize, Serialize};
 
 use domain::DomainError;
 use domain::ids::CorrelationId;
+
+pub mod backtest;
+
+pub use backtest::{
+    BacktestError, BacktestResult, BacktestSummary, BenchmarkPoint, CashLedgerEntry, DrawdownPoint,
+    EquityPoint, FeeEntry, FillRecord, MonthlyReturn, OrderRecord, OrderSide, PositionSnapshot,
+    PublicationGate,
+};
 
 /// Severity of a structured warning attached to a result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
