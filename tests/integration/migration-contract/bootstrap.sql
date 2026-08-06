@@ -14,28 +14,38 @@
 --
 -- Serving roles must never hold BYPASSRLS (plan: "app roles must not own
 -- tables or have BYPASSRLS") - asserted by the harness.
+--
+-- PASSWORDS: the harness builds role connection URLs by rewriting the
+-- superuser DATABASE_URL in place (`conn_url` in migration_contract.rs keeps
+-- the password part), so on scram-sha-256 clusters (pg_hba
+-- `host ... scram-sha-256`) every role must be created WITH the same
+-- password as the superuser URL. The disposable WSL PG18 cluster runs scram
+-- with password `lagrange`; production deployments inject real passwords via
+-- the compose secret flow instead. Roles are CLUSTER-WIDE and created only
+-- once (the DO blocks are idempotent), so this file must carry the final
+-- password before the first harness run on a given cluster.
 
 DO $role$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'migration_owner') THEN
-    CREATE ROLE migration_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+    CREATE ROLE migration_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
   END IF;
 END $role$;
 
 DO $role$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app') THEN
-    CREATE ROLE app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+    CREATE ROLE app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
   END IF;
 END $role$;
 
 DO $role$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'worker') THEN
-    CREATE ROLE worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+    CREATE ROLE worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
   END IF;
 END $role$;
 
 DO $role$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'audit_writer') THEN
-    CREATE ROLE audit_writer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+    CREATE ROLE audit_writer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
   END IF;
 END $role$;
 
