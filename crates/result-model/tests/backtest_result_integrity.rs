@@ -316,6 +316,77 @@ fn publication_is_allowed_after_a_successful_validation() {
 }
 
 #[test]
+fn sell_credit_reconciles_in_cash_ledger() {
+    // A SELL fill must CREDIT the cash ledger: initial - (-notional) == cash.
+    let t1 = ts("2020-01-02T00:00:00Z");
+    let t2 = ts("2020-02-03T00:00:00Z");
+    let mut metrics = BTreeMap::new();
+    metrics.insert("total_return".to_owned(), ReportedStat::from_f64(0.10).unwrap());
+    metrics.insert("max_drawdown".to_owned(), ReportedStat::from_f64(0.0).unwrap());
+    metrics.insert("sharpe".to_owned(), ReportedStat::from_f64(0.0).unwrap());
+
+    let result = BacktestResult {
+        summary: BacktestSummary {
+            currency: Currency::KRW,
+            initial_equity: krw("100000000.0000"),
+            final_equity: krw("110000000.0000"),
+            total_return: ReportedStat::from_f64(0.10).unwrap(),
+            cagr: ReportedStat::from_f64(0.10).unwrap(),
+            max_drawdown: ReportedStat::from_f64(0.0).unwrap(),
+            volatility: ReportedStat::from_f64(0.0).unwrap(),
+            sharpe: ReportedStat::from_f64(0.0).unwrap(),
+            sortino: ReportedStat::from_f64(0.0).unwrap(),
+            calmar: ReportedStat::from_f64(0.0).unwrap(),
+            turnover: ReportedStat::from_f64(0.0).unwrap(),
+            total_cost: krw("0.0000"),
+            n_orders: 1,
+            n_fills: 1,
+            start_date: "2020-01-02".to_owned(),
+            end_date: "2020-02-03".to_owned(),
+        },
+        equity: vec![
+            EquityPoint { ts: t1, equity: krw("100000000.0000") },
+            EquityPoint { ts: t2, equity: krw("110000000.0000") },
+        ],
+        drawdown: vec![
+            DrawdownPoint { ts: t1, drawdown: ReportedStat::from_f64(0.0).unwrap() },
+            DrawdownPoint { ts: t2, drawdown: ReportedStat::from_f64(0.0).unwrap() },
+        ],
+        monthly_returns: vec![
+            MonthlyReturn { month: "2020-01".to_owned(), return_: ReportedStat::from_f64(0.0).unwrap() },
+            MonthlyReturn { month: "2020-02".to_owned(), return_: ReportedStat::from_f64(0.10).unwrap() },
+        ],
+        orders: vec![],
+        fills: vec![FillRecord {
+            fill_id: "S-1".to_owned(),
+            order_id: "O-1".to_owned(),
+            client_order_id: "C-1".to_owned(),
+            instrument: InstrumentId::parse("069500.KRX").unwrap(),
+            side: OrderSide::Sell,
+            quantity: Quantity::parse("1000").unwrap(),
+            price: Price::parse("10000.0000").unwrap(),
+            ts: t2,
+            commission: krw("0.0000"),
+            tax: krw("0.0000"),
+        }],
+        positions: vec![],
+        cash: vec![
+            CashLedgerEntry { ts: t1, cash: krw("100000000.0000") },
+            CashLedgerEntry { ts: t2, cash: krw("110000000.0000") },
+        ],
+        fees: vec![],
+        benchmark: vec![
+            BenchmarkPoint { ts: t1, value: krw("100000000.0000") },
+            BenchmarkPoint { ts: t2, value: krw("100000000.0000") },
+        ],
+        metrics,
+        warnings: vec![],
+        provenance: provenance(),
+    };
+    result.validate().expect("a sell credit must reconcile the cash ledger");
+}
+
+#[test]
 fn provenance_shape_matches_design_execution_metadata() {
     let json = serde_json::to_value(valid_result().provenance).unwrap();
     for key in [

@@ -347,9 +347,13 @@ impl BacktestResult {
         let fee_date = |f: &FeeEntry| f.ts.to_rfc3339()[..10].to_owned();
         let mut spent: Vec<(String, i128)> = Vec::new();
         for fill in &self.fills {
+            let notional = fill.quantity.amount().bits() * fill.price.amount().bits();
             spent.push((
                 fill_date(fill).to_owned(),
-                fill.quantity.amount().bits() * fill.price.amount().bits(),
+                match fill.side {
+                    OrderSide::Buy => notional,
+                    OrderSide::Sell => -notional,
+                },
             ));
         }
         for fee in &self.fees {
