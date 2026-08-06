@@ -3486,6 +3486,8 @@ name = "result-model"
 version = "0.1.0"
 dependencies = [
  "domain",
+ "futures-util",
+ "job-queue",
  "serde",
  "serde_json",
  "sha2 0.10.9",

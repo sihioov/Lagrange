@@ -110,14 +110,14 @@ fn up_migration_count() -> usize {
         .count()
 }
 
-async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn Error>> {
+async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn Error + Send + Sync>> {
     let mut opts: sqlx::postgres::PgConnectOptions = url.parse()?;
     opts = opts.options([("statement_timeout", "20s")]);
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         match PgPoolOptions::new()
             .max_connections(max_conns)
-            .acquire_timeout(Duration::from_secs(8))
+            .acquire_timeout(Duration::from_secs(20))
             .connect_with(opts.clone())
             .await
         {
@@ -127,7 +127,7 @@ async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn
                     match sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&pool).await {
                         Ok(1) => return Ok(pool),
                         Ok(_) => return Err("SELECT 1 returned a non-1 value".into()),
-                        Err(error) if attempt < 3 && Instant::now() < deadline => {
+                        Err(_error) if attempt < 5 && Instant::now() < deadline => {
                             attempt += 1;
                             tokio::time::sleep(Duration::from_millis(500 * attempt)).await;
                         }
@@ -135,7 +135,7 @@ async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn
                     }
                 }
             }
-            Err(error) if Instant::now() < deadline => {
+            Err(_error) if Instant::now() < deadline => {
                 tokio::time::sleep(Duration::from_millis(750)).await;
             }
             Err(error) => return Err(error.into()),
@@ -144,23 +144,28 @@ async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn
 }
 
 /// Creates a fresh scratch database and runs the full T3 migration set.
-async fn scratch_db() -> Result<(PgPool, String), Box<dyn Error>> {
+async fn scratch_db() -> Result<(PgPool, String), Box<dyn Error + Send + Sync>> {
     let super_url = env::var("DATABASE_URL").expect("DATABASE_URL required");
     let db = fresh_db_name();
     let admin = connect_with_retry(&super_url, 2).await?;
-    sqlx::query(&ddl_for(&db, r#"CREATE DATABASE "{db}""#))
+    sqlx::query(ddl_for(&db, r#"CREATE DATABASE "{db}""#))
         .execute(&admin)
         .await?;
-    sqlx::query(&ddl_for(&db, ROLE_BOOTSTRAP_SQL))
+    sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
         .execute(&admin)
         .await?;
     let url = conn_url(&super_url, "postgres", &db);
     let pool = connect_with_retry(&url, 4).await?;
-    let applied = MIGRATOR.run(&pool).await?;
-    if applied != up_migration_count() {
+    MIGRATOR.run(&pool).await?;
+    // Every up-migration must be recorded (sqlx embeds .up and .down sides;
+    // the DB table records only the applied up side).
+    let recorded: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
+        .fetch_one(&pool)
+        .await?;
+    let expected = up_migration_count() as i64;
+    if recorded != expected {
         return Err(format!(
-            "expected {} up-migrations, applied {applied}",
-            up_migration_count()
+            "expected {expected} applied up-migrations, found {recorded}"
         )
         .into());
     }
@@ -170,7 +175,7 @@ async fn scratch_db() -> Result<(PgPool, String), Box<dyn Error>> {
 async fn drop_scratch_db(db: &str) {
     let Ok(super_url) = env::var("DATABASE_URL") else { return };
     if let Ok(admin) = connect_with_retry(&super_url, 2).await {
-        let _ = sqlx::query(&ddl_for(db, r#"DROP DATABASE IF EXISTS "{db}" WITH (FORCE)"#))
+        let _ = sqlx::raw_sql(ddl_for(db, r#"DROP DATABASE IF EXISTS "{db}" WITH (FORCE)"#))
             .execute(&admin)
             .await;
     }
@@ -352,11 +357,25 @@ fn missing_data_obeys_policy() {
 // 5. FR-BT-008 / AT-03: duplicate request returns the prior run (DB-gated)
 // --------------------------------------------------------------------------- //
 
+/// Seeds a real user row (jobs.owner_user_id is FK-bound; the T19
+/// convention: unique (issuer, subject) per owner).
+async fn insert_test_user(pool: &PgPool, subject: &str) -> Result<Uuid, String> {
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) VALUES ('test-issuer', $1, $2) RETURNING id",
+    )
+    .bind(subject)
+    .bind(format!("{subject}@example.com"))
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
 async fn attempt_duplicate_request() -> Result<(), String> {
     let (pool, db) = scratch_db().await.map_err(|e| e.to_string())?;
     let outcome = async {
         let queue = JobQueue::new(pool.clone(), None, QueueConfig::default());
-        let owner = Uuid::new_v4();
+        let owner = insert_test_user(&pool, "dup-owner").await?;
         let submit = SubmitJob {
             owner_user_id: owner,
             job_type: "backtest".to_owned(),
@@ -407,7 +426,7 @@ async fn attempt_worker_kill() -> Result<(), String> {
             backoff_base: Duration::from_millis(1),
         };
         let queue = JobQueue::new(pool.clone(), None, config);
-        let owner = Uuid::new_v4();
+        let owner = insert_test_user(&pool, "kill-owner").await?;
         queue
             .submit(SubmitJob {
                 owner_user_id: owner,

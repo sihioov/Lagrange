@@ -18,3 +18,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
 # Pure-Rust hashing for golden-artifact verification (Todo 21 core gate).
 sha2 = "0.10"
+
+[dev-dependencies]
+# Todo 19 job queue: the end-to-end robustness harness reuses its idempotent
+# submission and the ORPHANED-attempt sweeper for the AT-03/AT-06 evidence.
+job-queue = { path = "../job-queue" }
+futures-util = "0.3"
