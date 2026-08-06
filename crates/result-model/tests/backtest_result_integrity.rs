@@ -12,7 +12,7 @@ use domain::{
 };
 use result_model::backtest::{
     BacktestResult, BacktestSummary, BenchmarkPoint, CashLedgerEntry, DrawdownPoint, EquityPoint,
-    FeeEntry, FillRecord, MonthlyReturn, OrderRecord, OrderSide, PositionSnapshot,
+    FillRecord, MonthlyReturn, OrderRecord, OrderSide, PositionSnapshot,
 };
 use result_model::{BacktestError, PublicationGate, Warning};
 
@@ -50,15 +50,21 @@ fn valid_result() -> BacktestResult {
     let instrument = InstrumentId::parse("069500.KRX").unwrap();
 
     let mut metrics = BTreeMap::new();
-    metrics.insert("total_return".to_owned(), ReportedStat::from_f64(0.010_609_6).unwrap());
-    metrics.insert("max_drawdown".to_owned(), ReportedStat::from_f64(0.0).unwrap());
+    metrics.insert(
+        "total_return".to_owned(),
+        ReportedStat::from_f64(0.010_609_6).unwrap(),
+    );
+    metrics.insert(
+        "max_drawdown".to_owned(),
+        ReportedStat::from_f64(0.0).unwrap(),
+    );
     metrics.insert("sharpe".to_owned(), ReportedStat::from_f64(0.75).unwrap());
 
     BacktestResult {
         summary: BacktestSummary {
             currency: Currency::KRW,
             initial_equity: initial,
-            final_equity: final_equity,
+            final_equity,
             total_return: ReportedStat::from_f64(0.010_609_6).unwrap(),
             cagr: ReportedStat::from_f64(0.010_609_6).unwrap(),
             max_drawdown: ReportedStat::from_f64(0.0).unwrap(),
@@ -74,15 +80,30 @@ fn valid_result() -> BacktestResult {
             end_date: "2020-12-31".to_owned(),
         },
         equity: vec![
-            EquityPoint { ts: t1, equity: initial },
-            EquityPoint { ts: t2, equity: final_equity },
+            EquityPoint {
+                ts: t1,
+                equity: initial,
+            },
+            EquityPoint {
+                ts: t2,
+                equity: final_equity,
+            },
         ],
         drawdown: vec![
-            DrawdownPoint { ts: t1, drawdown: ReportedStat::from_f64(0.0).unwrap() },
-            DrawdownPoint { ts: t2, drawdown: ReportedStat::from_f64(0.0).unwrap() },
+            DrawdownPoint {
+                ts: t1,
+                drawdown: ReportedStat::from_f64(0.0).unwrap(),
+            },
+            DrawdownPoint {
+                ts: t2,
+                drawdown: ReportedStat::from_f64(0.0).unwrap(),
+            },
         ],
         monthly_returns: vec![
-            MonthlyReturn { month: "2020-01".to_owned(), return_: ReportedStat::from_f64(0.0).unwrap() },
+            MonthlyReturn {
+                month: "2020-01".to_owned(),
+                return_: ReportedStat::from_f64(0.0).unwrap(),
+            },
             MonthlyReturn {
                 month: "2020-12".to_owned(),
                 return_: ReportedStat::from_f64(0.010_609_6).unwrap(),
@@ -91,7 +112,7 @@ fn valid_result() -> BacktestResult {
         orders: vec![OrderRecord {
             order_id: "O-1".to_owned(),
             client_order_id: "C-1".to_owned(),
-            instrument,
+            instrument: instrument.clone(),
             side: OrderSide::Buy,
             quantity: Quantity::parse("3300").unwrap(),
             order_type: "MARKET".to_owned(),
@@ -104,7 +125,7 @@ fn valid_result() -> BacktestResult {
             fill_id: "F-1".to_owned(),
             order_id: "O-1".to_owned(),
             client_order_id: "C-1".to_owned(),
-            instrument,
+            instrument: instrument.clone(),
             side: OrderSide::Buy,
             quantity: Quantity::parse("3300").unwrap(),
             price: Price::parse("10106.0960").unwrap(),
@@ -118,13 +139,25 @@ fn valid_result() -> BacktestResult {
             quantity: Quantity::parse("3300").unwrap(),
         }],
         cash: vec![
-            CashLedgerEntry { ts: t1, cash: cash_after },
-            CashLedgerEntry { ts: t2, cash: cash_after },
+            CashLedgerEntry {
+                ts: t1,
+                cash: cash_after,
+            },
+            CashLedgerEntry {
+                ts: t2,
+                cash: cash_after,
+            },
         ],
         fees: vec![],
         benchmark: vec![
-            BenchmarkPoint { ts: t1, value: initial },
-            BenchmarkPoint { ts: t2, value: krw("102000000.0000") },
+            BenchmarkPoint {
+                ts: t1,
+                value: initial,
+            },
+            BenchmarkPoint {
+                ts: t2,
+                value: krw("102000000.0000"),
+            },
         ],
         metrics,
         warnings: vec![Warning::info("ok", "synthetic fixture")],
@@ -138,8 +171,19 @@ fn common_model_has_all_documented_fields() {
     let obj = json.as_object().unwrap();
     let keys: BTreeSet<String> = obj.keys().cloned().collect();
     let expected: BTreeSet<String> = [
-        "summary", "equity", "drawdown", "monthly_returns", "orders", "fills", "positions",
-        "cash", "fees", "benchmark", "metrics", "warnings", "provenance",
+        "summary",
+        "equity",
+        "drawdown",
+        "monthly_returns",
+        "orders",
+        "fills",
+        "positions",
+        "cash",
+        "fees",
+        "benchmark",
+        "metrics",
+        "warnings",
+        "provenance",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -158,9 +202,10 @@ fn valid_result_round_trips_and_validates() {
 
 #[test]
 fn non_finite_metric_is_rejected_at_the_json_boundary() {
-    let mut json = serde_json::to_value(valid_result()).unwrap();
-    json["metrics"]["total_return"] = serde_json::json!(1e999); // out of range -> non-finite
-    let err = serde_json::from_str::<BacktestResult>(&serde_json::to_string(&json).unwrap());
+    // 1e999 is a valid JSON number token that overflows f64 -> non-finite.
+    let json = serde_json::to_string(&valid_result()).unwrap();
+    let poisoned = json.replace("0.0106096", "1e999");
+    let err = serde_json::from_str::<BacktestResult>(&poisoned);
     assert!(err.is_err(), "1e999 must be rejected, got {err:?}");
 }
 
@@ -169,13 +214,16 @@ fn non_finite_drawdown_is_rejected_at_the_json_boundary() {
     let mut json = serde_json::to_value(valid_result()).unwrap();
     json["drawdown"][0]["drawdown"] = serde_json::json!("Infinity");
     let err = serde_json::from_str::<BacktestResult>(&serde_json::to_string(&json).unwrap());
-    assert!(err.is_err(), "Infinity drawdown must be rejected, got {err:?}");
+    assert!(
+        err.is_err(),
+        "Infinity drawdown must be rejected, got {err:?}"
+    );
 }
 
 #[test]
 fn date_regression_in_equity_is_rejected() {
     let mut result = valid_result();
-    result.equity[0].ts = ts("2020-12-31T00:00:00Z"); // later than point 1 -> regression
+    result.equity[0].ts = ts("2021-01-01T00:00:00Z"); // later than point 1 -> regression
     match result.validate() {
         Err(BacktestError::DateRegression { .. }) => {}
         other => panic!("expected DateRegression, got {other:?}"),
@@ -185,7 +233,19 @@ fn date_regression_in_equity_is_rejected() {
 #[test]
 fn date_regression_in_fills_is_rejected() {
     let mut result = valid_result();
-    result.fills[0].ts = ts("2021-01-02T00:00:00Z"); // after the equity end -> regression
+    let t0 = ts("2019-12-30T00:00:00Z");
+    result.fills.push(FillRecord {
+        fill_id: "F-0".to_owned(),
+        order_id: "O-0".to_owned(),
+        client_order_id: "C-0".to_owned(),
+        instrument: InstrumentId::parse("069500.KRX").unwrap(),
+        side: OrderSide::Sell,
+        quantity: Quantity::parse("1").unwrap(),
+        price: Price::parse("10106.0960").unwrap(),
+        ts: t0, // earlier than the first fill -> regression at index 1
+        commission: krw("0.0000"),
+        tax: krw("0.0000"),
+    });
     match result.validate() {
         Err(BacktestError::DateRegression { .. }) => {}
         other => panic!("expected DateRegression, got {other:?}"),
@@ -238,7 +298,7 @@ fn publication_is_refused_before_validation() {
 #[test]
 fn publication_is_refused_after_a_failed_validation() {
     let mut result = valid_result();
-    result.equity[0].ts = ts("2020-12-31T00:00:00Z");
+    result.equity[0].ts = ts("2021-01-01T00:00:00Z");
     let mut gate = PublicationGate::new();
     assert!(gate.validate(&result).is_err());
     match gate.publish() {
@@ -259,8 +319,15 @@ fn publication_is_allowed_after_a_successful_validation() {
 fn provenance_shape_matches_design_execution_metadata() {
     let json = serde_json::to_value(valid_result().provenance).unwrap();
     for key in [
-        "engine", "engine_version", "strategy_id", "strategy_version", "dataset_version",
-        "config_hash", "code_commit", "random_seed", "timezone",
+        "engine",
+        "engine_version",
+        "strategy_id",
+        "strategy_version",
+        "dataset_version",
+        "config_hash",
+        "code_commit",
+        "random_seed",
+        "timezone",
     ] {
         assert!(json.get(key).is_some(), "provenance missing {key}");
     }
