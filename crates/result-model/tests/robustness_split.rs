@@ -29,20 +29,20 @@ fn period_split_segments_are_disjoint_and_exhaustive() {
     let segments = split_period(&result, &split).expect("split must succeed");
 
     // train = all points <= 01-08; validation = (01-08, 01-13]; test = > 01-13
-    let train_dates: Vec<&str> = segments.train.points.iter().map(|p| &p.ts.to_rfc3339()[..10]).collect();
-    let validation_dates: Vec<&str> = segments.validation.points.iter().map(|p| &p.ts.to_rfc3339()[..10]).collect();
-    let test_dates: Vec<&str> = segments.test.points.iter().map(|p| &p.ts.to_rfc3339()[..10]).collect();
+    let train_dates: Vec<String> = segments.train.points.iter().map(|p| p.ts.to_rfc3339()[..10].to_owned()).collect();
+    let validation_dates: Vec<String> = segments.validation.points.iter().map(|p| p.ts.to_rfc3339()[..10].to_owned()).collect();
+    let test_dates: Vec<String> = segments.test.points.iter().map(|p| p.ts.to_rfc3339()[..10].to_owned()).collect();
 
     assert_eq!(train_dates, vec!["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-06"]);
     assert_eq!(validation_dates, vec!["2020-01-09"]);
     assert_eq!(test_dates, vec!["2020-01-14", "2020-01-16"]);
 
     // exhaustive: every golden point lands in exactly one segment
-    let mut seen: Vec<&str> = train_dates.iter().chain(validation_dates.iter()).chain(test_dates.iter()).copied().collect();
+    let mut seen: Vec<String> = train_dates.iter().chain(validation_dates.iter()).chain(test_dates.iter()).cloned().collect();
     seen.sort_unstable();
     let mut all = golden_points();
     all.sort_unstable();
-    assert_eq!(seen, all.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+    assert_eq!(seen, all);
 }
 
 #[test]
@@ -168,6 +168,14 @@ fn period_split_respects_the_same_barrier_as_selection() {
         validation_end: "2020-01-13".to_owned(),
     };
     let segments = split_period(&result, &split).unwrap();
-    assert!(segments.validation.points.iter().all(|p| p.ts.to_rfc3339()[..10].as_str() <= "2020-01-13"));
-    assert!(segments.test.points.iter().all(|p| p.ts.to_rfc3339()[..10].as_str() > "2020-01-13"));
+    assert!(segments
+        .validation
+        .points
+        .iter()
+        .all(|p| p.ts.to_rfc3339()[..10] <= *"2020-01-13"));
+    assert!(segments
+        .test
+        .points
+        .iter()
+        .all(|p| p.ts.to_rfc3339()[..10] > *"2020-01-13"));
 }

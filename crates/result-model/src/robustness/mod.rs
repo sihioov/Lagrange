@@ -29,6 +29,7 @@ pub mod error;
 pub mod holdout;
 pub mod lineage;
 pub mod replay;
+pub mod split;
 
 pub use cost::{CostStressProfile, stress_cost};
 pub use error::RobustnessError;
@@ -37,3 +38,7 @@ pub use lineage::{
     DerivedAxis, DerivedRunRequest, LineageRegistry, PinnedContext, RunLineage,
 };
 pub use replay::{ReplaySpec, replay, replay_with};
+pub use split::{
+    PeriodSegments, Segment, SegmentMetrics, WalkForwardFold, WalkForwardPlan, split_period,
+    walk_forward,
+};
