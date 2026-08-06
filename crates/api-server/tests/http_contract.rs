@@ -47,14 +47,7 @@ async fn http_contract_correlation_ids_propagate() {
     };
     // Custom X-Request-Id is echoed and appears in the error envelope.
     let resp = h
-        .send(
-            "GET",
-            "/api/v1/strategies/does-not-exist",
-            Some(&h.member),
-            false,
-            Some("corr-abc-123"),
-            None,
-        )
+        .send("GET", "/api/v1/strategies/does-not-exist", Some(&h.member), false, Some("corr-abc-123"), None, None)
         .await;
     assert_eq!(resp.headers()["x-request-id"], "corr-abc-123");
     let body = Harness::body_json(resp).await;
@@ -100,7 +93,7 @@ async fn http_contract_mutating_route_requires_csrf_and_idempotency_key() {
     // No CSRF token -> 403 CSRF_DENIED (audited).
     let body = serde_json::json!({ "strategy_version": "1.0.0", "config": { "lookback": 200 }, "is_active": true });
     let resp = h
-        .send("POST", "/api/v1/strategies/buy_and_hold/configs", Some(&h.member), false, Some("test-rid-1"), Some(body.clone()))
+        .send("POST", "/api/v1/strategies/buy_and_hold/configs", Some(&h.member), false, Some("test-rid-1"), None, Some(body.clone()))
         .await;
     assert_eq!(status(&resp), StatusCode::FORBIDDEN);
     let resp_body = Harness::body_json(resp).await;
@@ -108,7 +101,7 @@ async fn http_contract_mutating_route_requires_csrf_and_idempotency_key() {
 
     // CSRF ok but no Idempotency-Key -> 400 IDEMPOTENCY_KEY_REQUIRED.
     let resp = h
-        .send("POST", "/api/v1/strategies/buy_and_hold/configs", Some(&h.member), true, Some("test-rid-1"), Some(body))
+        .send("POST", "/api/v1/strategies/buy_and_hold/configs", Some(&h.member), true, Some("test-rid-1"), None, Some(body))
         .await;
     assert_eq!(status(&resp), StatusCode::BAD_REQUEST);
     let resp_body = Harness::body_json(resp).await;
@@ -130,6 +123,7 @@ async fn http_contract_invalid_parameter_schema_is_typed_400() {
             Some(&h.member),
             true,
             Some("test-rid-1"),
+            None,
             Some(serde_json::json!({ "strategy_version": "1.0.0", "config": { "lookback": 200 }, "is_active": true, "owner_user_id": "00000000-0000-0000-0000-000000000000" })),
         )
         .await;
