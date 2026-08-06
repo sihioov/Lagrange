@@ -49,11 +49,19 @@ fn fill(
 
 /// Builds a valid result via the public replay (zero fees) from raw fills.
 fn result_from_fills(fills: Vec<FillRecord>) -> BacktestResult {
+    let fees: Vec<result_model::backtest::FeeEntry> = fills
+        .iter()
+        .map(|f| result_model::backtest::FeeEntry {
+            ts: f.ts,
+            commission: Money::parse("0.0000", Currency::KRW).unwrap(),
+            tax: Money::parse("0.0000", Currency::KRW).unwrap(),
+        })
+        .collect();
     replay(ReplaySpec {
         initial_equity: &common::ten_million(),
         currency: Currency::KRW,
         fills,
-        fees: Vec::new(),
+        fees,
         orders: &[],
         warnings: &[],
         provenance: &common::provenance(),
@@ -86,17 +94,12 @@ fn diversified_returns_do_not_warn() {
         "143850.KRX",
         "133690.KRX",
     ];
+    // All buys first (chronological), then all sells (chronological).
     for (i, instrument) in instruments.iter().enumerate() {
-        let buy_day = format!("2020-01-{:02}", i * 2 + 2);
-        fills.push(fill(&format!("b{i}"), &buy_day, instrument, OrderSide::Buy, 100, "10000.0000"));
-        fills.push(fill(
-            &format!("s{i}"),
-            &format!("2020-02-{:02}", i + 2),
-            instrument,
-            OrderSide::Sell,
-            100,
-            "10500.0000",
-        ));
+        fills.push(fill(&format!("b{i}"), &format!("2020-01-{:02}", i * 2 + 2), instrument, OrderSide::Buy, 100, "10000.0000"));
+    }
+    for (i, instrument) in instruments.iter().enumerate() {
+        fills.push(fill(&format!("s{i}"), &format!("2020-02-{:02}", i + 2), instrument, OrderSide::Sell, 100, "10500.0000"));
     }
     let result = result_from_fills(fills);
     assert!(
@@ -220,7 +223,8 @@ fn neighborhood_without_jumps_does_not_warn() {
 
 #[test]
 fn empty_neighborhood_is_a_typed_error() {
-    let error = analyze_neighborhood(Vec::<(serde_json::Value, f64)>::new())
-        .expect_err("an empty neighborhood must be a typed error");
+    let error =
+        analyze_neighborhood(Vec::<(serde_json::Value, ReportedStat)>::new())
+            .expect_err("an empty neighborhood must be a typed error");
     assert!(matches!(error, RobustnessError::EmptySeries { .. }));
 }

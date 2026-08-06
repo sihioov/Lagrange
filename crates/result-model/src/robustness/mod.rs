@@ -32,6 +32,7 @@ pub mod holdout;
 pub mod lineage;
 pub mod replay;
 pub mod split;
+pub mod warnings;
 
 pub use benchmark::{BenchmarkComparison, compare_benchmark};
 pub use cost::{CostStressProfile, stress_cost};
@@ -42,6 +43,7 @@ pub use lineage::{
     DerivedAxis, DerivedRunRequest, LineageRegistry, PinnedContext, RunLineage,
 };
 pub use replay::{ReplaySpec, replay, replay_with};
+pub use warnings::{NeighborhoodAnalysis, NeighborhoodPoint, analyze_neighborhood, recent_degradation_warning, top_trade_concentration_warning, year_concentration_warning};
 pub use split::{
     PeriodSegments, Segment, SegmentMetrics, WalkForwardFold, WalkForwardPlan, split_period,
     walk_forward,
