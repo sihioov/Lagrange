@@ -13,6 +13,7 @@ use domain::ids::CorrelationId;
 
 pub mod backtest;
 pub mod manifest;
+pub mod robustness;
 
 pub use backtest::{
     BacktestError, BacktestResult, BacktestSummary, BenchmarkPoint, CashLedgerEntry, DrawdownPoint,

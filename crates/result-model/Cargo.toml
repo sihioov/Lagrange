@@ -15,4 +15,6 @@ thiserror = "2.0"
 # writer (`manifest.rs`); `migrate` embeds migrations for the DB-gated tests.
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "uuid", "chrono", "json", "migrate"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
-uuid = { version = "1.0", features = ["v4", "serde"] }
+uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
+# Pure-Rust hashing for golden-artifact verification (Todo 21 core gate).
+sha2 = "0.10"
