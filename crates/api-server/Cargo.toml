@@ -1,0 +1,30 @@
+# Lagrange Station typed tenancy repositories (plan Todo 23).
+#
+# This crate resolves the plan-command defect documented in the
+# migration-contract crate: the plan's acceptance lines use `cargo test -p
+# api-server`, which requires a Rust package literally named `api-server`
+# (apps/api-server is the Node/TypeScript product boundary). The typed
+# repositories live here: every method receives an authenticated
+# `auth::entitlement::Actor` and runs inside a transaction that pins
+# `app.actor_user_id` (SET LOCAL), so PostgreSQL Row-Level Security (migration
+# 0010_rls) scopes every row access to the acting user.
+#
+# SQLx 0.9.x is the approved line (plan draft line 40, Cargo.lock).
+[package]
+name = "api-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+publish = false
+
+[dependencies]
+auth = { path = "../auth" }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "macros", "uuid", "json", "chrono"] }
+thiserror = "2.0"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]

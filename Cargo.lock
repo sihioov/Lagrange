@@ -48,6 +48,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "api-server"
+version = "0.1.0"
+dependencies = [
+ "auth",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "api-server-auth"
 version = "0.1.0"
 dependencies = [

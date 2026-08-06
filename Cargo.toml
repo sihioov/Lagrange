@@ -22,6 +22,7 @@ members = [
     "crates/result-model",
     "crates/risk-gateway",
     "crates/kis-client",
+    "crates/api-server",
     "apps/api-server/auth",
     "tests/integration/migration-contract",
     "data-pipelines/collectors",
