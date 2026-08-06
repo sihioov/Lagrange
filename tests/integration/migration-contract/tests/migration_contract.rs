@@ -41,13 +41,14 @@
 //!   - large curves/orders/fills live in Parquet with DB manifests
 //!     (result_artifacts: parquet_path + row_count + sha256 + summary_json).
 
-use sqlx::migrate::Migrator;
+use sqlx::migrate::{MigrationType, Migrator};
 use sqlx::postgres::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::types::Uuid;
 use std::collections::HashSet;
 use std::env;
 use std::error::Error;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Migrations embedded at compile time from the workspace `migrations/` dir.
@@ -135,12 +136,35 @@ fn conn_url(super_url: &str, role: &str, db: &str) -> String {
     }
 }
 
+/// Scratch-database name, unique per call. Both tests share one process and
+/// run in PARALLEL test threads, so pid+millis alone can collide (two
+/// `CREATE DATABASE` of the same name -> duplicate key on
+/// `pg_database_datname_index`); the monotonic counter guarantees uniqueness.
 fn fresh_db_name() -> String {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock before epoch")
         .as_millis();
-    format!("contract_{}_{}", std::process::id(), ts)
+    format!(
+        "contract_{}_{}_{}",
+        std::process::id(),
+        ts,
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// Number of migrations `Migrator::run` applies. sqlx 0.9 records each
+/// `.up.sql` and `.down.sql` file as its OWN `Migration` entry
+/// (`ReversibleUp`/`ReversibleDown`), so `migrations.len()` is 2x the real
+/// count for the 9 up/down pairs in `migrations/`. `run` applies every
+/// non-`ReversibleDown` entry; `undo` consumes the down side.
+fn up_migration_count() -> usize {
+    MIGRATOR
+        .migrations
+        .iter()
+        .filter(|m| m.migration_type != MigrationType::ReversibleDown)
+        .count()
 }
 
 async fn admin_pool(url: &str) -> Result<PgPool, Box<dyn Error>> {
@@ -242,7 +266,7 @@ async fn full_contract_body(
     // ------------------------------------------------------------------
     // 1. `sqlx migrate run` applies every migration; a second run is a no-op.
     // ------------------------------------------------------------------
-    let expected = MIGRATOR.migrations.len();
+    let expected = up_migration_count();
     assert!(expected > 0, "migrator must embed at least one migration");
     MIGRATOR.run(owner).await?;
     let applied = applied_count(owner).await? as usize;
@@ -759,7 +783,7 @@ async fn revert_and_rerun_body(
     _db: &str,
     owner: &PgPool,
 ) -> Result<(), Box<dyn Error>> {
-    let expected = MIGRATOR.migrations.len();
+    let expected = up_migration_count();
     MIGRATOR.run(owner).await?;
     let applied = applied_count(owner).await? as usize;
     assert_eq!(
