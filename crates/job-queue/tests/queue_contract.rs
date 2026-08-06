@@ -22,13 +22,10 @@
 //!     settles its own attempt as FAILED(error_code='canceled') — CANCELED is
 //!     not an attempt outcome.
 
-use job_queue::{
-    ErrorClass, HeartbeatStatus, JobQueue, JobStatus, QueueConfig, SettleResult, SubmitJob,
-};
+use job_queue::{HeartbeatStatus, JobQueue, JobStatus, QueueConfig, SubmitJob};
 use sqlx::migrate::{MigrationType, Migrator};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::types::Uuid;
-use sqlx::Row;
 use std::env;
 use std::error::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -119,8 +116,45 @@ fn up_migration_count() -> usize {
         .count()
 }
 
+/// Connect with retries: the Windows->WSL PostgreSQL path flaps
+/// intermittently (documented in learnings.md; wslrelay died 2026-08-06 and
+/// the eth0-IP NAT route drops connections mid-stream), so a fresh pool per
+/// test rides through short outages instead of failing the whole suite.
+///
+/// sqlx pools connect lazily, so the retry performs a REAL round-trip
+/// (`SELECT 1`) on each attempt; only a pool that answered a query counts.
+async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn Error>> {
+    let mut last: Option<sqlx::Error> = None;
+    for attempt in 0..10u32 {
+        let connect = PgPoolOptions::new()
+            .max_connections(max_conns)
+            .acquire_timeout(Duration::from_secs(8))
+            .connect(url)
+            .await;
+        let pool = match connect {
+            Ok(pool) => pool,
+            Err(e) => {
+                last = Some(e);
+                tokio::time::sleep(Duration::from_millis(1500 * (attempt as u64 + 1))).await;
+                continue;
+            }
+        };
+        match sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&pool).await {
+            Ok(_) => return Ok(pool),
+            Err(e) => {
+                last = Some(e);
+                pool.close().await;
+                tokio::time::sleep(Duration::from_millis(1500 * (attempt as u64 + 1))).await;
+            }
+        }
+    }
+    Err(last
+        .map(Into::into)
+        .unwrap_or_else(|| "connect_with_retry exhausted attempts".into()))
+}
+
 async fn admin_pool(url: &str) -> Result<PgPool, Box<dyn Error>> {
-    Ok(PgPoolOptions::new().max_connections(3).connect(url).await?)
+    connect_with_retry(url, 3).await
 }
 
 /// Create a fresh scratch database, bootstrap roles, apply all migrations,
@@ -141,7 +175,7 @@ async fn create_scratch_db(super_url: &str) -> Result<(String, PgPool), Box<dyn 
         .await?;
     drop(admin);
 
-    let super_new = admin_pool(&conn_url(super_url, "postgres", &db)).await?;
+    let super_new = connect_with_retry(&conn_url(super_url, "postgres", &db), 3).await?;
     sqlx::raw_sql(ROLE_BOOTSTRAP_SQL).execute(&super_new).await?;
     sqlx::raw_sql(ddl_for(
         &db,
@@ -151,10 +185,7 @@ async fn create_scratch_db(super_url: &str) -> Result<(String, PgPool), Box<dyn 
     .await?;
     drop(super_new);
 
-    let pool = PgPoolOptions::new()
-        .max_connections(6)
-        .connect(&conn_url(super_url, "postgres", &db))
-        .await?;
+    let pool = connect_with_retry(&conn_url(super_url, "postgres", &db), 6).await?;
     let expected = up_migration_count();
     assert!(expected > 0, "migrator must embed at least one migration");
     MIGRATOR.run(&pool).await?;
@@ -174,10 +205,12 @@ async fn drop_scratch_db(super_url: &str, db: &str) -> Result<(), Box<dyn Error>
     Ok(())
 }
 
-async fn insert_test_user(pool: &PgPool) -> Result<Uuid, Box<dyn Error>> {
+async fn insert_test_user(pool: &PgPool, subject: &str) -> Result<Uuid, Box<dyn Error>> {
     let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO users (issuer, subject, email) VALUES ('test-issuer', 'test-subject', 'test@example.com') RETURNING id",
+        "INSERT INTO users (issuer, subject, email) VALUES ('test-issuer', $1, $2) RETURNING id",
     )
+    .bind(subject)
+    .bind(format!("{subject}@example.com"))
     .fetch_one(pool)
     .await?;
     Ok(id)
@@ -201,6 +234,15 @@ fn fast_config() -> QueueConfig {
     }
 }
 
+/// Lease long enough that WSL-NAT latency spikes never expire it mid-test
+/// (the flap documented in learnings.md can stall a query for seconds).
+fn long_lease_config() -> QueueConfig {
+    QueueConfig {
+        lease: Duration::from_secs(30),
+        backoff_base: Duration::from_millis(300),
+    }
+}
+
 fn submit<'a>(owner: Uuid, key: Option<&'a str>, max_attempts: i32, tag: i64) -> SubmitJob {
     SubmitJob {
         owner_user_id: owner,
@@ -213,7 +255,7 @@ fn submit<'a>(owner: Uuid, key: Option<&'a str>, max_attempts: i32, tag: i64) ->
     }
 }
 
-async fn count(pool: &PgPool, sql: &str) -> i64 {
+async fn count(pool: &PgPool, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
 
@@ -261,17 +303,17 @@ async fn two_workers_body(
     db: &str,
     pool: &PgPool,
 ) -> Result<(), Box<dyn Error>> {
-    let owner = insert_test_user(pool).await?;
+    let owner = insert_test_user(pool, "sub-pool").await?;
 
     // Separate pools per worker: each worker is an independent database
     // client with its own connection(s), like separate processes.
     let w1 = JobQueue::new(
-        PgPoolOptions::new().max_connections(2).connect(&conn_url(super_url, "postgres", db)).await?,
+        connect_with_retry(&conn_url(super_url, "postgres", db), 2).await?,
         None,
         fast_config(),
     );
     let w2 = JobQueue::new(
-        PgPoolOptions::new().max_connections(2).connect(&conn_url(super_url, "postgres", db)).await?,
+        connect_with_retry(&conn_url(super_url, "postgres", db), 2).await?,
         None,
         fast_config(),
     );
@@ -287,32 +329,32 @@ async fn two_workers_body(
         claim_and_settle_loop(&w1, "worker-a"),
         claim_and_settle_loop(&w2, "worker-b"),
     );
+    let a = a?;
+    let b = b?;
     assert_eq!(a + b, 100, "both workers together must claim exactly 100 jobs");
 
     // Exactly 100 attempts - one per job, no duplicates.
-    assert_eq!(count(pool, "SELECT count(*) FROM job_attempts"), 100);
+    assert_eq!(count(pool, "SELECT count(*) FROM job_attempts").await, 100);
     // No job has more than one attempt (a duplicate claim would create a
     // second attempt row OR fail the UNIQUE(job_id, attempt_no) constraint).
     assert_eq!(
         count(
             pool,
             "SELECT count(*) FROM (SELECT job_id FROM job_attempts GROUP BY job_id HAVING count(*) > 1) s"
-        ),
+        )
+        .await,
         0,
         "no job may be claimed twice"
     );
     // Every job reached SUCCEEDED, none is left RUNNING or QUEUED.
     assert_eq!(
-        count(pool, "SELECT count(*) FROM jobs WHERE status <> 'SUCCEEDED'"),
+        count(pool, "SELECT count(*) FROM jobs WHERE status <> 'SUCCEEDED'").await,
         0,
         "all jobs must be SUCCEEDED after the drain"
     );
     // Every attempt is terminal SUCCEEDED, owned by exactly one of the workers.
     assert_eq!(
-        count(
-            pool,
-            "SELECT count(*) FROM job_attempts WHERE outcome <> 'SUCCEEDED'"
-        ),
+        count(pool, "SELECT count(*) FROM job_attempts WHERE outcome <> 'SUCCEEDED'").await,
         0,
         "every attempt must settle SUCCEEDED"
     );
@@ -320,14 +362,15 @@ async fn two_workers_body(
         count(
             pool,
             "SELECT count(*) FROM job_attempts WHERE claimed_by NOT IN ('worker-a', 'worker-b')"
-        ),
+        )
+        .await,
         0,
         "every attempt must be owned by one of the two workers"
     );
     assert!(a > 0 && b > 0, "both workers must claim at least one job: a={a} b={b}");
     // attempt_count matches: each job was claimed exactly once.
     assert_eq!(
-        count(pool, "SELECT count(*) FROM jobs WHERE attempt_count <> 1"),
+        count(pool, "SELECT count(*) FROM jobs WHERE attempt_count <> 1").await,
         0,
         "attempt_count must equal the single attempt for every job"
     );
@@ -357,7 +400,7 @@ async fn duplicate_idempotency_key_returns_same_job() {
 }
 
 async fn idempotency_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
-    let owner = insert_test_user(pool).await?;
+    let owner = insert_test_user(pool, "sub-pool").await?;
     let q = JobQueue::new(pool.clone(), None, fast_config());
 
     let first = q.submit(submit(owner, Some("k1"), 3, 1)).await?;
@@ -368,10 +411,7 @@ async fn idempotency_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
         assert_eq!(same.id, first.id, "serial duplicate must return the same job");
     }
     assert_eq!(
-        count(
-            pool,
-            "SELECT count(*) FROM jobs WHERE idempotency_key = 'k1'"
-        ),
+        count(pool, "SELECT count(*) FROM jobs WHERE idempotency_key = 'k1'").await,
         1,
         "duplicate key must not create extra rows"
     );
@@ -388,13 +428,13 @@ async fn idempotency_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
         assert_eq!(job.id, first.id, "concurrent duplicate must return the same job");
     }
     assert_eq!(
-        count(pool, "SELECT count(*) FROM jobs WHERE idempotency_key = 'k1'"),
+        count(pool, "SELECT count(*) FROM jobs WHERE idempotency_key = 'k1'").await,
         1,
         "concurrent duplicates must not create extra rows"
     );
 
     // The key is scoped per owner: another owner with the same key gets a new job.
-    let other = insert_test_user(pool).await?;
+    let other = insert_test_user(pool, "sub-other").await?;
     let other_job = q.submit(submit(other, Some("k1"), 3, 2)).await?;
     assert_ne!(other_job.id, first.id, "idempotency key is per-owner");
 
@@ -435,7 +475,7 @@ async fn submit_validates_malformed_input() {
 }
 
 async fn validate_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
-    let owner = insert_test_user(pool).await?;
+    let owner = insert_test_user(pool, "sub-pool").await?;
     let q = JobQueue::new(pool.clone(), None, fast_config());
 
     let mut bad_type = submit(owner, None, 3, 1);
@@ -449,7 +489,7 @@ async fn validate_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     bad_payload.payload = serde_json::json!([1, 2, 3]);
     assert!(q.submit(bad_payload).await.is_err(), "non-object payload must be rejected");
 
-    assert_eq!(count(pool, "SELECT count(*) FROM jobs"), 0, "no rows may land");
+    assert_eq!(count(pool, "SELECT count(*) FROM jobs").await, 0, "no rows may land");
     Ok(())
 }
 
@@ -476,13 +516,13 @@ async fn api_db_available_while_job_running() {
 }
 
 async fn api_available_body(
-    super_url: &str,
+    _super_url: &str,
     db: &str,
     pool: &PgPool,
 ) -> Result<(), Box<dyn Error>> {
-    let owner = insert_test_user(pool).await?;
+    let owner = insert_test_user(pool, "sub-pool").await?;
     let q = JobQueue::new(pool.clone(), None, fast_config());
-    let job = q.submit(submit(owner, None, 3, 1)).await?;
+    let _job = q.submit(submit(owner, None, 3, 1)).await?;
     let claim = q.claim_next("worker-a").await?.expect("job must be claimable");
     assert_eq!(claim.job.status, JobStatus::Running);
     assert_eq!(claim.attempt.outcome, job_queue::AttemptOutcome::Running);
@@ -543,12 +583,18 @@ async fn heartbeat_extends_lease_and_expired_lease_is_lost() {
 }
 
 async fn heartbeat_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
-    let owner = insert_test_user(pool).await?;
-    let q = JobQueue::new(pool.clone(), None, fast_config()); // 1s lease
+    let owner = insert_test_user(pool, "sub-pool").await?;
+    // Long lease for the extension phase: latency spikes (WSL NAT flap) must
+    // never expire the lease between heartbeats, or the test would assert on
+    // network timing instead of heartbeat semantics.
+    let q = JobQueue::new(pool.clone(), None, long_lease_config());
 
     let job = q.submit(submit(owner, None, 3, 1)).await?;
     let claim = q.claim_next("worker-a").await?.expect("claimable");
-    assert_eq!(claim.lease_expires_at - claim.attempt.started_at, Duration::from_secs(1));
+    assert_eq!(
+        claim.lease_expires_at - claim.attempt.started_at.expect("claim inserts started_at"),
+        chrono::Duration::seconds(30)
+    );
 
     // Heartbeat well inside the lease: lease anchor advances each time.
     for _ in 0..3 {
@@ -565,10 +611,12 @@ async fn heartbeat_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
 
     // A second job with NO heartbeat lets the lease expire: the worker has
     // (apparently) died, and further heartbeats are rejected as LeaseLost.
-    let job2 = q.submit(submit(owner, None, 3, 2)).await?;
-    let claim2 = q.claim_next("worker-a").await?.expect("claimable");
+    // Claimed through a 1s-lease queue so the expiry happens while we wait.
+    let q_short = JobQueue::new(pool.clone(), None, fast_config());
+    let job2 = q_short.submit(submit(owner, None, 3, 2)).await?;
+    let claim2 = q_short.claim_next("worker-a").await?.expect("claimable");
     tokio::time::sleep(Duration::from_millis(1500)).await; // > 1s lease, no heartbeat
-    match q.heartbeat(&claim2).await? {
+    match q_short.heartbeat(&claim2).await? {
         HeartbeatStatus::LeaseLost => {}
         other => panic!("expected LeaseLost after expiry, got {other:?}"),
     }
@@ -608,16 +656,10 @@ async fn queue_operates_under_production_roles() {
 }
 
 async fn roles_body(super_url: &str, db: &str, pool: &PgPool) -> Result<(), Box<dyn Error>> {
-    let owner = insert_test_user(pool).await?;
+    let owner = insert_test_user(pool, "sub-pool").await?;
 
-    let app_pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&conn_url(super_url, "app", db))
-        .await?;
-    let worker_pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&conn_url(super_url, "worker", db))
-        .await?;
+    let app_pool = connect_with_retry(&conn_url(super_url, "app", db), 2).await?;
+    let worker_pool = connect_with_retry(&conn_url(super_url, "worker", db), 2).await?;
     let api = JobQueue::new(app_pool.clone(), None, fast_config());
     let w = JobQueue::new(worker_pool.clone(), None, fast_config());
 
@@ -651,3 +693,4 @@ async fn roles_body(super_url: &str, db: &str, pool: &PgPool) -> Result<(), Box<
 // landed yet); removed once the implementation compiles.
 #[allow(unused_imports)]
 use sqlx::Row as _Row;
+

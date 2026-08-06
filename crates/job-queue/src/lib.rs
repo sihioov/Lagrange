@@ -13,5 +13,8 @@ pub mod queue;
 pub mod types;
 
 pub use error::QueueError;
-pub use queue::{CancelResult, HeartbeatStatus, JobQueue, QueueConfig, SettleResult};
-pub use types::{AttemptOutcome, ClaimedJob, ErrorClass, Job, JobAttempt, JobStatus, SubmitJob, SweepReport};
+pub use queue::{JobQueue, QueueConfig};
+pub use types::{
+    AttemptOutcome, AuditActor, CancelResult, ClaimedJob, ErrorClass, HeartbeatStatus, Job,
+    JobAttempt, JobStatus, SettleResult, SubmitJob, SweepReport,
+};
