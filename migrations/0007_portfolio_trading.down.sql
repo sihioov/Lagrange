@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS risk_events;
+DROP TABLE IF EXISTS reconciliation_runs;
+DROP TABLE IF EXISTS broker_connections;
+DROP TABLE IF EXISTS daily_equity;
+DROP TABLE IF EXISTS fills;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS positions;
+DROP TABLE IF EXISTS cash_ledger;
+DROP TABLE IF EXISTS accounts;
