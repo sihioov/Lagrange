@@ -3,6 +3,7 @@ import { GeistSans } from "geist/font/sans";
 import type { Metadata } from "next";
 import Script from "next/script";
 import type { ReactNode } from "react";
+import "./globals.css";
 
 const { NEXT_PUBLIC_DISABLE_REACT_DEVTOOLS: disableReactDevTools } = process.env;
 const enableReactDevTools = process.env.NODE_ENV === "development" && disableReactDevTools !== "1";
