@@ -23,7 +23,9 @@
 //! a URL user id, UI hiding, or its own `WHERE` filters alone.
 
 pub mod actor_tx;
+pub mod contract;
 pub mod error;
+pub mod http;
 pub mod repos;
 
 pub use error::{TenancyError, TenancyResult};

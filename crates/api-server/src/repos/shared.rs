@@ -45,6 +45,14 @@ pub struct SnapshotManifestRow {
     pub created_at: DateTime<Utc>,
 }
 
+/// A row of `data_quality_issues`.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct QualityIssueRow {
+    pub issue_code: String,
+    pub severity: String,
+    pub detail_json: serde_json::Value,
+}
+
 /// Typed read-only repository over shared system-owned tables.
 #[derive(Debug, Clone)]
 pub struct SharedDataRepo {
@@ -90,6 +98,46 @@ impl SharedDataRepo {
         .map_err(TenancyError::from_sqlx)?;
         tx.commit().await.map_err(TenancyError::from_sqlx)?;
         crate::error::map_optional(row)
+    }
+
+    /// Read one dataset version by its uuid (shared, read-only).
+    pub async fn get_dataset_version_by_id(
+        &self,
+        _actor: &Actor,
+        id: Uuid,
+    ) -> TenancyResult<DatasetVersionRow> {
+        let mut tx = begin_actor_tx(&self.pool, _actor).await?;
+        let row = sqlx::query_as::<_, DatasetVersionRow>(
+            "SELECT id, dataset_id, version, status, storage_path, created_at \
+             FROM dataset_versions WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        crate::error::map_optional(row)
+    }
+
+    /// Quality issues of one dataset version (shared, read-only).
+    pub async fn dataset_issues(
+        &self,
+        _actor: &Actor,
+        dataset_id: &str,
+        version: &str,
+    ) -> TenancyResult<Vec<QualityIssueRow>> {
+        let mut tx = begin_actor_tx(&self.pool, _actor).await?;
+        let rows = sqlx::query_as::<_, QualityIssueRow>(
+            "SELECT issue_code, severity, detail_json FROM data_quality_issues \
+             WHERE dataset_id = $1 AND dataset_version = $2 ORDER BY created_at",
+        )
+        .bind(dataset_id)
+        .bind(version)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        Ok(rows)
     }
 
     /// List factor snapshot manifests (shared, read-only).

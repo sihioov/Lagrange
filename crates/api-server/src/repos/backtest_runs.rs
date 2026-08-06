@@ -91,6 +91,48 @@ impl BacktestRunRepo {
         Ok(row)
     }
 
+    /// List `actor`'s own runs, keyset-paginated on `(created_at, id)`.
+    pub async fn list_page(
+        &self,
+        actor: &Actor,
+        after: Option<&crate::http::pagination::Cursor>,
+        limit: usize,
+    ) -> TenancyResult<(Vec<BacktestRunRow>, Option<crate::http::pagination::Cursor>)> {
+        let mut tx = begin_actor_tx(&self.pool, actor).await?;
+        let sql = match after {
+            Some(_) => {
+                "SELECT id, owner_user_id, job_id, strategy_id, strategy_version, \
+                        dataset_version, engine, engine_version, config_sha256, \
+                        code_commit, random_seed, timezone, status, summary_json, \
+                        started_at, finished_at, created_at \
+                 FROM backtest_runs WHERE (created_at, id) > ($1::timestamptz, $2::uuid) \
+                 ORDER BY created_at, id LIMIT $3"
+            }
+            None => {
+                "SELECT id, owner_user_id, job_id, strategy_id, strategy_version, \
+                        dataset_version, engine, engine_version, config_sha256, \
+                        code_commit, random_seed, timezone, status, summary_json, \
+                        started_at, finished_at, created_at \
+                 FROM backtest_runs ORDER BY created_at, id LIMIT $1"
+            }
+        };
+        let mut q = sqlx::query_as::<_, BacktestRunRow>(sql);
+        if let Some(c) = after {
+            q = q
+                .bind(c.k.clone())
+                .bind(uuid::Uuid::parse_str(&c.i).map_err(|_| TenancyError::NotFound)?);
+        }
+        let rows = q
+            .bind(limit as i64 + 1)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        Ok(crate::repos::split_page(rows, limit, |r| {
+            (r.created_at.to_rfc3339(), r.id.to_string())
+        }))
+    }
+
     /// Fetch one of `actor`'s runs by id; a foreign row => NotFound.
     pub async fn get(&self, actor: &Actor, id: Uuid) -> TenancyResult<BacktestRunRow> {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;

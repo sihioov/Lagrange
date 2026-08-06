@@ -26,6 +26,12 @@ pub enum TenancyError {
     /// The operation is not implemented yet (red-phase stub).
     #[error("not implemented")]
     NotImplemented,
+    /// A dataset is quality-blocked (Todo 11 policy; needs a NEW version).
+    #[error("dataset blocked: {0}")]
+    DatasetBlocked(String),
+    /// The operation is not legal in the resource's current state.
+    #[error("invalid state: {0}")]
+    InvalidState(String),
     /// Database-level failure (connection, constraint, or other SQLSTATE).
     #[error("database: {0}")]
     Database(#[from] sqlx::Error),
