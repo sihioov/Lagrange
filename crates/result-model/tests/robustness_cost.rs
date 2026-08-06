@@ -158,7 +158,7 @@ fn replay_rejects_unsorted_fills() {
         let mut f = f.clone();
         // swap timestamps of the first two fills -> unsorted input
         if f.fill_id == "fill-1" {
-            f.ts = domain::UtcTimestamp::parse_rfc3339("2020-01-03T00:00:00Z").unwrap();
+            f.ts = domain::UtcTimestamp::parse_rfc3339("2020-01-09T00:00:00Z").unwrap();
         }
         f
     }, |f| (f.commission, f.tax))

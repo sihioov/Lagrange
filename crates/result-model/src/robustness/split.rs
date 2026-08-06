@@ -55,13 +55,13 @@ pub struct WalkForwardFold {
     pub validation: Segment,
 }
 
-fn day(point: &EquityPoint) -> &str {
-    &point.ts.to_rfc3339()[..10]
+fn day(point: &EquityPoint) -> String {
+    point.ts.to_rfc3339()[..10].to_owned()
 }
 
 fn segment(points: Vec<EquityPoint>) -> Segment {
-    let start_date = points.first().map(day).unwrap_or_default().to_owned();
-    let end_date = points.last().map(day).unwrap_or_default().to_owned();
+    let start_date = points.first().map(day).unwrap_or_default();
+    let end_date = points.last().map(day).unwrap_or_default();
     let n_points = points.len();
     let (total_return, max_drawdown, volatility) = metrics(&points);
     Segment {
@@ -85,7 +85,7 @@ fn metrics(points: &[EquityPoint]) -> (ReportedStat, ReportedStat, ReportedStat)
         _ => 0.0,
     };
     let mut peak = f64::NEG_INFINITY;
-    let mut max_drawdown = 0.0;
+    let mut max_drawdown = 0.0f64;
     for point in points {
         let v = value(point);
         peak = peak.max(v);
@@ -118,9 +118,9 @@ pub fn split_period(
     let mut test = Vec::new();
     for point in &result.equity {
         let date = day(point);
-        if date <= split.train_end.as_str() {
+        if date.as_str() <= split.train_end.as_str() {
             train.push(point.clone());
-        } else if date <= split.validation_end.as_str() {
+        } else if date.as_str() <= split.validation_end.as_str() {
             validation.push(point.clone());
         } else {
             test.push(point.clone());

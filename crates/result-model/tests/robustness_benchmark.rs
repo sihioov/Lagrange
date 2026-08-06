@@ -20,14 +20,17 @@ fn money(amount: &str) -> Money {
 /// Golden result with a benchmark aligned to every equity date.
 fn result_with_daily_benchmark(flat: bool) -> BacktestResult {
     let mut result = common::golden_result();
-    let base = if flat { 10_000_000.0 } else { 9_900_000.0 };
     result.benchmark = result
         .equity
         .iter()
         .enumerate()
         .map(|(i, point)| BenchmarkPoint {
             ts: point.ts,
-            value: money(&format!("{:.4}", base * (1.0 + 0.001 * i as f64))),
+            value: if flat {
+                money("10000000.0000")
+            } else {
+                money(&format!("{:.4}", 9_900_000.0 * (1.0 + 0.001 * i as f64)))
+            },
         })
         .collect();
     result
