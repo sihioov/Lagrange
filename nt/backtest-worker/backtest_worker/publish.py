@@ -34,10 +34,12 @@ def build_manifest(
     job_id: str | None,
     run_dir,
     status: str,
+    artifacts: dict[str, dict] | None = None,
     artifact_root: str = "",
 ) -> dict[str, Any]:
     provenance = result["provenance"]
-    artifacts = write_parquet_artifacts(result, run_dir)
+    if artifacts is None:
+        artifacts = write_parquet_artifacts(result, run_dir)
     return {
         "run": {
             "id": run_id,

@@ -213,9 +213,10 @@ class Normalizer:
 
     def _check_cash_ledger(self, raw: RawResult) -> None:
         initial = raw.equity["initial_cash_raw"]
-        spent: list[tuple[str, int]] = [
-            (f["ts"][:10], f["quantity"] * f["price_raw"]) for f in raw.fills
-        ]
+        spent: list[tuple[str, int]] = []
+        for fill in raw.fills:
+            notional = fill["quantity"] * fill["price_raw"]
+            spent.append((fill["ts"][:10], notional if fill["side"] == "BUY" else -notional))
         for item, fill_ts in self._fee_items_with_ts(raw):
             spent.append((item["ts"] or fill_ts, item["commission_raw"] + item["tax_raw"]))
         for point in raw.equity["points"]:

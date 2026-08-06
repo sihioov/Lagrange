@@ -193,6 +193,48 @@ def test_ledger_mismatch_cash_vs_fills_is_rejected(valid_raw):
     assert "ledger" in str(exc.value).lower()
 
 
+def test_cash_ledger_credits_sell_notional():
+    """A SELL fill must credit the cash ledger (not debit it like a BUY)."""
+    raw = {
+        "orders": {"orders": []},
+        "fills": {
+            "fills": [
+                {
+                    "fill_id": "S-1", "order_id": "O-1", "client_order_id": "C-1",
+                    "instrument": "069500.KRX", "side": "SELL", "quantity": 1000,
+                    "price_raw": 100000000, "ts": "2020-02-03T00:00:00Z",
+                    "commission_raw": 0, "tax_raw": 0,
+                }
+            ]
+        },
+        "equity": {
+            "initial_cash_raw": 1000000000000,
+            "points": [
+                {"date": "2020-01-02", "cash_raw": 1000000000000, "positions_value_raw": 0, "equity_raw": 1000000000000},
+                {"date": "2020-02-03", "cash_raw": 1100000000000, "positions_value_raw": 0, "equity_raw": 1100000000000},
+            ],
+        },
+        "positions": {"positions": []},
+        "fees": {"cost_profile": {}, "total_fees_raw": 0, "items": []},
+        "benchmark": {
+            "points": [
+                {"date": "2020-01-02", "value_raw": 1000000000000},
+                {"date": "2020-02-03", "value_raw": 1000000000000},
+            ]
+        },
+        "provenance": {
+            "engine": "nautilustrader", "engine_version": "1.231.0",
+            "strategy_id": "ma200_trend", "strategy_version": "1.0.0",
+            "dataset_version": "kr-etf-daily-20260804.1",
+            "config_hash": "sha256:" + "a" * 64, "code_commit": "abcdef1234567",
+            "random_seed": 42, "timezone": "Asia/Seoul",
+        },
+        "metrics": {},
+    }
+    result = normalize(raw)
+    assert result["cash"][1]["cash"] == "110000000.0000"
+
+
 def test_publication_refused_after_integrity_failure(valid_raw):
     from backtest_worker.normalizer import IntegrityGate, Normalizer
     from backtest_worker.raw import RawResult
