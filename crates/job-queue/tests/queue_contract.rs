@@ -22,7 +22,10 @@
 //!     settles its own attempt as FAILED(error_code='canceled') — CANCELED is
 //!     not an attempt outcome.
 
-use job_queue::{HeartbeatStatus, JobQueue, JobStatus, QueueConfig, SubmitJob};
+use job_queue::{
+    CancelResult, ErrorClass, HeartbeatStatus, JobQueue, JobStatus, QueueConfig, SettleResult,
+    SubmitJob,
+};
 use sqlx::migrate::{MigrationType, Migrator};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::types::Uuid;
@@ -117,25 +120,27 @@ fn up_migration_count() -> usize {
 }
 
 /// Connect with retries: the Windows->WSL PostgreSQL path flaps
-/// intermittently (documented in learnings.md; wslrelay died 2026-08-06 and
-/// the eth0-IP NAT route drops connections mid-stream), so a fresh pool per
-/// test rides through short outages instead of failing the whole suite.
+/// intermittently (documented in learnings.md; the shared cluster is also
+/// restarted by operators mid-run), so a fresh pool per test rides through
+/// short outages instead of failing the whole suite.
 ///
 /// sqlx pools connect lazily, so the retry performs a REAL round-trip
 /// (`SELECT 1`) on each attempt; only a pool that answered a query counts.
 async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn Error>> {
+    let mut opts: sqlx::postgres::PgConnectOptions = url.parse()?;
+    opts = opts.options([("statement_timeout", "20s")]);
     let mut last: Option<sqlx::Error> = None;
-    for attempt in 0..10u32 {
+    for attempt in 0..6u32 {
         let connect = PgPoolOptions::new()
             .max_connections(max_conns)
             .acquire_timeout(Duration::from_secs(8))
-            .connect(url)
+            .connect_with(opts.clone())
             .await;
         let pool = match connect {
             Ok(pool) => pool,
             Err(e) => {
                 last = Some(e);
-                tokio::time::sleep(Duration::from_millis(1500 * (attempt as u64 + 1))).await;
+                tokio::time::sleep(Duration::from_millis(1200 * (attempt as u64 + 1))).await;
                 continue;
             }
         };
@@ -144,13 +149,51 @@ async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn
             Err(e) => {
                 last = Some(e);
                 pool.close().await;
-                tokio::time::sleep(Duration::from_millis(1500 * (attempt as u64 + 1))).await;
+                tokio::time::sleep(Duration::from_millis(1200 * (attempt as u64 + 1))).await;
             }
         }
     }
     Err(last
         .map(Into::into)
         .unwrap_or_else(|| "connect_with_retry exhausted attempts".into()))
+}
+
+/// Run a test body on a fresh scratch database, retrying up to 3 times with a
+/// NEW scratch database per attempt. The shared cluster is restarted by
+/// operators without notice (every connection dies), so a whole-test retry is
+/// the only way to ride through such a window.
+async fn run_test<F>(label: &str, super_url: &str, body: F)
+where
+    F: for<'a> Fn(
+        &'a str,
+        &'a str,
+        &'a PgPool,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), Box<dyn Error>>> + 'a>,
+    >,
+{
+    let mut last: Option<String> = None;
+    for attempt in 0..3u32 {
+        let scratch = match create_scratch_db(super_url).await {
+            Ok(v) => v,
+            Err(e) => {
+                last = Some(format!("setup: {e}"));
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                continue;
+            }
+        };
+        let result = body(super_url, &scratch.0, &scratch.1).await;
+        let _ = drop_scratch_db(super_url, &scratch.0).await;
+        match result {
+            Ok(()) => return,
+            Err(e) => {
+                last = Some(format!("{e}"));
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+        eprintln!("{label}: attempt {} failed ({last:?}); retrying with a fresh DB", attempt + 1);
+    }
+    panic!("{label} FAILED after 3 attempts: {}", last.unwrap_or_default());
 }
 
 async fn admin_pool(url: &str) -> Result<PgPool, Box<dyn Error>> {
@@ -287,15 +330,7 @@ async fn two_workers_drain_100_jobs_without_duplicate_ownership() {
         Ok(u) => u,
         Err(_) => return,
     };
-    let (db, pool) = match create_scratch_db(&super_url).await {
-        Ok(v) => v,
-        Err(e) => panic!("setup failed: {e}"),
-    };
-    let result = two_workers_body(&super_url, &db, &pool).await;
-    let _ = drop_scratch_db(&super_url, &db).await;
-    if let Err(e) = result {
-        panic!("concurrent claim contract FAILED: {e}");
-    }
+    run_test("two-worker drain", &super_url, |s, d, p| Box::pin(two_workers_body(s, d, p))).await;
 }
 
 async fn two_workers_body(
@@ -388,15 +423,7 @@ async fn duplicate_idempotency_key_returns_same_job() {
         Ok(u) => u,
         Err(_) => return,
     };
-    let (db, pool) = match create_scratch_db(&super_url).await {
-        Ok(v) => v,
-        Err(e) => panic!("setup failed: {e}"),
-    };
-    let result = idempotency_body(&pool).await;
-    let _ = drop_scratch_db(&super_url, &db).await;
-    if let Err(e) = result {
-        panic!("idempotency contract FAILED: {e}");
-    }
+    run_test("idempotency", &super_url, |_s, _d, p| Box::pin(idempotency_body(p))).await;
 }
 
 async fn idempotency_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -463,15 +490,7 @@ async fn submit_validates_malformed_input() {
         Ok(u) => u,
         Err(_) => return,
     };
-    let (db, pool) = match create_scratch_db(&super_url).await {
-        Ok(v) => v,
-        Err(e) => panic!("setup failed: {e}"),
-    };
-    let result = validate_body(&pool).await;
-    let _ = drop_scratch_db(&super_url, &db).await;
-    if let Err(e) = result {
-        panic!("submit validation FAILED: {e}");
-    }
+    run_test("submit validation", &super_url, |_s, _d, p| Box::pin(validate_body(p))).await;
 }
 
 async fn validate_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -482,7 +501,7 @@ async fn validate_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     bad_type.job_type = String::new();
     assert!(q.submit(bad_type).await.is_err(), "empty job_type must be rejected");
 
-    let mut bad_attempts = submit(owner, None, 0, 1);
+    let bad_attempts = submit(owner, None, 0, 1);
     assert!(q.submit(bad_attempts).await.is_err(), "max_attempts < 1 must be rejected");
 
     let mut bad_payload = submit(owner, None, 3, 1);
@@ -504,15 +523,7 @@ async fn api_db_available_while_job_running() {
         Ok(u) => u,
         Err(_) => return,
     };
-    let (db, pool) = match create_scratch_db(&super_url).await {
-        Ok(v) => v,
-        Err(e) => panic!("setup failed: {e}"),
-    };
-    let result = api_available_body(&super_url, &db, &pool).await;
-    let _ = drop_scratch_db(&super_url, &db).await;
-    if let Err(e) = result {
-        panic!("API availability contract FAILED: {e}");
-    }
+    run_test("api availability", &super_url, |s, d, p| Box::pin(api_available_body(s, d, p))).await;
 }
 
 async fn api_available_body(
@@ -571,15 +582,7 @@ async fn heartbeat_extends_lease_and_expired_lease_is_lost() {
         Ok(u) => u,
         Err(_) => return,
     };
-    let (db, pool) = match create_scratch_db(&super_url).await {
-        Ok(v) => v,
-        Err(e) => panic!("setup failed: {e}"),
-    };
-    let result = heartbeat_body(&pool).await;
-    let _ = drop_scratch_db(&super_url, &db).await;
-    if let Err(e) = result {
-        panic!("heartbeat contract FAILED: {e}");
-    }
+    run_test("heartbeat", &super_url, |_s, _d, p| Box::pin(heartbeat_body(p))).await;
 }
 
 async fn heartbeat_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -644,15 +647,7 @@ async fn queue_operates_under_production_roles() {
         Ok(u) => u,
         Err(_) => return,
     };
-    let (db, pool) = match create_scratch_db(&super_url).await {
-        Ok(v) => v,
-        Err(e) => panic!("setup failed: {e}"),
-    };
-    let result = roles_body(&super_url, &db, &pool).await;
-    let _ = drop_scratch_db(&super_url, &db).await;
-    if let Err(e) = result {
-        panic!("production role contract FAILED: {e}");
-    }
+    run_test("production roles", &super_url, |s, d, p| Box::pin(roles_body(s, d, p))).await;
 }
 
 async fn roles_body(super_url: &str, db: &str, pool: &PgPool) -> Result<(), Box<dyn Error>> {
@@ -694,3 +689,483 @@ async fn roles_body(super_url: &str, db: &str, pool: &PgPool) -> Result<(), Box<
 #[allow(unused_imports)]
 use sqlx::Row as _Row;
 
+
+// ---------------------------------------------------------------------------
+// (c) Cancellation: audited requests, cooperative worker response, and the
+//     settle-after-cancel race. CANCELED is a JOB status only; the attempt of
+//     an aborted run is recorded FAILED(error_code='canceled').
+// ---------------------------------------------------------------------------
+
+async fn audit_rows(pool: &PgPool, job_id: Uuid) -> Vec<(String, String, String, String, String)> {
+    sqlx::query_as(
+        "SELECT action, actor_role, target_type, target_id, reason
+         FROM audit_logs WHERE action = 'job.canceled' AND target_id = $1 ORDER BY created_at",
+    )
+    .bind(job_id.to_string())
+    .fetch_all(pool)
+    .await
+    .expect("audit query")
+}
+
+#[tokio::test]
+async fn cancel_queued_job_is_audited_and_terminal() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("queued cancel", &super_url, |_s, _d, p| Box::pin(cancel_queued_body(p))).await;
+}
+
+async fn cancel_queued_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-cq").await?;
+    let q = JobQueue::new(pool.clone(), Some(pool.clone()), fast_config());
+    let actor = job_queue::AuditActor::new("owner");
+
+    let job = q.submit(submit(owner, None, 3, 1)).await?;
+    match q.request_cancel(job.id, &actor).await? {
+        CancelResult::Canceled(j) => assert_eq!(j.status, JobStatus::Canceled),
+        other => panic!("queued cancel must cancel, got {other:?}"),
+    }
+    // Never claimed: zero attempts.
+    assert_eq!(
+        count(pool, "SELECT count(*) FROM job_attempts").await,
+        0,
+        "canceled-before-claim job must have no attempts"
+    );
+    // Audited: exactly one job.canceled row naming this job.
+    let rows = audit_rows(pool, job.id).await;
+    assert_eq!(rows.len(), 1, "cancel must be audited exactly once");
+    assert_eq!(rows[0].0, "job.canceled");
+    assert_eq!(rows[0].1, "owner");
+    assert_eq!(rows[0].2, "job");
+    assert_eq!(rows[0].3, job.id.to_string());
+
+    // A second cancel on the terminal job is a no-op, not a new audit row.
+    match q.request_cancel(job.id, &actor).await? {
+        CancelResult::AlreadyTerminal(j) => assert_eq!(j.status, JobStatus::Canceled),
+        other => panic!("second cancel must be AlreadyTerminal, got {other:?}"),
+    }
+    assert_eq!(audit_rows(pool, job.id).await.len(), 1);
+    // Canceling a nonexistent job is a typed error.
+    let ghost = Uuid::new_v4();
+    assert!(matches!(q.request_cancel(ghost, &actor).await, Err(job_queue::QueueError::JobNotFound(_))));
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_running_job_is_cooperative_and_audited() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("running cancel", &super_url, |_s, _d, p| Box::pin(cancel_running_body(p))).await;
+}
+
+async fn cancel_running_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-cr").await?;
+    let q = JobQueue::new(pool.clone(), Some(pool.clone()), fast_config());
+    let actor = job_queue::AuditActor::new("owner");
+
+    let job = q.submit(submit(owner, None, 3, 1)).await?;
+    let claim = q.claim_next("worker-a").await?.expect("claimable");
+
+    // Cancel while RUNNING: the job flips to CANCELED immediately (the worker
+    // is not interrupted); the in-flight attempt stays RUNNING until the
+    // worker observes the checkpoint cooperatively.
+    match q.request_cancel(job.id, &actor).await? {
+        CancelResult::Canceled(j) => assert_eq!(j.status, JobStatus::Canceled),
+        other => panic!("running cancel must cancel, got {other:?}"),
+    }
+    assert_eq!(audit_rows(pool, job.id).await.len(), 1);
+    assert!(q.check_canceled(job.id).await?, "checkpoint must observe the cancel");
+
+    // Cooperative response: the worker aborts and records its own attempt as
+    // FAILED('canceled'); the JOB stays CANCELED, never FAILED.
+    let aborted = q.settle_aborted(&claim, "observed cancel checkpoint").await?;
+    assert_eq!(aborted.status, JobStatus::Canceled);
+    let attempt: (String, Option<String>) =
+        sqlx::query_as("SELECT outcome, error_code FROM job_attempts WHERE job_id = $1 AND attempt_no = 1")
+            .bind(job.id)
+            .fetch_one(pool)
+            .await?;
+    assert_eq!(attempt.0, "FAILED");
+    assert_eq!(attempt.1.as_deref(), Some("canceled"));
+    // No retry may ever follow a cancel.
+    assert!(q.claim_next("worker-a").await?.is_none(), "canceled job must never be claimable");
+    assert_eq!(q.get_by_id(job.id).await?.status, JobStatus::Canceled);
+    Ok(())
+}
+
+#[tokio::test]
+async fn settle_after_cancel_marks_attempt_canceled() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("settle/cancel race", &super_url, |_s, _d, p| Box::pin(settle_cancel_race_body(p))).await;
+}
+
+async fn settle_cancel_race_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-sc").await?;
+    let q = JobQueue::new(pool.clone(), Some(pool.clone()), fast_config());
+    let actor = job_queue::AuditActor::new("owner");
+
+    // Cancel wins the race: the late settle must NOT record SUCCEEDED.
+    let job = q.submit(submit(owner, None, 3, 1)).await?;
+    let claim = q.claim_next("worker-a").await?.expect("claimable");
+    let _ = q.request_cancel(job.id, &actor).await?;
+    match q.settle_success(&claim).await? {
+        SettleResult::Canceled(j) => assert_eq!(j.status, JobStatus::Canceled),
+        other => panic!("settle after cancel must yield Canceled, got {other:?}"),
+    }
+    let (outcome, code): (String, Option<String>) =
+        sqlx::query_as("SELECT outcome, error_code FROM job_attempts WHERE job_id = $1 AND attempt_no = 1")
+            .bind(job.id)
+            .fetch_one(pool)
+            .await?;
+    assert_eq!(outcome, "FAILED", "canceled work must never settle SUCCEEDED");
+    assert_eq!(code.as_deref(), Some("canceled"));
+
+    // Settle wins the race: the cancel is a no-op on the terminal job.
+    let job2 = q.submit(submit(owner, None, 3, 2)).await?;
+    let claim2 = q.claim_next("worker-a").await?.expect("claimable");
+    match q.settle_success(&claim2).await? {
+        SettleResult::Committed(j) => assert_eq!(j.status, JobStatus::Succeeded),
+        other => panic!("settle must win when it lands first, got {other:?}"),
+    }
+    match q.request_cancel(job2.id, &actor).await? {
+        CancelResult::AlreadyTerminal(j) => assert_eq!(j.status, JobStatus::Succeeded),
+        other => panic!("cancel after success must be AlreadyTerminal, got {other:?}"),
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// (e)/(f) Retry classification (design 6.8): ONLY transient errors retry,
+//     with exponential backoff; input/data/integrity/determinism errors fail
+//     the job immediately no matter how many attempts remain. Exhaustion of
+//     retries resolves the job FAILED.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn transient_failure_requeues_with_backoff_then_succeeds() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("transient retry", &super_url, |_s, _d, p| Box::pin(transient_retry_body(p))).await;
+}
+
+async fn transient_retry_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-tr").await?;
+    let q = JobQueue::new(pool.clone(), None, fast_config()); // backoff base 300ms
+
+    let job = q.submit(submit(owner, None, 3, 1)).await?;
+    let claim = q.claim_next("worker-a").await?.expect("claimable");
+    match q.settle_failure(&claim, ErrorClass::Transient, "e_boom", "transient glitch").await? {
+        SettleResult::Committed(j) => {
+            assert_eq!(j.status, JobStatus::Queued, "transient failure must requeue");
+            assert!(j.locked_by.is_none() && j.locked_at.is_none(), "requeue releases the claim");
+            assert!(j.available_at > j.created_at, "requeue applies a backoff");
+        }
+        other => panic!("transient failure must requeue, got {other:?}"),
+    }
+    // Attempt 1 is recorded FAILED with the error.
+    let (outcome, code): (String, Option<String>) =
+        sqlx::query_as("SELECT outcome, error_code FROM job_attempts WHERE job_id = $1 AND attempt_no = 1")
+            .bind(job.id)
+            .fetch_one(pool)
+            .await?;
+    assert_eq!(outcome, "FAILED");
+    assert_eq!(code.as_deref(), Some("e_boom"));
+    // Backoff: not claimable immediately...
+    assert!(q.claim_next("worker-a").await?.is_none(), "backoff must delay the retry");
+    // ...then claimable after the backoff elapses.
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let claim2 = q.claim_next("worker-a").await?.expect("retry claim after backoff");
+    assert_eq!(claim2.attempt.attempt_no, 2, "retry must be attempt 2");
+    match q.settle_success(&claim2).await? {
+        SettleResult::Committed(j) => assert_eq!(j.status, JobStatus::Succeeded),
+        other => panic!("retried job must succeed, got {other:?}"),
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM job_attempts WHERE job_id = $1")
+            .bind(job.id)
+            .fetch_one(pool)
+            .await?,
+        2,
+        "exactly two attempts"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn retry_exhaustion_ends_failed() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("retry exhaustion", &super_url, |_s, _d, p| Box::pin(exhaustion_body(p))).await;
+}
+
+async fn exhaustion_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-ex").await?;
+    let q = JobQueue::new(pool.clone(), None, fast_config());
+
+    let job = q.submit(submit(owner, None, 2, 1)).await?; // max_attempts = 2
+    for attempt in 1..=2 {
+        let claim = q.claim_next("worker-a").await?.expect("claim for attempt {attempt}");
+        match q.settle_failure(&claim, ErrorClass::Transient, "e_boom", "keeps failing").await? {
+            SettleResult::Committed(j) => {
+                if attempt == 1 {
+                    assert_eq!(j.status, JobStatus::Queued);
+                } else {
+                    assert_eq!(j.status, JobStatus::Failed, "retry exhaustion must resolve FAILED");
+                    assert_eq!(j.error_code.as_deref(), Some("e_boom"));
+                }
+            }
+            other => panic!("unexpected settle result {other:?}"),
+        }
+        tokio::time::sleep(Duration::from_millis(700)).await; // past the backoff
+    }
+    let final_job = q.get_by_id(job.id).await?;
+    assert_eq!(final_job.status, JobStatus::Failed);
+    assert_eq!(final_job.attempt_count, 2);
+    assert!(q.claim_next("worker-a").await?.is_none(), "exhausted job must not be claimable");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM job_attempts WHERE job_id = $1")
+            .bind(job.id)
+            .fetch_one(pool)
+            .await?,
+        2,
+        "exactly two attempts"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn input_data_integrity_errors_never_retry() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("no-retry classes", &super_url, |_s, _d, p| Box::pin(no_retry_body(p))).await;
+}
+
+async fn no_retry_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-nr").await?;
+    let q = JobQueue::new(pool.clone(), None, fast_config());
+
+    for (i, class) in [
+        ErrorClass::Input,
+        ErrorClass::DataBlocked,
+        ErrorClass::Integrity,
+        ErrorClass::Determinism,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // max_attempts = 3: three retries would be available, but a
+        // non-retryable class must fail the job on the FIRST attempt.
+        let job = q.submit(submit(owner, None, 3, i as i64)).await?;
+        let claim = q.claim_next("worker-a").await?.expect("claimable");
+        match q
+            .settle_failure(&claim, class, "e_noretry", "not transient")
+            .await?
+        {
+            SettleResult::Committed(j) => {
+                assert_eq!(j.status, JobStatus::Failed, "{class:?} must fail immediately");
+                assert_eq!(j.error_code.as_deref(), Some("e_noretry"));
+            }
+            other => panic!("{class:?} must settle to FAILED, got {other:?}"),
+        }
+        assert_eq!(q.get_by_id(job.id).await?.attempt_count, 1, "{class:?} must not retry");
+        assert!(
+            q.claim_next("worker-a").await?.is_none(),
+            "{class:?} failure must leave nothing claimable"
+        );
+    }
+    assert_eq!(count(pool, "SELECT count(*) FROM jobs WHERE status <> 'FAILED'").await, 0);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// (d) Orphan recovery: an expired lease is swept to an ORPHANED attempt
+//     (attempt-level outcome ONLY — jobs.status never shows ORPHANED), the
+//     job is requeued AT MOST ONCE per orphan, and retry exhaustion resolves
+//     the job FAILED. A zombie worker can never settle after the sweep.
+// ---------------------------------------------------------------------------
+
+async fn attempt_rows(pool: &PgPool, job_id: Uuid) -> Vec<(i32, String, String)> {
+    sqlx::query_as(
+        "SELECT attempt_no, outcome, claimed_by FROM job_attempts WHERE job_id = $1 ORDER BY attempt_no",
+    )
+    .bind(job_id)
+    .fetch_all(pool)
+    .await
+    .expect("attempt query")
+}
+
+#[tokio::test]
+async fn worker_death_orphans_attempt_and_requeues_once() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("orphan requeue", &super_url, |_s, _d, p| Box::pin(orphan_requeue_body(p))).await;
+}
+
+async fn orphan_requeue_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-or").await?;
+    let q = JobQueue::new(pool.clone(), None, fast_config()); // 1s lease, 300ms backoff
+
+    let job = q.submit(submit(owner, None, 3, 1)).await?;
+    let _claim = q.claim_next("worker-a").await?.expect("claimable");
+    tokio::time::sleep(Duration::from_millis(1500)).await; // lease expires: worker died
+
+    let report = q.sweep().await?;
+    assert_eq!(report.jobs_checked, 1);
+    assert_eq!(report.attempts_orphaned, 1);
+    assert_eq!(report.jobs_requeued, 1);
+    assert_eq!(report.jobs_failed, 0);
+
+    // Attempt 1 is ORPHANED (attempt-level); jobs.status is QUEUED, never
+    // ORPHANED.
+    let rows = attempt_rows(pool, job.id).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, 1);
+    assert_eq!(rows[0].1, "ORPHANED");
+    let swept = q.get_by_id(job.id).await?;
+    assert_eq!(swept.status, JobStatus::Queued);
+    assert!(swept.locked_by.is_none());
+    assert_eq!(swept.attempt_count, 1, "orphan must not consume the next attempt");
+    assert!(
+        count(pool, "SELECT count(*) FROM jobs WHERE status = 'ORPHANED'").await == 0,
+        "ORPHANED must never appear as a job status"
+    );
+
+    // Sweeping again is a no-op: the same orphan is never requeued twice.
+    let report2 = q.sweep().await?;
+    assert_eq!(report2.jobs_checked, 0, "second sweep must find nothing");
+    assert_eq!(report2.jobs_requeued, 0);
+
+    // The requeued job is claimable by ANY worker (worker-b) as attempt 2.
+    tokio::time::sleep(Duration::from_millis(700)).await; // past backoff
+    let claim2 = q.claim_next("worker-b").await?.expect("requeued job claimable");
+    assert_eq!(claim2.attempt.attempt_no, 2);
+    assert_eq!(claim2.job.status, JobStatus::Running);
+    let _ = q.settle_success(&claim2).await?;
+    assert_eq!(q.get_by_id(job.id).await?.status, JobStatus::Succeeded);
+    Ok(())
+}
+
+#[tokio::test]
+async fn orphan_exhaustion_resolves_failed() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("orphan exhaustion", &super_url, |_s, _d, p| Box::pin(orphan_exhaust_body(p))).await;
+}
+
+async fn orphan_exhaust_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-oe").await?;
+    let q = JobQueue::new(pool.clone(), None, fast_config());
+
+    let job = q.submit(submit(owner, None, 2, 1)).await?; // max_attempts = 2
+    // Death 1: orphan + requeue.
+    let _claim = q.claim_next("worker-a").await?.expect("claimable");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let r1 = q.sweep().await?;
+    assert_eq!((r1.jobs_requeued, r1.jobs_failed), (1, 0));
+    // Death 2: attempts exhausted -> FAILED, no requeue.
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let claim2 = q.claim_next("worker-b").await?.expect("claimable");
+    assert_eq!(claim2.attempt.attempt_no, 2);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let r2 = q.sweep().await?;
+    assert_eq!(r2.attempts_orphaned, 1);
+    assert_eq!(r2.jobs_requeued, 0, "no requeue after retry exhaustion");
+    assert_eq!(r2.jobs_failed, 1);
+
+    let final_job = q.get_by_id(job.id).await?;
+    assert_eq!(final_job.status, JobStatus::Failed);
+    assert_eq!(final_job.error_code.as_deref(), Some("attempts_exhausted"));
+    let rows = attempt_rows(pool, job.id).await;
+    assert_eq!(
+        rows.iter().map(|r| (r.0, r.1.as_str())).collect::<Vec<_>>(),
+        vec![(1, "ORPHANED"), (2, "ORPHANED")],
+        "both dead attempts are ORPHANED"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn zombie_worker_cannot_settle_after_sweep() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("zombie settle", &super_url, |_s, _d, p| Box::pin(zombie_body(p))).await;
+}
+
+async fn zombie_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-zb").await?;
+    let q = JobQueue::new(pool.clone(), None, fast_config());
+
+    let job = q.submit(submit(owner, None, 3, 1)).await?;
+    let claim = q.claim_next("worker-a").await?.expect("claimable");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let _ = q.sweep().await?; // attempt 1 -> ORPHANED, job requeued
+
+    // The zombie's settle and heartbeat are both rejected; the ORPHANED
+    // attempt is never rewritten.
+    assert!(matches!(
+        q.settle_success(&claim).await,
+        Err(job_queue::QueueError::StaleClaim(_))
+    ), "zombie settle must be rejected as StaleClaim");
+    assert_eq!(q.heartbeat(&claim).await?, HeartbeatStatus::LeaseLost);
+    let rows = attempt_rows(pool, job.id).await;
+    assert_eq!(rows[0].1, "ORPHANED", "orphaned attempt stays immutable");
+    assert_eq!(q.get_by_id(job.id).await?.status, JobStatus::Queued);
+
+    // A fresh worker takes the requeued job and settles it normally.
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let claim2 = q.claim_next("worker-b").await?.expect("reclaimable");
+    let _ = q.settle_success(&claim2).await?;
+    assert_eq!(q.get_by_id(job.id).await?.status, JobStatus::Succeeded);
+    Ok(())
+}
+
+#[tokio::test]
+async fn sweep_finalizes_orphan_of_canceled_job_without_requeue() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("sweep canceled", &super_url, |_s, _d, p| Box::pin(sweep_canceled_body(p))).await;
+}
+
+async fn sweep_canceled_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-sc2").await?;
+    let q = JobQueue::new(pool.clone(), Some(pool.clone()), fast_config());
+    let actor = job_queue::AuditActor::new("owner");
+
+    // Cancel a RUNNING job, then let the worker's lease expire without a
+    // cooperative abort: the sweeper finalizes the attempt as ORPHANED and
+    // never requeues — cancellation is honored even across worker death.
+    let job = q.submit(submit(owner, None, 3, 1)).await?;
+    let _claim = q.claim_next("worker-a").await?.expect("claimable");
+    let _ = q.request_cancel(job.id, &actor).await?;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let report = q.sweep().await?;
+    assert_eq!(report.attempts_orphaned, 1);
+    assert_eq!(report.jobs_requeued, 0, "canceled job must never be requeued");
+
+    let rows = attempt_rows(pool, job.id).await;
+    assert_eq!(rows[0].1, "ORPHANED");
+    let job = q.get_by_id(job.id).await?;
+    assert_eq!(job.status, JobStatus::Canceled);
+    assert!(q.claim_next("worker-a").await?.is_none());
+    Ok(())
+}

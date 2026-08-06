@@ -432,6 +432,27 @@ impl JobQueue {
         ))
     }
 
+    /// Cooperative cancel checkpoint: `true` once a cancel request won for
+    /// this job. Implemented in the cancellation increment.
+    pub async fn check_canceled(&self, _job_id: Uuid) -> Result<bool, QueueError> {
+        Err(QueueError::Internal(
+            "check_canceled not implemented".into(),
+        ))
+    }
+
+    /// Worker response to an observed cancel checkpoint: attempt recorded
+    /// `FAILED(error_code='canceled')`, job stays CANCELED. Implemented in
+    /// the cancellation increment.
+    pub async fn settle_aborted(
+        &self,
+        _claim: &ClaimedJob,
+        _reason: &str,
+    ) -> Result<Job, QueueError> {
+        Err(QueueError::Internal(
+            "settle_aborted not implemented".into(),
+        ))
+    }
+
     /// Orphan-recovery sweep. Implemented in the sweeper increment.
     pub async fn sweep(&self) -> Result<SweepReport, QueueError> {
         Err(QueueError::Internal("sweep not implemented".into()))
