@@ -3488,7 +3488,10 @@ dependencies = [
  "domain",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
