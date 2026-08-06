@@ -90,7 +90,7 @@ def make_raw() -> dict:
             "strategy_id": "ma200_trend",
             "strategy_version": "1.0.0",
             "dataset_version": "kr-etf-daily-20260804.1",
-            "config_hash": "sha256:abcd1234",
+            "config_hash": "sha256:" + "a" * 64,
             "code_commit": "abcdef1234567",
             "random_seed": 42,
             "timezone": "Asia/Seoul",
@@ -166,7 +166,7 @@ def test_infinity_in_raw_is_rejected(valid_raw):
 
 
 def test_date_regression_is_rejected(valid_raw):
-    valid_raw["equity"]["points"][0]["date"] = "2020-12-31"
+    valid_raw["equity"]["points"][0]["date"] = "2021-01-01"
     with pytest.raises(Exception) as exc:
         normalize(valid_raw)
     assert "regression" in str(exc.value).lower()
@@ -197,7 +197,7 @@ def test_publication_refused_after_integrity_failure(valid_raw):
     from backtest_worker.normalizer import IntegrityGate, Normalizer
     from backtest_worker.raw import RawResult
 
-    valid_raw["equity"]["points"][0]["date"] = "2020-12-31"
+    valid_raw["equity"]["points"][0]["date"] = "2021-01-01"
     result = Normalizer().normalize(RawResult.from_dict(valid_raw), validate=False)
     gate = IntegrityGate()
     assert gate.validate(result) is not None, "the broken result must fail validation"
