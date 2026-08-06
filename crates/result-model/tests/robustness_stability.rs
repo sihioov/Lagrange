@@ -52,7 +52,7 @@ fn weak_evidence() -> StabilityEvidence {
 #[test]
 fn components_sum_to_total_within_their_weights() {
     let score = analyze_stability(&strong_evidence()).expect("analysis succeeds");
-    let mut sum = 0.0;
+    let mut sum = 0.0f64;
     for component in &score.components {
         assert!(
             component.score >= 0.0 && component.score <= f64::from(component.weight),
@@ -77,6 +77,10 @@ fn stability_score_is_never_an_investment_approval() {
     assert_eq!(score.reference_only, true);
     let mut perfect = strong_evidence();
     perfect.validation_monthly_excess = vec![stat(0.05); 12];
+    perfect.neighborhood_returns = vec![stat(0.10); 4];
+    perfect.max_drawdown = stat(-0.02);
+    perfect.volatility = stat(0.05);
+    perfect.recent_excess = stat(0.05);
     let perfect_score = analyze_stability(&perfect).unwrap();
     assert!(perfect_score.total > score.total);
     assert!(matches!(
@@ -154,8 +158,7 @@ fn neighborhood_dispersion_moves_the_component_score() {
     let mut tight = strong_evidence();
     tight.neighborhood_returns = vec![stat(0.10), stat(0.101), stat(0.1005), stat(0.10)];
     let mut scattered = strong_evidence();
-    scattered.neighborhood_returns = vec![stat(0.10), stat(0.20), stat(0.0), stat(-0.05)];
-    let tight_score = analyze_stability(&tight).unwrap();
+    scattered.neighborhood_returns = vec![stat(0.10), stat(0.20), stat(0.0), stat(-0.05)];    let tight_score = analyze_stability(&tight).unwrap();
     let scattered_score = analyze_stability(&scattered).unwrap();
     let component = |score: &StabilityScore, code: &str| {
         score
