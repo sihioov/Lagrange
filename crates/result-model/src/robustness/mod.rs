@@ -25,5 +25,9 @@
 //!   deltas and non-finite values).
 
 pub mod error;
+pub mod lineage;
 
 pub use error::RobustnessError;
+pub use lineage::{
+    DerivedAxis, DerivedRunRequest, LineageRegistry, PinnedContext, RunLineage,
+};
