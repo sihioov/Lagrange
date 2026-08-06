@@ -11,13 +11,12 @@
 //!
 //! Every test requires `DATABASE_URL` to point at a SUPERVISOR connection to a
 //! DISPOSABLE PostgreSQL 18 cluster, e.g.
-//! `postgres://postgres@127.0.0.1:54329/postgres` (trust auth). Both tests are
-//! gated `#[ignore = "requires disposable PostgreSQL 18 (Todo 3 blocked)"]`, so
-//! `cargo test --workspace` stays green (they report as ignored) on hosts that
-//! have no database at all; run them with `cargo test -p migration-contract
-//! -- --ignored` once PG18 is available. The `require_db_url()` skip below is
-//! kept as a second line of defense so an ignored-but-forced run without a
-//! cluster fails as a clean SKIP rather than a connection error.
+//! `postgres://postgres:lagrange@127.0.0.1:5432/postgres`. The tests run by
+//! DEFAULT (un-gated since Todo 3's live gate passed): with `DATABASE_URL` set
+//! they create/drop their own scratch databases and run the full contract; on
+//! hosts with no database at all, `require_db_url()` below skips them cleanly
+//! (reported as `ok`, zero assertions) instead of failing with a connection
+//! error, so `cargo test --workspace` stays green everywhere.
 //!
 //! Covered contract (acceptance for plan Todo 3):
 //!   - `sqlx migrate run` applies all migrations; a second run is a no-op.
@@ -236,11 +235,9 @@ fn require_db_url() -> Result<String, Box<dyn Error>> {
 /// attempt -> ownership columns -> role invariants -> app-role denials ->
 /// audit append-only -> worker capability -> hash/unique/check constraints.
 ///
-/// Gated `#[ignore]`: requires a live disposable PostgreSQL 18 cluster; runs
-/// only via `cargo test -p migration-contract -- --ignored` once PG18 is
-/// available (Todo 3 is BLOCKED on that).
+/// Un-gated since Todo 3's live gate passed: runs with `cargo test -p
+/// migration-contract` against `DATABASE_URL` (disposable scratch DB).
 #[tokio::test]
-#[ignore = "requires disposable PostgreSQL 18 (Todo 3 blocked)"]
 async fn migration_contract_full() {
     let super_url = match require_db_url() {
         Ok(u) => u,
@@ -757,11 +754,9 @@ async fn full_contract_body(
 /// Revert (undo all migrations) then run again in a disposable DB: the schema
 /// must be fully removed by the down scripts and fully restored by re-run.
 ///
-/// Gated `#[ignore]`: requires a live disposable PostgreSQL 18 cluster; runs
-/// only via `cargo test -p migration-contract -- --ignored` once PG18 is
-/// available (Todo 3 is BLOCKED on that).
+/// Un-gated since Todo 3's live gate passed: runs with `cargo test -p
+/// migration-contract` against `DATABASE_URL` (disposable scratch DB).
 #[tokio::test]
-#[ignore = "requires disposable PostgreSQL 18 (Todo 3 blocked)"]
 async fn revert_and_rerun_in_disposable_db() {
     let super_url = match require_db_url() {
         Ok(u) => u,
