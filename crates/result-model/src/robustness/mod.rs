@@ -29,6 +29,7 @@ pub mod comparison;
 pub mod cost;
 pub mod delay;
 pub mod error;
+pub mod gate;
 pub mod holdout;
 pub mod lineage;
 pub mod missing;
@@ -42,6 +43,7 @@ pub use comparison::{EquityDiff, PresenceDiff, PositionDiff, RunComparison, Summ
 pub use cost::{CostStressProfile, stress_cost};
 pub use delay::delay_execution;
 pub use error::RobustnessError;
+pub use gate::{CANONICAL_ARTIFACTS, CoreEvidenceBundle, CoreReleaseVerdict, FIVE_STRATEGIES, GateItem, GoldenManifestEntry, GoldenSet, evaluate_core_release, evaluate_core_release_json, load_golden_set};
 pub use holdout::{HoldoutBarrier, PeriodSplit, SplitResult, select_equity_series};
 pub use missing::{ExclusionRecord, MissingDataOutcome, MissingDataPolicy, MissingInstrument, apply_missing_data_policy, enforce_missing_data_policy};
 pub use lineage::{

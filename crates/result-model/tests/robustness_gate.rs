@@ -70,6 +70,7 @@ fn full_evidence() -> CoreEvidenceBundle {
     CoreEvidenceBundle {
         golden_set,
         artifacts,
+        raw_stats: Vec::new(),
         at03_duplicate_request_returns_prior_run: true,
         at03_deterministic_rerun_identical: true,
         at04_higher_cost_ends_lower: true,
