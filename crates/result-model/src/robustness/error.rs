@@ -62,6 +62,10 @@ pub enum RobustnessError {
     #[error("benchmark series missing or empty for benchmark {benchmark_id}")]
     NoBenchmarkData { benchmark_id: String },
 
+    /// A period split has invalid boundaries (train_end after validation_end).
+    #[error("invalid split: {detail}")]
+    InvalidSplit { detail: String },
+
     /// Not enough sessions/points for the requested window or step.
     #[error("insufficient data: {what} (need {need}, have {have})")]
     InsufficientData {
