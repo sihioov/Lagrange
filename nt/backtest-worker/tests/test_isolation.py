@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import IS_WINDOWS, child_env
+from helpers import IS_WINDOWS, child_env, interpreter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -35,7 +35,7 @@ def _spawn(script: str, limits: dict, env_extra: dict | None = None, cwd=None):
     iso = ProcessIsolation(IsolationLimits(**limits))
     env = child_env(**(env_extra or {}))
     proc = iso.spawn(
-        [sys.executable, "-c", script],
+        [interpreter(), "-c", script],
         cwd=cwd,
         env=env,
         stdout=subprocess.PIPE,
@@ -84,19 +84,27 @@ def test_cpu_time_limit_kills_a_busy_child():
 
 def test_wall_clock_deadline_terminates_gracefully():
     script = (
-        "import time, json, os\n"
+        "from backtest_worker import guard\n"
+        "guard.install()\n"
+        "import time\n"
         "print('SLEEPING', flush=True); time.sleep(60); print('DONE')"
     )
-    iso, proc = _spawn(script, {"wall_seconds": 3})
+    status_file = Path(tempfile.mkdtemp(prefix="status-")) / "wall-status.json"
+    control_file = Path(tempfile.mkdtemp(prefix="control-")) / "stop"
+    env = {"LAGRANGE_STATUS_FILE": str(status_file), "LAGRANGE_CONTROL_FILE": str(control_file)}
+    iso, proc = _spawn(script, {"wall_seconds": 3}, env_extra=env)
     t0 = time.time()
     try:
         with pytest.raises(subprocess.TimeoutExpired):
             iso.wait(proc, timeout=3)
-        term = iso.terminate(proc, grace_seconds=5)
+        term = iso.terminate(proc, grace_seconds=8)
     finally:
         iso.close()
-    assert term.graceful, f"expected graceful signal termination, got {term}"
+    assert term.graceful, f"expected graceful termination, got {term}"
     assert time.time() - t0 < 15, "graceful termination must not wait the full sleep"
+    assert status_file.exists(), "the child must write a structured status file"
+    status = json.loads(status_file.read_text(encoding="utf-8"))
+    assert status.get("state") == "TERMINATED", f"unexpected status: {status}"
 
 
 @pytest.mark.skipif(not IS_WINDOWS, reason="one-node-per-process needs a Windows Job Object; POSIX cgroups/containers cover it in the Compose leg")
@@ -174,6 +182,32 @@ def test_readonly_mount_rejects_writes_in_child():
 
 def test_graceful_termination_writes_structured_status():
     status_file = Path(tempfile.mkdtemp(prefix="status-")) / "child-status.json"
+    control_file = Path(tempfile.mkdtemp(prefix="control-")) / "stop"
+    script = (
+        "from backtest_worker import guard\n"
+        "guard.install()\n"
+        "import time\n"
+        "time.sleep(60)\n"
+        "print('DONE')"
+    )
+    env = {"LAGRANGE_STATUS_FILE": str(status_file), "LAGRANGE_CONTROL_FILE": str(control_file)}
+    iso, proc = _spawn(script, {"wall_seconds": 30}, env_extra=env)
+    try:
+        time.sleep(1.0)
+        term = iso.terminate(proc, grace_seconds=8)
+    finally:
+        iso.close()
+    assert term.graceful, f"expected graceful termination, got {term}"
+    assert status_file.exists(), "the child must write a structured status file on termination"
+    status = json.loads(status_file.read_text(encoding="utf-8"))
+    assert status.get("state") == "TERMINATED", f"unexpected status: {status}"
+    assert status.get("signal") == "CONTROL_FILE", f"unexpected signal: {status}"
+    assert isinstance(status.get("pid"), int)
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="real SIGTERM delivery is POSIX; Windows uses the control-file watchdog (console CTRL events are unreliable under redirected stdio)")
+def test_sigterm_writes_structured_status():
+    status_file = Path(tempfile.mkdtemp(prefix="status-")) / "sigterm-status.json"
     script = (
         "from backtest_worker import guard\n"
         "guard.install()\n"
@@ -185,12 +219,10 @@ def test_graceful_termination_writes_structured_status():
     iso, proc = _spawn(script, {"wall_seconds": 30}, env_extra=env)
     try:
         time.sleep(1.0)
-        term = iso.terminate(proc, grace_seconds=5)
+        term = iso.terminate(proc, grace_seconds=8)
     finally:
         iso.close()
-    assert term.graceful, f"expected graceful termination, got {term}"
-    assert status_file.exists(), "the child must write a structured status file on termination"
+    assert term.graceful, f"expected graceful SIGTERM termination, got {term}"
     status = json.loads(status_file.read_text(encoding="utf-8"))
     assert status.get("state") == "TERMINATED", f"unexpected status: {status}"
-    assert status.get("signal") in ("SIGTERM", "SIGINT", "SIGBREAK"), f"unexpected signal: {status}"
-    assert isinstance(status.get("pid"), int)
+    assert status.get("signal") == "SIGTERM", f"unexpected signal: {status}"
