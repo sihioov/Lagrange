@@ -303,6 +303,27 @@ fn sample_manifest(run_id: Uuid, owner: Uuid, job_id: Uuid, seed: u64) -> Backte
     }
 }
 
+#[test]
+fn worker_produced_manifest_matches_the_rust_contract() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/manifest.json");
+    let json = std::fs::read_to_string(&path).unwrap();
+    let manifest: BacktestManifest = serde_json::from_str(&json)
+        .unwrap_or_else(|error| panic!("worker manifest.json must deserialize: {error}"));
+    ManifestWriter::validate(&manifest).expect("worker-produced manifest must validate");
+    assert_eq!(manifest.run.strategy_id, "ma200-trend");
+    assert_eq!(manifest.run.status, "SUCCEEDED");
+    assert_eq!(
+        manifest.artifacts.len(),
+        9,
+        "all nine large arrays must be manifested"
+    );
+    for artifact in &manifest.artifacts {
+        assert_eq!(artifact.sha256.len(), 64, "every artifact sha256 is hex");
+    }
+}
+
+use std::path::Path;
+
 #[tokio::test]
 async fn manifest_write_persists_rows_across_all_tables() {
     let super_url = match require_db_url() {

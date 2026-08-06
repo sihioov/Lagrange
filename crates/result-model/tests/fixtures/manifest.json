@@ -1,0 +1,134 @@
+{
+  "artifacts": [
+    {
+      "artifact_type": "EQUITY_CURVE",
+      "parquet_path": "equity.parquet",
+      "row_count": 260,
+      "sha256": "3b5743c314ed393181ca7dcca88b656b0ca8491a33e7c23923de1213acb49749",
+      "size_bytes": 2909,
+      "summary_json": {}
+    },
+    {
+      "artifact_type": "DRAWDOWN_CURVE",
+      "parquet_path": "drawdown.parquet",
+      "row_count": 260,
+      "sha256": "4e0cb81f4cecc942514695db76023bc8fa2790d445b5d0387e133d91e7f9652c",
+      "size_bytes": 2613,
+      "summary_json": {}
+    },
+    {
+      "artifact_type": "MONTHLY_RETURNS",
+      "parquet_path": "monthly_returns.parquet",
+      "row_count": 13,
+      "sha256": "e5e876a5e633a7fdac74837d9025efd2f32a1ef84cda647ae3700673b0c36342",
+      "size_bytes": 834,
+      "summary_json": {}
+    },
+    {
+      "artifact_type": "ORDERS",
+      "parquet_path": "orders.parquet",
+      "row_count": 6,
+      "sha256": "f65ac21ee7406ecb59dbece138d0dca8091667d602b8477b3dea7b09752a158e",
+      "size_bytes": 3478,
+      "summary_json": {}
+    },
+    {
+      "artifact_type": "FILLS",
+      "parquet_path": "fills.parquet",
+      "row_count": 6,
+      "sha256": "8c806a126a0bf85447745aaaa541c2955ae07d0282f06a65098fb2e656b2f3b8",
+      "size_bytes": 3493,
+      "summary_json": {}
+    },
+    {
+      "artifact_type": "POSITIONS",
+      "parquet_path": "positions.parquet",
+      "row_count": 780,
+      "sha256": "2ea78ee50c8e29acb1fb2c233ce57cef6d6b910a9bb08fae62dc3e44fde1df22",
+      "size_bytes": 3310,
+      "summary_json": {}
+    },
+    {
+      "artifact_type": "CASH_LEDGER",
+      "parquet_path": "cash.parquet",
+      "row_count": 260,
+      "sha256": "dc3b39632421e5e41a7a08631c40b8a7fad4bb6b46901795000b2ee72292e980",
+      "size_bytes": 2487,
+      "summary_json": {}
+    },
+    {
+      "artifact_type": "FEES",
+      "parquet_path": "fees.parquet",
+      "row_count": 6,
+      "sha256": "e7cc3dc669bfe04f051ee880f020e08bc3c8da8470bab0be5354bd8e54ec2fed",
+      "size_bytes": 1064,
+      "summary_json": {}
+    },
+    {
+      "artifact_type": "BENCHMARK",
+      "parquet_path": "benchmark.parquet",
+      "row_count": 260,
+      "sha256": "8be01fd213a80e62a12b1b47e650c958888c13b227bd19bcbffb67253263b1d6",
+      "size_bytes": 6064,
+      "summary_json": {}
+    }
+  ],
+  "metrics": {
+    "benchmark_max_drawdown": -0.564076553485972,
+    "benchmark_return": -0.341184815165,
+    "cagr": 0.013681099398555885,
+    "calmar": 0.046347102007474744,
+    "excess_return": 0.355248605165,
+    "max_drawdown": -0.2951878069172358,
+    "sharpe": 0.17848560634461472,
+    "sortino": 0.24596293938385197,
+    "total_cost": 0.0,
+    "total_return": 0.01406379000000002,
+    "tracking_error": 0.12247928776238502,
+    "turnover": 1.3675350576409742,
+    "volatility": 0.11039434331179626
+  },
+  "run": {
+    "code_commit": "0123456789abcdef0123456789abcdef01234567",
+    "config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dataset_version": "kr-etf-daily-phase0-v1",
+    "engine": "nautilustrader",
+    "engine_version": "1.231.0",
+    "id": "27dee8d0-0b93-42d7-95bb-30458e378503",
+    "job_id": "123e4567-e89b-12d3-a456-426614174002",
+    "owner_user_id": "123e4567-e89b-12d3-a456-426614174001",
+    "random_seed": 42,
+    "status": "SUCCEEDED",
+    "strategy_id": "ma200-trend",
+    "strategy_version": "1.0.0",
+    "summary_json": {
+      "cagr": 0.013681099398555885,
+      "calmar": 0.046347102007474744,
+      "currency": "KRW",
+      "end_date": "2021-01-29",
+      "final_equity": {
+        "amount": "101406379.0000",
+        "currency": "KRW"
+      },
+      "initial_equity": {
+        "amount": "100000000.0000",
+        "currency": "KRW"
+      },
+      "max_drawdown": -0.2951878069172358,
+      "n_fills": 6,
+      "n_orders": 6,
+      "sharpe": 0.17848560634461472,
+      "sortino": 0.24596293938385197,
+      "start_date": "2020-01-20",
+      "total_cost": {
+        "amount": "0.0000",
+        "currency": "KRW"
+      },
+      "total_return": 0.01406379000000002,
+      "turnover": 1.3675350576409742,
+      "volatility": 0.11039434331179626
+    },
+    "timezone": "Asia/Seoul"
+  },
+  "warnings": []
+}

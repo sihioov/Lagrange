@@ -120,14 +120,15 @@ def test_common_model_has_exactly_13_sections(valid_raw):
     assert set(result.keys()) == expected, f"unexpected sections: {set(result.keys()) - expected}"
 
 
-def test_money_is_scale4_decimal_strings(valid_raw):
+def test_money_is_scale4_domain_money(valid_raw):
     result = normalize(valid_raw)
-    assert result["summary"]["initial_equity"] == "100000000.0000"
-    assert result["summary"]["final_equity"] == "101060960.0000"
-    assert result["equity"][0]["equity"] == "100000000.0000"
-    assert result["cash"][0]["cash"] == "66649883.2000"
+    assert result["summary"]["initial_equity"] == {"amount": "100000000.0000", "currency": "KRW"}
+    assert result["summary"]["final_equity"] == {"amount": "101060960.0000", "currency": "KRW"}
+    assert result["equity"][0]["equity"] == {"amount": "100000000.0000", "currency": "KRW"}
+    assert result["cash"][0]["cash"] == {"amount": "66649883.2000", "currency": "KRW"}
     assert result["fills"][0]["price"] == "10106.0960"
-    assert result["benchmark"][1]["value"] == "102000000.0000"
+    assert result["fills"][0]["quantity"] == "3300"
+    assert result["benchmark"][1]["value"] == {"amount": "102000000.0000", "currency": "KRW"}
 
 
 def test_total_return_and_metrics_are_computed_finite(valid_raw):
@@ -232,7 +233,7 @@ def test_cash_ledger_credits_sell_notional():
         "metrics": {},
     }
     result = normalize(raw)
-    assert result["cash"][1]["cash"] == "110000000.0000"
+    assert result["cash"][1]["cash"] == {"amount": "110000000.0000", "currency": "KRW"}
 
 
 def test_publication_refused_after_integrity_failure(valid_raw):

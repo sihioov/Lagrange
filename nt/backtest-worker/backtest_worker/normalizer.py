@@ -65,6 +65,11 @@ def _fmt(raw_int: int) -> str:
     return f"{sign}{magnitude // 10 ** SCALE}.{magnitude % 10 ** SCALE:0{SCALE}d}"
 
 
+def _money(raw_int: int, currency: str = "KRW") -> dict[str, str]:
+    """Domain `Money` wire form: {"amount": "scale-4", "currency": "KRW"}."""
+    return {"amount": _fmt(raw_int), "currency": currency}
+
+
 def _metric(name: str, value: float) -> float:
     if not math.isfinite(value):
         raise NonFiniteValueError(f"metric {name} computed a non-finite value {value!r}")
@@ -89,11 +94,11 @@ class Normalizer:
             self._check_cash_ledger(raw)
 
         equity = [
-            {"ts": point["date"] + "T00:00:00Z", "equity": _fmt(point["equity_raw"])}
+            {"ts": point["date"] + "T00:00:00Z", "equity": _money(point["equity_raw"])}
             for point in raw.equity["points"]
         ]
         cash = [
-            {"ts": point["date"] + "T00:00:00Z", "cash": _fmt(point["cash_raw"])}
+            {"ts": point["date"] + "T00:00:00Z", "cash": _money(point["cash_raw"])}
             for point in raw.equity["points"]
         ]
         drawdown = self._drawdown(raw)
@@ -104,7 +109,7 @@ class Normalizer:
                 "client_order_id": o["client_order_id"],
                 "instrument": o["instrument"],
                 "side": o["side"],
-                "quantity": o["quantity"],
+                "quantity": str(o["quantity"]),
                 "order_type": o["order_type"],
                 "signal_date": o["signal_date"],
                 "created_ts": o["created_ts"],
@@ -120,24 +125,28 @@ class Normalizer:
                 "client_order_id": f["client_order_id"],
                 "instrument": f["instrument"],
                 "side": f["side"],
-                "quantity": f["quantity"],
+                "quantity": str(f["quantity"]),
                 "price": _fmt(f["price_raw"]),
                 "ts": f["ts"],
-                "commission": _fmt(f["commission_raw"]),
-                "tax": _fmt(f["tax_raw"]),
+                "commission": _money(f["commission_raw"]),
+                "tax": _money(f["tax_raw"]),
             }
             for f in raw.fills
         ]
         positions = [
-            {"date": p["date"], "instrument": p["instrument"], "quantity": p["quantity"]}
+            {"date": p["date"], "instrument": p["instrument"], "quantity": str(p["quantity"])}
             for p in raw.positions
         ]
         fees = [
-            {"ts": item["ts"] or fill_ts, "commission": _fmt(item["commission_raw"]), "tax": _fmt(item["tax_raw"])}
+            {
+                "ts": item["ts"] or fill_ts,
+                "commission": _money(item["commission_raw"]),
+                "tax": _money(item["tax_raw"]),
+            }
             for item, fill_ts in self._fee_items_with_ts(raw)
         ]
         benchmark = [
-            {"ts": point["date"] + "T00:00:00Z", "value": _fmt(point["value_raw"])}
+            {"ts": point["date"] + "T00:00:00Z", "value": _money(point["value_raw"])}
             for point in raw.benchmark["points"]
         ]
         summary, metrics = self._summary_and_metrics(raw)
@@ -292,7 +301,6 @@ class Normalizer:
         turnover = _metric("turnover", traded / avg_equity if avg_equity > 0 else 0.0)
 
         total_cost_raw = sum(f["commission_raw"] + f["tax_raw"] for f in raw.fills)
-        total_cost = _fmt(total_cost_raw)
 
         benchmark = raw.benchmark["points"]
         benchmark_return = 0.0
@@ -330,8 +338,8 @@ class Normalizer:
 
         summary = {
             "currency": "KRW",
-            "initial_equity": _fmt(initial),
-            "final_equity": _fmt(final),
+            "initial_equity": _money(initial),
+            "final_equity": _money(final),
             "total_return": total_return,
             "cagr": cagr,
             "max_drawdown": mdd,
@@ -340,7 +348,7 @@ class Normalizer:
             "sortino": sortino,
             "calmar": calmar,
             "turnover": turnover,
-            "total_cost": total_cost,
+            "total_cost": _money(total_cost_raw),
             "n_orders": len(raw.orders),
             "n_fills": len(raw.fills),
             "start_date": points[0]["date"],
@@ -377,8 +385,8 @@ class Normalizer:
             raise LedgerMismatchError("summary initial equity does not match the equity curve start")
         if result["equity"][-1]["equity"] != final:
             raise LedgerMismatchError("summary final equity does not match the equity curve end")
-        initial_value = float(initial)
-        actual = float(final) / initial_value - 1.0
+        initial_value = float(initial["amount"])
+        actual = float(final["amount"]) / initial_value - 1.0
         if abs(actual - float(result["summary"]["total_return"])) > 1e-6:
             raise LedgerMismatchError("summary total_return disagrees with the equity curve")
 
@@ -429,8 +437,8 @@ def _table_for(section: str, rows: list[dict]) -> pa.Table:
         value_column = {"equity": "equity", "cash": "cash", "fees": "commission", "benchmark": "value"}[section]
         columns = {"ts": [r["ts"] for r in rows]}
         if section == "fees":
-            columns["tax"] = [r["tax"] for r in rows]
-        columns[value_column] = [r[value_column] for r in rows]
+            columns["tax"] = [r["tax"]["amount"] for r in rows]
+        columns[value_column] = [r[value_column]["amount"] for r in rows]
         schema = pa.schema(
             [pa.field("ts", pa.string())]
             + ([pa.field("tax", pa.string())] if section == "fees" else [])
@@ -471,8 +479,8 @@ def _table_for(section: str, rows: list[dict]) -> pa.Table:
                 "quantity": [int(r["quantity"]) for r in rows],
                 "price": [r["price"] for r in rows],
                 "ts": [r["ts"] for r in rows],
-                "commission": [r["commission"] for r in rows],
-                "tax": [r["tax"] for r in rows],
+                "commission": [r["commission"]["amount"] for r in rows],
+                "tax": [r["tax"]["amount"] for r in rows],
             }
         )
     if section == "positions":

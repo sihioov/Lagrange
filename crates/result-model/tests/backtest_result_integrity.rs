@@ -4,6 +4,7 @@
 //! the `nt/backtest-worker` normalizer produces exactly what this declares.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use domain::provenance::{Engine, RandomSeed, RunProvenance};
 use domain::{
@@ -422,6 +423,26 @@ fn sell_credit_reconciles_in_cash_ledger() {
     result
         .validate()
         .expect("a sell credit must reconcile the cash ledger");
+}
+
+#[test]
+fn worker_produced_result_deserializes_and_validates() {
+    // Cross-language contract proof: the `nt/backtest-worker` normalizer
+    // produced this fixture (real isolated NT run); the Rust model must parse
+    // it and every integrity check must pass.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/result.json");
+    let json = std::fs::read_to_string(&path).unwrap();
+    let result: BacktestResult = serde_json::from_str(&json)
+        .unwrap_or_else(|error| panic!("worker result.json must deserialize: {error}"));
+    result
+        .validate()
+        .expect("worker-produced result must pass every integrity check");
+    assert_eq!(result.provenance.strategy_id.as_str(), "ma200-trend");
+    assert_eq!(result.summary.currency, Currency::KRW);
+    assert!(
+        !result.fills.is_empty(),
+        "the golden run must contain fills"
+    );
 }
 
 #[test]

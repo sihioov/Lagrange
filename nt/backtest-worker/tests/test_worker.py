@@ -84,7 +84,7 @@ def make_request(dataset: Path, run_id: str | None = None) -> dict:
         "random_seed": 42,
         "timezone": "Asia/Seoul",
         "currency": "KRW",
-        "config_sha256": "a" * 64,
+        "config_sha256": "sha256:" + "a" * 64,
         "slippage_bps": 10,
         "initial_cash": "100000000",
         "limits": {
@@ -127,7 +127,7 @@ def test_end_to_end_isolated_run_normalizes_results(tmp_path):
     assert result["provenance"]["strategy_id"] == "ma200-trend"
     assert result["provenance"]["engine"] == "nautilustrader"
     assert result["summary"]["currency"] == "KRW"
-    assert result["summary"]["initial_equity"] == "100000000.0000"
+    assert result["summary"]["initial_equity"] == {"amount": "100000000.0000", "currency": "KRW"}
     assert result["equity"][0]["ts"].endswith("T00:00:00Z")
 
     for section in (
