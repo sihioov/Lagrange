@@ -25,9 +25,11 @@
 //!   deltas and non-finite values).
 
 pub mod error;
+pub mod holdout;
 pub mod lineage;
 
 pub use error::RobustnessError;
+pub use holdout::{HoldoutBarrier, PeriodSplit, SplitResult, select_equity_series};
 pub use lineage::{
     DerivedAxis, DerivedRunRequest, LineageRegistry, PinnedContext, RunLineage,
 };

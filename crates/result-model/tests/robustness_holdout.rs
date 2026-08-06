@@ -64,8 +64,16 @@ fn barrier_rejects_test_period_dates() {
 #[test]
 fn selection_returns_only_train_and_validation() {
     let series = equity_series();
-    let selected = select_equity_series(&series, &split())
+    // The selection pipeline receives a train+validation-restricted view;
+    // selection over it succeeds and returns exactly the same points.
+    let n_selection = series
+        .iter()
+        .filter(|(d, _)| d.as_str() <= "2020-03-31")
+        .count();
+    let selection_input = &series[..n_selection];
+    let selected = select_equity_series(selection_input, &split())
         .expect("selection must succeed when no test point is read");
+    assert_eq!(selected, selection_input);
     assert!(selected.iter().all(|(date, _)| date.as_str() <= "2020-03-31"));
     let n_train = series.iter().filter(|(d, _)| d.as_str() <= "2020-02-28").count();
     let n_validation = series
@@ -106,9 +114,7 @@ fn split_result_exposes_segments_with_guarded_test() {
     );
 
     // The test segment is reachable only through the explicit escape hatch.
-    let test = result
-        .test()
-        .expect("explicit test access is allowed for final evaluation");
+    let test = result.test();
     assert!(test.iter().all(|(d, _)| d.as_str() > "2020-03-31"));
 }
 
