@@ -321,8 +321,14 @@ fn sell_credit_reconciles_in_cash_ledger() {
     let t1 = ts("2020-01-02T00:00:00Z");
     let t2 = ts("2020-02-03T00:00:00Z");
     let mut metrics = BTreeMap::new();
-    metrics.insert("total_return".to_owned(), ReportedStat::from_f64(0.10).unwrap());
-    metrics.insert("max_drawdown".to_owned(), ReportedStat::from_f64(0.0).unwrap());
+    metrics.insert(
+        "total_return".to_owned(),
+        ReportedStat::from_f64(0.10).unwrap(),
+    );
+    metrics.insert(
+        "max_drawdown".to_owned(),
+        ReportedStat::from_f64(0.0).unwrap(),
+    );
     metrics.insert("sharpe".to_owned(), ReportedStat::from_f64(0.0).unwrap());
 
     let result = BacktestResult {
@@ -345,16 +351,34 @@ fn sell_credit_reconciles_in_cash_ledger() {
             end_date: "2020-02-03".to_owned(),
         },
         equity: vec![
-            EquityPoint { ts: t1, equity: krw("100000000.0000") },
-            EquityPoint { ts: t2, equity: krw("110000000.0000") },
+            EquityPoint {
+                ts: t1,
+                equity: krw("100000000.0000"),
+            },
+            EquityPoint {
+                ts: t2,
+                equity: krw("110000000.0000"),
+            },
         ],
         drawdown: vec![
-            DrawdownPoint { ts: t1, drawdown: ReportedStat::from_f64(0.0).unwrap() },
-            DrawdownPoint { ts: t2, drawdown: ReportedStat::from_f64(0.0).unwrap() },
+            DrawdownPoint {
+                ts: t1,
+                drawdown: ReportedStat::from_f64(0.0).unwrap(),
+            },
+            DrawdownPoint {
+                ts: t2,
+                drawdown: ReportedStat::from_f64(0.0).unwrap(),
+            },
         ],
         monthly_returns: vec![
-            MonthlyReturn { month: "2020-01".to_owned(), return_: ReportedStat::from_f64(0.0).unwrap() },
-            MonthlyReturn { month: "2020-02".to_owned(), return_: ReportedStat::from_f64(0.10).unwrap() },
+            MonthlyReturn {
+                month: "2020-01".to_owned(),
+                return_: ReportedStat::from_f64(0.0).unwrap(),
+            },
+            MonthlyReturn {
+                month: "2020-02".to_owned(),
+                return_: ReportedStat::from_f64(0.10).unwrap(),
+            },
         ],
         orders: vec![],
         fills: vec![FillRecord {
@@ -371,19 +395,33 @@ fn sell_credit_reconciles_in_cash_ledger() {
         }],
         positions: vec![],
         cash: vec![
-            CashLedgerEntry { ts: t1, cash: krw("100000000.0000") },
-            CashLedgerEntry { ts: t2, cash: krw("110000000.0000") },
+            CashLedgerEntry {
+                ts: t1,
+                cash: krw("100000000.0000"),
+            },
+            CashLedgerEntry {
+                ts: t2,
+                cash: krw("110000000.0000"),
+            },
         ],
         fees: vec![],
         benchmark: vec![
-            BenchmarkPoint { ts: t1, value: krw("100000000.0000") },
-            BenchmarkPoint { ts: t2, value: krw("100000000.0000") },
+            BenchmarkPoint {
+                ts: t1,
+                value: krw("100000000.0000"),
+            },
+            BenchmarkPoint {
+                ts: t2,
+                value: krw("100000000.0000"),
+            },
         ],
         metrics,
         warnings: vec![],
         provenance: provenance(),
     };
-    result.validate().expect("a sell credit must reconcile the cash ledger");
+    result
+        .validate()
+        .expect("a sell credit must reconcile the cash ledger");
 }
 
 #[test]
