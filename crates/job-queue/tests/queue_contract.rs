@@ -27,7 +27,7 @@ use job_queue::{
     SubmitJob,
 };
 use sqlx::migrate::{MigrationType, Migrator};
-use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use sqlx::types::Uuid;
 use std::env;
 use std::error::Error;
@@ -61,7 +61,12 @@ DO $role$ BEGIN
     CREATE ROLE audit_writer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
   END IF;
 END $role$;
-GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer;
+DO $role$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin') THEN
+    CREATE ROLE admin LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
+  END IF;
+END $role$;
+GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer, admin;
 GRANT CREATE ON SCHEMA public TO migration_owner;
 "#;
 
@@ -129,6 +134,15 @@ fn up_migration_count() -> usize {
 async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn Error>> {
     let mut opts: sqlx::postgres::PgConnectOptions = url.parse()?;
     opts = opts.options([("statement_timeout", "20s")]);
+    connect_with_options(opts, max_conns).await
+}
+
+/// Connect with retries plus caller-supplied connection options (e.g. the
+/// Todo 23 RLS actor GUC `app.actor_user_id`).
+async fn connect_with_options(
+    opts: PgConnectOptions,
+    max_conns: u32,
+) -> Result<PgPool, Box<dyn Error>> {
     let mut last: Option<sqlx::Error> = None;
     for attempt in 0..6u32 {
         let connect = PgPoolOptions::new()
@@ -733,7 +747,12 @@ async fn queue_operates_under_production_roles() {
 async fn roles_body(super_url: &str, db: &str, pool: &PgPool) -> Result<(), Box<dyn Error>> {
     let owner = insert_test_user(pool, "sub-pool").await?;
 
-    let app_pool = connect_with_retry(&conn_url(super_url, "app", db), 2).await?;
+    // Todo 23 RLS: tenant reads are strict (owner = app.actor_user_id GUC), so
+    // the app-role pool must carry the actor context to act "as the owner".
+    let app_pool = {
+        let opts: PgConnectOptions = conn_url(super_url, "app", db).parse()?;
+        connect_with_options(opts.options([("app.actor_user_id", owner.to_string())]), 2).await?
+    };
     let worker_pool = connect_with_retry(&conn_url(super_url, "worker", db), 2).await?;
     let api = JobQueue::new(app_pool.clone(), None, fast_config());
     let w = JobQueue::new(worker_pool.clone(), None, fast_config());

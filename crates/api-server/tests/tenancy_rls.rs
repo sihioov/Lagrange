@@ -254,15 +254,13 @@ async fn insert_test_user(
 
 /// Run a test body on a fresh scratch database, retrying up to 3 times with a
 /// NEW database per attempt (documented relay spikes / operator restarts).
+type BoxedTenancyFuture<'a, T> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<T, Box<dyn std::error::Error>>> + 'a>,
+>;
+
 async fn run_tenancy<F, T>(label: &str, super_url: &str, body: F) -> T
 where
-    F: for<'a> Fn(
-        &'a str,
-        &'a str,
-        &'a PgPool,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<T, Box<dyn std::error::Error>>> + 'a>,
-    >,
+    F: for<'a> Fn(&'a str, &'a str, &'a PgPool) -> BoxedTenancyFuture<'a, T>,
 {
     let mut last: Option<String> = None;
     for attempt in 0..3u32 {
@@ -893,7 +891,7 @@ async fn tenancy_admin_pathway_is_explicit_and_audited() {
             // Audit rows: exactly two admin.jobs.list_all entries, the Owner
             // success and the Member denial, with actor/time/target/reason/
             // correlation captured.
-            let rows: Vec<(
+            type AuditRow = (
                 String,
                 String,
                 String,
@@ -901,7 +899,8 @@ async fn tenancy_admin_pathway_is_explicit_and_audited() {
                 Option<String>,
                 Option<String>,
                 String,
-            )> = sqlx::query_as(
+            );
+            let rows: Vec<AuditRow> = sqlx::query_as(
                 "SELECT action, actor_role, target_type, target_id, reason, \
                             correlation_id, created_at::text \
                      FROM audit_logs WHERE action = 'admin.jobs.list_all' ORDER BY created_at",

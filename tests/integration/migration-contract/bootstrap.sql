@@ -49,7 +49,15 @@ DO $role$ BEGIN
   END IF;
 END $role$;
 
+-- admin (Todo 23): dedicated read-only admin role for the explicit, audited
+-- Owner admin pathway (0010 grants SELECT on tenant/shared/audit tables).
+DO $role$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin') THEN
+    CREATE ROLE admin LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
+  END IF;
+END $role$;
+
 -- migration_owner performs DDL via migrations; serving roles receive USAGE but
 -- never CREATE, so they cannot create objects at schema level.
-GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer;
+GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer, admin;
 GRANT CREATE ON SCHEMA public TO migration_owner;

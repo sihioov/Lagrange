@@ -135,6 +135,29 @@ fn conn_url(super_url: &str, role: &str, db: &str) -> String {
     }
 }
 
+/// A pool whose connections carry an explicit RLS actor context
+/// (`app.actor_user_id` startup option). Since migration 0010 forces row-level
+/// security on every tenant table, tenant reads (which are STRICT: the policy
+/// requires `owner = current_setting('app.actor_user_id')`) only return rows
+/// when the connection carries the actor GUC. The migration owner may touch
+/// tenant rows while impersonating a user; without the GUC, FORCE RLS denies
+/// it (hazard proven by the Todo 23 tenancy suite).
+async fn actor_pool(
+    super_url: &str,
+    db: &str,
+    role: &str,
+    user_id: &str,
+) -> Result<PgPool, Box<dyn Error>> {
+    let opts: sqlx::postgres::PgConnectOptions = conn_url(super_url, role, db)
+        .parse()
+        .map_err(Box::<dyn Error>::from)?;
+    PgPoolOptions::new()
+        .max_connections(3)
+        .connect_with(opts.options([("app.actor_user_id", user_id.to_string())]))
+        .await
+        .map_err(Box::<dyn Error>::from)
+}
+
 /// Scratch-database name, unique per call. Both tests share one process and
 /// run in PARALLEL test threads, so pid+millis alone can collide (two
 /// `CREATE DATABASE` of the same name -> duplicate key on
@@ -192,7 +215,7 @@ async fn create_contract_db(super_url: &str) -> Result<(String, PgPool), Box<dyn
     sqlx::raw_sql(BOOTSTRAP_SQL).execute(&super_new).await?;
     sqlx::raw_sql(ddl_for(
         &db,
-        "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, audit_writer",
+        "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, audit_writer, admin",
     ))
     .execute(&super_new)
     .await?;
@@ -215,9 +238,12 @@ async fn drop_contract_db(super_url: &str, db: &str) -> Result<(), Box<dyn Error
 }
 
 async fn role_pool(super_url: &str, db: &str, role: &str) -> Result<PgPool, Box<dyn Error>> {
+    let opts: sqlx::postgres::PgConnectOptions = conn_url(super_url, role, db)
+        .parse()
+        .map_err(Box::<dyn Error>::from)?;
     Ok(PgPoolOptions::new()
         .max_connections(2)
-        .connect(&conn_url(super_url, role, db))
+        .connect_with(opts)
         .await?)
 }
 
@@ -334,7 +360,7 @@ async fn full_contract_body(
         owners.iter().all(|o| o == "migration_owner"),
         "all tables must be owned by migration_owner, got {owners:?}"
     );
-    for role in ["app", "worker", "audit_writer"] {
+    for role in ["app", "worker", "audit_writer", "admin"] {
         let bypass: bool =
             sqlx::query_scalar::<_, bool>("SELECT rolbypassrls FROM pg_roles WHERE rolname = $1")
                 .bind(role)
@@ -353,6 +379,9 @@ async fn full_contract_body(
     )
     .fetch_one(owner)
     .await?;
+    // Tenant DML runs under an explicit actor context (RLS policies are
+    // strict for writes too since migration 0010).
+    let owner_actor = actor_pool(super_url, db, "migration_owner", &uid.to_string()).await?;
     for (i, status) in PUBLIC_JOB_STATUSES.iter().enumerate() {
         sqlx::query(
             "INSERT INTO jobs (owner_user_id, job_type, status, priority, payload_json, \
@@ -361,14 +390,14 @@ async fn full_contract_body(
         .bind(uid)
         .bind(status)
         .bind(format!("idem-{i}"))
-        .execute(owner)
+        .execute(&owner_actor)
         .await?;
     }
     let sixth = sqlx::query(
         "INSERT INTO jobs (owner_user_id, job_type, status) VALUES ($1, 'backtest', 'ORPHANED')",
     )
     .bind(uid)
-    .execute(owner)
+    .execute(&owner_actor)
     .await
     .unwrap_err();
     assert_eq!(
@@ -398,7 +427,7 @@ async fn full_contract_body(
     // ------------------------------------------------------------------
     let job_id: Uuid =
         sqlx::query_scalar::<_, Uuid>("SELECT id FROM jobs ORDER BY created_at LIMIT 1")
-            .fetch_one(owner)
+            .fetch_one(&owner_actor)
             .await?;
     sqlx::query(
         "INSERT INTO job_attempts (job_id, attempt_no, outcome, claimed_by) \
@@ -436,13 +465,17 @@ async fn full_contract_body(
     // 6. App role: functional on tenant data, denied everything else.
     // ------------------------------------------------------------------
     let app = role_pool(super_url, db, "app").await?;
+    // Tenant writes that RETURN rows run under an explicit actor context
+    // (Todo 23 RLS policies are strict when a GUC is present); the app pool
+    // acts "as the owner" for the positive tenant assertions.
+    let app_actor = actor_pool(super_url, db, "app", &uid.to_string()).await?;
     // Positive: app serves its owner's tenant data.
     let acc: Uuid = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO accounts (owner_user_id, account_type, name, currency) \
          VALUES ($1, 'PAPER', 'qa-paper', 'KRW') RETURNING id",
     )
     .bind(uid)
-    .fetch_one(&app)
+    .fetch_one(&app_actor)
     .await?;
     assert!(
         acc.as_bytes().len() == 16,
@@ -539,7 +572,7 @@ async fn full_contract_body(
         "INSERT INTO jobs (owner_user_id, job_type, status) VALUES ($1, 'backtest', 'ORPHANED')",
     )
     .bind(uid)
-    .execute(&app)
+    .execute(&app_actor)
     .await
     .unwrap_err();
     assert_eq!(
@@ -673,11 +706,13 @@ async fn full_contract_body(
 
     // Large curves/orders/fills live in Parquet with DB manifests.
     let bad_artifact_hash = sqlx::query(
-        "INSERT INTO result_artifacts (backtest_run_id, artifact_type, parquet_path, row_count, \
-         sha256, size_bytes) VALUES ('00000000-0000-0000-0000-000000000001', 'EQUITY_CURVE', \
+        "INSERT INTO result_artifacts (backtest_run_id, owner_user_id, artifact_type, \
+         parquet_path, row_count, sha256, size_bytes) \
+         VALUES ('00000000-0000-0000-0000-000000000001', $1, 'EQUITY_CURVE', \
          'data/artifacts/qa/1.parquet', 0, 'zz', 0)",
     )
-    .execute(owner)
+    .bind(uid)
+    .execute(&owner_actor)
     .await
     .unwrap_err();
     assert_eq!(
@@ -698,7 +733,7 @@ async fn full_contract_body(
     .bind(uid)
     .bind(&sess_hash)
     .bind(&csrf_hash)
-    .execute(owner)
+    .execute(&owner_actor)
     .await?;
     let dup_session = sqlx::query(
         "INSERT INTO web_sessions (user_id, session_hash, csrf_hash, expires_at) \
@@ -707,7 +742,7 @@ async fn full_contract_body(
     .bind(uid)
     .bind(&sess_hash)
     .bind(&csrf_hash)
-    .execute(owner)
+    .execute(&owner_actor)
     .await
     .unwrap_err();
     assert_eq!(
@@ -775,7 +810,7 @@ async fn revert_and_rerun_in_disposable_db() {
 
 async fn revert_and_rerun_body(
     super_url: &str,
-    _db: &str,
+    db: &str,
     owner: &PgPool,
 ) -> Result<(), Box<dyn Error>> {
     let expected = up_migration_count();
@@ -827,11 +862,14 @@ async fn revert_and_rerun_body(
     )
     .fetch_one(owner)
     .await?;
+    // The RLS policy check precedes constraint evaluation (PG18), so the
+    // ORPHANED probe runs under an actor context to reach the CHECK.
+    let owner_actor = actor_pool(super_url, db, "migration_owner", &uid.to_string()).await?;
     let sixth = sqlx::query(
         "INSERT INTO jobs (owner_user_id, job_type, status) VALUES ($1, 'backtest', 'ORPHANED')",
     )
     .bind(uid)
-    .execute(owner)
+    .execute(&owner_actor)
     .await
     .unwrap_err();
     assert_eq!(

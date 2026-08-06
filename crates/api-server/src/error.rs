@@ -34,10 +34,10 @@ pub enum TenancyError {
 impl TenancyError {
     /// Classify a `sqlx` error against the RLS policy matrix.
     pub fn from_sqlx(e: sqlx::Error) -> Self {
-        if let sqlx::Error::Database(db) = &e {
-            if db.code().as_deref() == Some("42501") {
-                return Self::Forbidden;
-            }
+        if let sqlx::Error::Database(db) = &e
+            && db.code().as_deref() == Some("42501")
+        {
+            return Self::Forbidden;
         }
         if matches!(e, sqlx::Error::RowNotFound) {
             return Self::NotFound;
