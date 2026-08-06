@@ -3,12 +3,16 @@
 //! Every robustness test file includes this module via `mod common;`; the
 //! helpers build deterministic, `BacktestResult::validate`-clean fixtures so
 //! tests focus on the robustness contract rather than fixture plumbing.
+//! Each test binary uses a different subset of the helpers, so dead-code
+//! warnings are suppressed here by design.
+
+#![allow(dead_code)]
 
 use domain::provenance::{Engine, RandomSeed, RunProvenance};
 use domain::version::{SemVer, StrategyVersion};
-use domain::{FixedPoint,
-    CodeCommit, ContentHash, Currency, DatasetVersionId, InstrumentId, Money, Price, Quantity,
-    ReportedStat, StrategyId, UtcTimestamp, Zone,
+use domain::{
+    CodeCommit, ContentHash, Currency, DatasetVersionId, FixedPoint, InstrumentId, Money, Price,
+    Quantity, ReportedStat, StrategyId, UtcTimestamp, Zone,
 };
 
 use result_model::backtest::{
@@ -208,7 +212,8 @@ pub fn golden_result() -> BacktestResult {
         .iter()
         .map(|(day, raw, _)| EquityPoint {
             ts: ts(day),
-            equity: Money::from_fixed(FixedPoint::from_i128(*raw, 4).unwrap(), Currency::KRW).unwrap(),
+            equity: Money::from_fixed(FixedPoint::from_i128(*raw, 4).unwrap(), Currency::KRW)
+                .unwrap(),
         })
         .collect();
 
@@ -216,36 +221,33 @@ pub fn golden_result() -> BacktestResult {
         .iter()
         .map(|(day, _, raw)| CashLedgerEntry {
             ts: ts(day),
-            cash: Money::from_fixed(FixedPoint::from_i128(*raw, 4).unwrap(), Currency::KRW).unwrap(),
+            cash: Money::from_fixed(FixedPoint::from_i128(*raw, 4).unwrap(), Currency::KRW)
+                .unwrap(),
         })
         .collect();
 
     // point-in-time marks (last fill price per instrument up to each date)
     let positions = [
-        (
-            "2020-01-02",
-            vec![("069500.KRX", 200_i128)],
-        ),
-        (
-            "2020-01-03",
-            vec![("069500.KRX", 200), ("229200.KRX", 150)],
-        ),
+        ("2020-01-02", vec![("069500.KRX", 200_i128)]),
+        ("2020-01-03", vec![("069500.KRX", 200), ("229200.KRX", 150)]),
         (
             "2020-01-06",
-            vec![("069500.KRX", 200), ("114260.KRX", 100), ("229200.KRX", 150)],
+            vec![
+                ("069500.KRX", 200),
+                ("114260.KRX", 100),
+                ("229200.KRX", 150),
+            ],
         ),
         (
             "2020-01-09",
-            vec![("069500.KRX", 100), ("114260.KRX", 100), ("229200.KRX", 150)],
+            vec![
+                ("069500.KRX", 100),
+                ("114260.KRX", 100),
+                ("229200.KRX", 150),
+            ],
         ),
-        (
-            "2020-01-14",
-            vec![("069500.KRX", 100), ("114260.KRX", 100)],
-        ),
-        (
-            "2020-01-16",
-            vec![("069500.KRX", 100)],
-        ),
+        ("2020-01-14", vec![("069500.KRX", 100), ("114260.KRX", 100)]),
+        ("2020-01-16", vec![("069500.KRX", 100)]),
     ];
 
     let positions: Vec<PositionSnapshot> = positions
@@ -287,11 +289,14 @@ pub fn golden_result() -> BacktestResult {
     // reported metrics (finite only)
     let days = 15.0;
     let cagr = (final_raw / initial_f64).powf(365.25 / days) - 1.0;
-    let daily_returns: Vec<f64> = equity.windows(2).map(|w| {
-        let a = w[0].equity.amount().bits() as f64 / 10_000.0;
-        let b = w[1].equity.amount().bits() as f64 / 10_000.0;
-        b / a - 1.0
-    }).collect();
+    let daily_returns: Vec<f64> = equity
+        .windows(2)
+        .map(|w| {
+            let a = w[0].equity.amount().bits() as f64 / 10_000.0;
+            let b = w[1].equity.amount().bits() as f64 / 10_000.0;
+            b / a - 1.0
+        })
+        .collect();
     let mean = daily_returns.iter().sum::<f64>() / daily_returns.len() as f64;
     let variance = daily_returns
         .iter()
@@ -299,7 +304,11 @@ pub fn golden_result() -> BacktestResult {
         .sum::<f64>()
         / daily_returns.len() as f64;
     let vol = variance.sqrt() * 252.0f64.sqrt();
-    let sharpe = if vol > 0.0 { mean / vol * 252.0f64.sqrt() } else { 0.0 };
+    let sharpe = if vol > 0.0 {
+        mean / vol * 252.0f64.sqrt()
+    } else {
+        0.0
+    };
     let downside = daily_returns
         .iter()
         .map(|r| if *r < 0.0 { r * r } else { 0.0 })
@@ -323,9 +332,7 @@ pub fn golden_result() -> BacktestResult {
     let turnover = if mean_equity > 0.0 {
         fills
             .iter()
-            .map(|f| {
-                f.quantity.amount().bits() as f64 * f.price.amount().bits() as f64 / 10_000.0
-            })
+            .map(|f| f.quantity.amount().bits() as f64 * f.price.amount().bits() as f64 / 10_000.0)
             .sum::<f64>()
             / mean_equity
     } else {
@@ -366,7 +373,10 @@ pub fn golden_result() -> BacktestResult {
     .collect();
 
     let benchmark = vec![
-        BenchmarkPoint { ts: ts("2020-01-01"), value: initial },
+        BenchmarkPoint {
+            ts: ts("2020-01-01"),
+            value: initial,
+        },
         BenchmarkPoint {
             ts: ts("2020-01-08"),
             value: krw("10050000.0000"),

@@ -10,9 +10,7 @@ mod common;
 
 use std::path::Path;
 
-use result_model::robustness::{
-    CoreEvidenceBundle, evaluate_core_release, load_golden_set,
-};
+use result_model::robustness::{CoreEvidenceBundle, evaluate_core_release, load_golden_set};
 
 /// The committed golden area (relative to this crate: repo/tests/golden/robustness).
 fn golden_dir() -> std::path::PathBuf {
@@ -25,11 +23,10 @@ fn golden_dir() -> std::path::PathBuf {
 }
 
 #[test]
-fn committed_five_strategy_golden_gate_approves() {
+fn robustness_committed_five_strategy_golden_gate_approves() {
     let base_dir = golden_dir();
-    let (golden_set, artifacts) =
-        load_golden_set(&base_dir, &base_dir.join("golden-set.json"))
-            .expect("committed golden-set.json must parse and match the committed artifacts");
+    let (golden_set, artifacts) = load_golden_set(&base_dir, &base_dir.join("golden-set.json"))
+        .expect("committed golden-set.json must parse and match the committed artifacts");
 
     // The gate checks the five canonical strategies + seven artifacts.
     assert_eq!(golden_set.golden_id, "kr-etf-five-strategies-v1");
@@ -66,25 +63,25 @@ fn committed_five_strategy_golden_gate_approves() {
             .collect::<Vec<_>>()
     );
     // Every artifact hash was checked individually.
-    assert!(verdict
-        .items
-        .iter()
-        .filter(|item| item.id.starts_with("golden_artifact:"))
-        .count()
-        >= 35);
+    assert!(
+        verdict
+            .items
+            .iter()
+            .filter(|item| item.id.starts_with("golden_artifact:"))
+            .count()
+            >= 35
+    );
 }
 
 #[test]
-fn committed_golden_delta_mutation_blocks_the_gate() {
+fn robustness_committed_golden_delta_mutation_blocks_the_gate() {
     // Mutating one artifact byte is an unapproved golden delta: the loader
     // must refuse with the quoted expected-vs-actual diff. The probe runs
     // against a COPY so it can never race the approval test or dirty the
     // committed tree.
     let base_dir = golden_dir();
-    let scratch = std::env::temp_dir().join(format!(
-        "lagrange-golden-probe-{}",
-        std::process::id()
-    ));
+    let scratch =
+        std::env::temp_dir().join(format!("lagrange-golden-probe-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).expect("create scratch dir");
     copy_tree(&base_dir, &scratch);
@@ -100,8 +97,14 @@ fn committed_golden_delta_mutation_blocks_the_gate() {
     let error = load_golden_set(&scratch, &scratch.join("golden-set.json"))
         .expect_err("a mutated artifact must fail the golden loader");
     let detail = error.to_string();
-    assert!(detail.contains("buy_and_hold/fills"), "diff must name the artifact: {detail}");
-    assert!(detail.contains("expected") && detail.contains("got"), "diff must be quoted: {detail}");
+    assert!(
+        detail.contains("buy_and_hold/fills"),
+        "diff must name the artifact: {detail}"
+    );
+    assert!(
+        detail.contains("expected") && detail.contains("got"),
+        "diff must be quoted: {detail}"
+    );
     let _ = std::fs::remove_dir_all(&scratch);
 }
 

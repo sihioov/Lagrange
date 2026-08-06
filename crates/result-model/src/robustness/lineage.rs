@@ -173,7 +173,11 @@ impl LineageRegistry {
         let pinned = PinnedContext::from_provenance(&request.derived_provenance);
 
         let pin_checks: [(&'static str, &str, &str); 5] = [
-            ("strategy_id", &parent_pinned.strategy_id, &pinned.strategy_id),
+            (
+                "strategy_id",
+                &parent_pinned.strategy_id,
+                &pinned.strategy_id,
+            ),
             (
                 "strategy_version",
                 &parent_pinned.strategy_version,
@@ -185,7 +189,11 @@ impl LineageRegistry {
                 &pinned.dataset_version,
             ),
             ("engine", &parent_pinned.engine, &pinned.engine),
-            ("engine_version", &parent_pinned.engine_version, &pinned.engine_version),
+            (
+                "engine_version",
+                &parent_pinned.engine_version,
+                &pinned.engine_version,
+            ),
         ];
         for (field, parent_value, derived_value) in pin_checks {
             if parent_value != derived_value {

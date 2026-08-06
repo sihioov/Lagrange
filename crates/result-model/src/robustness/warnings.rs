@@ -21,10 +21,10 @@ use std::collections::BTreeMap;
 use domain::ReportedStat;
 use serde_json::json;
 
+use crate::Warning;
 use crate::backtest::{BacktestResult, OrderSide};
 use crate::robustness::RobustnessError;
 use crate::robustness::benchmark::{RECENT_WINDOW_SESSIONS, compare_benchmark};
-use crate::Warning;
 
 /// Top-trade concentration threshold (top-3 |PnL| share above this warns).
 pub const TOP_TRADE_CONCENTRATION_THRESHOLD: f64 = 0.5;
@@ -35,11 +35,7 @@ pub const SUDDEN_CHANGE_THRESHOLD: f64 = 0.10;
 /// How many top trades the concentration metric examines.
 pub const TOP_TRADES: usize = 3;
 
-fn warning(
-    code: &str,
-    message: impl Into<String>,
-    details: serde_json::Value,
-) -> Warning {
+fn warning(code: &str, message: impl Into<String>, details: serde_json::Value) -> Warning {
     Warning::new(code, message, crate::WarningSeverity::Warning).with_details(details)
 }
 
@@ -140,7 +136,10 @@ pub fn year_concentration_warning(result: &BacktestResult) -> Option<Warning> {
             .collect();
         return Some(warning(
             "year_concentration",
-            format!("year {worst_year} carries {:.1}% of the total yearly contribution", share * 100.0),
+            format!(
+                "year {worst_year} carries {:.1}% of the total yearly contribution",
+                share * 100.0
+            ),
             json!({
                 "max_year_share": share,
                 "worst_year": worst_year,
@@ -153,10 +152,7 @@ pub fn year_concentration_warning(result: &BacktestResult) -> Option<Warning> {
 
 /// `recent_degradation` warning when the recent window underperforms the
 /// benchmark (FR-ROB-005).
-pub fn recent_degradation_warning(
-    result: &BacktestResult,
-    benchmark_id: &str,
-) -> Option<Warning> {
+pub fn recent_degradation_warning(result: &BacktestResult, benchmark_id: &str) -> Option<Warning> {
     let comparison = compare_benchmark(result, benchmark_id).ok()?;
     if comparison.recent_excess.value() < 0.0 {
         return Some(warning(
@@ -208,11 +204,8 @@ pub fn analyze_neighborhood(
     }
     let returns: Vec<f64> = points.iter().map(|(_, r)| r.value()).collect();
     let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-    let variance = returns
-        .iter()
-        .map(|r| (r - mean) * (r - mean))
-        .sum::<f64>()
-        / returns.len() as f64;
+    let variance =
+        returns.iter().map(|r| (r - mean) * (r - mean)).sum::<f64>() / returns.len() as f64;
     let dispersion = variance.sqrt();
     let max_deviation = returns
         .iter()
@@ -225,9 +218,7 @@ pub fn analyze_neighborhood(
         if jump > SUDDEN_CHANGE_THRESHOLD {
             sudden_change = Some(warning(
                 "performance_sudden_change",
-                format!(
-                    "performance jumps {jump:.4} between adjacent parameter deltas"
-                ),
+                format!("performance jumps {jump:.4} between adjacent parameter deltas"),
                 json!({
                     "from_delta": pair[0].0,
                     "to_delta": pair[1].0,
@@ -249,7 +240,10 @@ pub fn analyze_neighborhood(
     Ok(NeighborhoodAnalysis {
         points: points
             .into_iter()
-            .map(|(delta, total_return)| NeighborhoodPoint { delta, total_return })
+            .map(|(delta, total_return)| NeighborhoodPoint {
+                delta,
+                total_return,
+            })
             .collect(),
         mean_return: stat(mean)?,
         dispersion: stat(dispersion)?,

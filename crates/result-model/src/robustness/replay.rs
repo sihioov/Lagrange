@@ -19,12 +19,12 @@ use std::collections::BTreeMap;
 
 use domain::{Currency, FixedPoint, InstrumentId, Money, UtcTimestamp};
 
+use crate::Warning;
 use crate::backtest::{
     BacktestResult, BacktestSummary, BenchmarkPoint, CashLedgerEntry, DrawdownPoint, EquityPoint,
     FeeEntry, FillRecord, MonthlyReturn, OrderRecord, OrderSide, PositionSnapshot,
 };
 use crate::robustness::RobustnessError;
-use crate::Warning;
 
 /// Inputs of a deterministic replay.
 #[derive(Debug, Clone)]
@@ -79,11 +79,14 @@ pub fn replay(spec: ReplaySpec) -> Result<BacktestResult, RobustnessError> {
 
     for (fill, fee) in spec.fills.iter().zip(spec.fees.iter()) {
         let date = fill.ts.to_rfc3339()[..10].to_owned();
-        let notional = raw4(&fill.quantity.checked_mul_price(&fill.price, spec.currency).map_err(
-            |e| RobustnessError::Replay {
-                detail: format!("notional for {}: {e}", fill.fill_id),
-            },
-        )?);
+        let notional = raw4(
+            &fill
+                .quantity
+                .checked_mul_price(&fill.price, spec.currency)
+                .map_err(|e| RobustnessError::Replay {
+                    detail: format!("notional for {}: {e}", fill.fill_id),
+                })?,
+        );
         let fee_total = raw4(&fee.commission) + raw4(&fee.tax);
         let delta = match fill.side {
             OrderSide::Buy => -notional - fee_total,
@@ -235,9 +238,12 @@ fn raw4(money: &Money) -> i128 {
 }
 
 fn money_from_raw(raw: i128, currency: Currency) -> Result<Money, RobustnessError> {
-    Money::from_fixed(FixedPoint::from_i128(raw, 4).map_err(|e| RobustnessError::Replay {
-        detail: format!("money from raw: {e}"),
-    })?, currency)
+    Money::from_fixed(
+        FixedPoint::from_i128(raw, 4).map_err(|e| RobustnessError::Replay {
+            detail: format!("money from raw: {e}"),
+        })?,
+        currency,
+    )
     .map_err(|e| RobustnessError::Replay {
         detail: format!("money from raw: {e}"),
     })
@@ -299,11 +305,11 @@ fn monthly_returns(equity: &[EquityPoint]) -> Result<Vec<MonthlyReturn>, Robustn
     for point in equity {
         let month = point.ts.to_rfc3339()[..7].to_owned();
         let value = raw4(&point.equity) as f64 / 10_000.0;
-        if let Some((last_month, last_value)) = monthly.last_mut() {
-            if *last_month == month {
-                *last_value = value;
-                continue;
-            }
+        if let Some((last_month, last_value)) = monthly.last_mut()
+            && *last_month == month
+        {
+            *last_value = value;
+            continue;
         }
         monthly.push((month, value));
     }
@@ -330,16 +336,12 @@ fn build_summary(
     currency: Currency,
     n_orders: usize,
 ) -> Result<BacktestSummary, RobustnessError> {
-    let first = equity
-        .first()
-        .ok_or_else(|| RobustnessError::EmptySeries {
-            what: "equity".to_owned(),
-        })?;
-    let last = equity
-        .last()
-        .ok_or_else(|| RobustnessError::EmptySeries {
-            what: "equity".to_owned(),
-        })?;
+    let first = equity.first().ok_or_else(|| RobustnessError::EmptySeries {
+        what: "equity".to_owned(),
+    })?;
+    let last = equity.last().ok_or_else(|| RobustnessError::EmptySeries {
+        what: "equity".to_owned(),
+    })?;
     let initial = raw4(&first.equity) as f64 / 10_000.0;
     let final_value = raw4(&last.equity) as f64 / 10_000.0;
     if initial <= 0.0 {
@@ -358,10 +360,11 @@ fn build_summary(
     }
 
     let days = match (equity.first(), equity.last()) {
-        (Some(first_point), Some(last_point)) => {
-            day_span(&first_point.ts.to_rfc3339()[..10], &last_point.ts.to_rfc3339()[..10])
-                .max(1) as f64
-        }
+        (Some(first_point), Some(last_point)) => day_span(
+            &first_point.ts.to_rfc3339()[..10],
+            &last_point.ts.to_rfc3339()[..10],
+        )
+        .max(1) as f64,
         _ => 1.0,
     };
     let cagr = (final_value / initial).powf(365.25 / days) - 1.0;
@@ -396,15 +399,19 @@ fn build_summary(
     } else {
         0.0
     };
-    let mean_equity =
-        equity.iter().map(|p| raw4(&p.equity) as f64 / 10_000.0).sum::<f64>() / equity.len() as f64;
+    let mean_equity = equity
+        .iter()
+        .map(|p| raw4(&p.equity) as f64 / 10_000.0)
+        .sum::<f64>()
+        / equity.len() as f64;
     let mut turnover_notional = 0_i128;
     for fill in fills {
-        let notional = fill.quantity.checked_mul_price(&fill.price, currency).map_err(|e| {
-            RobustnessError::Replay {
+        let notional = fill
+            .quantity
+            .checked_mul_price(&fill.price, currency)
+            .map_err(|e| RobustnessError::Replay {
                 detail: format!("turnover notional: {e}"),
-            }
-        })?;
+            })?;
         turnover_notional += raw4(&notional);
     }
     let turnover = if mean_equity > 0.0 {
@@ -413,9 +420,9 @@ fn build_summary(
         0.0
     };
 
-    let total_cost = fees.iter().fold(0_i128, |acc, f| {
-        acc + raw4(&f.commission) + raw4(&f.tax)
-    });
+    let total_cost = fees
+        .iter()
+        .fold(0_i128, |acc, f| acc + raw4(&f.commission) + raw4(&f.tax));
     let stat = |v: f64| {
         domain::ReportedStat::from_f64(v).map_err(|e| RobustnessError::NonFinite {
             field: format!("summary metric: {e}"),
@@ -437,8 +444,14 @@ fn build_summary(
         total_cost: money_from_raw(total_cost, currency)?,
         n_orders: n_orders as u64,
         n_fills: fills.len() as u64,
-        start_date: equity.first().map(|p| p.ts.to_rfc3339()[..10].to_owned()).unwrap_or_default(),
-        end_date: equity.last().map(|p| p.ts.to_rfc3339()[..10].to_owned()).unwrap_or_default(),
+        start_date: equity
+            .first()
+            .map(|p| p.ts.to_rfc3339()[..10].to_owned())
+            .unwrap_or_default(),
+        end_date: equity
+            .last()
+            .map(|p| p.ts.to_rfc3339()[..10].to_owned())
+            .unwrap_or_default(),
     })
 }
 

@@ -97,10 +97,7 @@ pub struct SplitResult {
 
 impl SplitResult {
     /// Partitions the series into train/validation/test.
-    pub fn new(
-        series: &[(String, i64)],
-        split: &PeriodSplit,
-    ) -> Result<Self, RobustnessError> {
+    pub fn new(series: &[(String, i64)], split: &PeriodSplit) -> Result<Self, RobustnessError> {
         split.validate()?;
         let mut train = Vec::new();
         let mut validation = Vec::new();

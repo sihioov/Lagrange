@@ -11,7 +11,7 @@ mod common;
 use domain::{Currency, Money};
 
 use result_model::backtest::{BacktestResult, BenchmarkPoint};
-use result_model::robustness::{BenchmarkComparison, RobustnessError, compare_benchmark};
+use result_model::robustness::{RobustnessError, compare_benchmark};
 
 fn money(amount: &str) -> Money {
     Money::parse(amount, Currency::KRW).unwrap()
@@ -37,7 +37,7 @@ fn result_with_daily_benchmark(flat: bool) -> BacktestResult {
 }
 
 #[test]
-fn benchmark_comparison_reports_expected_metrics() {
+fn robustness_benchmark_comparison_reports_expected_metrics() {
     let result = result_with_daily_benchmark(false);
     let comparison = compare_benchmark(&result, "069500.KRX")
         .expect("comparison with an aligned benchmark must succeed");
@@ -53,10 +53,7 @@ fn benchmark_comparison_reports_expected_metrics() {
     let expected_benchmark = 9_959_400.0 / 9_900_000.0 - 1.0;
     assert!((comparison.benchmark_total_return.value() - expected_benchmark).abs() < 1e-9);
     assert!(
-        (comparison.excess_return.value()
-            - (expected_strategy - expected_benchmark))
-            .abs()
-            < 1e-9
+        (comparison.excess_return.value() - (expected_strategy - expected_benchmark)).abs() < 1e-9
     );
     assert!(comparison.tracking_error.value() >= 0.0);
     assert!(comparison.win_rate.value() >= 0.0 && comparison.win_rate.value() <= 1.0);
@@ -65,7 +62,7 @@ fn benchmark_comparison_reports_expected_metrics() {
 }
 
 #[test]
-fn benchmark_missing_is_a_typed_error() {
+fn robustness_benchmark_missing_is_a_typed_error() {
     let mut result = common::golden_result();
     result.benchmark.clear();
     let error = compare_benchmark(&result, "069500.KRX")
@@ -74,7 +71,7 @@ fn benchmark_missing_is_a_typed_error() {
 }
 
 #[test]
-fn benchmark_comparison_is_deterministic() {
+fn robustness_benchmark_comparison_is_deterministic() {
     let a = result_with_daily_benchmark(true);
     let b = result_with_daily_benchmark(true);
     let ca = compare_benchmark(&a, "069500.KRX").unwrap();
@@ -83,7 +80,7 @@ fn benchmark_comparison_is_deterministic() {
 }
 
 #[test]
-fn flat_benchmark_exposes_underperformance_and_recent_excess() {
+fn robustness_flat_benchmark_exposes_underperformance_and_recent_excess() {
     let result = result_with_daily_benchmark(true);
     let comparison = compare_benchmark(&result, "069500.KRX").unwrap();
 
@@ -97,7 +94,7 @@ fn flat_benchmark_exposes_underperformance_and_recent_excess() {
 }
 
 #[test]
-fn empty_equity_is_a_typed_error() {
+fn robustness_empty_equity_is_a_typed_error() {
     let mut result = common::golden_result();
     result.equity.clear();
     let error = compare_benchmark(&result, "069500.KRX")

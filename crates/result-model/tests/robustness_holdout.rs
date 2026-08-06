@@ -45,14 +45,20 @@ fn equity_series() -> Vec<(String, i64)> {
 }
 
 #[test]
-fn barrier_rejects_test_period_dates() {
+fn robustness_barrier_rejects_test_period_dates() {
     let barrier = HoldoutBarrier::new(&split());
-    assert!(barrier.guard("2020-02-28").is_ok(), "train end is selectable");
-    assert!(barrier.guard("2020-03-31").is_ok(), "validation end is selectable");
-
-    let error = barrier.guard("2020-04-01").expect_err(
-        "the final test period must NEVER be readable during selection (FR-ROB-001)",
+    assert!(
+        barrier.guard("2020-02-28").is_ok(),
+        "train end is selectable"
     );
+    assert!(
+        barrier.guard("2020-03-31").is_ok(),
+        "validation end is selectable"
+    );
+
+    let error = barrier
+        .guard("2020-04-01")
+        .expect_err("the final test period must NEVER be readable during selection (FR-ROB-001)");
     match error {
         RobustnessError::HoldoutViolation { date } => {
             assert_eq!(date, "2020-04-01");
@@ -62,7 +68,7 @@ fn barrier_rejects_test_period_dates() {
 }
 
 #[test]
-fn selection_returns_only_train_and_validation() {
+fn robustness_selection_returns_only_train_and_validation() {
     let series = equity_series();
     // The selection pipeline receives a train+validation-restricted view;
     // selection over it succeeds and returns exactly the same points.
@@ -74,8 +80,15 @@ fn selection_returns_only_train_and_validation() {
     let selected = select_equity_series(selection_input, &split())
         .expect("selection must succeed when no test point is read");
     assert_eq!(selected, selection_input);
-    assert!(selected.iter().all(|(date, _)| date.as_str() <= "2020-03-31"));
-    let n_train = series.iter().filter(|(d, _)| d.as_str() <= "2020-02-28").count();
+    assert!(
+        selected
+            .iter()
+            .all(|(date, _)| date.as_str() <= "2020-03-31")
+    );
+    let n_train = series
+        .iter()
+        .filter(|(d, _)| d.as_str() <= "2020-02-28")
+        .count();
     let n_validation = series
         .iter()
         .filter(|(d, _)| d.as_str() > "2020-02-28" && d.as_str() <= "2020-03-31")
@@ -84,7 +97,7 @@ fn selection_returns_only_train_and_validation() {
 }
 
 #[test]
-fn selection_with_test_period_read_is_rejected() {
+fn robustness_selection_with_test_period_read_is_rejected() {
     let series = equity_series();
     // A (buggy) selector feeds the FULL series — including the final test
     // period. The barrier must reject the read and name the first test date
@@ -101,7 +114,7 @@ fn selection_with_test_period_read_is_rejected() {
 }
 
 #[test]
-fn split_result_exposes_segments_with_guarded_test() {
+fn robustness_split_result_exposes_segments_with_guarded_test() {
     let series = equity_series();
     let result = SplitResult::new(&series, &split()).expect("split over a full series succeeds");
     assert_eq!(
@@ -119,7 +132,7 @@ fn split_result_exposes_segments_with_guarded_test() {
 }
 
 #[test]
-fn invalid_split_boundaries_are_rejected() {
+fn robustness_invalid_split_boundaries_are_rejected() {
     let bad = PeriodSplit {
         train_end: "2020-04-30".to_owned(),
         validation_end: "2020-02-28".to_owned(),

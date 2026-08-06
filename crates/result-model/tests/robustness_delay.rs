@@ -14,7 +14,7 @@ mod common;
 use result_model::robustness::{RobustnessError, delay_execution};
 
 #[test]
-fn delay_shifts_fills_by_the_declared_sessions() {
+fn robustness_delay_shifts_fills_by_the_declared_sessions() {
     let base = common::golden_result();
     let delayed = delay_execution(&base, 1).expect("one-session delay must succeed");
     delayed
@@ -26,7 +26,12 @@ fn delay_shifts_fills_by_the_declared_sessions() {
     // Each fill moves to the next session; the last-session fill settles at
     // the window end (documented clamp).
     let expected_dates = [
-        "2020-01-03", "2020-01-06", "2020-01-09", "2020-01-14", "2020-01-16", "2020-01-16",
+        "2020-01-03",
+        "2020-01-06",
+        "2020-01-09",
+        "2020-01-14",
+        "2020-01-16",
+        "2020-01-16",
     ];
     for (i, fill) in delayed.fills.iter().enumerate() {
         assert_eq!(
@@ -43,7 +48,7 @@ fn delay_shifts_fills_by_the_declared_sessions() {
 }
 
 #[test]
-fn delay_is_identical_for_identical_inputs() {
+fn robustness_delay_is_identical_for_identical_inputs() {
     let base = common::golden_result();
     let a = delay_execution(&base, 2).unwrap();
     let b = delay_execution(&base, 2).unwrap();
@@ -53,7 +58,7 @@ fn delay_is_identical_for_identical_inputs() {
 }
 
 #[test]
-fn delay_redates_the_curve_and_preserves_terminal_value() {
+fn robustness_delay_redates_the_curve_and_preserves_terminal_value() {
     let base = common::golden_result();
     let delayed = delay_execution(&base, 2).unwrap();
     // First fill shifts 01-02 -> 01-06 (+2 sessions), so day-0 sits 01-05.
@@ -63,8 +68,7 @@ fn delay_redates_the_curve_and_preserves_terminal_value() {
     // Delay moves TIMING, not fills/prices/fees: terminal value is preserved
     // while the equity curve is re-dated.
     assert_eq!(
-        delayed.summary.final_equity,
-        base.summary.final_equity,
+        delayed.summary.final_equity, base.summary.final_equity,
         "execution delay must not change fills, prices, or fees"
     );
     assert_ne!(
@@ -79,7 +83,7 @@ fn delay_redates_the_curve_and_preserves_terminal_value() {
 }
 
 #[test]
-fn delay_beyond_the_session_calendar_is_a_typed_error() {
+fn robustness_delay_beyond_the_session_calendar_is_a_typed_error() {
     let base = common::golden_result();
     let error = delay_execution(&base, 10)
         .expect_err("a delay beyond the session calendar must be rejected");
@@ -87,7 +91,7 @@ fn delay_beyond_the_session_calendar_is_a_typed_error() {
 }
 
 #[test]
-fn zero_delay_is_the_identity() {
+fn robustness_zero_delay_is_the_identity() {
     let base = common::golden_result();
     let delayed = delay_execution(&base, 0).unwrap();
     assert_eq!(delayed.equity, base.equity);

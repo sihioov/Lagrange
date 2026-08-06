@@ -37,14 +37,21 @@ fn five_strategy_golden_set() -> (GoldenSet, Vec<(String, Vec<u8>)>) {
         "inverse_volatility",
     ];
     let artifacts = [
-        "recommendation", "orders", "fills", "equity", "fees", "metrics", "provenance",
+        "recommendation",
+        "orders",
+        "fills",
+        "equity",
+        "fees",
+        "metrics",
+        "provenance",
     ];
     let mut entries = Vec::new();
     let mut bytes_map = Vec::new();
     for strategy in strategies {
         for artifact in artifacts {
             let id = format!("{strategy}/{artifact}");
-            let content = format!("{{{{\"strategy\":\"{strategy}\",\"artifact\":\"{artifact}\",\"v\":1}}}}");
+            let content =
+                format!("{{{{\"strategy\":\"{strategy}\",\"artifact\":\"{artifact}\",\"v\":1}}}}");
             let bytes = content.into_bytes();
             entries.push(GoldenManifestEntry {
                 id: id.clone(),
@@ -83,7 +90,7 @@ fn full_evidence() -> CoreEvidenceBundle {
 }
 
 #[test]
-fn full_evidence_approves_the_release() {
+fn robustness_full_evidence_approves_the_release() {
     let bundle = full_evidence();
     let verdict = evaluate_core_release(&bundle);
     let failed: Vec<&str> = verdict
@@ -92,22 +99,34 @@ fn full_evidence_approves_the_release() {
         .filter(|item| !item.passed)
         .map(|item| item.id.as_str())
         .collect();
-    assert!(verdict.approved, "full evidence must APPROVE; failed: {failed:?}");
+    assert!(
+        verdict.approved,
+        "full evidence must APPROVE; failed: {failed:?}"
+    );
     // Every artifact hash was checked individually.
-    assert!(verdict
-        .items
-        .iter()
-        .any(|item| item.id.starts_with("golden_artifact:")));
+    assert!(
+        verdict
+            .items
+            .iter()
+            .any(|item| item.id.starts_with("golden_artifact:"))
+    );
 }
 
 #[test]
-fn unapproved_golden_delta_is_blocked_with_quoted_diff() {
+fn robustness_unapproved_golden_delta_is_blocked_with_quoted_diff() {
     let mut bundle = full_evidence();
     // Mutate ONE artifact byte: an unapproved golden delta.
-    let target = bundle.artifacts.iter_mut().find(|(id, _)| id == "buy_and_hold/fills").unwrap();
+    let target = bundle
+        .artifacts
+        .iter_mut()
+        .find(|(id, _)| id == "buy_and_hold/fills")
+        .unwrap();
     target.1.push(b'X');
     let verdict = evaluate_core_release(&bundle);
-    assert!(!verdict.approved, "unapproved golden delta must BLOCK the gate");
+    assert!(
+        !verdict.approved,
+        "unapproved golden delta must BLOCK the gate"
+    );
     let item = verdict
         .items
         .iter()
@@ -119,11 +138,14 @@ fn unapproved_golden_delta_is_blocked_with_quoted_diff() {
         "the failing item must carry the field-level diff: {}",
         item.detail
     );
-    assert!(item.detail.contains("got"), "detail must show the actual hash");
+    assert!(
+        item.detail.contains("got"),
+        "detail must show the actual hash"
+    );
 }
 
 #[test]
-fn missing_evidence_item_blocks_the_gate() {
+fn robustness_missing_evidence_item_blocks_the_gate() {
     let mut bundle = full_evidence();
     bundle.at06_worker_kill_one_orphan_max_one_retry = false;
     let verdict = evaluate_core_release(&bundle);
@@ -137,7 +159,7 @@ fn missing_evidence_item_blocks_the_gate() {
 }
 
 #[test]
-fn nan_raw_stat_is_rejected_at_the_boundary() {
+fn robustness_nan_raw_stat_is_rejected_at_the_boundary() {
     let mut bundle = full_evidence();
     let error = bundle
         .with_raw_stat("concentration_ratio", f64::NAN)
@@ -148,22 +170,30 @@ fn nan_raw_stat_is_rejected_at_the_boundary() {
 }
 
 #[test]
-fn nan_in_evidence_json_blocks_the_gate_without_panicking() {
+fn robustness_nan_in_evidence_json_blocks_the_gate_without_panicking() {
     let bundle = full_evidence();
     let json = serde_json::to_string(&bundle).unwrap();
     // Inject a NaN raw statistic into the evidence JSON.
-    let poisoned = json.replace("\"artifacts\":", "\"raw_stats\":[{\"field\":\"x\",\"value\":NaN}],\"artifacts\":");
+    let poisoned = json.replace(
+        "\"artifacts\":",
+        "\"raw_stats\":[{\"field\":\"x\",\"value\":NaN}],\"artifacts\":",
+    );
     let verdict = evaluate_core_release_json(&poisoned);
-    assert!(!verdict.approved, "a NaN in the evidence must BLOCK the gate");
-    assert!(verdict
-        .items
-        .iter()
-        .any(|item| item.id == "malformed_evidence"),
-        "the blocked item must be named malformed_evidence");
+    assert!(
+        !verdict.approved,
+        "a NaN in the evidence must BLOCK the gate"
+    );
+    assert!(
+        verdict
+            .items
+            .iter()
+            .any(|item| item.id == "malformed_evidence"),
+        "the blocked item must be named malformed_evidence"
+    );
 }
 
 #[test]
-fn incomplete_golden_set_blocks() {
+fn robustness_incomplete_golden_set_blocks() {
     let mut bundle = full_evidence();
     bundle
         .golden_set
@@ -173,7 +203,10 @@ fn incomplete_golden_set_blocks() {
         .artifacts
         .retain(|(id, _)| !id.starts_with("inverse_volatility/"));
     let verdict = evaluate_core_release(&bundle);
-    assert!(!verdict.approved, "four strategies must not pass the five-strategy gate");
+    assert!(
+        !verdict.approved,
+        "four strategies must not pass the five-strategy gate"
+    );
     let item = verdict
         .items
         .iter()
@@ -183,7 +216,7 @@ fn incomplete_golden_set_blocks() {
 }
 
 #[test]
-fn verdict_is_deterministic() {
+fn robustness_verdict_is_deterministic() {
     let bundle = full_evidence();
     let a = evaluate_core_release(&bundle);
     let b = evaluate_core_release(&bundle);
@@ -191,7 +224,7 @@ fn verdict_is_deterministic() {
 }
 
 #[test]
-fn verdict_is_machine_readable() {
+fn robustness_verdict_is_machine_readable() {
     let verdict = evaluate_core_release(&full_evidence());
     let json = serde_json::to_string(&verdict).unwrap();
     assert!(json.contains("\"approved\":true"));

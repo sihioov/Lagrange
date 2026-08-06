@@ -98,9 +98,7 @@ fn component(
 }
 
 /// Computes the reference stability score from the raw evidence.
-pub fn analyze_stability(
-    evidence: &StabilityEvidence,
-) -> Result<StabilityScore, RobustnessError> {
+pub fn analyze_stability(evidence: &StabilityEvidence) -> Result<StabilityScore, RobustnessError> {
     let month_excess = evidence.validation_monthly_excess.clone();
     let positive_months = month_excess.iter().filter(|r| r.value() > 0.0).count();
     let validation_persistence = if month_excess.is_empty() {
@@ -150,9 +148,8 @@ pub fn analyze_stability(
             .max(evidence.year_max_share.value()),
     );
     let recent = clamp01(evidence.recent_excess.value() / RECENT_EXCESS_SCALE);
-    let turnover = clamp01(
-        1.0 - (evidence.turnover.value() - TURNOVER_IDEAL).abs() / TURNOVER_TOLERANCE,
-    );
+    let turnover =
+        clamp01(1.0 - (evidence.turnover.value() - TURNOVER_IDEAL).abs() / TURNOVER_TOLERANCE);
 
     let components = vec![
         component(

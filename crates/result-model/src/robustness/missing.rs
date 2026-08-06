@@ -12,9 +12,9 @@
 
 use serde_json::json;
 
+use crate::Warning;
 use crate::backtest::BacktestResult;
 use crate::robustness::RobustnessError;
-use crate::Warning;
 
 /// How missing data is handled for a run (strategy-declared policy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

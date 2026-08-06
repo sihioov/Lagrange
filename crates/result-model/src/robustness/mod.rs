@@ -39,20 +39,32 @@ pub mod stability;
 pub mod warnings;
 
 pub use benchmark::{BenchmarkComparison, compare_benchmark};
-pub use comparison::{EquityDiff, PresenceDiff, PositionDiff, RunComparison, SummaryDiff, compare_runs};
+pub use comparison::{
+    EquityDiff, PositionDiff, PresenceDiff, RunComparison, SummaryDiff, compare_runs,
+};
 pub use cost::{CostStressProfile, stress_cost};
 pub use delay::delay_execution;
 pub use error::RobustnessError;
-pub use gate::{CANONICAL_ARTIFACTS, CoreEvidenceBundle, CoreReleaseVerdict, FIVE_STRATEGIES, GateItem, GoldenManifestEntry, GoldenSet, evaluate_core_release, evaluate_core_release_json, load_golden_set};
+pub use gate::{
+    CANONICAL_ARTIFACTS, CoreEvidenceBundle, CoreReleaseVerdict, FIVE_STRATEGIES, GateItem,
+    GoldenManifestEntry, GoldenSet, LoadedGoldenSet, evaluate_core_release,
+    evaluate_core_release_json, load_golden_set,
+};
 pub use holdout::{HoldoutBarrier, PeriodSplit, SplitResult, select_equity_series};
-pub use missing::{ExclusionRecord, MissingDataOutcome, MissingDataPolicy, MissingInstrument, apply_missing_data_policy, enforce_missing_data_policy};
-pub use lineage::{
-    DerivedAxis, DerivedRunRequest, LineageRegistry, PinnedContext, RunLineage,
+pub use lineage::{DerivedAxis, DerivedRunRequest, LineageRegistry, PinnedContext, RunLineage};
+pub use missing::{
+    ExclusionRecord, MissingDataOutcome, MissingDataPolicy, MissingInstrument,
+    apply_missing_data_policy, enforce_missing_data_policy,
 };
 pub use replay::{ReplaySpec, replay, replay_with};
-pub use warnings::{NeighborhoodAnalysis, NeighborhoodPoint, analyze_neighborhood, recent_degradation_warning, top_trade_concentration_warning, year_concentration_warning};
-pub use stability::{StabilityComponent, StabilityEvidence, StabilityScore, analyze_stability, approve_investment};
 pub use split::{
     PeriodSegments, Segment, SegmentMetrics, WalkForwardFold, WalkForwardPlan, split_period,
     walk_forward,
+};
+pub use stability::{
+    StabilityComponent, StabilityEvidence, StabilityScore, analyze_stability, approve_investment,
+};
+pub use warnings::{
+    NeighborhoodAnalysis, NeighborhoodPoint, analyze_neighborhood, recent_degradation_warning,
+    top_trade_concentration_warning, year_concentration_warning,
 };

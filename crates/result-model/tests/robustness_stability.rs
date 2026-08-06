@@ -50,7 +50,7 @@ fn weak_evidence() -> StabilityEvidence {
 }
 
 #[test]
-fn components_sum_to_total_within_their_weights() {
+fn robustness_components_sum_to_total_within_their_weights() {
     let score = analyze_stability(&strong_evidence()).expect("analysis succeeds");
     let mut sum = 0.0f64;
     for component in &score.components {
@@ -63,18 +63,21 @@ fn components_sum_to_total_within_their_weights() {
         );
         sum += component.score;
     }
-    assert!((sum - score.total).abs() < 1e-9, "total must equal the sum of components");
+    assert!(
+        (sum - score.total).abs() < 1e-9,
+        "total must equal the sum of components"
+    );
     assert!(score.total <= 100.0);
 }
 
 #[test]
-fn stability_score_is_never_an_investment_approval() {
+fn robustness_stability_score_is_never_an_investment_approval() {
     let score = analyze_stability(&strong_evidence()).expect("analysis succeeds");
     let error = approve_investment(&score)
         .expect_err("the stability score must NEVER approve an investment (design 9.6)");
     assert!(matches!(error, RobustnessError::StabilityScoreNotApproval));
     // Even a perfect score cannot approve: the guard is structural.
-    assert_eq!(score.reference_only, true);
+    assert!(score.reference_only);
     let mut perfect = strong_evidence();
     perfect.validation_monthly_excess = vec![stat(0.05); 12];
     perfect.neighborhood_returns = vec![stat(0.10); 4];
@@ -90,14 +93,20 @@ fn stability_score_is_never_an_investment_approval() {
 }
 
 #[test]
-fn stability_score_carries_raw_evidence() {
+fn robustness_stability_score_carries_raw_evidence() {
     let evidence = strong_evidence();
     let score = analyze_stability(&evidence).unwrap();
     let raw = &score.raw_evidence;
     // Every raw input is echoed in the evidence payload.
-    assert_eq!(raw["validation_monthly_excess"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        raw["validation_monthly_excess"].as_array().unwrap().len(),
+        4
+    );
     assert_eq!(raw["neighborhood_returns"].as_array().unwrap().len(), 4);
-    assert_eq!(raw["cost_stress_final_returns"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        raw["cost_stress_final_returns"].as_array().unwrap().len(),
+        3
+    );
     assert!(raw["max_drawdown"].as_f64().is_some());
     assert!(raw["volatility"].as_f64().is_some());
     assert!(raw["top_trade_share"].as_f64().is_some());
@@ -129,7 +138,7 @@ fn stability_score_carries_raw_evidence() {
 }
 
 #[test]
-fn strong_evidence_scores_materially_higher_than_weak() {
+fn robustness_strong_evidence_scores_materially_higher_than_weak() {
     let strong = analyze_stability(&strong_evidence()).unwrap();
     let weak = analyze_stability(&weak_evidence()).unwrap();
     assert!(
@@ -146,7 +155,7 @@ fn strong_evidence_scores_materially_higher_than_weak() {
 }
 
 #[test]
-fn stability_score_is_deterministic() {
+fn robustness_stability_score_is_deterministic() {
     let a = analyze_stability(&strong_evidence()).unwrap();
     let b = analyze_stability(&strong_evidence()).unwrap();
     assert_eq!(a.total, b.total);
@@ -154,11 +163,12 @@ fn stability_score_is_deterministic() {
 }
 
 #[test]
-fn neighborhood_dispersion_moves_the_component_score() {
+fn robustness_neighborhood_dispersion_moves_the_component_score() {
     let mut tight = strong_evidence();
     tight.neighborhood_returns = vec![stat(0.10), stat(0.101), stat(0.1005), stat(0.10)];
     let mut scattered = strong_evidence();
-    scattered.neighborhood_returns = vec![stat(0.10), stat(0.20), stat(0.0), stat(-0.05)];    let tight_score = analyze_stability(&tight).unwrap();
+    scattered.neighborhood_returns = vec![stat(0.10), stat(0.20), stat(0.0), stat(-0.05)];
+    let tight_score = analyze_stability(&tight).unwrap();
     let scattered_score = analyze_stability(&scattered).unwrap();
     let component = |score: &StabilityScore, code: &str| {
         score

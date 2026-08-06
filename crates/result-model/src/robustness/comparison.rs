@@ -85,10 +85,16 @@ fn raw4(money: &Money) -> i128 {
 pub fn compare_runs(left: &BacktestResult, right: &BacktestResult) -> RunComparison {
     let day = |ts: &domain::UtcTimestamp| ts.to_rfc3339()[..10].to_owned();
 
-    let left_equity: BTreeMap<String, i128> =
-        left.equity.iter().map(|p| (day(&p.ts), raw4(&p.equity))).collect();
-    let right_equity: BTreeMap<String, i128> =
-        right.equity.iter().map(|p| (day(&p.ts), raw4(&p.equity))).collect();
+    let left_equity: BTreeMap<String, i128> = left
+        .equity
+        .iter()
+        .map(|p| (day(&p.ts), raw4(&p.equity)))
+        .collect();
+    let right_equity: BTreeMap<String, i128> = right
+        .equity
+        .iter()
+        .map(|p| (day(&p.ts), raw4(&p.equity)))
+        .collect();
 
     let mut equity_diffs = Vec::new();
     let mut left_only_dates = Vec::new();
@@ -115,58 +121,146 @@ pub fn compare_runs(left: &BacktestResult, right: &BacktestResult) -> RunCompari
     }
 
     let summary_fields: Vec<(&'static str, String, String)> = vec![
-        ("currency", left.summary.currency.to_string(), right.summary.currency.to_string()),
-        ("initial_equity", left.summary.initial_equity.to_string(), right.summary.initial_equity.to_string()),
-        ("final_equity", left.summary.final_equity.to_string(), right.summary.final_equity.to_string()),
-        ("total_return", left.summary.total_return.to_string(), right.summary.total_return.to_string()),
-        ("cagr", left.summary.cagr.to_string(), right.summary.cagr.to_string()),
-        ("max_drawdown", left.summary.max_drawdown.to_string(), right.summary.max_drawdown.to_string()),
-        ("volatility", left.summary.volatility.to_string(), right.summary.volatility.to_string()),
-        ("sharpe", left.summary.sharpe.to_string(), right.summary.sharpe.to_string()),
-        ("sortino", left.summary.sortino.to_string(), right.summary.sortino.to_string()),
-        ("calmar", left.summary.calmar.to_string(), right.summary.calmar.to_string()),
-        ("turnover", left.summary.turnover.to_string(), right.summary.turnover.to_string()),
-        ("total_cost", left.summary.total_cost.to_string(), right.summary.total_cost.to_string()),
-        ("n_orders", left.summary.n_orders.to_string(), right.summary.n_orders.to_string()),
-        ("n_fills", left.summary.n_fills.to_string(), right.summary.n_fills.to_string()),
-        ("start_date", left.summary.start_date.clone(), right.summary.start_date.clone()),
-        ("end_date", left.summary.end_date.clone(), right.summary.end_date.clone()),
+        (
+            "currency",
+            left.summary.currency.to_string(),
+            right.summary.currency.to_string(),
+        ),
+        (
+            "initial_equity",
+            left.summary.initial_equity.to_string(),
+            right.summary.initial_equity.to_string(),
+        ),
+        (
+            "final_equity",
+            left.summary.final_equity.to_string(),
+            right.summary.final_equity.to_string(),
+        ),
+        (
+            "total_return",
+            left.summary.total_return.to_string(),
+            right.summary.total_return.to_string(),
+        ),
+        (
+            "cagr",
+            left.summary.cagr.to_string(),
+            right.summary.cagr.to_string(),
+        ),
+        (
+            "max_drawdown",
+            left.summary.max_drawdown.to_string(),
+            right.summary.max_drawdown.to_string(),
+        ),
+        (
+            "volatility",
+            left.summary.volatility.to_string(),
+            right.summary.volatility.to_string(),
+        ),
+        (
+            "sharpe",
+            left.summary.sharpe.to_string(),
+            right.summary.sharpe.to_string(),
+        ),
+        (
+            "sortino",
+            left.summary.sortino.to_string(),
+            right.summary.sortino.to_string(),
+        ),
+        (
+            "calmar",
+            left.summary.calmar.to_string(),
+            right.summary.calmar.to_string(),
+        ),
+        (
+            "turnover",
+            left.summary.turnover.to_string(),
+            right.summary.turnover.to_string(),
+        ),
+        (
+            "total_cost",
+            left.summary.total_cost.to_string(),
+            right.summary.total_cost.to_string(),
+        ),
+        (
+            "n_orders",
+            left.summary.n_orders.to_string(),
+            right.summary.n_orders.to_string(),
+        ),
+        (
+            "n_fills",
+            left.summary.n_fills.to_string(),
+            right.summary.n_fills.to_string(),
+        ),
+        (
+            "start_date",
+            left.summary.start_date.clone(),
+            right.summary.start_date.clone(),
+        ),
+        (
+            "end_date",
+            left.summary.end_date.clone(),
+            right.summary.end_date.clone(),
+        ),
     ];
     let summary_diffs: Vec<SummaryDiff> = summary_fields
         .into_iter()
         .filter(|(_, l, r)| l != r)
-        .map(|(field, l, r)| SummaryDiff { field: field.to_owned(), left: l, right: r })
+        .map(|(field, l, r)| SummaryDiff {
+            field: field.to_owned(),
+            left: l,
+            right: r,
+        })
         .collect();
 
-    let order_diffs = presence(&left.orders.iter().map(|o| o.order_id.clone()).collect::<Vec<_>>(),
-        &right.orders.iter().map(|o| o.order_id.clone()).collect::<Vec<_>>());
+    let order_diffs = presence(
+        &left
+            .orders
+            .iter()
+            .map(|o| o.order_id.clone())
+            .collect::<Vec<_>>(),
+        &right
+            .orders
+            .iter()
+            .map(|o| o.order_id.clone())
+            .collect::<Vec<_>>(),
+    );
     let fill_diffs = presence(
-        &left.fills.iter().map(|f| f.fill_id.clone()).collect::<Vec<_>>(),
-        &right.fills.iter().map(|f| f.fill_id.clone()).collect::<Vec<_>>(),
+        &left
+            .fills
+            .iter()
+            .map(|f| f.fill_id.clone())
+            .collect::<Vec<_>>(),
+        &right
+            .fills
+            .iter()
+            .map(|f| f.fill_id.clone())
+            .collect::<Vec<_>>(),
     );
 
-    let right_fills: BTreeMap<&str, &crate::backtest::FillRecord> =
-        right.fills.iter().map(|f| (f.fill_id.as_str(), f)).collect();
+    let right_fills: BTreeMap<&str, &crate::backtest::FillRecord> = right
+        .fills
+        .iter()
+        .map(|f| (f.fill_id.as_str(), f))
+        .collect();
     let mut changed_fills = Vec::new();
     for fill in &left.fills {
-        if let Some(other) = right_fills.get(fill.fill_id.as_str()) {
-            if fill.price != other.price
+        if let Some(other) = right_fills.get(fill.fill_id.as_str())
+            && (fill.price != other.price
                 || fill.quantity != other.quantity
                 || fill.side != other.side
-                || fill.ts != other.ts
-            {
-                changed_fills.push(fill.fill_id.clone());
-            }
+                || fill.ts != other.ts)
+        {
+            changed_fills.push(fill.fill_id.clone());
         }
     }
 
     let mut position_diffs = Vec::new();
-    let left_positions: BTreeMap<(String, String), i128> =
-        position_map(&left.positions);
-    let right_positions: BTreeMap<(String, String), i128> =
-        position_map(&right.positions);
-    let mut keys: Vec<&(String, String)> =
-        left_positions.keys().chain(right_positions.keys()).collect();
+    let left_positions: BTreeMap<(String, String), i128> = position_map(&left.positions);
+    let right_positions: BTreeMap<(String, String), i128> = position_map(&right.positions);
+    let mut keys: Vec<&(String, String)> = left_positions
+        .keys()
+        .chain(right_positions.keys())
+        .collect();
     keys.sort();
     keys.dedup();
     for key in keys {
@@ -184,10 +278,16 @@ pub fn compare_runs(left: &BacktestResult, right: &BacktestResult) -> RunCompari
 
     let config_diffs = provenance_diffs(&left.provenance, &right.provenance);
 
-    let left_warnings: BTreeMap<&str, ()> =
-        left.warnings.iter().map(|w| (w.code.as_str(), ())).collect();
-    let right_warnings: BTreeMap<&str, ()> =
-        right.warnings.iter().map(|w| (w.code.as_str(), ())).collect();
+    let left_warnings: BTreeMap<&str, ()> = left
+        .warnings
+        .iter()
+        .map(|w| (w.code.as_str(), ()))
+        .collect();
+    let right_warnings: BTreeMap<&str, ()> = right
+        .warnings
+        .iter()
+        .map(|w| (w.code.as_str(), ()))
+        .collect();
     let mut warnings_delta = Vec::new();
     for code in left_warnings.keys() {
         if !right_warnings.contains_key(code) {
@@ -278,15 +378,51 @@ fn provenance_diffs(
         domain::provenance::Engine::NautilusTrader => "nautilustrader",
     };
     let fields: Vec<(&'static str, String, String)> = vec![
-        ("engine", engine_name(&left.engine).to_owned(), engine_name(&right.engine).to_owned()),
-        ("engine_version", left.engine_version.to_string(), right.engine_version.to_string()),
-        ("strategy_id", left.strategy_id.to_string(), right.strategy_id.to_string()),
-        ("strategy_version", left.strategy_version.to_string(), right.strategy_version.to_string()),
-        ("dataset_version", left.dataset_version.to_string(), right.dataset_version.to_string()),
-        ("config_hash", left.config_hash.to_string(), right.config_hash.to_string()),
-        ("code_commit", left.code_commit.to_string(), right.code_commit.to_string()),
-        ("random_seed", left.random_seed.to_string(), right.random_seed.to_string()),
-        ("timezone", left.timezone.name().to_owned(), right.timezone.name().to_owned()),
+        (
+            "engine",
+            engine_name(&left.engine).to_owned(),
+            engine_name(&right.engine).to_owned(),
+        ),
+        (
+            "engine_version",
+            left.engine_version.to_string(),
+            right.engine_version.to_string(),
+        ),
+        (
+            "strategy_id",
+            left.strategy_id.to_string(),
+            right.strategy_id.to_string(),
+        ),
+        (
+            "strategy_version",
+            left.strategy_version.to_string(),
+            right.strategy_version.to_string(),
+        ),
+        (
+            "dataset_version",
+            left.dataset_version.to_string(),
+            right.dataset_version.to_string(),
+        ),
+        (
+            "config_hash",
+            left.config_hash.to_string(),
+            right.config_hash.to_string(),
+        ),
+        (
+            "code_commit",
+            left.code_commit.to_string(),
+            right.code_commit.to_string(),
+        ),
+        (
+            "random_seed",
+            left.random_seed.to_string(),
+            right.random_seed.to_string(),
+        ),
+        (
+            "timezone",
+            left.timezone.name().to_owned(),
+            right.timezone.name().to_owned(),
+        ),
     ];
     fields
         .into_iter()

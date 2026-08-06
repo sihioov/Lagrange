@@ -139,8 +139,12 @@ pub fn evaluate_core_release(bundle: &CoreEvidenceBundle) -> CoreReleaseVerdict 
 
     // 1. The golden set must cover all five strategies with the seven
     //    canonical artifacts.
-    let entry_ids: std::collections::BTreeSet<&str> =
-        bundle.golden_set.artifacts.iter().map(|e| e.id.as_str()).collect();
+    let entry_ids: std::collections::BTreeSet<&str> = bundle
+        .golden_set
+        .artifacts
+        .iter()
+        .map(|e| e.id.as_str())
+        .collect();
     let mut missing = Vec::new();
     for strategy in FIVE_STRATEGIES {
         for artifact in CANONICAL_ARTIFACTS {
@@ -154,7 +158,11 @@ pub fn evaluate_core_release(bundle: &CoreEvidenceBundle) -> CoreReleaseVerdict 
         items.push(item(
             true,
             "golden_set_complete",
-            format!("all {} strategies x {} artifacts present", FIVE_STRATEGIES.len(), CANONICAL_ARTIFACTS.len()),
+            format!(
+                "all {} strategies x {} artifacts present",
+                FIVE_STRATEGIES.len(),
+                CANONICAL_ARTIFACTS.len()
+            ),
         ));
     } else {
         items.push(item(
@@ -280,6 +288,9 @@ pub fn evaluate_core_release_json(json: &str) -> CoreReleaseVerdict {
     }
 }
 
+/// A loaded golden set: the manifest plus every artifact's bytes keyed by id.
+pub type LoadedGoldenSet = (GoldenSet, Vec<(String, Vec<u8>)>);
+
 /// Loads a golden set manifest plus its artifact bytes from disk.
 ///
 /// `manifest_path` is the committed `golden-set.json`; artifact paths in the
@@ -287,7 +298,7 @@ pub fn evaluate_core_release_json(json: &str) -> CoreReleaseVerdict {
 pub fn load_golden_set(
     base_dir: &Path,
     manifest_path: &Path,
-) -> Result<(GoldenSet, Vec<(String, Vec<u8>)>), RobustnessError> {
+) -> Result<LoadedGoldenSet, RobustnessError> {
     let text = std::fs::read_to_string(manifest_path).map_err(|e| RobustnessError::Replay {
         detail: format!("read golden manifest {}: {e}", manifest_path.display()),
     })?;

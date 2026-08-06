@@ -16,9 +16,7 @@ mod common;
 use domain::Price;
 
 use result_model::backtest::BacktestResult;
-use result_model::robustness::{
-    CostStressProfile, RobustnessError, replay_with, stress_cost,
-};
+use result_model::robustness::{CostStressProfile, RobustnessError, replay_with, stress_cost};
 
 fn raw4(money: &domain::Money) -> i128 {
     common::raw4(money)
@@ -33,7 +31,7 @@ fn fee_total(result: &BacktestResult) -> i128 {
 }
 
 #[test]
-fn higher_cost_golden_ends_lower_with_reconciled_fees() {
+fn robustness_higher_cost_golden_ends_lower_with_reconciled_fees() {
     let base = common::golden_result();
     base.validate().expect("fixture must be valid");
 
@@ -72,7 +70,7 @@ fn higher_cost_golden_ends_lower_with_reconciled_fees() {
 }
 
 #[test]
-fn higher_costs_never_improve_terminal_equity() {
+fn robustness_higher_costs_never_improve_terminal_equity() {
     let base = common::golden_result();
     let profiles = [
         CostStressProfile::custom("stress-2x", 1, "0.001", "1000", "0.005", 10).unwrap(),
@@ -94,7 +92,7 @@ fn higher_costs_never_improve_terminal_equity() {
 }
 
 #[test]
-fn slippage_stress_moves_execution_prices() {
+fn robustness_slippage_stress_moves_execution_prices() {
     let base = common::golden_result();
     // KRX_ETF_DEFAULT embeds 10 bps; stress to 30 bps → buy +0.20%, sell -0.20%.
     let stress = CostStressProfile::custom("slip-30bps", 1, "0.00015", "1000", "0", 30).unwrap();
@@ -118,7 +116,7 @@ fn slippage_stress_moves_execution_prices() {
 }
 
 #[test]
-fn equal_slippage_keeps_execution_prices_identical() {
+fn robustness_equal_slippage_keeps_execution_prices_identical() {
     let base = common::golden_result();
     let stress = CostStressProfile::custom("same-slip", 1, "0.00015", "1000", "0", 10).unwrap();
     let stressed = stress_cost(&base, &stress, 10).unwrap();
@@ -128,7 +126,7 @@ fn equal_slippage_keeps_execution_prices_identical() {
 }
 
 #[test]
-fn invalid_cost_profiles_are_typed_errors() {
+fn robustness_invalid_cost_profiles_are_typed_errors() {
     let error = CostStressProfile::custom("bad-rate", 1, "1.5", "1000", "0", 10)
         .expect_err("commission rate above 1 must be rejected");
     assert!(matches!(error, RobustnessError::InvalidCostProfile { .. }));
@@ -139,29 +137,33 @@ fn invalid_cost_profiles_are_typed_errors() {
 }
 
 #[test]
-fn replay_preserves_identity_when_nothing_changes() {
+fn robustness_replay_preserves_identity_when_nothing_changes() {
     let base = common::golden_result();
-    let identity = replay_with(&base, |f| f.clone(), |f| {
-        (f.commission, f.tax)
-    })
-    .expect("identity replay must succeed");
+    let identity = replay_with(&base, |f| f.clone(), |f| (f.commission, f.tax))
+        .expect("identity replay must succeed");
     assert_eq!(identity.equity, base.equity);
     assert_eq!(identity.summary.final_equity, base.summary.final_equity);
     assert_eq!(identity.fees, base.fees);
-    identity.validate().expect("identity replay must stay valid");
+    identity
+        .validate()
+        .expect("identity replay must stay valid");
 }
 
 #[test]
-fn replay_rejects_unsorted_fills() {
+fn robustness_replay_rejects_unsorted_fills() {
     let base = common::golden_result();
-    let error = replay_with(&base, |f| {
-        let mut f = f.clone();
-        // swap timestamps of the first two fills -> unsorted input
-        if f.fill_id == "fill-1" {
-            f.ts = domain::UtcTimestamp::parse_rfc3339("2020-01-09T00:00:00Z").unwrap();
-        }
-        f
-    }, |f| (f.commission, f.tax))
+    let error = replay_with(
+        &base,
+        |f| {
+            let mut f = f.clone();
+            // swap timestamps of the first two fills -> unsorted input
+            if f.fill_id == "fill-1" {
+                f.ts = domain::UtcTimestamp::parse_rfc3339("2020-01-09T00:00:00Z").unwrap();
+            }
+            f
+        },
+        |f| (f.commission, f.tax),
+    )
     .expect_err("unsorted fills must be rejected as a typed replay error");
     assert!(matches!(error, RobustnessError::Replay { .. }));
 }

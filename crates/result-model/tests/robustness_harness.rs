@@ -110,7 +110,10 @@ fn up_migration_count() -> usize {
         .count()
 }
 
-async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn Error + Send + Sync>> {
+async fn connect_with_retry(
+    url: &str,
+    max_conns: u32,
+) -> Result<PgPool, Box<dyn Error + Send + Sync>> {
     let mut opts: sqlx::postgres::PgConnectOptions = url.parse()?;
     opts = opts.options([("statement_timeout", "20s")]);
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -124,7 +127,10 @@ async fn connect_with_retry(url: &str, max_conns: u32) -> Result<PgPool, Box<dyn
             Ok(pool) => {
                 let mut attempt = 0;
                 loop {
-                    match sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&pool).await {
+                    match sqlx::query_scalar::<_, i32>("SELECT 1")
+                        .fetch_one(&pool)
+                        .await
+                    {
                         Ok(1) => return Ok(pool),
                         Ok(_) => return Err("SELECT 1 returned a non-1 value".into()),
                         Err(_error) if attempt < 5 && Instant::now() < deadline => {
@@ -151,9 +157,7 @@ async fn scratch_db() -> Result<(PgPool, String), Box<dyn Error + Send + Sync>> 
     sqlx::query(ddl_for(&db, r#"CREATE DATABASE "{db}""#))
         .execute(&admin)
         .await?;
-    sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
-        .execute(&admin)
-        .await?;
+    sqlx::raw_sql(ROLE_BOOTSTRAP_SQL).execute(&admin).await?;
     let url = conn_url(&super_url, "postgres", &db);
     let pool = connect_with_retry(&url, 4).await?;
     MIGRATOR.run(&pool).await?;
@@ -164,20 +168,22 @@ async fn scratch_db() -> Result<(PgPool, String), Box<dyn Error + Send + Sync>> 
         .await?;
     let expected = up_migration_count() as i64;
     if recorded != expected {
-        return Err(format!(
-            "expected {expected} applied up-migrations, found {recorded}"
-        )
-        .into());
+        return Err(format!("expected {expected} applied up-migrations, found {recorded}").into());
     }
     Ok((pool, db))
 }
 
 async fn drop_scratch_db(db: &str) {
-    let Ok(super_url) = env::var("DATABASE_URL") else { return };
+    let Ok(super_url) = env::var("DATABASE_URL") else {
+        return;
+    };
     if let Ok(admin) = connect_with_retry(&super_url, 2).await {
-        let _ = sqlx::raw_sql(ddl_for(db, r#"DROP DATABASE IF EXISTS "{db}" WITH (FORCE)"#))
-            .execute(&admin)
-            .await;
+        let _ = sqlx::raw_sql(ddl_for(
+            db,
+            r#"DROP DATABASE IF EXISTS "{db}" WITH (FORCE)"#,
+        ))
+        .execute(&admin)
+        .await;
     }
 }
 
@@ -194,7 +200,9 @@ fn require_db_url() -> Option<String> {
 /// One whole-test redo: the shared cluster restarts and the relay spikes
 /// are documented environment behavior; a failed attempt is retried ONCE
 /// from a fresh scratch database before the failure is reported.
-async fn run_attempt(mut attempt: impl FnMut() -> futures_util::future::BoxFuture<'static, Result<(), String>>) {
+async fn run_attempt(
+    mut attempt: impl FnMut() -> futures_util::future::BoxFuture<'static, Result<(), String>>,
+) {
     for round in 0..2 {
         match attempt().await {
             Ok(()) => return,
@@ -212,7 +220,7 @@ async fn run_attempt(mut attempt: impl FnMut() -> futures_util::future::BoxFutur
 // --------------------------------------------------------------------------- //
 
 #[test]
-fn each_derived_run_differs_on_exactly_one_axis() {
+fn robustness_each_derived_run_differs_on_exactly_one_axis() {
     let parent = common::provenance();
     let mut registry = LineageRegistry::new();
     let parent_run_id = Uuid::new_v4();
@@ -252,7 +260,10 @@ fn each_derived_run_differs_on_exactly_one_axis() {
             derived_provenance: common::derived_provenance(),
         })
         .expect_err("two-axis mutation must be rejected");
-    assert!(matches!(error, RobustnessError::MultiAxisChange { count: 2 }));
+    assert!(matches!(
+        error,
+        RobustnessError::MultiAxisChange { count: 2 }
+    ));
 }
 
 // --------------------------------------------------------------------------- //
@@ -260,7 +271,7 @@ fn each_derived_run_differs_on_exactly_one_axis() {
 // --------------------------------------------------------------------------- //
 
 #[test]
-fn holdout_is_never_read_during_selection() {
+fn robustness_holdout_is_never_read_during_selection() {
     let split = PeriodSplit {
         train_end: "2020-01-08".to_owned(),
         validation_end: "2020-01-13".to_owned(),
@@ -270,10 +281,8 @@ fn holdout_is_never_read_during_selection() {
 
     // A selection that would read the final test period is rejected and
     // names the first test date.
-    let series: Vec<(String, i64)> = vec![
-        ("2020-01-09".to_owned(), 1),
-        ("2020-01-14".to_owned(), 2),
-    ];
+    let series: Vec<(String, i64)> =
+        vec![("2020-01-09".to_owned(), 1), ("2020-01-14".to_owned(), 2)];
     let error = select_equity_series(&series, &split)
         .expect_err("test-period read during selection must fail (FR-ROB-001)");
     assert!(matches!(
@@ -287,7 +296,7 @@ fn holdout_is_never_read_during_selection() {
 // --------------------------------------------------------------------------- //
 
 #[test]
-fn higher_cost_golden_ends_lower_with_reconciled_fees() {
+fn robustness_higher_cost_golden_ends_lower_with_reconciled_fees() {
     let base = common::golden_result();
     base.validate().expect("golden fixture valid");
 
@@ -322,7 +331,12 @@ fn higher_cost_golden_ends_lower_with_reconciled_fees() {
     // A comparison of the two runs exposes the delta on the cost basis.
     let comparison = compare_runs(&base, &stressed);
     assert_eq!(comparison.cost_delta_raw, fee_total - base_fees);
-    assert!(comparison.summary_diffs.iter().any(|d| d.field == "final_equity"));
+    assert!(
+        comparison
+            .summary_diffs
+            .iter()
+            .any(|d| d.field == "final_equity")
+    );
 }
 
 // --------------------------------------------------------------------------- //
@@ -330,27 +344,27 @@ fn higher_cost_golden_ends_lower_with_reconciled_fees() {
 // --------------------------------------------------------------------------- //
 
 #[test]
-fn missing_data_obeys_policy() {
+fn robustness_missing_data_obeys_policy() {
     let missing = vec![MissingInstrument {
         instrument: "069500.KRX".to_owned(),
         missing_sessions: 5,
         last_observed: None,
     }];
     // Required universe: blocked (mirrors the queue's DataBlocked class).
-    let error =
-        apply_missing_data_policy(&missing, MissingDataPolicy::RequiredUniverse)
-            .expect_err("required-universe missing bars block");
+    let error = apply_missing_data_policy(&missing, MissingDataPolicy::RequiredUniverse)
+        .expect_err("required-universe missing bars block");
     assert!(matches!(error, RobustnessError::DataBlocked { .. }));
 
     // Strategy-declared optional exclusion: proceeds with a recorded reason.
     let result = common::golden_result();
-    let warned = enforce_missing_data_policy(
-        &result,
-        &missing,
-        MissingDataPolicy::OptionalExclude,
-    )
-    .expect("optional exclusion still produces a result");
-    assert!(warned.warnings.iter().any(|w| w.code == "missing_data_excluded"));
+    let warned = enforce_missing_data_policy(&result, &missing, MissingDataPolicy::OptionalExclude)
+        .expect("optional exclusion still produces a result");
+    assert!(
+        warned
+            .warnings
+            .iter()
+            .any(|w| w.code == "missing_data_excluded")
+    );
 }
 
 // --------------------------------------------------------------------------- //
@@ -385,11 +399,20 @@ async fn attempt_duplicate_request() -> Result<(), String> {
             max_attempts: 2,
             available_at: None,
         };
-        let first = queue.submit(submit.clone()).await.map_err(|e| e.to_string())?;
+        let first = queue
+            .submit(submit.clone())
+            .await
+            .map_err(|e| e.to_string())?;
         // The duplicate request returns the SAME job (AT-03): never a
         // second row, never a different run id.
-        let second = queue.submit(submit.clone()).await.map_err(|e| e.to_string())?;
-        assert_eq!(first.id, second.id, "duplicate request must return the prior run");
+        let second = queue
+            .submit(submit.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+        assert_eq!(
+            first.id, second.id,
+            "duplicate request must return the prior run"
+        );
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM jobs")
             .fetch_one(&pool)
             .await
@@ -409,7 +432,7 @@ async fn attempt_duplicate_request() -> Result<(), String> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn duplicate_request_returns_prior_run() {
+async fn robustness_duplicate_request_returns_prior_run() {
     let Some(_url) = require_db_url() else { return };
     run_attempt(|| Box::pin(attempt_duplicate_request())).await;
 }
@@ -455,12 +478,11 @@ async fn attempt_worker_kill() -> Result<(), String> {
         assert_eq!(sweep.attempts_orphaned, 1, "exactly one ORPHANED attempt");
         assert_eq!(sweep.jobs_requeued, 1, "at most one retry");
 
-        let orphaned: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM job_attempts WHERE outcome = 'ORPHANED'",
-        )
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        let orphaned: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM job_attempts WHERE outcome = 'ORPHANED'")
+                .fetch_one(&pool)
+                .await
+                .map_err(|e| e.to_string())?;
         assert_eq!(orphaned, 1, "exactly one ORPHANED attempt row");
 
         // The retry is claimed and settles SUCCESSFULLY (a second worker
@@ -489,7 +511,7 @@ async fn attempt_worker_kill() -> Result<(), String> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn worker_kill_produces_one_orphaned_attempt_and_at_most_one_retry() {
+async fn robustness_worker_kill_produces_one_orphaned_attempt_and_at_most_one_retry() {
     let Some(_url) = require_db_url() else { return };
     run_attempt(|| Box::pin(attempt_worker_kill())).await;
 }
@@ -499,7 +521,7 @@ async fn worker_kill_produces_one_orphaned_attempt_and_at_most_one_retry() {
 // --------------------------------------------------------------------------- //
 
 #[test]
-fn five_strategy_golden_gate_approves_with_core_evidence() {
+fn robustness_five_strategy_golden_gate_approves_with_core_evidence() {
     let base_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")

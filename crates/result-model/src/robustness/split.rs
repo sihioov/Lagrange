@@ -100,9 +100,7 @@ fn metrics(points: &[EquityPoint]) -> (ReportedStat, ReportedStat, ReportedStat)
     let variance = daily.iter().map(|r| (r - mean) * (r - mean)).sum::<f64>() / n;
     let volatility = variance.sqrt() * 252.0f64.sqrt();
     let stat = |v: f64| {
-        ReportedStat::from_f64(v).unwrap_or_else(|e| {
-            panic!("segment metric must stay finite: {e}")
-        })
+        ReportedStat::from_f64(v).unwrap_or_else(|e| panic!("segment metric must stay finite: {e}"))
     };
     (stat(total_return), stat(max_drawdown), stat(volatility))
 }

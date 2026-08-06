@@ -11,8 +11,8 @@
 
 mod common;
 
-use domain::version::{SemVer, StrategyVersion};
 use domain::DatasetVersionId;
+use domain::version::{SemVer, StrategyVersion};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -28,7 +28,7 @@ fn parameter_axis() -> DerivedAxis {
 }
 
 #[test]
-fn derived_run_pins_strategy_data_engine_and_changes_one_axis() {
+fn robustness_derived_run_pins_strategy_data_engine_and_changes_one_axis() {
     let parent = common::provenance();
     let derived = common::derived_provenance();
     let mut registry = LineageRegistry::new();
@@ -58,7 +58,7 @@ fn derived_run_pins_strategy_data_engine_and_changes_one_axis() {
 }
 
 #[test]
-fn two_axis_mutation_is_rejected() {
+fn robustness_two_axis_mutation_is_rejected() {
     let parent = common::provenance();
     let derived = common::derived_provenance();
     let mut registry = LineageRegistry::new();
@@ -71,16 +71,18 @@ fn two_axis_mutation_is_rejected() {
                 profile_id: "krx_etf_default".to_owned(),
                 profile_version: 2,
             },
-            DerivedAxis::ExecutionDelay {
-                delay_sessions: 1,
-            },
+            DerivedAxis::ExecutionDelay { delay_sessions: 1 },
         ],
         derived_provenance: derived,
     };
     let error = registry.register_derived(request).expect_err(
         "a derived run that mutates two axes must be rejected (design §9.5 one variable only)",
     );
-    assert_eq!(registry.len(), 0, "no lineage row may exist after a rejection");
+    assert_eq!(
+        registry.len(),
+        0,
+        "no lineage row may exist after a rejection"
+    );
     match error {
         RobustnessError::MultiAxisChange { count } => assert_eq!(
             count, 2,
@@ -91,7 +93,7 @@ fn two_axis_mutation_is_rejected() {
 }
 
 #[test]
-fn pinning_violations_are_rejected_per_field() {
+fn robustness_pinning_violations_are_rejected_per_field() {
     let parent = common::provenance();
     let mut registry = LineageRegistry::new();
 
@@ -154,7 +156,7 @@ fn pinning_violations_are_rejected_per_field() {
 }
 
 #[test]
-fn lineage_is_deterministic_and_idempotent() {
+fn robustness_lineage_is_deterministic_and_idempotent() {
     let parent = common::provenance();
     let derived = common::derived_provenance();
     let parent_run_id = Uuid::new_v4();

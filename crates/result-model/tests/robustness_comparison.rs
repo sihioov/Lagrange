@@ -10,14 +10,14 @@ mod common;
 
 use domain::Currency;
 
-use result_model::robustness::{CostStressProfile, RunComparison, compare_runs, stress_cost};
+use result_model::robustness::{CostStressProfile, compare_runs, stress_cost};
 
 fn raw4(money: &domain::Money) -> i128 {
     common::raw4(money)
 }
 
 #[test]
-fn identical_runs_compare_equal() {
+fn robustness_identical_runs_compare_equal() {
     let left = common::golden_result();
     let right = common::golden_result();
     let comparison = compare_runs(&left, &right);
@@ -31,28 +31,27 @@ fn identical_runs_compare_equal() {
 }
 
 #[test]
-fn cost_stress_differs_on_equity_and_costs_but_not_config() {
+fn robustness_cost_stress_differs_on_equity_and_costs_but_not_config() {
     let base = common::golden_result();
     let stress = CostStressProfile::custom("stress-2x", 1, "0.001", "1000", "0.005", 10).unwrap();
     let stressed = stress_cost(&base, &stress, 10).unwrap();
 
     let comparison = compare_runs(&base, &stressed);
-    assert!(!comparison.identical, "stressed run must differ from the base");
+    assert!(
+        !comparison.identical,
+        "stressed run must differ from the base"
+    );
 
     // Cost basis: the fee delta (+46,237 KRW == 462,370,000 scale-4 units).
     assert_eq!(
-        comparison.cost_delta_raw,
-        462_370_000_i128,
+        comparison.cost_delta_raw, 462_370_000_i128,
         "cost delta must equal the exact fee increase"
     );
     // Config basis: same provenance -> no config diffs.
     assert!(comparison.config_diffs.is_empty());
     // Period basis: shared dates with non-zero equity deltas.
     assert!(!comparison.equity_diffs.is_empty());
-    assert!(comparison
-        .equity_diffs
-        .iter()
-        .all(|d| d.delta_raw != 0));
+    assert!(comparison.equity_diffs.iter().all(|d| d.delta_raw != 0));
     // Summary basis: the changed fields are reported by name.
     let summary_fields: Vec<&str> = comparison
         .summary_diffs
@@ -65,18 +64,21 @@ fn cost_stress_differs_on_equity_and_costs_but_not_config() {
 }
 
 #[test]
-fn provenance_drift_reports_config_diffs() {
+fn robustness_provenance_drift_reports_config_diffs() {
     let left = common::golden_result();
     let mut right = common::golden_result();
-    right.provenance.strategy_version =
-        domain::version::StrategyVersion::parse("2.0.0").unwrap();
+    right.provenance.strategy_version = domain::version::StrategyVersion::parse("2.0.0").unwrap();
     let comparison = compare_runs(&left, &right);
-    assert!(comparison.config_diffs.contains(&"strategy_version".to_owned()));
+    assert!(
+        comparison
+            .config_diffs
+            .contains(&"strategy_version".to_owned())
+    );
     assert!(!comparison.identical);
 }
 
 #[test]
-fn mutated_fill_is_reported() {
+fn robustness_mutated_fill_is_reported() {
     let left = common::golden_result();
     let mut right = common::golden_result();
     // One fill executes at a different price.
@@ -91,7 +93,7 @@ fn mutated_fill_is_reported() {
 }
 
 #[test]
-fn order_presence_differs() {
+fn robustness_order_presence_differs() {
     let left = common::golden_result();
     let mut right = common::golden_result();
     right.orders.pop();
@@ -104,7 +106,7 @@ fn order_presence_differs() {
 }
 
 #[test]
-fn comparison_is_deterministic() {
+fn robustness_comparison_is_deterministic() {
     let left = common::golden_result();
     let stress = CostStressProfile::custom("stress-2x", 1, "0.001", "1000", "0.005", 10).unwrap();
     let right = stress_cost(&left, &stress, 10).unwrap();
@@ -114,7 +116,7 @@ fn comparison_is_deterministic() {
 }
 
 #[test]
-fn cost_delta_sign_matches_order() {
+fn robustness_cost_delta_sign_matches_order() {
     let base = common::golden_result();
     let stress = CostStressProfile::custom("stress-2x", 1, "0.001", "1000", "0.005", 10).unwrap();
     let stressed = stress_cost(&base, &stress, 10).unwrap();
@@ -122,6 +124,9 @@ fn cost_delta_sign_matches_order() {
     let backward = compare_runs(&stressed, &base);
     assert!(forward.cost_delta_raw > 0, "base -> stressed adds cost");
     assert_eq!(forward.cost_delta_raw, -backward.cost_delta_raw);
-    assert_eq!(forward.cost_delta_raw, raw4(&stressed.summary.total_cost) - raw4(&base.summary.total_cost));
+    assert_eq!(
+        forward.cost_delta_raw,
+        raw4(&stressed.summary.total_cost) - raw4(&base.summary.total_cost)
+    );
     let _ = Currency::KRW;
 }

@@ -21,29 +21,34 @@ fn missing_069500() -> Vec<MissingInstrument> {
 }
 
 #[test]
-fn required_universe_missing_data_blocks_the_run() {
+fn robustness_required_universe_missing_data_blocks_the_run() {
     let error = apply_missing_data_policy(&missing_069500(), MissingDataPolicy::RequiredUniverse)
         .expect_err("required-universe missing bars must BLOCK (AT-05)");
     match error {
         RobustnessError::DataBlocked { detail } => {
-            assert!(detail.contains("069500.KRX"), "blocked detail must name the instrument");
+            assert!(
+                detail.contains("069500.KRX"),
+                "blocked detail must name the instrument"
+            );
         }
         other => panic!("expected DataBlocked, got: {other:?}"),
     }
 
     // The enforce flavor refuses to produce a result at all.
     let result = common::golden_result();
-    let error =
-        enforce_missing_data_policy(&result, &missing_069500(), MissingDataPolicy::RequiredUniverse)
-            .expect_err("enforce must refuse the run entirely");
+    let error = enforce_missing_data_policy(
+        &result,
+        &missing_069500(),
+        MissingDataPolicy::RequiredUniverse,
+    )
+    .expect_err("enforce must refuse the run entirely");
     assert!(matches!(error, RobustnessError::DataBlocked { .. }));
 }
 
 #[test]
-fn optional_missing_data_excludes_with_recorded_reason() {
-    let outcome =
-        apply_missing_data_policy(&missing_069500(), MissingDataPolicy::OptionalExclude)
-            .expect("optional exclusion must produce a policy outcome");
+fn robustness_optional_missing_data_excludes_with_recorded_reason() {
+    let outcome = apply_missing_data_policy(&missing_069500(), MissingDataPolicy::OptionalExclude)
+        .expect("optional exclusion must produce a policy outcome");
     match outcome {
         MissingDataOutcome::Warning { exclusions } => {
             assert_eq!(exclusions.len(), 1);
@@ -55,9 +60,18 @@ fn optional_missing_data_excludes_with_recorded_reason() {
 
     // The enforce flavor attaches the structured warning to the result.
     let result = common::golden_result();
-    let warned = enforce_missing_data_policy(&result, &missing_069500(), MissingDataPolicy::OptionalExclude)
-        .expect("optional exclusion must still produce a result");
-    assert!(warned.warnings.iter().any(|w| w.code == "missing_data_excluded"));
+    let warned = enforce_missing_data_policy(
+        &result,
+        &missing_069500(),
+        MissingDataPolicy::OptionalExclude,
+    )
+    .expect("optional exclusion must still produce a result");
+    assert!(
+        warned
+            .warnings
+            .iter()
+            .any(|w| w.code == "missing_data_excluded")
+    );
     let warning = warned
         .warnings
         .iter()
@@ -70,7 +84,7 @@ fn optional_missing_data_excludes_with_recorded_reason() {
 }
 
 #[test]
-fn no_missing_data_passes_both_policies() {
+fn robustness_no_missing_data_passes_both_policies() {
     assert!(matches!(
         apply_missing_data_policy(&[], MissingDataPolicy::RequiredUniverse)
             .expect("empty missing list must pass"),
@@ -84,7 +98,7 @@ fn no_missing_data_passes_both_policies() {
 }
 
 #[test]
-fn multiple_missing_instruments_are_all_recorded() {
+fn robustness_multiple_missing_instruments_are_all_recorded() {
     let missing = vec![
         MissingInstrument {
             instrument: "069500.KRX".to_owned(),

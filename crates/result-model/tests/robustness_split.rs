@@ -8,7 +8,7 @@
 mod common;
 
 use result_model::robustness::{
-    PeriodSplit, RobustnessError, split_period, walk_forward, WalkForwardPlan,
+    PeriodSplit, RobustnessError, WalkForwardPlan, split_period, walk_forward,
 };
 
 fn golden_points() -> Vec<String> {
@@ -20,7 +20,7 @@ fn golden_points() -> Vec<String> {
 }
 
 #[test]
-fn period_split_segments_are_disjoint_and_exhaustive() {
+fn robustness_period_split_segments_are_disjoint_and_exhaustive() {
     let result = common::golden_result();
     let split = PeriodSplit {
         train_end: "2020-01-08".to_owned(),
@@ -29,16 +29,39 @@ fn period_split_segments_are_disjoint_and_exhaustive() {
     let segments = split_period(&result, &split).expect("split must succeed");
 
     // train = all points <= 01-08; validation = (01-08, 01-13]; test = > 01-13
-    let train_dates: Vec<String> = segments.train.points.iter().map(|p| p.ts.to_rfc3339()[..10].to_owned()).collect();
-    let validation_dates: Vec<String> = segments.validation.points.iter().map(|p| p.ts.to_rfc3339()[..10].to_owned()).collect();
-    let test_dates: Vec<String> = segments.test.points.iter().map(|p| p.ts.to_rfc3339()[..10].to_owned()).collect();
+    let train_dates: Vec<String> = segments
+        .train
+        .points
+        .iter()
+        .map(|p| p.ts.to_rfc3339()[..10].to_owned())
+        .collect();
+    let validation_dates: Vec<String> = segments
+        .validation
+        .points
+        .iter()
+        .map(|p| p.ts.to_rfc3339()[..10].to_owned())
+        .collect();
+    let test_dates: Vec<String> = segments
+        .test
+        .points
+        .iter()
+        .map(|p| p.ts.to_rfc3339()[..10].to_owned())
+        .collect();
 
-    assert_eq!(train_dates, vec!["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-06"]);
+    assert_eq!(
+        train_dates,
+        vec!["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-06"]
+    );
     assert_eq!(validation_dates, vec!["2020-01-09"]);
     assert_eq!(test_dates, vec!["2020-01-14", "2020-01-16"]);
 
     // exhaustive: every golden point lands in exactly one segment
-    let mut seen: Vec<String> = train_dates.iter().chain(validation_dates.iter()).chain(test_dates.iter()).cloned().collect();
+    let mut seen: Vec<String> = train_dates
+        .iter()
+        .chain(validation_dates.iter())
+        .chain(test_dates.iter())
+        .cloned()
+        .collect();
     seen.sort_unstable();
     let mut all = golden_points();
     all.sort_unstable();
@@ -46,7 +69,7 @@ fn period_split_segments_are_disjoint_and_exhaustive() {
 }
 
 #[test]
-fn segment_metrics_are_deterministic_and_hand_verified() {
+fn robustness_segment_metrics_are_deterministic_and_hand_verified() {
     let result = common::golden_result();
     let split = PeriodSplit {
         train_end: "2020-01-08".to_owned(),
@@ -73,7 +96,7 @@ fn segment_metrics_are_deterministic_and_hand_verified() {
 }
 
 #[test]
-fn walk_forward_folds_cover_expected_windows() {
+fn robustness_walk_forward_folds_cover_expected_windows() {
     let result = common::golden_result();
     let plan = WalkForwardPlan {
         window_sessions: 3,
@@ -123,7 +146,7 @@ fn walk_forward_folds_cover_expected_windows() {
 }
 
 #[test]
-fn walk_forward_plan_too_large_is_a_typed_error() {
+fn robustness_walk_forward_plan_too_large_is_a_typed_error() {
     let result = common::golden_result();
     let plan = WalkForwardPlan {
         window_sessions: 10,
@@ -135,7 +158,7 @@ fn walk_forward_plan_too_large_is_a_typed_error() {
 }
 
 #[test]
-fn walk_forward_rejects_zero_step_or_window() {
+fn robustness_walk_forward_rejects_zero_step_or_window() {
     let result = common::golden_result();
     let error = walk_forward(
         &result,
@@ -159,7 +182,7 @@ fn walk_forward_rejects_zero_step_or_window() {
 }
 
 #[test]
-fn period_split_respects_the_same_barrier_as_selection() {
+fn robustness_period_split_respects_the_same_barrier_as_selection() {
     // The validation segment boundary matches the holdout selection barrier:
     // dates past validation_end belong to the test segment only.
     let result = common::golden_result();
@@ -168,14 +191,18 @@ fn period_split_respects_the_same_barrier_as_selection() {
         validation_end: "2020-01-13".to_owned(),
     };
     let segments = split_period(&result, &split).unwrap();
-    assert!(segments
-        .validation
-        .points
-        .iter()
-        .all(|p| p.ts.to_rfc3339()[..10] <= *"2020-01-13"));
-    assert!(segments
-        .test
-        .points
-        .iter()
-        .all(|p| p.ts.to_rfc3339()[..10] > *"2020-01-13"));
+    assert!(
+        segments
+            .validation
+            .points
+            .iter()
+            .all(|p| p.ts.to_rfc3339()[..10] <= *"2020-01-13")
+    );
+    assert!(
+        segments
+            .test
+            .points
+            .iter()
+            .all(|p| p.ts.to_rfc3339()[..10] > *"2020-01-13")
+    );
 }

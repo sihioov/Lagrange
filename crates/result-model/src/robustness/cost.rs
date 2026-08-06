@@ -79,10 +79,11 @@ impl CostStressProfile {
         };
         validate_rate("commission_rate", commission_rate)?;
         validate_rate("sell_tax_rate", sell_tax_rate)?;
-        Money::parse(min_commission, Currency::KRW)
-            .map_err(|e| RobustnessError::InvalidCostProfile {
+        Money::parse(min_commission, Currency::KRW).map_err(|e| {
+            RobustnessError::InvalidCostProfile {
                 detail: format!("min_commission {min_commission:?}: {e}"),
-            })?;
+            }
+        })?;
         if slippage_bps > 10_000 {
             return Err(RobustnessError::InvalidCostProfile {
                 detail: format!("slippage_bps {slippage_bps} exceeds 10_000"),
@@ -106,17 +107,21 @@ pub fn stress_cost(
     profile: &CostStressProfile,
     base_slippage_bps: u64,
 ) -> Result<BacktestResult, RobustnessError> {
-    let commission_rate = FixedPoint::parse(&profile.commission_rate)
-        .map_err(|e| RobustnessError::InvalidCostProfile {
+    let commission_rate = FixedPoint::parse(&profile.commission_rate).map_err(|e| {
+        RobustnessError::InvalidCostProfile {
             detail: format!("commission_rate: {e}"),
-        })?;
-    let sell_tax_rate = FixedPoint::parse(&profile.sell_tax_rate)
-        .map_err(|e| RobustnessError::InvalidCostProfile {
+        }
+    })?;
+    let sell_tax_rate = FixedPoint::parse(&profile.sell_tax_rate).map_err(|e| {
+        RobustnessError::InvalidCostProfile {
             detail: format!("sell_tax_rate: {e}"),
-        })?;
-    let min_commission = Money::parse(&profile.min_commission, result.summary.currency)
-        .map_err(|e| RobustnessError::InvalidCostProfile {
-            detail: format!("min_commission: {e}"),
+        }
+    })?;
+    let min_commission =
+        Money::parse(&profile.min_commission, result.summary.currency).map_err(|e| {
+            RobustnessError::InvalidCostProfile {
+                detail: format!("min_commission: {e}"),
+            }
         })?;
     let delta = FixedPoint::from_i128(
         i128::from(profile.slippage_bps) - i128::from(base_slippage_bps),
@@ -151,7 +156,9 @@ pub fn stress_cost(
                 .quantity
                 .checked_mul_price(&fill.price, result.summary.currency)
                 .expect("notional fits");
-            let commission_raw = notional.checked_mul(&commission_rate).expect("commission fits");
+            let commission_raw = notional
+                .checked_mul(&commission_rate)
+                .expect("commission fits");
             let commission = if commission_raw.amount() < min_commission.amount() {
                 min_commission
             } else {

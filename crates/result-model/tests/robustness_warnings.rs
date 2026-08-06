@@ -71,7 +71,7 @@ fn result_from_fills(fills: Vec<FillRecord>) -> BacktestResult {
 }
 
 #[test]
-fn concentrated_returns_fire_top_trade_warning() {
+fn robustness_concentrated_returns_fire_top_trade_warning() {
     // Golden scenario: three round trips of very different sizes.
     let result = common::golden_result();
     let warning = top_trade_concentration_warning(&result)
@@ -83,7 +83,7 @@ fn concentrated_returns_fire_top_trade_warning() {
 }
 
 #[test]
-fn diversified_returns_do_not_warn() {
+fn robustness_diversified_returns_do_not_warn() {
     // Six equal round trips: top-3 share == 0.5, at the threshold -> no warn.
     let mut fills = Vec::new();
     let instruments = [
@@ -96,10 +96,24 @@ fn diversified_returns_do_not_warn() {
     ];
     // All buys first (chronological), then all sells (chronological).
     for (i, instrument) in instruments.iter().enumerate() {
-        fills.push(fill(&format!("b{i}"), &format!("2020-01-{:02}", i * 2 + 2), instrument, OrderSide::Buy, 100, "10000.0000"));
+        fills.push(fill(
+            &format!("b{i}"),
+            &format!("2020-01-{:02}", i * 2 + 2),
+            instrument,
+            OrderSide::Buy,
+            100,
+            "10000.0000",
+        ));
     }
     for (i, instrument) in instruments.iter().enumerate() {
-        fills.push(fill(&format!("s{i}"), &format!("2020-02-{:02}", i + 2), instrument, OrderSide::Sell, 100, "10500.0000"));
+        fills.push(fill(
+            &format!("s{i}"),
+            &format!("2020-02-{:02}", i + 2),
+            instrument,
+            OrderSide::Sell,
+            100,
+            "10500.0000",
+        ));
     }
     let result = result_from_fills(fills);
     assert!(
@@ -109,10 +123,10 @@ fn diversified_returns_do_not_warn() {
 }
 
 #[test]
-fn single_year_dominance_fires_year_warning() {
+fn robustness_single_year_dominance_fires_year_warning() {
     let result = common::golden_result();
-    let warning = year_concentration_warning(&result)
-        .expect("a single-year contribution of 1.0 must warn");
+    let warning =
+        year_concentration_warning(&result).expect("a single-year contribution of 1.0 must warn");
     assert_eq!(warning.code, "year_concentration");
     assert_eq!(warning.severity, result_model::WarningSeverity::Warning);
     let details = warning.details.as_ref().unwrap();
@@ -120,7 +134,7 @@ fn single_year_dominance_fires_year_warning() {
 }
 
 #[test]
-fn spread_years_do_not_warn() {
+fn robustness_spread_years_do_not_warn() {
     // Three equal-magnitude round trips, one per year (2019/2020/2021):
     // each year contributes 1/3 < 0.4 -> no warning.
     let mut fills = Vec::new();
@@ -157,7 +171,7 @@ fn spread_years_do_not_warn() {
 }
 
 #[test]
-fn recent_underperformance_warns() {
+fn robustness_recent_underperformance_warns() {
     let result = common::golden_result();
     let warning = recent_degradation_warning(&result, "069500.KRX")
         .expect("recent strategy return below benchmark must warn");
@@ -169,7 +183,7 @@ fn recent_underperformance_warns() {
 }
 
 #[test]
-fn recent_outperformance_does_not_warn() {
+fn robustness_recent_outperformance_does_not_warn() {
     let mut result = common::golden_result();
     // Benchmark crashing harder than the strategy -> no degradation warning.
     result.benchmark = vec![
@@ -189,7 +203,7 @@ fn recent_outperformance_does_not_warn() {
 }
 
 #[test]
-fn neighborhood_sudden_change_warns_and_stats_are_reported() {
+fn robustness_neighborhood_sudden_change_warns_and_stats_are_reported() {
     // Returns climb then collapse: the 0.04 -> -0.20 jump exceeds 10%.
     let analysis: NeighborhoodAnalysis = analyze_neighborhood(vec![
         (json!({"fast_ma": 10}), stat(0.05)),
@@ -206,7 +220,7 @@ fn neighborhood_sudden_change_warns_and_stats_are_reported() {
 }
 
 #[test]
-fn neighborhood_without_jumps_does_not_warn() {
+fn robustness_neighborhood_without_jumps_does_not_warn() {
     let analysis = analyze_neighborhood(vec![
         (json!({"fast_ma": 10}), stat(0.05)),
         (json!({"fast_ma": 20}), stat(0.04)),
@@ -218,13 +232,15 @@ fn neighborhood_without_jumps_does_not_warn() {
         "gentle neighborhood must not warn"
     );
     let mean = analysis.mean_return.value();
-    assert!((mean - 0.045).abs() < 1e-9, "mean of 0.05/0.04/0.045 is 0.045");
+    assert!(
+        (mean - 0.045).abs() < 1e-9,
+        "mean of 0.05/0.04/0.045 is 0.045"
+    );
 }
 
 #[test]
-fn empty_neighborhood_is_a_typed_error() {
-    let error =
-        analyze_neighborhood(Vec::<(serde_json::Value, ReportedStat)>::new())
-            .expect_err("an empty neighborhood must be a typed error");
+fn robustness_empty_neighborhood_is_a_typed_error() {
+    let error = analyze_neighborhood(Vec::<(serde_json::Value, ReportedStat)>::new())
+        .expect_err("an empty neighborhood must be a typed error");
     assert!(matches!(error, RobustnessError::EmptySeries { .. }));
 }
