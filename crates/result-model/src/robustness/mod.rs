@@ -25,6 +25,7 @@
 //!   deltas and non-finite values).
 
 pub mod benchmark;
+pub mod comparison;
 pub mod cost;
 pub mod delay;
 pub mod error;
@@ -35,6 +36,7 @@ pub mod split;
 pub mod warnings;
 
 pub use benchmark::{BenchmarkComparison, compare_benchmark};
+pub use comparison::{EquityDiff, PresenceDiff, PositionDiff, RunComparison, SummaryDiff, compare_runs};
 pub use cost::{CostStressProfile, stress_cost};
 pub use delay::delay_execution;
 pub use error::RobustnessError;
