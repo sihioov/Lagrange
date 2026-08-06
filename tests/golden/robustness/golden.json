@@ -1,0 +1,52 @@
+{
+  "golden_id": "kr-etf-five-strategies-v1",
+  "manifest_version": "1",
+  "versions": {
+    "data": {"id": "kr-etf-daily-phase0-v1", "version": "1.0.0", "source": "synthetic"},
+    "strategy": {"id": "five-baseline-strategies", "version": "1.0.0"},
+    "engine": {"name": "lagrange-golden-sim", "version": "1.0.0"},
+    "config": {"id": "golden-config-five-strategies-v1"},
+    "seed": 42,
+    "timezone": "Asia/Seoul"
+  },
+  "fixtures": [
+    {"path": "../../fixtures/kr-etf/2020-01-31/bars.json", "category": "data-bars"}
+  ],
+  "artifacts": [
+    {"path": "strategies/buy_and_hold/outputs/recommendation.json", "category": "recommendation"},
+    {"path": "strategies/buy_and_hold/outputs/orders.json", "category": "order"},
+    {"path": "strategies/buy_and_hold/outputs/fills.json", "category": "fill"},
+    {"path": "strategies/buy_and_hold/outputs/equity.json", "category": "equity"},
+    {"path": "strategies/buy_and_hold/outputs/fees.json", "category": "fee"},
+    {"path": "strategies/buy_and_hold/outputs/metrics.json", "category": "metric"},
+    {"path": "strategies/buy_and_hold/outputs/provenance.json", "category": "provenance"},
+    {"path": "strategies/trend_following/outputs/recommendation.json", "category": "recommendation"},
+    {"path": "strategies/trend_following/outputs/orders.json", "category": "order"},
+    {"path": "strategies/trend_following/outputs/fills.json", "category": "fill"},
+    {"path": "strategies/trend_following/outputs/equity.json", "category": "equity"},
+    {"path": "strategies/trend_following/outputs/fees.json", "category": "fee"},
+    {"path": "strategies/trend_following/outputs/metrics.json", "category": "metric"},
+    {"path": "strategies/trend_following/outputs/provenance.json", "category": "provenance"},
+    {"path": "strategies/relative_momentum/outputs/recommendation.json", "category": "recommendation"},
+    {"path": "strategies/relative_momentum/outputs/orders.json", "category": "order"},
+    {"path": "strategies/relative_momentum/outputs/fills.json", "category": "fill"},
+    {"path": "strategies/relative_momentum/outputs/equity.json", "category": "equity"},
+    {"path": "strategies/relative_momentum/outputs/fees.json", "category": "fee"},
+    {"path": "strategies/relative_momentum/outputs/metrics.json", "category": "metric"},
+    {"path": "strategies/relative_momentum/outputs/provenance.json", "category": "provenance"},
+    {"path": "strategies/dual_momentum/outputs/recommendation.json", "category": "recommendation"},
+    {"path": "strategies/dual_momentum/outputs/orders.json", "category": "order"},
+    {"path": "strategies/dual_momentum/outputs/fills.json", "category": "fill"},
+    {"path": "strategies/dual_momentum/outputs/equity.json", "category": "equity"},
+    {"path": "strategies/dual_momentum/outputs/fees.json", "category": "fee"},
+    {"path": "strategies/dual_momentum/outputs/metrics.json", "category": "metric"},
+    {"path": "strategies/dual_momentum/outputs/provenance.json", "category": "provenance"},
+    {"path": "strategies/inverse_volatility/outputs/recommendation.json", "category": "recommendation"},
+    {"path": "strategies/inverse_volatility/outputs/orders.json", "category": "order"},
+    {"path": "strategies/inverse_volatility/outputs/fills.json", "category": "fill"},
+    {"path": "strategies/inverse_volatility/outputs/equity.json", "category": "equity"},
+    {"path": "strategies/inverse_volatility/outputs/fees.json", "category": "fee"},
+    {"path": "strategies/inverse_volatility/outputs/metrics.json", "category": "metric"},
+    {"path": "strategies/inverse_volatility/outputs/provenance.json", "category": "provenance"}
+  ]
+}

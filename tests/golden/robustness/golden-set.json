@@ -1,0 +1,196 @@
+{
+  "artifacts": [
+    {
+      "id": "buy_and_hold/recommendation",
+      "path": "strategies/buy_and_hold/outputs/recommendation.json",
+      "sha256": "sha256:e298fa09f9c19827d241f0afda93b90791579863bccd5ec65b6429a7e3f31367"
+    },
+    {
+      "id": "buy_and_hold/orders",
+      "path": "strategies/buy_and_hold/outputs/orders.json",
+      "sha256": "sha256:c0e2c38f9c4cfc61534215564b514cac2978b1724fe814cda288c4da5483e115"
+    },
+    {
+      "id": "buy_and_hold/fills",
+      "path": "strategies/buy_and_hold/outputs/fills.json",
+      "sha256": "sha256:adf119f38678fd5aa0e7ea646fbabfa2b1e3abe32f5d7b92d77247662732d545"
+    },
+    {
+      "id": "buy_and_hold/equity",
+      "path": "strategies/buy_and_hold/outputs/equity.json",
+      "sha256": "sha256:ebb94e3632a364852088a0997c11fdd7657a0d74bda1118d15ee51f086a6009e"
+    },
+    {
+      "id": "buy_and_hold/fees",
+      "path": "strategies/buy_and_hold/outputs/fees.json",
+      "sha256": "sha256:ce1572fa54f5f864a84e93f624ec95c0036f23f0bd1accd29cc2154919f9f55a"
+    },
+    {
+      "id": "buy_and_hold/metrics",
+      "path": "strategies/buy_and_hold/outputs/metrics.json",
+      "sha256": "sha256:5fd94b263c569749b2cd83767b52b80f20f4ae368edae6a70ec192c2c540bb6a"
+    },
+    {
+      "id": "buy_and_hold/provenance",
+      "path": "strategies/buy_and_hold/outputs/provenance.json",
+      "sha256": "sha256:c5d3fbf848b21c8d742e8aaeba263bc69ffb012eb3b26ae21a10a85168b76c9f"
+    },
+    {
+      "id": "trend_following/recommendation",
+      "path": "strategies/trend_following/outputs/recommendation.json",
+      "sha256": "sha256:9e95a06a8b6a60b4e317fac23c903362fca84e79e6d5c9f739908c8c27ec19ef"
+    },
+    {
+      "id": "trend_following/orders",
+      "path": "strategies/trend_following/outputs/orders.json",
+      "sha256": "sha256:2ef204c344007e12cd7609f9bf1ceb4a8f150ae933949865bb4fc96f00cb397e"
+    },
+    {
+      "id": "trend_following/fills",
+      "path": "strategies/trend_following/outputs/fills.json",
+      "sha256": "sha256:c3e5f014956378753ac14d6e2be397736ba86564114060125e464dbfb1c58f88"
+    },
+    {
+      "id": "trend_following/equity",
+      "path": "strategies/trend_following/outputs/equity.json",
+      "sha256": "sha256:dc57969c112792315facf0137a80cf76d7cdee3fcc2277a5ec211374888556ec"
+    },
+    {
+      "id": "trend_following/fees",
+      "path": "strategies/trend_following/outputs/fees.json",
+      "sha256": "sha256:3b70670c9dbb6126d8d974f8d59d957c18eab3b0681d0596e76e7524abd2638b"
+    },
+    {
+      "id": "trend_following/metrics",
+      "path": "strategies/trend_following/outputs/metrics.json",
+      "sha256": "sha256:130eb1d454a253f2796dc74146b06fa09711c0950f63eb76362ccd28aa76875e"
+    },
+    {
+      "id": "trend_following/provenance",
+      "path": "strategies/trend_following/outputs/provenance.json",
+      "sha256": "sha256:c566a6b336f20b826b37ac3ff1cff92944a3b1aaed239e85ef31463fa2a6f147"
+    },
+    {
+      "id": "relative_momentum/recommendation",
+      "path": "strategies/relative_momentum/outputs/recommendation.json",
+      "sha256": "sha256:e194d94d8b5f7c9653ee4ae262148cf62fd4c718f47e5cfb99b639e58369be8c"
+    },
+    {
+      "id": "relative_momentum/orders",
+      "path": "strategies/relative_momentum/outputs/orders.json",
+      "sha256": "sha256:5764e40b8ef297b057a312fd6fda7751fe353d7d0ba1a1c4bc2dd5fd0bfb3833"
+    },
+    {
+      "id": "relative_momentum/fills",
+      "path": "strategies/relative_momentum/outputs/fills.json",
+      "sha256": "sha256:14de8ff26202e23b9965885a86cf1ed77b89d4718b031120aa96ee703859074e"
+    },
+    {
+      "id": "relative_momentum/equity",
+      "path": "strategies/relative_momentum/outputs/equity.json",
+      "sha256": "sha256:2d1fc95c1dea4b5e1966cb6090f901e639e25f0a2558af182ba62e35fc70bd47"
+    },
+    {
+      "id": "relative_momentum/fees",
+      "path": "strategies/relative_momentum/outputs/fees.json",
+      "sha256": "sha256:d2b675410749bdd5da5c7a5b77a7bbd261101d20ba960203063df9adb6bf8d8c"
+    },
+    {
+      "id": "relative_momentum/metrics",
+      "path": "strategies/relative_momentum/outputs/metrics.json",
+      "sha256": "sha256:20a4f976790770fb571661b6c201a07b26b4783e7e4ef9b556156894d97c68ff"
+    },
+    {
+      "id": "relative_momentum/provenance",
+      "path": "strategies/relative_momentum/outputs/provenance.json",
+      "sha256": "sha256:1bb1229fd0d23469b684ba480851c05f88f04211ca23ac3f542f9c9a8ae979da"
+    },
+    {
+      "id": "dual_momentum/recommendation",
+      "path": "strategies/dual_momentum/outputs/recommendation.json",
+      "sha256": "sha256:ee40ffbd29856399d4313f10b7a8c42a3e9eec5b85bf8b19499ace770ae61313"
+    },
+    {
+      "id": "dual_momentum/orders",
+      "path": "strategies/dual_momentum/outputs/orders.json",
+      "sha256": "sha256:5c9188fb26fa8f66e98b063f95435e264dfe0798b2936818a0b6b889716aced5"
+    },
+    {
+      "id": "dual_momentum/fills",
+      "path": "strategies/dual_momentum/outputs/fills.json",
+      "sha256": "sha256:90ca0b436970314ce192689bc272c612cad4716d0229055949cc6283997b629a"
+    },
+    {
+      "id": "dual_momentum/equity",
+      "path": "strategies/dual_momentum/outputs/equity.json",
+      "sha256": "sha256:a23a456c7bed9291fad3db34f14c29ba21f3818550ab7e18dbe1fd573a150b02"
+    },
+    {
+      "id": "dual_momentum/fees",
+      "path": "strategies/dual_momentum/outputs/fees.json",
+      "sha256": "sha256:6191012485e6d0d54871f8dd8f3efa3f2a14315f33b5fed4ed46cc9981d3556e"
+    },
+    {
+      "id": "dual_momentum/metrics",
+      "path": "strategies/dual_momentum/outputs/metrics.json",
+      "sha256": "sha256:6a0608363bcdfa981d6491f046c4d781b37b92523f78594db66af74c6d5fe7ea"
+    },
+    {
+      "id": "dual_momentum/provenance",
+      "path": "strategies/dual_momentum/outputs/provenance.json",
+      "sha256": "sha256:784f53252ecb796199ce156eb91e7c34054ec8007b7dac2d146f0adb71a8f3b8"
+    },
+    {
+      "id": "inverse_volatility/recommendation",
+      "path": "strategies/inverse_volatility/outputs/recommendation.json",
+      "sha256": "sha256:a224c40a13896f0045b24db348200f5c97d88e22e3af5d4daae07d718e974b0a"
+    },
+    {
+      "id": "inverse_volatility/orders",
+      "path": "strategies/inverse_volatility/outputs/orders.json",
+      "sha256": "sha256:c1f1c7f9fd0c3495c5e51d4ee816d20d7e5f6b09f13b41bf360efa2e962e363a"
+    },
+    {
+      "id": "inverse_volatility/fills",
+      "path": "strategies/inverse_volatility/outputs/fills.json",
+      "sha256": "sha256:d684b61bd05b1dad176486eb9deede115287cc872d38e0491f35a108266aec4d"
+    },
+    {
+      "id": "inverse_volatility/equity",
+      "path": "strategies/inverse_volatility/outputs/equity.json",
+      "sha256": "sha256:3c9736e835771097c521a51360a57ecddea07637257e899ae8d56e3bd3d02f5b"
+    },
+    {
+      "id": "inverse_volatility/fees",
+      "path": "strategies/inverse_volatility/outputs/fees.json",
+      "sha256": "sha256:a2e5fb7570b3c70f9378eec146265f2bc45684637467bc5c5bda464bfcc04a6a"
+    },
+    {
+      "id": "inverse_volatility/metrics",
+      "path": "strategies/inverse_volatility/outputs/metrics.json",
+      "sha256": "sha256:8795f4b1ff95b4b77e8e3e791adddd7e056c7d0ddbe1ce0f35c92d1c4852634c"
+    },
+    {
+      "id": "inverse_volatility/provenance",
+      "path": "strategies/inverse_volatility/outputs/provenance.json",
+      "sha256": "sha256:c174546cec1b2319d69a7370706955ad045c3554edb09d268a39567bec7156a9"
+    }
+  ],
+  "golden_id": "kr-etf-five-strategies-v1",
+  "versions": {
+    "config": {
+      "id": "golden-config-five-strategies-v1"
+    },
+    "data": {
+      "id": "kr-etf-daily-phase0-v1",
+      "source": "synthetic",
+      "version": "1.0.0"
+    },
+    "engine": {
+      "name": "lagrange-golden-sim",
+      "version": "1.0.0"
+    },
+    "seed": 42,
+    "timezone": "Asia/Seoul"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "cost_profile": {
+    "commission_bps": 1,
+    "minimum_commission": "1000.00",
+    "slippage_bps": 10,
+    "tax_bps": 0
+  },
+  "currency": "KRW",
+  "items": [
+    {
+      "commission": 48901752,
+      "tax": 0,
+      "ts": "2021-01-21T00:00:00Z"
+    },
+    {
+      "commission": 49670220,
+      "tax": 0,
+      "ts": "2021-01-21T00:00:00Z"
+    },
+    {
+      "commission": 49767968,
+      "tax": 0,
+      "ts": "2021-01-21T00:00:00Z"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "relative_momentum",
+  "strategy_version": "1.0.0",
+  "total_fees": "14833.9940"
+}

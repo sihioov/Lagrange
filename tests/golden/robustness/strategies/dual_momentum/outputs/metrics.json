@@ -1,0 +1,18 @@
+{
+  "cagr_pct": "-21.455218",
+  "calmar": "-1.363201",
+  "currency": "KRW",
+  "final_equity_raw": 842611445071,
+  "finite": true,
+  "max_drawdown_pct": "-15.738855",
+  "nan_free": true,
+  "num_fills": 1,
+  "schema_version": 1,
+  "sharpe": "-0.164571",
+  "strategy_id": "dual_momentum",
+  "strategy_version": "1.0.0",
+  "total_fees": "14902.7929",
+  "total_return_pct": "-15.738855",
+  "turnover": "0.996630",
+  "volatility_pct": "6.298416"
+}

@@ -1,0 +1,20 @@
+{
+  "execution_window": "NEXT_SESSION_OPEN",
+  "orders": [
+    {
+      "client_order_id": "co-069500.KRX-2021-01-20",
+      "created_ts": "2021-01-19T06:30:00Z",
+      "execution_ts_target": "2021-01-20T00:00:00Z",
+      "instrument": "069500.KRX",
+      "order_id": "ord-069500.KRX-2021-01-20",
+      "order_type": "MARKET",
+      "quantity": 10100,
+      "side": "BUY",
+      "signal_date": "2021-01-19",
+      "state": "FILLED"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "dual_momentum",
+  "strategy_version": "1.0.0"
+}

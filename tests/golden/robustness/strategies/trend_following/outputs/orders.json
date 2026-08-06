@@ -1,0 +1,68 @@
+{
+  "execution_window": "NEXT_SESSION_OPEN",
+  "orders": [
+    {
+      "client_order_id": "co-069500.KRX-2020-04-01",
+      "created_ts": "2020-03-31T06:30:00Z",
+      "execution_ts_target": "2020-04-01T00:00:00Z",
+      "instrument": "069500.KRX",
+      "order_id": "ord-069500.KRX-2020-04-01",
+      "order_type": "MARKET",
+      "quantity": 9700,
+      "side": "BUY",
+      "signal_date": "2020-03-31",
+      "state": "FILLED"
+    },
+    {
+      "client_order_id": "co-069500.KRX-2020-07-29",
+      "created_ts": "2020-07-28T06:30:00Z",
+      "execution_ts_target": "2020-07-29T00:00:00Z",
+      "instrument": "069500.KRX",
+      "order_id": "ord-069500.KRX-2020-07-29",
+      "order_type": "MARKET",
+      "quantity": 9700,
+      "side": "SELL",
+      "signal_date": "2020-07-28",
+      "state": "FILLED"
+    },
+    {
+      "client_order_id": "co-069500.KRX-2020-08-03",
+      "created_ts": "2020-07-31T06:30:00Z",
+      "execution_ts_target": "2020-08-03T00:00:00Z",
+      "instrument": "069500.KRX",
+      "order_id": "ord-069500.KRX-2020-08-03",
+      "order_type": "MARKET",
+      "quantity": 9800,
+      "side": "BUY",
+      "signal_date": "2020-07-31",
+      "state": "FILLED"
+    },
+    {
+      "client_order_id": "co-069500.KRX-2020-09-03",
+      "created_ts": "2020-09-02T06:30:00Z",
+      "execution_ts_target": "2020-09-03T00:00:00Z",
+      "instrument": "069500.KRX",
+      "order_id": "ord-069500.KRX-2020-09-03",
+      "order_type": "MARKET",
+      "quantity": 9800,
+      "side": "SELL",
+      "signal_date": "2020-09-02",
+      "state": "FILLED"
+    },
+    {
+      "client_order_id": "co-069500.KRX-2021-01-19",
+      "created_ts": "2021-01-18T06:30:00Z",
+      "execution_ts_target": "2021-01-19T00:00:00Z",
+      "instrument": "069500.KRX",
+      "order_id": "ord-069500.KRX-2021-01-19",
+      "order_type": "MARKET",
+      "quantity": 9300,
+      "side": "BUY",
+      "signal_date": "2021-01-18",
+      "state": "FILLED"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "trend_following",
+  "strategy_version": "1.0.0"
+}

@@ -1,0 +1,1570 @@
+{
+  "currency": "KRW",
+  "equity_note": "Daily equity = cash + sum(position shares x session close); cash ledger debited/credited at execution prices.",
+  "initial_cash_raw": 1000000000000,
+  "points": [
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-01-20",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-01-21",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-01-22",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-01-23",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-01-28",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-01-29",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-01-30",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-01-31",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-03",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-04",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-05",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-06",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-07",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-10",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-11",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-12",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-13",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-14",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-17",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-18",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-19",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-20",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-21",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-24",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-25",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-26",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-27",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-02-28",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-02",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-03",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-04",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-05",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-06",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-09",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-10",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-11",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-12",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-13",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-16",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-17",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-18",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-19",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-20",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-23",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-24",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-25",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-26",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-27",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-30",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 1000000000000,
+      "date": "2020-03-31",
+      "equity_raw": 1000000000000,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-01",
+      "equity_raw": 1004968690573,
+      "positions_value_raw": 999294000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-02",
+      "equity_raw": 1006520690573,
+      "positions_value_raw": 1000846000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-03",
+      "equity_raw": 1005453690573,
+      "positions_value_raw": 999779000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-06",
+      "equity_raw": 1021749690573,
+      "positions_value_raw": 1016075000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-07",
+      "equity_raw": 1009333690573,
+      "positions_value_raw": 1003659000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-08",
+      "equity_raw": 1003998690573,
+      "positions_value_raw": 998324000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-09",
+      "equity_raw": 989642690573,
+      "positions_value_raw": 983968000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-10",
+      "equity_raw": 988478690573,
+      "positions_value_raw": 982804000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-13",
+      "equity_raw": 989254690573,
+      "positions_value_raw": 983580000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-14",
+      "equity_raw": 984404690573,
+      "positions_value_raw": 978730000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-15",
+      "equity_raw": 977226690573,
+      "positions_value_raw": 971552000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-16",
+      "equity_raw": 968787690573,
+      "positions_value_raw": 963113000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-17",
+      "equity_raw": 953461690573,
+      "positions_value_raw": 947787000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-20",
+      "equity_raw": 962191690573,
+      "positions_value_raw": 956517000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-21",
+      "equity_raw": 961318690573,
+      "positions_value_raw": 955644000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-22",
+      "equity_raw": 964810690573,
+      "positions_value_raw": 959136000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-23",
+      "equity_raw": 966556690573,
+      "positions_value_raw": 960882000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-24",
+      "equity_raw": 958408690573,
+      "positions_value_raw": 952734000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-27",
+      "equity_raw": 962288690573,
+      "positions_value_raw": 956614000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-28",
+      "equity_raw": 956274690573,
+      "positions_value_raw": 950600000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-04-29",
+      "equity_raw": 950551690573,
+      "positions_value_raw": 944877000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-04",
+      "equity_raw": 936971690573,
+      "positions_value_raw": 931297000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-06",
+      "equity_raw": 955401690573,
+      "positions_value_raw": 949727000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-07",
+      "equity_raw": 956759690573,
+      "positions_value_raw": 951085000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-08",
+      "equity_raw": 967235690573,
+      "positions_value_raw": 961561000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-11",
+      "equity_raw": 970436690573,
+      "positions_value_raw": 964762000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-12",
+      "equity_raw": 952976690573,
+      "positions_value_raw": 947302000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-13",
+      "equity_raw": 953655690573,
+      "positions_value_raw": 947981000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-14",
+      "equity_raw": 956953690573,
+      "positions_value_raw": 951279000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-15",
+      "equity_raw": 947641690573,
+      "positions_value_raw": 941967000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-18",
+      "equity_raw": 955789690573,
+      "positions_value_raw": 950115000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-19",
+      "equity_raw": 957632690573,
+      "positions_value_raw": 951958000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-20",
+      "equity_raw": 956080690573,
+      "positions_value_raw": 950406000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-21",
+      "equity_raw": 950454690573,
+      "positions_value_raw": 944780000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-22",
+      "equity_raw": 949581690573,
+      "positions_value_raw": 943907000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-25",
+      "equity_raw": 939493690573,
+      "positions_value_raw": 933819000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-26",
+      "equity_raw": 941433690573,
+      "positions_value_raw": 935759000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-27",
+      "equity_raw": 931539690573,
+      "positions_value_raw": 925865000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-28",
+      "equity_raw": 933479690573,
+      "positions_value_raw": 927805000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-05-29",
+      "equity_raw": 921451690573,
+      "positions_value_raw": 915777000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-01",
+      "equity_raw": 931345690573,
+      "positions_value_raw": 925671000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-02",
+      "equity_raw": 934546690573,
+      "positions_value_raw": 928872000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-03",
+      "equity_raw": 927950690573,
+      "positions_value_raw": 922276000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-04",
+      "equity_raw": 936292690573,
+      "positions_value_raw": 930618000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-05",
+      "equity_raw": 933382690573,
+      "positions_value_raw": 927708000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-08",
+      "equity_raw": 934837690573,
+      "positions_value_raw": 929163000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-09",
+      "equity_raw": 936195690573,
+      "positions_value_raw": 930521000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-10",
+      "equity_raw": 921063690573,
+      "positions_value_raw": 915389000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-11",
+      "equity_raw": 911266690573,
+      "positions_value_raw": 905592000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-12",
+      "equity_raw": 908162690573,
+      "positions_value_raw": 902488000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-15",
+      "equity_raw": 908744690573,
+      "positions_value_raw": 903070000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-16",
+      "equity_raw": 903118690573,
+      "positions_value_raw": 897444000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-17",
+      "equity_raw": 902633690573,
+      "positions_value_raw": 896959000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-18",
+      "equity_raw": 889829690573,
+      "positions_value_raw": 884155000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-19",
+      "equity_raw": 887695690573,
+      "positions_value_raw": 882021000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-22",
+      "equity_raw": 897686690573,
+      "positions_value_raw": 892012000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-23",
+      "equity_raw": 903118690573,
+      "positions_value_raw": 897444000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-24",
+      "equity_raw": 910102690573,
+      "positions_value_raw": 904428000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-25",
+      "equity_raw": 909811690573,
+      "positions_value_raw": 904137000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-26",
+      "equity_raw": 910975690573,
+      "positions_value_raw": 905301000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-29",
+      "equity_raw": 912624690573,
+      "positions_value_raw": 906950000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-06-30",
+      "equity_raw": 914079690573,
+      "positions_value_raw": 908405000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-01",
+      "equity_raw": 922809690573,
+      "positions_value_raw": 917135000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-02",
+      "equity_raw": 932509690573,
+      "positions_value_raw": 926835000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-03",
+      "equity_raw": 934643690573,
+      "positions_value_raw": 928969000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-06",
+      "equity_raw": 925913690573,
+      "positions_value_raw": 920239000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-07",
+      "equity_raw": 927659690573,
+      "positions_value_raw": 921985000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-08",
+      "equity_raw": 925622690573,
+      "positions_value_raw": 919948000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-09",
+      "equity_raw": 921063690573,
+      "positions_value_raw": 915389000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-10",
+      "equity_raw": 918929690573,
+      "positions_value_raw": 913255000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-13",
+      "equity_raw": 918347690573,
+      "positions_value_raw": 912673000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-14",
+      "equity_raw": 902827690573,
+      "positions_value_raw": 897153000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-15",
+      "equity_raw": 907483690573,
+      "positions_value_raw": 901809000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-16",
+      "equity_raw": 920481690573,
+      "positions_value_raw": 914807000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-17",
+      "equity_raw": 926495690573,
+      "positions_value_raw": 920821000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-20",
+      "equity_raw": 922615690573,
+      "positions_value_raw": 916941000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-21",
+      "equity_raw": 931248690573,
+      "positions_value_raw": 925574000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-22",
+      "equity_raw": 930860690573,
+      "positions_value_raw": 925186000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-23",
+      "equity_raw": 924846690573,
+      "positions_value_raw": 919172000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-24",
+      "equity_raw": 916019690573,
+      "positions_value_raw": 910345000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-27",
+      "equity_raw": 923197690573,
+      "positions_value_raw": 917523000000
+    },
+    {
+      "cash_raw": 5674690573,
+      "date": "2020-07-28",
+      "equity_raw": 919996690573,
+      "positions_value_raw": 914322000000
+    },
+    {
+      "cash_raw": 918945357422,
+      "date": "2020-07-29",
+      "equity_raw": 918945357422,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 918945357422,
+      "date": "2020-07-30",
+      "equity_raw": 918945357422,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 918945357422,
+      "date": "2020-07-31",
+      "equity_raw": 918945357422,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-03",
+      "equity_raw": 901336125145,
+      "positions_value_raw": 893956000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-04",
+      "equity_raw": 901336125145,
+      "positions_value_raw": 893956000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-05",
+      "equity_raw": 904570125145,
+      "positions_value_raw": 897190000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-06",
+      "equity_raw": 914860125145,
+      "positions_value_raw": 907480000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-07",
+      "equity_raw": 917016125145,
+      "positions_value_raw": 909636000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-10",
+      "equity_raw": 922210125145,
+      "positions_value_raw": 914830000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-11",
+      "equity_raw": 920446125145,
+      "positions_value_raw": 913066000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-12",
+      "equity_raw": 927208125145,
+      "positions_value_raw": 919828000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-13",
+      "equity_raw": 933578125145,
+      "positions_value_raw": 926198000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-14",
+      "equity_raw": 931618125145,
+      "positions_value_raw": 924238000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-17",
+      "equity_raw": 937400125145,
+      "positions_value_raw": 930020000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-18",
+      "equity_raw": 948082125145,
+      "positions_value_raw": 940702000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-19",
+      "equity_raw": 932598125145,
+      "positions_value_raw": 925218000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-20",
+      "equity_raw": 922700125145,
+      "positions_value_raw": 915320000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-21",
+      "equity_raw": 923974125145,
+      "positions_value_raw": 916594000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-24",
+      "equity_raw": 922896125145,
+      "positions_value_raw": 915516000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-25",
+      "equity_raw": 929658125145,
+      "positions_value_raw": 922278000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-26",
+      "equity_raw": 932794125145,
+      "positions_value_raw": 925414000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-27",
+      "equity_raw": 930736125145,
+      "positions_value_raw": 923356000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-28",
+      "equity_raw": 933578125145,
+      "positions_value_raw": 926198000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-08-31",
+      "equity_raw": 932598125145,
+      "positions_value_raw": 925218000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-09-01",
+      "equity_raw": 926620125145,
+      "positions_value_raw": 919240000000
+    },
+    {
+      "cash_raw": 7380125145,
+      "date": "2020-09-02",
+      "equity_raw": 935734125145,
+      "positions_value_raw": 928354000000
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-03",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-04",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-07",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-08",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-09",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-10",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-11",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-14",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-15",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-16",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-17",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-18",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-21",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-22",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-23",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-24",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-25",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-28",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-09-29",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-05",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-06",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-07",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-08",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-12",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-13",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-14",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-15",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-16",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-19",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-20",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-21",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-22",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-23",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-26",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-27",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-28",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-29",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-10-30",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-02",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-03",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-04",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-05",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-06",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-09",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-10",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-11",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-12",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-13",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-16",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-17",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-18",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-19",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-20",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-23",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-24",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-25",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-26",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-27",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-11-30",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-01",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-02",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-03",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-04",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-07",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-08",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-09",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-10",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-11",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-14",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-15",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-16",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-17",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-18",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-21",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-22",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-23",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-24",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-28",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-29",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-30",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2020-12-31",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-01",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-04",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-05",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-06",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-07",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-08",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-11",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-12",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-13",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-14",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-15",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 934666657299,
+      "date": "2021-01-18",
+      "equity_raw": 934666657299,
+      "positions_value_raw": 0
+    },
+    {
+      "cash_raw": 2479734232,
+      "date": "2021-01-19",
+      "equity_raw": 916390734232,
+      "positions_value_raw": 913911000000
+    },
+    {
+      "cash_raw": 2479734232,
+      "date": "2021-01-20",
+      "equity_raw": 893326734232,
+      "positions_value_raw": 890847000000
+    },
+    {
+      "cash_raw": 2479734232,
+      "date": "2021-01-21",
+      "equity_raw": 861613734232,
+      "positions_value_raw": 859134000000
+    },
+    {
+      "cash_raw": 2479734232,
+      "date": "2021-01-22",
+      "equity_raw": 843571734232,
+      "positions_value_raw": 841092000000
+    },
+    {
+      "cash_raw": 2479734232,
+      "date": "2021-01-25",
+      "equity_raw": 835387734232,
+      "positions_value_raw": 832908000000
+    },
+    {
+      "cash_raw": 2479734232,
+      "date": "2021-01-26",
+      "equity_raw": 808138734232,
+      "positions_value_raw": 805659000000
+    },
+    {
+      "cash_raw": 2479734232,
+      "date": "2021-01-27",
+      "equity_raw": 794653734232,
+      "positions_value_raw": 792174000000
+    },
+    {
+      "cash_raw": 2479734232,
+      "date": "2021-01-28",
+      "equity_raw": 783028734232,
+      "positions_value_raw": 780549000000
+    },
+    {
+      "cash_raw": 2479734232,
+      "date": "2021-01-29",
+      "equity_raw": 772519734232,
+      "positions_value_raw": 770040000000
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "trend_following",
+  "strategy_version": "1.0.0"
+}

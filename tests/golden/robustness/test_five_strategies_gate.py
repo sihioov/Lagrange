@@ -63,7 +63,14 @@ def _sha256_bytes(data: bytes) -> str:
 
 
 def run_runner(strategy: str, out_dir: Path, timeout: int = 300) -> subprocess.CompletedProcess:
-    cmd = [sys.executable, str(RUNNER), "--strategy-id", strategy, "--out-dir", str(out_dir)]
+    committed = (DIR / "strategies" / strategy / "outputs" / "provenance.json")
+    code_commit = "unknown"
+    if committed.exists():
+        code_commit = json.loads(committed.read_text(encoding="utf-8"))["code_commit"]
+    cmd = [
+        sys.executable, str(RUNNER), "--strategy-id", strategy, "--out-dir", str(out_dir),
+        "--code-commit", code_commit,
+    ]
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
         cwd=str(REPO_ROOT), timeout=timeout,

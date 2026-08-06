@@ -1,0 +1,40 @@
+{
+  "cost_profile": {
+    "commission_bps": 1,
+    "minimum_commission": "1000.00",
+    "slippage_bps": 10,
+    "tax_bps": 0
+  },
+  "currency": "KRW",
+  "items": [
+    {
+      "commission": 149126427,
+      "tax": 0,
+      "ts": "2020-04-01T00:00:00Z"
+    },
+    {
+      "commission": 137011151,
+      "tax": 0,
+      "ts": "2020-07-29T00:00:00Z"
+    },
+    {
+      "commission": 136714277,
+      "tax": 0,
+      "ts": "2020-08-03T00:00:00Z"
+    },
+    {
+      "commission": 139113846,
+      "tax": 0,
+      "ts": "2020-09-03T00:00:00Z"
+    },
+    {
+      "commission": 139807067,
+      "tax": 0,
+      "ts": "2021-01-19T00:00:00Z"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "trend_following",
+  "strategy_version": "1.0.0",
+  "total_fees": "70177.2768"
+}

@@ -1,0 +1,20 @@
+{
+  "cost_profile": {
+    "commission_bps": 1,
+    "minimum_commission": "1000.00",
+    "slippage_bps": 10,
+    "tax_bps": 0
+  },
+  "currency": "KRW",
+  "items": [
+    {
+      "commission": 149140992,
+      "tax": 0,
+      "ts": "2020-01-21T00:00:00Z"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "buy_and_hold",
+  "strategy_version": "1.0.0",
+  "total_fees": "14914.0992"
+}

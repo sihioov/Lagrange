@@ -1,0 +1,32 @@
+{
+  "fill_model": {
+    "note": "Golden sim fills: buy at next-open x (1 + slippage), sell at next-open x (1 - slippage); the signal-day close and the execution day's high/low/close are never touched.",
+    "price_source": "NEXT_SESSION_OPEN",
+    "slippage_bps": 10
+  },
+  "fills": [
+    {
+      "barrier_held": true,
+      "client_order_id": "co-069500.KRX-2020-01-21",
+      "date": "2020-01-21",
+      "fill_id": "fill-069500.KRX-2020-01-21",
+      "instrument": "069500.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-069500.KRX-2020-01-21",
+      "price_raw": 102502400,
+      "quantity": 9700,
+      "side": "BUY",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2020-01-21T00:00:00Z"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "buy_and_hold",
+  "strategy_version": "1.0.0"
+}

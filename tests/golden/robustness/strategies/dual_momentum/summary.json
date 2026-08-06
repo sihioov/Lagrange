@@ -1,0 +1,31 @@
+{
+  "artifact_hashes": {
+    "equity": "a23a456c7bed9291fad3db34f14c29ba21f3818550ab7e18dbe1fd573a150b02",
+    "fees": "6191012485e6d0d54871f8dd8f3efa3f2a14315f33b5fed4ed46cc9981d3556e",
+    "fills": "90ca0b436970314ce192689bc272c612cad4716d0229055949cc6283997b629a",
+    "metrics": "6a0608363bcdfa981d6491f046c4d781b37b92523f78594db66af74c6d5fe7ea",
+    "orders": "5c9188fb26fa8f66e98b063f95435e264dfe0798b2936818a0b6b889716aced5",
+    "provenance": "784f53252ecb796199ce156eb91e7c34054ec8007b7dac2d146f0adb71a8f3b8",
+    "recommendation": "ee40ffbd29856399d4313f10b7a8c42a3e9eec5b85bf8b19499ace770ae61313"
+  },
+  "num_fills": 1,
+  "num_signals": 780,
+  "process": {
+    "argv": [
+      "tests\\golden\\robustness\\runner.py",
+      "--strategy-id",
+      "dual_momentum",
+      "--out-dir",
+      "tests\\golden\\robustness\\strategies\\dual_momentum"
+    ],
+    "pid": 35392
+  },
+  "status": "PASS",
+  "strategy_id": "dual_momentum",
+  "versions": {
+    "data": "kr-etf-daily-phase0-v1",
+    "engine": "lagrange-golden-sim",
+    "engine_version": "1.0.0",
+    "strategy": "1.0.0"
+  }
+}

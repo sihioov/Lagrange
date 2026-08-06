@@ -1,0 +1,44 @@
+{
+  "execution_window": "NEXT_SESSION_OPEN",
+  "orders": [
+    {
+      "client_order_id": "co-069500.KRX-2021-01-21",
+      "created_ts": "2021-01-20T06:30:00Z",
+      "execution_ts_target": "2021-01-21T00:00:00Z",
+      "instrument": "069500.KRX",
+      "order_id": "ord-069500.KRX-2021-01-21",
+      "order_type": "MARKET",
+      "quantity": 3400,
+      "side": "BUY",
+      "signal_date": "2021-01-20",
+      "state": "FILLED"
+    },
+    {
+      "client_order_id": "co-229200.KRX-2021-01-21",
+      "created_ts": "2021-01-20T06:30:00Z",
+      "execution_ts_target": "2021-01-21T00:00:00Z",
+      "instrument": "229200.KRX",
+      "order_id": "ord-229200.KRX-2021-01-21",
+      "order_type": "MARKET",
+      "quantity": 5400,
+      "side": "BUY",
+      "signal_date": "2021-01-20",
+      "state": "FILLED"
+    },
+    {
+      "client_order_id": "co-114260.KRX-2021-01-21",
+      "created_ts": "2021-01-20T06:30:00Z",
+      "execution_ts_target": "2021-01-21T00:00:00Z",
+      "instrument": "114260.KRX",
+      "order_id": "ord-114260.KRX-2021-01-21",
+      "order_type": "MARKET",
+      "quantity": 9500,
+      "side": "BUY",
+      "signal_date": "2021-01-20",
+      "state": "FILLED"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "relative_momentum",
+  "strategy_version": "1.0.0"
+}

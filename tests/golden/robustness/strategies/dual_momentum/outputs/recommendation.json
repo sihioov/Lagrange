@@ -1,0 +1,8574 @@
+{
+  "as_of_date": "2021-01-29",
+  "currency": "KRW",
+  "params": {
+    "absolute_threshold": -0.2,
+    "lookback_months": 12
+  },
+  "schema_version": 1,
+  "seed": 42,
+  "signals": [
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-01-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-02-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-03-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-04-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-05-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-06-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-07-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-08-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-09-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-10-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-19",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-20",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-25",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-26",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-27",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-11-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-02",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-03",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-09",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-10",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-16",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-17",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-21",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-22",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-23",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-24",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-28",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-29",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-30",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2020-12-31",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-01",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-04",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-05",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-06",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-07",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-08",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-11",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-12",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-13",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-14",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-15",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [
+        "WARMUP_LOOKBACK"
+      ],
+      "signal_date": "2021-01-18",
+      "target_weight": 0.0,
+      "warmup": true
+    },
+    {
+      "action": "BUY",
+      "effective_date": "2021-01-20",
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "ABSOLUTE_MOMENTUM_PASSED"
+      ],
+      "signal_date": "2021-01-19",
+      "target_weight": 1.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-19",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-19",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "ABSOLUTE_MOMENTUM_PASSED"
+      ],
+      "signal_date": "2021-01-20",
+      "target_weight": 1.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-20",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-20",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "ABSOLUTE_MOMENTUM_PASSED"
+      ],
+      "signal_date": "2021-01-21",
+      "target_weight": 1.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-21",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-21",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "ABSOLUTE_MOMENTUM_PASSED"
+      ],
+      "signal_date": "2021-01-22",
+      "target_weight": 1.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-22",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-22",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "ABSOLUTE_MOMENTUM_PASSED"
+      ],
+      "signal_date": "2021-01-25",
+      "target_weight": 1.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-25",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-25",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "ABSOLUTE_MOMENTUM_PASSED"
+      ],
+      "signal_date": "2021-01-26",
+      "target_weight": 1.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-26",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-26",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "ABSOLUTE_MOMENTUM_PASSED"
+      ],
+      "signal_date": "2021-01-27",
+      "target_weight": 1.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-27",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-27",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "BUY",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [
+        "ABSOLUTE_MOMENTUM_PASSED"
+      ],
+      "signal_date": "2021-01-28",
+      "target_weight": 1.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-28",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-28",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "069500.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-29",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "229200.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-29",
+      "target_weight": 0.0,
+      "warmup": false
+    },
+    {
+      "action": "FLAT",
+      "effective_date": null,
+      "instrument": "114260.KRX",
+      "reason_codes": [],
+      "signal_date": "2021-01-29",
+      "target_weight": 0.0,
+      "warmup": false
+    }
+  ],
+  "strategy_id": "dual_momentum",
+  "strategy_version": "1.0.0",
+  "target_portfolio": [
+    {
+      "instrument": "069500.KRX",
+      "reason_codes": [],
+      "target_weight": 0.0
+    },
+    {
+      "instrument": "229200.KRX",
+      "reason_codes": [],
+      "target_weight": 0.0
+    },
+    {
+      "instrument": "114260.KRX",
+      "reason_codes": [],
+      "target_weight": 0.0
+    }
+  ],
+  "timezone": "Asia/Seoul"
+}

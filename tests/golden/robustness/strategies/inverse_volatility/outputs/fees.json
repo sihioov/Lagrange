@@ -1,0 +1,30 @@
+{
+  "cost_profile": {
+    "commission_bps": 1,
+    "minimum_commission": "1000.00",
+    "slippage_bps": 10,
+    "tax_bps": 0
+  },
+  "currency": "KRW",
+  "items": [
+    {
+      "commission": 43613169,
+      "tax": 0,
+      "ts": "2020-04-16T00:00:00Z"
+    },
+    {
+      "commission": 44470225,
+      "tax": 0,
+      "ts": "2020-04-16T00:00:00Z"
+    },
+    {
+      "commission": 42611068,
+      "tax": 0,
+      "ts": "2020-04-16T00:00:00Z"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "inverse_volatility",
+  "strategy_version": "1.0.0",
+  "total_fees": "13069.4462"
+}

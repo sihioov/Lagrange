@@ -1,0 +1,112 @@
+{
+  "fill_model": {
+    "note": "Golden sim fills: buy at next-open x (1 + slippage), sell at next-open x (1 - slippage); the signal-day close and the execution day's high/low/close are never touched.",
+    "price_source": "NEXT_SESSION_OPEN",
+    "slippage_bps": 10
+  },
+  "fills": [
+    {
+      "barrier_held": true,
+      "client_order_id": "co-069500.KRX-2020-04-01",
+      "date": "2020-04-01",
+      "fill_id": "fill-069500.KRX-2020-04-01",
+      "instrument": "069500.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-069500.KRX-2020-04-01",
+      "price_raw": 102492390,
+      "quantity": 9700,
+      "side": "BUY",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2020-04-01T00:00:00Z"
+    },
+    {
+      "barrier_held": true,
+      "client_order_id": "co-069500.KRX-2020-07-29",
+      "date": "2020-07-29",
+      "fill_id": "fill-069500.KRX-2020-07-29",
+      "instrument": "069500.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-069500.KRX-2020-07-29",
+      "price_raw": 94165740,
+      "quantity": 9700,
+      "side": "SELL",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2020-07-29T00:00:00Z"
+    },
+    {
+      "barrier_held": true,
+      "client_order_id": "co-069500.KRX-2020-08-03",
+      "date": "2020-08-03",
+      "fill_id": "fill-069500.KRX-2020-08-03",
+      "instrument": "069500.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-069500.KRX-2020-08-03",
+      "price_raw": 93002910,
+      "quantity": 9800,
+      "side": "BUY",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2020-08-03T00:00:00Z"
+    },
+    {
+      "barrier_held": true,
+      "client_order_id": "co-069500.KRX-2020-09-03",
+      "date": "2020-09-03",
+      "fill_id": "fill-069500.KRX-2020-09-03",
+      "instrument": "069500.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-069500.KRX-2020-09-03",
+      "price_raw": 94635270,
+      "quantity": 9800,
+      "side": "SELL",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2020-09-03T00:00:00Z"
+    },
+    {
+      "barrier_held": true,
+      "client_order_id": "co-069500.KRX-2021-01-19",
+      "date": "2021-01-19",
+      "fill_id": "fill-069500.KRX-2021-01-19",
+      "instrument": "069500.KRX",
+      "never_uses": [
+        "signal_day_close",
+        "execution_day_high",
+        "execution_day_low",
+        "execution_day_close"
+      ],
+      "order_id": "ord-069500.KRX-2021-01-19",
+      "price_raw": 100220120,
+      "quantity": 9300,
+      "side": "BUY",
+      "slippage_bps": 10,
+      "source": "NEXT_SESSION_OPEN",
+      "ts": "2021-01-19T00:00:00Z"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "trend_following",
+  "strategy_version": "1.0.0"
+}

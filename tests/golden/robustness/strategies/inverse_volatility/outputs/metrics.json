@@ -1,0 +1,18 @@
+{
+  "cagr_pct": "-34.711101",
+  "calmar": "-0.670937",
+  "currency": "KRW",
+  "final_equity_raw": 739097879538,
+  "finite": true,
+  "max_drawdown_pct": "-51.735279",
+  "nan_free": true,
+  "num_fills": 3,
+  "schema_version": 1,
+  "sharpe": "-0.104707",
+  "strategy_id": "inverse_volatility",
+  "strategy_version": "1.0.0",
+  "total_fees": "13069.4462",
+  "total_return_pct": "-26.090212",
+  "turnover": "0.856788",
+  "volatility_pct": "16.829804"
+}

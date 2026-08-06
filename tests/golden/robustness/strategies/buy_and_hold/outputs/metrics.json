@@ -1,0 +1,18 @@
+{
+  "cagr_pct": "-25.871128",
+  "calmar": "-0.494038",
+  "currency": "KRW",
+  "final_equity_raw": 808737579008,
+  "finite": true,
+  "max_drawdown_pct": "-52.366667",
+  "nan_free": true,
+  "num_fills": 1,
+  "schema_version": 1,
+  "sharpe": "-0.056349",
+  "strategy_id": "buy_and_hold",
+  "strategy_version": "1.0.0",
+  "total_fees": "14914.0992",
+  "total_return_pct": "-19.126242",
+  "turnover": "0.975310",
+  "volatility_pct": "20.680255"
+}

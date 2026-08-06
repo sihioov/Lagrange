@@ -1,0 +1,31 @@
+{
+  "artifact_hashes": {
+    "equity": "2d1fc95c1dea4b5e1966cb6090f901e639e25f0a2558af182ba62e35fc70bd47",
+    "fees": "d2b675410749bdd5da5c7a5b77a7bbd261101d20ba960203063df9adb6bf8d8c",
+    "fills": "14de8ff26202e23b9965885a86cf1ed77b89d4718b031120aa96ee703859074e",
+    "metrics": "20a4f976790770fb571661b6c201a07b26b4783e7e4ef9b556156894d97c68ff",
+    "orders": "5764e40b8ef297b057a312fd6fda7751fe353d7d0ba1a1c4bc2dd5fd0bfb3833",
+    "provenance": "1bb1229fd0d23469b684ba480851c05f88f04211ca23ac3f542f9c9a8ae979da",
+    "recommendation": "e194d94d8b5f7c9653ee4ae262148cf62fd4c718f47e5cfb99b639e58369be8c"
+  },
+  "num_fills": 3,
+  "num_signals": 780,
+  "process": {
+    "argv": [
+      "tests\\golden\\robustness\\runner.py",
+      "--strategy-id",
+      "relative_momentum",
+      "--out-dir",
+      "tests\\golden\\robustness\\strategies\\relative_momentum"
+    ],
+    "pid": 19100
+  },
+  "status": "PASS",
+  "strategy_id": "relative_momentum",
+  "versions": {
+    "data": "kr-etf-daily-phase0-v1",
+    "engine": "lagrange-golden-sim",
+    "engine_version": "1.0.0",
+    "strategy": "1.0.0"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "execution_window": "NEXT_SESSION_OPEN",
+  "orders": [
+    {
+      "client_order_id": "co-069500.KRX-2020-04-16",
+      "created_ts": "2020-04-15T06:30:00Z",
+      "execution_ts_target": "2020-04-16T00:00:00Z",
+      "instrument": "069500.KRX",
+      "order_id": "ord-069500.KRX-2020-04-16",
+      "order_type": "MARKET",
+      "quantity": 2900,
+      "side": "BUY",
+      "signal_date": "2020-04-15",
+      "state": "FILLED"
+    },
+    {
+      "client_order_id": "co-229200.KRX-2020-04-16",
+      "created_ts": "2020-04-15T06:30:00Z",
+      "execution_ts_target": "2020-04-16T00:00:00Z",
+      "instrument": "229200.KRX",
+      "order_id": "ord-229200.KRX-2020-04-16",
+      "order_type": "MARKET",
+      "quantity": 3600,
+      "side": "BUY",
+      "signal_date": "2020-04-15",
+      "state": "FILLED"
+    },
+    {
+      "client_order_id": "co-114260.KRX-2020-04-16",
+      "created_ts": "2020-04-15T06:30:00Z",
+      "execution_ts_target": "2020-04-16T00:00:00Z",
+      "instrument": "114260.KRX",
+      "order_id": "ord-114260.KRX-2020-04-16",
+      "order_type": "MARKET",
+      "quantity": 6500,
+      "side": "BUY",
+      "signal_date": "2020-04-15",
+      "state": "FILLED"
+    }
+  ],
+  "schema_version": 1,
+  "strategy_id": "inverse_volatility",
+  "strategy_version": "1.0.0"
+}
