@@ -19,19 +19,20 @@ use api_server::http::state::{ApiConfig, ApiState};
 use auth::entitlement::{Actor, Role};
 use auth::sessions::cookie;
 use axum::body::Body;
-use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header};
+use axum::http::{Method, Request, StatusCode, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
+use sqlx::ConnectOptions;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgPool, Row};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
 use uuid::Uuid;
 
 /// Roles bootstrapped cluster-wide by the harness (migrations grant to them).
 pub const ROLE_BOOTSTRAP_SQL: &str = r#"
+SELECT pg_advisory_lock(424242001);
 DO $role$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'migration_owner') THEN
     CREATE ROLE migration_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
@@ -59,10 +60,11 @@ DO $role$ BEGIN
 END $role$;
 GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer, admin;
 GRANT CREATE ON SCHEMA public TO migration_owner;
+SELECT pg_advisory_unlock(424242001);
 "#;
 
 /// The sqlx Migrator embedding the real workspace migrations.
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations");
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
 fn fresh_db_name() -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -134,10 +136,14 @@ fn base_url() -> Option<String> {
 }
 
 async fn pool(url: &str, max: u32) -> PgPool {
+    let opts = url
+        .parse::<PgConnectOptions>()
+        .expect("pool url parses")
+        .log_statements(tracing::log::LevelFilter::Off);
     PgPoolOptions::new()
         .max_connections(max)
         .acquire_timeout(Duration::from_secs(20))
-        .connect(url)
+        .connect_with(opts)
         .await
         .expect("harness pool connects")
 }
@@ -156,21 +162,27 @@ pub async fn actor_pool(url: &str, user_id: &str, max: u32) -> PgPool {
         .expect("actor pool connects")
 }
 
+/// Serializes the cluster-wide role bootstrap within one test process
+/// (tokio threads run tests concurrently; the DB advisory lock already
+/// serializes across processes).
+static BOOTSTRAP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 impl Harness {
     /// Create a disposable database, bootstrap roles, run migrations, seed
     /// the baseline (users, sessions, instruments, strategies, datasets,
     /// entitlements), and build the real router.
     pub async fn new() -> Option<Harness> {
+        let _bootstrap_guard = BOOTSTRAP_LOCK.lock().await;
         let super_url = base_url()?;
         let db_name = fresh_db_name();
         let super_pool = pool(&super_url, 2).await;
-        sqlx::query(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "CREATE DATABASE \"{db_name}\" OWNER migration_owner"
-        ))
+        )))
         .execute(&super_pool)
         .await
         .expect("create scratch db");
-        sqlx::query(ROLE_BOOTSTRAP_SQL)
+        sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
             .execute(&super_pool)
             .await
             .expect("bootstrap roles");
@@ -265,7 +277,12 @@ impl Harness {
             .seed_user(Role::Owner, "owner@lagrange.test", "owner-iss", "owner-sub")
             .await;
         h.member = h
-            .seed_user(Role::Member, "member@lagrange.test", "member-iss", "member-sub")
+            .seed_user(
+                Role::Member,
+                "member@lagrange.test",
+                "member-iss",
+                "member-sub",
+            )
             .await;
 
         // ACTIVE entitlement covering the platform (managed by the owner).
@@ -283,16 +300,26 @@ impl Harness {
         .await;
 
         let cfg = ApiConfig {
-            cursor_secret: *b"api24-test-cursor-secret-0123456789abcdef",
+            cursor_secret: *b"api24-cursor-secret-0123456789ab",
             max_jobs_per_owner: 10,
-            db_url: app_url.clone(),
+            db_url: h.app_url.clone(),
             step_up_max_auth_age_secs: 900,
         };
-        let state = ApiState::from_pools(cfg, app_pool.clone(), admin_pool.clone(), audit_pool.clone())
-            .await
-            .expect("api state builds from pools");
+        let state = ApiState::from_pools(
+            cfg,
+            h.app_pool.clone(),
+            h.admin_pool.clone(),
+            h.audit_pool.clone(),
+        )
+        .await
+        .expect("api state builds from pools");
         h.app = api_router(state);
         Some(h)
+    }
+
+    /// GUC'd verification pool scoped to the member actor (tenant reads).
+    pub async fn member_pool(&self) -> PgPool {
+        actor_pool(&self.app_url, &self.member.user_id.to_string(), 2).await
     }
 
     /// Drop the scratch database (call at the end of every test).
@@ -303,17 +330,17 @@ impl Harness {
         drop(self.owner_pool);
         let super_url = base_url().expect("DATABASE_URL still set");
         let super_pool = pool(&super_url, 2).await;
-        let _ = sqlx::query(&format!(
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE)",
             self.db_name
-        ))
+        )))
         .execute(&super_pool)
         .await;
     }
 
     /// Seed a row into a shared system-owned table (as migration_owner).
     pub async fn seed_shared(&self, sql: &str) {
-        sqlx::query(sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
             .execute(&self.owner_pool)
             .await
             .unwrap_or_else(|e| panic!("seed_shared failed: {e} ({sql:?})"));
@@ -322,7 +349,7 @@ impl Harness {
     /// Seed a row into a tenant table under `actor`'s RLS context (app+GUC).
     pub async fn seed_tenant(&self, actor: &UserCtx, sql: &str) {
         let p = actor_pool(&self.app_url, &actor.user_id.to_string(), 2).await;
-        sqlx::query(sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
             .execute(&p)
             .await
             .unwrap_or_else(|e| panic!("seed_tenant failed: {e} ({sql:?})"));
@@ -339,21 +366,21 @@ impl Harness {
              (gen_random_uuid(), '{iss}', '{sub}', '{email}') \
              ON CONFLICT (issuer, subject) DO UPDATE SET email = EXCLUDED.email \
              RETURNING id"
-        ));
-        let row = sqlx::query(
-            "SELECT id FROM users WHERE issuer = $1 AND subject = $2",
-        )
-        .bind(iss)
-        .bind(sub)
-        .fetch_one(&self.owner_pool)
-        .await
-        .expect("user row");
+        ))
+        .await;
+        let row = sqlx::query("SELECT id FROM users WHERE issuer = $1 AND subject = $2")
+            .bind(iss)
+            .bind(sub)
+            .fetch_one(&self.owner_pool)
+            .await
+            .expect("user row");
         let user_id: Uuid = row.get("id");
         self.seed_shared(&format!(
             "INSERT INTO user_roles (user_id, role_id, granted_by) VALUES \
              ('{user_id}', '{role_id}', (SELECT id FROM users WHERE email='owner@lagrange.test' OR email='{email}' LIMIT 1)) \
              ON CONFLICT DO NOTHING"
-        ));
+        ))
+        .await;
 
         let cookie_value = format!("test-session-{email}");
         let csrf_token = format!("test-csrf-{email}");
@@ -370,7 +397,8 @@ impl Harness {
                 "INSERT INTO web_sessions (id, user_id, session_hash, csrf_hash, expires_at) VALUES \
                  (gen_random_uuid(), '{user_id}', '{session_hash}', '{csrf_hash}', now() + interval '1 hour')"
             ),
-        );
+        )
+        .await;
         UserCtx {
             user_id,
             role,
@@ -386,6 +414,7 @@ impl Harness {
     /// Send a request with full control. `user` adds the session cookie;
     /// `csrf` adds the X-CSRF-Token header; `rid` sets X-Request-Id; `idem`
     /// adds the Idempotency-Key header.
+    #[allow(clippy::too_many_arguments)]
     pub async fn send(
         &self,
         method: &str,
@@ -406,10 +435,8 @@ impl Harness {
                 format!("{}={}", cookie::NAME, u.cookie_value),
             );
         }
-        if csrf {
-            if let Some(u) = user {
-                builder = builder.header("x-csrf-token", &u.csrf_token);
-            }
+        if csrf && let Some(u) = user {
+            builder = builder.header("x-csrf-token", &u.csrf_token);
         }
         builder = builder.header("x-request-id", rid.unwrap_or("test-rid-1"));
         if let Some(k) = idem {
@@ -428,6 +455,9 @@ impl Harness {
             .await
     }
 
+    /// Convenience POST with an auto-generated Idempotency-Key (mutating
+    /// routes require one; tests that must prove the 400 use `send` with
+    /// `idem = None`).
     pub async fn post(
         &self,
         path: &str,
@@ -435,8 +465,17 @@ impl Harness {
         csrf: bool,
         body: serde_json::Value,
     ) -> Response {
-        self.send("POST", path, user, csrf, Some("test-rid-1"), None, Some(body))
-            .await
+        let key = format!("auto-{}", uuid::Uuid::new_v4());
+        self.send(
+            "POST",
+            path,
+            user,
+            csrf,
+            Some("test-rid-1"),
+            Some(&key),
+            Some(body),
+        )
+        .await
     }
 
     /// Collect the response body as UTF-8 text.
@@ -453,9 +492,8 @@ impl Harness {
     /// Collect the response body as JSON.
     pub async fn body_json(resp: Response) -> serde_json::Value {
         let text = Self::body_text(resp).await;
-        serde_json::from_str(&text).unwrap_or_else(|e| {
-            panic!("response is not JSON: {e} (body: {text})")
-        })
+        serde_json::from_str(&text)
+            .unwrap_or_else(|e| panic!("response is not JSON: {e} (body: {text})"))
     }
 
     pub fn rid(resp: &Response) -> String {

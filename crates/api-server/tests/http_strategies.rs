@@ -2,8 +2,8 @@
 //! ownership, idempotent creation, audit, and fuzz rejection.
 
 mod common;
-use common::{Harness, status};
 use axum::http::StatusCode;
+use common::{Harness, status};
 use serde_json::json;
 
 #[tokio::test]
@@ -25,7 +25,10 @@ async fn http_strategies_config_create_happy() {
     let body = Harness::body_json(resp).await;
     assert_eq!(body["strategy_id"], "buy_and_hold");
     assert_eq!(body["config"]["lookback"], 200);
-    assert!(!body.to_string().contains("owner_user_id"), "no tenant column leak");
+    assert!(
+        !body.to_string().contains("owner_user_id"),
+        "no tenant column leak"
+    );
 
     // The row is readable back through the API (ownership round-trip).
     let id = body["id"].as_str().unwrap();
@@ -101,7 +104,10 @@ async fn http_strategies_config_ownership_isolation() {
         )
         .await;
     assert_eq!(status(&resp), StatusCode::CREATED);
-    let id = Harness::body_json(resp).await["id"].as_str().unwrap().to_string();
+    let id = Harness::body_json(resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Member B (owner) reading A's config by direct id -> 404, no leak.
     let resp = h
@@ -119,11 +125,20 @@ async fn http_strategies_config_idempotent_replay() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let body = json!({ "strategy_version": "1.0.0", "config": { "lookback": 250 }, "is_active": true });
+    let body =
+        json!({ "strategy_version": "1.0.0", "config": { "lookback": 250 }, "is_active": true });
     let key = "config-create-001";
     // Without the Idempotency-Key header the mutation is rejected.
     let r0 = h
-        .send("POST", "/api/v1/strategies/buy_and_hold/configs", Some(&h.member), true, Some("test-rid-1"), None, Some(body.clone()))
+        .send(
+            "POST",
+            "/api/v1/strategies/buy_and_hold/configs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            None,
+            Some(body.clone()),
+        )
         .await;
     assert_eq!(r0.status(), StatusCode::BAD_REQUEST);
     let b0 = Harness::body_json(r0).await;
@@ -131,7 +146,15 @@ async fn http_strategies_config_idempotent_replay() {
 
     // First call with the key -> 201.
     let r1 = h
-        .send("POST", "/api/v1/strategies/buy_and_hold/configs", Some(&h.member), true, Some("test-rid-1"), Some(key), Some(body.clone()))
+        .send(
+            "POST",
+            "/api/v1/strategies/buy_and_hold/configs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(body.clone()),
+        )
         .await;
     assert_eq!(r1.status(), StatusCode::CREATED);
     let b1 = Harness::body_json(r1).await;
@@ -139,7 +162,15 @@ async fn http_strategies_config_idempotent_replay() {
 
     // Replay with the SAME key + SAME body -> same id, replay header, no double row.
     let r2 = h
-        .send("POST", "/api/v1/strategies/buy_and_hold/configs", Some(&h.member), true, Some("test-rid-1"), Some(key), Some(body.clone()))
+        .send(
+            "POST",
+            "/api/v1/strategies/buy_and_hold/configs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(body.clone()),
+        )
         .await;
     assert_eq!(r2.status(), StatusCode::CREATED);
     assert_eq!(r2.headers()["x-idempotent-replay"], "true");
@@ -147,9 +178,18 @@ async fn http_strategies_config_idempotent_replay() {
     assert_eq!(b2["id"].as_str().unwrap(), id1);
 
     // Replay with the SAME key + DIFFERENT body -> 409 IDEMPOTENCY_KEY_MISMATCH.
-    let other = json!({ "strategy_version": "1.0.0", "config": { "lookback": 251 }, "is_active": true });
+    let other =
+        json!({ "strategy_version": "1.0.0", "config": { "lookback": 251 }, "is_active": true });
     let r3 = h
-        .send("POST", "/api/v1/strategies/buy_and_hold/configs", Some(&h.member), true, Some("test-rid-1"), Some(key), Some(other))
+        .send(
+            "POST",
+            "/api/v1/strategies/buy_and_hold/configs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(other),
+        )
         .await;
     assert_eq!(r3.status(), StatusCode::CONFLICT);
     let b3 = Harness::body_json(r3).await;
@@ -159,7 +199,7 @@ async fn http_strategies_config_idempotent_replay() {
     let count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM user_strategy_configs WHERE strategy_id = 'buy_and_hold' AND config_json->>'lookback' = '250'",
     )
-    .fetch_one(&h.app_pool)
+    .fetch_one(&h.member_pool().await)
     .await
     .unwrap();
     assert_eq!(count, 1, "idempotent replay must not double-create");

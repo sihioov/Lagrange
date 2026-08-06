@@ -13,11 +13,14 @@ const SPEC: &str = include_str!("../../../apps/api-server/openapi.json");
 
 #[test]
 fn openapi_contract_parses() {
-    let spec: Value = serde_json::from_str(SPEC)
-        .unwrap_or_else(|e| panic!("openapi.json must parse: {e}"));
+    let spec: Value =
+        serde_json::from_str(SPEC).unwrap_or_else(|e| panic!("openapi.json must parse: {e}"));
     assert_eq!(spec["openapi"].as_str().unwrap(), "3.1.0");
     assert_eq!(spec["info"]["version"].as_str().unwrap(), "1.0.0");
-    assert_eq!(spec["info"]["title"].as_str().unwrap(), "Lagrange Station API");
+    assert_eq!(
+        spec["info"]["title"].as_str().unwrap(),
+        "Lagrange Station API"
+    );
 }
 
 #[test]
@@ -30,12 +33,7 @@ fn openapi_contract_routes_match_router_inventory() {
             item.as_object()
                 .expect("path item")
                 .iter()
-                .filter(|(m, _)| {
-                    matches!(
-                        m.as_str(),
-                        "get" | "post" | "put" | "patch" | "delete"
-                    )
-                })
+                .filter(|(m, _)| matches!(m.as_str(), "get" | "post" | "put" | "patch" | "delete"))
                 .map(|(m, _)| (m.clone(), path.clone()))
                 .collect::<Vec<_>>()
         })
@@ -97,10 +95,13 @@ fn openapi_contract_every_operation_has_required_metadata() {
             }
             // Every operation references the shared error envelope on 4xx.
             let responses = op["responses"].as_object().expect("responses");
-            let has_error_schema = responses.iter().any(|(code, resp)| {
-                code.starts_with('4') || code.starts_with('5')
-            });
-            assert!(has_error_schema, "{method} {path}: must declare 4xx/5xx responses");
+            let has_error_schema = responses
+                .iter()
+                .any(|(code, _resp)| code.starts_with('4') || code.starts_with('5'));
+            assert!(
+                has_error_schema,
+                "{method} {path}: must declare 4xx/5xx responses"
+            );
             // Cache semantics: authenticated data is never shared.
             assert!(
                 meta["cache"]["policy"].as_str().is_some(),
@@ -120,11 +121,11 @@ fn openapi_contract_error_codes_match_constants() {
         .iter()
         .map(|c| c.as_str().expect("code string").to_string())
         .collect();
-    let const_codes: BTreeSet<String> = ERROR_CODES
-        .iter()
-        .map(|c| c.code.to_string())
-        .collect();
-    assert_eq!(spec_codes, const_codes, "spec ErrorCode enum must match constants");
+    let const_codes: BTreeSet<String> = ERROR_CODES.iter().map(|c| c.code.to_string()).collect();
+    assert_eq!(
+        spec_codes, const_codes,
+        "spec ErrorCode enum must match constants"
+    );
     // The stable codes the plan acceptance names must exist.
     for stable in [
         "DATASET_BLOCKED",
@@ -147,7 +148,11 @@ fn openapi_contract_error_codes_match_constants() {
         assert!(const_codes.contains(stable), "stable code {stable} missing");
     }
     // Codes are unique across the table.
-    assert_eq!(const_codes.len(), ERROR_CODES.len(), "error codes must be unique");
+    assert_eq!(
+        const_codes.len(),
+        ERROR_CODES.len(),
+        "error codes must be unique"
+    );
 }
 
 #[test]
@@ -180,8 +185,7 @@ fn openapi_contract_phase3_routes_are_owner_only() {
             let op = spec_operation(route);
             let meta = op["x-lagrange"].as_object().expect("meta");
             assert_eq!(
-                meta["ownership"]["owner_only"],
-                true,
+                meta["ownership"]["owner_only"], true,
                 "route {} must declare owner_only",
                 route.path
             );

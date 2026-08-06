@@ -3,8 +3,8 @@
 //! of Phase 3 surfaces.
 
 mod common;
-use common::{Harness, status};
 use axum::http::StatusCode;
+use common::{Harness, status};
 use serde_json::json;
 
 /// Seed an owner-owned artifact row + parent run; returns (run_id, artifact_id).
@@ -22,7 +22,7 @@ async fn seed_artifact(h: &Harness, actor: &common::UserCtx) -> (String, String)
         "SELECT id::text FROM backtest_runs WHERE owner_user_id = $1::uuid ORDER BY created_at DESC LIMIT 1",
     )
     .bind(actor.user_id.to_string())
-    .fetch_one(&h.app_pool)
+    .fetch_one(&h.member_pool().await)
     .await
     .unwrap();
     h.seed_tenant(
@@ -38,7 +38,7 @@ async fn seed_artifact(h: &Harness, actor: &common::UserCtx) -> (String, String)
         "SELECT a.id::text FROM result_artifacts a WHERE a.backtest_run_id = $1::uuid LIMIT 1",
     )
     .bind(&run_id)
-    .fetch_one(&h.app_pool)
+    .fetch_one(&h.member_pool().await)
     .await
     .unwrap();
     (run_id, artifact_id)
@@ -102,28 +102,34 @@ async fn http_admin_retry_and_datasets() {
         "SELECT id::text FROM jobs WHERE owner_user_id=$1::uuid AND status='FAILED' LIMIT 1",
     )
     .bind(h.member.user_id.to_string())
-    .fetch_one(&h.app_pool)
+    .fetch_one(&h.member_pool().await)
     .await
     .unwrap();
 
     // Member cannot retry.
     let resp = h
-        .post(
+        .send(
+            "POST",
             &format!("/api/v1/admin/jobs/{job_id}/retry"),
             Some(&h.member),
             true,
-            json!({}),
+            Some("test-rid-1"),
+            Some("retry-member-denied"),
+            Some(json!({})),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::FORBIDDEN);
 
     // Owner retries (cross-user, audited) -> job returns to QUEUED.
     let resp = h
-        .post(
+        .send(
+            "POST",
             &format!("/api/v1/admin/jobs/{job_id}/retry"),
             Some(&h.owner),
             true,
-            json!({}),
+            Some("test-rid-1"),
+            Some("retry-owner-001"),
+            Some(json!({})),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
@@ -131,7 +137,7 @@ async fn http_admin_retry_and_datasets() {
     assert_eq!(body["status"], "QUEUED");
     let state: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id=$1::uuid")
         .bind(&job_id)
-        .fetch_one(&h.app_pool)
+        .fetch_one(&h.member_pool().await)
         .await
         .unwrap();
     assert_eq!(state, "QUEUED");
@@ -146,36 +152,46 @@ async fn http_admin_retry_and_datasets() {
         .iter()
         .find(|d| d["status"] == "BLOCKED")
         .expect("blocked dataset present");
-    assert!(blocked["blocking_issues"].as_array().unwrap().len() >= 1);
+    assert!(!blocked["blocking_issues"].as_array().unwrap().is_empty());
 
     // Approve a BLOCKED dataset -> 422 DATASET_BLOCKED (needs a new version).
     let blocked_id = blocked["id"].as_str().unwrap();
     let resp = h
-        .post(
+        .send(
+            "POST",
             &format!("/api/v1/admin/datasets/{blocked_id}/approve"),
             Some(&h.owner),
             true,
-            json!({}),
+            Some("test-rid-1"),
+            Some("approve-blocked-001"),
+            Some(json!({})),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::UNPROCESSABLE_ENTITY);
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "DATASET_BLOCKED");
-    assert!(body["error"]["message"].as_str().unwrap().contains("NEW dataset version"));
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("NEW dataset version")
+    );
 
     // Approve a WARNING dataset -> approved verdict + audit row.
-    let warning_id: String = sqlx::query_scalar(
-        "SELECT id::text FROM dataset_versions WHERE status='WARNING' LIMIT 1",
-    )
-    .fetch_one(&h.app_pool)
-    .await
-    .unwrap();
+    let warning_id: String =
+        sqlx::query_scalar("SELECT id::text FROM dataset_versions WHERE status='WARNING' LIMIT 1")
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
     let resp = h
-        .post(
+        .send(
+            "POST",
             &format!("/api/v1/admin/datasets/{warning_id}/approve"),
             Some(&h.owner),
             true,
-            json!({}),
+            Some("test-rid-1"),
+            Some("approve-warning-001"),
+            Some(json!({})),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
@@ -185,18 +201,21 @@ async fn http_admin_retry_and_datasets() {
         "SELECT count(*) FROM audit_logs WHERE action='admin.dataset.approve' AND target_id=$1",
     )
     .bind(&warning_id)
-    .fetch_one(&h.audit_pool)
+    .fetch_one(&h.admin_pool)
     .await
     .unwrap();
     assert_eq!(audit, 1, "approval is audited");
 
     // Member approve -> 403.
     let resp = h
-        .post(
+        .send(
+            "POST",
             &format!("/api/v1/admin/datasets/{warning_id}/approve"),
             Some(&h.member),
             true,
-            json!({}),
+            Some("test-rid-1"),
+            Some("approve-member-denied"),
+            Some(json!({})),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::FORBIDDEN);
@@ -242,12 +261,11 @@ async fn http_admin_audit_logs_and_phase3_live_gating() {
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "NOT_IMPLEMENTED");
     assert!(body["error"]["details"]["phase"].is_string());
-    let audit: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM audit_logs WHERE action LIKE 'admin.live.%'",
-    )
-    .fetch_one(&h.audit_pool)
-    .await
-    .unwrap();
+    let audit: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE action LIKE 'admin.live.%'")
+            .fetch_one(&h.admin_pool)
+            .await
+            .unwrap();
     assert!(audit >= 1, "Phase 3 attempts are audited");
     h.teardown().await;
 }
@@ -303,8 +321,14 @@ async fn http_artifacts_authorized_download() {
     let body = Harness::body_json(resp).await;
     assert_eq!(body["artifact_type"], "EQUITY_CURVE");
     assert_eq!(body["row_count"], 5);
-    assert_eq!(body["download_path"], format!("/api/v1/artifacts/{artifact_id}/download"));
-    assert!(!body.to_string().contains("parquet_path"), "no filesystem path leak");
+    assert_eq!(
+        body["download_path"],
+        format!("/api/v1/artifacts/{artifact_id}/download")
+    );
+    assert!(
+        !body.to_string().contains("parquet_path"),
+        "no filesystem path leak"
+    );
 
     // The owner (foreign actor) cannot see it: 404.
     let resp = h
@@ -314,7 +338,10 @@ async fn http_artifacts_authorized_download() {
 
     // Authorized download returns the inline payload.
     let resp = h
-        .get(&format!("/api/v1/artifacts/{artifact_id}/download"), Some(&h.member))
+        .get(
+            &format!("/api/v1/artifacts/{artifact_id}/download"),
+            Some(&h.member),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
@@ -322,7 +349,10 @@ async fn http_artifacts_authorized_download() {
 
     // Foreign download -> 404 (no bytes).
     let resp = h
-        .get(&format!("/api/v1/artifacts/{artifact_id}/download"), Some(&h.owner))
+        .get(
+            &format!("/api/v1/artifacts/{artifact_id}/download"),
+            Some(&h.owner),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND);
     h.teardown().await;

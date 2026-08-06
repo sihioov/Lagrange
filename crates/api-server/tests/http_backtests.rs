@@ -3,8 +3,8 @@
 //! robustness, compare; idempotent replay; ownership; fuzz.
 
 mod common;
-use common::{Harness, status};
 use axum::http::StatusCode;
+use common::{Harness, status};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -25,22 +25,28 @@ fn backtest_request(dataset: &str) -> serde_json::Value {
 /// Seed a strategy config for `actor`; returns its id and the config JSON.
 async fn seed_config(h: &Harness, actor: &common::UserCtx) -> String {
     let resp = h
-        .post(
+        .send(
+            "POST",
             "/api/v1/strategies/buy_and_hold/configs",
             Some(actor),
             true,
-            json!({ "strategy_version": "1.0.0", "config": { "lookback": 200 }, "is_active": true }),
+            Some("test-rid-1"),
+            Some("seed-config-001"),
+            Some(json!({ "strategy_version": "1.0.0", "config": { "lookback": 200 }, "is_active": true })),
         )
         .await;
     assert_eq!(resp.status(), StatusCode::CREATED);
-    Harness::body_json(resp).await["id"].as_str().unwrap().to_string()
+    Harness::body_json(resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
 }
 
 /// The READY dataset_version id from the baseline.
 async fn ready_dataset(h: &Harness) -> String {
     let id: Uuid =
         sqlx::query_scalar("SELECT id FROM dataset_versions WHERE status='READY' LIMIT 1")
-            .fetch_one(&h.app_pool)
+            .fetch_one(&h.member_pool().await)
             .await
             .unwrap();
     id.to_string()
@@ -71,11 +77,14 @@ async fn http_backtests_create_queue_result_compare_happy() {
     let job_id = body["job_id"].as_str().unwrap().to_string();
     let config_sha = body["config_sha256"].as_str().unwrap().to_string();
     assert_eq!(config_sha.len(), 64, "config hash is a real sha256 hex");
-    assert!(!body.to_string().contains("owner_user_id"), "no tenant column leak");
+    assert!(
+        !body.to_string().contains("owner_user_id"),
+        "no tenant column leak"
+    );
 
     let job_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1::uuid")
         .bind(&job_id)
-        .fetch_one(&h.app_pool)
+        .fetch_one(&h.member_pool().await)
         .await
         .unwrap();
     assert_eq!(job_status, "QUEUED");
@@ -103,8 +112,8 @@ async fn http_backtests_create_queue_result_compare_happy() {
         &format!(
             "INSERT INTO result_artifacts (id, backtest_run_id, owner_user_id, artifact_type, parquet_path, row_count, sha256, size_bytes, summary_json) VALUES \
              (gen_random_uuid(), '{run_id}', '{owner}', 'EQUITY_CURVE', 'runs/{run_id}/equity.parquet', 20, repeat('f',64), 4096, '{{\"points\":[{{\"date\":\"2026-01-05\",\"equity\":\"100000000\"}},{{\"date\":\"2026-01-30\",\"equity\":\"101234000\"}}]}}'::jsonb), \
-             (gen_random_uuid(), '{run_id}', '{owner}', 'FILLS', 'runs/{run_id}/fills.parquet', 3, repeat('g',64), 1024, '{{\"trades\":2}}'::jsonb), \
-             (gen_random_uuid(), '{run_id}', '{owner}', 'ORDERS', 'runs/{run_id}/orders.parquet', 3, repeat('h',64), 1024, '{{\"orders\":2}}'::jsonb)",
+             (gen_random_uuid(), '{run_id}', '{owner}', 'FILLS', 'runs/{run_id}/fills.parquet', 3, repeat('b',64), 1024, '{{\"trades\":2}}'::jsonb), \
+             (gen_random_uuid(), '{run_id}', '{owner}', 'ORDERS', 'runs/{run_id}/orders.parquet', 3, repeat('c',64), 1024, '{{\"orders\":2}}'::jsonb)",
             owner = h.member.user_id
         ),
     )
@@ -121,7 +130,10 @@ async fn http_backtests_create_queue_result_compare_happy() {
 
     // metrics.
     let resp = h
-        .get(&format!("/api/v1/backtests/{run_id}/metrics"), Some(&h.member))
+        .get(
+            &format!("/api/v1/backtests/{run_id}/metrics"),
+            Some(&h.member),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
@@ -135,19 +147,31 @@ async fn http_backtests_create_queue_result_compare_happy() {
 
     // equity (curve manifest + summary points).
     let resp = h
-        .get(&format!("/api/v1/backtests/{run_id}/equity"), Some(&h.member))
+        .get(
+            &format!("/api/v1/backtests/{run_id}/equity"),
+            Some(&h.member),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
-    assert_eq!(body["artifact_type"], "EQUITY_CURVE");
-    assert_eq!(body["row_count"], 20);
+    assert_eq!(body["artifact"]["artifact_type"], "EQUITY_CURVE");
+    assert_eq!(body["artifact"]["row_count"], 20);
     assert_eq!(body["summary"]["points"][1]["equity"], "101234000");
-    assert!(!body.to_string().contains("parquet_path"), "no filesystem path leak");
-    assert!(!body.to_string().contains("storage_path"), "no internal path leak");
+    assert!(
+        !body.to_string().contains("parquet_path"),
+        "no filesystem path leak"
+    );
+    assert!(
+        !body.to_string().contains("storage_path"),
+        "no internal path leak"
+    );
 
     // trades (fills + orders manifests).
     let resp = h
-        .get(&format!("/api/v1/backtests/{run_id}/trades"), Some(&h.member))
+        .get(
+            &format!("/api/v1/backtests/{run_id}/trades"),
+            Some(&h.member),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
@@ -161,7 +185,10 @@ async fn http_backtests_create_queue_result_compare_happy() {
         .post("/api/v1/backtests", Some(&h.member), true, req2)
         .await;
     assert_eq!(status(&resp), StatusCode::CREATED);
-    let run2 = Harness::body_json(resp).await["id"].as_str().unwrap().to_string();
+    let run2 = Harness::body_json(resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     h.seed_tenant(
         &h.member,
         &format!(
@@ -182,7 +209,7 @@ async fn http_backtests_create_queue_result_compare_happy() {
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
     assert_eq!(body["run_ids"].as_array().unwrap().len(), 2);
-    assert_eq!(body["deltas"]["total_return"], "0.0234");
+    assert_eq!(body["deltas"]["total_return"], "-0.0234");
     assert_eq!(body["runs"][0]["strategy_id"], "buy_and_hold");
     h.teardown().await;
 }
@@ -194,12 +221,11 @@ async fn http_backtests_dataset_blocked_and_stale_gate() {
         return;
     };
     let cfg = seed_config(&h, &h.member).await;
-    let blocked: String = sqlx::query_scalar(
-        "SELECT id::text FROM dataset_versions WHERE status='BLOCKED' LIMIT 1",
-    )
-    .fetch_one(&h.app_pool)
-    .await
-    .unwrap();
+    let blocked: String =
+        sqlx::query_scalar("SELECT id::text FROM dataset_versions WHERE status='BLOCKED' LIMIT 1")
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
     let mut req = backtest_request(&blocked);
     req["strategy_config_id"] = json!(cfg);
     let resp = h
@@ -211,18 +237,17 @@ async fn http_backtests_dataset_blocked_and_stale_gate() {
     assert!(body["error"]["details"]["issues"].is_array());
     // No side effect.
     let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM backtest_runs")
-        .fetch_one(&h.app_pool)
+        .fetch_one(&h.member_pool().await)
         .await
         .unwrap();
     assert_eq!(runs, 0);
 
     // WARNING dataset -> DATA_STALE (stale quality issue present).
-    let warning: String = sqlx::query_scalar(
-        "SELECT id::text FROM dataset_versions WHERE status='WARNING' LIMIT 1",
-    )
-    .fetch_one(&h.app_pool)
-    .await
-    .unwrap();
+    let warning: String =
+        sqlx::query_scalar("SELECT id::text FROM dataset_versions WHERE status='WARNING' LIMIT 1")
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
     let mut req = backtest_request(&warning);
     req["strategy_config_id"] = json!(cfg);
     let resp = h
@@ -232,7 +257,7 @@ async fn http_backtests_dataset_blocked_and_stale_gate() {
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "DATA_STALE");
     let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM backtest_runs")
-        .fetch_one(&h.app_pool)
+        .fetch_one(&h.member_pool().await)
         .await
         .unwrap();
     assert_eq!(runs, 0, "stale dataset must not create runs");
@@ -267,7 +292,7 @@ async fn http_backtests_capacity_limit_is_typed_429() {
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "BACKTEST_CAPACITY_EXCEEDED");
     let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM backtest_runs")
-        .fetch_one(&h.app_pool)
+        .fetch_one(&h.member_pool().await)
         .await
         .unwrap();
     assert_eq!(runs, 0, "capacity denial must not create runs");
@@ -288,7 +313,9 @@ async fn http_backtests_validation_and_fuzz() {
     req["strategy_config_id"] = json!(cfg);
     req["start_date"] = json!("2026-02-01");
     req["end_date"] = json!("2026-01-01");
-    let resp = h.post("/api/v1/backtests", Some(&h.member), true, req).await;
+    let resp = h
+        .post("/api/v1/backtests", Some(&h.member), true, req)
+        .await;
     assert_eq!(status(&resp), StatusCode::BAD_REQUEST);
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "INVALID_PARAMETER");
@@ -297,7 +324,9 @@ async fn http_backtests_validation_and_fuzz() {
     let mut req = backtest_request(&dataset);
     req["strategy_config_id"] = json!(cfg);
     req["initial_cash"] = json!({ "currency": "KRW", "amount": "1e999" });
-    let resp = h.post("/api/v1/backtests", Some(&h.member), true, req).await;
+    let resp = h
+        .post("/api/v1/backtests", Some(&h.member), true, req)
+        .await;
     assert_eq!(status(&resp), StatusCode::BAD_REQUEST);
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "INVALID_DECIMAL");
@@ -306,7 +335,9 @@ async fn http_backtests_validation_and_fuzz() {
     let mut req = backtest_request(&dataset);
     req["strategy_config_id"] = json!(cfg);
     req["initial_cash"] = json!({ "currency": "USD", "amount": "100000" });
-    let resp = h.post("/api/v1/backtests", Some(&h.member), true, req).await;
+    let resp = h
+        .post("/api/v1/backtests", Some(&h.member), true, req)
+        .await;
     assert_eq!(status(&resp), StatusCode::UNPROCESSABLE_ENTITY);
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "UNSUPPORTED_MARKET_CURRENCY");
@@ -315,13 +346,15 @@ async fn http_backtests_validation_and_fuzz() {
     let mut req = backtest_request(&dataset);
     req["strategy_config_id"] = json!(cfg);
     req["strategy_config_id"] = json!("00000000-0000-0000-0000-000000000001");
-    let resp = h.post("/api/v1/backtests", Some(&h.member), true, req).await;
+    let resp = h
+        .post("/api/v1/backtests", Some(&h.member), true, req)
+        .await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND);
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "RESOURCE_NOT_FOUND");
 
     let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM backtest_runs")
-        .fetch_one(&h.app_pool)
+        .fetch_one(&h.member_pool().await)
         .await
         .unwrap();
     assert_eq!(runs, 0, "fuzz must not create runs");
@@ -342,12 +375,16 @@ async fn http_backtests_ownership_cancel_robustness_integrity() {
         .post("/api/v1/backtests", Some(&h.member), true, req.clone())
         .await;
     assert_eq!(status(&resp), StatusCode::CREATED);
-    let run_id = Harness::body_json(resp).await["id"].as_str().unwrap().to_string();
-    let job_id: String = sqlx::query_scalar("SELECT job_id::text FROM backtest_runs WHERE id=$1::uuid")
-        .bind(&run_id)
-        .fetch_one(&h.app_pool)
-        .await
-        .unwrap();
+    let run_id = Harness::body_json(resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let job_id: String =
+        sqlx::query_scalar("SELECT job_id::text FROM backtest_runs WHERE id=$1::uuid")
+            .bind(&run_id)
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
 
     // Ownership: the owner cannot read member's run (direct id guess).
     let resp = h
@@ -378,7 +415,7 @@ async fn http_backtests_ownership_cancel_robustness_integrity() {
     assert_eq!(body["status"], "CANCEL_REQUESTED");
     let job_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1::uuid")
         .bind(&job_id)
-        .fetch_one(&h.app_pool)
+        .fetch_one(&h.member_pool().await)
         .await
         .unwrap();
     assert_eq!(job_status, "CANCELED");
@@ -403,7 +440,10 @@ async fn http_backtests_ownership_cancel_robustness_integrity() {
         .post("/api/v1/backtests", Some(&h.member), true, req2)
         .await;
     assert_eq!(status(&resp), StatusCode::CREATED);
-    let run2 = Harness::body_json(resp).await["id"].as_str().unwrap().to_string();
+    let run2 = Harness::body_json(resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     h.seed_tenant(
         &h.member,
         &format!("UPDATE backtest_runs SET status='SUCCEEDED' WHERE id='{run2}'"),

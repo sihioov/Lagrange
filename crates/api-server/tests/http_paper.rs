@@ -2,8 +2,8 @@
 //! orders/positions/equity views; ownership; idempotency; fuzz.
 
 mod common;
-use common::{Harness, status};
 use axum::http::StatusCode;
+use common::{Harness, status};
 use serde_json::json;
 
 #[tokio::test]
@@ -28,11 +28,17 @@ async fn http_paper_accounts_happy() {
     assert_eq!(body["name"], "member-paper-1");
     assert_eq!(body["status"], "ACTIVE");
     let account_id = body["id"].as_str().unwrap().to_string();
-    assert!(!body.to_string().contains("owner_user_id"), "no tenant column leak");
+    assert!(
+        !body.to_string().contains("owner_user_id"),
+        "no tenant column leak"
+    );
 
     // get.
     let resp = h
-        .get(&format!("/api/v1/paper/accounts/{account_id}"), Some(&h.member))
+        .get(
+            &format!("/api/v1/paper/accounts/{account_id}"),
+            Some(&h.member),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
@@ -40,20 +46,29 @@ async fn http_paper_accounts_happy() {
 
     // bind-strategy: config owned by the actor.
     let cfg_resp = h
-        .post(
+        .send(
+            "POST",
             "/api/v1/strategies/buy_and_hold/configs",
             Some(&h.member),
             true,
-            json!({ "strategy_version": "1.0.0", "config": { "lookback": 200 }, "is_active": true }),
+            Some("test-rid-1"),
+            Some("seed-config-002"),
+            Some(json!({ "strategy_version": "1.0.0", "config": { "lookback": 200 }, "is_active": true })),
         )
         .await;
-    let cfg_id = Harness::body_json(cfg_resp).await["id"].as_str().unwrap().to_string();
+    let cfg_id = Harness::body_json(cfg_resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let resp = h
-        .post(
+        .send(
+            "POST",
             &format!("/api/v1/paper/accounts/{account_id}/bind-strategy"),
             Some(&h.member),
             true,
-            json!({ "strategy_config_id": cfg_id }),
+            Some("test-rid-1"),
+            Some("bind-strategy-001"),
+            Some(json!({ "strategy_config_id": cfg_id })),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
@@ -92,17 +107,26 @@ async fn http_paper_accounts_happy() {
     .await;
 
     let resp = h
-        .get(&format!("/api/v1/paper/accounts/{account_id}/orders"), Some(&h.member))
+        .get(
+            &format!("/api/v1/paper/accounts/{account_id}/orders"),
+            Some(&h.member),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
     let orders = body["items"].as_array().expect("orders");
     assert_eq!(orders.len(), 2);
-    assert_eq!(orders[0]["side"], "BUY");
-    assert_eq!(orders[0]["quantity"], "100.0000");
+    let buy = orders
+        .iter()
+        .find(|o| o["side"] == "BUY")
+        .expect("buy order");
+    assert_eq!(buy["quantity"], "100.0000");
 
     let resp = h
-        .get(&format!("/api/v1/paper/accounts/{account_id}/positions"), Some(&h.member))
+        .get(
+            &format!("/api/v1/paper/accounts/{account_id}/positions"),
+            Some(&h.member),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
@@ -111,7 +135,10 @@ async fn http_paper_accounts_happy() {
     assert_eq!(positions[0]["quantity"], "60.0000");
 
     let resp = h
-        .get(&format!("/api/v1/paper/accounts/{account_id}/equity"), Some(&h.member))
+        .get(
+            &format!("/api/v1/paper/accounts/{account_id}/equity"),
+            Some(&h.member),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
@@ -135,11 +162,17 @@ async fn http_paper_accounts_ownership_and_gating() {
         )
         .await;
     assert_eq!(status(&resp), StatusCode::CREATED);
-    let account_id = Harness::body_json(resp).await["id"].as_str().unwrap().to_string();
+    let account_id = Harness::body_json(resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // The owner cannot read the member's account.
     let resp = h
-        .get(&format!("/api/v1/paper/accounts/{account_id}"), Some(&h.owner))
+        .get(
+            &format!("/api/v1/paper/accounts/{account_id}"),
+            Some(&h.owner),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND);
 
@@ -160,20 +193,40 @@ async fn http_paper_accounts_ownership_and_gating() {
     let key = "paper-acct-001";
     let b = json!({ "name": "member-paper-3", "currency": "KRW" });
     let r1 = h
-        .send("POST", "/api/v1/paper/accounts", Some(&h.member), true, Some("test-rid-1"), Some(key), Some(b.clone()))
+        .send(
+            "POST",
+            "/api/v1/paper/accounts",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(b.clone()),
+        )
         .await;
     assert_eq!(r1.status(), StatusCode::CREATED);
-    let id1 = Harness::body_json(r1).await["id"].as_str().unwrap().to_string();
+    let id1 = Harness::body_json(r1).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let r2 = h
-        .send("POST", "/api/v1/paper/accounts", Some(&h.member), true, Some("test-rid-1"), Some(key), Some(b))
+        .send(
+            "POST",
+            "/api/v1/paper/accounts",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(b),
+        )
         .await;
     assert_eq!(r2.status(), StatusCode::CREATED);
     assert_eq!(r2.headers()["x-idempotent-replay"], "true");
     assert_eq!(Harness::body_json(r2).await["id"].as_str().unwrap(), id1);
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts WHERE name='member-paper-3'")
-        .fetch_one(&h.app_pool)
-        .await
-        .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM accounts WHERE name='member-paper-3'")
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
     assert_eq!(count, 1, "idempotent replay must not double-create");
     h.teardown().await;
 }
