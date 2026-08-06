@@ -24,12 +24,16 @@
 //!   strategies + AT-03/04/05/06 core evidence; rejects unapproved golden
 //!   deltas and non-finite values).
 
+pub mod cost;
 pub mod error;
 pub mod holdout;
 pub mod lineage;
+pub mod replay;
 
+pub use cost::{CostStressProfile, stress_cost};
 pub use error::RobustnessError;
 pub use holdout::{HoldoutBarrier, PeriodSplit, SplitResult, select_equity_series};
 pub use lineage::{
     DerivedAxis, DerivedRunRequest, LineageRegistry, PinnedContext, RunLineage,
 };
+pub use replay::{ReplaySpec, replay, replay_with};
