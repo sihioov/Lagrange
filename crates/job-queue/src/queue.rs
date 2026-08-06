@@ -28,8 +28,8 @@
 
 use crate::error::QueueError;
 use crate::types::{
-    AttemptOutcome, AuditActor, CancelResult, ClaimedJob, HeartbeatStatus, Job, JobStatus,
-    SettleResult, SubmitJob, SweepReport,
+    AttemptOutcome, AuditActor, CancelResult, ClaimedJob, ErrorClass, HeartbeatStatus, Job,
+    JobStatus, SettleResult, SubmitJob, SweepReport,
 };
 use sqlx::postgres::PgPool;
 use sqlx::types::Uuid;
@@ -404,57 +404,376 @@ async fn settle_canceled_race(
     }
 }
 
-// Referenced by later increments (cancellation, retry classification,
-// sweeper); declared now so the public API surface is stable.
-#[allow(unused)]
+// ------------------------------------------------------------------
+// Cancellation (cooperative + audited) and retry classification
+// ------------------------------------------------------------------
+
 impl JobQueue {
-    /// Cooperative cancel request (audited). Implemented in the cancellation
-    /// increment; present as a documented seam.
-    pub async fn request_cancel(
-        &self,
-        _job_id: Uuid,
-        _actor: &AuditActor,
-    ) -> Result<CancelResult, QueueError> {
-        Err(QueueError::Internal("request_cancel not implemented".into()))
+    /// Request cancellation of a job. QUEUED/RUNNING -> CANCELED in one short
+/// transaction, then an append-only `audit_logs` row (`job.canceled` with
+/// actor and before/after status) written through the audit-writer pool.
+/// Terminal jobs are returned as [`CancelResult::AlreadyTerminal`] with no
+/// side effects; the request is refused with
+/// [`QueueError::AuditUnavailable`] when no audit pool was configured —
+/// cancellation is audited by contract, so an un-auditable cancel never
+/// happens. The RUNNING worker is never interrupted: it observes the cancel
+/// through [`JobQueue::check_canceled`] and aborts cooperatively.
+pub async fn request_cancel(
+    &self,
+    job_id: Uuid,
+    actor: &AuditActor,
+) -> Result<CancelResult, QueueError> {
+    let audit = self.audit.as_ref().ok_or(QueueError::AuditUnavailable)?;
+    let mut tx = self.pool.begin().await?;
+    let before: Option<JobStatus> =
+        sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1 FOR UPDATE")
+            .bind(job_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(before) = before else {
+        tx.rollback().await?;
+        return Err(QueueError::JobNotFound(job_id));
+    };
+    if before.is_terminal() {
+        tx.rollback().await?;
+        return Ok(CancelResult::AlreadyTerminal(self.get_by_id(job_id).await?));
     }
+    let job: Job = sqlx::query_as(update_job_returning(
+        "SET status = 'CANCELED', finished_at = now(), updated_at = now()
+         WHERE id = $1 AND status IN ('QUEUED', 'RUNNING')",
+    ))
+    .bind(job_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
 
-    /// Failure settle with retry classification. Implemented in the retry
-    /// increment; present as a documented seam.
-    pub async fn settle_failure(
-        &self,
-        _claim: &ClaimedJob,
-        _class: crate::types::ErrorClass,
-        _code: &str,
-        _message: &str,
-    ) -> Result<SettleResult, QueueError> {
-        Err(QueueError::Internal(
-            "settle_failure not implemented".into(),
+    sqlx::query(
+        "INSERT INTO audit_logs
+             (action, actor_role, actor_user_id, target_type, target_id,
+              before_json, after_json, reason, correlation_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind("job.canceled")
+    .bind(&actor.role)
+    .bind(actor.user_id)
+    .bind("job")
+    .bind(job_id.to_string())
+    .bind(serde_json::json!({ "status": before.as_str() }))
+    .bind(serde_json::json!({ "status": "CANCELED" }))
+    .bind("cooperative cancel request")
+    .bind(&actor.correlation_id)
+    .execute(audit)
+    .await?;
+    Ok(CancelResult::Canceled(job))
+}
+
+/// Cooperative cancel checkpoint: `true` once a cancel request won for this
+/// job. Workers poll this between work steps (never mid-transaction).
+pub async fn check_canceled(&self, job_id: Uuid) -> Result<bool, QueueError> {
+    let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(&self.pool)
+        .await?;
+    Ok(status == Some(JobStatus::Canceled))
+}
+
+/// Worker response to an observed cancel checkpoint: the attempt is recorded
+/// `FAILED(error_code='canceled')` and the job stays CANCELED (canceled work
+/// is never exposed as a result, FR-BT-009). Only valid once the job IS
+/// CANCELED — a stale/foreign claim yields [`QueueError::StaleClaim`].
+pub async fn settle_aborted(&self, claim: &ClaimedJob, reason: &str) -> Result<Job, QueueError> {
+    let mut tx = self.pool.begin().await?;
+    let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
+        .bind(claim.job.id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if status != Some(JobStatus::Canceled) {
+        tx.rollback().await?;
+        return Err(QueueError::StaleClaim(claim.job.id));
+    }
+    finalize_attempt(
+        &mut tx,
+        claim,
+        AttemptOutcome::Failed,
+        Some("canceled"),
+        Some(reason),
+    )
+    .await?;
+    tx.commit().await?;
+    self.get_by_id(claim.job.id).await
+}
+
+/// Settle a claim as FAILED under the design §6.8 retry policy:
+///
+/// * [`ErrorClass::Transient`] with attempts remaining: requeue QUEUED with
+///   exponential backoff (`available_at = now() + base * 2^(attempt-1)`).
+/// * Anything else — input, blocked data, integrity, determinism — or
+///   attempts exhausted: the job resolves FAILED immediately, carrying the
+///   worker's error code/message. Non-retryable classes NEVER retry, no
+///   matter how many attempts remain.
+///
+/// One short transaction (job + attempt), guarded like
+/// [`JobQueue::settle_success`]; a cancel that won meanwhile resolves to
+/// [`SettleResult::Canceled`].
+pub async fn settle_failure(
+    &self,
+    claim: &ClaimedJob,
+    class: ErrorClass,
+    code: &str,
+    message: &str,
+) -> Result<SettleResult, QueueError> {
+    let mut tx = self.pool.begin().await?;
+    let requeued: Option<Job> = if class.retryable() {
+        sqlx::query_as(update_job_returning(
+            "SET status = 'QUEUED', locked_by = NULL, locked_at = NULL,
+                 available_at = now() + make_interval(secs => $3),
+                 error_code = NULL, error_message = NULL, updated_at = now()
+             WHERE id = $1 AND status = 'RUNNING' AND locked_by = $2
+               AND attempt_count < max_attempts",
         ))
+        .bind(claim.job.id)
+        .bind(&claim.worker_id)
+        .bind(backoff_seconds(self.config.backoff_base, claim.job.attempt_count))
+        .fetch_optional(&mut *tx)
+        .await?
+    } else {
+        None
+    };
+    let job = match requeued {
+        Some(job) => Some(job),
+        None => {
+        sqlx::query_as(update_job_returning(
+                "SET status = 'FAILED', finished_at = now(), locked_by = NULL,
+                     locked_at = NULL, error_code = $3, error_message = $4, updated_at = now()
+                 WHERE id = $1 AND status = 'RUNNING' AND locked_by = $2",
+            ))
+            .bind(claim.job.id)
+            .bind(&claim.worker_id)
+            .bind(code)
+            .bind(message)
+            .fetch_optional(&mut *tx)
+            .await?
+        }
+    };
+    match job {
+        Some(job) => {
+            finalize_attempt(
+                &mut tx,
+                claim,
+                AttemptOutcome::Failed,
+                Some(code),
+                Some(message),
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(SettleResult::Committed(job))
+        }
+        None => {
+            let result = settle_canceled_race(&mut tx, claim, "job canceled by request").await;
+            match result {
+                Ok(SettleResult::Canceled(job)) => {
+                    tx.commit().await?;
+                    Ok(SettleResult::Canceled(job))
+                }
+                Ok(other) => {
+                    tx.rollback().await?;
+                    Err(QueueError::Internal(format!(
+                        "unexpected settle outcome {other:?}"
+                    )))
+                }
+                Err(e) => {
+                    tx.rollback().await?;
+                    Err(e)
+                }
+            }
+        }
     }
+}
+}
 
-    /// Cooperative cancel checkpoint: `true` once a cancel request won for
-    /// this job. Implemented in the cancellation increment.
-    pub async fn check_canceled(&self, _job_id: Uuid) -> Result<bool, QueueError> {
-        Err(QueueError::Internal(
-            "check_canceled not implemented".into(),
-        ))
-    }
+/// Exponential backoff in seconds for the attempt that just failed
+/// (`attempt_count` is the failed attempt's number): `base * 2^(n-1)`,
+/// capped at one hour so retries never schedule into the far future.
+fn backoff_seconds(base: Duration, attempt_count: i32) -> f64 {
+    let exponent = attempt_count.max(1) as u32 - 1;
+    base.as_secs_f64() * 2f64.powi(exponent as i32).min(3600.0)
+}
 
-    /// Worker response to an observed cancel checkpoint: attempt recorded
-    /// `FAILED(error_code='canceled')`, job stays CANCELED. Implemented in
-    /// the cancellation increment.
-    pub async fn settle_aborted(
-        &self,
-        _claim: &ClaimedJob,
-        _reason: &str,
-    ) -> Result<Job, QueueError> {
-        Err(QueueError::Internal(
-            "settle_aborted not implemented".into(),
-        ))
-    }
+// ------------------------------------------------------------------
+// Orphan recovery: the sweeper
+// ------------------------------------------------------------------
 
-    /// Orphan-recovery sweep. Implemented in the sweeper increment.
+impl JobQueue {
+    /// One sweep pass over expired leases (NFR-REL-003 / design §6.8
+    /// "워커 프로세스 비정상 종료: ORPHAN 감지 후 1회").
+    ///
+    /// Phase 1 reads candidate jobs whose lease anchor is stale
+    /// (`status IN ('RUNNING','CANCELED') AND locked_at <= now() - lease`)
+    /// WITHOUT taking locks, then each candidate is processed in its own
+    /// SHORT transaction: the row is re-read `FOR UPDATE` and the expiry
+    /// re-verified (a heartbeat that landed meanwhile wins), the `RUNNING`
+    /// attempt is marked `ORPHANED` — an attempt-level outcome, NEVER a job
+    /// status — and the job is either requeued exactly once (QUEUED with
+    /// backoff; the next claim becomes a NEW attempt) or resolved `FAILED`
+    /// (`error_code='attempts_exhausted'`) once `attempt_count` reached
+    /// `max_attempts`. A CANCELED job's orphaned attempt is finalized with
+    /// NO requeue — cancellation is honored even across worker death. All
+    /// updates are guarded, so two racing sweepers or a settling worker can
+    /// never orphan an attempt twice.
     pub async fn sweep(&self) -> Result<SweepReport, QueueError> {
-        Err(QueueError::Internal("sweep not implemented".into()))
+        let expired: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM jobs
+             WHERE status IN ('RUNNING', 'CANCELED')
+               AND locked_at <= now() - make_interval(secs => $1)",
+        )
+        .bind(self.config.lease.as_secs_f64())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut report = SweepReport::default();
+        for (job_id,) in expired {
+            report.jobs_checked += 1;
+            self.sweep_job(job_id, &mut report).await?;
+        }
+        Ok(report)
+    }
+
+    /// Process one expired-lease job in its own short transaction.
+    ///
+    /// Expiry is re-verified with the SERVER clock (`locked_at <= now() -
+    /// lease`) — never the client clock, whose skew against the database
+    /// would decide liveness differently from the phase-1 scan.
+    async fn sweep_job(&self, job_id: Uuid, report: &mut SweepReport) -> Result<(), QueueError> {
+        let mut tx = self.pool.begin().await?;
+        let row: Option<(i32, i32, String)> = sqlx::query_as(
+            "SELECT attempt_count, max_attempts, status FROM jobs
+             WHERE id = $1
+               AND locked_at <= now() - make_interval(secs => $2)
+             FOR UPDATE",
+        )
+        .bind(job_id)
+        .bind(self.config.lease.as_secs_f64())
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((attempt_count, max_attempts, status)) = row else {
+            tx.rollback().await?;
+            return Ok(()); // a heartbeat won the race; the lease is live again
+        };
+
+        let latest: Option<(i32, String)> = sqlx::query_as(
+            "SELECT attempt_no, outcome FROM job_attempts
+             WHERE job_id = $1 ORDER BY attempt_no DESC LIMIT 1",
+        )
+        .bind(job_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        match latest {
+            Some((attempt_no, outcome)) if outcome == "RUNNING" => {
+                let rows = sqlx::query(
+                    "UPDATE job_attempts
+                     SET outcome = 'ORPHANED', finished_at = now()
+                     WHERE job_id = $1 AND attempt_no = $2 AND outcome = 'RUNNING'",
+                )
+                .bind(job_id)
+                .bind(attempt_no)
+                .execute(&mut *tx)
+                .await?;
+                if rows.rows_affected() != 1 {
+                    tx.rollback().await?;
+                    return Ok(()); // another sweeper won; nothing to do
+                }
+                report.attempts_orphaned += 1;
+                if status == "CANCELED" {
+                    // Cancellation is terminal: finalize the attempt, never requeue.
+                    tx.commit().await?;
+                    return Ok(());
+                }
+                if attempt_count >= max_attempts {
+                    let rows = sqlx::query(
+                        "UPDATE jobs
+                         SET status = 'FAILED', finished_at = now(),
+                             error_code = 'attempts_exhausted',
+                             error_message = 'worker crash exhausted retries',
+                             locked_by = NULL, locked_at = NULL, updated_at = now()
+                         WHERE id = $1 AND status = 'RUNNING'",
+                    )
+                    .bind(job_id)
+                    .execute(&mut *tx)
+                    .await?;
+                    if rows.rows_affected() == 1 {
+                        report.jobs_failed += 1;
+                    }
+                } else {
+                    let rows = sqlx::query(
+                        "UPDATE jobs
+                         SET status = 'QUEUED', locked_by = NULL, locked_at = NULL,
+                             available_at = now() + make_interval(secs => $2),
+                             error_code = NULL, error_message = NULL, updated_at = now()
+                         WHERE id = $1 AND status = 'RUNNING'",
+                    )
+                    .bind(job_id)
+                    .bind(backoff_seconds(self.config.backoff_base, attempt_count))
+                    .execute(&mut *tx)
+                    .await?;
+                    if rows.rows_affected() == 1 {
+                        report.jobs_requeued += 1;
+                    }
+                }
+                tx.commit().await?;
+            }
+            Some((_no, outcome)) => {
+                // Defensive finalize for an impossible-in-practice state (an
+                // expired RUNNING job whose latest attempt is already
+                // terminal — settle/claim transactions are atomic, so this
+                // only occurs after manual tampering): mirror the attempt's
+                // terminal outcome on the job instead of leaving it RUNNING.
+                if outcome == "SUCCEEDED" {
+                    sqlx::query(
+                        "UPDATE jobs
+                         SET status = 'SUCCEEDED', finished_at = now(),
+                             locked_by = NULL, locked_at = NULL, updated_at = now()
+                         WHERE id = $1 AND status = 'RUNNING'",
+                    )
+                    .bind(job_id)
+                    .execute(&mut *tx)
+                    .await?;
+                } else if outcome == "FAILED" {
+                    if attempt_count >= max_attempts {
+                        sqlx::query(
+                            "UPDATE jobs
+                             SET status = 'FAILED', finished_at = now(),
+                                 error_code = 'attempts_exhausted',
+                                 error_message = 'attempt failed before settle completed',
+                                 locked_by = NULL, locked_at = NULL, updated_at = now()
+                             WHERE id = $1 AND status = 'RUNNING'",
+                        )
+                        .bind(job_id)
+                        .execute(&mut *tx)
+                        .await?;
+                        report.jobs_failed += 1;
+                    } else {
+                        sqlx::query(
+                            "UPDATE jobs
+                             SET status = 'QUEUED', locked_by = NULL, locked_at = NULL,
+                                 available_at = now() + make_interval(secs => $2),
+                                 error_code = NULL, error_message = NULL, updated_at = now()
+                             WHERE id = $1 AND status = 'RUNNING'",
+                        )
+                        .bind(job_id)
+                        .bind(backoff_seconds(self.config.backoff_base, attempt_count))
+                        .execute(&mut *tx)
+                        .await?;
+                        report.jobs_requeued += 1;
+                    }
+                }
+                tx.commit().await?;
+            }
+            None => {
+                // No attempt rows at all (manual tampering): leave the job;
+                // nothing to finalize.
+                tx.rollback().await?;
+            }
+        }
+        Ok(())
     }
 }

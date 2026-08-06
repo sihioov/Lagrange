@@ -280,8 +280,10 @@ pub struct SweepReport {
     pub attempts_orphaned: usize,
     /// Jobs requeued as QUEUED after an orphan (at most one per pass per job).
     pub jobs_requeued: usize,
-    /// Jobs resolved FAILED after retry exhaustion (or canceled jobs whose
-    /// orphaned attempt was finalized with no requeue).
+    /// Jobs resolved FAILED after retry exhaustion (worker-crash retries
+    /// exhausted). Canceled jobs whose orphaned attempt was finalized are
+    /// counted in `attempts_orphaned` only — they are never requeued or
+    /// re-resolved.
     pub jobs_failed: usize,
 }
 
