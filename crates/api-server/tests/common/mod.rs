@@ -22,6 +22,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
+use sha2::{Digest, Sha256};
 use sqlx::ConnectOptions;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgPool, Row};
@@ -29,6 +30,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
 use uuid::Uuid;
+
+/// sha256 hex of a byte slice (harness manifests must match the DB CHECK).
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(bytes);
+    hex::encode(h.finalize())
+}
 
 /// Roles bootstrapped cluster-wide by the harness (migrations grant to them).
 pub const ROLE_BOOTSTRAP_SQL: &str = r#"
@@ -128,6 +136,9 @@ pub struct Harness {
     pub owner_pool: PgPool,
     /// base app-role URL used to build actor-GUC pools for queue calls.
     pub app_url: String,
+    /// Temp artifact tree the download route hashes against (C: temp, keeps
+    /// D: safe; mirrors the read-only /data/artifacts mount in compose).
+    pub artifact_root: std::path::PathBuf,
 }
 
 /// Read DATABASE_URL or return None (tests skip).
@@ -200,6 +211,13 @@ impl Harness {
         let admin_pool = pool(&admin_url, 4).await;
         let audit_pool = pool(&audit_url, 4).await;
 
+        let artifact_root = std::env::temp_dir().join(format!(
+            "lagrange-artifacts-{}-{}",
+            std::process::id(),
+            db_name
+        ));
+        std::fs::create_dir_all(&artifact_root).expect("artifact root creates");
+
         let mut h = Harness {
             db_name,
             app: axum::Router::new(),
@@ -220,9 +238,9 @@ impl Harness {
             audit_pool,
             owner_pool,
             app_url,
+            artifact_root,
         };
 
-        // Baseline shared rows: roles, users are seeded by seed_user.
         h.seed_shared(
             "INSERT INTO roles (id, description) VALUES ('owner','Owner'), ('member','Member') \
              ON CONFLICT (id) DO NOTHING",
@@ -304,6 +322,7 @@ impl Harness {
             max_jobs_per_owner: 10,
             db_url: h.app_url.clone(),
             step_up_max_auth_age_secs: 900,
+            artifact_root: h.artifact_root.clone(),
         };
         let state = ApiState::from_pools(
             cfg,
@@ -328,6 +347,7 @@ impl Harness {
         drop(self.admin_pool);
         drop(self.audit_pool);
         drop(self.owner_pool);
+        let _ = std::fs::remove_dir_all(&self.artifact_root);
         let super_url = base_url().expect("DATABASE_URL still set");
         let super_pool = pool(&super_url, 2).await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -336,6 +356,18 @@ impl Harness {
         )))
         .execute(&super_pool)
         .await;
+    }
+
+    /// Write artifact bytes under the harness artifact root; returns the
+    /// sha256 hex the manifest row must carry.
+    pub fn write_artifact(&self, rel: &str, bytes: &[u8]) -> String {
+        let path = self.artifact_root.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("artifact parent dirs create");
+        }
+        std::fs::write(&path, bytes).expect("artifact file writes");
+        let digest = sha256_hex(bytes);
+        digest
     }
 
     /// Seed a row into a shared system-owned table (as migration_owner).

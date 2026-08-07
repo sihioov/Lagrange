@@ -42,6 +42,9 @@ pub struct ApiConfig {
     pub db_url: String,
     /// Max age of the authentication event behind Owner step-up actions.
     pub step_up_max_auth_age_secs: i64,
+    /// Read-only artifact tree (mirrors the `/data/artifacts` mount); the
+    /// download route hashes files against the manifest before serving.
+    pub artifact_root: std::path::PathBuf,
 }
 
 /// The assembled router state.
