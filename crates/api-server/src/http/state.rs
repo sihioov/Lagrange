@@ -16,6 +16,7 @@ use crate::repos::metrics::MetricsRepo;
 use crate::repos::ops::OpsRepo;
 use crate::repos::paper::PaperRepo;
 use crate::repos::recommendations::RecommendationRepo;
+use crate::repos::robustness::RobustnessRepo;
 use crate::repos::shared::SharedDataRepo;
 use crate::repos::strategies::StrategyCatalogRepo;
 use crate::repos::strategy_configs::StrategyConfigRepo;
@@ -103,6 +104,9 @@ impl ApiState {
     }
     pub fn backtest_runs(&self) -> BacktestRunRepo {
         BacktestRunRepo::new(self.app_pool.clone())
+    }
+    pub fn robustness_suites(&self) -> RobustnessRepo {
+        RobustnessRepo::new(self.app_pool.clone())
     }
     pub fn artifacts(&self) -> ArtifactRepo {
         ArtifactRepo::new(self.app_pool.clone())

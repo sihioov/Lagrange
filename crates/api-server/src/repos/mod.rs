@@ -12,6 +12,7 @@ pub mod metrics;
 pub mod ops;
 pub mod paper;
 pub mod recommendations;
+pub mod robustness;
 pub mod shared;
 pub mod strategies;
 pub mod strategy_configs;

@@ -171,10 +171,7 @@ async fn phase1_five_users_isolated_across_all_member_surfaces() {
     );
 
     // ---- entitlement ACTIVE proof (licensing-status) ---------------------
-    let lic = Harness::body_json(
-        h.get("/api/v1/licensing-status", Some(m1)).await,
-    )
-    .await;
+    let lic = Harness::body_json(h.get("/api/v1/licensing-status", Some(m1)).await).await;
     let active_rows: Vec<&Value> = lic["datasets"]
         .as_array()
         .into_iter()
@@ -230,7 +227,7 @@ async fn phase1_five_users_isolated_across_all_member_surfaces() {
     println!("AT-01 RECOMMENDATION: 4/4 other members -> 404, m1 -> 200");
 
     // ---- backtest: m1 creates; AT-03 same input twice -> same run --------
-    let mut req = backtest_request(&dataset, &cfgs[0]);
+    let req = backtest_request(&dataset, &cfgs[0]);
     let resp = h
         .send(
             "POST",
@@ -296,13 +293,16 @@ async fn phase1_five_users_isolated_across_all_member_surfaces() {
     let (_arun, artifact_id) =
         seed_run_with_artifact(&h, m1, "phase1/m1-equity.parquet", ARTIFACT_BYTES).await;
     let dl = h
-        .get(&format!("/api/v1/artifacts/{artifact_id}/download"), Some(m1))
+        .get(
+            &format!("/api/v1/artifacts/{artifact_id}/download"),
+            Some(m1),
+        )
         .await;
     assert_eq!(status(&dl), StatusCode::OK);
     assert!(
-        dl.headers()
-            .get("x-accel-redirect")
-            .is_some_and(|v| v.to_str().is_ok_and(|s| s.starts_with("/internal-artifacts/"))),
+        dl.headers().get("x-accel-redirect").is_some_and(|v| v
+            .to_str()
+            .is_ok_and(|s| s.starts_with("/internal-artifacts/"))),
         "authorized download must issue the internal X-Accel-Redirect"
     );
     let body = Harness::body_text(dl).await;
@@ -311,7 +311,10 @@ async fn phase1_five_users_isolated_across_all_member_surfaces() {
 
     for (i, m) in others.iter().enumerate() {
         let resp = h
-            .get(&format!("/api/v1/artifacts/{artifact_id}/download"), Some(m))
+            .get(
+                &format!("/api/v1/artifacts/{artifact_id}/download"),
+                Some(m),
+            )
             .await;
         assert_eq!(
             status(&resp),
@@ -326,7 +329,10 @@ async fn phase1_five_users_isolated_across_all_member_surfaces() {
     let tampered_path = h.artifact_root.join("phase1/m1-equity.parquet");
     std::fs::write(&tampered_path, b"tampered-bytes").unwrap();
     let dl = h
-        .get(&format!("/api/v1/artifacts/{artifact_id}/download"), Some(m1))
+        .get(
+            &format!("/api/v1/artifacts/{artifact_id}/download"),
+            Some(m1),
+        )
         .await;
     assert_ne!(status(&dl), StatusCode::OK);
     assert!(
@@ -363,7 +369,7 @@ async fn phase1_entitlement_revoked_fails_closed_for_all_five() {
     for (i, m) in members.iter().enumerate() {
         cfgs.push(create_config(&h, m, &format!("p1-revoke-cfg-{i}")).await);
     }
-    let mut req = backtest_request(&dataset, &cfgs[0]);
+    let req = backtest_request(&dataset, &cfgs[0]);
 
     // Revoke the ACTIVE entitlement (owner-managed row).
     h.seed_shared("UPDATE data_entitlements SET status='REVOKED' WHERE status='ACTIVE'")
@@ -398,7 +404,9 @@ async fn phase1_entitlement_revoked_fails_closed_for_all_five() {
             i + 1
         );
     }
-    println!("REVOKE: 5/5 members -> 403 DATA_ENTITLEMENT_REQUIRED on recommendations and backtests");
+    println!(
+        "REVOKE: 5/5 members -> 403 DATA_ENTITLEMENT_REQUIRED on recommendations and backtests"
+    );
 
     // Licensing-status now shows the REVOKED state, not ACTIVE.
     let lic = Harness::body_json(h.get("/api/v1/licensing-status", Some(&members[0])).await).await;
@@ -413,12 +421,11 @@ async fn phase1_entitlement_revoked_fails_closed_for_all_five() {
     // Owner-only continues: admin jobs + dataset policy verdict still work.
     let owner_admin = h.get("/api/v1/admin/jobs", Some(&h.owner)).await;
     assert_eq!(status(&owner_admin), StatusCode::OK);
-    let warning_id: String = sqlx::query_scalar(
-        "SELECT id::text FROM dataset_versions WHERE status='WARNING' LIMIT 1",
-    )
-    .fetch_one(&h.member_pool().await)
-    .await
-    .unwrap();
+    let warning_id: String =
+        sqlx::query_scalar("SELECT id::text FROM dataset_versions WHERE status='WARNING' LIMIT 1")
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
     let approve = h
         .send(
             "POST",
@@ -456,12 +463,11 @@ async fn phase1_at05_dataset_quality_policy_blocks_runs() {
     let members = five_members(&h).await;
     let cfg = create_config(&h, &members[0], "p1-at05-cfg").await;
 
-    let blocked: String = sqlx::query_scalar(
-        "SELECT id::text FROM dataset_versions WHERE status='BLOCKED' LIMIT 1",
-    )
-    .fetch_one(&h.member_pool().await)
-    .await
-    .unwrap();
+    let blocked: String =
+        sqlx::query_scalar("SELECT id::text FROM dataset_versions WHERE status='BLOCKED' LIMIT 1")
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
     let mut req = backtest_request(&blocked, &cfg);
     let resp = h
         .post("/api/v1/backtests", Some(&members[0]), true, req.clone())
@@ -473,12 +479,11 @@ async fn phase1_at05_dataset_quality_policy_blocks_runs() {
     );
     println!("AT-05: BLOCKED dataset -> 422 DATASET_BLOCKED for member 1");
 
-    let warning: String = sqlx::query_scalar(
-        "SELECT id::text FROM dataset_versions WHERE status='WARNING' LIMIT 1",
-    )
-    .fetch_one(&h.member_pool().await)
-    .await
-    .unwrap();
+    let warning: String =
+        sqlx::query_scalar("SELECT id::text FROM dataset_versions WHERE status='WARNING' LIMIT 1")
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
     req = backtest_request(&warning, &cfg);
     let resp = h
         .post("/api/v1/backtests", Some(&members[0]), true, req.clone())
@@ -552,17 +557,13 @@ async fn phase1_worker_kill_orphans_once_retries_once_api_alive() {
     // the sweeper must orphan the attempt and requeue exactly once.
     tokio::time::sleep(Duration::from_millis(300)).await;
     let sweep = worker_queue.sweep().await.expect("sweep");
-    assert_eq!(
-        sweep.attempts_orphaned, 1,
-        "exactly one ORPHANED attempt"
-    );
+    assert_eq!(sweep.attempts_orphaned, 1, "exactly one ORPHANED attempt");
     assert_eq!(sweep.jobs_requeued, 1, "at most one retry");
-    let orphaned: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM job_attempts WHERE outcome = 'ORPHANED'",
-    )
-    .fetch_one(&h.owner_pool)
-    .await
-    .unwrap();
+    let orphaned: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM job_attempts WHERE outcome = 'ORPHANED'")
+            .fetch_one(&h.owner_pool)
+            .await
+            .unwrap();
     assert_eq!(orphaned, 1, "exactly one ORPHANED attempt row persisted");
     println!("AT-06: worker killed -> 1 ORPHANED attempt, 1 requeue (sweep)");
 
@@ -624,10 +625,22 @@ async fn phase1_pre_member_restore_hashes_clean_and_isolation_holds() {
     ));
     let set_dir = base.join("backup-set");
     let manifest_files = [
-        ("files/raw/2026-08-05T00-00-00Z/raw.increment", b"raw-bytes-001".as_slice()),
-        ("files/curated/2026-08-05T00-00-00Z/curated.increment", b"curated-bytes-002".as_slice()),
-        ("files/artifact/2026-08-05T00-00-00Z/artifact.increment", b"artifact-bytes-003".as_slice()),
-        ("pg/base/2026-08-05T00-00-00Z/base.tar.gz", b"base-dump-bytes-004".as_slice()),
+        (
+            "files/raw/2026-08-05T00-00-00Z/raw.increment",
+            b"raw-bytes-001".as_slice(),
+        ),
+        (
+            "files/curated/2026-08-05T00-00-00Z/curated.increment",
+            b"curated-bytes-002".as_slice(),
+        ),
+        (
+            "files/artifact/2026-08-05T00-00-00Z/artifact.increment",
+            b"artifact-bytes-003".as_slice(),
+        ),
+        (
+            "pg/base/2026-08-05T00-00-00Z/base.tar.gz",
+            b"base-dump-bytes-004".as_slice(),
+        ),
     ];
     let mut files_json = Vec::new();
     for (rel, bytes) in &manifest_files {
@@ -656,7 +669,10 @@ async fn phase1_pre_member_restore_hashes_clean_and_isolation_holds() {
     let target = base.join("restore-target");
     std::fs::create_dir_all(&target).unwrap();
     let empty_before = std::fs::read_dir(&target).unwrap().count() == 0;
-    assert!(empty_before, "A7: restore targets must be empty before restore");
+    assert!(
+        empty_before,
+        "A7: restore targets must be empty before restore"
+    );
     for (rel, bytes) in &manifest_files {
         let dest = target.join(rel);
         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
@@ -690,7 +706,10 @@ async fn phase1_pre_member_restore_hashes_clean_and_isolation_holds() {
     .unwrap();
     assert_eq!(runs, 1, "A6: member's run present after restore");
     let resp = h
-        .get(&format!("/api/v1/recommendations/runs/{run_id}"), Some(&members[1]))
+        .get(
+            &format!("/api/v1/recommendations/runs/{run_id}"),
+            Some(&members[1]),
+        )
         .await;
     assert_eq!(
         status(&resp),

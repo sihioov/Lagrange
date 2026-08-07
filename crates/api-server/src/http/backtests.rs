@@ -5,7 +5,7 @@
 
 use crate::http::dto::{
     ArtifactDto, BacktestBody, BacktestRunDto, CancelDto, CompareBody, CompareDto, CompareRunDto,
-    EquityDto, MetricDto, PageDto, RobustnessDto, TradeDto,
+    EquityDto, MetricDto, PageDto, RobustnessChildDto, RobustnessDto, TradeDto,
 };
 use crate::http::entitlement::require_use;
 use crate::http::error::{api_error, code_error, request_id};
@@ -482,6 +482,17 @@ pub async fn cancel(
         if let Err(e) = queue.request_cancel(job_id, &actor_for_audit).await {
             return code_error("INTERNAL", format!("cancel failed: {e}"), &rid);
         }
+        // Cascade: any robustness suite planned from this run cancels with
+        // it. A suite child is never left running against a canceled parent.
+        if let Ok(Some(suite)) = state.robustness_suites().find_by_parent(&actor, id).await
+            && let Ok((_, children)) = state
+                .robustness_suites()
+                .suite_status(&actor, suite.id)
+                .await
+        {
+            let child_job_ids: Vec<Uuid> = children.iter().map(|c| c.job_id).collect();
+            let _ = job_queue::batch::cancel_batch(&queue, &child_job_ids, &actor_for_audit).await;
+        }
         audit(
             &state,
             &session,
@@ -650,13 +661,112 @@ pub async fn trades(
     }
 }
 
+/// Builds the parent run's [`RunProvenance`] from its persisted columns.
+/// Every robustness child pins THIS provenance verbatim (except the single
+/// declared axis) -- the caller never supplies strategy/data/engine
+/// identity, so a pin mismatch can only ever be a server bug, never a
+/// client input (plan Todo 29: version pinning is structural, not a
+/// runtime check on user input).
+/// Sanitizes a raw `dataset_version` column value (Todo 20's `create()`
+/// stores `"{dataset_id}@{version}"`, and `@` is outside
+/// [`domain::DatasetVersionId`]'s slug alphabet) into a valid slug. This
+/// identity is used ONLY to compare a suite's children against their
+/// parent for equality -- not to look anything up externally -- so a
+/// stable, deterministic substitution preserves correctness.
+fn sanitize_dataset_version(raw: &str) -> String {
+    raw.chars()
+        .map(|c| if c == '@' { '.' } else { c })
+        .collect()
+}
+
+/// A valid placeholder `code_commit` for runs whose real commit is not yet
+/// known (Todo 20's `create()` stores the literal `"PENDING"`, which is not
+/// valid hex). Like [`sanitize_dataset_version`], this identity is compared
+/// only within one suite, never resolved externally.
+const PENDING_CODE_COMMIT: &str = "0000000";
+
+fn parent_provenance(
+    run: &crate::repos::backtest_runs::BacktestRunRow,
+) -> Result<domain::provenance::RunProvenance, String> {
+    use domain::provenance::{Engine, RandomSeed, RunProvenance};
+    use domain::version::{SemVer, StrategyVersion};
+    use domain::{CodeCommit, ContentHash, DatasetVersionId, StrategyId, Zone};
+
+    let engine = match run.engine.as_str() {
+        "nautilustrader" => Engine::NautilusTrader,
+        other => return Err(format!("unknown engine {other}")),
+    };
+    let code_commit = CodeCommit::parse(&run.code_commit)
+        .or_else(|_| CodeCommit::parse(PENDING_CODE_COMMIT))
+        .map_err(|e| e.to_string())?;
+    Ok(RunProvenance {
+        engine,
+        engine_version: SemVer::parse(&run.engine_version).map_err(|e| e.to_string())?,
+        strategy_id: StrategyId::parse(&run.strategy_id).map_err(|e| e.to_string())?,
+        strategy_version: StrategyVersion::parse(&run.strategy_version)
+            .map_err(|e| e.to_string())?,
+        dataset_version: DatasetVersionId::parse(&sanitize_dataset_version(&run.dataset_version))
+            .map_err(|e| e.to_string())?,
+        config_hash: ContentHash::parse(&format!("sha256:{}", run.config_sha256))
+            .map_err(|e| e.to_string())?,
+        code_commit,
+        random_seed: RandomSeed::new(run.random_seed.unwrap_or(0) as u64),
+        timezone: Zone::from_name(&run.timezone).map_err(|e| e.to_string())?,
+    })
+}
+
+/// The standard cost-stress pair the zero-configuration "Run robustness
+/// evidence" button requests when the caller supplies no `axes` (FR-ROB-003:
+/// adverse and extreme cost/slippage scenarios compared against the base
+/// run).
+fn default_axes() -> Vec<result_model::robustness::DerivedAxis> {
+    use result_model::robustness::DerivedAxis;
+    vec![
+        DerivedAxis::CostStress {
+            profile_id: "adverse".to_string(),
+            profile_version: 1,
+        },
+        DerivedAxis::CostStress {
+            profile_id: "extreme".to_string(),
+            profile_version: 1,
+        },
+    ]
+}
+
+fn robustness_error_response(
+    rid: &str,
+    err: result_model::robustness::RobustnessError,
+) -> Response {
+    use result_model::robustness::RobustnessError;
+    let message = err.to_string();
+    match err {
+        RobustnessError::GridTooLarge { .. }
+        | RobustnessError::MultiAxisChange { .. }
+        | RobustnessError::HoldoutViolation { .. }
+        | RobustnessError::PinMismatch { .. }
+        | RobustnessError::EmptySeries { .. }
+        | RobustnessError::InvalidSplit { .. } => api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PARAMETER",
+            message,
+            rid,
+            None,
+        ),
+        _ => code_error("INTERNAL", message, rid),
+    }
+}
+
 pub async fn robustness(
     State(state): State<ApiState>,
     session: Session,
     headers: HeaderMap,
     Path(run_id): Path<String>,
-    JsonBody(_body): JsonBody<crate::http::dto::EmptyBody>,
+    JsonBody(body): JsonBody<crate::http::dto::RobustnessSuiteBody>,
 ) -> Response {
+    use result_model::robustness::{
+        HoldoutBarrier, LineageRegistry, PeriodSplit, PlannedChild, SuiteRequest, plan_suite,
+    };
+
     let rid = request_id(&headers);
     if let Err(r) = crate::http::session::require_csrf(&headers, &session.0) {
         return r;
@@ -666,7 +776,9 @@ pub async fn robustness(
         Ok(i) => i,
         Err(r) => return r,
     };
-    let body_hash = crate::http::idempotency::body_hash(&serde_json::json!({}));
+    let body_hash = crate::http::idempotency::body_hash(&serde_json::json!({
+        "axes": &body.axes,
+    }));
     idempotent(&state, &session, &headers, &body_hash, async {
         let run = match state.backtest_runs().get(&actor, id).await {
             Ok(r) => r,
@@ -684,25 +796,103 @@ pub async fn robustness(
                 None,
             );
         }
+        let parent = match parent_provenance(&run) {
+            Ok(p) => p,
+            Err(detail) => {
+                return code_error(
+                    "INTERNAL",
+                    format!("parent provenance invalid: {detail}"),
+                    &rid,
+                );
+            }
+        };
+        let holdout = match &body.holdout {
+            Some(h) => {
+                let split = PeriodSplit {
+                    train_end: h.train_end.clone(),
+                    validation_end: h.validation_end.clone(),
+                };
+                if let Err(e) = split.validate() {
+                    return robustness_error_response(&rid, e);
+                }
+                Some(HoldoutBarrier::new(&split))
+            }
+            None => None,
+        };
+        let requested_axes = body.axes.clone().unwrap_or_else(default_axes);
+        let children: Vec<PlannedChild> = requested_axes
+            .iter()
+            .map(|axis| PlannedChild {
+                axes: vec![axis.clone()],
+                provenance: parent.clone(),
+            })
+            .collect();
+        let suite_request = SuiteRequest {
+            parent_run_id: id,
+            parent: parent.clone(),
+            children,
+        };
+        let mut registry = LineageRegistry::new();
+        let plan = match plan_suite(&mut registry, holdout.as_ref(), suite_request) {
+            Ok(p) => p,
+            Err(e) => return robustness_error_response(&rid, e),
+        };
+
+        let suite = match state.robustness_suites().find_by_parent(&actor, id).await {
+            Ok(Some(existing)) => existing,
+            Ok(None) => match state.robustness_suites().create_suite(&actor, id).await {
+                Ok(s) => s,
+                Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+            },
+            Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+        };
+
         let queue = match state.queue_for(&actor).await {
             Ok(q) => q,
             Err(_) => return code_error("INTERNAL", "queue unavailable", &rid),
         };
-        let job = match queue
-            .submit(job_queue::SubmitJob {
-                owner_user_id: crate::actor_tx::actor_uuid(&actor).unwrap_or_default(),
-                job_type: "backtest".to_string(),
-                payload: serde_json::json!({ "kind": "robustness", "run_id": id }),
-                priority: 10,
-                idempotency_key: crate::http::idempotency::key_from(&headers),
-                max_attempts: 3,
-                available_at: None,
+        let batch_items: Vec<job_queue::batch::BatchItem> = plan
+            .items
+            .iter()
+            .map(|item| job_queue::batch::BatchItem {
+                job_type: "robustness".to_string(),
+                payload: serde_json::json!({
+                    "parent_run_id": id,
+                    "run_id": item.lineage.run_id,
+                    "axis": item.lineage.changed_axis,
+                }),
+                idempotency_key: item.idempotency_key.clone(),
             })
-            .await
-        {
-            Ok(j) => j,
+            .collect();
+        let owner = match crate::actor_tx::actor_uuid(&actor) {
+            Ok(u) => u,
+            Err(_) => return code_error("INTERNAL", "actor id invalid", &rid),
+        };
+        let jobs = match job_queue::batch::submit_batch(&queue, owner, batch_items, 5, 3).await {
+            Ok(js) => js,
             Err(e) => return code_error("INTERNAL", format!("enqueue failed: {e}"), &rid),
         };
+
+        let new_children: Vec<crate::repos::robustness::NewChild> = plan
+            .items
+            .iter()
+            .zip(jobs.iter())
+            .map(|(item, job)| crate::repos::robustness::NewChild {
+                run_id: item.lineage.run_id,
+                axis_code: item.lineage.changed_axis.code().to_string(),
+                axis_json: serde_json::to_value(&item.lineage.changed_axis)
+                    .unwrap_or(serde_json::Value::Null),
+                job_id: job.id,
+            })
+            .collect();
+        if let Err(e) = state
+            .robustness_suites()
+            .insert_children(&actor, suite.id, &new_children)
+            .await
+        {
+            return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
+        }
+
         audit(
             &state,
             &session,
@@ -711,16 +901,28 @@ pub async fn robustness(
             "backtest_run",
             &run.id.to_string(),
             None,
-            Some(serde_json::json!({ "job_id": job.id })),
+            Some(serde_json::json!({ "suite_id": suite.id, "children": new_children.len() })),
             None,
         )
         .await;
+
+        let dto_children: Vec<RobustnessChildDto> = plan
+            .items
+            .iter()
+            .zip(jobs.iter())
+            .map(|(item, job)| RobustnessChildDto {
+                run_id: item.lineage.run_id.to_string(),
+                job_id: job.id.to_string(),
+                axis: item.lineage.changed_axis.code().to_string(),
+                status: job.status.to_string(),
+            })
+            .collect();
         (
             StatusCode::OK,
             Json(RobustnessDto {
                 run_id: run.id.to_string(),
-                job_id: job.id.to_string(),
-                status: "QUEUED",
+                suite_id: suite.id.to_string(),
+                children: dto_children,
             }),
         )
             .into_response()

@@ -145,10 +145,18 @@ pub struct CancelDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct RobustnessDto {
+pub struct RobustnessChildDto {
     pub run_id: String,
     pub job_id: String,
-    pub status: &'static str,
+    pub axis: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RobustnessDto {
+    pub run_id: String,
+    pub suite_id: String,
+    pub children: Vec<RobustnessChildDto>,
 }
 
 // ---------------------------------------------------------------------------
@@ -408,6 +416,29 @@ pub struct CompareBody {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyBody {}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HoldoutSpec {
+    pub train_end: String,
+    pub validation_end: String,
+}
+
+/// A robustness-suite creation request: one axis change per requested
+/// child. `axis` reuses `result_model::robustness::DerivedAxis`'s own wire
+/// shape (internally tagged on `"axis"`), so the request body IS the same
+/// shape the crate already validates against — no parallel DTO to drift.
+/// `axes` defaults to the documented standard cost-stress pair when omitted
+/// (the product's zero-configuration "Run robustness evidence" button never
+/// selects axes itself).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RobustnessSuiteBody {
+    #[serde(default)]
+    pub axes: Option<Vec<result_model::robustness::DerivedAxis>>,
+    #[serde(default)]
+    pub holdout: Option<HoldoutSpec>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
