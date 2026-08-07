@@ -125,6 +125,7 @@ impl Notifier {
         body: &str,
     ) -> TenancyResult<AlertResult> {
         let mut result = AlertResult::default();
+        crate::observability::metrics::record_alert(severity.as_str());
         // The actor's own notification: members receive the web leg only —
         // the admin leg of WARNING/CRITICAL belongs to the Owner below
         // (design §15.3 "웹 + 관리자 알림").
@@ -202,6 +203,7 @@ impl Notifier {
                 status,
                 error_detail,
             });
+            crate::observability::metrics::record_delivery(status);
         }
         tx.commit().await.map_err(TenancyError::from_sqlx)?;
         Ok(outcomes)

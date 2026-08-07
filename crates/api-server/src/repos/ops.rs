@@ -418,6 +418,7 @@ impl OpsRepo {
                 correlation_id,
             )
             .await?;
+            crate::observability::metrics::record_retry_outcome("denied");
             return Err(TenancyError::InvalidState(format!(
                 "only FAILED jobs can be retried (job is {})",
                 job.status
@@ -431,6 +432,7 @@ impl OpsRepo {
                 correlation_id,
             )
             .await?;
+            crate::observability::metrics::record_retry_outcome("denied");
             return Err(TenancyError::InvalidState(format!(
                 "retry budget exhausted ({} of {} attempts used)",
                 job.attempt_count, job.max_attempts
@@ -457,6 +459,7 @@ impl OpsRepo {
                     correlation_id,
                 )
                 .await?;
+                crate::observability::metrics::record_retry_outcome("denied");
                 return Err(TenancyError::DatasetBlocked(format!(
                     "dataset version {dataset_id} is quality-blocked; retry requires a NEW dataset version"
                 )));
@@ -478,6 +481,7 @@ impl OpsRepo {
         .await
         .map_err(TenancyError::from_sqlx)?;
         let row = crate::error::map_optional(row)?;
+        crate::observability::metrics::record_retry_outcome("requeued");
         self.audit
             .record(
                 actor,

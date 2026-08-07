@@ -99,25 +99,34 @@ pub async fn download(
     //    (indistinguishable from missing, by design).
     let row = match state.artifacts().get_owned(&actor, id).await {
         Ok(r) => r,
-        Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+        Err(e) => {
+            crate::observability::metrics::record_artifact_outcome("denied");
+            return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
+        }
     };
     // 2. KR-data entitlement (fail closed on PENDING/EXPIRED/REVOKED).
     if let Err(resp) =
         require_use(&state, &session, &headers, use_from_name("download").unwrap(), &today_iso()).await
     {
+        crate::observability::metrics::record_artifact_outcome("denied");
         return resp;
     }
     // 3. Safe internal path: no absolute path, no traversal, no drive/UNC.
     let rel = match derive_internal_path(&row.parquet_path) {
         Ok(r) => r,
-        Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+        Err(e) => {
+            crate::observability::metrics::record_artifact_outcome("denied");
+            return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
+        }
     };
     let media = media_type(&row.artifact_type);
     // 4. Manifest hash vs the on-disk file (streaming; never a path in any
     //    error body).
     if let Err(e) = verify_manifest_hash(&state.cfg.artifact_root, &rel, &row.sha256).await {
+        crate::observability::metrics::record_artifact_outcome("integrity_failed");
         return tenancy_response(e, &rid, "RESULT_INTEGRITY_FAILED");
     }
+    crate::observability::metrics::record_artifact_outcome("authorized");
     (
         StatusCode::OK,
         [

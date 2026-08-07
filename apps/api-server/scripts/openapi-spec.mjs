@@ -67,8 +67,9 @@ const ROUTES = [
   ["POST", "/api/v1/admin/live/kill-switch/enable", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
   ["POST", "/api/v1/admin/live/kill-switch/disable", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
   ["GET", "/api/v1/admin/live/reconciliation", { owner: true, audit: true, phase: PHASE3 }],
-  // licensing / artifacts
+  // licensing / artifacts / metrics
   ["GET", "/api/v1/licensing-status", {}],
+  ["GET", "/api/v1/metrics", {}],
   ["GET", "/api/v1/artifacts/{artifact_id}", { entitlement: "download" }],
   ["GET", "/api/v1/artifacts/{artifact_id}/download", { entitlement: "download" }],
 ];

@@ -196,7 +196,11 @@ pub fn tenancy_response(
             {
                 return error::code_error("DUPLICATE_RESOURCE", "resource already exists", rid);
             }
-            eprintln!("DB ERROR: {e}");
+            crate::observability::log::LogEvent::critical("db.error")
+                .correlation(rid)
+                .message(format!("database: {e}"))
+                .error_code("INTERNAL")
+                .emit();
             error::api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL",
@@ -215,9 +219,27 @@ fn sqlstate_of(e: &sqlx::Error) -> Option<String> {
     }
 }
 
+/// Serve the Prometheus text exposition format (design §15.2). No session
+/// is required: the endpoint is scraped over the internal backend network
+/// and carries no PII (labels come from fixed sets only).
+pub async fn metrics() -> axum::response::Response {
+    let body = crate::observability::metrics::render();
+    (
+        StatusCode::OK,
+        [
+            ("Content-Type", "text/plain; version=0.0.4"),
+            ("Cache-Control", "no-store"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
 /// Assemble the versioned router.
 pub fn api_router(state: ApiState) -> Router {
     let v1 = Router::new()
+        // metrics (Prometheus scrape; no PII, fixed label sets)
+        .route("/metrics", get(metrics))
         // auth / session
         .route("/auth/session", get(admin::session_info))
         .route("/auth/logout", post(admin::logout))

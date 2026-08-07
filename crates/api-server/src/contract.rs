@@ -780,6 +780,17 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
     ),
     route(
         "GET",
+        "/api/v1/metrics",
+        Phase::Current,
+        false,
+        false,
+        false,
+        false,
+        None,
+        false,
+    ),
+    route(
+        "GET",
         "/api/v1/artifacts/{artifact_id}",
         Phase::Current,
         false,
