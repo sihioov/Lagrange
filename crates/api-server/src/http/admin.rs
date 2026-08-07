@@ -2,7 +2,8 @@
 //! (datasets, jobs, workers, audit logs) and the Phase 3 Live stubs.
 
 use crate::http::dto::{
-    AdminDatasetDto, AuditDto, DatasetVerdictDto, IssueDto, JobDto, PageDto, SessionDto, WorkerDto,
+    AdminDatasetDto, AdminUserDto, AuditDto, DatasetVerdictDto, IssueDto, JobDto, PageDto,
+    SessionDto, WorkerDto,
 };
 use crate::http::error::{api_error, code_error, request_id};
 use crate::http::pagination::Cursor;
@@ -388,6 +389,29 @@ pub async fn list_audit_logs(
                 })
                 .collect();
             (StatusCode::OK, Json(PageDto::new(items, next))).into_response()
+        }
+        Err(e) => tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+    }
+}
+
+pub async fn list_users(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+) -> Response {
+    let rid = request_id(&headers);
+    match state.ops().list_users(&session.actor(), &rid).await {
+        Ok(rows) => {
+            let items: Vec<AdminUserDto> = rows
+                .into_iter()
+                .map(|u| AdminUserDto {
+                    id: u.id.to_string(),
+                    email: u.email,
+                    roles: u.roles,
+                    created_at: u.created_at,
+                })
+                .collect();
+            (StatusCode::OK, Json(PageDto::new(items, None))).into_response()
         }
         Err(e) => tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
     }

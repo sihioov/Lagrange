@@ -277,6 +277,7 @@ pub fn api_router(state: ApiState) -> Router {
         .route("/admin/jobs", get(admin::list_jobs))
         .route("/admin/jobs/{job_id}/retry", post(admin::retry_job))
         .route("/admin/workers", get(admin::list_workers))
+        .route("/admin/users", get(admin::list_users))
         .route("/admin/audit-logs", get(admin::list_audit_logs))
         // live (Phase 3)
         .route("/admin/live/connections", post(admin::live_not_available))

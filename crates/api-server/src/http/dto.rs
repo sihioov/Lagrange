@@ -248,6 +248,14 @@ pub struct WorkerDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AdminUserDto {
+    pub id: String,
+    pub email: String,
+    pub roles: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AuditDto {
     pub id: String,
     pub action: String,

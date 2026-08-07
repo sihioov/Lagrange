@@ -52,6 +52,7 @@ const ROUTES = [
   ["GET", "/api/v1/admin/jobs", { owner: true, audit: true }],
   ["POST", "/api/v1/admin/jobs/{job_id}/retry", { mutating: true, idem: true, owner: true, audit: true }],
   ["GET", "/api/v1/admin/workers", { owner: true, audit: true }],
+  ["GET", "/api/v1/admin/users", { owner: true, audit: true }],
   ["GET", "/api/v1/admin/audit-logs", { owner: true, audit: true }],
   // Live (Phase 3, Owner-only)
   ["POST", "/api/v1/admin/live/connections", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],

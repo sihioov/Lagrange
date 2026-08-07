@@ -623,6 +623,17 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
     ),
     route(
         "GET",
+        "/api/v1/admin/users",
+        Phase::Current,
+        false,
+        false,
+        false,
+        true,
+        None,
+        true,
+    ),
+    route(
+        "GET",
         "/api/v1/admin/audit-logs",
         Phase::Current,
         false,

@@ -52,11 +52,21 @@ pub struct AdminJobRow {
     pub priority: i32,
     pub idempotency_key: Option<String>,
     pub attempt_count: i32,
+    pub max_attempts: i32,
+    pub payload_json: Value,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct AdminUserRow {
+    pub id: Uuid,
+    pub email: String,
+    pub roles: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, FromRow)]
@@ -328,12 +338,12 @@ impl OpsRepo {
         let sql = match after {
             Some(_) => {
                 "SELECT id, owner_user_id, job_type, status, priority, idempotency_key, \
-                        attempt_count, created_at, started_at, finished_at, error_code, error_message \
+                        attempt_count, max_attempts, payload_json, created_at, started_at, finished_at, error_code, error_message \
                  FROM jobs WHERE (created_at, id) > ($1::timestamptz, $2::uuid) ORDER BY created_at, id LIMIT $3"
             }
             None => {
                 "SELECT id, owner_user_id, job_type, status, priority, idempotency_key, \
-                        attempt_count, created_at, started_at, finished_at, error_code, error_message \
+                        attempt_count, max_attempts, payload_json, created_at, started_at, finished_at, error_code, error_message \
                  FROM jobs ORDER BY created_at, id LIMIT $1"
             }
         };
@@ -368,6 +378,13 @@ impl OpsRepo {
 
     /// Requeue a FAILED job (Owner-only, audited; runs as the app role with
     /// the GUC pinned to the job owner).
+    ///
+    /// Eligibility (FR-ADM-001 "실패 작업 재시도", design §6.8): only FAILED
+    /// jobs with retry budget left (`attempt_count < max_attempts`) whose
+    /// inputs are still valid are retryable. NOT_FAILED, exhausted
+    /// (`attempts_exhausted`), and structurally blocked inputs (the job's
+    /// `dataset_version_id` dataset is quality-BLOCKED) are denied — every
+    /// denial is audited with its reason.
     pub async fn retry_job(
         &self,
         actor: &Actor,
@@ -384,7 +401,8 @@ impl OpsRepo {
         // Cross-user read to find the owner + verify state.
         let job: Option<AdminJobRow> = sqlx::query_as(
             "SELECT id, owner_user_id, job_type, status, priority, idempotency_key, \
-                    attempt_count, created_at, started_at, finished_at, error_code, error_message \
+                    attempt_count, max_attempts, payload_json, created_at, started_at, \
+                    finished_at, error_code, error_message \
              FROM jobs WHERE id = $1",
         )
         .bind(job_id)
@@ -393,10 +411,56 @@ impl OpsRepo {
         .map_err(TenancyError::from_sqlx)?;
         let job = crate::error::map_optional(job)?;
         if job.status != "FAILED" {
+            self.audit_retry_denial(
+                actor,
+                job_id,
+                format!("NOT_FAILED:{}", job.status),
+                correlation_id,
+            )
+            .await?;
             return Err(TenancyError::InvalidState(format!(
                 "only FAILED jobs can be retried (job is {})",
                 job.status
             )));
+        }
+        if job.attempt_count >= job.max_attempts {
+            self.audit_retry_denial(
+                actor,
+                job_id,
+                "RETRY_EXHAUSTED".to_string(),
+                correlation_id,
+            )
+            .await?;
+            return Err(TenancyError::InvalidState(format!(
+                "retry budget exhausted ({} of {} attempts used)",
+                job.attempt_count, job.max_attempts
+            )));
+        }
+        if let Some(dataset_id) = job
+            .payload_json
+            .get("dataset_version_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+        {
+            let status: Option<String> = sqlx::query_scalar(
+                "SELECT status FROM dataset_versions WHERE id = $1",
+            )
+            .bind(dataset_id)
+            .fetch_optional(&self.admin_pool)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+            if status.as_deref() == Some("BLOCKED") {
+                self.audit_retry_denial(
+                    actor,
+                    job_id,
+                    "DATASET_BLOCKED".to_string(),
+                    correlation_id,
+                )
+                .await?;
+                return Err(TenancyError::DatasetBlocked(format!(
+                    "dataset version {dataset_id} is quality-blocked; retry requires a NEW dataset version"
+                )));
+            }
         }
         // Requeue with the GUC pinned to the job owner (server-side, audited).
         let owner = job.owner_user_id.to_string();
@@ -406,7 +470,8 @@ impl OpsRepo {
                     error_message = NULL, available_at = now(), updated_at = now() \
              WHERE id = $1 AND status = 'FAILED' \
              RETURNING id, owner_user_id, job_type, status, priority, idempotency_key, \
-                       attempt_count, created_at, started_at, finished_at, error_code, error_message",
+                       attempt_count, max_attempts, payload_json, created_at, started_at, \
+                       finished_at, error_code, error_message",
         )
         .bind(job_id)
         .fetch_optional(&pool)
@@ -428,6 +493,75 @@ impl OpsRepo {
             )
             .await?;
         Ok(row)
+    }
+
+    /// Record an audited retry denial (FR-ADM-002: denials are audited too).
+    async fn audit_retry_denial(
+        &self,
+        actor: &Actor,
+        job_id: Uuid,
+        reason: String,
+        correlation_id: &str,
+    ) -> TenancyResult<()> {
+        self.audit
+            .record(
+                actor,
+                &AuditEntry {
+                    action: "admin.job.retry".to_string(),
+                    target_type: "job".to_string(),
+                    target_id: job_id.to_string(),
+                    before_json: None,
+                    after_json: None,
+                    reason: Some(reason),
+                    correlation_id: Some(correlation_id.to_string()),
+                },
+            )
+            .await
+    }
+
+    /// Cross-user user list (FR-ADM-001 users view), Owner-only, audited.
+    /// Emails and roles are the point of the admin screen; no secrets or
+    /// account numbers are ever part of this surface.
+    pub async fn list_users(
+        &self,
+        actor: &Actor,
+        correlation_id: &str,
+    ) -> TenancyResult<Vec<AdminUserRow>> {
+        self.require_owner(
+            actor,
+            "admin.users.list",
+            ("user", "all"),
+            correlation_id,
+        )
+        .await?;
+        let mut tx = begin_actor_tx(&self.admin_pool, actor).await?;
+        let rows = sqlx::query_as::<_, AdminUserRow>(
+            "SELECT u.id, u.email, \
+                    COALESCE(string_agg(ur.role_id, ',' ORDER BY ur.role_id) \
+                             FILTER (WHERE ur.role_id IS NOT NULL), '') AS roles, \
+                    u.created_at \
+             FROM users u LEFT JOIN user_roles ur ON ur.user_id = u.id \
+             GROUP BY u.id ORDER BY u.created_at, u.id",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        self.audit
+            .record(
+                actor,
+                &AuditEntry {
+                    action: "admin.users.list".to_string(),
+                    target_type: "user".to_string(),
+                    target_id: "all".to_string(),
+                    before_json: None,
+                    after_json: None,
+                    reason: None,
+                    correlation_id: Some(correlation_id.to_string()),
+                },
+            )
+            .await?;
+        Ok(rows)
     }
 
     /// Worker liveness derived from RUNNING job claims (`worker_heartbeats`
