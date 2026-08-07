@@ -15,6 +15,7 @@ use crate::repos::entitlements::EntitlementRepo;
 use crate::repos::metrics::MetricsRepo;
 use crate::repos::ops::OpsRepo;
 use crate::repos::paper::PaperRepo;
+use crate::repos::pending_targets::PendingTargetRepo;
 use crate::repos::recommendations::RecommendationRepo;
 use crate::repos::robustness::RobustnessRepo;
 use crate::repos::shared::SharedDataRepo;
@@ -119,6 +120,9 @@ impl ApiState {
     }
     pub fn paper(&self) -> PaperRepo {
         PaperRepo::new(self.app_pool.clone())
+    }
+    pub fn pending_targets(&self) -> PendingTargetRepo {
+        PendingTargetRepo::new(self.app_pool.clone())
     }
     pub fn ops(&self) -> OpsRepo {
         OpsRepo::new(

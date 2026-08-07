@@ -11,6 +11,7 @@ pub mod entitlements;
 pub mod metrics;
 pub mod ops;
 pub mod paper;
+pub mod pending_targets;
 pub mod recommendations;
 pub mod robustness;
 pub mod shared;

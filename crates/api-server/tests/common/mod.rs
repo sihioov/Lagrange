@@ -341,6 +341,15 @@ impl Harness {
         actor_pool(&self.app_url, &self.member.user_id.to_string(), 2).await
     }
 
+    /// The `pending_targets` repository over the harness app pool.
+    ///
+    /// Todo 31 has no HTTP surface for queueing/settling a target — that is
+    /// the scheduler's own path — so the scheduler suite drives the typed
+    /// repository directly, exactly as the runner will.
+    pub fn state_pending_targets(&self) -> api_server::repos::pending_targets::PendingTargetRepo {
+        api_server::repos::pending_targets::PendingTargetRepo::new(self.app_pool.clone())
+    }
+
     /// Drop the scratch database (call at the end of every test).
     pub async fn teardown(self) {
         drop(self.app_pool);
