@@ -42,10 +42,12 @@ describe("application shell accessibility", () => {
 
     // When
     const markup = renderToStaticMarkup(errorState);
+    const headingId = markup.match(/aria-labelledby="([^"]+)"/)?.[1] ?? "";
 
     // Then
     expect(markup).toContain('role="alert"');
-    expect(markup).toContain('aria-labelledby="state-panel-title"');
+    expect(headingId).not.toBe("");
+    expect(markup).toContain(`<h2 id="${headingId}">We could not load this view</h2>`);
     expect(markup).toContain("We could not load this view");
     expect(markup).toContain("Try again");
   });

@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/shell/app-shell";
 import type { ApiSession } from "@/lib/api/contracts";
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/recommendations",
+}));
 
 const MEMBER_SESSION = {
   user_id: "00000000-0000-4000-8000-000000000002",
@@ -24,6 +28,23 @@ function renderShell(session: ApiSession): string {
 }
 
 describe("role-aware primary navigation", () => {
+  it("marks only the active destination as the current page", () => {
+    // Given
+    const session = MEMBER_SESSION;
+
+    // When
+    const markup = renderShell(session);
+    const currentLabels = Array.from(markup.matchAll(/<a([^>]*)>([^<]+)<\/a>/g), (match) => ({
+      attributes: match[1] ?? "",
+      label: match[2] ?? "",
+    }))
+      .filter((link) => link.attributes.includes('aria-current="page"'))
+      .map((link) => link.label);
+
+    // Then
+    expect(currentLabels).toEqual(["Recommendations"]);
+  });
+
   it("shows research destinations without Owner operations for a Member", () => {
     // Given
     const session = MEMBER_SESSION;

@@ -1,6 +1,10 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { LogoutForm } from "@/components/auth/logout-form";
+import {
+  PrimaryNavigation,
+  type PrimaryNavigationItem,
+} from "@/components/shell/primary-navigation";
 import type { ApiSession } from "@/lib/api/contracts";
 
 const ROLE_LABELS = {
@@ -8,18 +12,13 @@ const ROLE_LABELS = {
   owner: "Owner",
 } as const satisfies Record<ApiSession["role"], string>;
 
-type NavigationItem = {
-  readonly href: string;
-  readonly label: string;
-};
-
 const MEMBER_NAVIGATION = [
   { href: "/", label: "Dashboard" },
   { href: "/strategies", label: "Strategies" },
   { href: "/recommendations", label: "Recommendations" },
   { href: "/backtests", label: "Backtests" },
   { href: "/paper", label: "Paper account" },
-] as const satisfies readonly NavigationItem[];
+] as const satisfies readonly PrimaryNavigationItem[];
 
 const NAVIGATION_BY_ROLE = {
   member: MEMBER_NAVIGATION,
@@ -28,7 +27,7 @@ const NAVIGATION_BY_ROLE = {
     { href: "/admin", label: "Administration" },
     { href: "/live", label: "Live controls" },
   ],
-} as const satisfies Record<ApiSession["role"], readonly NavigationItem[]>;
+} as const satisfies Record<ApiSession["role"], readonly PrimaryNavigationItem[]>;
 
 export type AppShellProps = {
   readonly children: ReactNode;
@@ -45,13 +44,7 @@ export function AppShell({ children, session }: AppShellProps) {
         <Link href="/">Lagrange Station</Link>
         <p>{ROLE_LABELS[session.role]}</p>
       </header>
-      <nav aria-label="Primary" className="shell-navigation">
-        {NAVIGATION_BY_ROLE[session.role].map((item) => (
-          <Link href={item.href} key={item.href}>
-            {item.label}
-          </Link>
-        ))}
-      </nav>
+      <PrimaryNavigation items={NAVIGATION_BY_ROLE[session.role]} />
       <main className="shell-main" id="main-content">
         {children}
       </main>
