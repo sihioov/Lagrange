@@ -32,6 +32,9 @@ pub enum TenancyError {
     /// The operation is not legal in the resource's current state.
     #[error("invalid state: {0}")]
     InvalidState(String),
+    /// An artifact failed manifest integrity verification (file/hash/path).
+    #[error("result integrity failed: {0}")]
+    ResultIntegrity(String),
     /// Database-level failure (connection, constraint, or other SQLSTATE).
     #[error("database: {0}")]
     Database(#[from] sqlx::Error),

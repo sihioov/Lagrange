@@ -178,6 +178,13 @@ pub fn tenancy_response(
         crate::error::TenancyError::InvalidState(msg) => {
             error::api_error(StatusCode::BAD_REQUEST, "INVALID_PARAMETER", msg, rid, None)
         }
+        crate::error::TenancyError::ResultIntegrity(msg) => error::api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "RESULT_INTEGRITY_FAILED",
+            msg,
+            rid,
+            None,
+        ),
         crate::error::TenancyError::NotImplemented => {
             error::code_error("NOT_IMPLEMENTED", "not implemented", rid)
         }

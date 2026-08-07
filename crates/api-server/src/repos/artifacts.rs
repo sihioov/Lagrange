@@ -60,3 +60,57 @@ impl ArtifactRepo {
         crate::error::map_optional(row)
     }
 }
+
+/// The path prefix the artifact tree is mounted under (compose
+/// `LAGRANGE_ARTIFACTS_DIR`). Stored `parquet_path` values may or may not
+/// carry it; it is stripped (never trusted) before the internal path is
+/// validated. Nginx serves `/internal-artifacts/<rel>` from the same root.
+pub const ARTIFACT_URL_PREFIX: &str = "data/artifacts/";
+
+/// Derive the INTERNAL alias path (`/internal-artifacts/<rel>`) from a stored
+/// `parquet_path`. Fail-closed: absolute paths, backslashes, drive/UNC
+/// markers, and `..`/`.` segments are rejected so a poisoned manifest can
+/// never escape the artifact root or reach an internal Nginx target outside
+/// the alias (symlink escapes are additionally blocked by `disable_symlinks`).
+pub fn derive_internal_path(parquet_path: &str) -> TenancyResult<String> {
+    let rel = match parquet_path.strip_prefix(ARTIFACT_URL_PREFIX) {
+        Some(rest) => rest,
+        None => parquet_path,
+    };
+    if rel.is_empty()
+        || rel.starts_with('/')
+        || rel.starts_with('\\')
+        || rel.contains('\\')
+        || rel.contains(':')
+    {
+        return Err(TenancyError::ResultIntegrity(
+            "artifact path is not a safe relative path".to_string(),
+        ));
+    }
+    for segment in rel.split('/') {
+        if segment.is_empty() || segment == ".." || segment == "." {
+            return Err(TenancyError::ResultIntegrity(
+                "artifact path contains unsafe segments".to_string(),
+            ));
+        }
+    }
+    Ok(rel.to_string())
+}
+
+/// The media type served for an artifact: derived from the constrained
+/// `artifact_type` (all result artifacts are Parquet files), never from the
+/// client or the file extension. Unknown types fail closed to a binary type.
+pub fn media_type(artifact_type: &str) -> &'static str {
+    match artifact_type {
+        "EQUITY_CURVE"
+        | "DRAWDOWN_CURVE"
+        | "MONTHLY_RETURNS"
+        | "ORDERS"
+        | "FILLS"
+        | "POSITIONS"
+        | "CASH_LEDGER"
+        | "FEES"
+        | "BENCHMARK" => "application/vnd.apache.parquet",
+        _ => "application/octet-stream",
+    }
+}

@@ -7,7 +7,8 @@ use axum::http::StatusCode;
 use common::{Harness, status};
 use serde_json::json;
 
-/// Seed an owner-owned artifact row + parent run; returns (run_id, artifact_id).
+/// Seed an owner-owned artifact row + parent run; the on-disk file matches
+/// the manifest hash. Returns (run_id, artifact_id).
 async fn seed_artifact(h: &Harness, actor: &common::UserCtx) -> (String, String) {
     h.seed_tenant(
         actor,
@@ -25,12 +26,17 @@ async fn seed_artifact(h: &Harness, actor: &common::UserCtx) -> (String, String)
     .fetch_one(&h.member_pool().await)
     .await
     .unwrap();
+    let rel = format!("runs/{run_id}/equity.parquet");
+    let bytes = b"PAR1\x00\x00\x00\x00admin-equity-curve\x00\x00";
+    let sha = h.write_artifact(&rel, bytes);
     h.seed_tenant(
         actor,
         &format!(
             "INSERT INTO result_artifacts (id, backtest_run_id, owner_user_id, artifact_type, parquet_path, row_count, sha256, size_bytes, summary_json) VALUES \
-             (gen_random_uuid(), '{run_id}', '{owner}', 'EQUITY_CURVE', 'runs/{run_id}/equity.parquet', 5, repeat('2',64), 128, '{{\"points\":[{{\"date\":\"2026-01-05\",\"equity\":\"100000000\"}}]}}'::jsonb)",
-            owner = actor.user_id
+             (gen_random_uuid(), '{run_id}', '{owner}', 'EQUITY_CURVE', '{rel}', 5, '{sha}', {size}, '{{\"points\":[{{\"date\":\"2026-01-05\",\"equity\":\"100000000\"}}]}}'::jsonb)",
+            owner = actor.user_id,
+            sha = sha,
+            size = bytes.len(),
         ),
     )
     .await;
@@ -336,7 +342,8 @@ async fn http_artifacts_authorized_download() {
         .await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND);
 
-    // Authorized download returns the inline payload.
+    // Authorized download issues the INTERNAL redirect only (no inline
+    // payload, no filesystem path).
     let resp = h
         .get(
             &format!("/api/v1/artifacts/{artifact_id}/download"),
@@ -344,8 +351,21 @@ async fn http_artifacts_authorized_download() {
         )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
-    let body = Harness::body_json(resp).await;
-    assert_eq!(body["payload"]["points"][0]["equity"], "100000000");
+    let redirect = resp
+        .headers()
+        .get("x-accel-redirect")
+        .and_then(|v| v.to_str().ok())
+        .expect("authorized download must carry X-Accel-Redirect");
+    assert_eq!(
+        redirect,
+        format!("/internal-artifacts/runs/{_run_id}/equity.parquet"),
+        "redirect targets the internal alias path only"
+    );
+    let body = Harness::body_text(resp).await;
+    assert!(
+        !body.contains("points") && !body.contains("parquet_path"),
+        "no inline payload or path may be returned"
+    );
 
     // Foreign download -> 404 (no bytes).
     let resp = h
@@ -355,6 +375,7 @@ async fn http_artifacts_authorized_download() {
         )
         .await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND);
+    assert!(resp.headers().get("x-accel-redirect").is_none());
     h.teardown().await;
 }
 
