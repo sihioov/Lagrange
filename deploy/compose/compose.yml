@@ -143,6 +143,10 @@ services:
       - session_secret
       - csrf_secret
       - auth0_client_secret
+    volumes:
+      # Read-only artifact tree: the download route hashes files against the
+      # result_artifacts manifest before issuing the internal redirect.
+      - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}:/data/artifacts:ro
     networks:
       - edge
       - backend

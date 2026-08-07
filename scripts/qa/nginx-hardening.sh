@@ -17,11 +17,20 @@ set -euo pipefail
 
 CONF="${1:-$(cd "$(dirname "$0")/../.." && pwd)/deploy/nginx/nginx.conf}"
 PROBE="$(mktemp -d /tmp/lagrange-nginx-probe.XXXXXX)"
-PORT=9455
-cleanup() { [ -f "$PROBE/nginx.pid" ] && kill "$(cat "$PROBE/nginx.pid")" 2>/dev/null || true; rm -rf "$PROBE"; }
+# Unique ports per run so a stale instance can never answer the probes.
+PORT=$((9000 + RANDOM % 500))
+UPSTREAM=$((PORT + 1))
+cleanup() {
+  pkill -f "nginx -c $PROBE/nginx.conf" 2>/dev/null || true
+  [ -f "$PROBE/nginx.pid" ] && kill "$(cat "$PROBE/nginx.pid")" 2>/dev/null || true
+  rm -rf "$PROBE"
+}
 trap cleanup EXIT
 
 mkdir -p "$PROBE/artifacts" "$PROBE/logs"
+# nginx workers run as an unprivileged user: the probe tree must be
+# traversable by them (mktemp -d defaults to 0700).
+chmod -R a+rX "$PROBE"
 printf 'PAR1 legitimate artifact bytes' > "$PROBE/artifacts/legit.parquet"
 ln -s /etc/passwd "$PROBE/artifacts/escape.parquet"
 
@@ -30,33 +39,54 @@ openssl req -x509 -newkey rsa:2048 -keyout "$PROBE/key.pem" -out "$PROBE/cert.pe
   -days 1 -nodes -subj "/CN=lagrange-test" >/dev/null 2>&1
 
 # --- config with the real edge file + probe server -------------------------
-{
-  sed -e "s|/run/secrets/lagrange_tls_cert|$PROBE/cert.pem|" \
-      -e "s|/run/secrets/lagrange_tls_key|$PROBE/key.pem|" \
-      -e "s|listen 8443 ssl;|listen 127.0.0.1:8444 ssl;|" \
-      -e "s|pid /tmp/nginx.pid;|pid $PROBE/nginx.pid;|" \
-      -e "s|error_log /dev/stderr warn;|error_log $PROBE/logs/error.log warn;|" \
-      "$CONF"
-  cat <<EOF
+sed -e "s|/run/secrets/lagrange_tls_cert|$PROBE/cert.pem|" \
+    -e "s|/run/secrets/lagrange_tls_key|$PROBE/key.pem|" \
+    -e "s|listen 8443 ssl;|listen 127.0.0.1:8444 ssl;|" \
+    -e "s|pid /tmp/nginx.pid;|pid $PROBE/nginx.pid;|" \
+    -e "s|error_log /dev/stderr warn;|error_log $PROBE/logs/error.log warn;|" \
+    -e "s|http://api-server:8080|http://127.0.0.1:18080|" \
+    -e "s|http://web:3000|http://127.0.0.1:13000|" \
+    "$CONF" > "$PROBE/base.conf"
+PROBE_SERVER=$(cat <<'EOF'
     server {
-        listen 127.0.0.1:$PORT;
-        location /accel {
-            add_header X-Accel-Redirect \$arg_r;
+        listen 127.0.0.1:UPSTREAM;
+        # Stand-in for the api-server: echoes the authorization decision as
+        # the X-Accel-Redirect header (the real edge gets it from a proxy
+        # response, which is the only header source nginx honors for accel).
+        location / {
+            add_header X-Accel-Redirect $http_x_accel_redirect;
             return 200 "ok";
+        }
+    }
+    server {
+        listen 127.0.0.1:PORT;
+        location /accel {
+            proxy_pass http://127.0.0.1:UPSTREAM;
+            proxy_set_header X-Accel-Redirect $arg_r;
         }
         location /internal-artifacts/ {
             internal;
             disable_symlinks on;
-            alias $PROBE/artifacts/;
+            alias ARTIFACTS/;
         }
         location /internal-artifacts-nosymlink/ {
             internal;
-            alias $PROBE/artifacts/;
+            alias ARTIFACTS/;
         }
     }
-}
 EOF
-} > "$PROBE/nginx.conf"
+)
+PROBE_SERVER=$(printf '%s' "$PROBE_SERVER" | sed "s|PORT|$PORT|; s|UPSTREAM|$UPSTREAM|; s|ARTIFACTS|$PROBE/artifacts|")
+# The edge config's last line closes the http block; the probe server must be
+# inserted INSIDE http (before that final closing brace).
+awk -v ins="$PROBE_SERVER" '
+  { lines[NR] = $0 }
+  END {
+    for (i = 1; i < NR; i++) print lines[i]
+    print ins
+    print lines[NR]
+  }
+' "$PROBE/base.conf" > "$PROBE/nginx.conf"
 
 # --- 1. config parse --------------------------------------------------------
 nginx -t -c "$PROBE/nginx.conf" -p "$PROBE/" > "$PROBE/t.out" 2>&1
@@ -64,7 +94,9 @@ grep -q "syntax is ok" "$PROBE/t.out"
 grep -q "test is successful" "$PROBE/t.out"
 echo "PASS: nginx -t accepts the committed edge config"
 
-nginx -c "$PROBE/nginx.conf" -p "$PROBE/"
+if ! nginx -c "$PROBE/nginx.conf" -p "$PROBE/"; then
+  echo "FAIL: nginx would not start (bind conflict?)"; cat "$PROBE/logs/error.log"; exit 1
+fi
 for _ in $(seq 1 20); do
   curl -s -o /dev/null "http://127.0.0.1:$PORT/accel?r=/internal-artifacts/legit.parquet" && break
   sleep 0.1

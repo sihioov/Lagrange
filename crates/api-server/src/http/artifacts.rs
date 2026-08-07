@@ -50,7 +50,15 @@ pub async fn get(
             );
         }
     };
-    if let Err(resp) = require_use(&state, &session, &headers, use_from_name("download").unwrap(), &today_iso()).await {
+    if let Err(resp) = require_use(
+        &state,
+        &session,
+        &headers,
+        use_from_name("download").unwrap(),
+        &today_iso(),
+    )
+    .await
+    {
         return resp;
     }
     match state.artifacts().get_owned(&actor, id).await {
@@ -105,8 +113,14 @@ pub async fn download(
         }
     };
     // 2. KR-data entitlement (fail closed on PENDING/EXPIRED/REVOKED).
-    if let Err(resp) =
-        require_use(&state, &session, &headers, use_from_name("download").unwrap(), &today_iso()).await
+    if let Err(resp) = require_use(
+        &state,
+        &session,
+        &headers,
+        use_from_name("download").unwrap(),
+        &today_iso(),
+    )
+    .await
     {
         crate::observability::metrics::record_artifact_outcome("denied");
         return resp;

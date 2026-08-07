@@ -366,8 +366,7 @@ impl Harness {
             std::fs::create_dir_all(parent).expect("artifact parent dirs create");
         }
         std::fs::write(&path, bytes).expect("artifact file writes");
-        let digest = sha256_hex(bytes);
-        digest
+        sha256_hex(bytes)
     }
 
     /// Seed a row into a shared system-owned table (as migration_owner).

@@ -110,7 +110,10 @@ pub struct Notifier {
 
 impl Notifier {
     pub fn new(app_pool: sqlx::PgPool, admin_pool: sqlx::PgPool) -> Self {
-        Self { app_pool, admin_pool }
+        Self {
+            app_pool,
+            admin_pool,
+        }
     }
 
     /// Route one alert: severity determines the channel set and whether the
@@ -140,16 +143,23 @@ impl Notifier {
         let outcomes = self
             .notify_recipient(actor, &channels, kind, title, body)
             .await?;
-        result.notifications.extend(outcomes.iter().map(|o| o.notification_id));
+        result
+            .notifications
+            .extend(outcomes.iter().map(|o| o.notification_id));
         result.deliveries.extend(outcomes);
         // WARNING/CRITICAL: immediate admin alert to the Owner (design 15.3).
-        if severity != AlertSeverity::Info && !actor.is_owner() {
-            if let Some(owner_id) = self.owner_user_id().await? {
-                let owner = Actor::new(owner_id.to_string(), Role::Owner);
-                let outcomes = self.notify_recipient(&owner, &["admin"], kind, title, body).await?;
-                result.notifications.extend(outcomes.iter().map(|o| o.notification_id));
-                result.deliveries.extend(outcomes);
-            }
+        if severity != AlertSeverity::Info
+            && !actor.is_owner()
+            && let Some(owner_id) = self.owner_user_id().await?
+        {
+            let owner = Actor::new(owner_id.to_string(), Role::Owner);
+            let outcomes = self
+                .notify_recipient(&owner, &["admin"], kind, title, body)
+                .await?;
+            result
+                .notifications
+                .extend(outcomes.iter().map(|o| o.notification_id));
+            result.deliveries.extend(outcomes);
         }
         Ok(result)
     }
@@ -264,7 +274,12 @@ impl Notifier {
         Ok(rows)
     }
 
-    async fn has_subscription(&self, actor: &Actor, kind: &str, channel: &str) -> TenancyResult<bool> {
+    async fn has_subscription(
+        &self,
+        actor: &Actor,
+        kind: &str,
+        channel: &str,
+    ) -> TenancyResult<bool> {
         let mut tx = begin_actor_tx(&self.app_pool, actor).await?;
         let enabled: Option<bool> = sqlx::query_scalar(
             "SELECT enabled FROM notification_subscriptions \
@@ -286,7 +301,10 @@ impl Notifier {
         actor: &Actor,
         after: Option<&crate::http::pagination::Cursor>,
         limit: usize,
-    ) -> TenancyResult<(Vec<NotificationRow>, Option<crate::http::pagination::Cursor>)> {
+    ) -> TenancyResult<(
+        Vec<NotificationRow>,
+        Option<crate::http::pagination::Cursor>,
+    )> {
         let mut tx = begin_actor_tx(&self.app_pool, actor).await?;
         let sql = match after {
             Some(_) => {
