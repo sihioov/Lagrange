@@ -15,6 +15,10 @@
 //! Signals are scale-6 fixed-point weights on both sides, produced by the
 //! same deterministic selector, so comparison is EXACT: a tolerance would
 //! only hide bugs the golden guarantees already exclude.
+//!
+//! Every test carries the `paper_parity_` prefix so the plan's acceptance
+//! filter `cargo test -p result-model paper_parity` — a test-NAME filter,
+//! not a target filter — actually selects them.
 
 use std::collections::BTreeMap;
 
@@ -74,7 +78,7 @@ fn paper_side() -> SignalSet {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn identical_lineage_and_signals_report_a_match() {
+fn paper_parity_identical_lineage_and_signals_report_a_match() {
     let report = evaluate_parity(&backtest_side(), &paper_side());
     assert_eq!(report.status, ParityStatus::Match);
     assert!(
@@ -88,7 +92,7 @@ fn identical_lineage_and_signals_report_a_match() {
 }
 
 #[test]
-fn the_fill_model_difference_is_always_reported_even_on_a_match() {
+fn paper_parity_the_fill_model_difference_is_always_reported_even_on_a_match() {
     // Design §10.2: "Paper와 백테스트의 체결 모델 차이를 리포트에 표시한다".
     // The note is unconditional -- a matching report that hid it would let a
     // reader assume the two executions are interchangeable.
@@ -105,7 +109,7 @@ fn the_fill_model_difference_is_always_reported_even_on_a_match() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_changed_weight_is_a_divergence_with_both_sides_named() {
+fn paper_parity_a_changed_weight_is_a_divergence_with_both_sides_named() {
     let mut paper = paper_side();
     paper
         .targets
@@ -121,7 +125,7 @@ fn a_changed_weight_is_a_divergence_with_both_sides_named() {
 }
 
 #[test]
-fn an_instrument_on_only_one_side_is_a_divergence_not_a_silent_skip() {
+fn paper_parity_an_instrument_on_only_one_side_is_a_divergence_not_a_silent_skip() {
     let mut paper = paper_side();
     paper.targets.remove(&instrument("229200.KRX"));
     paper
@@ -149,7 +153,7 @@ fn an_instrument_on_only_one_side_is_a_divergence_not_a_silent_skip() {
 }
 
 #[test]
-fn parity_is_exact_a_one_ulp_weight_difference_still_diverges() {
+fn paper_parity_parity_is_exact_a_one_ulp_weight_difference_still_diverges() {
     // Both sides come from the same deterministic selector at scale 6, so
     // ANY difference is a real finding. A tolerance would hide bugs the
     // golden guarantees already exclude.
@@ -171,7 +175,7 @@ fn parity_is_exact_a_one_ulp_weight_difference_still_diverges() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_changed_strategy_version_is_not_comparable_rather_than_divergent() {
+fn paper_parity_a_changed_strategy_version_is_not_comparable_rather_than_divergent() {
     let paper = SignalSet {
         provenance: provenance("1.3.0", "kr-etf-daily-20260804.1", "1.231.0"),
         ..paper_side()
@@ -188,7 +192,7 @@ fn a_changed_strategy_version_is_not_comparable_rather_than_divergent() {
 }
 
 #[test]
-fn a_stale_as_of_is_not_comparable_and_names_the_field() {
+fn paper_parity_a_stale_as_of_is_not_comparable_and_names_the_field() {
     let paper = SignalSet {
         as_of: "2026-01-29".to_owned(),
         ..paper_side()
@@ -199,7 +203,7 @@ fn a_stale_as_of_is_not_comparable_and_names_the_field() {
 }
 
 #[test]
-fn a_changed_dataset_version_is_not_comparable() {
+fn paper_parity_a_changed_dataset_version_is_not_comparable() {
     let paper = SignalSet {
         provenance: provenance("1.2.0", "kr-etf-daily-20260805.1", "1.231.0"),
         ..paper_side()
@@ -215,7 +219,7 @@ fn a_changed_dataset_version_is_not_comparable() {
 }
 
 #[test]
-fn identical_signals_under_a_changed_lineage_are_still_not_comparable() {
+fn paper_parity_identical_signals_under_a_changed_lineage_are_still_not_comparable() {
     // The dangerous case: the numbers happen to agree, but they were
     // produced from different inputs. Calling that a "match" would be a
     // false parity claim.
@@ -240,7 +244,7 @@ fn identical_signals_under_a_changed_lineage_are_still_not_comparable() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_different_engine_version_does_not_break_comparability() {
+fn paper_parity_a_different_engine_version_does_not_break_comparability() {
     // The backtest runs on NautilusTrader; the Paper runner models the open
     // itself. That difference is the whole point of the fill-model note --
     // treating it as a lineage mismatch would make every real parity report
@@ -263,7 +267,7 @@ fn a_different_engine_version_does_not_break_comparability() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn every_report_serializes_with_its_status_and_reason() {
+fn paper_parity_every_report_serializes_with_its_status_and_reason() {
     let mut paper = paper_side();
     paper
         .targets
@@ -285,7 +289,7 @@ fn every_report_serializes_with_its_status_and_reason() {
 }
 
 #[test]
-fn a_warning_grade_is_reported_for_a_divergence_and_not_for_a_match() {
+fn paper_parity_a_warning_grade_is_reported_for_a_divergence_and_not_for_a_match() {
     // Design §15.3 grades "Paper 불일치" as WARNING (web + admin alert).
     // The report carries the grade so the caller never has to re-derive it.
     let matched = evaluate_parity(&backtest_side(), &paper_side());

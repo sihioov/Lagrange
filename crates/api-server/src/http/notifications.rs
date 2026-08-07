@@ -4,8 +4,8 @@
 //! delivery view. Alert grades follow design §15.3.
 
 use crate::http::dto::{
-    AdminDeliveryDto, DeliveryOutcomeDto, NotificationDto, PageDto, SubscriptionBody,
-    SubscriptionDto, TestNotificationBody, TestNotificationResult,
+    AdminDeliveryDto, DeliveryOutcomeDto, NotificationDeliveryDto, NotificationDto, PageDto,
+    SubscriptionBody, SubscriptionDto, TestNotificationBody, TestNotificationResult,
 };
 use crate::http::error::{api_error, request_id};
 use crate::http::pagination::Cursor;
@@ -38,9 +38,23 @@ pub async fn list(
     {
         Ok((rows, next)) => {
             let next = next.map(|c| c.encode(&state.cfg.cursor_secret));
+            let ids: Vec<uuid::Uuid> = rows.iter().map(|n| n.id).collect();
+            let deliveries = match state.notifier().deliveries_for(&actor, &ids).await {
+                Ok(d) => d,
+                Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+            };
             let items: Vec<NotificationDto> = rows
                 .into_iter()
                 .map(|n| NotificationDto {
+                    deliveries: deliveries
+                        .iter()
+                        .filter(|d| d.notification_id == n.id)
+                        .map(|d| NotificationDeliveryDto {
+                            channel: d.channel.clone(),
+                            status: d.status.clone(),
+                            error_detail: d.error_detail.clone(),
+                        })
+                        .collect(),
                     id: n.id.to_string(),
                     kind: n.kind,
                     title: n.title,

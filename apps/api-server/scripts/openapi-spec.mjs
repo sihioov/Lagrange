@@ -22,6 +22,7 @@ const ROUTES = [
   ["GET", "/api/v1/strategies", {}],
   ["GET", "/api/v1/strategies/{strategy_id}", {}],
   ["POST", "/api/v1/strategies/{strategy_id}/configs", { mutating: true, idem: true, audit: true }],
+  ["GET", "/api/v1/strategy-configs", {}],
   ["GET", "/api/v1/strategy-configs/{config_id}", {}],
   // recommendations
   ["POST", "/api/v1/recommendations/runs", { mutating: true, idem: true, entitlement: "recommendation", audit: true }],
@@ -39,6 +40,7 @@ const ROUTES = [
   ["POST", "/api/v1/backtests/{run_id}/robustness", { mutating: true, idem: true, entitlement: "backtest", audit: true }],
   ["POST", "/api/v1/backtests/compare", { entitlement: "backtest" }],
   // paper
+  ["GET", "/api/v1/paper/accounts", { entitlement: "paper_view" }],
   ["POST", "/api/v1/paper/accounts", { mutating: true, idem: true, entitlement: "paper_view", audit: true }],
   ["GET", "/api/v1/paper/accounts/{account_id}", { entitlement: "paper_view" }],
   ["POST", "/api/v1/paper/accounts/{account_id}/bind-strategy", { mutating: true, idem: true, entitlement: "paper_view", audit: true }],
@@ -607,6 +609,31 @@ const SCHEMAS = {
       divergences: { type: "array", items: { type: "object", additionalProperties: true } },
       fill_model_difference: { type: "string", description: "Stated on every report: backtest fills come from the NT engine, Paper fills are modeled at the next raw open plus slippage" },
       warrants_alert: { type: "boolean", description: "True for DIVERGENT and NOT_COMPARABLE (design 15.3 grades a Paper divergence WARNING)" },
+    },
+  },
+  Notification: {
+    type: "object",
+    required: ["id", "kind", "title", "body", "created_at", "deliveries"],
+    description: "One feed row plus every attempt made to deliver it, so an outage is visible to the recipient and not only in the Owner's admin view (FR-RPT-002).",
+    properties: {
+      id: uuid,
+      kind: { type: "string", enum: ["job", "recommendation", "backtest", "alert"] },
+      title: { type: "string" },
+      body: { type: "string" },
+      read_at: { type: ["string", "null"], format: "date-time" },
+      created_at: ts,
+      deliveries: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["channel", "status"],
+          properties: {
+            channel: { type: "string", enum: ["web", "email", "admin"] },
+            status: { type: "string", enum: ["SUCCESS", "FAILED"] },
+            error_detail: { type: "string", description: "present only on FAILED; a recorded outage is never silent" },
+          },
+        },
+      },
     },
   },
   BindStrategyBody: {

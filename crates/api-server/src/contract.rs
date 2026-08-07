@@ -333,6 +333,17 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
     ),
     route(
         "GET",
+        "/api/v1/strategy-configs",
+        Phase::Current,
+        false,
+        false,
+        false,
+        false,
+        None,
+        false,
+    ),
+    route(
+        "GET",
         "/api/v1/strategy-configs/{config_id}",
         Phase::Current,
         false,
@@ -488,6 +499,17 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
         false,
     ),
     // --- paper ----------------------------------------------------------------
+    route(
+        "GET",
+        "/api/v1/paper/accounts",
+        Phase::Current,
+        false,
+        false,
+        false,
+        false,
+        Some("paper_view"),
+        false,
+    ),
     route(
         "POST",
         "/api/v1/paper/accounts",

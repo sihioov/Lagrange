@@ -139,6 +139,8 @@ pub struct Harness {
     /// Temp artifact tree the download route hashes against (C: temp, keeps
     /// D: safe; mirrors the read-only /data/artifacts mount in compose).
     pub artifact_root: std::path::PathBuf,
+    /// The state the router runs on; `None` only while `new()` assembles it.
+    state: Option<ApiState>,
 }
 
 /// Read DATABASE_URL or return None (tests skip).
@@ -239,6 +241,7 @@ impl Harness {
             owner_pool,
             app_url,
             artifact_root,
+            state: None,
         };
 
         h.seed_shared(
@@ -332,8 +335,18 @@ impl Harness {
         )
         .await
         .expect("api state builds from pools");
+        h.state = Some(state.clone());
         h.app = api_router(state);
         Some(h)
+    }
+
+    /// The live `ApiState` behind the router.
+    ///
+    /// Services that have no HTTP surface of their own — the Paper runner's
+    /// settle-and-announce path (Todo 32) — are driven through this, exactly
+    /// as the runner process will drive them.
+    pub fn state(&self) -> ApiState {
+        self.state.clone().expect("state built during Harness::new")
     }
 
     /// GUC'd verification pool scoped to the member actor (tenant reads).

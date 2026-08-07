@@ -175,6 +175,37 @@ pub async fn create_config(
     .await
 }
 
+/// The actor's own saved strategy configurations.
+///
+/// Binding a Paper account needs a config id, so the branching UI has to be
+/// able to enumerate what the actor may bind. RLS scopes the rows, so this
+/// can never surface another member's configuration.
+pub async fn list_configs(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+) -> Response {
+    let actor = session.actor();
+    match state.strategy_configs().list(&actor).await {
+        Ok(rows) => {
+            let items: Vec<StrategyConfigDto> = rows
+                .into_iter()
+                .map(|row| StrategyConfigDto {
+                    id: row.id.to_string(),
+                    strategy_id: row.strategy_id,
+                    strategy_version: row.strategy_version,
+                    config: row.config_json,
+                    is_active: row.is_active,
+                    created_at: row.created_at,
+                    updated_at: row.updated_at,
+                })
+                .collect();
+            (StatusCode::OK, Json(PageDto::new(items, None))).into_response()
+        }
+        Err(e) => tenancy_response(e, &request_id(&headers), "RESOURCE_NOT_FOUND"),
+    }
+}
+
 pub async fn get_config(
     State(state): State<ApiState>,
     session: Session,

@@ -398,6 +398,19 @@ pub struct NotificationDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// Every attempt made to deliver this notification. A failed channel is
+    /// carried here with its error detail so an outage is visible in the
+    /// feed itself (FR-RPT-002) rather than only in the Owner's admin view.
+    pub deliveries: Vec<NotificationDeliveryDto>,
+}
+
+/// One delivery attempt on a notification the actor owns.
+#[derive(Debug, Clone, Serialize)]
+pub struct NotificationDeliveryDto {
+    pub channel: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

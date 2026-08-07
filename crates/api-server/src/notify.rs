@@ -137,7 +137,10 @@ impl Notifier {
         } else {
             vec!["web"]
         };
-        if self.has_subscription(actor, "alert", "email").await? {
+        // The subscription is looked up for the kind ACTUALLY being routed,
+        // so "configurable per kind" means what it says: opting into email
+        // for `job` adds the email leg to job alerts and to nothing else.
+        if self.has_subscription(actor, kind, "email").await? {
             channels.push("email");
         }
         let outcomes = self
@@ -335,6 +338,36 @@ impl Notifier {
         }))
     }
 
+    /// The actor's OWN delivery attempts for a page of notifications.
+    ///
+    /// Fetched in one round trip rather than per row: the feed renders each
+    /// notification's outcome, and a per-row query would turn one page into
+    /// N+1 statements. RLS still scopes the rows to the actor, so passing
+    /// ids that are not theirs simply returns nothing.
+    pub async fn deliveries_for(
+        &self,
+        actor: &Actor,
+        notification_ids: &[Uuid],
+    ) -> TenancyResult<Vec<OwnDeliveryRow>> {
+        if notification_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = begin_actor_tx(&self.app_pool, actor).await?;
+        let rows = sqlx::query_as::<_, OwnDeliveryRow>(
+            "SELECT notification_id, channel, status, error_detail \
+             FROM notification_deliveries \
+             WHERE owner_user_id = $1 AND notification_id = ANY($2) \
+             ORDER BY attempted_at, channel",
+        )
+        .bind(actor_uuid(actor)?)
+        .bind(notification_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        Ok(rows)
+    }
+
     /// Cross-user delivery records for the admin view (Owner-only upstream).
     pub async fn list_all_deliveries(
         &self,
@@ -390,6 +423,15 @@ pub struct NotificationRow {
     pub body: String,
     pub read_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// One of the actor's own delivery attempts, keyed to its notification.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct OwnDeliveryRow {
+    pub notification_id: Uuid,
+    pub channel: String,
+    pub status: String,
+    pub error_detail: Option<String>,
 }
 
 /// One cross-user delivery record (admin view).

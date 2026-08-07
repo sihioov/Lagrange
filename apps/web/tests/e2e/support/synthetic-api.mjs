@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { backtestResponse } from "./backtest-fixture.mjs";
+import { paperResponse } from "./paper-fixture.mjs";
 import { recommendationResponse } from "./recommendation-fixture.mjs";
 
 const port = Number.parseInt(process.env.SYNTHETIC_API_PORT ?? "38180", 10);
@@ -7,6 +8,10 @@ const defaultScenario = Object.freeze({
   backtest: "running",
   entitlement: "active",
   exclusions: "present",
+  notification: "delivered",
+  paperAccount: "present",
+  paperEntitlement: "active",
+  parity: "match",
   recommendation: "fresh",
   tradePagination: "normal",
   user: "u1",
@@ -72,6 +77,17 @@ const server = createServer(async (request, response) => {
   });
   if (backtest !== null) {
     json(response, backtest.status, backtest.body);
+    return;
+  }
+  const paper = paperResponse({
+    body,
+    headers: request.headers,
+    method: request.method ?? "GET",
+    pathname: url.pathname,
+    scenario,
+  });
+  if (paper !== null) {
+    json(response, paper.status, paper.body);
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/v1/auth/session") {

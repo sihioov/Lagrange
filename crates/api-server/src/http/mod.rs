@@ -252,6 +252,7 @@ pub fn api_router(state: ApiState) -> Router {
             "/strategies/{strategy_id}/configs",
             post(strategies::create_config),
         )
+        .route("/strategy-configs", get(strategies::list_configs))
         .route("/strategy-configs/{config_id}", get(strategies::get_config))
         // recommendations
         .route("/recommendations/runs", post(recommendations::create_run))
@@ -275,7 +276,10 @@ pub fn api_router(state: ApiState) -> Router {
             post(backtests::robustness),
         )
         // paper
-        .route("/paper/accounts", post(paper::create_account))
+        .route(
+            "/paper/accounts",
+            get(paper::list_accounts).post(paper::create_account),
+        )
         .route("/paper/accounts/{account_id}", get(paper::get_account))
         .route(
             "/paper/accounts/{account_id}/bind-strategy",

@@ -171,6 +171,43 @@ pub async fn create_account(
     .await
 }
 
+/// The actor's own paper accounts.
+///
+/// Discovery has to be a route rather than a client-side guess: RLS is what
+/// makes the list the actor's own, so two users hitting the same path can
+/// never see each other's accounts. LIVE accounts are filtered out here —
+/// this is the Paper surface, and the Owner-only Live routes are separate.
+pub async fn list_accounts(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+) -> Response {
+    let rid = request_id(&headers);
+    let actor = session.actor();
+    if let Err(r) = require_use(
+        &state,
+        &session,
+        &headers,
+        auth::entitlement::KrUse::PaperView,
+        &crate::http::entitlement::today_iso(),
+    )
+    .await
+    {
+        return r;
+    }
+    match state.accounts().list(&actor).await {
+        Ok(rows) => {
+            let items: Vec<AccountDto> = rows
+                .into_iter()
+                .filter(|a| a.account_type == "PAPER")
+                .map(account_dto)
+                .collect();
+            (StatusCode::OK, Json(PageDto::new(items, None))).into_response()
+        }
+        Err(e) => tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+    }
+}
+
 pub async fn get_account(
     State(state): State<ApiState>,
     session: Session,

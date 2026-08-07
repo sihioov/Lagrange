@@ -134,9 +134,10 @@ async fn observability_notification_email_outage_records_failed_delivery() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    // The member opted into email; the email transport is not configured in
-    // this release, so the outage must be recorded as a FAILED delivery.
-    let resp = put_subscription(&h, Some(&h.member), "alert", "email", true).await;
+    // The member opted into email FOR THE KIND being routed; the email
+    // transport is not configured in this release, so the outage must be
+    // recorded as a FAILED delivery.
+    let resp = put_subscription(&h, Some(&h.member), "job", "email", true).await;
     assert_eq!(status(&resp), StatusCode::OK);
     let before = count_notifications(&h, &h.member).await;
     let resp = post_test_notification(&h, Some(&h.member), "INFO").await;
@@ -158,6 +159,30 @@ async fn observability_notification_email_outage_records_failed_delivery() {
     assert_eq!(count_notifications(&h, &h.member).await, before + 1);
     assert_eq!(count_deliveries(&h, "FAILED").await, 1);
     assert_eq!(count_deliveries(&h, "SUCCESS").await, 1);
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn observability_notification_subscription_is_per_kind() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    // Opting into email for `alert` must NOT add an email leg to a `job`
+    // alert. Notifications are configurable per kind, not globally.
+    let resp = put_subscription(&h, Some(&h.member), "alert", "email", true).await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let resp = post_test_notification(&h, Some(&h.member), "INFO").await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    let deliveries = body["deliveries"].as_array().expect("deliveries");
+    assert_eq!(
+        deliveries.len(),
+        1,
+        "a subscription for another kind must not add a channel"
+    );
+    assert_eq!(deliveries[0]["channel"], "web");
+    assert_eq!(count_deliveries(&h, "FAILED").await, 0);
     h.teardown().await;
 }
 

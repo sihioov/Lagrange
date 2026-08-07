@@ -118,6 +118,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/strategy-configs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/strategy-configs */
+        get: operations["get__api_v1_strategy_configs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/strategy-configs/{config_id}": {
         parameters: {
             query?: never;
@@ -331,7 +348,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** GET /api/v1/paper/accounts */
+        get: operations["get__api_v1_paper_accounts"];
         put?: never;
         /** POST /api/v1/paper/accounts */
         post: operations["post__api_v1_paper_accounts"];
@@ -1217,6 +1235,27 @@ export interface components {
             /** @description True for DIVERGENT and NOT_COMPARABLE (design 15.3 grades a Paper divergence WARNING) */
             warrants_alert: boolean;
         };
+        /** @description One feed row plus every attempt made to deliver it, so an outage is visible to the recipient and not only in the Owner's admin view (FR-RPT-002). */
+        Notification: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "job" | "recommendation" | "backtest" | "alert";
+            title: string;
+            body: string;
+            /** Format: date-time */
+            read_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            deliveries: {
+                /** @enum {string} */
+                channel: "web" | "email" | "admin";
+                /** @enum {string} */
+                status: "SUCCESS" | "FAILED";
+                /** @description present only on FAILED; a recorded outage is never silent */
+                error_detail?: string;
+            }[];
+        };
         BindStrategyBody: {
             /** Format: uuid */
             strategy_config_id: string;
@@ -1598,6 +1637,27 @@ export interface operations {
             501: components["responses"]["Error501"];
         };
     };
+    get__api_v1_strategy_configs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
     get__api_v1_strategy_configs__config_id_: {
         parameters: {
             query?: never;
@@ -1912,6 +1972,27 @@ export interface operations {
         };
     };
     post__api_v1_backtests_compare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_paper_accounts: {
         parameters: {
             query?: never;
             header?: never;

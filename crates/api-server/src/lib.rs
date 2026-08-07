@@ -28,6 +28,7 @@ pub mod error;
 pub mod http;
 pub mod notify;
 pub mod observability;
+pub mod paper_session;
 pub mod repos;
 
 pub use error::{TenancyError, TenancyResult};

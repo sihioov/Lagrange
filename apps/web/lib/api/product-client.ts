@@ -20,6 +20,22 @@ import {
   type StrategyCatalogItem,
   strategySchema,
 } from "@/lib/products/contracts";
+import {
+  type NotificationModel,
+  notificationSchema,
+  type PaperAccountModel,
+  type PaperLineageModel,
+  type PaperParityModel,
+  type PaperPerformanceModel,
+  paperAccountSchema,
+  paperLineageSchema,
+  paperOrderSchema,
+  paperParitySchema,
+  paperPerformanceSchema,
+  paperPositionSchema,
+  type StrategyConfigModel,
+  strategyConfigSchema,
+} from "@/lib/products/paper-contracts";
 import { parseApiResponse } from "./response";
 import { createServerTransport, type ServerApiClientOptions } from "./server-client";
 
@@ -30,7 +46,26 @@ export type ProductApiClient = {
   readonly getLicensingStatus: () => Promise<LicensingStatusModel>;
   readonly getRecommendationRuns: () => Promise<PageResult<RecommendationRunModel>>;
   readonly getStrategies: () => Promise<PageResult<StrategyCatalogItem>>;
+  readonly getPaperAccounts: () => Promise<PageResult<PaperAccountModel>>;
+  readonly getPaperAccount: (accountId: string) => Promise<PaperAccountModel>;
+  readonly getNotifications: () => Promise<PageResult<NotificationModel>>;
+  readonly getStrategyConfigs: () => Promise<PageResult<StrategyConfigModel>>;
+  readonly getPaperPerformance: (accountId: string) => Promise<PaperPerformanceModel>;
+  readonly getPaperLineage: (accountId: string) => Promise<PaperLineageModel>;
+  readonly getPaperParity: (accountId: string, asOf: string) => Promise<PaperParityModel>;
+  readonly getPaperPositions: (
+    accountId: string,
+  ) => Promise<PageResult<z.infer<typeof paperPositionSchema>>>;
+  readonly getPaperOrders: (
+    accountId: string,
+  ) => Promise<PageResult<z.infer<typeof paperOrderSchema>>>;
 };
+
+const paperAccountPageSchema = pageSchema(paperAccountSchema);
+const paperPositionPageSchema = pageSchema(paperPositionSchema);
+const paperOrderPageSchema = pageSchema(paperOrderSchema);
+const notificationPageSchema = pageSchema(notificationSchema);
+const strategyConfigPageSchema = pageSchema(strategyConfigSchema);
 
 const strategyPageSchema = pageSchema(strategySchema);
 const recommendationPageSchema = pageSchema(recommendationRunSchema);
@@ -69,5 +104,45 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
     getRecommendationRuns: () =>
       getParsed(client, "/api/v1/recommendations/runs", recommendationPageSchema),
     getStrategies: () => getParsed(client, "/api/v1/strategies", strategyPageSchema),
+    getPaperAccounts: () => getParsed(client, "/api/v1/paper/accounts", paperAccountPageSchema),
+    getNotifications: () => getParsed(client, "/api/v1/notifications", notificationPageSchema),
+    getStrategyConfigs: () =>
+      getParsed(client, "/api/v1/strategy-configs", strategyConfigPageSchema),
+    getPaperAccount: (accountId) =>
+      getParsed(
+        client,
+        `/api/v1/paper/accounts/${encodeURIComponent(accountId)}`,
+        paperAccountSchema,
+      ),
+    getPaperPerformance: (accountId) =>
+      getParsed(
+        client,
+        `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/performance`,
+        paperPerformanceSchema,
+      ),
+    getPaperLineage: (accountId) =>
+      getParsed(
+        client,
+        `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/lineage`,
+        paperLineageSchema,
+      ),
+    getPaperParity: (accountId, asOf) =>
+      getParsed(
+        client,
+        `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/parity?as_of=${encodeURIComponent(asOf)}`,
+        paperParitySchema,
+      ),
+    getPaperPositions: (accountId) =>
+      getParsed(
+        client,
+        `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/positions`,
+        paperPositionPageSchema,
+      ),
+    getPaperOrders: (accountId) =>
+      getParsed(
+        client,
+        `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/orders`,
+        paperOrderPageSchema,
+      ),
   };
 }
