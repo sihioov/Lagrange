@@ -22,6 +22,7 @@
 //!     settles its own attempt as FAILED(error_code='canceled') — CANCELED is
 //!     not an attempt outcome.
 
+use job_queue::batch::{self, BatchItem, MAX_BATCH_SIZE};
 use job_queue::{
     CancelResult, ErrorClass, HeartbeatStatus, JobQueue, JobStatus, QueueConfig, SettleResult,
     SubmitJob,
@@ -1367,5 +1368,158 @@ async fn sweep_canceled_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     let job = q.get_by_id(job.id).await?;
     assert_eq!(job.status, JobStatus::Canceled);
     assert!(q.claim_next("worker-a").await?.is_none());
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Todo 29: bounded batch fan-out and cascade cancellation — the job-queue
+// side of robustness suite orchestration. `job_queue::batch` is
+// domain-agnostic: it knows nothing about robustness/derived axes, only "N
+// related jobs, one owner, each with a caller-supplied idempotency key."
+// Domain-specific fan-out planning (grid limits, one-axis children, holdout
+// guards) lives in result-model, which owns that domain.
+// ---------------------------------------------------------------------------
+
+fn batch_item(tag: usize, key: &str) -> BatchItem {
+    BatchItem {
+        job_type: "backtest".to_string(),
+        payload: serde_json::json!({ "kind": "robustness_child", "tag": tag }),
+        idempotency_key: key.to_string(),
+    }
+}
+
+#[tokio::test]
+async fn robustness_orchestration_rejects_oversized_batch() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("robustness oversized batch", &super_url, |_s, _d, p| {
+        Box::pin(oversized_batch_body(p))
+    })
+    .await;
+}
+
+async fn oversized_batch_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-batch-oversized").await?;
+    let q = JobQueue::new(pool.clone(), Some(pool.clone()), fast_config());
+    let items: Vec<BatchItem> = (0..=MAX_BATCH_SIZE)
+        .map(|i| batch_item(i, &format!("oversized-{i}")))
+        .collect();
+    let err = batch::submit_batch(&q, owner, items, 5, 3)
+        .await
+        .expect_err("a batch larger than MAX_BATCH_SIZE must be rejected before any insert");
+    assert!(matches!(err, job_queue::QueueError::InvalidInput(_)));
+    let queued: i64 = count(pool, "SELECT count(*) FROM jobs").await;
+    assert_eq!(
+        queued, 0,
+        "an oversized batch must submit NOTHING, not a truncated prefix"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn robustness_orchestration_fan_out_is_crash_safe_on_resubmit() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("robustness crash-safe fan-out", &super_url, |_s, _d, p| {
+        Box::pin(crash_safe_fan_out_body(p))
+    })
+    .await;
+}
+
+async fn crash_safe_fan_out_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-batch-crashsafe").await?;
+    let q = JobQueue::new(pool.clone(), Some(pool.clone()), fast_config());
+    let items = || {
+        vec![
+            batch_item(0, "suite-1-child-cost-stress"),
+            batch_item(1, "suite-1-child-execution-delay"),
+            batch_item(2, "suite-1-child-benchmark"),
+        ]
+    };
+    let first = batch::submit_batch(&q, owner, items(), 5, 3).await?;
+    assert_eq!(first.len(), 3);
+
+    // The orchestrator "dies" after submitting and re-plans the SAME suite
+    // from scratch: re-submission with the same keys must resolve to the
+    // SAME jobs, never duplicate rows (AT-03 semantics at suite level).
+    let second = batch::submit_batch(&q, owner, items(), 5, 3).await?;
+    let first_ids: Vec<Uuid> = first.iter().map(|j| j.id).collect();
+    let second_ids: Vec<Uuid> = second.iter().map(|j| j.id).collect();
+    assert_eq!(
+        first_ids, second_ids,
+        "re-submission must return the identical jobs"
+    );
+
+    let total: i64 = count(pool, "SELECT count(*) FROM jobs").await;
+    assert_eq!(
+        total, 3,
+        "crash-safe re-submission must never create duplicate rows"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn robustness_orchestration_cascade_cancel_stops_pending_children_only() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("robustness cascade cancel", &super_url, |_s, _d, p| {
+        Box::pin(cascade_cancel_body(p))
+    })
+    .await;
+}
+
+async fn cascade_cancel_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-batch-cascadecancel").await?;
+    let q = JobQueue::new(pool.clone(), Some(pool.clone()), fast_config());
+    let items = vec![
+        batch_item(0, "suite-2-child-a"),
+        batch_item(1, "suite-2-child-b"),
+        batch_item(2, "suite-2-child-c"),
+    ];
+    let jobs = batch::submit_batch(&q, owner, items, 5, 3).await?;
+    let job_ids: Vec<Uuid> = jobs.iter().map(|j| j.id).collect();
+
+    // One child already finished successfully before the cascade fires.
+    let claim = q.claim_next("worker-cascade").await?.expect("claimable");
+    assert_eq!(claim.job.id, job_ids[0]);
+    let _ = q.settle_success(&claim).await?;
+
+    let actor = job_queue::AuditActor::new("owner");
+    let results = batch::cancel_batch(&q, &job_ids, &actor).await;
+    assert_eq!(results.len(), 3);
+
+    let mut canceled = 0usize;
+    let mut already_terminal = 0usize;
+    for (_, outcome) in &results {
+        match outcome.as_ref().expect("cancel request must not error") {
+            CancelResult::Canceled(_) => canceled += 1,
+            CancelResult::AlreadyTerminal(job) => {
+                already_terminal += 1;
+                assert_eq!(job.status, JobStatus::Succeeded);
+            }
+        }
+    }
+    assert_eq!(
+        canceled, 2,
+        "the two still-pending children must be canceled"
+    );
+    assert_eq!(
+        already_terminal, 1,
+        "the already-succeeded child stays untouched"
+    );
+
+    let mut statuses = Vec::new();
+    for id in &job_ids {
+        statuses.push(q.get_by_id(*id).await?.status);
+    }
+    assert_eq!(statuses[0], JobStatus::Succeeded);
+    assert_eq!(statuses[1], JobStatus::Canceled);
+    assert_eq!(statuses[2], JobStatus::Canceled);
     Ok(())
 }
