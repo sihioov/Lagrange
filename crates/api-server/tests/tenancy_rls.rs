@@ -521,6 +521,9 @@ async fn tenancy_crafted_owner_id_insert_is_denied() {
                         account_type: "PAPER".into(),
                         name: "b-own".into(),
                         currency: "KRW".into(),
+                        initial_cash: Some("10000000".into()),
+                        cost_profile_id: "KRX_ETF_DEFAULT".into(),
+                        cost_profile_version: 1,
                     },
                 )
                 .await?;
@@ -567,6 +570,9 @@ async fn tenancy_direct_id_guess_leaks_no_foreign_fields() {
                         account_type: "PAPER".into(),
                         name: "a-secret".into(),
                         currency: "KRW".into(),
+                        initial_cash: Some("10000000".into()),
+                        cost_profile_id: "KRX_ETF_DEFAULT".into(),
+                        cost_profile_version: 1,
                     },
                 )
                 .await?;
@@ -613,6 +619,9 @@ async fn tenancy_table_owner_connection_cannot_bypass_rls() {
                         account_type: "PAPER".into(),
                         name: "a-account".into(),
                         currency: "KRW".into(),
+                        initial_cash: Some("10000000".into()),
+                        cost_profile_id: "KRX_ETF_DEFAULT".into(),
+                        cost_profile_version: 1,
                     },
                 )
                 .await?;
@@ -986,6 +995,9 @@ async fn tenancy_two_users_isolated_happy_path() {
                             account_type: "PAPER".into(),
                             name: format!("acc-{i}"),
                             currency: "KRW".into(),
+                            initial_cash: Some("10000000".into()),
+                            cost_profile_id: "KRX_ETF_DEFAULT".into(),
+                            cost_profile_version: 1,
                         },
                     )
                     .await?;

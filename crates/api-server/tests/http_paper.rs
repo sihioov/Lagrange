@@ -18,7 +18,7 @@ async fn http_paper_accounts_happy() {
             "/api/v1/paper/accounts",
             Some(&h.member),
             true,
-            json!({ "name": "member-paper-1", "currency": "KRW" }),
+            json!({ "name": "member-paper-1", "currency": "KRW", "initial_cash": "10000000" }),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::CREATED);
@@ -27,6 +27,8 @@ async fn http_paper_accounts_happy() {
     assert_eq!(body["account_type"], "PAPER");
     assert_eq!(body["name"], "member-paper-1");
     assert_eq!(body["status"], "ACTIVE");
+    assert_eq!(body["initial_cash"], "10000000.0000");
+    assert_eq!(body["cost_profile_id"], "KRX_ETF_DEFAULT");
     let account_id = body["id"].as_str().unwrap().to_string();
     assert!(
         !body.to_string().contains("owner_user_id"),
@@ -75,6 +77,8 @@ async fn http_paper_accounts_happy() {
     let body = Harness::body_json(resp).await;
     assert_eq!(body["account_id"], account_id);
     assert_eq!(body["strategy_config_id"], cfg_id);
+    assert_eq!(body["strategy_id"], "buy_and_hold");
+    assert_eq!(body["strategy_version"], "1.0.0");
 
     // Ledger views (seeded as the paper engine would write them).
     h.seed_tenant(
@@ -158,7 +162,7 @@ async fn http_paper_accounts_ownership_and_gating() {
             "/api/v1/paper/accounts",
             Some(&h.member),
             true,
-            json!({ "name": "member-paper-2", "currency": "KRW" }),
+            json!({ "name": "member-paper-2", "currency": "KRW", "initial_cash": "10000000" }),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::CREATED);
@@ -182,7 +186,7 @@ async fn http_paper_accounts_ownership_and_gating() {
             "/api/v1/paper/accounts",
             Some(&h.owner),
             true,
-            json!({ "name": "live-account", "currency": "KRW", "account_type": "LIVE" }),
+            json!({ "name": "live-account", "currency": "KRW", "initial_cash": "10000000", "account_type": "LIVE" }),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::BAD_REQUEST);
@@ -191,7 +195,7 @@ async fn http_paper_accounts_ownership_and_gating() {
 
     // Idempotent creation replay.
     let key = "paper-acct-001";
-    let b = json!({ "name": "member-paper-3", "currency": "KRW" });
+    let b = json!({ "name": "member-paper-3", "currency": "KRW", "initial_cash": "10000000" });
     let r1 = h
         .send(
             "POST",
@@ -243,7 +247,7 @@ async fn http_paper_accounts_fuzz_and_duplicate() {
             "/api/v1/paper/accounts",
             Some(&h.member),
             true,
-            json!({ "name": "x", "currency": "JPY" }),
+            json!({ "name": "x", "currency": "JPY", "initial_cash": "10000000" }),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::UNPROCESSABLE_ENTITY);
@@ -256,7 +260,7 @@ async fn http_paper_accounts_fuzz_and_duplicate() {
             "/api/v1/paper/accounts",
             Some(&h.member),
             true,
-            json!({ "name": "dup-name", "currency": "KRW" }),
+            json!({ "name": "dup-name", "currency": "KRW", "initial_cash": "10000000" }),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::CREATED);
@@ -265,7 +269,7 @@ async fn http_paper_accounts_fuzz_and_duplicate() {
             "/api/v1/paper/accounts",
             Some(&h.member),
             true,
-            json!({ "name": "dup-name", "currency": "KRW" }),
+            json!({ "name": "dup-name", "currency": "KRW", "initial_cash": "10000000" }),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::CONFLICT);
@@ -278,7 +282,7 @@ async fn http_paper_accounts_fuzz_and_duplicate() {
             "/api/v1/paper/accounts",
             Some(&h.member),
             true,
-            json!({ "name": "", "currency": "KRW" }),
+            json!({ "name": "", "currency": "KRW", "initial_cash": "10000000" }),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::BAD_REQUEST);
