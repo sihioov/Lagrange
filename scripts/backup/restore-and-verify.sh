@@ -38,6 +38,7 @@ set_dir=""
 sidecar=""
 gate="default"
 key="lagrange-drill-key"
+key_file=""
 now=""
 verdict=""
 metrics=""
@@ -48,6 +49,9 @@ while [ $# -gt 0 ]; do
     --sidecar) sidecar="$2"; shift 2 ;;
     --gate) gate="$2"; shift 2 ;;
     --key) key="$2"; shift 2 ;;
+    # Preferred for scheduled runs: a passphrase passed as an argument is
+    # visible to every user in `ps`.
+    --key-file) key_file="$2"; shift 2 ;;
     --now) now="$2"; shift 2 ;;
     --verdict) verdict="$2"; shift 2 ;;
     --metrics) metrics="$2"; shift 2 ;;
@@ -61,6 +65,12 @@ done
 [ -f "$sidecar" ] || { echo "ENV ERROR: sidecar not found: $sidecar" >&2; exit 2; }
 command -v docker >/dev/null 2>&1 || { echo "ENV ERROR: docker not found on PATH" >&2; exit 2; }
 [ -n "$now" ] || now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+if [ -n "$key_file" ]; then
+  [ -f "$key_file" ] || { echo "ENV ERROR: key file not found: $key_file" >&2; exit 2; }
+  key="$(tr -d '\r\n' < "$key_file")"
+  [ -n "$key" ] || { echo "ENV ERROR: key file is empty: $key_file" >&2; exit 2; }
+fi
 
 hostpath() {
   if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
@@ -188,6 +198,7 @@ target_lsn="$(json_field "$sidecar" recovery_target_lsn)"
 expect_rows="$(json_field "$sidecar" pre_target_row_count)"
 expect_prov="$(json_field "$sidecar" provenance_row_count)"
 expect_dataset="$(json_field "$sidecar" dataset_version)"
+expect_min_lsn="$(json_field "$sidecar" pre_target_lsn)"
 add_fact recovery_target_lsn "\"$target_lsn\""
 
 # --- 3/4. stage and recover into a disposable project --------------------------
@@ -241,6 +252,7 @@ echo "== runbook assertions =="
 assert_out="$(dc exec -T \
   -e TARGET_LSN="$target_lsn" -e EXPECT_ROWS_AT_TARGET="$expect_rows" \
   -e EXPECT_PROVENANCE="$expect_prov" -e EXPECT_DATASET="$expect_dataset" \
+  -e EXPECT_MIN_LSN="$expect_min_lsn" \
   target bash -s < "$verify" 2>&1)"
 assert_rc=$?
 printf '%s\n' "$assert_out"

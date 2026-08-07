@@ -89,7 +89,13 @@ cat >> "$PGDATA_DIR/postgresql.auto.conf" <<EOF
 restore_command = 'cp $WAL_RESTORE/%f %p'
 recovery_target_lsn = '$TARGET_LSN'
 recovery_target_action = 'promote'
-recovery_target_inclusive = on
+# OFF, not the default ON. With ON, PostgreSQL stops just AFTER the first
+# record at or beyond the target, and a bulk INSERT is a single WAL record --
+# so an entire batch written after the target comes back. "Restore to a point"
+# means excluding everything at or after it, which is what OFF does.
+# (No backticks in this heredoc: it is unquoted so that TARGET_LSN and
+# WAL_RESTORE interpolate, which means backticks would be run as commands.)
+recovery_target_inclusive = off
 archive_mode = off
 EOF
 touch "$PGDATA_DIR/recovery.signal"

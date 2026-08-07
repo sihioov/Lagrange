@@ -1,9 +1,44 @@
 # Pre-Member Restore Drill — MANDATORY GATE 1
 
-**Status:** CONTRACT SKELETON. The automation referenced below (pg restore, WAL replay, file
-extraction) is implemented in Todo 33 against these contracts. Until a drill passes with a
-real executed transcript, **do not claim Member-launch readiness** and do not open the Member
-surface.
+**Status:** AUTOMATED (Todo 33). The pg restore, WAL replay, and file extraction referenced
+below are implemented by `scripts/backup/restore-and-verify.{sh,ps1}`, which runs the drill
+into a disposable Compose project and emits a machine-readable verdict. Until a drill passes
+with a real executed transcript, **do not claim Member-launch readiness** and do not open the
+Member surface.
+
+```bash
+scripts/backup/restore-and-verify.sh \
+    --set <backup-set-dir> --sidecar <backup-sidecar.json> \
+    --gate premember --key-file /etc/lagrange/backup.key \
+    --verdict .omo/evidence/premember-drill.json
+```
+
+The `premember` gate is not cosmetic: `deploy/backup/policy/backup-policy.json` requires a
+FULL restore for it, so a set that would satisfy the everyday `default` gate can still be
+refused here.
+
+The drill is only meaningful if it also fails when it should. Prove that with
+`scripts/backup/tests/test-restore-failures.{sh,ps1}`, which asserts that a wrong key, a
+missing WAL segment, a corrupt archive, a planted secret marker, a partial DB, and an expired
+set each abort — and that no drill container survives the failure.
+
+**Scheduling.** `create.*` and `restore-and-verify.*` drive Docker themselves, so they run on
+the HOST scheduler, not as a container inside the stack:
+
+Always `--key-file`, never `--key`: an argv passphrase is readable by every user via `ps`.
+
+```cron
+# daily verified backup, weekly restore drill (UTC)
+17 18 * * *  /srv/lagrange/scripts/backup/create.sh --out /srv/backups/$(date -u +\%Y\%m\%d) \
+                 --key-file /etc/lagrange/backup.key \
+                 --metrics /var/lib/node_exporter/textfile/lagrange_backup.prom
+41 19 * * 0  /srv/lagrange/scripts/backup/restore-and-verify.sh --set /srv/backups/latest/set \
+                 --sidecar /srv/backups/latest/backup-sidecar.json \
+                 --metrics /var/lib/node_exporter/textfile/lagrange_restore.prom
+23 20 * * *  /srv/lagrange/scripts/backup/prune.sh --root /srv/backups --apply
+```
+
+Staleness of either metric alerts via `deploy/compose/alerts/backup-recovery.rules.yml`.
 
 **Gate rule (NFR-REL-005, System Design §13.4):** a full PostgreSQL + Raw/Curated/Artifact
 file restore must be rehearsed into an ISOLATED target BEFORE the Member surface is enabled.

@@ -30,24 +30,33 @@ fails=0
 assert_fail() { echo "ASSERT_FAIL $1 $2"; fails=$((fails+1)); }
 trim() { printf '%s' "$1" | tr -d '[:space:]'; }
 
-# --- P2: recovery actually completed and reached the target -------------------
+# --- P2: recovery completed and stopped in the right place --------------------
 in_recovery="$(trim "$($PSQL -c 'SELECT pg_is_in_recovery();')")"
 if [ "$in_recovery" != "f" ]; then
   assert_fail P2 "cluster is still in recovery (pg_is_in_recovery=$in_recovery)"
 fi
-# After promotion the replay LSN is frozen at the target; compare numerically
-# via pg_lsn so "0/4002568" vs "0/04002568" cannot produce a false mismatch.
-reached="$(trim "$($PSQL -c "SELECT pg_last_wal_replay_lsn() >= '$TARGET_LSN'::pg_lsn;" 2>/dev/null || echo '')")"
 last_replay="$(trim "$($PSQL -c 'SELECT coalesce(pg_last_wal_replay_lsn()::text, '"'"''"'"');' 2>/dev/null || echo '')")"
 # A promoted cluster reports NULL for pg_last_wal_replay_lsn; the authoritative
 # post-promotion evidence is the control file's checkpoint position.
 if [ -z "$last_replay" ]; then
   last_replay="$(pg_controldata "${PGDATA:-/var/lib/postgresql/18/docker}" 2>/dev/null \
     | awk -F': *' '/Latest checkpoint location/{print $2}' | tr -d '[:space:]')"
-  reached="$(trim "$($PSQL -c "SELECT '$last_replay'::pg_lsn >= '$TARGET_LSN'::pg_lsn;")")"
 fi
-[ "$reached" = "t" ] || assert_fail P2 "replay reached $last_replay, target was $TARGET_LSN"
 echo "RECOVERY_LSN=$last_replay"
+# The recovery point is a BRACKET, not a single bound. `recovery_target_inclusive
+# = off` deliberately stops just BELOW the target, so asserting ">= target" would
+# fail every correct restore. What must hold is:
+#   pre_target_lsn <= replay <= target
+# i.e. every pre-target row was replayed (lower bound) and nothing at or after
+# the target was (upper bound). Compared as pg_lsn so text padding cannot
+# produce a false verdict.
+if [ -n "$last_replay" ] && [ -n "${EXPECT_MIN_LSN:-}" ]; then
+  in_range="$(trim "$($PSQL -c "SELECT '$last_replay'::pg_lsn >= '$EXPECT_MIN_LSN'::pg_lsn AND '$last_replay'::pg_lsn <= '$TARGET_LSN'::pg_lsn;")")"
+  [ "$in_range" = "t" ] || assert_fail P2 \
+    "replay stopped at $last_replay, outside the expected range [$EXPECT_MIN_LSN, $TARGET_LSN]"
+else
+  assert_fail P2 "could not determine the recovery stop position"
+fi
 
 # --- P3/P4: the cut is exactly at the target ---------------------------------
 # Rows written before the target must be present; rows written after it must

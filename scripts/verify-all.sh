@@ -39,5 +39,12 @@ npm test --workspaces --if-present || { echo "FAILED: npm test"; exit 1; }
 step=$((step+1)); echo; echo "[$step] uv run --project nt pytest -q"
 uv run --project nt pytest -q || { echo "FAILED: uv run --project nt pytest -q"; exit 1; }
 
+# Backup POLICY tests only. They need no Docker and no prebuilt backup set, so
+# they belong in a clean-container gate. The restore DRILL
+# (scripts/backup/tests/test-restore-failures.*) needs a live Docker daemon and
+# a real backup set, so it runs from the operational suites instead.
+step=$((step+1)); echo; echo "[$step] backup policy validator tests"
+bash "$root/scripts/backup/tests/test-validate-policy.sh" || { echo "FAILED: backup policy tests"; exit 1; }
+
 echo; echo "ALL GATES PASSED"
 exit 0

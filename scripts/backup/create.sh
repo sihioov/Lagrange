@@ -31,6 +31,7 @@ out_dir=""
 run_id=""
 now=""
 key="lagrange-drill-key"
+key_file=""
 metrics=""
 
 while [ $# -gt 0 ]; do
@@ -39,10 +40,19 @@ while [ $# -gt 0 ]; do
     --run-id) run_id="$2"; shift 2 ;;
     --now) now="$2"; shift 2 ;;
     --key) key="$2"; shift 2 ;;
+    # Preferred for scheduled runs: a passphrase passed as an argument is
+    # visible to every user in `ps`.
+    --key-file) key_file="$2"; shift 2 ;;
     --metrics) metrics="$2"; shift 2 ;;
-    *) echo "USAGE: $0 --out <dir> [--run-id <id>] [--now <ts>] [--key <pass>] [--metrics <file>]" >&2; exit 2 ;;
+    *) echo "USAGE: $0 --out <dir> [--run-id <id>] [--now <ts>] [--key <pass>|--key-file <path>] [--metrics <file>]" >&2; exit 2 ;;
   esac
 done
+
+if [ -n "${key_file:-}" ]; then
+  [ -f "$key_file" ] || { echo "ENV ERROR: key file not found: $key_file" >&2; exit 2; }
+  key="$(tr -d '\r\n' < "$key_file")"
+  [ -n "$key" ] || { echo "ENV ERROR: key file is empty: $key_file" >&2; exit 2; }
+fi
 
 [ -n "$out_dir" ] || { echo "USAGE: --out <dir> is required" >&2; exit 2; }
 command -v docker >/dev/null 2>&1 || { echo "ENV ERROR: docker not found on PATH" >&2; exit 2; }

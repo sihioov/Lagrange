@@ -96,6 +96,18 @@ $PSQL -c "INSERT INTO drill_rows (id, phase, payload) SELECT g, 'pre_target', 'r
 # The recovery target is an LSN, not a timestamp. An LSN cannot drift with the
 # container clock, and "a point between two WAL records" is exactly what it
 # names - which is the PITR runbook's happy-path requirement (P2/P3/P4).
+#
+# Flush and switch BEFORE capturing, so the target sits on a clean record
+# boundary with every pre-target row durably behind it. Capturing mid-record
+# makes the cut depend on how PostgreSQL happened to batch the next write.
+# PRE_TARGET_LSN is the position once every pre-target row is written. Recovery
+# must reach at least here (or the data is incomplete) and must not pass
+# TARGET_LSN (or post-target data leaked back in). The pair brackets a correct
+# restore exactly; a single ">= target" check cannot, because
+# recovery_target_inclusive=off deliberately stops just BELOW the target.
+PRE_TARGET_LSN="$($PSQL -c "SELECT pg_current_wal_insert_lsn();")"
+$PSQL -c "CHECKPOINT;"
+$PSQL -c "SELECT pg_switch_wal();" >/dev/null
 TARGET_LSN="$($PSQL -c "SELECT pg_current_wal_insert_lsn();")"
 PRE_TARGET_COUNT="$($PSQL -c "SELECT count(*) FROM drill_rows;")"
 PROVENANCE_COUNT="$($PSQL -c "SELECT count(*) FROM drill_provenance;")"
@@ -274,6 +286,7 @@ cat > "$OUT/../backup-sidecar.json" <<EOF
   "backup_set_id": "$RUN_ID",
   "created_at": "$NOW",
   "recovery_target_lsn": "$TARGET_LSN",
+  "pre_target_lsn": "$PRE_TARGET_LSN",
   "pre_target_row_count": $PRE_TARGET_COUNT,
   "post_target_row_count": $POST_TARGET_COUNT,
   "provenance_row_count": $PROVENANCE_COUNT,

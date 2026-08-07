@@ -51,9 +51,13 @@ mkdir -p "$work"
 tests=0
 fails=0
 
+# Scoped to THIS scenario's own project, not every lagrange-restore-* container:
+# an unrelated drill running concurrently is not evidence that this one leaked.
 running_drill_containers() {
+  local proj="$1"
+  [ -n "$proj" ] || { echo 0; return; }
   MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
-    docker ps --format '{{.Names}}' 2>/dev/null | grep -c 'lagrange-restore-' || true
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -c "^$proj-" || true
 }
 
 # scenario <name> <set-dir> <expected-assertion> [extra restore args...]
@@ -76,8 +80,10 @@ scenario() {
     ok=0; why="$why no-verdict-file"
   fi
   # No drill may survive its own failure.
-  local left; left="$(running_drill_containers)"
-  [ "$left" = "0" ] || { ok=0; why="$why left $left container(s) running"; }
+  local proj=""
+  [ -f "$vfile" ] && proj="$(sed -n 's/.*"restore_project": "\([^"]*\)".*/\1/p' "$vfile" | head -n1)"
+  local left; left="$(running_drill_containers "$proj")"
+  [ "$left" = "0" ] || { ok=0; why="$why left $left container(s) of $proj running"; }
 
   if [ "$ok" -eq 1 ]; then
     echo "PASS $name (failed_assertion=$expect)"
