@@ -14,10 +14,13 @@
 //!   Paper, and Live — never mode-specific arithmetic).
 //! - [`persistence`]: the DB-manifest seam (Todo 3); the ledger core is
 //!   deliberately DB-free.
+//! - [`paper_account`]: validates a Paper account opening (initial cash,
+//!   cost profile) and builds its opening [`ledger::LedgerState`] (Todo 30).
 
 pub mod cost;
 pub mod error;
 pub mod ledger;
+pub mod paper_account;
 pub mod persistence;
 pub mod side;
 pub mod sizing;
@@ -25,6 +28,7 @@ pub mod sizing;
 pub use cost::{CostBreakdown, CostProfile, CostProfileId};
 pub use error::PortfolioError;
 pub use ledger::{FillRecord, LedgerEffect, LedgerEvent, LedgerState, OpenOrder};
+pub use paper_account::NewPaperAccount;
 pub use persistence::{InMemoryLedgerStore, LedgerStore};
 pub use side::Side;
 pub use sizing::{

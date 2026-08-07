@@ -128,4 +128,8 @@ pub enum PortfolioError {
     /// Canonical serialization failed (never user-reachable).
     #[error("serialization failed: {detail}")]
     Serialization { detail: String },
+
+    /// A Paper account's initial cash was zero (accounts must open funded).
+    #[error("initial cash must be positive, got {amount}")]
+    NonPositiveInitialCash { amount: Money },
 }
