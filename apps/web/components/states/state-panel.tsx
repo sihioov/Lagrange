@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 
 export type StateKind = "blocked" | "empty" | "error" | "loading";
 
@@ -24,17 +24,18 @@ export type StatePanelProps = {
 };
 
 export function StatePanel({ action, kind, message, title }: StatePanelProps) {
+  const titleId = useId();
   return (
     <section
       aria-busy={kind === "loading" ? true : undefined}
-      aria-labelledby="state-panel-title"
+      aria-labelledby={titleId}
       aria-live={STATE_LIVE_REGIONS[kind]}
       className="state-panel"
       data-kind={kind}
       role={STATE_ROLES[kind]}
     >
       <span aria-hidden="true" className="state-panel-marker" />
-      <h2 id="state-panel-title">{title}</h2>
+      <h2 id={titleId}>{title}</h2>
       <p>{message}</p>
       {action === undefined ? null : <div className="state-panel-action">{action}</div>}
     </section>

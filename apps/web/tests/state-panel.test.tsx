@@ -3,6 +3,28 @@ import { describe, expect, it } from "vitest";
 import { StatePanel } from "@/components/states/state-panel";
 
 describe("application state announcements", () => {
+  it("gives each rendered panel a distinct accessible heading", () => {
+    // Given
+    const states = (
+      <>
+        <StatePanel kind="blocked" message="Creation is unavailable." title="Creation blocked" />
+        <StatePanel kind="empty" message="No history is available." title="No results" />
+      </>
+    );
+
+    // When
+    const markup = renderToStaticMarkup(states);
+    const headingIds = Array.from(markup.matchAll(/<h2 id="([^"]+)"/g), (match) => match[1]);
+    const labelledBy = Array.from(
+      markup.matchAll(/<section aria-labelledby="([^"]+)"/g),
+      (match) => match[1],
+    );
+
+    // Then
+    expect(new Set(headingIds).size).toBe(2);
+    expect(labelledBy).toEqual(headingIds);
+  });
+
   it("announces loading without interrupting the user", () => {
     // Given
     const state = (
