@@ -2,6 +2,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecommendationsPage from "@/app/(authenticated)/recommendations/page";
 import StrategiesPage from "@/app/(authenticated)/strategies/page";
+import { StrategyCatalog } from "@/components/strategies/strategy-catalog";
+import type { StrategyCatalogItem } from "@/lib/products/contracts";
+
+vi.mock("server-only", () => ({}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: () => undefined }),
+}));
 
 vi.mock("next/headers", () => ({
   cookies: async () => ({
@@ -138,6 +146,27 @@ afterEach(() => {
 });
 
 describe("strategy and recommendation product surfaces", () => {
+  it("explains retired strategy configuration without blaming entitlements", () => {
+    // Given
+    const retiredStrategy = {
+      description: "A historical strategy retained for audit evidence.",
+      display_name: "Retired momentum",
+      id: "retired_momentum",
+      latest_version: "1.0.0",
+      risk_description: "This version is no longer approved for new configurations.",
+      state: "Retired",
+    } satisfies StrategyCatalogItem;
+
+    // When
+    const markup = renderToStaticMarkup(
+      <StrategyCatalog canConfigure={true} strategies={[retiredStrategy]} />,
+    );
+
+    // Then
+    expect(markup).toContain("This strategy version is retired and cannot be configured.");
+    expect(markup).not.toContain("required data entitlement is inactive");
+  });
+
   it("renders a schema-bound strategy configuration form", async () => {
     // Given
     const page = await StrategiesPage();
