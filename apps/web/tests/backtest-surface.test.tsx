@@ -16,13 +16,11 @@ vi.mock("next/headers", () => ({
 
 const BASELINE_RUN_ID = "00000000-0000-4000-8000-000000000301";
 
-function backtestRun() {
+function backtestRun(includeDates = true) {
   return {
     benchmark: "069500.KRX",
     config_sha256: "sha256:backtest-config",
-    created_at: "2026-01-31T07:00:00Z",
     dataset_version: "krx-eod@2025-12-31",
-    end_date: "2025-12-31",
     engine: "NautilusTrader",
     engine_version: "nautilus@1.231.0",
     finished_at: "2026-01-31T07:10:00Z",
@@ -33,6 +31,7 @@ function backtestRun() {
     status: "SUCCEEDED",
     strategy_id: "dual_momentum",
     strategy_version: "2.3.1",
+    ...(includeDates ? { created_at: "2026-01-31T07:00:00Z", end_date: "2025-12-31" } : {}),
     summary: {
       cost_profile_id: "krx-default@2026-01",
       data_version: "krx-eod@2025-12-31",
@@ -47,7 +46,7 @@ function backtestRun() {
   };
 }
 
-function syntheticBacktestApi(): typeof fetch {
+function syntheticBacktestApi(run = backtestRun()): typeof fetch {
   return async (input, init) => {
     const request = new Request(input, init);
     const { pathname } = new URL(request.url);
@@ -67,7 +66,7 @@ function syntheticBacktestApi(): typeof fetch {
       });
     }
     if (pathname === "/api/v1/backtests") {
-      return Response.json({ has_more: false, items: [backtestRun()], next_cursor: null });
+      return Response.json({ has_more: false, items: [run], next_cursor: null });
     }
     if (pathname === `/api/v1/backtests/${BASELINE_RUN_ID}/metrics`) {
       return Response.json({
@@ -147,6 +146,19 @@ afterEach(() => {
 });
 
 describe("backtest product surface", () => {
+  it("reports missing as-of metadata instead of inventing a date", async () => {
+    // Given
+    vi.stubGlobal("fetch", syntheticBacktestApi(backtestRun(false)));
+
+    // When
+    const page = await BacktestsPage();
+    const markup = renderToStaticMarkup(page);
+
+    // Then
+    expect(markup).toContain("As of Not reported");
+    expect(markup).not.toContain("Jan 1, 2026");
+  });
+
   it("renders server-produced results, provenance, and robustness controls", async () => {
     // Given
     const page = await BacktestsPage();

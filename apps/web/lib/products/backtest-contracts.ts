@@ -102,16 +102,12 @@ export const backtestPageSchema = z
   })
   .strict();
 
-export const metricSchema = z
-  .object({ metric_key: z.string(), metric_value: z.string() })
-  .strict();
+export const metricSchema = z.object({ metric_key: z.string(), metric_value: z.string() }).strict();
 
 export const backtestMetricsSchema = z.object({ items: z.array(metricSchema) }).strict();
 export type BacktestMetricsModel = z.infer<typeof backtestMetricsSchema>;
 
-const seriesPointSchema = z
-  .object({ date: z.iso.date(), value: z.string() })
-  .strict();
+const seriesPointSchema = z.object({ date: z.iso.date(), value: z.string() }).strict();
 const monthlyReturnSchema = z
   .object({ month: z.string().regex(/^\d{4}-\d{2}$/), value: z.string() })
   .strict();
@@ -179,7 +175,7 @@ export type BacktestTradesModel = z.infer<typeof backtestTradesSchema>;
 
 export const backtestCompareSchema = z
   .object({
-    deltas: z.record(z.string(), z.string()),
+    deltas: z.object({ total_return: z.string() }).catchall(z.string()),
     run_ids: z.array(z.uuid()).min(2),
     runs: z.array(
       z

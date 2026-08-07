@@ -4,10 +4,10 @@ import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseApiResponse } from "@/lib/api/response";
 import {
-  backtestCompareSchema,
-  backtestRunLabel,
   type BacktestCompareModel,
   type BacktestRunModel,
+  backtestCompareSchema,
+  backtestRunLabel,
 } from "@/lib/products/backtest-contracts";
 import { formatPercentage } from "@/lib/products/format";
 
@@ -68,8 +68,14 @@ export function BacktestComparison({ runs }: BacktestComparisonProps) {
             ))}
           </div>
         </fieldset>
-        <button className="secondary-action" type="submit">Compare selected runs</button>
-        {message === "" ? null : <p className="form-result" role="alert">{message}</p>}
+        <button className="secondary-action" type="submit">
+          Compare selected runs
+        </button>
+        {message === "" ? null : (
+          <p className="form-result" role="alert">
+            {message}
+          </p>
+        )}
       </form>
       {comparison === null ? null : (
         <section aria-labelledby="comparison-result-title" className="report-section">
@@ -77,7 +83,7 @@ export function BacktestComparison({ runs }: BacktestComparisonProps) {
           <dl className="provenance-grid">
             <div>
               <dt>Total return delta</dt>
-              <dd>{formatPercentage(comparison.deltas["total_return"] ?? "0")}</dd>
+              <dd>{formatPercentage(comparison.deltas.total_return)}</dd>
             </div>
           </dl>
         </section>
