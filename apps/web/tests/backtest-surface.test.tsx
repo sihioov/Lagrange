@@ -34,8 +34,13 @@ function backtestRun() {
     strategy_id: "dual_momentum",
     strategy_version: "2.3.1",
     summary: {
+      cost_profile_id: "krx-default@2026-01",
       data_version: "krx-eod@2025-12-31",
+      dataset_version_id: "00000000-0000-4000-8000-000000000601",
       engine_version: "nautilus@1.231.0",
+      execution_profile: "daily-close-next-open@1",
+      run_label: "Dual momentum baseline",
+      strategy_config_id: "00000000-0000-4000-8000-000000000101",
       strategy_version: "dual_momentum@2.3.1",
       warnings: ["Next-open execution can differ from close-to-close benchmarks."],
     },
