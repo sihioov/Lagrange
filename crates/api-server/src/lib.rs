@@ -26,6 +26,7 @@ pub mod actor_tx;
 pub mod contract;
 pub mod error;
 pub mod http;
+pub mod notify;
 pub mod repos;
 
 pub use error::{TenancyError, TenancyResult};

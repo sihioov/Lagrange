@@ -133,6 +133,10 @@ impl ApiState {
         AuditWriter::new(self.audit_pool.clone())
     }
 
+    pub fn notifier(&self) -> crate::notify::Notifier {
+        crate::notify::Notifier::new(self.app_pool.clone(), self.admin_pool.clone())
+    }
+
     /// A job-queue client whose statements run under the actor's RLS context.
     /// The queue opens its own transactions, so the actor GUC rides in via
     /// per-actor connection pools (the documented T23 P1 wiring); pools are

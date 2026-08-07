@@ -306,6 +306,54 @@ pub struct SessionDto {
 }
 
 // ---------------------------------------------------------------------------
+// Notifications / alerts
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NotificationDto {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SubscriptionDto {
+    pub kind: String,
+    pub channel: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeliveryOutcomeDto {
+    pub notification_id: String,
+    pub channel: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TestNotificationResult {
+    pub notifications: Vec<String>,
+    pub deliveries: Vec<DeliveryOutcomeDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminDeliveryDto {
+    pub notification_id: String,
+    pub owner_user_id: String,
+    pub channel: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_detail: Option<String>,
+    pub attempted_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
 // Request bodies (deny_unknown_fields => typed 400 INVALID_PARAMETER)
 // ---------------------------------------------------------------------------
 
@@ -372,6 +420,24 @@ pub struct NewAccountBody {
 #[serde(deny_unknown_fields)]
 pub struct BindStrategyBody {
     pub strategy_config_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubscriptionBody {
+    pub kind: String,
+    pub channel: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestNotificationBody {
+    pub severity: String,
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub body: String,
 }
 
 // ---------------------------------------------------------------------------

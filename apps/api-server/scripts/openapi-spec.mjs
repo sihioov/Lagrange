@@ -54,6 +54,12 @@ const ROUTES = [
   ["GET", "/api/v1/admin/workers", { owner: true, audit: true }],
   ["GET", "/api/v1/admin/users", { owner: true, audit: true }],
   ["GET", "/api/v1/admin/audit-logs", { owner: true, audit: true }],
+  ["GET", "/api/v1/admin/notifications/deliveries", { owner: true, audit: true }],
+  // notifications
+  ["GET", "/api/v1/notifications", {}],
+  ["GET", "/api/v1/notifications/subscriptions", {}],
+  ["PUT", "/api/v1/notifications/subscriptions", { mutating: true, idem: true, audit: true }],
+  ["POST", "/api/v1/notifications/test", { mutating: true, idem: true, audit: true }],
   // Live (Phase 3, Owner-only)
   ["POST", "/api/v1/admin/live/connections", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
   ["POST", "/api/v1/admin/live/nodes/{node_id}/start", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],

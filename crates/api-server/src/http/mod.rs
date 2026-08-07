@@ -11,6 +11,7 @@ pub mod error;
 pub mod idempotency;
 pub mod licensing;
 pub mod middleware;
+pub mod notifications;
 pub mod pagination;
 pub mod paper;
 pub mod recommendations;
@@ -279,6 +280,24 @@ pub fn api_router(state: ApiState) -> Router {
         .route("/admin/workers", get(admin::list_workers))
         .route("/admin/users", get(admin::list_users))
         .route("/admin/audit-logs", get(admin::list_audit_logs))
+        .route(
+            "/admin/notifications/deliveries",
+            get(notifications::list_deliveries),
+        )
+        // notifications
+        .route("/notifications", get(notifications::list))
+        .route(
+            "/notifications/subscriptions",
+            get(notifications::list_subscriptions),
+        )
+        .route(
+            "/notifications/subscriptions",
+            axum::routing::put(notifications::upsert_subscription),
+        )
+        .route(
+            "/notifications/test",
+            post(notifications::test_notification),
+        )
         // live (Phase 3)
         .route("/admin/live/connections", post(admin::live_not_available))
         .route(

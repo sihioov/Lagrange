@@ -562,6 +562,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/notifications/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/admin/notifications/deliveries */
+        get: operations["get__api_v1_admin_notifications_deliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/notifications */
+        get: operations["get__api_v1_notifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/notifications/subscriptions */
+        get: operations["get__api_v1_notifications_subscriptions"];
+        /** PUT /api/v1/notifications/subscriptions */
+        put: operations["put__api_v1_notifications_subscriptions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/notifications/test */
+        post: operations["post__api_v1_notifications_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/live/connections": {
         parameters: {
             query?: never;
@@ -1993,6 +2062,119 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_admin_notifications_deliveries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_notifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_notifications_subscriptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    put__api_v1_notifications_subscriptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmptyBody"];
+            };
+        };
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    post__api_v1_notifications_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmptyBody"];
+            };
+        };
         responses: {
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
