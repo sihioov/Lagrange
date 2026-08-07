@@ -1,9 +1,9 @@
 import { ReportFooter } from "@/components/reports/report-footer";
 import { StatusPill } from "@/components/states/status-pill";
 import {
-  recommendationProvenance,
   type RecommendationItemModel,
   type RecommendationRunModel,
+  recommendationProvenance,
 } from "@/lib/products/contracts";
 import { formatDate, formatDecimal, formatPercentage } from "@/lib/products/format";
 
@@ -65,13 +65,20 @@ export function RecommendationReport({ licenseState, run }: RecommendationReport
           <p>Strategy-based proposal, not investment advice. Review warnings and the as-of date.</p>
         </div>
         <div className="status-cluster">
-          <StatusPill label={run.status} tone={run.status === "SUCCEEDED" ? "success" : "warning"} />
+          <StatusPill
+            label={run.status}
+            tone={run.status === "SUCCEEDED" ? "success" : "warning"}
+          />
           <span>As of {formatDate(run.as_of)}</span>
         </div>
       </header>
       {provenance.warnings.length === 0 ? null : (
         <aside aria-label="Recommendation warnings" className="warning-strip" role="status">
-          <strong>{provenance.warnings.some((warning) => warning.startsWith("Stale result")) ? "Stale result" : "Warnings"}</strong>
+          <strong>
+            {provenance.warnings.some((warning) => warning.startsWith("Stale result"))
+              ? "Stale result"
+              : "Warnings"}
+          </strong>
           <ul>
             {provenance.warnings.map((warning) => (
               <li key={warning}>{warning}</li>
@@ -98,9 +105,17 @@ export function RecommendationReport({ licenseState, run }: RecommendationReport
                 <tr key={item.instrument_id}>
                   <td>{item.rank ?? "—"}</td>
                   <th scope="row">{item.instrument_id}</th>
-                  <td>{item.target_weight === null || item.target_weight === undefined ? "—" : formatPercentage(item.target_weight)}</td>
-                  <td><ScoreList item={item} /></td>
-                  <td><ReasonList item={item} /></td>
+                  <td>
+                    {item.target_weight === null || item.target_weight === undefined
+                      ? "—"
+                      : formatPercentage(item.target_weight)}
+                  </td>
+                  <td>
+                    <ScoreList item={item} />
+                  </td>
+                  <td>
+                    <ReasonList item={item} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -115,13 +130,21 @@ export function RecommendationReport({ licenseState, run }: RecommendationReport
           <div className="data-table-wrap">
             <table>
               <caption>Excluded instruments and policy reasons</caption>
-              <thead><tr><th scope="col">Instrument</th><th scope="col">Reason</th><th scope="col">Evidence</th></tr></thead>
+              <thead>
+                <tr>
+                  <th scope="col">Instrument</th>
+                  <th scope="col">Reason</th>
+                  <th scope="col">Evidence</th>
+                </tr>
+              </thead>
               <tbody>
                 {excluded.map((item) => (
                   <tr key={item.instrument_id}>
                     <th scope="row">{item.instrument_id}</th>
                     <td>{item.exclusion_reason ?? "No exclusion reason was reported."}</td>
-                    <td><ReasonList item={item} /></td>
+                    <td>
+                      <ReasonList item={item} />
+                    </td>
                   </tr>
                 ))}
               </tbody>

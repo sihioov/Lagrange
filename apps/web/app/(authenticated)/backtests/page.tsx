@@ -8,11 +8,8 @@ import { RoutePage } from "@/components/pages/route-page";
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
-import {
-  backtestCreationDefaults,
-  type BacktestRunModel,
-} from "@/lib/products/backtest-contracts";
-import { permitsUse, type LicensingStatusModel } from "@/lib/products/contracts";
+import { type BacktestRunModel, backtestCreationDefaults } from "@/lib/products/backtest-contracts";
+import { type LicensingStatusModel, permitsUse } from "@/lib/products/contracts";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -41,7 +38,9 @@ function blockedPage(message: string) {
 }
 
 function backtestLicenseState(status: LicensingStatusModel): string {
-  return status.datasets.find((dataset) => dataset.use_kind === "backtest")?.state ?? "NOT REPORTED";
+  return (
+    status.datasets.find((dataset) => dataset.use_kind === "backtest")?.state ?? "NOT REPORTED"
+  );
 }
 
 function firstByStatus(runs: readonly BacktestRunModel[], status: BacktestRunModel["status"]) {

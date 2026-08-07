@@ -97,7 +97,8 @@ export function BacktestCreateForm(props: BacktestCreateFormProps) {
         </label>
       </div>
       <p className="supporting-copy">
-        The server applies {props.executionProfile}, {props.costProfileId}, and benchmark {props.benchmark}.
+        The server applies {props.executionProfile}, {props.costProfileId}, and benchmark{" "}
+        {props.benchmark}.
       </p>
       <button className="primary-action" disabled={state.kind === "submitting"} type="submit">
         {state.kind === "submitting" ? "Creating backtest" : "Create backtest"}

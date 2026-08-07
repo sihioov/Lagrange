@@ -1,24 +1,24 @@
 import type { KyInstance } from "ky";
 import type { z } from "zod";
 import {
+  type BacktestReportModel,
+  type BacktestRunModel,
   backtestEquitySchema,
   backtestMetricsSchema,
   backtestPageSchema,
   backtestProvenance,
   backtestTradesSchema,
-  type BacktestReportModel,
-  type BacktestRunModel,
 } from "@/lib/products/backtest-contracts";
 import {
+  type LicensingStatusModel,
   latestRecommendationSchema,
   licensingStatusSchema,
-  pageSchema,
-  recommendationRunSchema,
-  strategySchema,
-  type LicensingStatusModel,
   type PageResult,
+  pageSchema,
   type RecommendationRunModel,
+  recommendationRunSchema,
   type StrategyCatalogItem,
+  strategySchema,
 } from "@/lib/products/contracts";
 import { parseApiResponse } from "./response";
 import { createServerTransport, type ServerApiClientOptions } from "./server-client";
@@ -50,21 +50,9 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
     getBacktestReport: async (run) => {
       const encodedRunId = encodeURIComponent(run.id);
       const [metrics, equity, trades] = await Promise.all([
-        getParsed(
-          client,
-          `/api/v1/backtests/${encodedRunId}/metrics`,
-          backtestMetricsSchema,
-        ),
-        getParsed(
-          client,
-          `/api/v1/backtests/${encodedRunId}/equity`,
-          backtestEquitySchema,
-        ),
-        getParsed(
-          client,
-          `/api/v1/backtests/${encodedRunId}/trades`,
-          backtestTradesSchema,
-        ),
+        getParsed(client, `/api/v1/backtests/${encodedRunId}/metrics`, backtestMetricsSchema),
+        getParsed(client, `/api/v1/backtests/${encodedRunId}/equity`, backtestEquitySchema),
+        getParsed(client, `/api/v1/backtests/${encodedRunId}/trades`, backtestTradesSchema),
       ]);
       return { equity, metrics, provenance: backtestProvenance(run), run, trades };
     },
@@ -77,8 +65,7 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
       );
       return envelope.run;
     },
-    getLicensingStatus: () =>
-      getParsed(client, "/api/v1/licensing-status", licensingStatusSchema),
+    getLicensingStatus: () => getParsed(client, "/api/v1/licensing-status", licensingStatusSchema),
     getRecommendationRuns: () =>
       getParsed(client, "/api/v1/recommendations/runs", recommendationPageSchema),
     getStrategies: () => getParsed(client, "/api/v1/strategies", strategyPageSchema),

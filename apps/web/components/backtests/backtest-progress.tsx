@@ -4,9 +4,9 @@ import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseApiResponse } from "@/lib/api/response";
 import {
+  type BacktestRunModel,
   backtestProgress,
   cancelBacktestSchema,
-  type BacktestRunModel,
 } from "@/lib/products/backtest-contracts";
 
 export type BacktestProgressProps = {
@@ -48,10 +48,19 @@ export function BacktestProgress({ run }: BacktestProgressProps) {
         <strong>{run.status}</strong>
       </div>
       <p>{progress === null ? "Progress not reported" : `${progress}% complete`}</p>
-      <button className="secondary-action" disabled={submitting} onClick={() => void cancel()} type="button">
+      <button
+        className="secondary-action"
+        disabled={submitting}
+        onClick={() => void cancel()}
+        type="button"
+      >
         {submitting ? "Requesting cancellation" : "Cancel backtest"}
       </button>
-      {message === "" ? null : <p className="form-result" role="status">{message}</p>}
+      {message === "" ? null : (
+        <p className="form-result" role="status">
+          {message}
+        </p>
+      )}
     </section>
   );
 }

@@ -35,10 +35,19 @@ export function RobustnessControl({ runId }: RobustnessControlProps) {
 
   return (
     <div className="workflow-form">
-      <button className="secondary-action" disabled={submitting} onClick={() => void queue()} type="button">
+      <button
+        className="secondary-action"
+        disabled={submitting}
+        onClick={() => void queue()}
+        type="button"
+      >
         {submitting ? "Queueing robustness evidence" : "Run robustness evidence"}
       </button>
-      {message === "" ? null : <p className="form-result" role="status">{message}</p>}
+      {message === "" ? null : (
+        <p className="form-result" role="status">
+          {message}
+        </p>
+      )}
     </div>
   );
 }

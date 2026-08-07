@@ -47,16 +47,14 @@ function grouped(integer: string): string {
   return integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-export function formatDecimal(
-  value: string,
-  fractionDigits = 2,
-  useGrouping = false,
-): string {
+export function formatDecimal(value: string, fractionDigits = 2, useGrouping = false): string {
   if (!Number.isInteger(fractionDigits) || fractionDigits < 0 || fractionDigits > 12) {
     throw new DecimalFormatError("fractionDigits must be an integer between 0 and 12");
   }
   const parsed = parseDecimal(value);
-  const digits = scaledValue(parsed, fractionDigits).toString().padStart(fractionDigits + 1, "0");
+  const digits = scaledValue(parsed, fractionDigits)
+    .toString()
+    .padStart(fractionDigits + 1, "0");
   const integer = fractionDigits === 0 ? digits : digits.slice(0, -fractionDigits);
   const fraction = fractionDigits === 0 ? "" : `.${digits.slice(-fractionDigits)}`;
   const sign = parsed.negative && parsed.unscaled !== 0n ? "−" : "";
@@ -77,7 +75,10 @@ export function formatPercentage(value: string, fractionDigits = 2): string {
       : `${percentage.negative ? "-" : ""}${percentage.unscaled
           .toString()
           .padStart(scale + 1, "0")
-          .slice(0, -scale)}.${percentage.unscaled.toString().padStart(scale + 1, "0").slice(-scale)}`;
+          .slice(0, -scale)}.${percentage.unscaled
+          .toString()
+          .padStart(scale + 1, "0")
+          .slice(-scale)}`;
   return `${formatDecimal(decimal, fractionDigits)}%`;
 }
 
