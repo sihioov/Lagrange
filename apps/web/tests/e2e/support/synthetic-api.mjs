@@ -9,8 +9,21 @@ const defaultScenario = Object.freeze({
   exclusions: "present",
   recommendation: "fresh",
   tradePagination: "normal",
+  user: "u1",
+  role: "member",
 });
 let scenario = { ...defaultScenario };
+
+// Five invited identities: u1..u5 map to deterministic distinct user ids.
+function userIndex(scenario) {
+  const match = /^u(\d)$/.exec(scenario.user ?? "u1");
+  return match ? Number(match[1]) : 1;
+}
+
+function userIdFor(scenario) {
+  const idx = userIndex(scenario);
+  return `00000000-0000-4000-8000-${"00000000000"}${idx}`;
+}
 
 function json(response, status, body) {
   response.writeHead(status, {
@@ -64,8 +77,8 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname === "/api/v1/auth/session") {
     json(response, 200, {
       expires_at_secs: 2_000_000_000,
-      role: "member",
-      user_id: "00000000-0000-4000-8000-000000000002",
+      role: scenario.role === "owner" ? "owner" : "member",
+      user_id: userIdFor(scenario),
     });
     return;
   }

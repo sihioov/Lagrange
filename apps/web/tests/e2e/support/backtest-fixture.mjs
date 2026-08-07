@@ -4,6 +4,23 @@ const HIGH_COST_RUN_ID = "00000000-0000-4000-8000-000000000303";
 const FAILED_RUN_ID = "00000000-0000-4000-8000-000000000304";
 const CANCELED_RUN_ID = "00000000-0000-4000-8000-000000000305";
 
+// u1 keeps the canonical ids; every other invited identity gets its own set so
+// per-user isolation is visible in the rendered history table. The identity is
+// stamped one digit above the trailing run number, which keeps remapped ids out
+// of the artifact and job id blocks that also live in this namespace.
+function userIndex(scenario) {
+  const match = /^u(\d)$/.exec(scenario.user ?? "u1");
+  return match ? Number(match[1]) : 1;
+}
+
+function idFor(scenario, baseId) {
+  const idx = userIndex(scenario);
+  if (idx === 1) {
+    return baseId;
+  }
+  return `${baseId.slice(0, -4)}${idx}${baseId.slice(-3)}`;
+}
+
 function provenance(warnings = []) {
   return {
     data_version: "krx-eod@2025-12-31",
@@ -58,18 +75,39 @@ const higherCosts = run(HIGH_COST_RUN_ID, "SUCCEEDED", "Dual momentum higher cos
 function runsFor(scenario) {
   if (scenario.backtest === "failed-canceled") {
     return [
-      run(FAILED_RUN_ID, "FAILED", "Failed validation run", {
+      run(idFor(scenario, FAILED_RUN_ID), "FAILED", "Failed validation run", {
         failure_reason: "Worker exited before producing a verified result.",
       }),
-      run(CANCELED_RUN_ID, "CANCELED", "Canceled member run"),
-      baseline,
-      higherCosts,
+      run(idFor(scenario, CANCELED_RUN_ID), "CANCELED", "Canceled member run"),
+      run(idFor(scenario, BASELINE_RUN_ID), "SUCCEEDED", "Dual momentum baseline", {
+        robustness_evidence: {
+          cost_stress: "Stable through the adverse cost profile.",
+          parameter_sensitivity:
+            "Neighboring lookbacks remain within the approved dispersion band.",
+          validation_periods: "Concentrated in three trades; inspect the holdout contribution.",
+        },
+        warnings: ["Next-open execution can differ from close-to-close benchmarks."],
+      }),
+      run(idFor(scenario, HIGH_COST_RUN_ID), "SUCCEEDED", "Dual momentum higher costs", {
+        warnings: ["Higher costs reduce the server-reported total return."],
+      }),
     ];
   }
   return [
-    run(RUNNING_RUN_ID, "RUNNING", "Backtest progress", { progress_percent: "65" }),
-    baseline,
-    higherCosts,
+    run(idFor(scenario, RUNNING_RUN_ID), "RUNNING", "Backtest progress", {
+      progress_percent: "65",
+    }),
+    run(idFor(scenario, BASELINE_RUN_ID), "SUCCEEDED", "Dual momentum baseline", {
+      robustness_evidence: {
+        cost_stress: "Stable through the adverse cost profile.",
+        parameter_sensitivity: "Neighboring lookbacks remain within the approved dispersion band.",
+        validation_periods: "Concentrated in three trades; inspect the holdout contribution.",
+      },
+      warnings: ["Next-open execution can differ from close-to-close benchmarks."],
+    }),
+    run(idFor(scenario, HIGH_COST_RUN_ID), "SUCCEEDED", "Dual momentum higher costs", {
+      warnings: ["Higher costs reduce the server-reported total return."],
+    }),
   ];
 }
 
@@ -98,6 +136,8 @@ function trades(scenario) {
 
 export function backtestResponse(request) {
   const { body, headers, method, pathname, scenario } = request;
+  const baselineId = idFor(scenario, BASELINE_RUN_ID);
+  const runningId = idFor(scenario, RUNNING_RUN_ID);
   if (scenario.entitlement === "blocked" && pathname.startsWith("/api/v1/backtests")) {
     return error(403, "DATA_ENTITLEMENT_REQUIRED", "backtest entitlement is inactive");
   }
@@ -112,16 +152,20 @@ export function backtestResponse(request) {
       return error(403, "CSRF_DENIED", "CSRF and idempotency headers are required");
     }
     return {
-      body: run("00000000-0000-4000-8000-000000000306", "PENDING", "New member run"),
+      body: run(
+        idFor(scenario, "00000000-0000-4000-8000-000000000306"),
+        "PENDING",
+        "New member run",
+      ),
       status: 201,
     };
   }
-  if (method === "POST" && pathname === `/api/v1/backtests/${RUNNING_RUN_ID}/cancel`) {
+  if (method === "POST" && pathname === `/api/v1/backtests/${runningId}/cancel`) {
     return mutationAuthorized(headers)
       ? {
           body: {
             job_id: "00000000-0000-4000-8000-000000000402",
-            run_id: RUNNING_RUN_ID,
+            run_id: runningId,
             status: "CANCEL_REQUESTED",
           },
           status: 202,
@@ -145,19 +189,19 @@ export function backtestResponse(request) {
         }
       : error(403, "CSRF_DENIED", "CSRF and idempotency headers are required");
   }
-  if (method === "POST" && pathname === `/api/v1/backtests/${BASELINE_RUN_ID}/robustness`) {
+  if (method === "POST" && pathname === `/api/v1/backtests/${baselineId}/robustness`) {
     return mutationAuthorized(headers)
       ? {
           body: {
             job_id: "00000000-0000-4000-8000-000000000499",
-            run_id: BASELINE_RUN_ID,
+            run_id: baselineId,
             status: "QUEUED",
           },
           status: 202,
         }
       : error(403, "CSRF_DENIED", "CSRF and idempotency headers are required");
   }
-  if (method === "GET" && pathname === `/api/v1/backtests/${BASELINE_RUN_ID}/metrics`) {
+  if (method === "GET" && pathname === `/api/v1/backtests/${baselineId}/metrics`) {
     return {
       body: {
         items: [
@@ -169,15 +213,15 @@ export function backtestResponse(request) {
       status: 200,
     };
   }
-  if (method === "GET" && pathname === `/api/v1/backtests/${BASELINE_RUN_ID}/equity`) {
+  if (method === "GET" && pathname === `/api/v1/backtests/${baselineId}/equity`) {
     return {
       body: {
         artifact: {
           artifact_type: "EQUITY_CURVE",
-          download_path: `/api/v1/artifacts/${BASELINE_RUN_ID}/download`,
+          download_path: `/api/v1/artifacts/${baselineId}/download`,
           id: "00000000-0000-4000-8000-000000000501",
           row_count: 2,
-          run_id: BASELINE_RUN_ID,
+          run_id: baselineId,
           sha256: "sha256:equity",
           size_bytes: 256,
         },
@@ -200,7 +244,7 @@ export function backtestResponse(request) {
       status: 200,
     };
   }
-  if (method === "GET" && pathname === `/api/v1/backtests/${BASELINE_RUN_ID}/trades`) {
+  if (method === "GET" && pathname === `/api/v1/backtests/${baselineId}/trades`) {
     const items = trades(scenario);
     return {
       body: { has_more: false, items, next_cursor: null, total_count: items.length },

@@ -1,6 +1,16 @@
 const CONFIG_ID = "00000000-0000-4000-8000-000000000101";
 const RUN_ID = "00000000-0000-4000-8000-000000000201";
 
+// u1 keeps the canonical ids; each invited identity gets its own run id so
+// per-user isolation is visible in the rendered history table. Identity is
+// stamped one digit above the trailing run number, matching the backtest
+// fixture so neither remapping walks into the other's id block.
+function runIdFor(scenario) {
+  const match = /^u(\d)$/.exec(scenario.user ?? "u1");
+  const idx = match ? Number(match[1]) : 1;
+  return idx === 1 ? RUN_ID : `${RUN_ID.slice(0, -4)}${idx}${RUN_ID.slice(-3)}`;
+}
+
 const strategy = Object.freeze({
   description: "Ranks the governed universe with absolute and relative momentum.",
   display_name: "Dual momentum",
@@ -66,7 +76,7 @@ function recommendationRun(scenario, includeItems) {
   return {
     as_of: "2026-01-31",
     created_at: "2026-01-31T06:30:00Z",
-    id: RUN_ID,
+    id: runIdFor(scenario),
     items: includeItems ? recommendationItems(scenario.exclusions) : undefined,
     status: "SUCCEEDED",
     strategy_config_id: CONFIG_ID,
