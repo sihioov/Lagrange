@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-const appOrigin = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:33000";
+const appOrigin = process.env["PLAYWRIGHT_BASE_URL"] ?? "http://127.0.0.1:33000";
 
 export default defineConfig({
   expect: {
