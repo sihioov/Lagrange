@@ -48,6 +48,14 @@ data/phase0/
 tests/golden/phase0/outputs/summary.json
 *.parquet
 
+# Generated test/agent-tooling artifacts
+test-results/
+**/test-results/
+*.tsbuildinfo
+.playwright-mcp/
+.omc/
+!.omc/skills/
+
 # Editor / OS
 .vscode/
 .idea/

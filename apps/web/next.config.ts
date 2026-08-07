@@ -9,6 +9,10 @@ function apiOrigin(): string {
 }
 
 const nextConfig: NextConfig = {
+  // `next dev` serves /_next/static chunks only to origins it recognises. The
+  // e2e lane drives the app over the loopback literal, so without this the
+  // client bundle is refused and nothing ever hydrates.
+  allowedDevOrigins: ["127.0.0.1"],
   async rewrites() {
     return [
       {
