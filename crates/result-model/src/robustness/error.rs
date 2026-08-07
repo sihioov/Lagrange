@@ -73,4 +73,16 @@ pub enum RobustnessError {
         need: usize,
         have: usize,
     },
+
+    /// A robustness suite requested more children than the bounded-fan-out
+    /// limit allows (plan Todo 29: parameter-grid limits). Rejected before
+    /// any lineage row is registered — never a silently truncated grid.
+    #[error("suite grid of {requested} children exceeds the maximum of {max}")]
+    GridTooLarge { requested: usize, max: usize },
+
+    /// Promotion evidence was assembled from a suite that has not FULLY
+    /// succeeded (plan Todo 29: "promotion refusal without all required
+    /// evidence"). Evidence must be complete, never partial.
+    #[error("suite evidence is incomplete: {have} of {expected} children succeeded")]
+    IncompleteSuite { expected: usize, have: usize },
 }

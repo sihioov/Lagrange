@@ -23,6 +23,10 @@
 //! - [`gate`] — the Phase 1 core golden gate (golden artifacts for the five
 //!   strategies + AT-03/04/05/06 core evidence; rejects unapproved golden
 //!   deltas and non-finite values).
+//! - [`suite`] — bounded robustness-suite planning: parameter-grid limits,
+//!   one-axis-per-child construction, holdout enforcement against every
+//!   planned child, and promotion-evidence assembly that refuses on any
+//!   incomplete suite (plan Todo 29).
 
 pub mod benchmark;
 pub mod comparison;
@@ -36,6 +40,7 @@ pub mod missing;
 pub mod replay;
 pub mod split;
 pub mod stability;
+pub mod suite;
 pub mod warnings;
 
 pub use benchmark::{BenchmarkComparison, compare_benchmark};
@@ -51,7 +56,9 @@ pub use gate::{
     evaluate_core_release_json, load_golden_set,
 };
 pub use holdout::{HoldoutBarrier, PeriodSplit, SplitResult, select_equity_series};
-pub use lineage::{DerivedAxis, DerivedRunRequest, LineageRegistry, PinnedContext, RunLineage};
+pub use lineage::{
+    DerivedAxis, DerivedRunRequest, LineageRegistry, PinnedContext, RunLineage, check_pin_match,
+};
 pub use missing::{
     ExclusionRecord, MissingDataOutcome, MissingDataPolicy, MissingInstrument,
     apply_missing_data_policy, enforce_missing_data_policy,
@@ -63,6 +70,10 @@ pub use split::{
 };
 pub use stability::{
     StabilityComponent, StabilityEvidence, StabilityScore, analyze_stability, approve_investment,
+};
+pub use suite::{
+    EvidenceManifests, MAX_SUITE_CHILDREN, PlannedChild, SuiteChildOutcome, SuiteEvidenceBundle,
+    SuitePlan, SuitePlanItem, SuiteRequest, assemble_evidence_bundle, plan_suite,
 };
 pub use warnings::{
     NeighborhoodAnalysis, NeighborhoodPoint, analyze_neighborhood, recent_degradation_warning,

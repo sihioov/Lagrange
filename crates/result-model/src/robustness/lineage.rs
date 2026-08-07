@@ -139,6 +139,44 @@ pub struct DerivedRunRequest {
     pub derived_provenance: RunProvenance,
 }
 
+/// Checks that `derived` pins every field of `parent` (design §9.5). Shared
+/// by [`LineageRegistry::register_derived`] and suite planning (`suite.rs`)
+/// so both reject a mismatch with the same field-precise error.
+pub fn check_pin_match(
+    parent: &PinnedContext,
+    derived: &PinnedContext,
+) -> Result<(), RobustnessError> {
+    let pin_checks: [(&'static str, &str, &str); 5] = [
+        ("strategy_id", &parent.strategy_id, &derived.strategy_id),
+        (
+            "strategy_version",
+            &parent.strategy_version,
+            &derived.strategy_version,
+        ),
+        (
+            "dataset_version",
+            &parent.dataset_version,
+            &derived.dataset_version,
+        ),
+        ("engine", &parent.engine, &derived.engine),
+        (
+            "engine_version",
+            &parent.engine_version,
+            &derived.engine_version,
+        ),
+    ];
+    for (field, parent_value, derived_value) in pin_checks {
+        if parent_value != derived_value {
+            return Err(RobustnessError::PinMismatch {
+                field,
+                parent: parent_value.to_owned(),
+                derived: derived_value.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// In-memory lineage registry with deterministic, idempotent registration.
 #[derive(Debug, Clone, Default)]
 pub struct LineageRegistry {
@@ -171,39 +209,7 @@ impl LineageRegistry {
             .expect("exactly one axis was validated");
         let parent_pinned = PinnedContext::from_provenance(&request.parent);
         let pinned = PinnedContext::from_provenance(&request.derived_provenance);
-
-        let pin_checks: [(&'static str, &str, &str); 5] = [
-            (
-                "strategy_id",
-                &parent_pinned.strategy_id,
-                &pinned.strategy_id,
-            ),
-            (
-                "strategy_version",
-                &parent_pinned.strategy_version,
-                &pinned.strategy_version,
-            ),
-            (
-                "dataset_version",
-                &parent_pinned.dataset_version,
-                &pinned.dataset_version,
-            ),
-            ("engine", &parent_pinned.engine, &pinned.engine),
-            (
-                "engine_version",
-                &parent_pinned.engine_version,
-                &pinned.engine_version,
-            ),
-        ];
-        for (field, parent_value, derived_value) in pin_checks {
-            if parent_value != derived_value {
-                return Err(RobustnessError::PinMismatch {
-                    field,
-                    parent: parent_value.to_owned(),
-                    derived: derived_value.to_owned(),
-                });
-            }
-        }
+        check_pin_match(&parent_pinned, &pinned)?;
 
         let run_id = Uuid::new_v5(
             &LINEAGE_NAMESPACE,
