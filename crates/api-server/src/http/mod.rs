@@ -287,6 +287,12 @@ pub fn api_router(state: ApiState) -> Router {
             get(paper::positions),
         )
         .route("/paper/accounts/{account_id}/equity", get(paper::equity))
+        .route(
+            "/paper/accounts/{account_id}/performance",
+            get(paper::performance),
+        )
+        .route("/paper/accounts/{account_id}/lineage", get(paper::lineage))
+        .route("/paper/accounts/{account_id}/parity", get(paper::parity))
         // admin
         .route("/admin/datasets", get(admin::list_datasets))
         .route(

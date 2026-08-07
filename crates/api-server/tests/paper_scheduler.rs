@@ -84,6 +84,7 @@ fn new_target(account: &str, config: &str, computed: &str, effective: &str) -> N
         computed_on: date(computed),
         effective_date: date(effective),
         targets_json: targets_json(),
+        dataset_version: Some("krx_eod_bars@2026-01-01".to_owned()),
     }
 }
 

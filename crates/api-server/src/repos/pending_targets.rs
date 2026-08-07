@@ -24,6 +24,10 @@ pub struct PendingTargetRow {
     pub computed_on: NaiveDate,
     pub effective_date: NaiveDate,
     pub targets_json: serde_json::Value,
+    /// The dataset the target was computed from; NULL means unknown and a
+    /// parity report degrades to NOT_COMPARABLE rather than claiming
+    /// comparability it cannot prove.
+    pub dataset_version: Option<String>,
     pub status: String,
     pub executed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -37,6 +41,7 @@ pub struct NewPendingTarget {
     pub computed_on: NaiveDate,
     pub effective_date: NaiveDate,
     pub targets_json: serde_json::Value,
+    pub dataset_version: Option<String>,
 }
 
 /// Typed repository over `pending_targets`.
@@ -62,11 +67,12 @@ impl PendingTargetRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let row = sqlx::query_as::<_, PendingTargetRow>(
             "INSERT INTO pending_targets \
-             (account_id, owner_user_id, strategy_config_id, computed_on, effective_date, targets_json) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
+             (account_id, owner_user_id, strategy_config_id, computed_on, effective_date, \
+              targets_json, dataset_version) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
              ON CONFLICT (account_id, effective_date) DO NOTHING \
              RETURNING id, account_id, strategy_config_id, computed_on, effective_date, \
-                       targets_json, status, executed_at, created_at",
+                       targets_json, dataset_version, status, executed_at, created_at",
         )
         .bind(input.account_id)
         .bind(actor_uuid(actor)?)
@@ -74,6 +80,7 @@ impl PendingTargetRepo {
         .bind(input.computed_on)
         .bind(input.effective_date)
         .bind(&input.targets_json)
+        .bind(&input.dataset_version)
         .fetch_optional(&mut *tx)
         .await
         .map_err(TenancyError::from_sqlx)?;
@@ -81,7 +88,7 @@ impl PendingTargetRepo {
             Some(r) => r,
             None => sqlx::query_as::<_, PendingTargetRow>(
                 "SELECT id, account_id, strategy_config_id, computed_on, effective_date, \
-                        targets_json, status, executed_at, created_at \
+                        targets_json, dataset_version, status, executed_at, created_at \
                  FROM pending_targets WHERE account_id = $1 AND effective_date = $2",
             )
             .bind(input.account_id)
@@ -104,7 +111,7 @@ impl PendingTargetRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let rows = sqlx::query_as::<_, PendingTargetRow>(
             "SELECT id, account_id, strategy_config_id, computed_on, effective_date, \
-                    targets_json, status, executed_at, created_at \
+                    targets_json, dataset_version, status, executed_at, created_at \
              FROM pending_targets \
              WHERE status = 'PENDING' AND effective_date <= $1 \
              ORDER BY effective_date, account_id",
@@ -122,7 +129,7 @@ impl PendingTargetRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let row = sqlx::query_as::<_, PendingTargetRow>(
             "SELECT id, account_id, strategy_config_id, computed_on, effective_date, \
-                    targets_json, status, executed_at, created_at \
+                    targets_json, dataset_version, status, executed_at, created_at \
              FROM pending_targets WHERE id = $1",
         )
         .bind(id)
@@ -148,7 +155,7 @@ impl PendingTargetRepo {
             "UPDATE pending_targets SET status = $2, executed_at = now() \
              WHERE id = $1 AND status = 'PENDING' \
              RETURNING id, account_id, strategy_config_id, computed_on, effective_date, \
-                       targets_json, status, executed_at, created_at",
+                       targets_json, dataset_version, status, executed_at, created_at",
         )
         .bind(id)
         .bind(status)
@@ -168,7 +175,7 @@ impl PendingTargetRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let rows = sqlx::query_as::<_, PendingTargetRow>(
             "SELECT id, account_id, strategy_config_id, computed_on, effective_date, \
-                    targets_json, status, executed_at, created_at \
+                    targets_json, dataset_version, status, executed_at, created_at \
              FROM pending_targets WHERE account_id = $1 ORDER BY effective_date",
         )
         .bind(account_id)

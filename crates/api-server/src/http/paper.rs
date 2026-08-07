@@ -486,6 +486,226 @@ pub async fn equity(
     }
 }
 
+/// Paper results are simulated. The UI renders this verbatim so a reader
+/// never mistakes a Paper curve for a promise (design §10.2).
+const PAPER_DISCLAIMER: &str = "Simulated results from a paper account. Fills are modeled, not \
+     executed in a real market, and past simulated performance is not a guarantee of future \
+     returns.";
+
+/// Day-over-day performance derived from the ledger's own daily equity.
+///
+/// The returns are computed HERE on read rather than stored: `daily_equity`
+/// is the single source of truth the runner writes from the shared ledger,
+/// and a cached return column could only ever drift from it.
+pub async fn performance(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+    Path(account_id): Path<String>,
+    Query(params): Query<PageParams>,
+) -> Response {
+    let rid = request_id(&headers);
+    let actor = session.actor();
+    let id = match parse_uuid(&rid, "account id", &account_id) {
+        Ok(i) => i,
+        Err(r) => return r,
+    };
+    if let Err(r) = require_use(
+        &state,
+        &session,
+        &headers,
+        auth::entitlement::KrUse::PaperView,
+        &crate::http::entitlement::today_iso(),
+    )
+    .await
+    {
+        return r;
+    }
+    if let Err(e) = state.accounts().get(&actor, id).await {
+        return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
+    }
+    let cursor = match decode_cursor(&state, &rid, params.cursor.as_deref()) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let limit = params.limit_or(PageParams::DEFAULT_LIMIT);
+    let rows = match state
+        .paper()
+        .equity(&actor, id, cursor.as_ref(), limit)
+        .await
+    {
+        Ok((rows, _)) => rows,
+        Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+    };
+
+    let mut points: Vec<crate::http::dto::PerformancePointDto> = Vec::with_capacity(rows.len());
+    let mut previous: Option<f64> = None;
+    for row in rows {
+        let current = row.equity.parse::<f64>().ok();
+        let return_pct = match (previous, current) {
+            (Some(prev), Some(cur)) if prev != 0.0 => Some(format!("{:.6}", cur / prev - 1.0)),
+            _ => None,
+        };
+        previous = current.or(previous);
+        points.push(crate::http::dto::PerformancePointDto {
+            trading_date: row.trading_date,
+            equity: row.equity,
+            cash: row.cash,
+            positions_value: row.positions_value,
+            currency: row.currency,
+            return_pct,
+        });
+    }
+    (
+        StatusCode::OK,
+        Json(crate::http::dto::PerformanceDto {
+            account_id: id.to_string(),
+            points,
+            disclaimer: PAPER_DISCLAIMER,
+        }),
+    )
+        .into_response()
+}
+
+/// The account's full lineage: its immutable strategy-binding history
+/// (Todo 30's branching record) and the targets each session queued and
+/// executed (Todo 31).
+pub async fn lineage(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+    Path(account_id): Path<String>,
+) -> Response {
+    let rid = request_id(&headers);
+    let actor = session.actor();
+    let id = match parse_uuid(&rid, "account id", &account_id) {
+        Ok(i) => i,
+        Err(r) => return r,
+    };
+    if let Err(r) = require_use(
+        &state,
+        &session,
+        &headers,
+        auth::entitlement::KrUse::PaperView,
+        &crate::http::entitlement::today_iso(),
+    )
+    .await
+    {
+        return r;
+    }
+    if let Err(e) = state.accounts().get(&actor, id).await {
+        return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
+    }
+    let bindings = match state.accounts().binding_history(&actor, id).await {
+        Ok(b) => b,
+        Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+    };
+    let targets = match state.pending_targets().history(&actor, id).await {
+        Ok(t) => t,
+        Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+    };
+    (
+        StatusCode::OK,
+        Json(crate::http::dto::LineageDto {
+            account_id: id.to_string(),
+            bindings: bindings
+                .into_iter()
+                .map(|b| crate::http::dto::BindingHistoryDto {
+                    strategy_config_id: b.strategy_config_id.to_string(),
+                    strategy_id: b.strategy_id,
+                    strategy_version: b.strategy_version,
+                    bound_at: b.bound_at,
+                    unbound_at: b.unbound_at,
+                    active: b.unbound_at.is_none(),
+                })
+                .collect(),
+            targets: targets
+                .into_iter()
+                .map(|t| crate::http::dto::TargetLineageDto {
+                    id: t.id.to_string(),
+                    computed_on: t.computed_on,
+                    effective_date: t.effective_date,
+                    status: t.status,
+                    executed_at: t.executed_at,
+                })
+                .collect(),
+        }),
+    )
+        .into_response()
+}
+
+/// The backtest-vs-Paper signal parity report for one session.
+///
+/// Computed on read from the two sides' persisted signals — never stored,
+/// so it can never go stale against the lineage it describes. A divergence
+/// or an incomparable lineage is WARNING-grade (design §15.3); the caller
+/// sees `warrants_alert` rather than having to re-derive the grade.
+pub async fn parity(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+    Path(account_id): Path<String>,
+    Query(params): Query<ParityParams>,
+) -> Response {
+    let rid = request_id(&headers);
+    let actor = session.actor();
+    let id = match parse_uuid(&rid, "account id", &account_id) {
+        Ok(i) => i,
+        Err(r) => return r,
+    };
+    if let Err(r) = require_use(
+        &state,
+        &session,
+        &headers,
+        auth::entitlement::KrUse::PaperView,
+        &crate::http::entitlement::today_iso(),
+    )
+    .await
+    {
+        return r;
+    }
+    if let Err(e) = state.accounts().get(&actor, id).await {
+        return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
+    }
+    let Some(as_of) = params.as_of.clone() else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PARAMETER",
+            "as_of is required (the session both sides must share)",
+            &rid,
+            None,
+        );
+    };
+    if crate::http::validation::parse_date(&as_of).is_none() {
+        return code_error("INVALID_DATE", "as_of must be a valid calendar date", &rid);
+    }
+
+    let report = match state.parity_report(&actor, id, &as_of).await {
+        Ok(r) => r,
+        Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+    };
+    (
+        StatusCode::OK,
+        Json(crate::http::dto::ParityDto {
+            account_id: id.to_string(),
+            as_of,
+            status: report.status.as_str().to_owned(),
+            lineage: serde_json::to_value(&report.lineage).unwrap_or(serde_json::Value::Null),
+            divergences: serde_json::to_value(&report.divergences)
+                .unwrap_or(serde_json::Value::Null),
+            warrants_alert: report.warrants_alert(),
+            fill_model_difference: report.fill_model_difference,
+        }),
+    )
+        .into_response()
+}
+
+/// Query parameters of the parity route.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ParityParams {
+    pub as_of: Option<String>,
+}
+
 fn account_dto(a: crate::repos::accounts::AccountRow) -> AccountDto {
     AccountDto {
         id: a.id.to_string(),

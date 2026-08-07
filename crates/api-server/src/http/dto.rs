@@ -186,6 +186,73 @@ pub struct BindStrategyDto {
     pub bound_at: DateTime<Utc>,
 }
 
+/// One day of ledger-derived performance. `equity`/`cash`/`positions_value`
+/// are read straight from `daily_equity` (which the runner writes from the
+/// shared ledger); `return_pct` is the day-over-day change computed on
+/// read, never stored — there is no second source of truth to drift.
+#[derive(Debug, Clone, Serialize)]
+pub struct PerformancePointDto {
+    pub trading_date: chrono::NaiveDate,
+    pub equity: String,
+    pub cash: String,
+    pub positions_value: String,
+    pub currency: String,
+    /// Day-over-day return as a decimal string; absent on the first point.
+    pub return_pct: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PerformanceDto {
+    pub account_id: String,
+    pub points: Vec<PerformancePointDto>,
+    /// Rendered verbatim by the UI. Paper results are simulated and are
+    /// never a promise of future returns (design §10.2's reporting duty).
+    pub disclaimer: &'static str,
+}
+
+/// One entry of the account's strategy-binding history (Todo 30). The
+/// history is immutable: a rebind closes the old row and opens a new one,
+/// so this is the account's full branching lineage.
+#[derive(Debug, Clone, Serialize)]
+pub struct BindingHistoryDto {
+    pub strategy_config_id: String,
+    pub strategy_id: String,
+    pub strategy_version: String,
+    pub bound_at: DateTime<Utc>,
+    pub unbound_at: Option<DateTime<Utc>>,
+    pub active: bool,
+}
+
+/// One queued/executed target (Todo 31), correlating a close(T) computation
+/// with the session it executed at.
+#[derive(Debug, Clone, Serialize)]
+pub struct TargetLineageDto {
+    pub id: String,
+    pub computed_on: chrono::NaiveDate,
+    pub effective_date: chrono::NaiveDate,
+    pub status: String,
+    pub executed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LineageDto {
+    pub account_id: String,
+    pub bindings: Vec<BindingHistoryDto>,
+    pub targets: Vec<TargetLineageDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ParityDto {
+    pub account_id: String,
+    pub as_of: String,
+    pub status: String,
+    pub lineage: Value,
+    pub divergences: Value,
+    pub fill_model_difference: String,
+    /// True when the report is worth a WARNING-grade alert (design §15.3).
+    pub warrants_alert: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OrderDto {
     pub id: String,

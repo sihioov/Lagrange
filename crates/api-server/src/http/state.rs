@@ -15,6 +15,7 @@ use crate::repos::entitlements::EntitlementRepo;
 use crate::repos::metrics::MetricsRepo;
 use crate::repos::ops::OpsRepo;
 use crate::repos::paper::PaperRepo;
+use crate::repos::parity::ParityRepo;
 use crate::repos::pending_targets::PendingTargetRepo;
 use crate::repos::recommendations::RecommendationRepo;
 use crate::repos::robustness::RobustnessRepo;
@@ -123,6 +124,20 @@ impl ApiState {
     }
     pub fn pending_targets(&self) -> PendingTargetRepo {
         PendingTargetRepo::new(self.app_pool.clone())
+    }
+    pub fn parity(&self) -> ParityRepo {
+        ParityRepo::new(self.app_pool.clone())
+    }
+
+    /// The backtest-vs-Paper parity report for one account and session,
+    /// computed on read (never stored, so it cannot go stale).
+    pub async fn parity_report(
+        &self,
+        actor: &Actor,
+        account_id: uuid::Uuid,
+        as_of: &str,
+    ) -> crate::error::TenancyResult<result_model::paper_parity::ParityReport> {
+        self.parity().report(actor, account_id, as_of).await
     }
     pub fn ops(&self) -> OpsRepo {
         OpsRepo::new(
