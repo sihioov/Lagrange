@@ -397,6 +397,25 @@ impl LedgerState {
         &self.fills
     }
 
+    /// Whether this exact event is ALREADY reflected in the state, by
+    /// identity rather than by sequence.
+    ///
+    /// A crashed Paper session re-plans deterministically (Todo 31), so the
+    /// resumed plan repeats the events that already landed. The runner
+    /// filters those out with this check before applying the remainder;
+    /// without it the ledger would (correctly) reject the whole resumed
+    /// batch on the first duplicate and the session could never finish.
+    /// `MarkToMarket` and `CashDeposit` carry no natural identity, so they
+    /// are never reported as applied — a caller that wants to re-mark a
+    /// date is doing something the ledger should judge on its own terms.
+    pub fn already_applied(&self, event: &LedgerEvent) -> bool {
+        match event {
+            LedgerEvent::OrderPlaced { order_id, .. } => self.orders.contains_key(order_id),
+            LedgerEvent::Fill { fill_id, .. } => self.fills.iter().any(|f| f.fill_id == *fill_id),
+            LedgerEvent::CashDeposit { .. } | LedgerEvent::MarkToMarket { .. } => false,
+        }
+    }
+
     /// The latest marks per instrument.
     pub fn marks(&self) -> &BTreeMap<InstrumentId, Price> {
         &self.marks

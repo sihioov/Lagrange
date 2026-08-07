@@ -132,4 +132,15 @@ pub enum PortfolioError {
     /// A Paper account's initial cash was zero (accounts must open funded).
     #[error("initial cash must be positive, got {amount}")]
     NonPositiveInitialCash { amount: Money },
+
+    /// A pending target was executed at a session other than its declared
+    /// effective date (design §9.2: a T-close target fills at the T+1 open
+    /// and nowhere else -- executing it early would reference same-session
+    /// prices the strategy could not have seen, and executing it late would
+    /// fill at the wrong session's prices).
+    #[error("target is effective on {effective_date}, not session {session_date}")]
+    TargetNotEffective {
+        effective_date: String,
+        session_date: String,
+    },
 }

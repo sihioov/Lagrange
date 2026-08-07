@@ -16,11 +16,15 @@
 //!   deliberately DB-free.
 //! - [`paper_account`]: validates a Paper account opening (initial cash,
 //!   cost profile) and builds its opening [`ledger::LedgerState`] (Todo 30).
+//! - [`paper_flow`]: the deterministic close -> pending-target -> next-open
+//!   -> close session flow, with account-scoped uuid5 order/fill ids so a
+//!   crashed session re-plans to byte-identical events (Todo 31).
 
 pub mod cost;
 pub mod error;
 pub mod ledger;
 pub mod paper_account;
+pub mod paper_flow;
 pub mod persistence;
 pub mod side;
 pub mod sizing;
@@ -29,6 +33,9 @@ pub use cost::{CostBreakdown, CostProfile, CostProfileId};
 pub use error::PortfolioError;
 pub use ledger::{FillRecord, LedgerEffect, LedgerEvent, LedgerState, OpenOrder};
 pub use paper_account::NewPaperAccount;
+pub use paper_flow::{
+    PAPER_NAMESPACE, PendingTarget, SessionOpenPlan, close_valuation_event, plan_session_open,
+};
 pub use persistence::{InMemoryLedgerStore, LedgerStore};
 pub use side::Side;
 pub use sizing::{
