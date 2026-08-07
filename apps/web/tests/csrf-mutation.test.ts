@@ -1,5 +1,5 @@
-import { logout, mutateWithCsrf } from "@/lib/api/browser-client";
 import { describe, expect, it } from "vitest";
+import { logout, mutateWithCsrf } from "@/lib/api/browser-client";
 
 type RecordedRequest = {
   readonly cache: RequestCache;

@@ -1,5 +1,5 @@
-import { createServerApiClient, SESSION_COOKIE_NAME } from "@/lib/api/server-client";
 import { describe, expect, it } from "vitest";
+import { createServerApiClient, SESSION_COOKIE_NAME } from "@/lib/api/server-client";
 
 const OWNER_USER_ID = "00000000-0000-4000-8000-000000000001";
 const MEMBER_USER_ID = "00000000-0000-4000-8000-000000000002";
@@ -17,14 +17,8 @@ function sessionApi(): {
 } {
   const calls: RecordedRequest[] = [];
   const sessions = new Map([
-    [
-      "owner-opaque",
-      { user_id: OWNER_USER_ID, role: "owner", expires_at_secs: 2_000_000_000 },
-    ],
-    [
-      "member-opaque",
-      { user_id: MEMBER_USER_ID, role: "member", expires_at_secs: 2_000_000_000 },
-    ],
+    ["owner-opaque", { user_id: OWNER_USER_ID, role: "owner", expires_at_secs: 2_000_000_000 }],
+    ["member-opaque", { user_id: MEMBER_USER_ID, role: "member", expires_at_secs: 2_000_000_000 }],
   ]);
   const fetcher: typeof fetch = async (input, init) => {
     const request = new Request(input, init);

@@ -1,7 +1,7 @@
-import { AppShell } from "@/components/shell/app-shell";
-import { StatePanel } from "@/components/states/state-panel";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { AppShell } from "@/components/shell/app-shell";
+import { StatePanel } from "@/components/states/state-panel";
 
 const OWNER_SESSION = {
   user_id: "00000000-0000-4000-8000-000000000001",

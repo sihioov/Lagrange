@@ -1,7 +1,7 @@
-import { GET as callback } from "@/app/callback/route";
-import { GET as login } from "@/app/login/route";
 import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
+import { GET as callback } from "@/app/callback/route";
+import { GET as login } from "@/app/login/route";
 
 describe("server-auth handoff routes", () => {
   it("hands login to the existing same-origin auth authority", () => {
