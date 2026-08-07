@@ -13,6 +13,7 @@ use domain::ids::CorrelationId;
 
 pub mod backtest;
 pub mod manifest;
+pub mod paper_parity;
 pub mod robustness;
 
 pub use backtest::{
