@@ -6,6 +6,14 @@ export type ApiSession = components["schemas"]["Session"];
 export type ApiErrorCode = components["schemas"]["ErrorCode"];
 export type ApiErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 
+export type ProductMutationPath =
+  | "/api/v1/backtests"
+  | "/api/v1/backtests/compare"
+  | "/api/v1/recommendations/runs"
+  | `/api/v1/backtests/${string}/cancel`
+  | `/api/v1/backtests/${string}/robustness`
+  | `/api/v1/strategies/${string}/configs`;
+
 export const AUTH_API_PATHS = {
   csrf: "/api/v1/auth/csrf",
   logout: "/api/v1/auth/logout",

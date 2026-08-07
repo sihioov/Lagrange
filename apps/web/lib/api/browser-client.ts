@@ -1,5 +1,5 @@
 import ky from "ky";
-import type { ApiPath } from "./contracts";
+import type { ApiPath, ProductMutationPath } from "./contracts";
 import { AUTH_API_PATHS, csrfTokenSchema } from "./contracts";
 import { parseApiResponse } from "./response";
 
@@ -11,11 +11,12 @@ export type BrowserClientOptions = {
 };
 
 export type MutationOptions = BrowserClientOptions & {
+  readonly idempotencyKey?: string;
   readonly json: unknown;
   readonly method: MutationMethod;
 };
 
-function requestUrl(path: ApiPath, origin: string | undefined): string {
+function requestUrl(path: ApiPath | ProductMutationPath, origin: string | undefined): string {
   return origin === undefined ? path : new URL(path, origin).toString();
 }
 
@@ -38,12 +39,18 @@ async function csrfToken(options: BrowserClientOptions): Promise<string> {
   return parsed.csrf_token;
 }
 
-export async function mutateWithCsrf(path: ApiPath, options: MutationOptions): Promise<Response> {
+export async function mutateWithCsrf(
+  path: ApiPath | ProductMutationPath,
+  options: MutationOptions,
+): Promise<Response> {
   const token = await csrfToken(options);
   return browserClient(options.fetcher)(requestUrl(path, options.origin), {
     cache: "no-store",
     credentials: "same-origin",
-    headers: { "X-CSRF-Token": token },
+    headers: {
+      "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID(),
+      "X-CSRF-Token": token,
+    },
     json: options.json,
     method: options.method,
     retry: 0,
