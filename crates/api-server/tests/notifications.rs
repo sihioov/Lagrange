@@ -36,13 +36,14 @@ async fn post_test_notification(
     user: Option<&common::UserCtx>,
     severity: &str,
 ) -> axum::http::Response<axum::body::Body> {
+    let key = format!("notify-{}", uuid::Uuid::new_v4());
     h.send(
         "POST",
         "/api/v1/notifications/test",
         user,
         true,
         Some("test-rid-1"),
-        Some("notify-key"),
+        Some(&key),
         Some(json!({
             "severity": severity,
             "kind": "job",
@@ -54,13 +55,11 @@ async fn post_test_notification(
 }
 
 async fn count_notifications(h: &Harness, owner: &common::UserCtx) -> i64 {
-    sqlx::query_scalar(
-        "SELECT count(*) FROM notifications WHERE owner_user_id = $1::uuid",
-    )
-    .bind(owner.user_id.to_string())
-    .fetch_one(&h.member_pool().await)
-    .await
-    .unwrap()
+    sqlx::query_scalar("SELECT count(*) FROM notifications WHERE owner_user_id = $1::uuid")
+        .bind(owner.user_id.to_string())
+        .fetch_one(&h.admin_pool)
+        .await
+        .unwrap()
 }
 
 async fn count_deliveries(h: &Harness, status_filter: &str) -> i64 {
@@ -71,7 +70,7 @@ async fn count_deliveries(h: &Harness, status_filter: &str) -> i64 {
     )
     .bind(h.member.user_id.to_string())
     .bind(status_filter)
-    .fetch_one(&h.member_pool().await)
+    .fetch_one(&h.admin_pool)
     .await
     .unwrap()
 }
@@ -150,7 +149,9 @@ async fn observability_notification_email_outage_records_failed_delivery() {
         .expect("email delivery attempted for the subscribed channel");
     assert_eq!(email["status"], "FAILED");
     assert!(
-        email["error_detail"].as_str().is_some_and(|e| !e.is_empty()),
+        email["error_detail"]
+            .as_str()
+            .is_some_and(|e| !e.is_empty()),
         "failed deliveries must carry an error detail"
     );
     // The web delivery still succeeded and the notification exists.
@@ -172,7 +173,7 @@ async fn observability_alert_routing_severity_grades() {
     let before_owner: i64 =
         sqlx::query_scalar("SELECT count(*) FROM notifications WHERE owner_user_id = $1::uuid")
             .bind(&owner)
-            .fetch_one(&h.member_pool().await)
+            .fetch_one(&h.admin_pool)
             .await
             .unwrap();
     let resp = post_test_notification(&h, Some(&h.member), "INFO").await;
@@ -181,7 +182,7 @@ async fn observability_alert_routing_severity_grades() {
     let owner_now: i64 =
         sqlx::query_scalar("SELECT count(*) FROM notifications WHERE owner_user_id = $1::uuid")
             .bind(&owner)
-            .fetch_one(&h.member_pool().await)
+            .fetch_one(&h.admin_pool)
             .await
             .unwrap();
     assert_eq!(owner_now, before_owner, "INFO must not alert the admin");
@@ -203,10 +204,14 @@ async fn observability_alert_routing_severity_grades() {
     let owner_after_warning: i64 =
         sqlx::query_scalar("SELECT count(*) FROM notifications WHERE owner_user_id = $1::uuid")
             .bind(&owner)
-            .fetch_one(&h.member_pool().await)
+            .fetch_one(&h.admin_pool)
             .await
             .unwrap();
-    assert_eq!(owner_after_warning, before_owner + 1, "admin alert for WARNING");
+    assert_eq!(
+        owner_after_warning,
+        before_owner + 1,
+        "admin alert for WARNING"
+    );
 
     // CRITICAL: same immediate admin routing.
     let resp = post_test_notification(&h, Some(&h.member), "CRITICAL").await;
@@ -214,10 +219,14 @@ async fn observability_alert_routing_severity_grades() {
     let owner_after_critical: i64 =
         sqlx::query_scalar("SELECT count(*) FROM notifications WHERE owner_user_id = $1::uuid")
             .bind(&owner)
-            .fetch_one(&h.member_pool().await)
+            .fetch_one(&h.admin_pool)
             .await
             .unwrap();
-    assert_eq!(owner_after_critical, before_owner + 2, "admin alert for CRITICAL");
+    assert_eq!(
+        owner_after_critical,
+        before_owner + 2,
+        "admin alert for CRITICAL"
+    );
     h.teardown().await;
 }
 
@@ -243,7 +252,10 @@ async fn observability_admin_deliveries_view_owner_only() {
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
     let items = body["items"].as_array().expect("delivery items");
-    assert!(!items.is_empty(), "the WARNING alert deliveries must be visible");
+    assert!(
+        !items.is_empty(),
+        "the WARNING alert deliveries must be visible"
+    );
     let statuses: Vec<&str> = items
         .iter()
         .map(|d| d["status"].as_str().unwrap_or_default())

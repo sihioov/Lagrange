@@ -94,8 +94,7 @@ async fn artifact_owner_download_issues_internal_redirect_with_matching_hash() {
         .and_then(|v| v.to_str().ok())
         .expect("authorized download must carry X-Accel-Redirect");
     assert_eq!(
-        redirect,
-        "/internal-artifacts/runs/owner-ok/equity.parquet",
+        redirect, "/internal-artifacts/runs/owner-ok/equity.parquet",
         "redirect targets the internal alias path, never a filesystem path"
     );
     assert_eq!(
@@ -125,13 +124,8 @@ async fn artifact_cross_user_download_fails_closed_without_redirect() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let (_run_id, artifact_id) = seed_run_with_artifact(
-        &h,
-        &h.member,
-        "runs/foreign/equity.parquet",
-        ARTIFACT_BYTES,
-    )
-    .await;
+    let (_run_id, artifact_id) =
+        seed_run_with_artifact(&h, &h.member, "runs/foreign/equity.parquet", ARTIFACT_BYTES).await;
     let resp = h
         .get(
             &format!("/api/v1/artifacts/{artifact_id}/download"),
@@ -139,7 +133,10 @@ async fn artifact_cross_user_download_fails_closed_without_redirect() {
         )
         .await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND, "foreign owner -> 404");
-    assert!(no_redirect(&resp), "denied download must not carry the redirect");
+    assert!(
+        no_redirect(&resp),
+        "denied download must not carry the redirect"
+    );
     let body = Harness::body_text(resp).await;
     assert!(
         !body.contains("parquet") && !body.contains("data/artifacts") && !body.contains("runs/"),
@@ -196,7 +193,10 @@ async fn artifact_hash_mismatch_fails_closed() {
         StatusCode::UNPROCESSABLE_ENTITY,
         "tampered artifact -> RESULT_INTEGRITY_FAILED"
     );
-    assert!(no_redirect(&resp), "integrity failure must not issue the redirect");
+    assert!(
+        no_redirect(&resp),
+        "integrity failure must not issue the redirect"
+    );
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "RESULT_INTEGRITY_FAILED");
     assert!(!body.to_string().contains("runs/tampered"));
@@ -218,13 +218,8 @@ async fn artifact_traversal_path_rejected() {
         "C:\\windows\\system.ini",
         "runs/..%2f..%2fsecret",
     ] {
-        let (_run_id, artifact_id) = seed_run_with_artifact(
-            &h,
-            &h.member,
-            "runs/safe/equity.parquet",
-            ARTIFACT_BYTES,
-        )
-        .await;
+        let (_run_id, artifact_id) =
+            seed_run_with_artifact(&h, &h.member, "runs/safe/equity.parquet", ARTIFACT_BYTES).await;
         h.seed_tenant(
             &h.member,
             &format!(
@@ -282,7 +277,10 @@ async fn artifact_expired_entitlement_denied() {
         )
         .await;
     assert_eq!(status(&resp), StatusCode::FORBIDDEN);
-    assert!(no_redirect(&resp), "expired entitlement must not issue the redirect");
+    assert!(
+        no_redirect(&resp),
+        "expired entitlement must not issue the redirect"
+    );
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "DATA_ENTITLEMENT_REQUIRED");
     assert!(!body.to_string().contains("parquet"));
@@ -295,13 +293,8 @@ async fn artifact_metadata_never_leaks_internal_path() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let (_run_id, artifact_id) = seed_run_with_artifact(
-        &h,
-        &h.member,
-        "runs/meta/equity.parquet",
-        ARTIFACT_BYTES,
-    )
-    .await;
+    let (_run_id, artifact_id) =
+        seed_run_with_artifact(&h, &h.member, "runs/meta/equity.parquet", ARTIFACT_BYTES).await;
     let resp = h
         .get(&format!("/api/v1/artifacts/{artifact_id}"), Some(&h.member))
         .await;
@@ -309,7 +302,9 @@ async fn artifact_metadata_never_leaks_internal_path() {
     let body = Harness::body_json(resp).await;
     let text = body.to_string();
     assert!(
-        !text.contains("parquet_path") && !text.contains("data/artifacts") && !text.contains("runs/meta"),
+        !text.contains("parquet_path")
+            && !text.contains("data/artifacts")
+            && !text.contains("runs/meta"),
         "metadata must not expose the storage path: {text}"
     );
     assert_eq!(body["sha256"].as_str().unwrap().len(), 64);

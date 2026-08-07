@@ -18,14 +18,8 @@ fn location_block<'a>(conf: &'a str, location: &str) -> &'a str {
     let start = conf
         .find(&format!("location {location}"))
         .unwrap_or_else(|| panic!("location {location} must exist"));
-    let body_start = conf[start..]
-        .find('{')
-        .expect("location block opens")
-        + start;
-    let body_end = conf[body_start..]
-        .find('}')
-        .expect("location block closes")
-        + body_start;
+    let body_start = conf[start..].find('{').expect("location block opens") + start;
+    let body_end = conf[body_start..].find('}').expect("location block closes") + body_start;
     &conf[body_start + 1..body_end]
 }
 
@@ -76,7 +70,10 @@ fn nginx_never_exposes_artifacts_through_the_api() {
         .collect();
     assert_eq!(
         download_routes,
-        vec!["/api/v1/artifacts/{artifact_id}", "/api/v1/artifacts/{artifact_id}/download"],
+        vec![
+            "/api/v1/artifacts/{artifact_id}",
+            "/api/v1/artifacts/{artifact_id}/download"
+        ],
         "only the two authorized artifact routes may exist"
     );
 }
@@ -100,9 +97,7 @@ fn nginx_tls_edge_publishes_only_https() {
 
 #[test]
 fn nginx_disable_symlinks_covers_every_artifact_serving_location() {
-    let count = NGINX_CONF
-        .match_indices("disable_symlinks on;")
-        .count();
+    let count = NGINX_CONF.match_indices("disable_symlinks on;").count();
     assert!(
         count >= 1,
         "the artifact-serving location must carry disable_symlinks"

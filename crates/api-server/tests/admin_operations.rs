@@ -59,11 +59,13 @@ async fn owner_retry(h: &Harness, job_id: &str) -> axum::http::Response<axum::bo
 }
 
 async fn job_state(h: &Harness, job_id: &str) -> (String, i32, String) {
-    let row = sqlx::query("SELECT status, attempt_count, coalesce(error_code,'') FROM jobs WHERE id=$1::uuid")
-        .bind(job_id)
-        .fetch_one(&h.member_pool().await)
-        .await
-        .unwrap();
+    let row = sqlx::query(
+        "SELECT status, attempt_count, coalesce(error_code,'') FROM jobs WHERE id=$1::uuid",
+    )
+    .bind(job_id)
+    .fetch_one(&h.member_pool().await)
+    .await
+    .unwrap();
     (
         row.get::<String, _>(0),
         row.get::<i32, _>(1),
@@ -171,12 +173,11 @@ async fn admin_retry_retryable_when_dataset_ready() {
         return;
     };
     // The same job shape with a READY input dataset is eligible.
-    let ready_id: String = sqlx::query_scalar(
-        "SELECT id::text FROM dataset_versions WHERE status = 'READY' LIMIT 1",
-    )
-    .fetch_one(&h.member_pool().await)
-    .await
-    .unwrap();
+    let ready_id: String =
+        sqlx::query_scalar("SELECT id::text FROM dataset_versions WHERE status = 'READY' LIMIT 1")
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
     let payload = format!("{{\"dataset_version_id\": \"{ready_id}\"}}");
     let job_id = seed_job(&h, &h.member, "FAILED", 1, 3, Some("timeout"), &payload).await;
     let resp = owner_retry(&h, &job_id).await;
@@ -214,7 +215,10 @@ async fn admin_retry_success_and_denial_are_audited() {
     .fetch_one(&h.admin_pool)
     .await
     .unwrap();
-    assert!(denials >= 1, "the denied retry must be audited with a reason");
+    assert!(
+        denials >= 1,
+        "the denied retry must be audited with a reason"
+    );
     h.teardown().await;
 }
 
@@ -292,12 +296,11 @@ async fn admin_audit_history_append_only_immutable() {
         }
     }
     // The row is still intact and visible to the owner (read-only view).
-    let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM audit_logs WHERE correlation_id = 'probe-1'",
-    )
-    .fetch_one(&h.admin_pool)
-    .await
-    .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE correlation_id = 'probe-1'")
+            .fetch_one(&h.admin_pool)
+            .await
+            .unwrap();
     assert_eq!(count, 1, "audit rows must survive every mutation attempt");
     h.teardown().await;
 }

@@ -81,7 +81,10 @@ fn observability_log_event_carries_correlation_and_redacts_payload() {
 #[test]
 fn observability_log_event_warning_and_critical_levels() {
     let w = LogEvent::warn("job.degraded").message("missing bars");
-    assert_eq!(serde_json::from_str::<serde_json::Value>(&w.to_json()).unwrap()["level"], "WARNING");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&w.to_json()).unwrap()["level"],
+        "WARNING"
+    );
     let c = LogEvent::critical("db.down").message("pool exhausted");
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&c.to_json()).unwrap()["level"],
@@ -110,7 +113,10 @@ async fn observability_metrics_exposed_without_pii() {
         );
     }
     // No PII: no emails, no request ids, no uuid-shaped label values.
-    assert!(!text.contains('@'), "metrics must not contain emails: {text}");
+    assert!(
+        !text.contains('@'),
+        "metrics must not contain emails: {text}"
+    );
     assert!(
         !text.contains("test-rid"),
         "metrics must not contain request ids"
@@ -131,7 +137,10 @@ async fn observability_metrics_exposed_without_pii() {
     // A request increments the API counter.
     let before = count_metric(&text, "api_requests_total");
     let _ = h.get("/api/v1/auth/session", Some(&h.member)).await;
-    let after = count_metric(&Harness::body_text(h.get("/api/v1/metrics", None).await).await, "api_requests_total");
+    let after = count_metric(
+        &Harness::body_text(h.get("/api/v1/metrics", None).await).await,
+        "api_requests_total",
+    );
     assert!(
         after > before,
         "api_requests_total must increment per request ({before} -> {after})"
@@ -147,7 +156,10 @@ async fn observability_metrics_artifact_and_alert_counters() {
     };
     // A denied artifact download increments the denied outcome (no PII label).
     let resp = h
-        .get("/api/v1/artifacts/00000000-0000-0000-0000-000000000000/download", Some(&h.member))
+        .get(
+            "/api/v1/artifacts/00000000-0000-0000-0000-000000000000/download",
+            Some(&h.member),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND);
     let text = Harness::body_text(h.get("/api/v1/metrics", None).await).await;

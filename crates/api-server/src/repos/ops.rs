@@ -425,13 +425,8 @@ impl OpsRepo {
             )));
         }
         if job.attempt_count >= job.max_attempts {
-            self.audit_retry_denial(
-                actor,
-                job_id,
-                "RETRY_EXHAUSTED".to_string(),
-                correlation_id,
-            )
-            .await?;
+            self.audit_retry_denial(actor, job_id, "RETRY_EXHAUSTED".to_string(), correlation_id)
+                .await?;
             crate::observability::metrics::record_retry_outcome("denied");
             return Err(TenancyError::InvalidState(format!(
                 "retry budget exhausted ({} of {} attempts used)",
@@ -444,13 +439,12 @@ impl OpsRepo {
             .and_then(|v| v.as_str())
             .and_then(|s| Uuid::parse_str(s).ok())
         {
-            let status: Option<String> = sqlx::query_scalar(
-                "SELECT status FROM dataset_versions WHERE id = $1",
-            )
-            .bind(dataset_id)
-            .fetch_optional(&self.admin_pool)
-            .await
-            .map_err(TenancyError::from_sqlx)?;
+            let status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM dataset_versions WHERE id = $1")
+                    .bind(dataset_id)
+                    .fetch_optional(&self.admin_pool)
+                    .await
+                    .map_err(TenancyError::from_sqlx)?;
             if status.as_deref() == Some("BLOCKED") {
                 self.audit_retry_denial(
                     actor,
@@ -531,13 +525,8 @@ impl OpsRepo {
         actor: &Actor,
         correlation_id: &str,
     ) -> TenancyResult<Vec<AdminUserRow>> {
-        self.require_owner(
-            actor,
-            "admin.users.list",
-            ("user", "all"),
-            correlation_id,
-        )
-        .await?;
+        self.require_owner(actor, "admin.users.list", ("user", "all"), correlation_id)
+            .await?;
         let mut tx = begin_actor_tx(&self.admin_pool, actor).await?;
         let rows = sqlx::query_as::<_, AdminUserRow>(
             "SELECT u.id, u.email, \

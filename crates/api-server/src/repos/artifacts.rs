@@ -102,15 +102,8 @@ pub fn derive_internal_path(parquet_path: &str) -> TenancyResult<String> {
 /// client or the file extension. Unknown types fail closed to a binary type.
 pub fn media_type(artifact_type: &str) -> &'static str {
     match artifact_type {
-        "EQUITY_CURVE"
-        | "DRAWDOWN_CURVE"
-        | "MONTHLY_RETURNS"
-        | "ORDERS"
-        | "FILLS"
-        | "POSITIONS"
-        | "CASH_LEDGER"
-        | "FEES"
-        | "BENCHMARK" => "application/vnd.apache.parquet",
+        "EQUITY_CURVE" | "DRAWDOWN_CURVE" | "MONTHLY_RETURNS" | "ORDERS" | "FILLS"
+        | "POSITIONS" | "CASH_LEDGER" | "FEES" | "BENCHMARK" => "application/vnd.apache.parquet",
         _ => "application/octet-stream",
     }
 }
