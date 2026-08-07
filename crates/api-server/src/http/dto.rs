@@ -170,6 +170,9 @@ pub struct AccountDto {
     pub name: String,
     pub currency: String,
     pub status: String,
+    pub initial_cash: Option<String>,
+    pub cost_profile_id: String,
+    pub cost_profile_version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -178,6 +181,8 @@ pub struct AccountDto {
 pub struct BindStrategyDto {
     pub account_id: String,
     pub strategy_config_id: String,
+    pub strategy_id: String,
+    pub strategy_version: String,
     pub bound_at: DateTime<Utc>,
 }
 
@@ -445,6 +450,11 @@ pub struct RobustnessSuiteBody {
 pub struct NewAccountBody {
     pub name: String,
     pub currency: String,
+    /// A decimal string; PAPER accounts must open positively funded.
+    pub initial_cash: String,
+    /// Defaults to the versioned `KRX_ETF_DEFAULT` profile when omitted.
+    #[serde(default)]
+    pub cost_profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

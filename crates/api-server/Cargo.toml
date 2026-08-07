@@ -27,6 +27,7 @@ hex = "0.4"
 hmac = "0.12"
 job-queue = { path = "../job-queue" }
 jsonschema = "0.49.5"
+portfolio-model = { path = "../portfolio-model" }
 prometheus = "0.14"
 regex = "1"
 result-model = { path = "../result-model" }
