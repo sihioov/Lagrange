@@ -6,8 +6,8 @@ import { parseApiResponse } from "@/lib/api/response";
 import {
   type ParameterDefinition,
   type ParameterSchema,
-  strategyConfigSchema,
   type StrategyCatalogItem,
+  strategyConfigSchema,
 } from "@/lib/products/contracts";
 
 type SubmissionState =
@@ -117,32 +117,50 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
       <fieldset disabled={state.kind === "submitting"}>
         <legend>Allowed parameters</legend>
         <div className="field-grid">
-          {Object.entries(activeSchema.properties).map(([name, definition]) => (
-            <label className="form-field" key={name}>
-              <span>{definition.title}</span>
-              {definition.enum === undefined ? (
-                <input
-                  defaultChecked={definition.type === "boolean" && definition.default === true}
-                  defaultValue={definition.type === "boolean" ? undefined : String(definition.default ?? "")}
-                  max={definition.maximum}
-                  min={definition.minimum}
-                  name={name}
-                  required={activeSchema.required.includes(name) && definition.type !== "boolean"}
-                  step={definition.type === "integer" ? 1 : "any"}
-                  type={definition.type === "boolean" ? "checkbox" : definition.type === "string" ? "text" : "number"}
-                />
-              ) : (
-                <select defaultValue={String(definition.default ?? definition.enum[0] ?? "")} name={name}>
-                  {definition.enum.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {definition.description === undefined ? null : <small>{definition.description}</small>}
-            </label>
-          ))}
+          {Object.entries(activeSchema.properties).map(([name, definition]) => {
+            const fieldId = `strategy-${strategy.id}-${name}`;
+            return (
+              <label className="form-field" htmlFor={fieldId} key={name}>
+                <span>{definition.title}</span>
+                {definition.enum === undefined ? (
+                  <input
+                    defaultChecked={definition.type === "boolean" && definition.default === true}
+                    defaultValue={
+                      definition.type === "boolean" ? undefined : String(definition.default ?? "")
+                    }
+                    id={fieldId}
+                    max={definition.maximum}
+                    min={definition.minimum}
+                    name={name}
+                    required={activeSchema.required.includes(name) && definition.type !== "boolean"}
+                    step={definition.type === "integer" ? 1 : "any"}
+                    type={
+                      definition.type === "boolean"
+                        ? "checkbox"
+                        : definition.type === "string"
+                          ? "text"
+                          : "number"
+                    }
+                  />
+                ) : (
+                  <select
+                    defaultValue={String(definition.default ?? definition.enum[0] ?? "")}
+                    id={fieldId}
+                    name={name}
+                  >
+                    {definition.enum.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {definition.description === undefined ? null : (
+                  <small>{definition.description}</small>
+                )}
+              </label>
+            );
+          })}
         </div>
       </fieldset>
       <button className="primary-action" disabled={state.kind === "submitting"} type="submit">
