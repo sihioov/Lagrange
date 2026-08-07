@@ -136,13 +136,15 @@ test("blocked entitlement keeps every member KR-derived surface denied", async (
   for (const user of USERS) {
     await setScenario(request, { user, role: "member", entitlement: "blocked" });
 
+    // Name the panel: Next's route announcer is also role="alert", so an
+    // unqualified lookup is ambiguous once client-side navigation has happened.
     await page.goto("/recommendations");
-    await expect(page.getByRole("alert")).toContainText("Recommendation data is blocked");
+    await expect(page.getByRole("alert", { name: "Recommendation data is blocked" })).toBeVisible();
     await expect(page.getByText("069500.KRX")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Generate strategy proposal" })).toHaveCount(0);
 
     await page.goto("/backtests");
-    await expect(page.getByRole("alert")).toContainText("Backtest data is blocked");
+    await expect(page.getByRole("alert", { name: "Backtest data is blocked" })).toBeVisible();
     await expect(page.getByRole("form", { name: "Create backtest" })).toHaveCount(0);
     await expect(page.getByText("069500.KRX")).toHaveCount(0);
   }
