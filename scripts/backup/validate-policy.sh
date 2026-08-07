@@ -51,6 +51,26 @@ fail_usage() {
   exit 2
 }
 
+# Pure-bash predicates. These deliberately avoid `printf ... | grep -q`:
+# `grep -q` exits the moment it matches, which SIGPIPEs the writer, and under
+# MSYS/Git Bash that surfaces as an "Aborted (core dumped)" job-control line on
+# stderr carrying a PID. The verdict stayed correct, but the transcript changed
+# between identical runs -- and a validator whose transcript is not reproducible
+# cannot be restore evidence. No subprocess, no pipe, no noise.
+is_sha256() {
+  [[ "$1" =~ ^[0-9a-fA-F]{64}$ ]]
+}
+
+# Case-insensitive literal substring test (the `grep -iF` this replaces).
+contains_ci() {
+  local haystack="${1,,}" needle="${2,,}"
+  [ -n "$needle" ] || return 1
+  case "$haystack" in
+    *"$needle"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 [ -f "$policy" ]  || fail_usage "policy file not found: $policy"
 [ -f "$schema" ]  || fail_usage "manifest schema file not found: $schema"
 [ -n "$set_path" ] || fail_usage "--set <path> is required (backup-set directory containing backup-manifest.json, or the manifest file itself)"
@@ -174,14 +194,14 @@ while IFS= read -r req; do
     [ "$ds" = "$exp_ds" ] || violate "classes[$ci].dataset" "class '$req' expects dataset '$exp_ds', got '$ds'"
   fi
 
-  if ! printf '%s' "$rd" | grep -Eq '^[1-9][0-9]*$'; then
+  if ! [[ "$rd" =~ ^[1-9][0-9]*$ ]]; then
     violate "classes[$ci].retention_days" "must be a positive integer, got '$rd'"
   else
     floor=$(printf '%s\n' "$policy_lines" | awk -F'\t' -v c="$req" '$1=="retention_min" && $2==c {print $3}')
     if [ -n "$floor" ] && [ "$rd" -lt "$floor" ]; then
       violate "classes[$ci].retention_days" "declared $rd day(s) is below the policy floor of $floor day(s) for '$req'"
     fi
-    if printf '%s' "$completed" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'; then
+    if [[ "$completed" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
       expected_expiry=$(python3 - "$completed" "$rd" <<'PYEOF'
 import datetime, sys
 c = datetime.datetime.strptime(sys.argv[1], '%Y-%m-%dT%H:%M:%SZ')
@@ -221,15 +241,15 @@ PYEOF
     [ -n "$path" ] || unsafe=1
     case "$path" in /*) unsafe=1;; esac
     case "$path" in \\*) unsafe=1;; esac
-    printf '%s' "$path" | grep -Eq '^[A-Za-z]:' && unsafe=1
-    printf '%s' "$path" | grep -Fq '\\' && unsafe=1
-    printf '%s' "$path" | tr '/\\' '\n' | grep -Fxq '..' && unsafe=1
+    [[ "$path" =~ ^[A-Za-z]: ]] && unsafe=1
+    case "$path" in *\\*) unsafe=1;; esac
+    case "/${path//\\//}/" in */../*) unsafe=1;; esac
     if [ "$unsafe" -eq 1 ]; then
       violate "classes[$ci].files[$fi].path" "unsafe path '$path' (must be relative to the set root, no '..', no absolute/drive/backslash paths)"
       continue
     fi
 
-    if ! printf '%s' "$h" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+    if ! is_sha256 "$h"; then
       violate "classes[$ci].files[$fi].sha256" "missing or malformed sha256 for '$path'"
     fi
 
@@ -239,14 +259,14 @@ PYEOF
       continue
     fi
 
-    if printf '%s' "$h" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+    if is_sha256 "$h"; then
       computed=$(sha256sum "$abs_path" | cut -d' ' -f1)
       [ "$computed" = "$h" ] || violate "classes[$ci].files[$fi].sha256" "hash mismatch for '$path' (declared $h, computed $computed)"
     fi
 
     while IFS= read -r seg; do
       [ -n "$seg" ] || continue
-      if printf '%s' "$path" | grep -qiF "$seg"; then
+      if contains_ci "$path" "$seg"; then
         violate "classes[$ci].files[$fi].path" "forbidden path segment '$seg' in '$path'"
       fi
     done <<< "$(printf '%s\n' "$policy_lines" | awk -F'\t' '$1=="forbidden_segment"{print $2}')"
