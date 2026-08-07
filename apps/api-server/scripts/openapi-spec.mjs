@@ -200,6 +200,7 @@ function bodySchemaRef(path) {
   if (path.endsWith("/recommendations/runs")) return "#/components/schemas/RecommendationRunBody";
   if (path === "/api/v1/backtests") return "#/components/schemas/BacktestBody";
   if (path === "/api/v1/backtests/compare") return "#/components/schemas/CompareBody";
+  if (path.endsWith("/robustness")) return "#/components/schemas/RobustnessSuiteBody";
   if (path === "/api/v1/paper/accounts") return "#/components/schemas/NewAccountBody";
   if (path.endsWith("/bind-strategy")) return "#/components/schemas/BindStrategyBody";
   return "#/components/schemas/EmptyBody";
@@ -438,13 +439,60 @@ const SCHEMAS = {
       status: { type: "string", enum: ["CANCEL_REQUESTED"] },
     },
   },
+  RobustnessSuiteBody: {
+    type: "object",
+    additionalProperties: false,
+    description: "One entry per requested derived-run child; each entry changes exactly one axis (design 9.5). Omitting axes runs the standard adverse/extreme cost-stress pair. A canceled parent run cascades to every child job through the existing cancel route.",
+    properties: {
+      axes: {
+        type: "array",
+        minItems: 1,
+        maxItems: 25,
+        items: {
+          type: "object",
+          required: ["axis"],
+          properties: {
+            axis: { type: "string", enum: ["parameter_neighborhood", "cost_stress", "period_split", "walk_forward", "execution_delay", "benchmark_comparison"] },
+            parameter: { type: "string" },
+            delta: {},
+            profile_id: { type: "string" },
+            profile_version: { type: "integer" },
+            train_end: dateStr,
+            validation_end: dateStr,
+            window_sessions: { type: "integer" },
+            step_sessions: { type: "integer" },
+            delay_sessions: { type: "integer" },
+            benchmark_id: { type: "string" },
+          },
+        },
+      },
+      holdout: {
+        type: "object",
+        description: "The train/validation boundary a period_split child must never read past (FR-ROB-001).",
+        required: ["train_end", "validation_end"],
+        properties: { train_end: dateStr, validation_end: dateStr },
+      },
+    },
+  },
   Robustness: {
     type: "object",
-    required: ["run_id", "job_id", "status"],
+    required: ["run_id", "suite_id", "children"],
     properties: {
       run_id: uuid,
-      job_id: uuid,
-      status: { type: "string", enum: ["QUEUED"] },
+      suite_id: uuid,
+      children: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["run_id", "job_id", "axis", "status"],
+          properties: {
+            run_id: uuid,
+            job_id: uuid,
+            axis: { type: "string" },
+            status: { type: "string", enum: ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"] },
+          },
+        },
+      },
     },
   },
   Account: {

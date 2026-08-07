@@ -1008,13 +1008,46 @@ export interface components {
             /** @enum {string} */
             status: "CANCEL_REQUESTED";
         };
+        /** @description One entry per requested derived-run child; each entry changes exactly one axis (design 9.5). Omitting axes runs the standard adverse/extreme cost-stress pair. A canceled parent run cascades to every child job through the existing cancel route. */
+        RobustnessSuiteBody: {
+            axes?: {
+                /** @enum {string} */
+                axis: "parameter_neighborhood" | "cost_stress" | "period_split" | "walk_forward" | "execution_delay" | "benchmark_comparison";
+                parameter?: string;
+                delta?: unknown;
+                profile_id?: string;
+                profile_version?: number;
+                /** @example 2026-01-31 */
+                train_end?: string;
+                /** @example 2026-01-31 */
+                validation_end?: string;
+                window_sessions?: number;
+                step_sessions?: number;
+                delay_sessions?: number;
+                benchmark_id?: string;
+            }[];
+            /** @description The train/validation boundary a period_split child must never read past (FR-ROB-001). */
+            holdout?: {
+                /** @example 2026-01-31 */
+                train_end: string;
+                /** @example 2026-01-31 */
+                validation_end: string;
+            };
+        };
         Robustness: {
             /** Format: uuid */
             run_id: string;
             /** Format: uuid */
-            job_id: string;
-            /** @enum {string} */
-            status: "QUEUED";
+            suite_id: string;
+            children: {
+                /** Format: uuid */
+                run_id: string;
+                /** Format: uuid */
+                job_id: string;
+                axis: string;
+                /** @enum {string} */
+                status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+            }[];
         };
         Account: {
             /** Format: uuid */
@@ -1725,7 +1758,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["EmptyBody"];
+                "application/json": components["schemas"]["RobustnessSuiteBody"];
             };
         };
         responses: {
