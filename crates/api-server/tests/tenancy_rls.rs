@@ -85,6 +85,9 @@ const TENANT_TABLES: &[&str] = &[
     "notifications",
     "web_sessions",
     "invitations",
+    "robustness_suites",
+    "robustness_children",
+    "account_strategy_bindings",
 ];
 
 /// The sqlx Migrator embedding the real workspace migrations.
