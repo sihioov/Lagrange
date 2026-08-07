@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const syntheticApiOrigin = process.env.SYNTHETIC_API_ORIGIN ?? "http://127.0.0.1:38180";
+const syntheticApiOrigin = process.env["SYNTHETIC_API_ORIGIN"] ?? "http://127.0.0.1:38180";
 
 async function setScenario(
   request: import("@playwright/test").APIRequestContext,
@@ -70,7 +70,7 @@ test("invalid parameters and blocked entitlement fail closed without proprietary
   await configuration.getByRole("button", { name: "Save strategy configuration" }).click();
 
   // Then
-  await expect(page.getByRole("alert")).toContainText(
+  await expect(configuration.getByRole("alert")).toContainText(
     "Lookback months must be between 1 and 24",
   );
 
