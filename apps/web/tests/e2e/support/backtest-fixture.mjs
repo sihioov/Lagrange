@@ -193,11 +193,24 @@ export function backtestResponse(request) {
     return mutationAuthorized(headers)
       ? {
           body: {
-            job_id: "00000000-0000-4000-8000-000000000499",
+            children: [
+              {
+                axis: "cost_stress",
+                job_id: "00000000-0000-4000-8000-000000000499",
+                run_id: "00000000-0000-4000-8000-000000000601",
+                status: "QUEUED",
+              },
+              {
+                axis: "cost_stress",
+                job_id: "00000000-0000-4000-8000-000000000498",
+                run_id: "00000000-0000-4000-8000-000000000602",
+                status: "QUEUED",
+              },
+            ],
             run_id: baselineId,
-            status: "QUEUED",
+            suite_id: "00000000-0000-4000-8000-000000000701",
           },
-          status: 202,
+          status: 200,
         }
       : error(403, "CSRF_DENIED", "CSRF and idempotency headers are required");
   }

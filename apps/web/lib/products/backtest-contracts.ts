@@ -200,8 +200,21 @@ export const cancelBacktestSchema = z
   })
   .strict();
 
+const robustnessChildSchema = z
+  .object({
+    axis: z.string(),
+    job_id: z.uuid(),
+    run_id: z.uuid(),
+    status: z.enum(["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"]),
+  })
+  .strict();
+
 export const robustnessQueuedSchema = z
-  .object({ job_id: z.uuid(), run_id: z.uuid(), status: z.literal("QUEUED") })
+  .object({
+    children: z.array(robustnessChildSchema),
+    run_id: z.uuid(),
+    suite_id: z.uuid(),
+  })
   .strict();
 
 export const backtestCreateSchema = backtestRunSchema;
