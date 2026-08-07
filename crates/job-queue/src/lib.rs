@@ -8,10 +8,12 @@
 //!
 //! Package name is `job-queue` (underscore form `job_queue` in `use` paths).
 
+pub mod batch;
 pub mod error;
 pub mod queue;
 pub mod types;
 
+pub use batch::{BatchItem, MAX_BATCH_SIZE, cancel_batch, submit_batch};
 pub use error::QueueError;
 pub use queue::{JobQueue, QueueConfig};
 pub use types::{
