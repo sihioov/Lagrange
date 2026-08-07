@@ -6,7 +6,7 @@
   --surface-strong: #dde4ed;
   --text-primary: #171c24;
   --text-secondary: #536071;
-  --text-tertiary: #6f7c8f;
+  --text-tertiary: #5c6778;
   --border-default: #cdd6e2;
   --border-subtle: #dee5ee;
   --accent-soft: #e5e8ff;
@@ -15,7 +15,7 @@
   --accent-on: #ffffff;
   --status-success: #087a57;
   --status-warning: #9b5700;
-  --status-error: #c43d4d;
+  --status-error: #b83344;
   --status-info: #245ea8;
   --focus-ring: #4351d8;
   --space-1: 0.25rem;
@@ -566,7 +566,12 @@ small {
     scroll-behavior: auto;
   }
 
-  .skip-link,
+  .skip-link {
+    animation: none;
+    transition: none;
+    transform: translateY(-200%);
+  }
+
   .shell-navigation a,
   .shell-signout button,
   .primary-action,

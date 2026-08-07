@@ -1,0 +1,323 @@
+.product-section,
+.workflow-panel,
+.data-report {
+  container-type: inline-size;
+  min-inline-size: 0;
+  border: 0.0625rem solid var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel);
+}
+
+.product-section,
+.workflow-panel {
+  display: grid;
+  gap: var(--space-6);
+  padding: var(--space-6);
+}
+
+.section-heading,
+.panel-heading,
+.report-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  min-inline-size: 0;
+}
+
+.section-heading > div,
+.panel-heading > div,
+.report-heading > div {
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.section-heading > p,
+.panel-heading > p,
+.report-heading p,
+.supporting-copy,
+.empty-copy {
+  color: var(--text-secondary);
+}
+
+.section-heading > p {
+  max-inline-size: 48ch;
+}
+
+.eyebrow {
+  color: var(--accent-primary);
+  font-size: 0.75rem;
+  font-weight: 560;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.section-heading h2,
+.report-heading h2 {
+  font-size: 1.5rem;
+  font-weight: 560;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+.strategy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr));
+  gap: var(--space-4);
+}
+
+.strategy-panel {
+  display: grid;
+  align-content: start;
+  gap: var(--space-5);
+  min-inline-size: 0;
+  padding: var(--space-5);
+  border: 0.0625rem solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.strategy-panel > p,
+.risk-note p {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.risk-note {
+  display: grid;
+  gap: var(--space-2);
+  padding-inline-start: var(--space-4);
+  border-inline-start: var(--space-1) solid var(--status-warning);
+}
+
+.status-pill[data-tone="neutral"] > span {
+  background: var(--text-tertiary);
+}
+
+.status-pill[data-tone="info"] > span {
+  background: var(--status-info);
+}
+
+.status-pill[data-tone="warning"] > span {
+  background: var(--status-warning);
+}
+
+.status-pill[data-tone="error"] > span {
+  background: var(--status-error);
+}
+
+.config-form,
+.workflow-form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.config-form fieldset,
+.workflow-form fieldset {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.config-form legend,
+.workflow-form legend {
+  margin-block-end: var(--space-3);
+  font-weight: 560;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
+  gap: var(--space-3);
+}
+
+.form-field {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 560;
+}
+
+.form-field input,
+.form-field select {
+  min-block-size: 2.75rem;
+  min-inline-size: 0;
+  padding: var(--space-3);
+  border: 0.0625rem solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
+}
+
+.form-field input[type="checkbox"] {
+  inline-size: 2.75rem;
+}
+
+.form-field small {
+  color: var(--text-tertiary);
+  font-weight: 430;
+}
+
+.form-result,
+.blocked-inline {
+  color: var(--status-error);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.form-result[role="status"] {
+  color: var(--status-success);
+}
+
+.data-report {
+  display: grid;
+  gap: var(--space-6);
+  padding: var(--space-6);
+}
+
+.status-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.warning-strip {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-inline-start: var(--space-1) solid var(--status-warning);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  color: var(--status-warning);
+}
+
+.warning-strip ul,
+.report-warnings ul,
+.code-list {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+.report-section {
+  display: grid;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.data-table-wrap {
+  max-inline-size: 100%;
+  overflow-x: auto;
+  border: 0.0625rem solid var(--border-subtle);
+  border-radius: var(--radius-control);
+}
+
+table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+caption {
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-secondary);
+  text-align: start;
+}
+
+th,
+td {
+  min-inline-size: 7rem;
+  padding: var(--space-3) var(--space-4);
+  border-block-start: 0.0625rem solid var(--border-subtle);
+  text-align: start;
+  vertical-align: top;
+}
+
+thead th {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.factor-list,
+.provenance-grid {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.factor-list div,
+.provenance-grid div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.factor-list dt,
+.provenance-grid dt {
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  text-transform: capitalize;
+}
+
+.factor-list dd,
+.provenance-grid dd {
+  margin: 0;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.provenance-grid dd {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.data-cell {
+  max-inline-size: 18rem;
+  overflow-wrap: anywhere;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+.report-footer {
+  display: grid;
+  gap: var(--space-5);
+  padding-block-start: var(--space-5);
+  border-block-start: 0.0625rem solid var(--border-subtle);
+}
+
+.provenance-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
+}
+
+.report-warnings {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+}
+
+@container (max-width: 36rem) {
+  .section-heading,
+  .panel-heading,
+  .report-heading {
+    flex-direction: column;
+  }
+
+  .status-cluster {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .data-report,
+  .product-section,
+  .workflow-panel {
+    padding: var(--space-4);
+  }
+}

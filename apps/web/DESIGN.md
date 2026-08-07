@@ -32,7 +32,7 @@ Ability-spectrum stress personas are keyboard-only users, low-vision users at 20
 | Strong surface | `--surface-strong` | `#DDE4ED` | `#253041` | Pressed and emphasized regions |
 | Primary text | `--text-primary` | `#171C24` | `#F3F6FA` | Headings and body |
 | Secondary text | `--text-secondary` | `#536071` | `#AFBAC8` | Supporting copy |
-| Tertiary text | `--text-tertiary` | `#6F7C8F` | `#8F9BAD` | Metadata only |
+| Tertiary text | `--text-tertiary` | `#5C6778` | `#8F9BAD` | Metadata only |
 | Default border | `--border-default` | `#CDD6E2` | `#303C4C` | Region and control outlines |
 | Subtle border | `--border-subtle` | `#DEE5EE` | `#25303E` | Dividers |
 | Cobalt 400 | `--accent-soft` | `#E5E8FF` | `#252C63` | Selected background |
@@ -41,7 +41,7 @@ Ability-spectrum stress personas are keyboard-only users, low-vision users at 20
 | On accent | `--accent-on` | `#FFFFFF` | `#10142A` | Text on accent |
 | Success | `--status-success` | `#087A57` | `#56D5AA` | Positive status with text/icon |
 | Warning | `--status-warning` | `#9B5700` | `#FFB76B` | Caution with text/icon |
-| Error | `--status-error` | `#C43D4D` | `#FF7C89` | Failure/destructive with text/icon |
+| Error | `--status-error` | `#B83344` | `#FF7C89` | Failure/destructive with text/icon |
 | Information | `--status-info` | `#245EA8` | `#79AAFF` | Informational state with text/icon |
 | Focus | `--focus-ring` | `#4351D8` | `#A1A8FF` | Two-pixel keyboard focus ring |
 
@@ -152,6 +152,31 @@ All spacing intent derives from a four-pixel unit.
 - **Variants**: neutral, information, success, warning, error.
 - **Accessibility**: color is secondary; text always carries the meaning.
 
+### Schema-bound Configuration Form
+
+- **Structure**: named native form, server-supplied parameter fieldset, short parameter help, submit action, and one live result region.
+- **Variants**: numeric bounds, enumerated select, text, and boolean controls derived from the approved schema; arbitrary code and untyped free-form payloads are absent.
+- **States**: ready, submitting, saved, invalid, and blocked. Client checks improve recovery, while the API remains authoritative and returns stable error codes.
+- **Accessibility**: every field has a visible label; invalid state uses `role="alert"`; blocked controls are not rendered as an apparent bypass.
+
+### Data Report
+
+- **Structure**: named report region, status/as-of cluster, warning strip, responsive data regions, and a provenance footer.
+- **Variants**: recommendation, backtest result, comparison, and robustness evidence. Every variant displays strategy, data, and engine versions plus a warnings section.
+- **States**: ready, stale, empty subsection, failed, canceled, integrity error, and entitlement blocked. Proprietary rows are absent from blocked markup.
+- **Language**: recommendation output is labeled a strategy-based proposal and warning; it never uses guaranteed-return or personalized investment language.
+
+### Data Table
+
+- **Structure**: caption, semantic column headers, compact rows, and an overflow-safe wrapper for genuinely tabular secondary content.
+- **Variants**: candidates, exclusions, run history, metrics, monthly returns, trades, costs, provenance, comparisons, and robustness evidence.
+- **Accessibility**: captions name the dataset, row/column headers remain explicit, and empty data is prose rather than a blank table.
+
+### Report Provenance Footer
+
+- **Structure**: labeled strategy, data, and engine versions; report as-of time; license state; and warning evidence.
+- **States**: complete metadata or explicit `Not reported` values with a warning. Missing metadata is never silently hidden.
+
 ## 6. Motion & Interaction
 
 | Token | Duration | Easing | Usage |
@@ -162,7 +187,7 @@ All spacing intent derives from a four-pixel unit.
 
 - Motion intensity is 3: no automatic page entrances, parallax, marquees, magnetic effects, or decorative loops.
 - Interactive feedback may animate only `transform`, `opacity`, and color. Press feedback uses a subtle `scale(0.98)` without moving surrounding layout.
-- `prefers-reduced-motion: reduce` removes transforms and makes state changes immediate.
+- `prefers-reduced-motion: reduce` removes interaction transforms and makes state changes immediate; the skip link remains off-canvas until focus without animating.
 - Focus is never delayed by animation. Loading feedback appears without blocking navigation.
 
 ## 7. Depth & Surface
