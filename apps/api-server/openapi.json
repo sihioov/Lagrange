@@ -5243,7 +5243,9 @@
           "account_type",
           "name",
           "currency",
-          "status"
+          "status",
+          "cost_profile_id",
+          "cost_profile_version"
         ],
         "properties": {
           "id": {
@@ -5274,6 +5276,23 @@
               "CLOSED"
             ]
           },
+          "initial_cash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The opening deposit; current cash is derived from cash_ledger, never cached here"
+          },
+          "cost_profile_id": {
+            "type": "string",
+            "enum": [
+              "KRX_ETF_DEFAULT",
+              "CUSTOM"
+            ]
+          },
+          "cost_profile_version": {
+            "type": "integer"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -5288,7 +5307,8 @@
         "type": "object",
         "required": [
           "name",
-          "currency"
+          "currency",
+          "initial_cash"
         ],
         "additionalProperties": false,
         "properties": {
@@ -5301,6 +5321,19 @@
             "enum": [
               "KRW"
             ]
+          },
+          "initial_cash": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "cost_profile_id": {
+            "type": "string",
+            "enum": [
+              "KRX_ETF_DEFAULT",
+              "CUSTOM"
+            ],
+            "description": "Defaults to KRX_ETF_DEFAULT; CUSTOM is not yet configurable through this route"
           }
         }
       },
@@ -5309,6 +5342,8 @@
         "required": [
           "account_id",
           "strategy_config_id",
+          "strategy_id",
+          "strategy_version",
           "bound_at"
         ],
         "properties": {
@@ -5319,6 +5354,12 @@
           "strategy_config_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "strategy_id": {
+            "type": "string"
+          },
+          "strategy_version": {
+            "type": "string"
           },
           "bound_at": {
             "type": "string",

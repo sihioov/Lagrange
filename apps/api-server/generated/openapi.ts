@@ -1062,6 +1062,11 @@ export interface components {
             currency: "KRW";
             /** @enum {string} */
             status: "ACTIVE" | "SUSPENDED" | "CLOSED";
+            /** @description The opening deposit; current cash is derived from cash_ledger, never cached here */
+            initial_cash?: string | null;
+            /** @enum {string} */
+            cost_profile_id: "KRX_ETF_DEFAULT" | "CUSTOM";
+            cost_profile_version: number;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -1071,12 +1076,21 @@ export interface components {
             name: string;
             /** @enum {string} */
             currency: "KRW";
+            /** @example 100000000 */
+            initial_cash: string;
+            /**
+             * @description Defaults to KRX_ETF_DEFAULT; CUSTOM is not yet configurable through this route
+             * @enum {string}
+             */
+            cost_profile_id?: "KRX_ETF_DEFAULT" | "CUSTOM";
         };
         BindStrategy: {
             /** Format: uuid */
             account_id: string;
             /** Format: uuid */
             strategy_config_id: string;
+            strategy_id: string;
+            strategy_version: string;
             /** Format: date-time */
             bound_at: string;
         };
