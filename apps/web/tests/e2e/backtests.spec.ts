@@ -1,7 +1,6 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { type APIRequestContext, expect, test } from "@playwright/test";
 
-const syntheticApiOrigin =
-  process.env["SYNTHETIC_API_ORIGIN"] ?? "http://127.0.0.1:38180";
+const syntheticApiOrigin = process.env["SYNTHETIC_API_ORIGIN"] ?? "http://127.0.0.1:38180";
 
 async function setScenario(
   request: APIRequestContext,
@@ -45,7 +44,7 @@ test("member creates, monitors, cancels, compares, and reads server-produced bac
   await progress.getByRole("button", { name: "Cancel backtest" }).click();
 
   // Then
-  await expect(page.getByRole("status")).toContainText("Cancellation requested");
+  await expect(progress.getByRole("status")).toContainText("Cancellation requested");
 
   // When
   const comparisonForm = page.getByRole("form", { name: "Compare backtest runs" });
@@ -68,13 +67,15 @@ test("member creates, monitors, cancels, compares, and reads server-produced bac
   await expect(report).toContainText("dual_momentum@2.3.1");
   await expect(report).toContainText("krx-eod@2025-12-31");
   await expect(report).toContainText("nautilus@1.231.0");
-  await expect(report).toContainText("Next-open execution can differ from close-to-close benchmarks.");
+  await expect(report).toContainText(
+    "Next-open execution can differ from close-to-close benchmarks.",
+  );
 
   // When
   await report.getByRole("button", { name: "Run robustness evidence" }).click();
 
   // Then
-  await expect(page.getByRole("status")).toContainText("Robustness queued");
+  await expect(report.getByRole("status")).toContainText("Robustness queued");
   const robustness = page.getByRole("region", { name: "Robustness evidence" });
   await expect(robustness).toContainText("Parameter sensitivity");
   await expect(robustness).toContainText("Cost stress");
@@ -111,8 +112,10 @@ test("failed and canceled jobs stay explicit while a large trade page remains us
 
   // Then
   await expect(page.getByRole("alert")).toContainText("Backtest failed");
-  await expect(page.getByText("CANCELED")).toBeVisible();
-  await expect(page.getByText("Canceled and failed runs do not expose result payloads.")).toBeVisible();
+  await expect(page.getByRole("row", { name: /Canceled member run.*CANCELED/ })).toBeVisible();
+  await expect(
+    page.getByText("Canceled and failed runs do not expose result payloads."),
+  ).toBeVisible();
   const trades = page.getByRole("region", { name: "Trades and costs" });
   await expect(trades).toContainText("1,200 trades");
   await expect(trades.getByText("Trade 1,200")).toBeVisible();

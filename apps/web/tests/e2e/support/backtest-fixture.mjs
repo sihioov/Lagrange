@@ -92,7 +92,7 @@ function trades(scenario) {
     instrument_id: index % 2 === 0 ? "069500.KRX" : "229200.KRX",
     quantity: String(100 + index),
     side: index % 2 === 0 ? "BUY" : "SELL",
-    trade_id: `Trade ${index + 1}`,
+    trade_id: `Trade ${(index + 1).toLocaleString("en-US")}`,
   }));
 }
 
