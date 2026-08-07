@@ -2,13 +2,17 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import type { ApiSession } from "./contracts";
-import { createServerApiClient, SESSION_COOKIE_NAME } from "./server-client";
+import {
+  createServerApiClient,
+  SESSION_COOKIE_NAME,
+  type ServerApiClientOptions,
+} from "./server-client";
 
 export class ServerConfigurationError extends Error {
   override readonly name = "ServerConfigurationError";
 }
 
-function internalApiOrigin(): string {
+export function internalApiOrigin(): string {
   const { API_INTERNAL_URL: configuredApiUrl } = process.env;
   const configured = configuredApiUrl ?? "http://127.0.0.1:8080";
   if (!URL.canParse(configured)) {
@@ -21,16 +25,19 @@ function internalApiOrigin(): string {
   return url.origin;
 }
 
-export async function getServerSession(): Promise<ApiSession> {
+export async function serverApiClientOptions(): Promise<ServerApiClientOptions> {
   const cookieStore = await cookies();
   const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME);
-  const client =
-    sessionCookie === undefined
-      ? createServerApiClient({ baseUrl: internalApiOrigin(), fetcher: fetch })
-      : createServerApiClient({
-          baseUrl: internalApiOrigin(),
-          fetcher: fetch,
-          sessionCookie: sessionCookie.value,
-        });
+  return sessionCookie === undefined
+    ? { baseUrl: internalApiOrigin(), fetcher: fetch }
+    : {
+        baseUrl: internalApiOrigin(),
+        fetcher: fetch,
+        sessionCookie: sessionCookie.value,
+      };
+}
+
+export async function getServerSession(): Promise<ApiSession> {
+  const client = createServerApiClient(await serverApiClientOptions());
   return client.getSession();
 }

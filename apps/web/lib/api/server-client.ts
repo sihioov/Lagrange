@@ -1,3 +1,4 @@
+import type { KyInstance } from "ky";
 import ky from "ky";
 import type { ApiSession } from "./contracts";
 import { AUTH_API_PATHS, apiSessionSchema } from "./contracts";
@@ -19,12 +20,12 @@ function normalizedBaseUrl(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 }
 
-export function createServerApiClient(options: ServerApiClientOptions): ServerApiClient {
+export function createServerTransport(options: ServerApiClientOptions): KyInstance {
   const headers = new Headers();
   if (options.sessionCookie !== undefined) {
     headers.set("Cookie", `${SESSION_COOKIE_NAME}=${options.sessionCookie}`);
   }
-  const client = ky.create({
+  return ky.create({
     cache: "no-store",
     credentials: "omit",
     fetch: options.fetcher,
@@ -34,6 +35,10 @@ export function createServerApiClient(options: ServerApiClientOptions): ServerAp
     throwHttpErrors: false,
     timeout: 10_000,
   });
+}
+
+export function createServerApiClient(options: ServerApiClientOptions): ServerApiClient {
+  const client = createServerTransport(options);
 
   return {
     getSession: async () => {
