@@ -1,0 +1,61 @@
+# Disposable QA PostgreSQL for the Phase 2 failure suite (plan Todo 34).
+#
+# Why this exists rather than reusing the WSL2 PostgreSQL the Rust tests
+# normally target:
+#
+#   * Hermetic. The suite creates and destroys its own cluster, so a run
+#     cannot be polluted by, or pollute, the developer database.
+#   * Reliable. The WSL2 NAT path degrades under sustained load (documented in
+#     decisions.md: handshakes climb from ~15ms to seconds after 5-10 minutes),
+#     which is fatal for a long fault-injection suite that is *supposed* to be
+#     the thing detecting failures. A published loopback port on a container
+#     has no such behaviour.
+#   * It makes `docker stop`/`start` available as a genuine DB-outage
+#     injection, on top of the in-SQL outage the Rust tests use.
+#
+# Same pinned digest as deploy/compose/compose.yml — a suite that proved
+# behaviour on a different PostgreSQL minor would prove nothing about
+# production.
+#
+# The port is published on 127.0.0.1 ONLY, and defaults to 55432 so it can
+# never collide with the WSL instance on 5432 or a local install.
+
+name: lagrange-qa
+
+services:
+  qa-db:
+    image: postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a # tag: 18.4
+    init: true
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: lagrange
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      # The suite creates a fresh database per test and runs several
+      # concurrently; the default 100 is tight once each harness holds a
+      # handful of role-scoped pools.
+      - -c
+      - max_connections=300
+      # Durability is irrelevant for a disposable cluster and fsync dominates
+      # the runtime of a suite that creates a database per test.
+      - -c
+      - fsync=off
+      - -c
+      - full_page_writes=off
+      - -c
+      - synchronous_commit=off
+    ports:
+      # Loopback only. Never 0.0.0.0: this cluster trusts a fixed password.
+      - "127.0.0.1:${LAGRANGE_QA_DB_PORT:-55432}:5432"
+    # No volume: the cluster is meant to die with the project. `down -v` and a
+    # fresh `up` is the reset procedure.
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 40
+      start_period: 5s

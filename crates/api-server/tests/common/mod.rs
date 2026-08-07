@@ -189,16 +189,21 @@ impl Harness {
         let super_url = base_url()?;
         let db_name = fresh_db_name();
         let super_pool = pool(&super_url, 2).await;
+        // Roles FIRST: the CREATE DATABASE below names migration_owner as the
+        // owner, so on a cluster that has never hosted this suite the role must
+        // already exist. Doing it the other way round only ever worked because
+        // a previous run had left the roles behind - it failed immediately on
+        // the fresh QA cluster (42704: role "migration_owner" does not exist).
+        sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
+            .execute(&super_pool)
+            .await
+            .expect("bootstrap roles");
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "CREATE DATABASE \"{db_name}\" OWNER migration_owner"
         )))
         .execute(&super_pool)
         .await
         .expect("create scratch db");
-        sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
-            .execute(&super_pool)
-            .await
-            .expect("bootstrap roles");
         drop(super_pool);
 
         let owner_url = conn_url(&super_url, "migration_owner", &db_name);

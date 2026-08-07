@@ -108,10 +108,17 @@ pub(crate) async fn resolve_session(
     .bind(&token_hash)
     .fetch_optional(backend.admin_pool())
     .await
+    // A failed session LOOKUP is not an invalid session. Reporting a database
+    // outage as 401 SESSION_UNKNOWN tells every authenticated caller their
+    // session is gone, and a well-behaved client responds by logging the user
+    // out - so a transient blip becomes a spurious mass logout, and the real
+    // cause is hidden behind an auth code. Fail closed as a server error
+    // instead: no data is served either way, but the cause is truthful and the
+    // caller may retry. Found by the Todo 34 DB-outage injection.
     .map_err(|_| SessionRejection {
-        status: StatusCode::UNAUTHORIZED,
-        code: "SESSION_UNKNOWN",
-        message: "no session",
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "INTERNAL",
+        message: "session store unavailable",
     })?;
     let Some((user_id, role_id, csrf_hash, expires_at_secs, auth_time_secs)) = row else {
         return Err(SessionRejection {
