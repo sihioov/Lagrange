@@ -426,6 +426,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/paper/accounts/{account_id}/performance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/paper/accounts/{account_id}/performance */
+        get: operations["get__api_v1_paper_accounts__account_id__performance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/paper/accounts/{account_id}/lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/paper/accounts/{account_id}/lineage */
+        get: operations["get__api_v1_paper_accounts__account_id__lineage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/paper/accounts/{account_id}/parity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/paper/accounts/{account_id}/parity */
+        get: operations["get__api_v1_paper_accounts__account_id__parity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/datasets": {
         parameters: {
             query?: never;
@@ -1093,6 +1144,78 @@ export interface components {
             strategy_version: string;
             /** Format: date-time */
             bound_at: string;
+        };
+        PerformancePoint: {
+            /** @example 2026-01-31 */
+            trading_date: string;
+            /** @example 100000000 */
+            equity: string;
+            /** @example 100000000 */
+            cash: string;
+            /** @example 100000000 */
+            positions_value: string;
+            /** @enum {string} */
+            currency: "KRW";
+            /** @description Day-over-day return, computed on read from ledger-derived equity; absent on the first point */
+            return_pct?: string | null;
+        };
+        Performance: {
+            /** Format: uuid */
+            account_id: string;
+            points: components["schemas"]["PerformancePoint"][];
+            /** @description Rendered verbatim; Paper results are simulated and never a guarantee of future returns */
+            disclaimer: string;
+        };
+        Lineage: {
+            /** Format: uuid */
+            account_id: string;
+            /** @description Immutable strategy-binding history; a rebind closes the old row and opens a new one (branching lineage) */
+            bindings: {
+                /** Format: uuid */
+                strategy_config_id: string;
+                strategy_id: string;
+                strategy_version: string;
+                /** Format: date-time */
+                bound_at: string;
+                /** Format: date-time */
+                unbound_at?: string | null;
+                active: boolean;
+            }[];
+            /** @description Each close(T) computation and the session T+1 it executed at */
+            targets: {
+                /** Format: uuid */
+                id: string;
+                /** @example 2026-01-31 */
+                computed_on: string;
+                /** @example 2026-01-31 */
+                effective_date: string;
+                /** @enum {string} */
+                status: "PENDING" | "EXECUTED" | "SKIPPED";
+                /** Format: date-time */
+                executed_at?: string | null;
+            }[];
+        };
+        /** @description Computed on read, never stored, so it cannot go stale against the lineage it describes. */
+        Parity: {
+            /** Format: uuid */
+            account_id: string;
+            /** @example 2026-01-31 */
+            as_of: string;
+            /**
+             * @description NOT_COMPARABLE means the two sides came from different strategy/data/as-of inputs, so no parity claim is meaningful
+             * @enum {string}
+             */
+            status: "MATCH" | "DIVERGENT" | "NOT_COMPARABLE";
+            lineage: {
+                [key: string]: unknown;
+            };
+            divergences: {
+                [key: string]: unknown;
+            }[];
+            /** @description Stated on every report: backtest fills come from the NT engine, Paper fills are modeled at the next raw open plus slippage */
+            fill_model_difference: string;
+            /** @description True for DIVERGENT and NOT_COMPARABLE (design 15.3 grades a Paper divergence WARNING) */
+            warrants_alert: boolean;
         };
         BindStrategyBody: {
             /** Format: uuid */
@@ -1931,6 +2054,75 @@ export interface operations {
         };
     };
     get__api_v1_paper_accounts__account_id__equity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_paper_accounts__account_id__performance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_paper_accounts__account_id__lineage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_paper_accounts__account_id__parity: {
         parameters: {
             query?: never;
             header?: never;

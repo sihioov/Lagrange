@@ -2476,6 +2476,267 @@
         }
       }
     },
+    "/api/v1/paper/accounts/{account_id}/performance": {
+      "get": {
+        "operationId": "get__api_v1_paper_accounts__account_id__performance",
+        "summary": "GET /api/v1/paper/accounts/{account_id}/performance",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "paper_view",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/paper/accounts/{account_id}/lineage": {
+      "get": {
+        "operationId": "get__api_v1_paper_accounts__account_id__lineage",
+        "summary": "GET /api/v1/paper/accounts/{account_id}/lineage",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "paper_view",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/paper/accounts/{account_id}/parity": {
+      "get": {
+        "operationId": "get__api_v1_paper_accounts__account_id__parity",
+        "summary": "GET /api/v1/paper/accounts/{account_id}/parity",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "paper_view",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
     "/api/v1/admin/datasets": {
       "get": {
         "operationId": "get__api_v1_admin_datasets",
@@ -5364,6 +5625,225 @@
           "bound_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "PerformancePoint": {
+        "type": "object",
+        "required": [
+          "trading_date",
+          "equity",
+          "cash",
+          "positions_value",
+          "currency"
+        ],
+        "properties": {
+          "trading_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "equity": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "cash": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "positions_value": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "KRW"
+            ]
+          },
+          "return_pct": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Day-over-day return, computed on read from ledger-derived equity; absent on the first point"
+          }
+        }
+      },
+      "Performance": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "points",
+          "disclaimer"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PerformancePoint"
+            }
+          },
+          "disclaimer": {
+            "type": "string",
+            "description": "Rendered verbatim; Paper results are simulated and never a guarantee of future returns"
+          }
+        }
+      },
+      "Lineage": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "bindings",
+          "targets"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bindings": {
+            "type": "array",
+            "description": "Immutable strategy-binding history; a rebind closes the old row and opens a new one (branching lineage)",
+            "items": {
+              "type": "object",
+              "required": [
+                "strategy_config_id",
+                "strategy_id",
+                "strategy_version",
+                "bound_at",
+                "active"
+              ],
+              "properties": {
+                "strategy_config_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "strategy_id": {
+                  "type": "string"
+                },
+                "strategy_version": {
+                  "type": "string"
+                },
+                "bound_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "unbound_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "active": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "targets": {
+            "type": "array",
+            "description": "Each close(T) computation and the session T+1 it executed at",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "computed_on",
+                "effective_date",
+                "status"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "computed_on": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "example": "2026-01-31"
+                },
+                "effective_date": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "example": "2026-01-31"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "PENDING",
+                    "EXECUTED",
+                    "SKIPPED"
+                  ]
+                },
+                "executed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Parity": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "as_of",
+          "status",
+          "lineage",
+          "divergences",
+          "fill_model_difference",
+          "warrants_alert"
+        ],
+        "description": "Computed on read, never stored, so it cannot go stale against the lineage it describes.",
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "as_of": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "MATCH",
+              "DIVERGENT",
+              "NOT_COMPARABLE"
+            ],
+            "description": "NOT_COMPARABLE means the two sides came from different strategy/data/as-of inputs, so no parity claim is meaningful"
+          },
+          "lineage": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "divergences": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "fill_model_difference": {
+            "type": "string",
+            "description": "Stated on every report: backtest fills come from the NT engine, Paper fills are modeled at the next raw open plus slippage"
+          },
+          "warrants_alert": {
+            "type": "boolean",
+            "description": "True for DIVERGENT and NOT_COMPARABLE (design 15.3 grades a Paper divergence WARNING)"
           }
         }
       },

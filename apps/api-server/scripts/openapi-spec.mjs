@@ -45,6 +45,9 @@ const ROUTES = [
   ["GET", "/api/v1/paper/accounts/{account_id}/orders", { entitlement: "paper_view" }],
   ["GET", "/api/v1/paper/accounts/{account_id}/positions", { entitlement: "paper_view" }],
   ["GET", "/api/v1/paper/accounts/{account_id}/equity", { entitlement: "paper_view" }],
+  ["GET", "/api/v1/paper/accounts/{account_id}/performance", { entitlement: "paper_view" }],
+  ["GET", "/api/v1/paper/accounts/{account_id}/lineage", { entitlement: "paper_view" }],
+  ["GET", "/api/v1/paper/accounts/{account_id}/parity", { entitlement: "paper_view" }],
   // admin (Owner-only, audited)
   ["GET", "/api/v1/admin/datasets", { owner: true, audit: true }],
   ["POST", "/api/v1/admin/datasets/{dataset_id}/approve", { mutating: true, idem: true, owner: true, audit: true }],
@@ -531,6 +534,79 @@ const SCHEMAS = {
       strategy_id: { type: "string" },
       strategy_version: { type: "string" },
       bound_at: ts,
+    },
+  },
+  PerformancePoint: {
+    type: "object",
+    required: ["trading_date", "equity", "cash", "positions_value", "currency"],
+    properties: {
+      trading_date: dateStr,
+      equity: decimalStr,
+      cash: decimalStr,
+      positions_value: decimalStr,
+      currency: { type: "string", enum: ["KRW"] },
+      return_pct: { type: ["string", "null"], description: "Day-over-day return, computed on read from ledger-derived equity; absent on the first point" },
+    },
+  },
+  Performance: {
+    type: "object",
+    required: ["account_id", "points", "disclaimer"],
+    properties: {
+      account_id: uuid,
+      points: { type: "array", items: { $ref: "#/components/schemas/PerformancePoint" } },
+      disclaimer: { type: "string", description: "Rendered verbatim; Paper results are simulated and never a guarantee of future returns" },
+    },
+  },
+  Lineage: {
+    type: "object",
+    required: ["account_id", "bindings", "targets"],
+    properties: {
+      account_id: uuid,
+      bindings: {
+        type: "array",
+        description: "Immutable strategy-binding history; a rebind closes the old row and opens a new one (branching lineage)",
+        items: {
+          type: "object",
+          required: ["strategy_config_id", "strategy_id", "strategy_version", "bound_at", "active"],
+          properties: {
+            strategy_config_id: uuid,
+            strategy_id: { type: "string" },
+            strategy_version: { type: "string" },
+            bound_at: ts,
+            unbound_at: { type: ["string", "null"], format: "date-time" },
+            active: { type: "boolean" },
+          },
+        },
+      },
+      targets: {
+        type: "array",
+        description: "Each close(T) computation and the session T+1 it executed at",
+        items: {
+          type: "object",
+          required: ["id", "computed_on", "effective_date", "status"],
+          properties: {
+            id: uuid,
+            computed_on: dateStr,
+            effective_date: dateStr,
+            status: { type: "string", enum: ["PENDING", "EXECUTED", "SKIPPED"] },
+            executed_at: { type: ["string", "null"], format: "date-time" },
+          },
+        },
+      },
+    },
+  },
+  Parity: {
+    type: "object",
+    required: ["account_id", "as_of", "status", "lineage", "divergences", "fill_model_difference", "warrants_alert"],
+    description: "Computed on read, never stored, so it cannot go stale against the lineage it describes.",
+    properties: {
+      account_id: uuid,
+      as_of: dateStr,
+      status: { type: "string", enum: ["MATCH", "DIVERGENT", "NOT_COMPARABLE"], description: "NOT_COMPARABLE means the two sides came from different strategy/data/as-of inputs, so no parity claim is meaningful" },
+      lineage: { type: "object", additionalProperties: true },
+      divergences: { type: "array", items: { type: "object", additionalProperties: true } },
+      fill_model_difference: { type: "string", description: "Stated on every report: backtest fills come from the NT engine, Paper fills are modeled at the next raw open plus slippage" },
+      warrants_alert: { type: "boolean", description: "True for DIVERGENT and NOT_COMPARABLE (design 15.3 grades a Paper divergence WARNING)" },
     },
   },
   BindStrategyBody: {
