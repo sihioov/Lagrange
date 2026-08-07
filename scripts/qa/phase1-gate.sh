@@ -171,7 +171,11 @@ test_playwright_phase1() {
     add_check E7 playwright-phase1 BLOCKED_EXTERNAL "mock did not become ready on 38180"
     return 0
   fi
+  # The spec side reads SYNTHETIC_API_ORIGIN; the app itself resolves its
+  # upstream from API_INTERNAL_URL. Without the second one the app renders every
+  # page against the absent real API and the whole lane 500s.
   ( cd "$web_dir" && PORT=33000 SYNTHETIC_API_ORIGIN=http://127.0.0.1:38180 \
+      API_INTERNAL_URL=http://127.0.0.1:38180 \
       nohup "$node_bin" node_modules/next/dist/bin/next dev -p 33000 >"$transcript_dir/app.stdout.txt" 2>&1 & echo $! >"$transcript_dir/app.pid" )
   app_pid="$(cat "$transcript_dir/app.pid" 2>/dev/null || true)"
   if ! ready_port 33000 120; then

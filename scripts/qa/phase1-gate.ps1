@@ -218,7 +218,11 @@ function Test-PlaywrightPhase1 {
         if (-not $mockReady) { throw "synthetic-api mock did not become ready on 38180" }
 
         $env:PORT = "33000"
+        # The spec side reads SYNTHETIC_API_ORIGIN; the app itself resolves its
+        # upstream from API_INTERNAL_URL. Without the second one the app renders
+        # every page against the absent real API and the whole lane 500s.
         $env:SYNTHETIC_API_ORIGIN = "http://127.0.0.1:38180"
+        $env:API_INTERNAL_URL = "http://127.0.0.1:38180"
         $appProc = Start-Process -FilePath $nodeExe -ArgumentList @("node_modules/next/dist/bin/next", "dev", "-p", "33000") `
             -WorkingDirectory $webDir -RedirectStandardOutput $appOut -RedirectStandardError "$appOut.err" -PassThru -WindowStyle Hidden
         try {
