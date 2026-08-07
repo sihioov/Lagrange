@@ -1,0 +1,74 @@
+# Backup and restore alerting (plan Todo 33).
+#
+# These fire on the textfile metrics that scripts/backup/create.* and
+# scripts/backup/restore-and-verify.* write on EVERY run, success or failure.
+#
+# The staleness alerts are the important ones. A backup system fails silently
+# far more often than it fails loudly: the usual disaster is not "the backup
+# errored" but "nothing has run for three weeks and nobody noticed". Alerting
+# on absence-of-success rather than presence-of-error is what covers that, and
+# it is also why both scripts write their metrics file even when they fail —
+# a file that only appears on success can never go stale.
+
+groups:
+  - name: lagrange-backup
+    interval: 60s
+    rules:
+      - alert: LagrangeBackupStale
+        # 26h: a daily backup that missed one window is still fine; two is not.
+        expr: time() - lagrange_backup_last_success_timestamp_seconds > 93600
+        for: 10m
+        labels:
+          severity: critical
+          component: backup
+        annotations:
+          summary: "No verified backup in over 26 hours"
+          description: >-
+            lagrange_backup_last_success_timestamp_seconds has not advanced.
+            Either scripts/backup/create.* is not running, or every run is being
+            rejected by the policy gate. Recovery capability is degrading with
+            every hour this persists.
+          runbook: deploy/backup/runbooks/pitr-point-in-time-recovery.md
+
+      - alert: LagrangeBackupFailing
+        expr: lagrange_backup_exit_code != 0
+        for: 5m
+        labels:
+          severity: critical
+          component: backup
+        annotations:
+          summary: "The last backup attempt did not pass the policy gate"
+          description: >-
+            create.* completed but validate-policy rejected the set (exit
+            {{ $value }}). The set on disk must NOT be relied on for recovery:
+            a set the gate rejects is a set no restore will start from.
+          runbook: deploy/backup/runbooks/pre-member-restore-drill.md
+
+      - alert: LagrangeRestoreDrillStale
+        # 8 days: the drill is weekly. An untested backup is a hypothesis.
+        expr: time() - lagrange_restore_last_success_timestamp_seconds > 691200
+        for: 30m
+        labels:
+          severity: warning
+          component: recovery
+        annotations:
+          summary: "No verified restore drill in over 8 days"
+          description: >-
+            Backups may still be running, but nothing has proven they can be
+            restored. Run scripts/backup/restore-and-verify.* against the newest
+            set before treating recovery as available.
+          runbook: deploy/backup/runbooks/pre-member-restore-drill.md
+
+      - alert: LagrangeRestoreDrillFailed
+        expr: lagrange_restore_verified == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: recovery
+        annotations:
+          summary: "The last restore drill failed its assertions"
+          description: >-
+            restore-and-verify.* ran and did not verify. Treat the backup set as
+            unusable for that recovery point and investigate the failed
+            assertion recorded in the verdict JSON before the next release gate.
+          runbook: deploy/backup/runbooks/pitr-point-in-time-recovery.md

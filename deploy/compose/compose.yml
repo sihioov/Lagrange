@@ -177,7 +177,12 @@ services:
       - postgres_password
     volumes:
       # DB data on a dedicated named volume (backed up by deploy/backup/).
-      - pgdata:/var/lib/postgresql/data
+      # Mounted at /var/lib/postgresql, NOT /var/lib/postgresql/data: the
+      # PG18 images keep data in a major-version subdirectory
+      # (/var/lib/postgresql/18/docker) and the entrypoint refuses to start
+      # when it finds a volume on the pre-18 path. Proven by the Todo 33
+      # restore drill, which hit exactly this on the same pinned digest.
+      - pgdata:/var/lib/postgresql
     networks:
       - backend
       # Also on the isolated backtest network so nt-backtest-worker-* can
@@ -421,6 +426,7 @@ services:
       - "--web.enable-lifecycle"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts:/etc/prometheus/alerts:ro
       - ${LAGRANGE_DATA_DIR:-../data}/metrics:/prometheus
     networks:
       - backend

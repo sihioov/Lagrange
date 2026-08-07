@@ -1,0 +1,156 @@
+# Disposable restore-drill Compose project (plan Todo 33).
+#
+# This is NOT the production stack. It exists so `scripts/backup/create.*` and
+# `scripts/backup/restore-and-verify.*` can exercise a real PostgreSQL 18 base
+# backup, a real WAL archive, and a real point-in-time recovery against a
+# cluster that is created and destroyed within one run.
+#
+# Isolation is structural, not conventional:
+#   * NO published ports. The host's own PostgreSQL (the dev/test lane) and the
+#     production stack's `postgres` service are therefore untouchable from here
+#     and cannot be reached by accident. Every command runs via
+#     `docker compose exec -T` / `run --rm` inside the project.
+#   * The project name is unique per run (`-p lagrange-drill-<run-id>`), so two
+#     drills, or a drill and the production stack, can never share a volume,
+#     a container name, or a network.
+#   * `restore_policy.isolated_target_required` in the backup manifest is what
+#     the policy validator enforces; this file is how that requirement is met.
+#
+# The image digest is the SAME pin as deploy/compose/compose.yml's postgres
+# service. A drill that restored into a different minor version would prove
+# nothing about the production cluster.
+#
+# Two services, never running at once:
+#   source  — the cluster a backup is TAKEN from (create.*). Archives WAL.
+#   target  — the empty cluster a backup is RESTORED into (restore-and-verify.*).
+#             Starts with an empty pgdata volume that the restore populates from
+#             the base tar before first boot.
+
+name: lagrange-drill
+
+x-pg-image: &pg-image
+  image: postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a # tag: 18.4
+
+services:
+  # --------------------------------------------------------------------
+  # init-perms — make the shared volumes writable by the postgres user.
+  #
+  # Named volumes are created root-owned, but postgres runs as uid 999 and
+  # `archive_command` executes AS postgres. Without this the archiver fails
+  # every segment with "Permission denied" and the cluster stays healthy while
+  # silently shipping no WAL — the worst possible failure mode for a backup
+  # system, because everything looks fine until a restore needs the archive.
+  # Runs as root, chowns, exits; the DB services gate on its success.
+  # --------------------------------------------------------------------
+  init-perms:
+    <<: *pg-image
+    user: root
+    entrypoint:
+      - /bin/sh
+      - -c
+      - mkdir -p /wal-archive /wal-restore /backup && chown -R 999:999 /wal-archive /wal-restore /backup && echo perms-ok
+    volumes:
+      - wal-archive:/wal-archive
+      - wal-restore:/wal-restore
+      - backup-out:/backup
+    networks:
+      - drill
+
+  # --------------------------------------------------------------------
+  # source — the cluster under backup.
+  #
+  # archive_mode/archive_command are the WAL shipping contract the PITR
+  # runbook (deploy/backup/runbooks/pitr-point-in-time-recovery.md §3) calls
+  # for. `archive_command` copies each completed segment into the wal-archive
+  # volume; `pg_basebackup -X none` then deliberately takes NO WAL of its own,
+  # so the archive is the single source of WAL for recovery and a gap in it is
+  # a real, detectable gap rather than something the base backup papers over.
+  # --------------------------------------------------------------------
+  source:
+    <<: *pg-image
+    init: true
+    environment:
+      POSTGRES_USER: lagrange
+      POSTGRES_DB: lagrange
+      # A throwaway cluster with no published ports and a lifetime of one
+      # drill. The production stack injects its password from a Docker secret
+      # (`POSTGRES_PASSWORD_FILE`); doing that here would add a secret file to
+      # a project whose whole point is that it is destroyed, and the policy
+      # forbids secrets entering backup archives at all.
+      POSTGRES_PASSWORD: drill-only-not-a-secret
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f
+      - -c
+      - archive_timeout=60
+      - -c
+      - summarize_wal=on
+    volumes:
+      # PG18 images store data in a major-version subdirectory
+      # (/var/lib/postgresql/18/docker) and REFUSE to start when a volume is
+      # mounted at the pre-18 path /var/lib/postgresql/data. Mount the parent.
+      - source-pgdata:/var/lib/postgresql
+      - wal-archive:/wal-archive
+      - backup-out:/backup
+    networks:
+      - drill
+    depends_on:
+      init-perms:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lagrange -d lagrange"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  # --------------------------------------------------------------------
+  # target — the isolated restore destination.
+  #
+  # Deliberately started with `command: postgres` and an EMPTY pgdata volume:
+  # restore-and-verify populates that volume from the base tar plus a
+  # `recovery.signal` before the container is ever started, which is what makes
+  # this a real recovery rather than a fresh initdb with data copied in.
+  # --------------------------------------------------------------------
+  target:
+    <<: *pg-image
+    init: true
+    environment:
+      POSTGRES_USER: lagrange
+      POSTGRES_DB: lagrange
+      POSTGRES_PASSWORD: drill-only-not-a-secret
+    volumes:
+      - target-pgdata:/var/lib/postgresql
+      - wal-restore:/wal-archive
+      - backup-out:/backup
+    networks:
+      - drill
+    depends_on:
+      init-perms:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lagrange -d lagrange"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+networks:
+  # internal: no egress. A drill cluster has no reason to reach the internet,
+  # and this guarantees a restored dataset cannot phone anywhere.
+  drill:
+    driver: bridge
+    internal: true
+
+volumes:
+  source-pgdata:
+  target-pgdata:
+  wal-archive:
+  wal-restore:
+  backup-out:
