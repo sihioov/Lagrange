@@ -27,6 +27,7 @@ use crate::error::{TenancyError, TenancyResult};
 use auth::entitlement::Actor;
 use chrono::{DateTime, Utc};
 use kis_client::order_state::{Applied, Event, OrderIntentState, TransitionError};
+use risk_gateway::RiskApproval;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
@@ -42,6 +43,8 @@ pub struct OrderIntentRow {
     pub quantity: String,
     pub price: Option<String>,
     pub correlation_id: String,
+    /// The client `Idempotency-Key` this intent was created for.
+    pub client_key: Option<String>,
     pub state: String,
     pub broker_order_no: Option<String>,
     pub cumulative_filled: String,
@@ -51,7 +54,7 @@ pub struct OrderIntentRow {
 }
 
 const INTENT_COLUMNS: &str = "intent_ref, account_id, instrument_id, side, \
-     quantity::text AS quantity, price::text AS price, correlation_id, state, \
+     quantity::text AS quantity, price::text AS price, correlation_id, client_key, state, \
      broker_order_no, cumulative_filled::text AS cumulative_filled, state_reason, \
      created_at, updated_at";
 
@@ -90,6 +93,9 @@ pub struct NewOrderIntent {
     pub quantity: String,
     pub price: Option<String>,
     pub correlation_id: String,
+    /// The client's `Idempotency-Key`. THIS is what a retransmission repeats,
+    /// and therefore what deduplication has to key on — see migration 0020.
+    pub client_key: String,
 }
 
 impl NewOrderIntent {
@@ -120,20 +126,31 @@ impl OrderIntentRepo {
         }
     }
 
-    /// Claims an intent, or returns the one that already holds this ref.
+    /// Claims an intent, or returns the one this client key already made.
     ///
-    /// `ON CONFLICT DO NOTHING` plus a read makes this a single round trip
-    /// whose outcome is decided by the database, so two concurrent requests
-    /// for the same ref cannot both be told they created it.
+    /// Deduplication keys on the CLIENT's `Idempotency-Key`, never on the
+    /// server-minted `intent_ref`. The ref is different on every request, so
+    /// it can never match a retransmission — and keying on it would leave
+    /// FR-LIVE-003 unmet in the worst possible way. Trace AT-09: the client
+    /// POSTs, the response times out, the client retransmits, the route mints
+    /// a NEW ref, the claim finds nothing to deduplicate against, the gate
+    /// runs again and legitimately approves, and a SECOND REAL ORDER reaches
+    /// the broker. Every individual step is correct, and the state machine
+    /// cannot help, because the two submissions are two distinct intents.
+    ///
+    /// `ON CONFLICT DO NOTHING` plus a read makes the outcome the database's
+    /// to decide, so two concurrent retransmissions cannot both be told they
+    /// created it.
     pub async fn claim(&self, input: NewOrderIntent) -> TenancyResult<Claim> {
         let mut tx = begin_actor_tx(&self.pool, &self.actor).await?;
 
         let inserted = sqlx::query_scalar::<_, String>(
             "INSERT INTO order_intents \
              (intent_ref, owner_user_id, account_id, instrument_id, side, quantity, price, \
-              correlation_id) \
-             VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8) \
-             ON CONFLICT (intent_ref) DO NOTHING \
+              correlation_id, client_key) \
+             VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8, $9) \
+             ON CONFLICT (owner_user_id, client_key) WHERE client_key IS NOT NULL \
+             DO NOTHING \
              RETURNING intent_ref",
         )
         .bind(&input.intent_ref)
@@ -144,14 +161,20 @@ impl OrderIntentRepo {
         .bind(&input.quantity)
         .bind(input.price.as_deref())
         .bind(&input.correlation_id)
+        .bind(&input.client_key)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|_| TenancyError::Forbidden)?;
 
+        // Read by the CLIENT key, not by the minted ref: on a retransmission
+        // the ref in `input` was never stored, so reading by it would miss the
+        // very row this method exists to find.
         let row = sqlx::query_as::<_, OrderIntentRow>(sqlx::AssertSqlSafe(format!(
-            "SELECT {INTENT_COLUMNS} FROM order_intents WHERE intent_ref = $1"
+            "SELECT {INTENT_COLUMNS} FROM order_intents \
+             WHERE owner_user_id = $1 AND client_key = $2"
         )))
-        .bind(&input.intent_ref)
+        .bind(self.owner_user_id)
+        .bind(&input.client_key)
         .fetch_one(&mut *tx)
         .await
         .map_err(|_| TenancyError::NotFound)?;
@@ -163,6 +186,32 @@ impl OrderIntentRepo {
         } else {
             Claim::Existing(row)
         })
+    }
+
+    /// Records the gate's approval, CONSUMING the token that proves it.
+    ///
+    /// This is where Todo 38's compile-time guarantee is switched back on at
+    /// the layer that will actually be called. `Event::RiskApproved` has to
+    /// stay freely constructible — [`Self::events`] deserializes it to replay
+    /// the log — so the enum cannot be the enforcement point. This method is:
+    /// it takes [`RiskApproval`] by value, so a caller must have obtained one
+    /// from a gate run that both approved AND durably recorded, and cannot
+    /// use it twice.
+    ///
+    /// The approval must name THIS intent. One laundered from another intent
+    /// would authorise an order the gate never assessed.
+    pub async fn record_approval(
+        &self,
+        intent_ref: &str,
+        approval: RiskApproval,
+    ) -> TenancyResult<AppendOutcome> {
+        if approval.intent_ref() != intent_ref {
+            return Err(TenancyError::InvalidState(format!(
+                "approval authorises intent {}, not {intent_ref}",
+                approval.intent_ref()
+            )));
+        }
+        self.append(intent_ref, &Event::RiskApproved).await
     }
 
     /// Loads an intent's current state as the machine understands it.

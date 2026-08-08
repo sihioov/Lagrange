@@ -44,6 +44,7 @@ async fn new_intent(_h: &Harness, account_id: Uuid) -> NewOrderIntent {
         quantity: "10".into(),
         price: Some("7250".into()),
         correlation_id: "corr-1".into(),
+        client_key: format!("ck-{}", Uuid::new_v4()),
     }
 }
 
@@ -72,27 +73,37 @@ async fn live_order_state_a_duplicate_claim_returns_the_existing_intent() {
         "the first claim owns the intent and proceeds to the gate"
     );
 
-    // The retry. This is the path that matters: it must NOT report a new
-    // claim, because the caller would then re-enter the Risk Gateway, hit
-    // 0018's one-decision-per-intent index, and turn a benign client retry
-    // into a CRITICAL "decision not persisted" alert.
-    let second = repo(&h).claim(input.clone()).await.expect("second claim");
+    // The retransmission, modelled the way it actually arrives: the SAME
+    // client Idempotency-Key, but a fresh server-minted ref, because the
+    // route mints one per request. Dedup keyed on the ref would miss this
+    // entirely -- the client would get a second intent, a second legitimate
+    // gate approval, and a SECOND REAL ORDER (FR-LIVE-003).
+    let retransmission = NewOrderIntent {
+        intent_ref: NewOrderIntent::mint_ref(),
+        ..input.clone()
+    };
+    assert_ne!(retransmission.intent_ref, input.intent_ref);
+    let second = repo(&h).claim(retransmission).await.expect("second claim");
     assert!(
         !second.is_new(),
         "a duplicate claim must not send the caller back through the gate"
     );
     assert!(matches!(second, Claim::Existing(_)));
-    assert_eq!(second.row().intent_ref, input.intent_ref);
+    assert_eq!(
+        second.row().intent_ref,
+        input.intent_ref,
+        "the retransmission must resolve to the ORIGINAL intent"
+    );
     assert_eq!(second.row().state, "INTENT_CREATED");
 
     // Exactly one row exists.
     let pool = actor_pool(&h.app_url, &h.owner.user_id.to_string(), 2).await;
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM order_intents WHERE intent_ref = $1")
-        .bind(&input.intent_ref)
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM order_intents WHERE client_key = $1")
+        .bind(&input.client_key)
         .fetch_one(&pool)
         .await
         .expect("count");
-    assert_eq!(count, 1);
+    assert_eq!(count, 1, "one client key yields exactly one intent, ever");
 }
 
 #[tokio::test]
@@ -383,5 +394,84 @@ async fn live_order_state_unresolved_lists_exactly_what_needs_attention() {
     assert!(
         !refs.contains(&done.intent_ref.as_str()),
         "a terminated intent needs no attention"
+    );
+}
+
+#[tokio::test]
+async fn live_order_state_a_different_client_key_is_a_different_intent() {
+    // The dedup must not be so eager that two genuinely distinct orders
+    // collapse into one. Same account, same instrument, same size -- a client
+    // legitimately placing the same order twice -- but different keys.
+    let Some(h) = Harness::new().await else {
+        return;
+    };
+    let account = live_account(&h).await;
+    let r = repo(&h);
+
+    let first = new_intent(&h, account).await;
+    let second = NewOrderIntent {
+        intent_ref: NewOrderIntent::mint_ref(),
+        client_key: format!("ck-{}", Uuid::new_v4()),
+        ..first.clone()
+    };
+
+    let a = r.claim(first).await.expect("first");
+    let b = r.claim(second).await.expect("second");
+    assert!(a.is_new());
+    assert!(b.is_new(), "a distinct client key is a distinct intent");
+    assert_ne!(a.row().intent_ref, b.row().intent_ref);
+}
+
+#[tokio::test]
+async fn live_order_state_an_approval_for_another_intent_is_refused() {
+    // `record_approval` consumes the RiskApproval token, so an intent cannot
+    // be approved without a gate run that both approved AND persisted. This
+    // asserts the other half: the token must name THIS intent, or it would
+    // authorise an order the gate never assessed.
+    let Some(h) = Harness::new().await else {
+        return;
+    };
+    let account = live_account(&h).await;
+    let r = repo(&h);
+
+    let target = new_intent(&h, account).await;
+    r.claim(target.clone()).await.expect("claim");
+
+    // Publish limits and run the gate for a DIFFERENT intent, then try to
+    // spend its approval here.
+    sqlx::query(
+        "INSERT INTO risk_limits (version, max_symbol_weight_bp, max_order_value, \
+         max_daily_order_value, max_daily_loss, max_data_age_secs) \
+         VALUES ('risk-limits-v1', 3000, 1000000, 5000000, 500000, 300) \
+         ON CONFLICT (version) DO NOTHING",
+    )
+    .execute(&h.owner_pool)
+    .await
+    .expect("limits");
+
+    let mut snapshot = risk_gateway::testing::snapshot_all_green();
+    snapshot.intent.intent_ref = "some-other-intent".into();
+    let store = api_server::repos::risk::RiskRepo::new(
+        h.app_pool.clone(),
+        h.owner.actor(),
+        h.owner.user_id,
+        None,
+    );
+    let approval =
+        risk_gateway::evaluate_and_record(&snapshot, &risk_gateway::testing::limits(), &store)
+            .await
+            .into_approval()
+            .expect("approved");
+
+    let err = r
+        .record_approval(&target.intent_ref, approval)
+        .await
+        .expect_err("an approval for another intent must be refused");
+    assert!(format!("{err}").contains("some-other-intent"), "{err}");
+
+    // The target intent is untouched: still ungated.
+    assert_eq!(
+        r.state(&target.intent_ref).await.expect("state").name(),
+        "INTENT_CREATED"
     );
 }
