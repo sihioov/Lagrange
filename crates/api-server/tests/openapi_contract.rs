@@ -240,11 +240,24 @@ fn openapi_contract_handlers_emit_only_declared_codes() {
     let mut emitted: BTreeSet<String> = BTreeSet::new();
     let mut files_scanned = 0usize;
 
-    for entry in fs::read_dir(&http_dir).expect("src/http is readable") {
-        let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
-            continue;
+    // Recursive: `src/http` is flat today, but a nested handler module added
+    // later (`src/http/risk/`) would otherwise be skipped silently while the
+    // live.rs sentinel below still passed — a guard that quietly stops
+    // guarding the new code is worse than no guard.
+    let mut dirs = vec![http_dir];
+    let mut sources: Vec<std::path::PathBuf> = Vec::new();
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).expect("handler directory is readable") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                sources.push(path);
+            }
         }
+    }
+
+    for path in sources {
         let source = fs::read_to_string(&path).expect("handler source is readable");
         files_scanned += 1;
         for call in CALLS {
