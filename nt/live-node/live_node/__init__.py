@@ -11,12 +11,14 @@ broker and reproducible from a log after an incident:
 * :mod:`live_node.isolation` -- one node per account, enforced by the OS
 * :mod:`live_node.cancel_policy` -- what happens to working orders on engage
 * :mod:`live_node.health` -- health vs readiness, which are not the same
+* :mod:`live_node.startup` -- the one safe order: sweep, apply, reconcile, ready
 """
 from __future__ import annotations
 
 from .cancel_policy import CancelPlan, CancelPolicy, OrderDisposition, WorkingOrder, plan
 from .health import HealthReport, METRIC_NAMES, metrics, report
 from .isolation import AccountLock, LockInfo, NodeAlreadyRunning
+from .startup import IN_FLIGHT, StartupOutcome, StartupPlan, plan_startup, sweep_targets
 from .lifecycle import (
     IllegalTransition,
     NodeLifecycle,
@@ -31,6 +33,7 @@ __all__ = [
     "CancelPlan",
     "CancelPolicy",
     "HealthReport",
+    "IN_FLIGHT",
     "IllegalTransition",
     "LockInfo",
     "METRIC_NAMES",
@@ -40,9 +43,13 @@ __all__ = [
     "NodeStatus",
     "OrderDisposition",
     "Reason",
+    "StartupOutcome",
+    "StartupPlan",
     "WorkingOrder",
     "metrics",
     "plan",
+    "plan_startup",
     "report",
     "resume_after_crash",
+    "sweep_targets",
 ]
