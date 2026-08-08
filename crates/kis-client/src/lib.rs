@@ -29,6 +29,7 @@ pub mod rest;
 pub mod retry;
 pub mod secret;
 pub mod simulator;
+pub mod token_issuer;
 pub mod transport;
 pub mod websocket;
 

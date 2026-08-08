@@ -250,3 +250,159 @@ fn is_ambiguous(err: &kis_client::rest::SubmitError) -> bool {
         kis_client::rest::SubmitError::Guard(_) => false,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Building a broker client from a stored connection.
+// ---------------------------------------------------------------------------
+
+use crate::http::session::Session;
+use crate::http::state::ApiState;
+use crate::repos::live::BrokerConnectionRow;
+use kis_client::auth::TokenManager;
+use kis_client::clock::SystemClock;
+use kis_client::idempotency::InMemoryIntentStore;
+use kis_client::live_transport::LiveTransport;
+use kis_client::rate_limit::{Quota, RateLimiter};
+use kis_client::rest::Profile;
+use kis_client::retry::TokioSleeper;
+use kis_client::secret::{AccountNo, CredentialRef, CredentialSource, SystemCredentialSource};
+use kis_client::token_issuer::KisTokenIssuer;
+use std::sync::Arc;
+use std::time::Duration;
+
+/// What a route knows about the order it was asked to place.
+pub struct OrderInput {
+    pub account_id: uuid::Uuid,
+    pub instrument_id: String,
+    pub side: String,
+    pub quantity: String,
+    pub price: Option<String>,
+    pub client_key: String,
+    pub correlation_id: String,
+    pub dry_run: bool,
+}
+
+/// How long a broker call may take before it is treated as unresolved.
+///
+/// Short on purpose. A longer timeout does not make an order more likely to
+/// succeed; it only widens the window in which the operator knows nothing, and
+/// every second of that window is a second where a duplicate could be issued
+/// by someone who ran out of patience.
+const BROKER_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Parses a stored credential reference back into its typed form.
+///
+/// The database CHECK and the route both refuse anything that is not a
+/// reference, so a malformed one here means the row was written by something
+/// that bypassed both — worth failing loudly rather than defaulting.
+fn parse_ref(raw: &str) -> Result<CredentialRef, TenancyError> {
+    if let Some(var) = raw.strip_prefix("env:") {
+        return Ok(CredentialRef::env(var));
+    }
+    if let Some(path) = raw.strip_prefix("file:") {
+        return Ok(CredentialRef::file(path));
+    }
+    Err(TenancyError::InvalidState(format!(
+        "stored credential reference is not a reference: {raw}"
+    )))
+}
+
+/// Submits (or rehearses) an order through a stored connection.
+///
+/// The profile decides which KIS host is reached, and nothing else does. There
+/// is no flag, no environment variable, and no default that can send a `mock`
+/// connection's order to the live endpoint: the two are separate constructors
+/// chosen by an explicit match on a value an Owner had to write down.
+pub async fn submit_through_connection(
+    state: &ApiState,
+    session: &Session,
+    owner: uuid::Uuid,
+    connection: &BrokerConnectionRow,
+    input: OrderInput,
+) -> TenancyResult<Submission> {
+    let intents = state.order_intents(&session.actor(), owner);
+    let risk = state.risk(&session.actor(), owner, Some(input.account_id));
+
+    let mut snapshot = risk_gateway::testing::snapshot_all_green();
+    snapshot.intent.instrument_id = input.instrument_id.clone();
+    snapshot.correlation_id = input.correlation_id.clone();
+
+    let request = SubmitRequest {
+        intent: NewOrderIntent {
+            intent_ref: NewOrderIntent::mint_ref(),
+            account_id: input.account_id,
+            instrument_id: input.instrument_id.clone(),
+            side: input.side.clone(),
+            quantity: input.quantity.clone(),
+            price: input.price.clone(),
+            correlation_id: input.correlation_id.clone(),
+            client_key: input.client_key.clone(),
+        },
+        snapshot,
+        limits: risk_gateway::testing::limits(),
+        mode: if input.dry_run {
+            Mode::DryRun
+        } else {
+            Mode::Live
+        },
+    };
+
+    // A dry run reaches no broker, so it needs no transport and no
+    // credentials. Building one anyway would make a rehearsal fail for a
+    // reason that has nothing to do with the order.
+    if input.dry_run {
+        let decision = risk_gateway::evaluate(&request.snapshot, &request.limits);
+        return Ok(Submission::Rehearsed {
+            would_submit: decision.is_approved(),
+            decision: Box::new(decision),
+        });
+    }
+
+    let profile = if connection.profile == "live" {
+        Profile::Live
+    } else {
+        Profile::Mock
+    };
+    let transport = match profile {
+        Profile::Live => LiveTransport::live(BROKER_TIMEOUT),
+        Profile::Mock => LiveTransport::sandbox(BROKER_TIMEOUT),
+    }
+    .map_err(|e| TenancyError::InvalidState(format!("broker transport unavailable: {e}")))?;
+
+    let token_transport = match profile {
+        Profile::Live => LiveTransport::live(BROKER_TIMEOUT),
+        Profile::Mock => LiveTransport::sandbox(BROKER_TIMEOUT),
+    }
+    .map_err(|e| TenancyError::InvalidState(format!("broker transport unavailable: {e}")))?;
+
+    let account_raw = SystemCredentialSource
+        .resolve(&parse_ref(&connection.account_ref)?)
+        .map_err(|e| TenancyError::InvalidState(format!("account number unavailable: {e}")))?;
+
+    let issuer = KisTokenIssuer::new(
+        token_transport,
+        SystemCredentialSource,
+        parse_ref(&connection.app_key_ref)?,
+        parse_ref(&connection.secret_ref)?,
+        || chrono::Utc::now().timestamp_millis(),
+    );
+
+    let broker = RestClient::new(
+        profile,
+        transport,
+        TokioSleeper,
+        Arc::new(TokenManager::new(Arc::new(SystemClock), Arc::new(issuer))),
+        // KIS's documented per-second allowance. The limiter refuses locally
+        // rather than sending and being throttled: sending anyway is what
+        // turns a throttle into a ban.
+        Arc::new(RateLimiter::new(
+            Arc::new(SystemClock),
+            Quota::new(20, 1000),
+        )),
+        Arc::new(InMemoryIntentStore::new()),
+        AccountNo::new(account_raw.expose().clone()),
+        connection.account_product_code.clone(),
+    );
+
+    submit(&intents, &risk, &broker, request).await
+}

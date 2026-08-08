@@ -125,6 +125,34 @@ impl ApiState {
     pub fn live(&self, actor: &auth::entitlement::Actor) -> crate::repos::live::LiveRepo {
         crate::repos::live::LiveRepo::new(self.app_pool.clone(), actor.clone())
     }
+    /// Live order intents for one actor.
+    pub fn order_intents(
+        &self,
+        actor: &auth::entitlement::Actor,
+        owner_user_id: uuid::Uuid,
+    ) -> crate::repos::order_intents::OrderIntentRepo {
+        crate::repos::order_intents::OrderIntentRepo::new(
+            self.app_pool.clone(),
+            actor.clone(),
+            owner_user_id,
+        )
+    }
+
+    /// The Risk Gateway's decision store for one actor.
+    pub fn risk(
+        &self,
+        actor: &auth::entitlement::Actor,
+        owner_user_id: uuid::Uuid,
+        account_id: Option<uuid::Uuid>,
+    ) -> crate::repos::risk::RiskRepo {
+        crate::repos::risk::RiskRepo::new(
+            self.app_pool.clone(),
+            actor.clone(),
+            owner_user_id,
+            account_id,
+        )
+    }
+
     /// Reconciliation runs and readiness for one actor.
     ///
     /// Takes the owner id explicitly rather than parsing it out of the actor,

@@ -30,6 +30,12 @@ pub struct BrokerConnectionRow {
     pub account_product_code: String,
     pub app_key_ref: String,
     pub secret_ref: String,
+    /// Where the FULL account number lives. Present on the ROW because the
+    /// submission path needs to resolve it, and deliberately ABSENT from
+    /// `BrokerConnectionDto`: the API discloses reference locations for the
+    /// credentials an Owner configured, but the account reference is only ever
+    /// read by the server.
+    pub account_ref: String,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -91,7 +97,7 @@ impl LiveRepo {
               account_product_code, app_key_ref, secret_ref) \
              VALUES ($1, 'KIS', $2, $3, $4, $5, $6, $7, $8) \
              RETURNING id, label, profile, account_no_masked, account_product_code, \
-                       app_key_ref, secret_ref, status, created_at, updated_at",
+                       app_key_ref, secret_ref, account_ref, status, created_at, updated_at",
         )
         .bind(owner_user_id)
         .bind(&input.account_ref)
@@ -112,7 +118,7 @@ impl LiveRepo {
         let mut tx = begin_actor_tx(&self.pool, &self.actor).await?;
         let rows = sqlx::query_as::<_, BrokerConnectionRow>(
             "SELECT id, label, profile, account_no_masked, account_product_code, \
-                    app_key_ref, secret_ref, status, created_at, updated_at \
+                    app_key_ref, secret_ref, account_ref, status, created_at, updated_at \
              FROM broker_connections ORDER BY created_at",
         )
         .fetch_all(&mut *tx)
@@ -126,7 +132,7 @@ impl LiveRepo {
         let mut tx = begin_actor_tx(&self.pool, &self.actor).await?;
         let row = sqlx::query_as::<_, BrokerConnectionRow>(
             "SELECT id, label, profile, account_no_masked, account_product_code, \
-                    app_key_ref, secret_ref, status, created_at, updated_at \
+                    app_key_ref, secret_ref, account_ref, status, created_at, updated_at \
              FROM broker_connections WHERE id = $1",
         )
         .bind(id)

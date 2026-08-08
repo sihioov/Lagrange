@@ -698,6 +698,11 @@ mod tests {
 /// The body of a Live order submission.
 #[derive(Debug, Deserialize)]
 pub struct SubmitOrderBody {
+    /// Which configured broker connection to submit through. Explicit rather
+    /// than inferred from the account: an Owner may hold both a mock and a
+    /// live connection, and guessing which one an order meant is not a guess
+    /// this system gets to make.
+    pub connection_id: uuid::Uuid,
     pub account_id: uuid::Uuid,
     pub instrument_id: String,
     pub side: String,
@@ -818,17 +823,120 @@ pub async fn submit_order(
     )
     .await;
 
-    // The submission path itself needs a configured broker connection and a
-    // transport built from its profile. Until an Owner has configured one,
-    // there is nothing to submit through, and saying so plainly is better than
-    // a generic failure.
-    let _ = (owner, client_key);
-    api_error(
-        StatusCode::CONFLICT,
-        "LIVE_CONNECTION_NOT_CONFIGURED",
-        "no Live broker connection is configured for this account; configure one before \
-         submitting orders",
-        &rid,
-        None,
+    // The connection carries the profile and the credential REFERENCES. It is
+    // read through the actor transaction like everything else, so an Owner
+    // cannot submit through a connection that is not theirs.
+    let connection = match state
+        .live(&session.actor())
+        .get_connection(body.connection_id)
+        .await
+    {
+        Ok(c) => c,
+        Err(_) => {
+            return api_error(
+                StatusCode::CONFLICT,
+                "LIVE_CONNECTION_NOT_CONFIGURED",
+                "no such Live broker connection; configure one before submitting orders",
+                &rid,
+                None,
+            );
+        }
+    };
+
+    let submission = match crate::live_order::submit_through_connection(
+        &state,
+        &session,
+        owner,
+        &connection,
+        crate::live_order::OrderInput {
+            account_id: body.account_id,
+            instrument_id: body.instrument_id.clone(),
+            side: body.side.clone(),
+            quantity: body.quantity.clone(),
+            price: body.price.clone(),
+            client_key: client_key.to_string(),
+            correlation_id: rid.clone(),
+            dry_run: body.dry_run,
+        },
     )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+    };
+
+    submission_response(submission, &rid)
+}
+
+/// Turns a submission outcome into a response.
+///
+/// The status codes are chosen so a client cannot mistake one outcome for
+/// another. `Unresolved` in particular is a 409 with `ORDER_STATE_UNKNOWN`
+/// rather than a 5xx: a 5xx reads as "something broke, try again", and trying
+/// again is the one thing that must never happen when the broker may already
+/// hold the order.
+fn submission_response(s: crate::live_order::Submission, rid: &str) -> Response {
+    use crate::live_order::Submission;
+    match s {
+        Submission::Rehearsed {
+            would_submit,
+            decision,
+        } => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "mode": "dry_run",
+                "would_submit": would_submit,
+                "reason": decision.reason.map(|r| r.as_str()),
+                "severity": decision.severity(),
+            })),
+        )
+            .into_response(),
+        // 200, not 201: this request created nothing. The order it names was
+        // created by the FIRST request, and a 201 would invite a client to
+        // believe it had just placed one.
+        Submission::AlreadySubmitted { intent_ref, state } => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "intent_ref": intent_ref,
+                "state": state,
+                "duplicate": true,
+            })),
+        )
+            .into_response(),
+        Submission::Accepted {
+            intent_ref,
+            broker_order_no,
+        } => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({
+                "intent_ref": intent_ref,
+                "broker_order_no": broker_order_no,
+                "state": "ACCEPTED",
+            })),
+        )
+            .into_response(),
+        Submission::Denied {
+            intent_ref, reason, ..
+        } => api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "RISK_LIMIT_EXCEEDED",
+            format!("order refused: {reason}"),
+            rid,
+            Some(serde_json::json!({ "intent_ref": intent_ref, "reason": reason })),
+        ),
+        Submission::Unresolved {
+            intent_ref,
+            client_order_id,
+        } => api_error(
+            StatusCode::CONFLICT,
+            "ORDER_STATE_UNKNOWN",
+            "the broker may hold this order; it must be resolved by a status lookup and \
+             must NOT be resubmitted",
+            rid,
+            Some(serde_json::json!({
+                "intent_ref": intent_ref,
+                "client_order_id": client_order_id,
+            })),
+        ),
+    }
 }
