@@ -27,6 +27,7 @@ pub mod retry;
 pub mod secret;
 pub mod simulator;
 pub mod transport;
+pub mod websocket;
 
 pub use auth::{AccessToken, TokenIssuer, TokenManager};
 pub use clock::{Clock, SystemClock, check_skew};
@@ -40,3 +41,4 @@ pub use retry::{RetryPolicy, Sleeper, TokioSleeper};
 pub use secret::{AccountNo, CredentialError, CredentialRef, CredentialSource, Secret};
 pub use simulator::{BrokerSimulator, SIMULATOR_CONTRACT_VERSION, Scenario};
 pub use transport::{HttpRequest, HttpResponse, Transport};
+pub use websocket::{ReconnectPolicy, ResyncRequired, SessionState, WebSocketSession};
