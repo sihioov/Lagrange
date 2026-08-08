@@ -32,3 +32,25 @@ members = [
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
+
+# Build-artifact size control.
+#
+# With the default `debug = 2`, ONE clean `cargo test --workspace` produced an
+# 86.7GB `target/debug/deps`: every test binary statically links the polars
+# stack (via selector -> factor-engine) with full DWARF. That filled the disk
+# twice on 2026-08-08, and it does not announce itself as a disk problem — it
+# surfaces as `link.exe failed: exit code 1318` and
+# `rustc-LLVM ERROR: IO failure on output stream`, which read like toolchain
+# faults.
+#
+# `line-tables-only` keeps what the test suites actually consume: panic
+# messages and backtraces still carry file and line. What it drops is variable
+# and type information, which only a step-debugger uses. Raise this back to 2
+# temporarily if you need to attach a debugger.
+[profile.dev]
+debug = "line-tables-only"
+
+# Test and dependency builds inherit dev; state it rather than relying on the
+# inheritance being remembered, since these are the profiles that dominate.
+[profile.test]
+debug = "line-tables-only"
