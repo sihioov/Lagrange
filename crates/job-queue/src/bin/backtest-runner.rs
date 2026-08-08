@@ -34,6 +34,19 @@
 //! **One job at a time.** A NautilusTrader run is given a 2 GiB limit; two in
 //! one container is how a host that was sized for one runner starts swapping.
 //! Concurrency here is `--replicas`, not threads.
+//!
+//! **No audit connection.** [`JobQueue`] takes an optional second pool for
+//! `audit_logs`, and this process passes `None` — a decision rather than an
+//! omission. `request_cancel` is the only operation that writes an audit row,
+//! it is the API server's to call, and the daemon calls `claim_next`,
+//! `settle_*` and `sweep` exclusively. `worker` is not granted INSERT on
+//! `audit_logs` (the migration contract asserts it), so handing this process
+//! an audit pool would mean giving the role a privilege it has no use for.
+//!
+//! **`--once` does not sweep.** The one-shot path exits on an empty queue
+//! before reaching the recovery step, so it will not pick up an orphan left by
+//! a previous crash. That is right for the gates it exists for, which start
+//! from a fresh database; a long-lived deployment must run without `--once`.
 
 use job_queue::queue::{JobQueue, QueueConfig};
 use job_queue::resolver::DbStrategyResolver;
