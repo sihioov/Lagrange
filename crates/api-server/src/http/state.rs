@@ -125,6 +125,22 @@ impl ApiState {
     pub fn live(&self, actor: &auth::entitlement::Actor) -> crate::repos::live::LiveRepo {
         crate::repos::live::LiveRepo::new(self.app_pool.clone(), actor.clone())
     }
+    /// Reconciliation runs and readiness for one actor.
+    ///
+    /// Takes the owner id explicitly rather than parsing it out of the actor,
+    /// because a non-uuid actor id cannot address a tenant row at all and the
+    /// caller has already resolved the Owner by the time it asks.
+    pub fn reconciliation(
+        &self,
+        actor: &auth::entitlement::Actor,
+        owner_user_id: uuid::Uuid,
+    ) -> crate::repos::reconciliation::ReconciliationRepo {
+        crate::repos::reconciliation::ReconciliationRepo::new(
+            self.app_pool.clone(),
+            actor.clone(),
+            owner_user_id,
+        )
+    }
     pub fn metrics(&self) -> MetricsRepo {
         MetricsRepo::new(self.app_pool.clone())
     }

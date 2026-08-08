@@ -542,6 +542,58 @@ async fn set_kill_switch(
         Err(r) => return r,
     };
 
+    // Disengaging additionally requires green reconciliation (FR-LIVE-004:
+    // "불일치가 해결되지 않으면 전략 시작과 신규 주문이 차단된다").
+    //
+    // The asymmetry is the whole point and mirrors the reason/no-reason one
+    // above. ENGAGING is never blocked by anything: the switch exists to stop
+    // Live, and a precondition on stopping is a precondition that will fail at
+    // the worst possible moment. DISENGAGING is the dangerous direction, and
+    // turning Live back on while our books disagree with the broker's is the
+    // specific way a kill switch gets used to cause the incident it was
+    // installed to prevent.
+    if !engaged {
+        let readiness = match state
+            .reconciliation(&session.actor(), owner)
+            .readiness(None)
+            .await
+        {
+            Ok(r) => r,
+            // Unreadable readiness is not permission. §16 is fail-closed, and
+            // the one thing we must not do is infer "probably fine".
+            Err(_) => {
+                return api_error(
+                    StatusCode::CONFLICT,
+                    "LIVE_RECONCILIATION_REQUIRED",
+                    "reconciliation state could not be read; Live stays disabled",
+                    &rid,
+                    None,
+                );
+            }
+        };
+        if !readiness.may_trade() {
+            audit(
+                &state,
+                &session,
+                &headers,
+                "admin.live.kill_switch.disable",
+                "live_kill_switch",
+                "disengage",
+                None,
+                None,
+                Some(readiness.reason().to_string()),
+            )
+            .await;
+            return api_error(
+                StatusCode::CONFLICT,
+                "LIVE_RECONCILIATION_REQUIRED",
+                "Live requires a green reconciliation before the kill switch may be disengaged",
+                &rid,
+                Some(serde_json::json!({ "readiness": readiness.reason() })),
+            );
+        }
+    }
+
     // Parsed after the gate, for the same reason as create_connection: a
     // Member must get 404 regardless of what they sent. A reason is optional
     // here rather than required — refusing to ENGAGE the kill switch because

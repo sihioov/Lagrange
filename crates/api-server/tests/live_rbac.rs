@@ -44,6 +44,33 @@ async fn owner_with_mfa(h: &Harness) -> UserCtx {
 // A Member must not be able to tell these routes exist.
 // ---------------------------------------------------------------------------
 
+/// Records a completed, zero-mismatch reconciliation run for the Owner.
+///
+/// Disengaging the kill switch requires one (FR-LIVE-004), so every test that
+/// needs Live enabled must establish it the same way an operator would.
+/// Scoped to the ACTOR that will disengage: readiness is per-owner (the runs
+/// table is RLS-scoped), so recording a run for a different Owner would leave
+/// the disengage still blocked -- and this test seeds its own fresh-MFA Owner
+/// rather than reusing the harness baseline.
+async fn record_green_reconciliation(h: &Harness, who: &UserCtx) {
+    use api_server::repos::reconciliation::ReconciliationRepo;
+    use kis_client::reconciliation::ReconciliationOutcome;
+
+    let repo = ReconciliationRepo::new(h.app_pool.clone(), who.actor(), who.user_id);
+    let run = repo.start(None, "STARTUP").await.expect("start run");
+    repo.finish(
+        run.id,
+        &ReconciliationOutcome {
+            mismatches: vec![],
+            fills_to_apply: vec![],
+            lookups_required: vec![],
+        },
+        None,
+    )
+    .await
+    .expect("finish run");
+}
+
 #[tokio::test]
 async fn live_rbac_member_gets_404_not_403_on_every_live_route() {
     let Some(h) = Harness::new().await else {
@@ -308,7 +335,12 @@ async fn live_rbac_only_one_node_per_connection_can_run() {
     .await;
     let cid = created["id"].as_str().expect("id").to_string();
 
-    // Disengage the kill switch first — itself an Owner + fresh-MFA action.
+    // Green reconciliation first: since Todo 41 the kill switch may only be
+    // DISENGAGED against a green run, so this is the sequence a real operator
+    // has to follow, not test scaffolding.
+    record_green_reconciliation(&h, &o).await;
+
+    // Then disengage — itself an Owner + fresh-MFA action.
     let resp = h
         .post(
             "/api/v1/admin/live/kill-switch/disable",
@@ -385,4 +417,105 @@ async fn live_rbac_a_refused_live_request_is_audited() {
     .unwrap_or(0);
     assert_eq!(audited, 1, "the refusal must be on the audit trail");
     h.teardown().await;
+}
+
+#[tokio::test]
+async fn live_rbac_the_kill_switch_cannot_be_disengaged_without_a_green_reconciliation() {
+    // FR-LIVE-004. Turning Live back on while our books disagree with the
+    // broker's is the specific way a kill switch causes the incident it was
+    // installed to prevent.
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let o = owner_with_mfa(&h).await;
+
+    // No run has ever completed: the account has no established relationship
+    // to the broker at all.
+    let resp = h
+        .post(
+            "/api/v1/admin/live/kill-switch/disable",
+            Some(&o),
+            true,
+            json!({"reason": "premature"}),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::CONFLICT);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(body["error"]["code"], "LIVE_RECONCILIATION_REQUIRED");
+    assert_eq!(body["error"]["details"]["readiness"], "NEVER_RECONCILED");
+
+    // A run that FOUND something is not permission either.
+    {
+        use api_server::repos::reconciliation::ReconciliationRepo;
+        use kis_client::reconciliation::{Mismatch, ReconciliationOutcome};
+        let repo = ReconciliationRepo::new(h.app_pool.clone(), o.actor(), o.user_id);
+        let run = repo.start(None, "STARTUP").await.expect("start");
+        repo.finish(
+            run.id,
+            &ReconciliationOutcome {
+                mismatches: vec![Mismatch::Cash {
+                    ours: "100".into(),
+                    brokers: "90".into(),
+                }],
+                fills_to_apply: vec![],
+                lookups_required: vec![],
+            },
+            None,
+        )
+        .await
+        .expect("finish");
+    }
+    let resp = h
+        .post(
+            "/api/v1/admin/live/kill-switch/disable",
+            Some(&o),
+            true,
+            json!({"reason": "still premature"}),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::CONFLICT);
+    assert_eq!(
+        Harness::body_json(resp).await["error"]["details"]["readiness"],
+        "RECONCILIATION_MISMATCH"
+    );
+
+    // Green, and only then, it disengages.
+    record_green_reconciliation(&h, &o).await;
+    let resp = h
+        .post(
+            "/api/v1/admin/live/kill-switch/disable",
+            Some(&o),
+            true,
+            json!({"reason": "reconciled drill"}),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn live_rbac_engaging_the_kill_switch_is_never_blocked_by_reconciliation() {
+    // The asymmetry that matters. The switch exists to STOP Live, so a
+    // precondition on stopping is a precondition that fails at the worst
+    // possible moment. This account has never reconciled -- which blocks
+    // disengaging -- and engaging must still work.
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let o = owner_with_mfa(&h).await;
+
+    let resp = h
+        .post(
+            "/api/v1/admin/live/kill-switch/enable",
+            Some(&o),
+            true,
+            json!({}),
+        )
+        .await;
+    assert_eq!(
+        status(&resp),
+        StatusCode::OK,
+        "engaging the kill switch must never be refused"
+    );
 }
