@@ -15,8 +15,14 @@
 //! Live credentials are never inlined in configuration: config carries a
 //! [`secret::CredentialRef`] naming where the value lives.
 
+pub mod auth;
+pub mod clock;
 pub mod error;
+pub mod rate_limit;
 pub mod secret;
 
+pub use auth::{AccessToken, TokenIssuer, TokenManager};
+pub use clock::{Clock, SystemClock, check_skew};
 pub use error::{KisError, RequestKind};
+pub use rate_limit::{BucketKey, Permit, Quota, RateLimiter};
 pub use secret::{AccountNo, CredentialError, CredentialRef, CredentialSource, Secret};
