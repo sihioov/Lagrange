@@ -30,8 +30,10 @@ use crate::error::QueueError;
 use crate::queue::JobQueue;
 use crate::types::{ClaimedJob, ErrorClass};
 use serde::Deserialize;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use uuid::Uuid;
 
 /// Where a backtest run's inputs and outputs live.
 #[derive(Debug, Clone)]
@@ -91,11 +93,48 @@ pub struct BacktestPayload {
 pub enum Outcome {
     /// Nothing was waiting.
     Idle,
-    Succeeded { job_id: String },
+    Succeeded {
+        job_id: String,
+    },
     /// The backtest itself failed. The user's result, not a runner fault.
-    Failed { job_id: String, reason: String },
+    Failed {
+        job_id: String,
+        reason: String,
+    },
     /// The runner could not do its job. Retryable.
-    Errored { job_id: String, reason: String },
+    Errored {
+        job_id: String,
+        reason: String,
+    },
+}
+
+/// Why a strategy could not be resolved.
+///
+/// The split is the whole point. A config id that does not exist produces the
+/// same failure on every attempt, so retrying it burns the job's attempts and
+/// tells the user nothing they did not already know; a registry that is
+/// briefly unreachable is the runner's problem and a later attempt may well
+/// work. Collapsing these into one error gets one of the two wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveError {
+    /// No such config for this owner, or it is no longer active. PERMANENT.
+    NotFound(String),
+    /// The config is real but names a strategy this runner carries no code
+    /// for. PERMANENT, and deliberately distinct from `NotFound`: one is the
+    /// submitter's to fix, the other is a deployment that is behind.
+    Unknown(String),
+    /// The registry could not be consulted at all. RETRYABLE.
+    Unavailable(String),
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolveError::NotFound(d) => write!(f, "{d}"),
+            ResolveError::Unknown(d) => write!(f, "{d}"),
+            ResolveError::Unavailable(d) => write!(f, "{d}"),
+        }
+    }
 }
 
 /// The strategy a config id resolves to.
@@ -104,8 +143,18 @@ pub enum Outcome {
 /// path in the payload and have it executed, submitting a backtest would be
 /// remote code execution; the registry is a closed set for that reason, and
 /// this signature is where that guarantee is kept.
+///
+/// `owner_user_id` is not decoration. It comes from the CLAIMED JOB, not from
+/// the payload, and an implementation must filter by it: without that, a job
+/// naming another tenant's config id would run that tenant's strategy and
+/// parameters. The runner serves every tenant, so nothing above this call
+/// scopes the lookup for it.
 pub trait StrategyResolver {
-    fn resolve(&self, strategy_config_id: &str) -> Result<ResolvedStrategy, String>;
+    fn resolve(
+        &self,
+        strategy_config_id: &str,
+        owner_user_id: Uuid,
+    ) -> impl Future<Output = Result<ResolvedStrategy, ResolveError>> + Send;
 }
 
 /// A registry entry, expanded.
@@ -113,6 +162,14 @@ pub trait StrategyResolver {
 pub struct ResolvedStrategy {
     /// `module:Class`, produced by the registry — never by a request.
     pub strategy_path: String,
+    /// `module:Class` of the strategy's config type.
+    ///
+    /// Sent explicitly even though the worker would otherwise derive
+    /// `{class}Config` from `strategy_path`. That derivation is a convention
+    /// two codebases have to keep agreeing on, and when it breaks it breaks
+    /// inside a child process at import time — far from the table that chose
+    /// the name.
+    pub config_path: String,
     pub strategy_id: String,
     pub strategy_version: String,
     pub config: serde_json::Value,
@@ -168,18 +225,71 @@ pub async fn run_once<R: StrategyResolver>(
                 .unwrap_or("the backtest did not succeed")
                 .to_string();
             queue
-                .settle_failure(&claim, classify_backtest_failure(&reason), "BACKTEST_FAILED", &reason)
+                .settle_failure(
+                    &claim,
+                    classify_backtest_failure(&reason),
+                    "BACKTEST_FAILED",
+                    &reason,
+                )
                 .await?;
             Ok(Outcome::Failed { job_id, reason })
         }
-        Err(reason) => {
+        Err(ExecError::Permanent {
+            class,
+            code,
+            reason,
+        }) => {
+            // The job's own inputs cannot produce a run: an unknown config, a
+            // strategy this deployment has no code for, a malformed payload.
+            // Retrying spends the remaining attempts to reach the identical
+            // answer, so the user is told now.
+            queue.settle_failure(&claim, class, code, &reason).await?;
+            Ok(Outcome::Failed { job_id, reason })
+        }
+        Err(ExecError::Transient(reason)) => {
             // The runner could not run it: a missing interpreter, an
-            // unreadable status file, a resolver outage. Retryable, because a
+            // unreadable status file, a registry outage. Retryable, because a
             // later attempt may well work.
             queue
                 .settle_failure(&claim, ErrorClass::Transient, "RUNNER_ERROR", &reason)
                 .await?;
             Ok(Outcome::Errored { job_id, reason })
+        }
+    }
+}
+
+/// Why [`execute`] did not return a worker status.
+///
+/// Separated from `Outcome` because the distinction it carries is about
+/// RETRYABILITY, which the queue acts on, rather than about what to report.
+enum ExecError {
+    /// No attempt can succeed. Settled permanently.
+    Permanent {
+        class: ErrorClass,
+        code: &'static str,
+        reason: String,
+    },
+    /// The runner faltered; a later attempt may work.
+    Transient(String),
+}
+
+impl From<ResolveError> for ExecError {
+    fn from(e: ResolveError) -> ExecError {
+        match e {
+            ResolveError::NotFound(reason) => ExecError::Permanent {
+                class: ErrorClass::Input,
+                code: "STRATEGY_CONFIG_NOT_FOUND",
+                reason,
+            },
+            ResolveError::Unknown(reason) => ExecError::Permanent {
+                // Not `Input`: the submitter did nothing wrong, and an
+                // operator reading this needs to see a deployment that is
+                // missing code rather than a user who sent a bad parameter.
+                class: ErrorClass::DataBlocked,
+                code: "STRATEGY_NOT_DEPLOYED",
+                reason,
+            },
+            ResolveError::Unavailable(reason) => ExecError::Transient(reason),
         }
     }
 }
@@ -209,22 +319,40 @@ async fn execute<R: StrategyResolver>(
     claim: &ClaimedJob,
     paths: &RunnerPaths,
     resolver: &R,
-) -> Result<WorkerStatus, String> {
-    let payload: BacktestPayload = serde_json::from_value(claim.job.payload_json.clone())
-        .map_err(|e| format!("payload is not a backtest request: {e}"))?;
+) -> Result<WorkerStatus, ExecError> {
+    // A payload the runner cannot read is PERMANENT: the row is written once
+    // at submit time and no retry will make it parse.
+    let payload: BacktestPayload =
+        serde_json::from_value(claim.job.payload_json.clone()).map_err(|e| {
+            ExecError::Permanent {
+                class: ErrorClass::Input,
+                code: "MALFORMED_PAYLOAD",
+                reason: format!("payload is not a backtest request: {e}"),
+            }
+        })?;
 
     let config_id = payload
         .strategy_config_id
         .as_deref()
-        .ok_or("payload names no strategy_config_id")?;
-    let strategy = resolver.resolve(config_id)?;
+        .ok_or_else(|| ExecError::Permanent {
+            class: ErrorClass::Input,
+            code: "MALFORMED_PAYLOAD",
+            reason: "payload names no strategy_config_id".to_string(),
+        })?;
+    // The owner comes from the CLAIMED JOB, never from the payload: a payload
+    // that could name its own owner would reach any tenant's config.
+    let strategy = resolver.resolve(config_id, claim.job.owner_user_id).await?;
 
     let run_id = payload
         .run_id
         .clone()
         .unwrap_or_else(|| claim.job.id.to_string());
     let run_dir = paths.artifacts_root.join(&run_id);
-    std::fs::create_dir_all(&run_dir).map_err(|e| format!("cannot create {run_dir:?}: {e}"))?;
+    // Everything from here down is the RUNNER's environment -- a full disk, an
+    // unwritable directory, a missing interpreter. None of it is the job's
+    // fault, so all of it is transient.
+    std::fs::create_dir_all(&run_dir)
+        .map_err(|e| ExecError::Transient(format!("cannot create {run_dir:?}: {e}")))?;
 
     let request = serde_json::json!({
         "run_id": run_id,
@@ -232,6 +360,7 @@ async fn execute<R: StrategyResolver>(
         "job_id": claim.job.id.to_string(),
         // From the REGISTRY, never from the request body.
         "strategy_path": strategy.strategy_path,
+        "strategy_config_class": strategy.config_path,
         "strategy_config": strategy.config,
         "strategy_id": strategy.strategy_id,
         "strategy_version": strategy.strategy_version,
@@ -267,15 +396,24 @@ async fn execute<R: StrategyResolver>(
     let status_path = run_dir.join("status.json");
     std::fs::write(
         &request_path,
-        serde_json::to_vec_pretty(&request).map_err(|e| e.to_string())?,
+        serde_json::to_vec_pretty(&request)
+            .map_err(|e| ExecError::Transient(format!("cannot serialise request: {e}")))?,
     )
-    .map_err(|e| format!("cannot write request: {e}"))?;
+    .map_err(|e| ExecError::Transient(format!("cannot write request: {e}")))?;
 
-    run_worker(paths, &request_path, &run_dir.join("artifacts"), &status_path).await?;
+    run_worker(
+        paths,
+        &request_path,
+        &run_dir.join("artifacts"),
+        &status_path,
+    )
+    .await
+    .map_err(ExecError::Transient)?;
 
     let raw = std::fs::read_to_string(&status_path)
-        .map_err(|e| format!("worker wrote no readable status: {e}"))?;
-    serde_json::from_str(&raw).map_err(|e| format!("worker status is not JSON: {e}"))
+        .map_err(|e| ExecError::Transient(format!("worker wrote no readable status: {e}")))?;
+    serde_json::from_str(&raw)
+        .map_err(|e| ExecError::Transient(format!("worker status is not JSON: {e}")))
 }
 
 /// Spawns the worker as a CHILD process.

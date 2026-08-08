@@ -11,12 +11,14 @@
 pub mod batch;
 pub mod error;
 pub mod queue;
+pub mod resolver;
 pub mod runner;
 pub mod types;
 
 pub use batch::{BatchItem, MAX_BATCH_SIZE, cancel_batch, submit_batch};
 pub use error::QueueError;
 pub use queue::{JobQueue, QueueConfig};
+pub use resolver::DbStrategyResolver;
 pub use types::{
     AttemptOutcome, AuditActor, CancelResult, ClaimedJob, ErrorClass, HeartbeatStatus, Job,
     JobAttempt, JobStatus, SettleResult, SubmitJob, SweepReport,

@@ -15,7 +15,9 @@ mod common;
 use common::ScratchDb;
 use job_queue::error::QueueError;
 use job_queue::queue::{JobQueue, QueueConfig};
-use job_queue::runner::{Outcome, ResolvedStrategy, RunnerPaths, StrategyResolver, run_once};
+use job_queue::runner::{
+    Outcome, ResolveError, ResolvedStrategy, RunnerPaths, StrategyResolver, run_once,
+};
 use job_queue::types::{JobStatus, SubmitJob};
 use sqlx::PgPool;
 use std::path::PathBuf;
@@ -31,9 +33,10 @@ use uuid::Uuid;
 struct GoldenResolver;
 
 impl StrategyResolver for GoldenResolver {
-    fn resolve(&self, _strategy_config_id: &str) -> Result<ResolvedStrategy, String> {
+    async fn resolve(&self, _id: &str, _owner: Uuid) -> Result<ResolvedStrategy, ResolveError> {
         Ok(ResolvedStrategy {
             strategy_path: "ma200_trend:MA200Trend".into(),
+            config_path: "ma200_trend:MA200TrendConfig".into(),
             strategy_id: "ma200-trend".into(),
             strategy_version: "1.0.0".into(),
             config: serde_json::json!({
@@ -48,12 +51,24 @@ impl StrategyResolver for GoldenResolver {
     }
 }
 
-/// A resolver that always refuses, for the "the runner could not run it" path.
+/// A resolver whose registry is DOWN, for the "the runner could not run it"
+/// path. Distinct from one that says no such config: an outage must requeue.
 struct BrokenResolver;
 
 impl StrategyResolver for BrokenResolver {
-    fn resolve(&self, _id: &str) -> Result<ResolvedStrategy, String> {
-        Err("strategy registry is unavailable".into())
+    async fn resolve(&self, _id: &str, _owner: Uuid) -> Result<ResolvedStrategy, ResolveError> {
+        Err(ResolveError::Unavailable(
+            "strategy registry is unavailable".into(),
+        ))
+    }
+}
+
+/// A resolver that answers, definitively, that the config does not exist.
+struct MissingConfigResolver;
+
+impl StrategyResolver for MissingConfigResolver {
+    async fn resolve(&self, id: &str, _owner: Uuid) -> Result<ResolvedStrategy, ResolveError> {
+        Err(ResolveError::NotFound(format!("no strategy config {id}")))
     }
 }
 
@@ -115,8 +130,13 @@ async fn seed_owner(pool: &PgPool) -> Uuid {
     .expect("seed owner")
 }
 
-/// Submits a job shaped exactly as `POST /api/v1/backtests` writes it.
-async fn submit_backtest(queue: &JobQueue, owner: Uuid) -> Result<Uuid, QueueError> {
+/// Submits a job shaped exactly as `POST /api/v1/backtests` writes it, naming
+/// a config id the caller controls.
+async fn submit_backtest_for(
+    queue: &JobQueue,
+    owner: Uuid,
+    config_id: Uuid,
+) -> Result<Uuid, QueueError> {
     let job = queue
         .submit(SubmitJob {
             owner_user_id: owner,
@@ -124,7 +144,7 @@ async fn submit_backtest(queue: &JobQueue, owner: Uuid) -> Result<Uuid, QueueErr
             payload: serde_json::json!({
                 "kind": "backtest",
                 "run_id": Uuid::new_v4(),
-                "strategy_config_id": Uuid::new_v4(),
+                "strategy_config_id": config_id,
                 "dataset_version_id": "kr-etf-daily-phase0-v1",
                 "start_date": "2020-01-01",
                 "end_date": "2020-12-31",
@@ -140,6 +160,12 @@ async fn submit_backtest(queue: &JobQueue, owner: Uuid) -> Result<Uuid, QueueErr
         })
         .await?;
     Ok(job.id)
+}
+
+/// The common case: the config id does not matter because the test's resolver
+/// ignores it.
+async fn submit_backtest(queue: &JobQueue, owner: Uuid) -> Result<Uuid, QueueError> {
+    submit_backtest_for(queue, owner, Uuid::new_v4()).await
 }
 
 fn walk(root: &std::path::Path) -> Vec<String> {
@@ -256,6 +282,134 @@ async fn a_runner_fault_requeues_the_job_instead_of_discarding_it() {
         "a transient fault must requeue, not discard"
     );
     assert_eq!(after.attempt_count, 1, "the attempt is still counted");
+
+    db.drop_db().await;
+}
+
+/// Seeds a real `user_strategy_configs` row for the deployed strategy.
+async fn seed_strategy_config(pool: &PgPool, owner: Uuid) -> Uuid {
+    sqlx::query("INSERT INTO strategies (id, display_name) VALUES ('ma200_trend', 'MA200 Trend')")
+        .execute(pool)
+        .await
+        .expect("seed strategy");
+    sqlx::query_scalar(
+        "INSERT INTO user_strategy_configs \
+           (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, 'ma200_trend', '1.0.0', $2) RETURNING id",
+    )
+    .bind(owner)
+    .bind(serde_json::json!({
+        "ma_period": 200,
+        "slippage_bps": 10,
+        "lot_size": 100,
+        "initial_cash": "100000000",
+        "strategy_version": "1.0.0",
+        "probe_future_fields": false,
+    }))
+    .fetch_one(pool)
+    .await
+    .expect("seed config")
+}
+
+#[tokio::test]
+async fn the_daemon_drains_a_real_job_under_the_worker_role() {
+    // The end of the chain, and the only test here that uses none of the
+    // doubles: the real binary, the real `DbStrategyResolver`, and a
+    // connection as `worker` rather than as superuser.
+    //
+    // The role is the point. `worker` was granted everything a backtest
+    // WRITES in 0009 and not the one table it must READ, and nothing noticed
+    // because nothing consumed the queue. Every test above would still pass
+    // with that grant missing -- they connect as superuser, where a GRANT is
+    // irrelevant -- and the runner would resolve nothing in production. This
+    // test is what makes migration 0021 provable rather than asserted.
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
+    let owner = seed_owner(&db.pool).await;
+    let config_id = seed_strategy_config(&db.pool, owner).await;
+    let job_id = submit_backtest_for(&queue, owner, config_id)
+        .await
+        .expect("submit");
+
+    let root = repo_root();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_backtest-runner"))
+        .arg("--once")
+        .env("DATABASE_URL", db.role_url("worker"))
+        .env("LAGRANGE_REPO_ROOT", &root)
+        .env("LAGRANGE_DATASET_ROOT", root.join("data/phase0"))
+        .env("LAGRANGE_ARTIFACTS_ROOT", scratch.path())
+        .env("LAGRANGE_UV_BIN", uv_bin())
+        .output()
+        .expect("the daemon binary runs");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        output.status.success(),
+        "the daemon exited {}: {stderr}",
+        output.status
+    );
+
+    let after = queue.get_by_id(job_id).await.expect("get");
+    assert_eq!(
+        after.status,
+        JobStatus::Succeeded,
+        "the daemon must finish the job it claimed: {stderr}"
+    );
+
+    // `locked_by` is what an operator reads when a job looks stuck, so it has
+    // to name a process rather than say "a worker".
+    let attempt_worker: String = sqlx::query_scalar(
+        "SELECT claimed_by FROM job_attempts WHERE job_id = $1 ORDER BY attempt_no DESC LIMIT 1",
+    )
+    .bind(job_id)
+    .fetch_one(&db.pool)
+    .await
+    .expect("attempt recorded");
+    assert!(
+        attempt_worker.starts_with("backtest-runner@"),
+        "the attempt must name the process that ran it, got {attempt_worker:?}"
+    );
+
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn a_config_that_does_not_exist_fails_now_rather_than_three_times() {
+    // The mirror of the test above, and the reason resolution has a typed
+    // error at all. A config id that does not exist produces the identical
+    // answer on every attempt, so requeueing it spends the job's remaining
+    // attempts and a worker slot each time to tell the user nothing new --
+    // while the failure they need to see stays hidden behind RETRYING.
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
+    let owner = seed_owner(&db.pool).await;
+    let job_id = submit_backtest(&queue, owner).await.expect("submit");
+
+    let outcome = run_once(
+        &queue,
+        "test-runner",
+        &paths(&scratch),
+        &MissingConfigResolver,
+    )
+    .await
+    .expect("runner");
+    assert!(
+        matches!(outcome, Outcome::Failed { .. }),
+        "a missing config is the user's answer, not a runner fault: {outcome:?}"
+    );
+
+    let after = queue.get_by_id(job_id).await.expect("get");
+    assert_eq!(
+        after.status,
+        JobStatus::Failed,
+        "the job is settled, not waiting for two more identical attempts"
+    );
 
     db.drop_db().await;
 }

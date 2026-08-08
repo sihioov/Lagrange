@@ -69,11 +69,7 @@ fn ddl_for(db: &str, statement: &str) -> sqlx::AssertSqlSafe<String> {
 
 fn fresh_db_name() -> String {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "lagrange_jq_{}_{}",
-        std::process::id(),
-        n
-    )
+    format!("lagrange_jq_{}_{}", std::process::id(), n)
 }
 
 fn conn_url(base: &str, user: &str, db: &str) -> String {
@@ -106,7 +102,10 @@ fn up_migration_count() -> usize {
     MIGRATOR
         .migrations
         .iter()
-        .filter(|m| m.migration_type == MigrationType::Simple || m.migration_type == MigrationType::ReversibleUp)
+        .filter(|m| {
+            m.migration_type == MigrationType::Simple
+                || m.migration_type == MigrationType::ReversibleUp
+        })
         .count()
 }
 
@@ -140,7 +139,9 @@ impl ScratchDb {
         );
 
         let admin = connect_with_retry(super_url, 3).await?;
-        admin.execute(ddl_for(&db, "DROP DATABASE IF EXISTS {db} WITH (FORCE)")).await?;
+        admin
+            .execute(ddl_for(&db, "DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
+            .await?;
         admin.execute(ddl_for(&db, "CREATE DATABASE {db}")).await?;
         drop(admin);
 
@@ -168,6 +169,24 @@ impl ScratchDb {
             name: db,
             super_url: super_url.to_string(),
         })
+    }
+
+    /// A connection URL for this database as one of the production roles.
+    ///
+    /// Tests otherwise connect as superuser, where every GRANT is irrelevant
+    /// and a role that is missing a privilege looks perfectly healthy. What
+    /// that hides is specific: the failure appears only in production, on a
+    /// path a green suite just declared working.
+    pub fn role_url(&self, role: &str) -> String {
+        let (scheme, rest) = self
+            .super_url
+            .split_once("://")
+            .expect("DATABASE_URL has a scheme");
+        // Everything before the last '@' is the credentials; a password may
+        // itself contain '@', so the host is taken from the RIGHT.
+        let host = rest.rsplit_once('@').map(|(_, h)| h).unwrap_or(rest);
+        let host = host.rsplit_once('/').map(|(h, _)| h).unwrap_or(host);
+        format!("{scheme}://{role}:lagrange@{host}/{}", self.name)
     }
 
     pub async fn drop_db(self) {

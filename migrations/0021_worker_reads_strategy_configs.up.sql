@@ -1,0 +1,31 @@
+-- 0021: let `worker` read the strategy config a job names.
+--
+-- 0009 gave `worker` everything a backtest runner writes -- jobs, job_attempts,
+-- backtest_runs, backtest_metrics, backtest_warnings, result_artifacts -- and
+-- not the one table it must READ to know what to run. Nothing noticed because
+-- nothing consumed the queue: submitted backtests sat QUEUED forever, so the
+-- missing SELECT never had a chance to fail.
+--
+-- The shape of that failure is the reason this is its own migration rather
+-- than a footnote. Integration tests connect as superuser, where the grant is
+-- irrelevant; the runner would resolve every strategy in every test and
+-- nothing in production, failing with 42501 on a path that had just been
+-- proven green.
+--
+-- RLS already anticipated this: 0010 created `tenant_all_worker_
+-- user_strategy_configs` with `USING (true)`, because a runner serves every
+-- tenant's jobs and has no `app.actor_user_id` to filter by. The policy was
+-- there and the grant underneath it was not, so the row was unreachable
+-- regardless of what the policy allowed.
+--
+-- SELECT only. `worker` still cannot create, edit, or delete a config -- the
+-- 0009 intent that configs are the owner's to change through `app` is intact,
+-- and the migration-contract assertion that `worker` cannot write tenant data
+-- continues to hold.
+--
+-- Tenant scoping does NOT come from this grant. The runner binds the claimed
+-- job's own `owner_user_id` into the lookup, so a job cannot reach a config
+-- belonging to someone else even though the policy lets the role see all of
+-- them.
+
+GRANT SELECT ON TABLE user_strategy_configs TO worker;
