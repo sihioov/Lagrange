@@ -98,6 +98,17 @@ class TargetExecutionStrategy(Strategy):
         self.last_close_date: Dict[str, Optional[str]] = {}
         self.signal_dates: Dict[str, Optional[str]] = {}
         self._rebalanced_on: Optional[str] = None
+        #: `date -> instrument -> factor -> raw value`, computed by the Rust
+        #: factor-engine and handed in by the runner. Empty for a strategy
+        #: that needs no factors, and for every unit test.
+        self.factor_series: Dict[str, Dict[str, Dict[str, float]]] = dict(
+            getattr(config, "factor_series", {}) or {}
+        )
+        #: Scheduled dates not yet acted on. The series doubles as the
+        #: rebalance schedule, so cadence is decided once, in Rust, from the
+        #: dataset's own sessions -- rather than by month-end arithmetic
+        #: reimplemented here against a calendar this process cannot see.
+        self._pending_schedule: List[str] = sorted(self.factor_series)
         # A failure the run must not survive, recorded rather than only
         # raised. NautilusTrader catches and logs whatever an `on_data`
         # handler throws so one bad event cannot kill an engine -- which
@@ -165,33 +176,43 @@ class TargetExecutionStrategy(Strategy):
     def _factors_for(self, as_of: str) -> Dict[str, Dict[str, float]]:
         """Factor values for `as_of`, keyed by instrument.
 
-        Empty here, and that is the current state of the system rather than a
-        placeholder: the canonical factor definitions live in the Rust
-        `factor-engine`, and nothing yet carries a factor series into a
-        backtest run.
-
-        It is NOT overridden with a Python reimplementation on purpose.  A
-        second implementation of `return_12m` would make a backtest disagree
-        with the paper and live paths that use the Rust one, and a strategy
-        cannot be promoted on a backtest that does not describe how it will
-        actually behave -- the Paper gate is a parity check.
+        Read from the series the runner computed with the Rust
+        `factor-engine`.  Deliberately NOT computed here: a second
+        implementation of `return_12m` would make a backtest disagree with the
+        paper and live paths that use the Rust one, and a strategy cannot be
+        promoted on a backtest that does not describe how it will actually
+        behave -- the Paper gate is a parity check.
         """
-        return {}
+        return self.factor_series.get(as_of, {})
 
     def _rebalance_due(self, as_of: str) -> bool:
         """Whether to recompute targets at this close.
 
-        Once, on the first close with history.  That is exactly right for a
-        buy-and-hold target and wrong for the monthly baselines, which is
-        harmless while they cannot run at all for want of factors -- they
-        raise in `_rebalance` before cadence is ever consulted.  Month-end
-        detection belongs with the change that supplies factors.
+        With a series, the schedule is the series: rebalance on the dates the
+        runner picked.  The comparison is ``<=`` rather than ``==`` so a
+        scheduled date that never arrives as a close event -- a holiday, an
+        instrument that did not trade -- is executed at the next close instead
+        of being skipped in silence.
+
+        Without a series, once, on the first close.  That is exactly right for
+        a buy-and-hold target, which is the case that has no factors and
+        therefore no schedule.
         """
-        return self._rebalanced_on is None
+        if not self._pending_schedule:
+            return not self.factor_series and self._rebalanced_on is None
+        return self._pending_schedule[0] <= as_of
 
     def _rebalance(self, as_of: str) -> None:
+        # Consume the schedule entry FIRST, so a date that fails to produce a
+        # target is not retried at every subsequent close.
+        scheduled = as_of
+        if self._pending_schedule:
+            scheduled = self._pending_schedule.pop(0)
         required = self._required_factors()
-        factors = self._factors_for(as_of)
+        # The factors of the SCHEDULED date, not of the close that triggered
+        # it: when a scheduled date never arrives as a close event the target
+        # is still the one that date's data implies.
+        factors = self._factors_for(scheduled)
         missing = [f for f in required if not any(f in v for v in factors.values())]
         if missing:
             # Loud, not empty. Returning here would leave `pending_targets`
@@ -204,9 +225,9 @@ class TargetExecutionStrategy(Strategy):
             self.fatal_error = {
                 "code": "MISSING_FACTOR_SUPPLY",
                 "detail": (
-                    f"{self.STRATEGY_ID} requires {', '.join(missing)} and no "
-                    f"factor series was supplied for {as_of}; a backtest "
-                    f"cannot be run from an empty factor set"
+                    f"{self.STRATEGY_ID} requires {', '.join(missing)} and the "
+                    f"factor series carries none of them for {scheduled}; a "
+                    f"backtest cannot be run from an empty factor set"
                 ),
             }
             raise AdapterError(
@@ -214,12 +235,14 @@ class TargetExecutionStrategy(Strategy):
             )
         target_module = importlib.import_module(f"strategies.{self.STRATEGY_ID}.target")
         portfolio = target_module.generate_target(
-            self.parameters, factors, as_of, list(self.instrument_ids)
+            self.parameters, factors, scheduled, list(self.instrument_ids)
         )
         self.set_target_portfolio(portfolio)
-        self._rebalanced_on = as_of
+        self._rebalanced_on = scheduled
         for instrument_id in self.instrument_ids:
-            self.signal_dates[instrument_id] = as_of
+            # The date the DECISION was made, which is what an order's
+            # `signal_date` means; the fill lands at the next open.
+            self.signal_dates[instrument_id] = scheduled
 
     def _on_session_close(self, event) -> None:
         instrument_id = str(event.instrument_id)

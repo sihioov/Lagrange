@@ -1864,6 +1864,7 @@ dependencies = [
  "domain",
  "factor-engine",
  "market-data",
+ "selector",
  "serde",
  "serde_json",
  "sqlx",

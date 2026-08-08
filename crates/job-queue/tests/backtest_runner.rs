@@ -381,6 +381,10 @@ struct BaselineResolver {
     strategy_id: &'static str,
     strategy_path: &'static str,
     config_path: &'static str,
+    /// Overrides the package defaults when a test needs a specific branch of
+    /// the target generator; `None` uses whatever the adapter config
+    /// defaults to, which is what a real user config would carry.
+    parameters: Option<serde_json::Value>,
 }
 
 impl StrategyResolver for BaselineResolver {
@@ -390,13 +394,22 @@ impl StrategyResolver for BaselineResolver {
             config_path: self.config_path.into(),
             strategy_id: self.strategy_id.into(),
             strategy_version: "1.0.0".into(),
-            config: serde_json::json!({
-                "instrument_ids": ["069500.KRX"],
-                "slippage_bps": 10,
-                "lot_size": 100,
-                "initial_cash": "100000000",
-                "strategy_version": "1.0.0",
-            }),
+            config: {
+                let mut config = serde_json::json!({
+                    "slippage_bps": 10,
+                    "lot_size": 100,
+                    "initial_cash": "100000000",
+                    "strategy_version": "1.0.0",
+                });
+                // `instrument_ids` is deliberately absent: the worker
+                // overwrites it with what it found in the dataset, and a
+                // resolver that set it would be describing a universe the
+                // strategy will not actually see.
+                if let Some(params) = &self.parameters {
+                    config["parameters"] = params.clone();
+                }
+                config
+            },
         })
     }
 }
@@ -448,6 +461,7 @@ async fn a_baseline_backtest_produces_orders_rather_than_an_empty_success() {
         strategy_id: "buy_and_hold",
         strategy_path: "strategies.buy_and_hold.adapter:BuyAndHoldAdapter",
         config_path: "strategies.buy_and_hold.adapter:BuyAndHoldConfig",
+        parameters: None,
     };
     let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
         .await
@@ -471,12 +485,106 @@ async fn a_baseline_backtest_produces_orders_rather_than_an_empty_success() {
 }
 
 #[tokio::test]
-async fn a_strategy_whose_factors_are_missing_fails_instead_of_reporting_success() {
-    // The other half. Four baselines still need a factor series nobody
-    // supplies, and the honest outcome is a FAILED run naming what is
-    // missing. Before this, the run completed with zero orders and reported
-    // SUCCEEDED -- the same empty artifacts as above, with no signal at all
-    // that anything had gone wrong.
+async fn a_factor_driven_strategy_trades_on_the_computed_series() {
+    // The end of the factor chain: the runner computes `vol_60` with the Rust
+    // factor-engine, embeds the series in the worker request, the adapter
+    // hands those values to the Python target generator, and the resulting
+    // targets become real orders.
+    //
+    // Asserting SUCCEEDED would prove none of it -- an adapter that received
+    // nothing also finishes SUCCEEDED. Only the row count separates a
+    // strategy that traded from one that could not.
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
+    let owner = seed_owner(&db.pool).await;
+    submit_backtest(&queue, owner).await.expect("submit");
+
+    let resolver = BaselineResolver {
+        strategy_id: "inverse_volatility",
+        strategy_path: "strategies.inverse_volatility.adapter:InverseVolatilityAdapter",
+        config_path: "strategies.inverse_volatility.adapter:InverseVolatilityConfig",
+        parameters: None,
+    };
+    let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
+        .await
+        .expect("runner");
+    assert!(
+        matches!(outcome, Outcome::Succeeded { .. }),
+        "inverse_volatility must run on the computed series: {outcome:?}"
+    );
+    for artifact in ["ORDERS", "FILLS"] {
+        let rows = reported_rows(scratch.path(), artifact).unwrap_or_else(|| {
+            panic!("{artifact} was not reported at all");
+        });
+        assert!(
+            rows > 0,
+            "{artifact} holds {rows} rows -- the factor series reached the \
+             strategy but produced no trade"
+        );
+    }
+
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn a_strategy_that_reads_two_factors_executes_the_invested_branch() {
+    // `trend_following` compares two factors rather than ranking one, so it
+    // exercises a different path through the series into the generator.
+    //
+    // The parameters are swapped (fast 200 / slow 50) on purpose. With its
+    // defaults this strategy legitimately holds CASH on both of phase-0's
+    // rebalance dates -- trend_50 sits below trend_200 on each -- and a
+    // correct run that places no orders is indistinguishable from a broken
+    // one that cannot. Swapping the windows is schema-valid, reads the exact
+    // same two factor values, and lands on the invested branch, so what the
+    // assertion below proves is the plumbing rather than the market.
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
+    let owner = seed_owner(&db.pool).await;
+    submit_backtest(&queue, owner).await.expect("submit");
+
+    let resolver = BaselineResolver {
+        strategy_id: "trend_following",
+        strategy_path: "strategies.trend_following.adapter:TrendFollowingAdapter",
+        config_path: "strategies.trend_following.adapter:TrendFollowingConfig",
+        parameters: Some(serde_json::json!({
+            "benchmark_instrument": "069500.KRX",
+            "fast_ma": 200,
+            "slow_ma": 50,
+        })),
+    };
+    let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
+        .await
+        .expect("runner");
+    assert!(
+        matches!(outcome, Outcome::Succeeded { .. }),
+        "trend_following must run: {outcome:?}"
+    );
+    let rows = reported_rows(scratch.path(), "ORDERS").expect("orders reported");
+    assert!(
+        rows > 0,
+        "ORDERS holds {rows} rows -- the invested branch placed no order"
+    );
+
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn a_dataset_too_short_for_a_strategy_fails_permanently() {
+    // `dual_momentum` needs 252 sessions of history and phase-0 holds 260,
+    // which leaves no month-end that is not also the final session. There is
+    // no honest rebalance date, so the run must fail.
+    //
+    // PERMANENTLY. A dataset does not grow between attempts, so requeueing
+    // would spend the job's two remaining attempts reaching the identical
+    // answer while the message an operator needs -- this dataset is too short
+    // for this strategy -- stayed hidden behind RETRYING until they ran out.
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -489,20 +597,20 @@ async fn a_strategy_whose_factors_are_missing_fails_instead_of_reporting_success
         strategy_id: "dual_momentum",
         strategy_path: "strategies.dual_momentum.adapter:DualMomentumAdapter",
         config_path: "strategies.dual_momentum.adapter:DualMomentumConfig",
+        parameters: None,
     };
     let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
         .await
         .expect("runner");
     let Outcome::Failed { reason, .. } = &outcome else {
-        panic!("a strategy that cannot compute a target must fail: {outcome:?}");
+        panic!("a dataset that cannot support the strategy must fail: {outcome:?}");
     };
     assert!(
-        reason.contains("MISSING_FACTOR_SUPPLY"),
-        "the failure must name what is missing, got {reason:?}"
+        reason.contains("252") && reason.contains("260"),
+        "the failure must name both numbers so it is clearly the DATA that is \
+         short, got {reason:?}"
     );
 
-    // Settled permanently: rerunning it produces the identical answer until
-    // somebody supplies factors, so the attempts are not worth spending.
     let after = queue.get_by_id(job_id).await.expect("get");
     assert_eq!(after.status, JobStatus::Failed);
 

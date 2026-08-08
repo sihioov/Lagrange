@@ -22,27 +22,23 @@ use uuid::Uuid;
 ///
 /// `(strategy_id, strategy_path, config_path)`.
 ///
-/// # Why four baselines are still missing
+/// # Why two baselines are still missing
 ///
-/// Not an omission — they cannot produce a correct answer yet. Every baseline
-/// except `buy_and_hold` needs a factor series (`return_12m`, `momentum_12_1`,
-/// `vol_60`, `trend_50`/`trend_200`), the canonical definitions of those live
-/// in the Rust `factor-engine`, and nothing yet carries a factor series into a
-/// backtest run.
+/// `dual_momentum` and `relative_momentum` are blocked by the DATA, not by
+/// this build. Both declare a 252-session lookback and the phase-0 dataset
+/// holds 260 sessions, which leaves no month-end that is not also the final
+/// session — and a rebalance on the final session has no later open to fill
+/// it. The runner settles them permanently as `DATASET_TOO_SHORT` with both
+/// numbers in the message, because a dataset does not grow between retries.
 ///
-/// They are not given a Python reimplementation to unblock them: a second
-/// `return_12m` would make a backtest disagree with the paper and live paths
-/// that use the Rust one, and the Paper promotion gate is a parity check. A
-/// strategy promoted on a backtest that does not describe how it will behave
-/// is worse than one that cannot be backtested at all.
+/// Nothing is faked to unblock them. Extending the synthetic span would
+/// change `kr-etf-daily-phase0-v1`, which is a hashed golden identity, and
+/// reimplementing their factors in Python would make a backtest disagree with
+/// the paper and live paths that use the Rust engine — the Paper promotion
+/// gate is a parity check between exactly those two.
 ///
-/// They no longer fail SILENTLY, which was the actual danger. The adapter
-/// records a `MISSING_FACTOR_SUPPLY` failure that the worker turns into a
-/// FAILED run, where before the run completed and reported SUCCEEDED with
-/// zero orders — indistinguishable from a strategy that chose not to trade.
-///
-/// Both entries here are proven end to end against the phase-0 dataset, with
-/// non-empty `orders`/`fills` artifacts rather than merely a SUCCEEDED status.
+/// Every entry here is proven end to end against the phase-0 dataset with
+/// non-empty `orders`/`fills`, rather than merely a SUCCEEDED status.
 const DEPLOYED: &[(&str, &str, &str)] = &[
     (
         "ma200_trend",
@@ -53,6 +49,16 @@ const DEPLOYED: &[(&str, &str, &str)] = &[
         "buy_and_hold",
         "strategies.buy_and_hold.adapter:BuyAndHoldAdapter",
         "strategies.buy_and_hold.adapter:BuyAndHoldConfig",
+    ),
+    (
+        "inverse_volatility",
+        "strategies.inverse_volatility.adapter:InverseVolatilityAdapter",
+        "strategies.inverse_volatility.adapter:InverseVolatilityConfig",
+    ),
+    (
+        "trend_following",
+        "strategies.trend_following.adapter:TrendFollowingAdapter",
+        "strategies.trend_following.adapter:TrendFollowingConfig",
     ),
 ];
 
@@ -140,28 +146,23 @@ mod tests {
     }
 
     #[test]
-    fn the_factor_dependent_baselines_are_deliberately_absent() {
-        // `buy_and_hold` has left this list, which is what the previous
-        // version of this test asked for: the adapter now submits real orders
-        // and a runner test asserts non-empty artifacts.
+    fn the_data_blocked_baselines_are_deliberately_absent() {
+        // `inverse_volatility` and `trend_following` have left this list, as
+        // the previous version of this test asked: the factor series computed
+        // by the Rust engine now reaches the backtest, and runner tests
+        // assert non-empty orders rather than a SUCCEEDED status.
         //
-        // The four that remain need a factor series nobody supplies. Adding
-        // one before that exists means either a backtest with no orders or a
-        // Python reimplementation of a Rust factor -- the first is a wrong
-        // answer, the second breaks parity with the paper and live paths that
-        // the Paper promotion gate compares against.
-        for baseline in [
-            "dual_momentum",
-            "inverse_volatility",
-            "relative_momentum",
-            "trend_following",
-        ] {
+        // These two are blocked by the DATASET, which no change here can fix.
+        // Both declare a 252-session lookback and phase-0 holds 260 sessions,
+        // so they have no month-end that is not also the final session -- and
+        // a rebalance there has no later open to fill it.
+        for baseline in ["dual_momentum", "relative_momentum"] {
             assert!(
                 !DEPLOYED.iter().any(|(id, _, _)| *id == baseline),
-                "{baseline} was added to DEPLOYED. That is only correct once a \
-                 factor series computed by the Rust factor-engine reaches the \
-                 backtest AND a test asserts non-empty orders/fills -- delete \
-                 this case in the same commit that proves it."
+                "{baseline} was added to DEPLOYED. It declares a 252-session \
+                 lookback and phase-0 holds 260 sessions, so it has no valid \
+                 rebalance date -- delete this case only alongside a dataset \
+                 that gives it one, and a test asserting non-empty orders."
             );
         }
     }

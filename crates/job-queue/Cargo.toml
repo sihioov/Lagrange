@@ -11,6 +11,9 @@ rust-version.workspace = true
 # definition in Python would make a backtest disagree with the behaviour the
 # Paper promotion gate compares it against.
 factor-engine = { path = "../factor-engine" }
+# The strategy registry: which factors each baseline needs and how much
+# history. Read rather than restated, so this is not a fourth copy of it.
+selector = { path = "../selector" }
 market-data = { path = "../market-data" }
 domain = { path = "../domain" }
 # SQLx 0.9.x is the approved line (plan draft 2026-08-04 line 40; already in

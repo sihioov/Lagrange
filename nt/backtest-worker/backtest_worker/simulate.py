@@ -122,6 +122,11 @@ def _run_backtest(request: dict[str, Any], run_dir: Path) -> dict[str, Any]:
 
     strategy_config = dict(request.get("strategy_config", {}))
     strategy_config["instrument_ids"] = instruments
+    # The factor values the strategy decides from, computed by the runner.
+    # Forwarded like `instrument_ids`: both are things the RUN knows and the
+    # stored config cannot.
+    if "factor_series" in request:
+        strategy_config["factor_series"] = request["factor_series"]
 
     data = []
     for instrument in instruments:

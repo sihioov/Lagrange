@@ -21,6 +21,11 @@ class RelativeMomentumConfig(StrategyConfig, frozen=True):
     lot_size: int = 100
     initial_cash: str = "100000000"
     strategy_version: str = VERSION
+    #: `date -> instrument -> factor -> raw value`, computed by the Rust
+    #: factor-engine and passed in by the runner. A real config field rather
+    #: than an entry in `parameters`, which is schema-validated with
+    #: `additionalProperties: false` and would reject it.
+    factor_series: dict = msgspec.field(default_factory=dict)
 
 
 class RelativeMomentumAdapter(TargetExecutionStrategy):

@@ -342,6 +342,7 @@ async fn execute<R: StrategyResolver>(
     // The owner comes from the CLAIMED JOB, never from the payload: a payload
     // that could name its own owner would reach any tenant's config.
     let strategy = resolver.resolve(config_id, claim.job.owner_user_id).await?;
+    let factor_series = factor_series_for(&strategy.strategy_id, &paths.dataset_root).await?;
 
     let run_id = payload
         .run_id
@@ -354,7 +355,7 @@ async fn execute<R: StrategyResolver>(
     std::fs::create_dir_all(&run_dir)
         .map_err(|e| ExecError::Transient(format!("cannot create {run_dir:?}: {e}")))?;
 
-    let request = serde_json::json!({
+    let mut request = serde_json::json!({
         "run_id": run_id,
         "owner_user_id": claim.job.owner_user_id.to_string(),
         "job_id": claim.job.id.to_string(),
@@ -391,6 +392,12 @@ async fn execute<R: StrategyResolver>(
         },
         "readonly_mounts": [],
     });
+    // Attached only when the strategy needs it, so a request for a strategy
+    // that computes its own signal is unchanged.
+    if let Some(series) = factor_series {
+        request["factor_series"] = serde_json::to_value(series)
+            .map_err(|e| ExecError::Transient(format!("cannot serialise factors: {e}")))?;
+    }
 
     let request_path = run_dir.join("request.json");
     let status_path = run_dir.join("status.json");
@@ -414,6 +421,70 @@ async fn execute<R: StrategyResolver>(
         .map_err(|e| ExecError::Transient(format!("worker wrote no readable status: {e}")))?;
     serde_json::from_str(&raw)
         .map_err(|e| ExecError::Transient(format!("worker status is not JSON: {e}")))
+}
+
+/// The factor values a strategy needs, or `None` when it needs none.
+///
+/// The metadata comes from `selector::baseline`, which is the registry the
+/// rest of the system reads. Restating `required_factors` here would make a
+/// fourth copy of it — after the Python package, the Rust registry, and the
+/// database — and the copy that drifts is the one that decides what a
+/// backtest computes.
+async fn factor_series_for(
+    strategy_id: &str,
+    dataset_root: &Path,
+) -> Result<Option<crate::factor_series::FactorSeries>, ExecError> {
+    let Some(package) = selector::baseline::baseline_packages()
+        .into_iter()
+        .find(|p| p.strategy_id == strategy_id)
+    else {
+        // Not a baseline: the phase-0 golden strategy computes its own signal
+        // from the bars it is given and asks for nothing.
+        return Ok(None);
+    };
+    if package.required_factors.is_empty() {
+        return Ok(None);
+    }
+
+    let required: Vec<String> = package.required_factors.iter().cloned().collect();
+    // `dataset_root` is what the WORKER is given, and the worker appends
+    // `curated` itself. `CurateStore` is rooted one level in, at the zone
+    // rather than at the dataset, so the two readers reach the same files
+    // from different starting points.
+    let curated_root = dataset_root.join("curated");
+    let lookback = package.minimum_lookback_sessions;
+
+    // Off the async runtime. Reading a year of parquet and collecting Polars
+    // lazy frames is seconds of CPU-bound work with blocking file I/O inside
+    // it, and leaving that on an executor thread starves every other task the
+    // process is running -- the heartbeat that holds this job's own lease
+    // among them. Polars makes the point loudly: its collect calls
+    // `block_in_place`, which PANICS on a current-thread runtime.
+    let computed = tokio::task::spawn_blocking(move || {
+        let shape = crate::factor_series::dataset_shape(&curated_root)?;
+        crate::factor_series::build(&curated_root, &shape, &required, lookback)
+    })
+    .await
+    .map_err(|e| ExecError::Transient(format!("factor computation did not finish: {e}")))?;
+
+    match computed {
+        Ok(series) => Ok(Some(series)),
+        Err(e @ crate::factor_series::FactorSeriesError::InsufficientHistory { .. }) => {
+            // PERMANENT. A dataset does not grow between attempts, so the two
+            // remaining retries would spend a worker slot each to reach the
+            // identical answer, and the message an operator needs -- this
+            // dataset is too short for this strategy -- would stay hidden
+            // behind RETRYING until they were used up.
+            Err(ExecError::Permanent {
+                class: ErrorClass::DataBlocked,
+                code: "DATASET_TOO_SHORT",
+                reason: e.to_string(),
+            })
+        }
+        Err(e) => Err(ExecError::Transient(format!(
+            "factor series unavailable: {e}"
+        ))),
+    }
 }
 
 /// Spawns the worker as a CHILD process.
