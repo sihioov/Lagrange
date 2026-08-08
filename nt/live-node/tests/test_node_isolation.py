@@ -1,5 +1,11 @@
 """Todo 41: one live node per account, enforced rather than assumed.
 
+Named `test_node_isolation` rather than `test_isolation` because pytest
+derives a module name from the BASENAME when a test directory has no
+`__init__.py`, and `nt/backtest-worker/tests/test_isolation.py` already claims
+that name. The collision does not appear when either suite runs on its own --
+only when the whole `nt` tree is collected, which is what CI does.
+
 Two processes trading one account double every order either places, and
 neither can see the other's in-flight state. Migration 0016 stops the API
 recording two nodes; nothing there stops someone running the process twice on
