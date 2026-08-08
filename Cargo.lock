@@ -61,6 +61,7 @@ dependencies = [
  "http-body-util",
  "job-queue",
  "jsonschema",
+ "kis-client",
  "portfolio-model",
  "prometheus",
  "regex",

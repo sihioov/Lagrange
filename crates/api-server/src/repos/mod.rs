@@ -11,6 +11,7 @@ pub mod entitlements;
 pub mod live;
 pub mod metrics;
 pub mod ops;
+pub mod order_intents;
 pub mod paper;
 pub mod parity;
 pub mod pending_targets;
