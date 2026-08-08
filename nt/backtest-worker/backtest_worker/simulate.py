@@ -166,6 +166,23 @@ def _run_backtest(request: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     engine = node.get_engines()[0]
     strategy = [s for s in engine.trader.strategies()][0]
 
+    # A strategy that could not do its job must not be published as a result.
+    #
+    # NautilusTrader catches whatever an `on_data` handler raises, logs it,
+    # and continues -- correct for an engine, because one malformed event
+    # should not destroy a run. The consequence here is that a strategy which
+    # failed on EVERY event still reaches this line, and its empty `orders`
+    # and `fills` normalize into a clean SUCCEEDED backtest that a user cannot
+    # tell apart from a strategy that decided not to trade.
+    #
+    # So the strategy records the failure it could not raise its way out of,
+    # and it is turned back into one here, where it fails the run.
+    fatal = getattr(strategy, "fatal_error", None)
+    if fatal:
+        raise SimulateError(
+            f"{fatal.get('code', 'STRATEGY_FAILED')}: {fatal.get('detail', '')}"
+        )
+
     raw = _collect_raw(strategy, rows, instruments, request, nautilus_trader.__version__)
     return raw
 

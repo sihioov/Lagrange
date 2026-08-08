@@ -376,6 +376,139 @@ async fn the_daemon_drains_a_real_job_under_the_worker_role() {
     db.drop_db().await;
 }
 
+/// A resolver for one of the five user-facing baseline packages.
+struct BaselineResolver {
+    strategy_id: &'static str,
+    strategy_path: &'static str,
+    config_path: &'static str,
+}
+
+impl StrategyResolver for BaselineResolver {
+    async fn resolve(&self, _id: &str, _owner: Uuid) -> Result<ResolvedStrategy, ResolveError> {
+        Ok(ResolvedStrategy {
+            strategy_path: self.strategy_path.into(),
+            config_path: self.config_path.into(),
+            strategy_id: self.strategy_id.into(),
+            strategy_version: "1.0.0".into(),
+            config: serde_json::json!({
+                "instrument_ids": ["069500.KRX"],
+                "slippage_bps": 10,
+                "lot_size": 100,
+                "initial_cash": "100000000",
+                "strategy_version": "1.0.0",
+            }),
+        })
+    }
+}
+
+/// Rows the worker reported for an artifact type, from its own status file.
+///
+/// The worker publishes an exact `row_count` per artifact, so the assertion
+/// reads that rather than inspecting parquet or guessing from file size. A
+/// size threshold would be a heuristic standing in for the number the worker
+/// already states, and the whole point of these tests is that "it produced a
+/// file" is not the same claim as "it produced results".
+fn reported_rows(scratch: &std::path::Path, artifact_type: &str) -> Option<u64> {
+    let status_path = walk(scratch)
+        .into_iter()
+        .find(|p| p.ends_with("status.json"))?;
+    let raw = std::fs::read_to_string(&status_path).ok()?;
+    let status: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    status
+        .get("artifacts")?
+        .as_array()?
+        .iter()
+        .find(|a| a.get("artifact_type").and_then(|t| t.as_str()) == Some(artifact_type))?
+        .get("row_count")?
+        .as_u64()
+}
+
+#[tokio::test]
+async fn a_baseline_backtest_produces_orders_rather_than_an_empty_success() {
+    // The defect this exists for: every baseline adapter recorded its
+    // decisions in `order_intents` and submitted nothing, while the worker
+    // collects with `getattr(strategy, "orders", [])`. The getattr default
+    // turned that into an empty list rather than an error, so a baseline
+    // backtest RAN, reported SUCCEEDED, and wrote artifacts holding zero
+    // orders -- which a user cannot tell apart from a strategy that decided
+    // not to trade.
+    //
+    // Asserting SUCCEEDED would therefore have passed the whole time it was
+    // broken. The assertion that matters is that the orders and fills
+    // artifacts are not EMPTY.
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
+    let owner = seed_owner(&db.pool).await;
+    submit_backtest(&queue, owner).await.expect("submit");
+
+    let resolver = BaselineResolver {
+        strategy_id: "buy_and_hold",
+        strategy_path: "strategies.buy_and_hold.adapter:BuyAndHoldAdapter",
+        config_path: "strategies.buy_and_hold.adapter:BuyAndHoldConfig",
+    };
+    let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
+        .await
+        .expect("runner");
+    assert!(
+        matches!(outcome, Outcome::Succeeded { .. }),
+        "buy_and_hold must run: {outcome:?}"
+    );
+
+    for artifact in ["ORDERS", "FILLS"] {
+        let rows = reported_rows(scratch.path(), artifact)
+            .unwrap_or_else(|| panic!("{artifact} was not reported at all"));
+        assert!(
+            rows > 0,
+            "{artifact} holds {rows} rows -- the strategy traded nothing, which \
+             is the silent failure this test exists to catch"
+        );
+    }
+
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn a_strategy_whose_factors_are_missing_fails_instead_of_reporting_success() {
+    // The other half. Four baselines still need a factor series nobody
+    // supplies, and the honest outcome is a FAILED run naming what is
+    // missing. Before this, the run completed with zero orders and reported
+    // SUCCEEDED -- the same empty artifacts as above, with no signal at all
+    // that anything had gone wrong.
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
+    let owner = seed_owner(&db.pool).await;
+    let job_id = submit_backtest(&queue, owner).await.expect("submit");
+
+    let resolver = BaselineResolver {
+        strategy_id: "dual_momentum",
+        strategy_path: "strategies.dual_momentum.adapter:DualMomentumAdapter",
+        config_path: "strategies.dual_momentum.adapter:DualMomentumConfig",
+    };
+    let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
+        .await
+        .expect("runner");
+    let Outcome::Failed { reason, .. } = &outcome else {
+        panic!("a strategy that cannot compute a target must fail: {outcome:?}");
+    };
+    assert!(
+        reason.contains("MISSING_FACTOR_SUPPLY"),
+        "the failure must name what is missing, got {reason:?}"
+    );
+
+    // Settled permanently: rerunning it produces the identical answer until
+    // somebody supplies factors, so the attempts are not worth spending.
+    let after = queue.get_by_id(job_id).await.expect("get");
+    assert_eq!(after.status, JobStatus::Failed);
+
+    db.drop_db().await;
+}
+
 #[tokio::test]
 async fn a_config_that_does_not_exist_fails_now_rather_than_three_times() {
     // The mirror of the test above, and the reason resolution has a typed

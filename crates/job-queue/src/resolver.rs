@@ -22,35 +22,39 @@ use uuid::Uuid;
 ///
 /// `(strategy_id, strategy_path, config_path)`.
 ///
-/// # Why this list is one entry long
+/// # Why four baselines are still missing
 ///
-/// The five baseline packages in `nt/strategies/` are NOT here, and leaving
-/// them out is the finding rather than an omission. They subclass
-/// `TargetExecutionStrategy`, which records what it did in `order_intents`
-/// and keeps no fills; the backtest worker collects results with
-/// `getattr(strategy, "orders", [])` and `getattr(strategy, "fills", [])`.
-/// Nothing raises — the getattr defaults hide the mismatch — so a baseline
-/// strategy would complete, report SUCCEEDED, and write artifacts containing
-/// zero orders and zero fills.
+/// Not an omission — they cannot produce a correct answer yet. Every baseline
+/// except `buy_and_hold` needs a factor series (`return_12m`, `momentum_12_1`,
+/// `vol_60`, `trend_50`/`trend_200`), the canonical definitions of those live
+/// in the Rust `factor-engine`, and nothing yet carries a factor series into a
+/// backtest run.
 ///
-/// A user cannot tell that from a strategy that legitimately never traded, so
-/// mapping them would turn a missing seam into a wrong ANSWER. Refusing is
-/// louder and honest: the job fails with `STRATEGY_NOT_DEPLOYED`.
+/// They are not given a Python reimplementation to unblock them: a second
+/// `return_12m` would make a backtest disagree with the paper and live paths
+/// that use the Rust one, and the Paper promotion gate is a parity check. A
+/// strategy promoted on a backtest that does not describe how it will behave
+/// is worse than one that cannot be backtested at all.
 ///
-/// The entry that IS here is proven end to end — `nt/backtest-worker/tests/
-/// test_worker.py` and `tests/golden/phase0/runner.py` both drive
-/// `ma200_trend:MA200Trend` through the worker, and `backtest_runner.rs`
-/// drives it through this runner.
+/// They no longer fail SILENTLY, which was the actual danger. The adapter
+/// records a `MISSING_FACTOR_SUPPLY` failure that the worker turns into a
+/// FAILED run, where before the run completed and reported SUCCEEDED with
+/// zero orders — indistinguishable from a strategy that chose not to trade.
 ///
-/// Adding a baseline is therefore not an edit to this table. It is teaching
-/// the adapters to expose `orders`/`fills` (or the worker to read
-/// `order_intents`), proving it with a test that asserts a non-empty
-/// artifact, and then adding the row.
-const DEPLOYED: &[(&str, &str, &str)] = &[(
-    "ma200_trend",
-    "ma200_trend:MA200Trend",
-    "ma200_trend:MA200TrendConfig",
-)];
+/// Both entries here are proven end to end against the phase-0 dataset, with
+/// non-empty `orders`/`fills` artifacts rather than merely a SUCCEEDED status.
+const DEPLOYED: &[(&str, &str, &str)] = &[
+    (
+        "ma200_trend",
+        "ma200_trend:MA200Trend",
+        "ma200_trend:MA200TrendConfig",
+    ),
+    (
+        "buy_and_hold",
+        "strategies.buy_and_hold.adapter:BuyAndHoldAdapter",
+        "strategies.buy_and_hold.adapter:BuyAndHoldConfig",
+    ),
+];
 
 /// Looks a config up in `user_strategy_configs`.
 pub struct DbStrategyResolver {
@@ -136,14 +140,17 @@ mod tests {
     }
 
     #[test]
-    fn the_baseline_packages_are_deliberately_absent() {
-        // Guards the reasoning in DEPLOYED's docs rather than the list itself.
-        // Adding one of these without first fixing the adapter/worker
-        // collection mismatch produces backtests that report SUCCEEDED with
-        // zero orders -- a wrong answer the user cannot distinguish from a
-        // strategy that chose not to trade.
+    fn the_factor_dependent_baselines_are_deliberately_absent() {
+        // `buy_and_hold` has left this list, which is what the previous
+        // version of this test asked for: the adapter now submits real orders
+        // and a runner test asserts non-empty artifacts.
+        //
+        // The four that remain need a factor series nobody supplies. Adding
+        // one before that exists means either a backtest with no orders or a
+        // Python reimplementation of a Rust factor -- the first is a wrong
+        // answer, the second breaks parity with the paper and live paths that
+        // the Paper promotion gate compares against.
         for baseline in [
-            "buy_and_hold",
             "dual_momentum",
             "inverse_volatility",
             "relative_momentum",
@@ -151,10 +158,10 @@ mod tests {
         ] {
             assert!(
                 !DEPLOYED.iter().any(|(id, _, _)| *id == baseline),
-                "{baseline} was added to DEPLOYED. That is only correct once the \
-                 adapter exposes `orders`/`fills` (or the worker reads \
-                 `order_intents`) AND a test asserts a non-empty artifact -- \
-                 delete this case in the same commit that proves it."
+                "{baseline} was added to DEPLOYED. That is only correct once a \
+                 factor series computed by the Rust factor-engine reaches the \
+                 backtest AND a test asserts non-empty orders/fills -- delete \
+                 this case in the same commit that proves it."
             );
         }
     }

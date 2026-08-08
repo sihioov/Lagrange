@@ -7,18 +7,57 @@ custom data (Todo 13): close events maintain per-instrument history, open
 events execute pending targets.  Sells are planned before buys and are
 reduce-only; integer lot sizing; pending targets are consumed once (a
 T-close signal executes at the T+1 open exactly once).
+
+Two modes, one class
+--------------------
+The adapter is used two ways and behaves differently in each, which is
+deliberate rather than incidental.
+
+**Unregistered** — constructed directly by a unit test, with no engine behind
+it.  It records `order_intents` and nothing else: a decision log that can be
+asserted against a golden fixture without a backtest.  This is what the Todo
+17 suite exercises.
+
+**Registered with a NautilusTrader engine** — the adapter additionally submits
+REAL orders and records `orders`/`fills`/`equity_points`, which is what the
+backtest worker collects.  It also drives its own rebalance, because inside a
+backtest nobody else can: `set_target_portfolio` is called by an operator or a
+test, and there is no operator in a simulation.
+
+`order_factory` is `None` until NT registers the strategy, so the mode is read
+from that rather than from a flag someone has to remember to set.
+
+Why the split matters
+---------------------
+Before this, the adapter had ONLY the first mode.  Run through the worker it
+placed no orders, took no fills, and moved no positions — and the worker
+collects results with ``getattr(strategy, "orders", [])``, whose default
+turned that into an empty list rather than an error.  A baseline backtest
+therefore completed, reported SUCCEEDED, and produced artifacts with zero
+orders: a result the user cannot tell apart from a strategy that decided not
+to trade.
+
+A strategy that needs factors nobody supplies now raises instead, for the same
+reason: the failure a user can act on is the one that says what is missing.
 """
 
 import importlib
 from typing import Dict, List, Optional
 
+from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import DataType
+from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.identifiers import ClientId, InstrumentId
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
 _session = importlib.import_module("custom-data.session_events")
 SessionOpenEvent = _session.SessionOpenEvent
 DailyBarClosedEvent = _session.DailyBarClosedEvent
+
+#: Prices are carried as integers scaled by 10_000 (design §6.3), so every
+#: conversion to a real price goes through this rather than a literal.
+PRICE_SCALE = 10_000
 
 
 class AdapterError(Exception):
@@ -48,10 +87,40 @@ class TargetExecutionStrategy(Strategy):
         self.positions: Dict[str, int] = {}
         self.closes: Dict[str, List[int]] = {}
         self.order_intents: List[dict] = []
+        # Collected by the backtest worker. Named to match what it reads --
+        # it uses `getattr(strategy, name, [])`, so a rename here silently
+        # empties an artifact instead of failing.
+        self.orders: List[dict] = []
+        self.fills: List[dict] = []
+        self.equity_points: List[dict] = []
+        self.cash: float = float(self.initial_cash)
+        self.position_ids: Dict[str, object] = {}
+        self.last_close_date: Dict[str, Optional[str]] = {}
+        self.signal_dates: Dict[str, Optional[str]] = {}
+        self._rebalanced_on: Optional[str] = None
+        # A failure the run must not survive, recorded rather than only
+        # raised. NautilusTrader catches and logs whatever an `on_data`
+        # handler throws so one bad event cannot kill an engine -- which
+        # means an exception alone leaves the backtest running to a clean,
+        # empty, SUCCEEDED finish. `simulate.py` reads this after the run.
+        self.fatal_error: Optional[dict] = None
         for instrument_id in self.instrument_ids:
             self.pending_targets[instrument_id] = None
             self.positions[instrument_id] = 0
             self.closes[instrument_id] = []
+            self.position_ids[instrument_id] = None
+            self.last_close_date[instrument_id] = None
+            self.signal_dates[instrument_id] = None
+
+    # -- mode --------------------------------------------------------------
+
+    def _engine_attached(self) -> bool:
+        """Whether NT has registered this strategy.
+
+        `order_factory` is `None` until registration, which makes it the
+        honest test: a strategy that cannot build an order cannot submit one.
+        """
+        return self.order_factory is not None
 
     def on_start(self) -> None:
         client_id = ClientId("CUSTOM")
@@ -87,9 +156,82 @@ class TargetExecutionStrategy(Strategy):
         for instrument_id in self.instrument_ids:
             self.pending_targets[instrument_id] = weights.get(instrument_id, 0.0)
 
+    # -- rebalance ---------------------------------------------------------
+
+    def _required_factors(self) -> List[str]:
+        package = importlib.import_module(f"strategies.{self.STRATEGY_ID}.package")
+        return list(package.REQUIRED_FACTORS)
+
+    def _factors_for(self, as_of: str) -> Dict[str, Dict[str, float]]:
+        """Factor values for `as_of`, keyed by instrument.
+
+        Empty here, and that is the current state of the system rather than a
+        placeholder: the canonical factor definitions live in the Rust
+        `factor-engine`, and nothing yet carries a factor series into a
+        backtest run.
+
+        It is NOT overridden with a Python reimplementation on purpose.  A
+        second implementation of `return_12m` would make a backtest disagree
+        with the paper and live paths that use the Rust one, and a strategy
+        cannot be promoted on a backtest that does not describe how it will
+        actually behave -- the Paper gate is a parity check.
+        """
+        return {}
+
+    def _rebalance_due(self, as_of: str) -> bool:
+        """Whether to recompute targets at this close.
+
+        Once, on the first close with history.  That is exactly right for a
+        buy-and-hold target and wrong for the monthly baselines, which is
+        harmless while they cannot run at all for want of factors -- they
+        raise in `_rebalance` before cadence is ever consulted.  Month-end
+        detection belongs with the change that supplies factors.
+        """
+        return self._rebalanced_on is None
+
+    def _rebalance(self, as_of: str) -> None:
+        required = self._required_factors()
+        factors = self._factors_for(as_of)
+        missing = [f for f in required if not any(f in v for v in factors.values())]
+        if missing:
+            # Loud, not empty. Returning here would leave `pending_targets`
+            # unset, and the run would finish SUCCEEDED with no orders -- a
+            # result indistinguishable from a strategy that chose to hold
+            # cash, which is the failure this whole path exists to remove.
+            #
+            # Recorded BEFORE it is raised: the raise only unwinds this
+            # handler, and NT logs it and carries on to the next event.
+            self.fatal_error = {
+                "code": "MISSING_FACTOR_SUPPLY",
+                "detail": (
+                    f"{self.STRATEGY_ID} requires {', '.join(missing)} and no "
+                    f"factor series was supplied for {as_of}; a backtest "
+                    f"cannot be run from an empty factor set"
+                ),
+            }
+            raise AdapterError(
+                self.fatal_error["code"], self.fatal_error["detail"]
+            )
+        target_module = importlib.import_module(f"strategies.{self.STRATEGY_ID}.target")
+        portfolio = target_module.generate_target(
+            self.parameters, factors, as_of, list(self.instrument_ids)
+        )
+        self.set_target_portfolio(portfolio)
+        self._rebalanced_on = as_of
+        for instrument_id in self.instrument_ids:
+            self.signal_dates[instrument_id] = as_of
+
     def _on_session_close(self, event) -> None:
         instrument_id = str(event.instrument_id)
+        self.last_close_date[instrument_id] = event.trading_date
         self.closes[instrument_id].append(int(event.close))
+        if not self._engine_attached():
+            # Unregistered: history only. A unit test drives targets itself,
+            # and rebalancing under it would replace what it just installed.
+            return
+        self._record_equity_point(event)
+        if self._rebalance_due(event.trading_date):
+            self._rebalance(event.trading_date)
 
     def _on_session_open(self, event) -> None:
         instrument_id = str(event.instrument_id)
@@ -110,16 +252,122 @@ class TargetExecutionStrategy(Strategy):
                         "source": "NEXT_SESSION_OPEN",
                     }
                 )
+                self._submit(instrument_id, OrderSide.BUY, quantity, event)
         elif pending == 0.0 and self.positions[instrument_id] > 0:
+            quantity = self.positions[instrument_id]
             self.order_intents.append(
                 {
                     "instrument": instrument_id,
                     "side": "SELL",
-                    "quantity": self.positions[instrument_id],
+                    "quantity": quantity,
                     "reduce_only": True,
                     "source": "NEXT_SESSION_OPEN",
                 }
             )
+            self._submit(instrument_id, OrderSide.SELL, quantity, event)
+
+    # -- execution ---------------------------------------------------------
+
+    def _submit(self, instrument_id: str, side, quantity: int, event) -> None:
+        """Places the order the intent describes.
+
+        A no-op when unregistered, so the intent log stays the whole story for
+        a unit test while a backtest gets a real order.
+        """
+        if not self._engine_attached():
+            return
+        order = self.order_factory.market(
+            InstrumentId.from_str(instrument_id),
+            side,
+            Quantity.from_int(quantity),
+            reduce_only=(side == OrderSide.SELL),
+        )
+        self.orders.append(
+            {
+                "order_id": None,
+                "client_order_id": None,
+                "instrument": instrument_id,
+                "side": side.name,
+                "quantity": quantity,
+                "order_type": "MARKET",
+                "signal_date": self.signal_dates.get(instrument_id),
+                "created_date": event.trading_date,
+                "state": "SUBMITTED",
+            }
+        )
+        self.submit_order(
+            order,
+            # A sell must reduce the position it was planned against rather
+            # than open a short: this venue is CASH and the account cannot
+            # borrow.
+            position_id=self.position_ids.get(instrument_id)
+            if side == OrderSide.SELL
+            else None,
+        )
+
+    def on_order_submitted(self, event) -> None:
+        for order in self.orders:
+            if order["client_order_id"] is None:
+                order["client_order_id"] = event.client_order_id.value
+                order["state"] = "SUBMITTED"
+                break
+
+    def on_order_filled(self, event) -> None:
+        instrument_id = str(event.instrument_id)
+        quantity = int(event.last_qty.as_double())
+        price_raw = int(round(event.last_px.as_double() * PRICE_SCALE))
+        ts = unix_nanos_to_dt(event.ts_event)
+        # Cash and positions move HERE, not at submission. An order that is
+        # placed and not filled must not change either, or the equity curve
+        # reports money that was never spent.
+        if event.order_side == OrderSide.BUY:
+            self.cash -= quantity * price_raw / PRICE_SCALE
+            self.positions[instrument_id] += quantity
+        else:
+            self.cash += quantity * price_raw / PRICE_SCALE
+            self.positions[instrument_id] -= quantity
+        self.position_ids[instrument_id] = event.position_id
+        self.fills.append(
+            {
+                "fill_id": f"fill-{instrument_id}-{ts.date().isoformat()}",
+                "order_id": f"ord-{instrument_id}-{ts.date().isoformat()}",
+                "client_order_id": event.client_order_id.value,
+                "instrument": instrument_id,
+                "side": event.order_side.name,
+                "quantity": quantity,
+                "price_raw": price_raw,
+                "date": ts.date().isoformat(),
+                "ts": ts.isoformat(),
+                "source": "NEXT_SESSION_OPEN",
+                "slippage_bps": self.slippage_bps,
+                "commission_raw": 0,
+                "tax_raw": 0,
+            }
+        )
+        for order in self.orders:
+            if order["client_order_id"] == event.client_order_id.value:
+                order["state"] = "FILLED"
+                order["order_id"] = f"ord-{instrument_id}-{ts.date().isoformat()}"
+                break
+
+    def _record_equity_point(self, event) -> None:
+        positions_value = 0.0
+        for instrument_id in self.instrument_ids:
+            if instrument_id == str(event.instrument_id):
+                close_raw = int(event.close)
+            elif self.closes[instrument_id]:
+                close_raw = self.closes[instrument_id][-1]
+            else:
+                continue
+            positions_value += self.positions[instrument_id] * close_raw / PRICE_SCALE
+        self.equity_points.append(
+            {
+                "date": event.trading_date,
+                "cash_raw": int(round(self.cash * PRICE_SCALE)),
+                "positions_value_raw": int(round(positions_value * PRICE_SCALE)),
+                "equity_raw": int(round((self.cash + positions_value) * PRICE_SCALE)),
+            }
+        )
 
     def _target_quantity(self, instrument_id: str, open_raw: int, weight: float) -> int:
         price = open_raw / 10_000
