@@ -918,6 +918,165 @@ async fn full_contract_body(
         );
     }
 
+    // ------------------------------------------------------------------
+    // 13. Order intents (0019): the constraints the migration claims.
+    //
+    // The api-server suite proves the repository behaves; these prove the
+    // SCHEMA refuses the shapes the repository is trusted not to write, so a
+    // future writer -- or a psql session -- cannot create them either.
+    // ------------------------------------------------------------------
+    // 0019's FK requires the instrument to exist; this database seeds none.
+    sqlx::query(
+        "INSERT INTO instruments (id, symbol, venue, currency, name, asset_class, status)          VALUES ('069500.KRX', '069500', 'KRX', 'KRW', 'KODEX 200', 'ETF', 'ACTIVE')          ON CONFLICT (id) DO NOTHING",
+    )
+    .execute(owner)
+    .await?;
+
+    let account_id: Uuid = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO accounts (owner_user_id, account_type, name, currency)          VALUES ($1, 'LIVE', 'contract-live', 'KRW') RETURNING id",
+    )
+    .bind(uid)
+    .fetch_one(&owner_actor)
+    .await?;
+
+    let intent_insert = "INSERT INTO order_intents          (intent_ref, owner_user_id, account_id, instrument_id, side, quantity, price,           correlation_id, state, broker_order_no, cumulative_filled)          VALUES ($1, $2, $3, '069500.KRX', $4, $5::numeric, 7250, 'corr', $6, $7, $8::numeric)";
+
+    // A well-formed intent.
+    sqlx::query(intent_insert)
+        .bind("oi-contract-1")
+        .bind(uid)
+        .bind(account_id)
+        .bind("BUY")
+        .bind("10")
+        .bind("INTENT_CREATED")
+        .bind(Option::<String>::None)
+        .bind("0")
+        .execute(&owner_actor)
+        .await?;
+
+    // A state that names a broker order must HAVE one: an ACCEPTED row with
+    // no order number is a row nobody can reconcile against the broker.
+    let unbound = sqlx::query(intent_insert)
+        .bind("oi-contract-2")
+        .bind(uid)
+        .bind(account_id)
+        .bind("BUY")
+        .bind("10")
+        .bind("ACCEPTED")
+        .bind(Option::<String>::None)
+        .bind("0")
+        .execute(&owner_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        pg_code(&unbound).as_deref(),
+        Some("23514"),
+        "ACCEPTED without a broker order number must be refused"
+    );
+
+    // A fill beyond the order quantity.
+    let overfilled = sqlx::query(intent_insert)
+        .bind("oi-contract-3")
+        .bind(uid)
+        .bind(account_id)
+        .bind("BUY")
+        .bind("10")
+        .bind("PARTIALLY_FILLED")
+        .bind(Some("B-1"))
+        .bind("11")
+        .execute(&owner_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        pg_code(&overfilled).as_deref(),
+        Some("23514"),
+        "cumulative_filled above the order quantity must be refused"
+    );
+
+    // An unknown state string. The set is closed so a typo cannot create a
+    // state the machine has never heard of.
+    let bogus_state = sqlx::query(intent_insert)
+        .bind("oi-contract-4")
+        .bind(uid)
+        .bind(account_id)
+        .bind("BUY")
+        .bind("10")
+        .bind("ALMOST_FILLED")
+        .bind(Option::<String>::None)
+        .bind("0")
+        .execute(&owner_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&bogus_state).as_deref(), Some("23514"));
+
+    // One broker order belongs to one intent, in both directions.
+    for (r, no) in [("oi-contract-5", "B-UNIQ"), ("oi-contract-6", "B-UNIQ")] {
+        let result = sqlx::query(intent_insert)
+            .bind(r)
+            .bind(uid)
+            .bind(account_id)
+            .bind("BUY")
+            .bind("10")
+            .bind("ACCEPTED")
+            .bind(Some(no))
+            .bind("0")
+            .execute(&owner_actor)
+            .await;
+        if r == "oi-contract-6" {
+            assert_eq!(
+                pg_code(&result.unwrap_err()).as_deref(),
+                Some("23505"),
+                "two intents must not claim one broker order"
+            );
+        } else {
+            result?;
+        }
+    }
+
+    // The event log: gapless per intent, and append-only.
+    let event_insert = "INSERT INTO order_intent_events          (intent_ref, owner_user_id, seq, event_type, resulting_state)          VALUES ($1, $2, $3, $4, $5)";
+    sqlx::query(event_insert)
+        .bind("oi-contract-1")
+        .bind(uid)
+        .bind(1_i32)
+        .bind("RISK_APPROVED")
+        .bind("RISK_APPROVED")
+        .execute(&owner_actor)
+        .await?;
+    let duplicate_seq = sqlx::query(event_insert)
+        .bind("oi-contract-1")
+        .bind(uid)
+        .bind(1_i32)
+        .bind("SUBMISSION_STARTED")
+        .bind("SUBMITTING")
+        .execute(&owner_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        pg_code(&duplicate_seq).as_deref(),
+        Some("23505"),
+        "two events must not share a sequence number within one intent"
+    );
+
+    // History does not change, not even for the migration owner.
+    for statement in [
+        "UPDATE order_intent_events SET resulting_state = 'FILLED'",
+        "DELETE FROM order_intent_events",
+    ] {
+        let err = sqlx::query(sqlx::AssertSqlSafe(statement.to_string()))
+            .execute(&owner_actor)
+            .await
+            .unwrap_err();
+        assert_eq!(pg_code(&err).as_deref(), Some("42501"), "{statement}");
+    }
+
+    // But the intent row ITSELF is mutable: its state legitimately moves, and
+    // fencing it would have been copying the 0018 pattern without the reason.
+    sqlx::query("UPDATE order_intents SET state = 'RISK_APPROVED' WHERE intent_ref = $1")
+        .bind("oi-contract-1")
+        .execute(&owner_actor)
+        .await?;
+
     drop(app);
     drop(aw);
     drop(wk);
