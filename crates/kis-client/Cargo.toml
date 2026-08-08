@@ -12,6 +12,10 @@ thiserror = "2.0"
 # Serializing token issue/refresh needs an async mutex held across an await.
 tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
 async-trait = "0.1"
+# Same declaration as apps/api-server/auth: rustls only, no default
+# features, so the workspace has ONE TLS stack rather than two. Already
+# in Cargo.lock at 0.12.28, so this adds no new supply-chain surface.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "json"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }

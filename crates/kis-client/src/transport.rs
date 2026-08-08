@@ -18,6 +18,15 @@ use crate::error::KisError;
 use crate::secret::Secret;
 
 /// One outbound broker call.
+/// The header carrying the client order id.
+///
+/// A constant because FOUR places read or write it -- the REST client, the
+/// simulator, the live transport, and its tests -- and a typo in any of them
+/// silently degrades an `Ambiguous` error's `client_order_id` to "unknown".
+/// That is the correlation id used to find the order at the broker, so it is
+/// lost at exactly the moment it matters most.
+pub const CLIENT_ORDER_ID_HEADER: &str = "x-client-order-id";
+
 pub struct HttpRequest {
     pub method: &'static str,
     pub path: String,

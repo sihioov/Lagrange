@@ -154,7 +154,7 @@ impl<T: Transport, S: Sleeper> RestClient<T, S> {
                         .with_header("tr_id", &tr_id)
                         // Lets the transport name the order in an ambiguous
                         // error, so an unknown outcome is correlatable.
-                        .with_header("x-client-order-id", coid);
+                        .with_header(crate::transport::CLIENT_ORDER_ID_HEADER, coid);
                     let req = self.authorize(req).await?;
                     self.transport.send(req).await
                 }

@@ -143,7 +143,7 @@ impl Transport for BrokerSimulator {
                         operation: format!("{} {}", request.method, request.path),
                         client_order_id: request
                             .headers
-                            .get("x-client-order-id")
+                            .get(crate::transport::CLIENT_ORDER_ID_HEADER)
                             .cloned()
                             .unwrap_or_else(|| "unknown".to_string()),
                     })
