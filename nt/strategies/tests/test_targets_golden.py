@@ -5,7 +5,7 @@ never orders)."""
 
 import pytest
 
-from conftest import STRATEGIES, load_golden, load_target
+from strategy_helpers import STRATEGIES, load_golden, load_target
 
 
 @pytest.mark.parametrize("sid", STRATEGIES)

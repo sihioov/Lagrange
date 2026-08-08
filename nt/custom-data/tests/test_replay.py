@@ -20,7 +20,7 @@ from nautilus_trader.model.identifiers import ClientId, InstrumentId
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
-from conftest import equity_from_dict
+from curated_helpers import equity_from_dict
 
 _session_events = importlib.import_module("custom-data.session_events")
 SessionOpenEvent = _session_events.SessionOpenEvent

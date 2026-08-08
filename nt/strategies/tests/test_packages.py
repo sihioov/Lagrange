@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator, validate as js_validate
 
-from conftest import NT_ROOT, STRATEGIES, load_golden, load_package
+from strategy_helpers import NT_ROOT, STRATEGIES, load_golden, load_package
 
 #: Mirror of the Rust baseline metadata (selector::baseline).  The Python
 #: packages must agree with the Rust registry on every cross-visible field.

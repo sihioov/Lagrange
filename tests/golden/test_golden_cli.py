@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from conftest import GOLDEN_PY
+from golden_paths import GOLDEN_PY
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

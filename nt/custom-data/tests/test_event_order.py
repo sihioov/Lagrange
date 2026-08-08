@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import golden_bars_rows, session_instants
+from curated_helpers import golden_bars_rows, session_instants
 
 
 def build_stream(builder, rows):

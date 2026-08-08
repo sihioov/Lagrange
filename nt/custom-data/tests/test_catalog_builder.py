@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from conftest import equity_from_dict, golden_bars_rows, session_instants, write_curated_fixture
+from curated_helpers import equity_from_dict, golden_bars_rows, session_instants, write_curated_fixture
 
 
 def test_build_layout_and_manifest(builder, curated_root, tmp_path):
@@ -71,7 +71,7 @@ def test_builder_accepts_only_documented_schema(builder, tmp_path):
     """A curated input with an unknown column is rejected (no silent success)."""
     import pyarrow as pa
 
-    from conftest import bars_table
+    from curated_helpers import bars_table
 
     root = tmp_path / "bad-curated"
     rows = golden_bars_rows()[:1]

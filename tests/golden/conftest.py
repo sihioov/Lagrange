@@ -10,17 +10,13 @@ test_golden_cli.py::test_committed_manifest_verifies.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS_GOLDEN = REPO_ROOT / "scripts" / "golden"
-if str(SCRIPTS_GOLDEN) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_GOLDEN))
-
-GOLDEN_PY = SCRIPTS_GOLDEN / "golden.py"
+# Re-exported for readers who expect them here; defined in a uniquely-named
+# module so a test can import them without competing for the name `conftest`.
+from golden_paths import GOLDEN_PY, REPO_ROOT, SCRIPTS_GOLDEN  # noqa: F401
 
 
 def _write_json(path: Path, obj: object) -> Path:

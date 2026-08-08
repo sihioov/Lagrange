@@ -4,7 +4,7 @@ ORIGINAL immutable version."""
 
 import pytest
 
-from conftest import load_package
+from strategy_helpers import load_package
 
 
 @pytest.fixture(scope="module")

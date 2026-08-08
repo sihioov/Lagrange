@@ -5,7 +5,7 @@ typed error."""
 
 import pytest
 
-from conftest import STRATEGIES, load_package
+from strategy_helpers import STRATEGIES, load_package
 
 
 @pytest.fixture(scope="module")

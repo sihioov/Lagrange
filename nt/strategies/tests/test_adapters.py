@@ -6,7 +6,7 @@ strategy-side order boundary."""
 
 import pytest
 
-from conftest import STRATEGIES, load_adapter, load_golden, load_target, make_close, make_open
+from strategy_helpers import STRATEGIES, load_adapter, load_golden, load_target, make_close, make_open
 
 
 @pytest.mark.parametrize("sid", STRATEGIES)
@@ -22,7 +22,7 @@ def test_adapter_imports_and_subclasses_base(sid, execution_module):
 
 @pytest.mark.parametrize("sid", STRATEGIES)
 def test_adapter_default_config_matches_package_defaults(sid):
-    from conftest import load_package
+    from strategy_helpers import load_package
 
     mod = load_adapter(sid)
     adapter_class = getattr(mod, mod.__all__[0])
