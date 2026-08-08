@@ -23,6 +23,8 @@ pub mod idempotency;
 pub mod rate_limit;
 pub mod retry;
 pub mod secret;
+pub mod simulator;
+pub mod transport;
 
 pub use auth::{AccessToken, TokenIssuer, TokenManager};
 pub use clock::{Clock, SystemClock, check_skew};
@@ -32,3 +34,5 @@ pub use idempotency::{Claim, InMemoryIntentStore, IntentState, IntentStore, guar
 pub use rate_limit::{BucketKey, Permit, Quota, RateLimiter};
 pub use retry::{RetryPolicy, Sleeper, TokioSleeper};
 pub use secret::{AccountNo, CredentialError, CredentialRef, CredentialSource, Secret};
+pub use simulator::{BrokerSimulator, SIMULATOR_CONTRACT_VERSION, Scenario};
+pub use transport::{HttpRequest, HttpResponse, Transport};
