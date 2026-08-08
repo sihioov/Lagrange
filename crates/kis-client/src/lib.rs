@@ -21,6 +21,7 @@ pub mod error;
 pub mod execution;
 pub mod idempotency;
 pub mod rate_limit;
+pub mod retry;
 pub mod secret;
 
 pub use auth::{AccessToken, TokenIssuer, TokenManager};
@@ -29,4 +30,5 @@ pub use error::{KisError, RequestKind};
 pub use execution::{Applied, ExecutionReport, ExecutionTracker};
 pub use idempotency::{Claim, InMemoryIntentStore, IntentState, IntentStore, guard_submission};
 pub use rate_limit::{BucketKey, Permit, Quota, RateLimiter};
+pub use retry::{RetryPolicy, Sleeper, TokioSleeper};
 pub use secret::{AccountNo, CredentialError, CredentialRef, CredentialSource, Secret};
