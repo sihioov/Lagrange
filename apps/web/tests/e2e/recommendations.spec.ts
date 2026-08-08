@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { appAlert } from "./support/alerts";
 
 const syntheticApiOrigin = process.env["SYNTHETIC_API_ORIGIN"] ?? "http://127.0.0.1:38180";
 
@@ -79,7 +80,7 @@ test("invalid parameters and blocked entitlement fail closed without proprietary
   await page.goto("/recommendations");
 
   // Then
-  await expect(page.getByRole("alert")).toContainText("Recommendation data is blocked");
+  await expect(appAlert(page)).toContainText("Recommendation data is blocked");
   await expect(page.getByText("069500.KRX")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Generate strategy proposal" })).toHaveCount(0);
 });

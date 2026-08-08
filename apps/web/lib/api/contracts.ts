@@ -12,6 +12,7 @@ export type ProductMutationPath =
   | "/api/v1/recommendations/runs"
   | `/api/v1/backtests/${string}/cancel`
   | `/api/v1/backtests/${string}/robustness`
+  | `/api/v1/admin/live/kill-switch/${string}`
   | `/api/v1/paper/accounts/${string}/bind-strategy`
   | `/api/v1/strategies/${string}/configs`;
 
@@ -61,6 +62,7 @@ export const apiErrorEnvelopeSchema = z
           "BACKTEST_CAPACITY_EXCEEDED",
           "RESULT_INTEGRITY_FAILED",
           "LIVE_RECONCILIATION_REQUIRED",
+          "LIVE_KILL_SWITCH_ENGAGED",
           "RISK_LIMIT_EXCEEDED",
           "ORDER_STATE_UNKNOWN",
           "NOT_IMPLEMENTED",

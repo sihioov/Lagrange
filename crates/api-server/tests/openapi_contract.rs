@@ -215,3 +215,77 @@ fn openapi_contract_every_mutating_route_requires_idempotency_key() {
         }
     }
 }
+
+/// Every error code a handler actually emits must be a declared code.
+///
+/// `openapi_contract_error_codes_match_constants` proves the spec and the
+/// constant table agree, but both are declarations. Nothing proved the
+/// handlers only emit codes from that table, and a handler is where a code
+/// comes into existence. `LIVE_KILL_SWITCH_ENGAGED` (Todo 37) was emitted by
+/// `start_node` for a while without appearing in either list: undocumented in
+/// the spec, and — because the web derives its Zod enum from the generated
+/// types — unparseable by the browser, so the Owner would have seen a parse
+/// failure instead of "the kill switch is engaged".
+#[test]
+fn openapi_contract_handlers_emit_only_declared_codes() {
+    use std::fs;
+    use std::path::Path;
+
+    // `api_error(status, code, ..)` and `tenancy_response(err, rid, code)`:
+    // in both, the code is the first string literal of the call.
+    const CALLS: [&str; 2] = ["api_error(", "tenancy_response("];
+
+    let declared: BTreeSet<&str> = ERROR_CODES.iter().map(|c| c.code).collect();
+    let http_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/http");
+    let mut emitted: BTreeSet<String> = BTreeSet::new();
+    let mut files_scanned = 0usize;
+
+    for entry in fs::read_dir(&http_dir).expect("src/http is readable") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("handler source is readable");
+        files_scanned += 1;
+        for call in CALLS {
+            for (idx, _) in source.match_indices(call) {
+                let rest = &source[idx + call.len()..];
+                // The first string literal of the call is the code argument;
+                // the status/error arguments before it are never strings.
+                let Some(open) = rest.find('"') else { continue };
+                let after = &rest[open + 1..];
+                let Some(close) = after.find('"') else {
+                    continue;
+                };
+                let token = &after[..close];
+                // Skip call sites that pass a non-literal code.
+                let literal_code = !token.is_empty()
+                    && token
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit());
+                if literal_code {
+                    emitted.insert(token.to_string());
+                }
+            }
+        }
+    }
+
+    assert!(
+        files_scanned > 10,
+        "expected the handler modules to be scanned, saw {files_scanned}"
+    );
+    assert!(
+        emitted.contains("LIVE_KILL_SWITCH_ENGAGED"),
+        "the scan must actually reach live.rs; it is the regression this test exists for"
+    );
+
+    let undeclared: Vec<&String> = emitted
+        .iter()
+        .filter(|c| !declared.contains(c.as_str()))
+        .collect();
+    assert!(
+        undeclared.is_empty(),
+        "handlers emit error codes absent from ERROR_CODES (so absent from the OpenAPI spec and \
+         unparseable by the web client): {undeclared:?}"
+    );
+}

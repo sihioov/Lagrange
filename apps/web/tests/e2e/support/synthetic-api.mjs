@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { backtestResponse } from "./backtest-fixture.mjs";
+import { liveResponse } from "./live-fixture.mjs";
 import { paperResponse } from "./paper-fixture.mjs";
 import { recommendationResponse } from "./recommendation-fixture.mjs";
 
@@ -11,6 +12,7 @@ const defaultScenario = Object.freeze({
   notification: "delivered",
   paperAccount: "present",
   paperEntitlement: "active",
+  liveMfa: "fresh",
   parity: "match",
   recommendation: "fresh",
   tradePagination: "normal",
@@ -53,7 +55,18 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
   const body = request.method === "POST" ? await requestBody(request) : {};
   if (request.method === "POST" && url.pathname === "/__test/scenario") {
-    scenario = { ...scenario, ...body };
+    // Reset to defaults, THEN apply. Merging into the previous scenario let
+    // state outlive the test that set it: a key no later spec mentions kept
+    // whatever the last one left. `role` made that dangerous rather than
+    // merely untidy — `no-member-live.spec.ts` is the only spec that sets
+    // `role: "owner"`, and under merge semantics it stayed owner for every
+    // spec that ran afterwards. A suite asserting a Member cannot reach
+    // something would then be asserting it about an Owner, and passing for the
+    // wrong reason.
+    //
+    // Every call site is unaffected: each states the keys it varies and wants
+    // documented defaults for the rest, which is now what it gets.
+    scenario = { ...defaultScenario, ...body };
     json(response, 200, { scenario });
     return;
   }
@@ -77,6 +90,17 @@ const server = createServer(async (request, response) => {
   });
   if (backtest !== null) {
     json(response, backtest.status, backtest.body);
+    return;
+  }
+  const live = liveResponse({
+    body,
+    headers: request.headers,
+    method: request.method ?? "GET",
+    pathname: url.pathname,
+    scenario,
+  });
+  if (live !== null) {
+    json(response, live.status, live.body);
     return;
   }
   const paper = paperResponse({

@@ -1,4 +1,5 @@
 import { type APIRequestContext, expect, test } from "@playwright/test";
+import { appAlert } from "./support/alerts";
 
 const syntheticApiOrigin = process.env["SYNTHETIC_API_ORIGIN"] ?? "http://127.0.0.1:38180";
 
@@ -94,7 +95,7 @@ test("blocked entitlement prevents creation and hides proprietary backtest paylo
   await page.goto("/backtests");
 
   // Then
-  await expect(page.getByRole("alert")).toContainText("Backtest data is blocked");
+  await expect(appAlert(page)).toContainText("Backtest data is blocked");
   await expect(page.getByRole("form", { name: "Create backtest" })).toHaveCount(0);
   await expect(page.getByText("₩128,450,000.00")).toHaveCount(0);
   await expect(page.getByText("069500.KRX")).toHaveCount(0);
@@ -111,7 +112,7 @@ test("failed and canceled jobs stay explicit while a large trade page remains us
   await page.goto("/backtests");
 
   // Then
-  await expect(page.getByRole("alert")).toContainText("Backtest failed");
+  await expect(appAlert(page)).toContainText("Backtest failed");
   await expect(page.getByRole("row", { name: /Canceled member run.*CANCELED/ })).toBeVisible();
   await expect(
     page.getByText("Canceled and failed runs do not expose result payloads."),

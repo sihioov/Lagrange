@@ -9,7 +9,21 @@ const FORBIDDEN_STORAGE = [
   { label: "sessionStorage", pattern: /\bsessionStorage\b/u },
   { label: "Auth0 browser token", pattern: /auth0_(?:access|refresh|id)_token/iu },
   { label: "OAuth refresh token", pattern: /refresh_token/iu },
-  { label: "KIS browser credential", pattern: /kis_(?:app_?key|app_?secret|access_token)/iu },
+  // A KIS credential NAME not suffixed `_ref`.
+  //
+  // The suffix is the whole distinction and it is load-bearing, so it is worth
+  // stating why it is safe rather than treating it as an exemption. A `_ref`
+  // holds a LOCATION (`env:KIS_APP_KEY`, `file:/run/secrets/...`), never a
+  // value, and two independent things enforce that: the
+  // `broker_connections_*_is_a_reference` CHECK constraints in migration 0016
+  // reject any other shape at write time, and `credentialReferenceSchema`
+  // rejects it again at parse time in the browser. The bare names stay
+  // forbidden — `kis_app_key` in web source is a credential in the browser,
+  // which is precisely what this audit exists to prevent.
+  {
+    label: "KIS browser credential",
+    pattern: /kis_(?:app_?key|app_?secret|access_token)(?!_ref\b)/iu,
+  },
   { label: "bearer token persistence", pattern: /Authorization\s*:\s*["'`]Bearer/iu },
   { label: "user identity in URL", pattern: /[?&]user_id=/iu },
 ] as const;

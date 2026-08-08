@@ -176,6 +176,11 @@ pub const ERROR_CODES: &[ErrorCodeDef] = &[
         "Live requires reconciliation before new orders",
     ),
     ErrorCodeDef::new(
+        "LIVE_KILL_SWITCH_ENGAGED",
+        StatusCode::CONFLICT,
+        "the Live kill switch is engaged; no node may start",
+    ),
+    ErrorCodeDef::new(
         "RISK_LIMIT_EXCEEDED",
         StatusCode::UNPROCESSABLE_ENTITY,
         "order risk limit violated",

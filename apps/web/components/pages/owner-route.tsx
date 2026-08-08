@@ -16,11 +16,22 @@ export type OwnerRouteProps = {
   readonly title: string;
 };
 
+/**
+ * What a refused visitor is told the page is about.
+ *
+ * NOT the caller's `description`: that text exists to orient the Owner and
+ * therefore enumerates the capabilities behind the gate. Rendering it to a
+ * refused Member would disclose, in prose, exactly what the refusal is meant
+ * to conceal — for the Live route it named broker connections, node lifecycle,
+ * and the kill switch.
+ */
+const REFUSED_DESCRIPTION = "This area is restricted to the Owner.";
+
 export async function OwnerRoute({ children, description, title }: OwnerRouteProps) {
   const session = await getServerSession();
   if (!OWNER_ACCESS_BY_ROLE[session.role]) {
     return (
-      <RoutePage description={description} title={title}>
+      <RoutePage description={REFUSED_DESCRIPTION} title={title}>
         <StatePanel
           action={
             <Link className="secondary-action" href="/">

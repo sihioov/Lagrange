@@ -20,6 +20,7 @@ import {
   type StrategyCatalogItem,
   strategySchema,
 } from "@/lib/products/contracts";
+import { type LiveConnectionModel, liveConnectionSchema } from "@/lib/products/live-contracts";
 import {
   type NotificationModel,
   notificationSchema,
@@ -50,6 +51,7 @@ export type ProductApiClient = {
   readonly getPaperAccount: (accountId: string) => Promise<PaperAccountModel>;
   readonly getNotifications: () => Promise<PageResult<NotificationModel>>;
   readonly getStrategyConfigs: () => Promise<PageResult<StrategyConfigModel>>;
+  readonly getLiveConnections: () => Promise<PageResult<LiveConnectionModel>>;
   readonly getPaperPerformance: (accountId: string) => Promise<PaperPerformanceModel>;
   readonly getPaperLineage: (accountId: string) => Promise<PaperLineageModel>;
   readonly getPaperParity: (accountId: string, asOf: string) => Promise<PaperParityModel>;
@@ -66,6 +68,7 @@ const paperPositionPageSchema = pageSchema(paperPositionSchema);
 const paperOrderPageSchema = pageSchema(paperOrderSchema);
 const notificationPageSchema = pageSchema(notificationSchema);
 const strategyConfigPageSchema = pageSchema(strategyConfigSchema);
+const liveConnectionPageSchema = pageSchema(liveConnectionSchema);
 
 const strategyPageSchema = pageSchema(strategySchema);
 const recommendationPageSchema = pageSchema(recommendationRunSchema);
@@ -108,6 +111,8 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
     getNotifications: () => getParsed(client, "/api/v1/notifications", notificationPageSchema),
     getStrategyConfigs: () =>
       getParsed(client, "/api/v1/strategy-configs", strategyConfigPageSchema),
+    getLiveConnections: () =>
+      getParsed(client, "/api/v1/admin/live/connections", liveConnectionPageSchema),
     getPaperAccount: (accountId) =>
       getParsed(
         client,
