@@ -23,6 +23,7 @@ pub mod idempotency;
 pub mod mapping;
 pub mod order_state;
 pub mod rate_limit;
+pub mod reconciliation;
 pub mod rest;
 pub mod retry;
 pub mod secret;
