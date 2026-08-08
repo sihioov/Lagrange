@@ -234,10 +234,33 @@ class TargetExecutionStrategy(Strategy):
                 self.fatal_error["code"], self.fatal_error["detail"]
             )
         target_module = importlib.import_module(f"strategies.{self.STRATEGY_ID}.target")
-        portfolio = target_module.generate_target(
-            self.parameters, factors, scheduled, list(self.instrument_ids)
-        )
-        self.set_target_portfolio(portfolio)
+        try:
+            portfolio = target_module.generate_target(
+                self.parameters, factors, scheduled, list(self.instrument_ids)
+            )
+            self.set_target_portfolio(portfolio)
+        except Exception as exc:
+            # ANY failure to produce a target is fatal to the run, not just the
+            # missing-factor case checked above -- and the check above is not
+            # enough on its own.
+            #
+            # It compares against the package's STATIC `required_factors`,
+            # while a generator looks factors up from the PARAMETERS: with
+            # `fast_ma=100`, which `trend_following`'s schema permits, the
+            # generator wants `trend_100` and the static list never mentioned
+            # it. The guard passes, `generate_target` raises
+            # MISSING_REQUIRED_FACTOR, NautilusTrader swallows it, and the run
+            # finishes SUCCEEDED with zero orders -- the exact silent wrong
+            # answer, reachable by a configuration the product allows.
+            #
+            # Recorded then re-raised: the raise only unwinds this handler.
+            if self.fatal_error is None:
+                self.fatal_error = {
+                    "code": getattr(exc, "code", "TARGET_GENERATION_FAILED"),
+                    "detail": f"{self.STRATEGY_ID} could not compute a target "
+                    f"for {scheduled}: {exc}",
+                }
+            raise
         self._rebalanced_on = scheduled
         for instrument_id in self.instrument_ids:
             # The date the DECISION was made, which is what an order's

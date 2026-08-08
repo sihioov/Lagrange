@@ -576,6 +576,58 @@ async fn a_strategy_that_reads_two_factors_executes_the_invested_branch() {
 }
 
 #[tokio::test]
+async fn parameters_that_ask_for_an_undeclared_factor_fail_loudly() {
+    // The silent empty success, reachable through a configuration the product
+    // ALLOWS -- which is why the earlier guard was not enough on its own.
+    //
+    // The runner computes the factors a package STATICALLY declares
+    // (`trend_50`, `trend_200`), while the generator looks them up from the
+    // PARAMETERS. `fast_ma: 100` is inside the schema's 5..250 range, so it
+    // passes validation, wants `trend_100`, and nothing had computed it. The
+    // adapter's missing-factor guard saw only the static list, let it through,
+    // and `generate_target` raised inside a handler NautilusTrader swallows --
+    // leaving a run that finished SUCCEEDED with zero orders.
+    //
+    // Proven by observation before it was fixed: this exact config returned
+    // `Succeeded` with ORDERS=0.
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
+    let owner = seed_owner(&db.pool).await;
+    let job_id = submit_backtest(&queue, owner).await.expect("submit");
+
+    let resolver = BaselineResolver {
+        strategy_id: "trend_following",
+        strategy_path: "strategies.trend_following.adapter:TrendFollowingAdapter",
+        config_path: "strategies.trend_following.adapter:TrendFollowingConfig",
+        parameters: Some(serde_json::json!({
+            "benchmark_instrument": "069500.KRX",
+            "fast_ma": 100,
+            "slow_ma": 200,
+        })),
+    };
+    let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
+        .await
+        .expect("runner");
+    let Outcome::Failed { reason, .. } = &outcome else {
+        panic!("a target that cannot be computed must fail: {outcome:?}");
+    };
+    assert!(
+        reason.contains("trend_100"),
+        "the failure must name the factor nobody computed, got {reason:?}"
+    );
+
+    // Permanent: the same parameters produce the same answer on every attempt,
+    // and it is the submitter's config to change.
+    let after = queue.get_by_id(job_id).await.expect("get");
+    assert_eq!(after.status, JobStatus::Failed);
+
+    db.drop_db().await;
+}
+
+#[tokio::test]
 async fn a_dataset_too_short_for_a_strategy_fails_permanently() {
     // `dual_momentum` needs 252 sessions of history and phase-0 holds 260,
     // which leaves no month-end that is not also the final session. There is
