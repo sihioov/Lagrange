@@ -32,6 +32,10 @@ from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
+import msgspec
+
+from strategies._costs import fees_for
+
 STRATEGY_ID = "ma200-trend"
 STRATEGY_VERSION = "1.0.0"
 MA_PERIOD = 200
@@ -55,6 +59,11 @@ class MA200TrendConfig(StrategyConfig, frozen=True):
     initial_cash: str = "100000000"
     strategy_version: str = STRATEGY_VERSION
     probe_future_fields: bool = False
+    #: The versioned cost profile a fill is charged under, supplied by the
+    #: backtest runner. Empty by default, which is what the phase-0 golden
+    #: run uses: it constructs this config directly and models no costs, so
+    #: its pinned artifact hashes are unaffected by this field existing.
+    cost_profile: dict = msgspec.field(default_factory=dict)
 
 
 class MA200Trend(Strategy):
@@ -69,6 +78,7 @@ class MA200Trend(Strategy):
         self.initial_cash = int(config.initial_cash)
         self.strategy_version = config.strategy_version
         self.probe_future_fields = bool(config.probe_future_fields)
+        self.cost_profile = dict(getattr(config, "cost_profile", {}) or {})
 
         self.cash = self.initial_cash
         self.closes: dict[str, deque] = {}
@@ -214,12 +224,19 @@ class MA200Trend(Strategy):
         qty = int(event.last_qty.as_double())
         price_raw = int(round(event.last_px.as_double() * 10_000))
         ts = unix_nanos_to_dt(event.ts_event)
+        commission_raw, tax_raw = fees_for(
+            self.cost_profile, event.order_side != OrderSide.BUY, qty, price_raw
+        )
         if event.order_side == OrderSide.BUY:
             self.cash -= qty * price_raw / 10_000
             self.positions[instrument_id] += qty
         else:
             self.cash += qty * price_raw / 10_000
             self.positions[instrument_id] -= qty
+        # A cash DEBIT on both sides: fees are paid, not netted. Zero when no
+        # profile was supplied, which is the phase-0 golden run -- it builds
+        # this config directly and models no costs, so its pinned hashes hold.
+        self.cash -= (commission_raw + tax_raw) / 10_000
         self.position_ids[instrument_id] = event.position_id
         self.fills.append({
             "fill_id": f"fill-{instrument_id}-{ts.date().isoformat()}",
@@ -233,6 +250,8 @@ class MA200Trend(Strategy):
             "ts": ts.isoformat(),
             "source": "NEXT_SESSION_OPEN",
             "slippage_bps": self.slippage_bps,
+            "commission_raw": commission_raw,
+            "tax_raw": tax_raw,
             "never_uses": [
                 "signal_day_close",
                 "execution_day_high",

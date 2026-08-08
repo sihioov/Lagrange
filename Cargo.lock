@@ -1864,6 +1864,7 @@ dependencies = [
  "domain",
  "factor-engine",
  "market-data",
+ "portfolio-model",
  "selector",
  "serde",
  "serde_json",

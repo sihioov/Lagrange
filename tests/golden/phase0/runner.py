@@ -375,7 +375,35 @@ def build_artifacts(strategy: object, catalog: dict, effective: dict, args: argp
                 "day's high/low/close are never touched."
             ),
         },
-        "fills": list(strategy.fills),
+        # Selected explicitly, like every neighbouring artifact.
+        #
+        # This used to be `list(strategy.fills)`, so the approved golden's
+        # shape was whatever the strategy happened to carry -- adding one
+        # attribute to `MA200Trend` changed a PINNED artifact hash without
+        # touching this file. An approved baseline has to be pinned to a
+        # schema, not to a class's internals.
+        #
+        # Fee fields are deliberately absent: the phase-0 run passes no cost
+        # profile and therefore makes no claim about costs. Adding them here
+        # is a golden re-approval, which is its own deliberate act.
+        "fills": [
+            {
+                "fill_id": f["fill_id"],
+                "order_id": f["order_id"],
+                "client_order_id": f["client_order_id"],
+                "instrument": f["instrument"],
+                "side": f["side"],
+                "quantity": f["quantity"],
+                "price_raw": f["price_raw"],
+                "date": f["date"],
+                "ts": f["ts"],
+                "source": f["source"],
+                "slippage_bps": f["slippage_bps"],
+                "never_uses": f["never_uses"],
+                "barrier_held": f["barrier_held"],
+            }
+            for f in strategy.fills
+        ],
     }
 
     equity_points = [

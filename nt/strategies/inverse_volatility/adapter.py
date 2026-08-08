@@ -26,6 +26,10 @@ class InverseVolatilityConfig(StrategyConfig, frozen=True):
     #: than an entry in `parameters`, which is schema-validated with
     #: `additionalProperties: false` and would reject it.
     factor_series: dict = msgspec.field(default_factory=dict)
+    #: The versioned cost profile a fill is charged under, resolved by the
+    #: runner from `portfolio_model::cost`. Empty means no fees are charged,
+    #: which is visible in the artifacts.
+    cost_profile: dict = msgspec.field(default_factory=dict)
 
 
 class InverseVolatilityAdapter(TargetExecutionStrategy):

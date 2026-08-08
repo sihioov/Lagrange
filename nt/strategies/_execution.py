@@ -51,6 +51,8 @@ from nautilus_trader.model.identifiers import ClientId, InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
+from strategies._costs import fees_for
+
 _session = importlib.import_module("custom-data.session_events")
 SessionOpenEvent = _session.SessionOpenEvent
 DailyBarClosedEvent = _session.DailyBarClosedEvent
@@ -109,6 +111,13 @@ class TargetExecutionStrategy(Strategy):
         #: dataset's own sessions -- rather than by month-end arithmetic
         #: reimplemented here against a calendar this process cannot see.
         self._pending_schedule: List[str] = sorted(self.factor_series)
+        #: The versioned cost profile a fill is charged under, resolved by the
+        #: runner. Rates are NEVER defaulted here: an empty profile charges
+        #: nothing, which is visible in the artifacts, while a locally-invented
+        #: rate would produce fees that look real and match no ledger.
+        self.cost_profile: Dict[str, object] = dict(
+            getattr(config, "cost_profile", {}) or {}
+        )
         # A failure the run must not survive, recorded rather than only
         # raised. NautilusTrader catches and logs whatever an `on_data`
         # handler throws so one bad event cannot kill an engine -- which
@@ -358,20 +367,32 @@ class TargetExecutionStrategy(Strategy):
                 order["state"] = "SUBMITTED"
                 break
 
+    def _fees_for(self, side_is_sell: bool, quantity: int, price_raw: int) -> tuple[int, int]:
+        """What this fill is charged, per the resolved cost profile."""
+        return fees_for(self.cost_profile, side_is_sell, quantity, price_raw)
+
     def on_order_filled(self, event) -> None:
         instrument_id = str(event.instrument_id)
         quantity = int(event.last_qty.as_double())
         price_raw = int(round(event.last_px.as_double() * PRICE_SCALE))
         ts = unix_nanos_to_dt(event.ts_event)
+        is_sell = event.order_side != OrderSide.BUY
+        commission_raw, tax_raw = self._fees_for(is_sell, quantity, price_raw)
         # Cash and positions move HERE, not at submission. An order that is
         # placed and not filled must not change either, or the equity curve
         # reports money that was never spent.
+        #
+        # Fees are a cash DEBIT on both sides -- they are paid, not netted --
+        # so a sell credits the proceeds and pays out of them. Slippage is not
+        # charged: it is already inside the execution price, and charging it
+        # again would take it twice.
         if event.order_side == OrderSide.BUY:
             self.cash -= quantity * price_raw / PRICE_SCALE
             self.positions[instrument_id] += quantity
         else:
             self.cash += quantity * price_raw / PRICE_SCALE
             self.positions[instrument_id] -= quantity
+        self.cash -= (commission_raw + tax_raw) / PRICE_SCALE
         self.position_ids[instrument_id] = event.position_id
         self.fills.append(
             {
@@ -386,8 +407,8 @@ class TargetExecutionStrategy(Strategy):
                 "ts": ts.isoformat(),
                 "source": "NEXT_SESSION_OPEN",
                 "slippage_bps": self.slippage_bps,
-                "commission_raw": 0,
-                "tax_raw": 0,
+                "commission_raw": commission_raw,
+                "tax_raw": tax_raw,
             }
         )
         for order in self.orders:

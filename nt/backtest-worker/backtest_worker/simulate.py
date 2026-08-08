@@ -127,6 +127,8 @@ def _run_backtest(request: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     # stored config cannot.
     if "factor_series" in request:
         strategy_config["factor_series"] = request["factor_series"]
+    if "cost_profile" in request:
+        strategy_config["cost_profile"] = request["cost_profile"]
 
     data = []
     for instrument in instruments:

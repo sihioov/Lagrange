@@ -227,7 +227,17 @@ class Normalizer:
             notional = fill["quantity"] * fill["price_raw"]
             spent.append((fill["ts"][:10], notional if fill["side"] == "BUY" else -notional))
         for item, fill_ts in self._fee_items_with_ts(raw):
-            spent.append((item["ts"] or fill_ts, item["commission_raw"] + item["tax_raw"]))
+            # Truncated to a DATE, exactly as the fills above are.
+            #
+            # Without this the comparison below is between a full timestamp
+            # and a date -- `"2020-01-21T00:00:00+00:00" <= "2020-01-21"` is
+            # False, because the longer string sorts after -- so no fee ever
+            # counted toward `spent_by` and the identity this check exists to
+            # enforce silently excluded the entire fee side.
+            #
+            # Invisible until fees became non-zero: every fill charged 0, so a
+            # term that was never added always summed to the right answer.
+            spent.append(((item["ts"] or fill_ts)[:10], item["commission_raw"] + item["tax_raw"]))
         for point in raw.equity["points"]:
             day = point["date"]
             spent_by = sum(value for (d, value) in spent if d <= day)

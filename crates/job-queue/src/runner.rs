@@ -86,6 +86,7 @@ pub struct BacktestPayload {
     pub strategy_config_id: Option<String>,
     pub dataset_version_id: Option<String>,
     pub initial_cash: Option<serde_json::Value>,
+    pub cost_profile_id: Option<String>,
 }
 
 /// How a single claimed job finished.
@@ -391,6 +392,10 @@ async fn execute<R: StrategyResolver>(
             "network_disabled": true,
         },
         "readonly_mounts": [],
+        // What a fill is charged. Resolved from the versioned profile rather
+        // than assembled here, so a backtest's fees are the ones the paper
+        // and live ledgers would charge for the same trade.
+        "cost_profile": cost_profile_for(&payload)?,
     });
     // Attached only when the strategy needs it, so a request for a strategy
     // that computes its own signal is unchanged.
@@ -421,6 +426,77 @@ async fn execute<R: StrategyResolver>(
         .map_err(|e| ExecError::Transient(format!("worker wrote no readable status: {e}")))?;
     serde_json::from_str(&raw)
         .map_err(|e| ExecError::Transient(format!("worker status is not JSON: {e}")))
+}
+
+/// The cost settings a fill is charged under, resolved for the worker.
+///
+/// The RATES are not restated here and must never be. `cost.rs` is explicit
+/// about why — 세율과 수수료는 변경 가능하므로 코드 상수로 고정하지 않고 설정
+/// 버전으로 관리한다 — so a rate written into a second place is a rate that
+/// changes in one of them. What crosses into Python is the resolved profile:
+/// numbers with a version attached, never a formula's inputs invented locally.
+///
+/// The identity travels with them so a stored result can say which profile
+/// produced it. A backtest whose fees cannot be traced to a profile version
+/// is not reproducible, and reproducibility is the whole point of pinning the
+/// dataset, the seed, and the engine version alongside it.
+fn cost_profile_for(payload: &BacktestPayload) -> Result<serde_json::Value, ExecError> {
+    use portfolio_model::cost::{CostProfile, CostProfileId};
+
+    let id = payload
+        .cost_profile_id
+        .as_deref()
+        .unwrap_or("KRX_ETF_DEFAULT");
+    // Two spellings of one profile reach this point, and both are load-bearing
+    // today.
+    //
+    // `paper.rs` resolves `KRX_ETF_DEFAULT`, which is the enum's own serde
+    // name. `POST /api/v1/backtests` passes `cost_profile_id` into the job
+    // payload WITHOUT validating it, and every backtest test in the repository
+    // sends `krx-etf-default@2026-01` — a versioned spelling that resolves
+    // nowhere and was never wired to anything.
+    //
+    // Accepting both is a compatibility shim, not the fix. The fix is for the
+    // route to validate the id the way the paper route does, so a profile
+    // nobody can resolve is a 400 at submission instead of a job that fails
+    // minutes later; that is an API change and is called out rather than made
+    // quietly here. What this does NOT do is accept anything else: an
+    // unrecognised id fails, because charging the default's fees under
+    // another profile's name would report costs the submitter never chose.
+    let profile = match id {
+        "KRX_ETF_DEFAULT" | "krx-etf-default" | "krx-etf-default@2026-01" => {
+            CostProfile::krx_etf_default().map_err(|e| ExecError::Permanent {
+                class: ErrorClass::Input,
+                code: "COST_PROFILE_INVALID",
+                reason: format!("the shipped cost profile is unusable: {e}"),
+            })?
+        }
+        // A CUSTOM profile needs explicit rates the payload does not carry.
+        // Substituting the default would charge a backtest fees the submitter
+        // never asked for and report them as if they had.
+        other => {
+            return Err(ExecError::Permanent {
+                class: ErrorClass::Input,
+                code: "UNKNOWN_COST_PROFILE",
+                reason: format!("cost profile {other:?} is not one this runner can resolve"),
+            });
+        }
+    };
+
+    Ok(serde_json::json!({
+        "profile_id": match profile.profile_id {
+            CostProfileId::KrxEtfDefault => "KRX_ETF_DEFAULT",
+            CostProfileId::Custom => "CUSTOM",
+        },
+        "version": profile.version,
+        // Decimal strings, not floats: a commission rate of 0.00015 has no
+        // exact binary representation, and a fee that is off in the last digit
+        // breaks the ledger identity the property suite asserts.
+        "commission_rate": profile.commission_rate.to_string(),
+        "min_commission": profile.min_commission.amount().to_string(),
+        "sell_tax_rate": profile.sell_tax_rate.to_string(),
+        "slippage_bps": profile.slippage_bps,
+    }))
 }
 
 /// The factor values a strategy needs, or `None` when it needs none.
