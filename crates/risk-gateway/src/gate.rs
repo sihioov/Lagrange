@@ -94,11 +94,22 @@ pub async fn evaluate_and_record<S: RiskEventStore>(
             // durable record there is nothing to reconcile against after a
             // restart, so the order does not go out.
             let mut decision = decision;
-            decision.denied_by = decision.denied_by.or(Some(
-                // Attribute an unrecordable approval to the last check, so the
-                // row shape stays consistent: every denial names a check.
-                *CHECK_ORDER.last().expect("CHECK_ORDER is non-empty"),
-            ));
+
+            // `denied_by` stays as evaluation left it: the denying check if a
+            // check denied, and NONE if the checks all passed and only the
+            // write failed. Naming a check here — the earlier version blamed
+            // the last one so that "every denial names a check" — would tell
+            // an operator reading the log during a database outage that the
+            // order was denied by DUPLICATE_INTENT. The consistency it bought
+            // was worthless: a `NotPersisted` decision is by definition never
+            // a row, so 0018's CHECK constraint never sees it, while the log
+            // that does see it is read at exactly the wrong moment.
+            //
+            // When a check HAD already denied, `reason` is overwritten while
+            // `records` keep the original denial. That is deliberate: both
+            // facts are true, and unrecordability is the dominant one because
+            // it is the one that makes the audit trail unreliable. The trail
+            // in `records` still says which check objected.
             decision.reason = Some(DenyReason::NotPersisted);
             GateOutcome::Denied { decision }
         }
@@ -181,6 +192,51 @@ mod tests {
         assert!(
             outcome.into_approval().is_none(),
             "no approval may exist without a durable record"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_write_failure_blames_the_write_and_not_a_check() {
+        // The log written during a database outage is read by an operator
+        // trying to find out what is wrong. If an all-green evaluation whose
+        // write failed reported `denied_by: DUPLICATE_INTENT`, it would send
+        // that reader looking for a duplicate order that does not exist.
+        let outcome = evaluate_and_record(
+            &testing::snapshot_all_green(),
+            &testing::limits(),
+            &FailingStore::new("connection reset"),
+        )
+        .await;
+        let decision = outcome.decision();
+        assert_eq!(decision.reason, Some(DenyReason::NotPersisted));
+        assert_eq!(
+            decision.denied_by, None,
+            "no check denied this order; the write did"
+        );
+        assert!(
+            decision
+                .records
+                .iter()
+                .all(|r| r.outcome == CheckOutcome::Passed),
+            "the trail must still show that every check passed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_write_failure_after_a_real_denial_keeps_both_facts() {
+        // Unrecordability is the dominant reason, because it is the one that
+        // makes the audit trail unreliable -- but the trail must still say
+        // which check objected.
+        let mut snap = testing::snapshot_all_green();
+        snap.market_session = crate::snapshot::MarketSession::Closed;
+        let outcome =
+            evaluate_and_record(&snap, &testing::limits(), &FailingStore::new("db down")).await;
+        let decision = outcome.decision();
+        assert_eq!(decision.reason, Some(DenyReason::NotPersisted));
+        assert_eq!(decision.denied_by, Some(Check::MarketSession));
+        assert_eq!(
+            decision.records[1].outcome,
+            CheckOutcome::Denied(DenyReason::MarketSessionClosed)
         );
     }
 

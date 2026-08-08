@@ -54,6 +54,12 @@ impl RiskEventStore for RiskRepo {
         // it was derived from. The snapshot is what makes a decision
         // re-derivable after limits change or the process restarts; without
         // it the row records a verdict nobody can check.
+        //
+        // Casing differs between the two on purpose and is worth knowing
+        // before writing a query that joins them: the payload is serde output
+        // and so is snake_case (`kill_switch`), while the indexed columns
+        // carry the stable audit strings in SCREAMING_SNAKE
+        // (`denied_by_check = 'KILL_SWITCH'`).
         let payload = serde_json::json!({
             "checks": decision.records,
             "snapshot": snapshot,
