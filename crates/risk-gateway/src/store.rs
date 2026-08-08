@@ -47,10 +47,19 @@ impl std::error::Error for StoreError {}
 ///    store; a double-decision must never become a second approval.
 /// 3. **Append-only.** Nothing may edit a recorded decision afterwards
 ///    (migration 0018 revokes UPDATE/DELETE and installs a reject trigger).
+///
+/// The method is async because the real implementation talks to PostgreSQL,
+/// and the write has to happen INSIDE the gate. Lifting persistence out to the
+/// caller — the shape a synchronous trait would have forced — would dissolve
+/// the guarantee entirely: the approval must not exist until the row does.
 pub trait RiskEventStore {
     /// Records the decision and its full input snapshot, returning the
     /// `risk_events.id` of the row.
-    fn record(&self, decision: &Decision, snapshot: &RiskSnapshot) -> Result<String, StoreError>;
+    fn record(
+        &self,
+        decision: &Decision,
+        snapshot: &RiskSnapshot,
+    ) -> impl std::future::Future<Output = Result<String, StoreError>>;
 }
 
 #[cfg(test)]

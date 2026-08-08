@@ -65,6 +65,7 @@ dependencies = [
  "prometheus",
  "regex",
  "result-model",
+ "risk-gateway",
  "selector",
  "serde",
  "serde_json",
@@ -3611,6 +3612,7 @@ dependencies = [
  "domain",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

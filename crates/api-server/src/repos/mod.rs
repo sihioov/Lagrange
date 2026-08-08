@@ -15,6 +15,7 @@ pub mod paper;
 pub mod parity;
 pub mod pending_targets;
 pub mod recommendations;
+pub mod risk;
 pub mod robustness;
 pub mod shared;
 pub mod strategies;

@@ -13,8 +13,8 @@ use crate::snapshot::{
 };
 use crate::store::{RiskEventStore, StoreError};
 use domain::{Currency, Money, Price, Quantity};
-use std::cell::RefCell;
 use std::collections::BTreeSet;
+use std::sync::Mutex;
 
 /// KRW money from a decimal string.
 pub fn krw(value: &str) -> Money {
@@ -73,24 +73,37 @@ pub fn snapshot_all_green() -> RiskSnapshot {
 ///
 /// Models the real store's unique index: a second decision for an
 /// `intent_ref` that already has one is an error, never an overwrite.
+///
+/// State lives behind a `Mutex` rather than a `RefCell` so the double is
+/// `Send + Sync`: the gate's future must stay `Send` to be usable from an
+/// axum handler, and a test double that quietly made it `!Send` would compile
+/// here and fail only once the real caller was written.
 #[derive(Default)]
 pub struct RecordingStore {
-    rows: RefCell<Vec<(Decision, RiskSnapshot)>>,
-    intents: RefCell<BTreeSet<String>>,
+    rows: Mutex<Vec<(Decision, RiskSnapshot)>>,
+    intents: Mutex<BTreeSet<String>>,
 }
 
 impl RecordingStore {
     /// Every recorded decision with the snapshot it was made from.
     pub fn records(&self) -> Vec<(Decision, RiskSnapshot)> {
-        self.rows.borrow().clone()
+        self.rows
+            .lock()
+            .expect("recording store is not poisoned")
+            .clone()
     }
 }
 
 impl RiskEventStore for RecordingStore {
-    fn record(&self, decision: &Decision, snapshot: &RiskSnapshot) -> Result<String, StoreError> {
+    async fn record(
+        &self,
+        decision: &Decision,
+        snapshot: &RiskSnapshot,
+    ) -> Result<String, StoreError> {
         if !self
             .intents
-            .borrow_mut()
+            .lock()
+            .expect("recording store is not poisoned")
             .insert(decision.intent_ref.clone())
         {
             return Err(StoreError::new(format!(
@@ -98,7 +111,7 @@ impl RiskEventStore for RecordingStore {
                 decision.intent_ref
             )));
         }
-        let mut rows = self.rows.borrow_mut();
+        let mut rows = self.rows.lock().expect("recording store is not poisoned");
         rows.push((decision.clone(), snapshot.clone()));
         Ok(format!("risk-event-{}", rows.len()))
     }
@@ -118,7 +131,11 @@ impl FailingStore {
 }
 
 impl RiskEventStore for FailingStore {
-    fn record(&self, _decision: &Decision, _snapshot: &RiskSnapshot) -> Result<String, StoreError> {
+    async fn record(
+        &self,
+        _decision: &Decision,
+        _snapshot: &RiskSnapshot,
+    ) -> Result<String, StoreError> {
         Err(StoreError::new(self.detail.clone()))
     }
 }

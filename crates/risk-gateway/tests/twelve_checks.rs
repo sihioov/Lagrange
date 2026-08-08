@@ -207,12 +207,12 @@ fn every_unknown_input_denies_as_unavailable_not_as_a_policy_rejection() {
     }
 }
 
-#[test]
-fn at_08_stale_data_blocks_with_a_reason_a_metric_and_an_audited_record() {
+#[tokio::test]
+async fn at_08_stale_data_blocks_with_a_reason_a_metric_and_an_audited_record() {
     // AT-08: 오래된 데이터로 Live 주문 시도 → 주문이 차단되고 사유와 감사 로그 생성.
     let store = RecordingStore::default();
     let snap = break_check(base(), Check::DataFreshness);
-    let outcome = evaluate_and_record(&snap, &testing::limits(), &store);
+    let outcome = evaluate_and_record(&snap, &testing::limits(), &store).await;
 
     let decision = outcome.decision().clone();
     assert_eq!(decision.reason, Some(DenyReason::DataStale));
@@ -356,8 +356,8 @@ fn submit_to_broker(approval: RiskApproval, intent_ref: &str) -> Result<String, 
     Ok(format!("submitted:{}", approval.risk_event_id()))
 }
 
-#[test]
-fn no_submission_is_possible_after_a_denial() {
+#[tokio::test]
+async fn no_submission_is_possible_after_a_denial() {
     // "no simulated KIS submission occurs after any denial or failed
     // persistence" -- here there is no approval to pass, so the call cannot
     // be written at all.
@@ -366,20 +366,23 @@ fn no_submission_is_possible_after_a_denial() {
         &break_check(base(), Check::KillSwitch),
         &testing::limits(),
         &store,
-    );
+    )
+    .await;
     assert!(denied.into_approval().is_none());
 
-    let failed = evaluate_and_record(&base(), &testing::limits(), &FailingStore::new("db down"));
+    let failed =
+        evaluate_and_record(&base(), &testing::limits(), &FailingStore::new("db down")).await;
     assert!(
         failed.into_approval().is_none(),
         "a failed write must not yield a token"
     );
 }
 
-#[test]
-fn an_approval_authorises_exactly_the_intent_it_names() {
+#[tokio::test]
+async fn an_approval_authorises_exactly_the_intent_it_names() {
     let store = RecordingStore::default();
     let approval = evaluate_and_record(&base(), &testing::limits(), &store)
+        .await
         .into_approval()
         .expect("approved");
 
@@ -395,17 +398,18 @@ fn an_approval_authorises_exactly_the_intent_it_names() {
     let mut snap = base();
     snap.intent.intent_ref = "intent-2".into();
     let approval2 = evaluate_and_record(&snap, &testing::limits(), &store2)
+        .await
         .into_approval()
         .expect("approved");
     assert!(submit_to_broker(approval2, "intent-2").is_ok());
 }
 
-#[test]
-fn every_decision_names_its_limits_version_and_correlation_id() {
+#[tokio::test]
+async fn every_decision_names_its_limits_version_and_correlation_id() {
     // Without these a decision cannot be re-derived once limits change, nor
     // joined to the audit log and the alert it raised.
     let store = RecordingStore::default();
-    let outcome = evaluate_and_record(&base(), &testing::limits(), &store);
+    let outcome = evaluate_and_record(&base(), &testing::limits(), &store).await;
     let decision = outcome.decision();
     assert_eq!(decision.limits_version, "risk-limits-v1");
     assert_eq!(decision.correlation_id, "correlation-1");

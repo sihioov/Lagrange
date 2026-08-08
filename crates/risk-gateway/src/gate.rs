@@ -69,14 +69,14 @@ pub fn evaluate(snapshot: &RiskSnapshot, limits: &RiskLimits) -> Decision {
 ///   is an incident rather than a policy outcome.
 /// * A denial is recorded too. A denied order is exactly the thing someone
 ///   will later need to explain.
-pub fn evaluate_and_record<S: RiskEventStore>(
+pub async fn evaluate_and_record<S: RiskEventStore>(
     snapshot: &RiskSnapshot,
     limits: &RiskLimits,
     store: &S,
 ) -> GateOutcome {
     let decision = evaluate(snapshot, limits);
 
-    match store.record(&decision, snapshot) {
+    match store.record(&decision, snapshot).await {
         Ok(risk_event_id) => {
             if decision.is_approved() {
                 let approval = RiskApproval::new(
@@ -112,11 +112,11 @@ mod tests {
     use crate::store::StoreError;
     use crate::testing::{self, FailingStore, RecordingStore};
 
-    #[test]
-    fn an_all_green_snapshot_is_approved_and_records_twelve_passes() {
+    #[tokio::test]
+    async fn an_all_green_snapshot_is_approved_and_records_twelve_passes() {
         let store = RecordingStore::default();
         let outcome =
-            evaluate_and_record(&testing::snapshot_all_green(), &testing::limits(), &store);
+            evaluate_and_record(&testing::snapshot_all_green(), &testing::limits(), &store).await;
         let decision = outcome.decision().clone();
         assert!(decision.is_approved(), "{decision:?}");
         assert_eq!(decision.records.len(), 12);
@@ -166,14 +166,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_failed_write_denies_an_otherwise_approved_order() {
+    #[tokio::test]
+    async fn a_failed_write_denies_an_otherwise_approved_order() {
         // §16: a DB write failure blocks new Live orders. The evaluation here
         // is all-green, so the ONLY thing standing between this order and the
         // broker is the persistence requirement.
         let store = FailingStore::new("disk full");
         let outcome =
-            evaluate_and_record(&testing::snapshot_all_green(), &testing::limits(), &store);
+            evaluate_and_record(&testing::snapshot_all_green(), &testing::limits(), &store).await;
         let decision = outcome.decision().clone();
         assert!(!decision.is_approved());
         assert_eq!(decision.reason, Some(DenyReason::NotPersisted));
@@ -184,13 +184,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_denial_is_recorded_too() {
+    #[tokio::test]
+    async fn a_denial_is_recorded_too() {
         // The rows someone will need most are the denials.
         let mut snap = testing::snapshot_all_green();
         snap.kill_switch = crate::snapshot::KillSwitch::Engaged;
         let store = RecordingStore::default();
-        let outcome = evaluate_and_record(&snap, &testing::limits(), &store);
+        let outcome = evaluate_and_record(&snap, &testing::limits(), &store).await;
         assert!(outcome.into_approval().is_none());
         assert_eq!(store.records().len(), 1);
         let (decision, _) = store.records().into_iter().next().unwrap();
@@ -198,16 +198,16 @@ mod tests {
         assert_eq!(decision.denied_by, Some(Check::KillSwitch));
     }
 
-    #[test]
-    fn a_second_decision_for_the_same_intent_is_refused_by_the_store() {
+    #[tokio::test]
+    async fn a_second_decision_for_the_same_intent_is_refused_by_the_store() {
         // The DB's unique index is modelled here: re-deciding an intent must
         // fail rather than produce a second, possibly contradictory approval.
         let store = RecordingStore::default();
         let snap = testing::snapshot_all_green();
-        let first = evaluate_and_record(&snap, &testing::limits(), &store);
+        let first = evaluate_and_record(&snap, &testing::limits(), &store).await;
         assert!(first.into_approval().is_some());
 
-        let second = evaluate_and_record(&snap, &testing::limits(), &store);
+        let second = evaluate_and_record(&snap, &testing::limits(), &store).await;
         assert!(
             second.into_approval().is_none(),
             "an intent may be approved once"
@@ -215,13 +215,13 @@ mod tests {
         assert_eq!(store.records().len(), 1);
     }
 
-    #[test]
-    fn the_store_sees_the_snapshot_the_decision_was_made_from() {
+    #[tokio::test]
+    async fn the_store_sees_the_snapshot_the_decision_was_made_from() {
         // Without the snapshot, the decision cannot be re-derived later, and
         // the restart property has nothing to replay.
         let store = RecordingStore::default();
         let snap = testing::snapshot_all_green();
-        let _ = evaluate_and_record(&snap, &testing::limits(), &store);
+        let _ = evaluate_and_record(&snap, &testing::limits(), &store).await;
         let (_, recorded) = store.records().into_iter().next().unwrap();
         assert_eq!(recorded, snap);
     }
