@@ -256,12 +256,13 @@ async fn seed_artifact_without_bytes(h: &Harness, actor: &common::UserCtx) -> St
         ),
     )
     .await;
-    let artifact_id: String =
-        sqlx::query_scalar("SELECT id::text FROM result_artifacts WHERE backtest_run_id = $1::uuid LIMIT 1")
-            .bind(&run_id)
-            .fetch_one(&h.member_pool().await)
-            .await
-            .unwrap();
+    let artifact_id: String = sqlx::query_scalar(
+        "SELECT id::text FROM result_artifacts WHERE backtest_run_id = $1::uuid LIMIT 1",
+    )
+    .bind(&run_id)
+    .fetch_one(&h.member_pool().await)
+    .await
+    .unwrap();
 
     // The write that never completed.
     let _ = std::fs::remove_file(h.artifact_root.join(rel));
@@ -357,13 +358,12 @@ async fn failure_refusal_is_audited_with_its_correlation_id() {
     );
 
     // And the refusal reason is recorded, not just the fact of a denial.
-    let reason: Option<String> = sqlx::query_scalar(
-        "SELECT reason FROM audit_logs WHERE correlation_id = $1 LIMIT 1",
-    )
-    .bind(rid)
-    .fetch_one(&h.admin_pool)
-    .await
-    .unwrap_or(None);
+    let reason: Option<String> =
+        sqlx::query_scalar("SELECT reason FROM audit_logs WHERE correlation_id = $1 LIMIT 1")
+            .bind(rid)
+            .fetch_one(&h.admin_pool)
+            .await
+            .unwrap_or(None);
     assert!(
         reason.is_some_and(|r| !r.is_empty()),
         "an audited refusal must record why it was refused"

@@ -179,7 +179,7 @@ pub fn redact_payload(raw: &str) -> String {
 
         // Is the key immediately before this colon sensitive?
         let key = head
-            .rsplit(|c: char| c == '{' || c == ',' || c == '\n')
+            .rsplit(['{', ',', '\n'])
             .next()
             .unwrap_or("")
             .trim()
@@ -188,9 +188,7 @@ pub fn redact_payload(raw: &str) -> String {
 
         if SENSITIVE_KEYS.contains(&key.as_str()) {
             // Consume this value and replace it.
-            let end = after
-                .find(|c: char| c == ',' || c == '}' || c == '\n')
-                .unwrap_or(after.len());
+            let end = after.find([',', '}', '\n']).unwrap_or(after.len());
             out.push_str("\"<redacted>\"");
             rest = &after[end..];
         } else {

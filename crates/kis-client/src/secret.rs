@@ -202,7 +202,9 @@ mod tests {
     fn a_secret_inside_a_derived_debug_struct_stays_redacted() {
         // The realistic leak: someone derives Debug on a config struct and
         // logs it. The wrapper has to survive that, not just direct printing.
+        // Read only through the derived Debug, which is the whole point.
         #[derive(Debug)]
+        #[allow(dead_code)]
         struct Config {
             endpoint: String,
             app_secret: Secret<String>,
