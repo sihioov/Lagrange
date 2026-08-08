@@ -25,6 +25,7 @@ chrono = { version = "0.4", features = ["serde"] }
 domain = { path = "../domain" }
 risk-gateway = { path = "../risk-gateway" }
 kis-client = { path = "../kis-client" }
+async-trait = "0.1"
 hex = "0.4"
 hmac = "0.12"
 job-queue = { path = "../job-queue" }
