@@ -707,7 +707,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** GET /api/v1/admin/live/connections */
+        get: operations["get__api_v1_admin_live_connections"];
         put?: never;
         /** POST /api/v1/admin/live/connections */
         post: operations["post__api_v1_admin_live_connections"];
@@ -717,7 +718,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/live/nodes/{node_id}/start": {
+    "/api/v1/admin/live/connections/{connection_id}/start": {
         parameters: {
             query?: never;
             header?: never;
@@ -726,8 +727,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** POST /api/v1/admin/live/nodes/{node_id}/start */
-        post: operations["post__api_v1_admin_live_nodes__node_id__start"];
+        /** POST /api/v1/admin/live/connections/{connection_id}/start */
+        post: operations["post__api_v1_admin_live_connections__connection_id__start"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2525,6 +2526,27 @@ export interface operations {
             501: components["responses"]["Error501"];
         };
     };
+    get__api_v1_admin_live_connections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
     post__api_v1_admin_live_connections: {
         parameters: {
             query?: never;
@@ -2550,12 +2572,12 @@ export interface operations {
             501: components["responses"]["Error501"];
         };
     };
-    post__api_v1_admin_live_nodes__node_id__start: {
+    post__api_v1_admin_live_connections__connection_id__start: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                node_id: string;
+                connection_id: string;
             };
             cookie?: never;
         };

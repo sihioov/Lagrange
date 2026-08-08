@@ -87,18 +87,24 @@ impl SessionRejection {
 
 /// Resolve a session cookie value to [`SessionInfo`] via the admin pool.
 ///
-/// `web_sessions` has no `auth_time`/`amr` columns, so the login instant
-/// (`created_at`) is the best available authentication timestamp and `amr` is
-/// empty — the Owner step-up gate therefore fails closed (no MFA claim).
+/// `amr` and `auth_time` are carried on the session row (migration 0017).
+/// Before that they could not be, so the loader passed `amr: []` and the Owner
+/// step-up gate denied EVERY request — safe, but it made every Owner Live
+/// action permanently impossible. `auth_time` is distinct from `created_at`:
+/// a session can be minted from a token that authenticated much earlier, and
+/// treating session age as authentication age would make a stale login look
+/// fresh, which is exactly what step-up exists to catch. `coalesce` keeps
+/// pre-0017 rows working; they carry no MFA claim, so they still cannot pass.
 pub(crate) async fn resolve_session(
     backend: &impl SessionBackend,
     cookie_value: &str,
 ) -> Result<SessionInfo, SessionRejection> {
     let token_hash = cookie::hash(cookie_value);
-    let row: Option<(Uuid, String, String, i64, i64)> = sqlx::query_as(
+    let row: Option<(Uuid, String, String, i64, i64, Vec<String>)> = sqlx::query_as(
         "SELECT s.user_id, r.id, s.csrf_hash, \
                 EXTRACT(EPOCH FROM s.expires_at)::bigint, \
-                EXTRACT(EPOCH FROM s.created_at)::bigint \
+                EXTRACT(EPOCH FROM coalesce(s.auth_time, s.created_at))::bigint, \
+                s.amr \
          FROM web_sessions s \
          JOIN users u ON u.id = s.user_id \
          JOIN user_roles ur ON ur.user_id = u.id \
@@ -120,7 +126,7 @@ pub(crate) async fn resolve_session(
         code: "INTERNAL",
         message: "session store unavailable",
     })?;
-    let Some((user_id, role_id, csrf_hash, expires_at_secs, auth_time_secs)) = row else {
+    let Some((user_id, role_id, csrf_hash, expires_at_secs, auth_time_secs, amr)) = row else {
         return Err(SessionRejection {
             status: StatusCode::UNAUTHORIZED,
             code: "SESSION_UNKNOWN",
@@ -142,7 +148,7 @@ pub(crate) async fn resolve_session(
         user_id: auth::entitlement::UserId::new(user_id.to_string()),
         role,
         auth_time_secs,
-        amr: Vec::new(),
+        amr,
         expires_at_secs,
         csrf_token_hash: csrf_hash,
     })

@@ -66,8 +66,9 @@ const ROUTES = [
   ["PUT", "/api/v1/notifications/subscriptions", { mutating: true, idem: true, audit: true }],
   ["POST", "/api/v1/notifications/test", { mutating: true, idem: true, audit: true }],
   // Live (Phase 3, Owner-only)
+  ["GET", "/api/v1/admin/live/connections", { owner: true, audit: true, phase: PHASE3 }],
   ["POST", "/api/v1/admin/live/connections", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
-  ["POST", "/api/v1/admin/live/nodes/{node_id}/start", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
+  ["POST", "/api/v1/admin/live/connections/{connection_id}/start", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
   ["POST", "/api/v1/admin/live/nodes/{node_id}/stop", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
   ["POST", "/api/v1/admin/live/kill-switch/enable", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
   ["POST", "/api/v1/admin/live/kill-switch/disable", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],

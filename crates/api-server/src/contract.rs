@@ -756,6 +756,17 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
     ),
     // --- Live (Phase 3: Owner-only; not available) ------------------------------
     route(
+        "GET",
+        "/api/v1/admin/live/connections",
+        Phase::Phase3,
+        false,
+        false,
+        false,
+        true,
+        None,
+        true,
+    ),
+    route(
         "POST",
         "/api/v1/admin/live/connections",
         Phase::Phase3,
@@ -768,7 +779,7 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
     ),
     route(
         "POST",
-        "/api/v1/admin/live/nodes/{node_id}/start",
+        "/api/v1/admin/live/connections/{connection_id}/start",
         Phase::Phase3,
         true,
         true,

@@ -465,6 +465,41 @@ impl Harness {
         }
     }
 
+    /// Seed a user whose session carries authentication-method claims and an
+    /// explicit authentication time.
+    ///
+    /// Step-up (Owner + fresh MFA) cannot be exercised through `seed_user`,
+    /// whose sessions carry no `amr` — by design, since that is what an
+    /// ordinary password login looks like. A test that needs to pass step-up,
+    /// or to prove that STALE MFA still fails, has to control both facts.
+    pub async fn seed_user_with_amr(
+        &self,
+        role: Role,
+        email: &str,
+        iss: &str,
+        sub: &str,
+        amr: &[&str],
+        auth_time_secs: i64,
+    ) -> UserCtx {
+        let ctx = self.seed_user(role, email, iss, sub).await;
+        let amr_literal = amr
+            .iter()
+            .map(|a| format!("'{a}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        self.seed_tenant(
+            &ctx,
+            &format!(
+                "UPDATE web_sessions SET amr = ARRAY[{amr_literal}]::text[], \
+                        auth_time = to_timestamp({auth_time_secs}) \
+                 WHERE user_id = '{}'",
+                ctx.user_id
+            ),
+        )
+        .await;
+        ctx
+    }
+
     // ------------------------------------------------------------------
     // HTTP plumbing: oneshot against the router with cookie/csrf/request id.
     // ------------------------------------------------------------------

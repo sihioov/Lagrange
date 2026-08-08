@@ -241,32 +241,41 @@ async fn http_admin_audit_logs_and_phase3_live_gating() {
     let resp = h.get("/api/v1/admin/audit-logs", Some(&h.owner)).await;
     assert_eq!(status(&resp), StatusCode::OK);
 
-    // Phase 3 live routes: Member -> 403 FORBIDDEN (never exposed).
+    // Phase 3 Live routes. These expectations CHANGED in Todo 37, when the
+    // placeholder handlers became the real Owner-only boundary:
+    //
+    //   Member: was 403 FORBIDDEN, now 404 RESOURCE_NOT_FOUND. A 403 confirms
+    //   the route exists, which is the discovery Todo 37 forbids; to a Member,
+    //   Live must be indistinguishable from something never built.
+    //
+    //   Owner: was 501 NOT_IMPLEMENTED, now 403 STEP_UP_* — the route IS
+    //   implemented, and this Owner simply has no fresh MFA claim.
+    //
+    // See crates/api-server/tests/live_rbac.rs for the full boundary.
     let resp = h
         .post(
             "/api/v1/admin/live/kill-switch/enable",
             Some(&h.member),
             true,
-            json!({}),
+            json!({"reason": "member attempt"}),
         )
         .await;
-    assert_eq!(status(&resp), StatusCode::FORBIDDEN);
+    assert_eq!(status(&resp), StatusCode::NOT_FOUND);
     let body = Harness::body_json(resp).await;
-    assert_eq!(Harness::error_code(&body), "FORBIDDEN");
+    assert_eq!(Harness::error_code(&body), "RESOURCE_NOT_FOUND");
 
-    // Owner -> 501 NOT_IMPLEMENTED (Phase 3), audited.
     let resp = h
         .post(
             "/api/v1/admin/live/kill-switch/enable",
             Some(&h.owner),
             true,
-            json!({}),
+            json!({"reason": "owner without fresh mfa"}),
         )
         .await;
-    assert_eq!(status(&resp), StatusCode::NOT_IMPLEMENTED);
-    let body = Harness::body_json(resp).await;
-    assert_eq!(Harness::error_code(&body), "NOT_IMPLEMENTED");
-    assert!(body["error"]["details"]["phase"].is_string());
+    assert_eq!(status(&resp), StatusCode::FORBIDDEN);
+    let code = Harness::error_code(&Harness::body_json(resp).await);
+    assert!(code.starts_with("STEP_UP_"), "expected step-up, got {code}");
+
     let audit: i64 =
         sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE action LIKE 'admin.live.%'")
             .fetch_one(&h.admin_pool)

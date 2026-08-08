@@ -10,6 +10,7 @@ pub mod entitlement;
 pub mod error;
 pub mod idempotency;
 pub mod licensing;
+pub mod live;
 pub mod middleware;
 pub mod notifications;
 pub mod pagination;
@@ -331,22 +332,22 @@ pub fn api_router(state: ApiState) -> Router {
             post(notifications::test_notification),
         )
         // live (Phase 3)
-        .route("/admin/live/connections", post(admin::live_not_available))
         .route(
-            "/admin/live/nodes/{node_id}/start",
-            post(admin::live_not_available),
+            "/admin/live/connections",
+            get(live::list_connections).post(live::create_connection),
         )
         .route(
-            "/admin/live/nodes/{node_id}/stop",
-            post(admin::live_not_available),
+            "/admin/live/connections/{connection_id}/start",
+            post(live::start_node),
         )
+        .route("/admin/live/nodes/{node_id}/stop", post(live::stop_node))
         .route(
             "/admin/live/kill-switch/enable",
-            post(admin::live_not_available),
+            post(live::enable_kill_switch),
         )
         .route(
             "/admin/live/kill-switch/disable",
-            post(admin::live_not_available),
+            post(live::disable_kill_switch),
         )
         .route("/admin/live/reconciliation", get(admin::live_not_available))
         // licensing / artifacts

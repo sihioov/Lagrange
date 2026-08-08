@@ -8,6 +8,7 @@ pub mod artifacts;
 pub mod audit;
 pub mod backtest_runs;
 pub mod entitlements;
+pub mod live;
 pub mod metrics;
 pub mod ops;
 pub mod paper;

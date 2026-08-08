@@ -116,6 +116,15 @@ impl ApiState {
     pub fn recommendations(&self) -> RecommendationRepo {
         RecommendationRepo::new(self.app_pool.clone())
     }
+    /// The Live repository, bound to the calling actor.
+    ///
+    /// Takes the actor rather than exposing a bare pool: `broker_connections`
+    /// is a FORCE-RLS tenant table, so a query without the actor GUC is
+    /// refused. Requiring it here means a handler cannot reach these rows
+    /// without having established who is asking.
+    pub fn live(&self, actor: &auth::entitlement::Actor) -> crate::repos::live::LiveRepo {
+        crate::repos::live::LiveRepo::new(self.app_pool.clone(), actor.clone())
+    }
     pub fn metrics(&self) -> MetricsRepo {
         MetricsRepo::new(self.app_pool.clone())
     }

@@ -370,9 +370,12 @@ async fn http_qa_transcripts() {
             Some(json!({})),
         )
         .await;
-    assert_eq!(status(&resp), StatusCode::FORBIDDEN);
+    // Todo 37: a Member gets 404, not 403. A 403 would confirm the Live route
+    // exists; to a Member it must be indistinguishable from a route that was
+    // never built.
+    assert_eq!(status(&resp), StatusCode::NOT_FOUND);
     let _ = show(
-        "POST /api/v1/admin/live/kill-switch/enable as MEMBER (Phase 3 -> FORBIDDEN)",
+        "POST /api/v1/admin/live/kill-switch/enable as MEMBER (Owner-only -> NOT FOUND)",
         resp,
     )
     .await;
@@ -388,9 +391,11 @@ async fn http_qa_transcripts() {
             Some(json!({})),
         )
         .await;
-    assert_eq!(status(&resp), StatusCode::NOT_IMPLEMENTED);
+    // Todo 37: the route IS implemented now, so an Owner is refused for the
+    // real reason - this session carries no fresh MFA claim.
+    assert_eq!(status(&resp), StatusCode::FORBIDDEN);
     let _ = show(
-        "POST /api/v1/admin/live/kill-switch/enable as OWNER (Phase 3 -> NOT_IMPLEMENTED, audited)",
+        "POST /api/v1/admin/live/kill-switch/enable as OWNER without fresh MFA (-> STEP_UP, audited)",
         resp,
     )
     .await;
