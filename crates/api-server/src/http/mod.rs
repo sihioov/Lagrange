@@ -340,6 +340,7 @@ pub fn api_router(state: ApiState) -> Router {
             "/admin/live/connections/{connection_id}/start",
             post(live::start_node),
         )
+        .route("/admin/live/orders", post(live::submit_order))
         .route("/admin/live/nodes/{node_id}/stop", post(live::stop_node))
         .route(
             "/admin/live/kill-switch/enable",

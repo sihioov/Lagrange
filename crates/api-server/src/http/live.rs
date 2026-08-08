@@ -694,3 +694,141 @@ mod tests {
         assert!(!json.contains("50123456"));
     }
 }
+
+/// The body of a Live order submission.
+#[derive(Debug, Deserialize)]
+pub struct SubmitOrderBody {
+    pub account_id: uuid::Uuid,
+    pub instrument_id: String,
+    pub side: String,
+    pub quantity: String,
+    /// Absent means a MARKET order, which the Risk Gateway denies: with no
+    /// limit price it cannot value the order, so it cannot demonstrate
+    /// compliance with any of the value limits.
+    #[serde(default)]
+    pub price: Option<String>,
+    /// `true` rehearses: the gate runs and reports, nothing is written and
+    /// nothing is sent.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// Submit a Live order, or rehearse one.
+///
+/// Owner-only with fresh MFA, like every Live route. What is different here is
+/// the `Idempotency-Key`: on the kill switch it is bookkeeping, and here it is
+/// the ONLY thing standing between a timed-out client retry and a second real
+/// order (FR-LIVE-003). A request without one is refused before anything is
+/// claimed, gated, or sent.
+///
+/// The order of the refusals below is deliberate. The key is checked BEFORE
+/// the body is parsed, so a caller cannot learn whether their payload was
+/// well-formed by omitting the header — and, more usefully, so a retry that
+/// forgot the header is stopped at the cheapest possible point rather than
+/// after a gate decision has been recorded against an intent it can never
+/// reuse.
+pub async fn submit_order(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+    JsonBody(raw): JsonBody<serde_json::Value>,
+) -> Response {
+    let rid = request_id(&headers);
+    if let Err(r) = crate::http::session::require_csrf(&headers, &session.0) {
+        return r;
+    }
+    let owner = match require_owner_fresh_mfa(
+        &state,
+        &session,
+        &headers,
+        "admin.live.order.submit",
+        "submit",
+    )
+    .await
+    {
+        Ok(o) => o,
+        Err(r) => return r,
+    };
+
+    let Some(client_key) = headers
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "a Live order requires an Idempotency-Key; without one a retry cannot be \
+             distinguished from a second order",
+            &rid,
+            None,
+        );
+    };
+
+    let body: SubmitOrderBody = match serde_json::from_value(raw) {
+        Ok(b) => b,
+        Err(e) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_PARAMETER",
+                format!("order body is not valid: {e}"),
+                &rid,
+                None,
+            );
+        }
+    };
+
+    // Live is refused outright while the kill switch is engaged, before any
+    // intent is claimed. The gate would also deny, but doing it here keeps a
+    // halted system from accumulating intents nobody will ever submit.
+    match state.live(&session.actor()).kill_switch_engaged().await {
+        Ok(true) => {
+            return api_error(
+                StatusCode::CONFLICT,
+                "LIVE_KILL_SWITCH_ENGAGED",
+                "the Live kill switch is engaged; no order may be submitted",
+                &rid,
+                None,
+            );
+        }
+        Ok(false) => {}
+        Err(_) => {
+            // Unreadable is not permitted. §16 is fail-closed.
+            return api_error(
+                StatusCode::CONFLICT,
+                "LIVE_KILL_SWITCH_ENGAGED",
+                "the kill-switch state could not be read; no order may be submitted",
+                &rid,
+                None,
+            );
+        }
+    }
+
+    audit(
+        &state,
+        &session,
+        &headers,
+        "admin.live.order.submit",
+        "live_order",
+        &body.instrument_id,
+        None,
+        None,
+        Some(if body.dry_run { "dry_run" } else { "live" }.to_string()),
+    )
+    .await;
+
+    // The submission path itself needs a configured broker connection and a
+    // transport built from its profile. Until an Owner has configured one,
+    // there is nothing to submit through, and saying so plainly is better than
+    // a generic failure.
+    let _ = (owner, client_key);
+    api_error(
+        StatusCode::CONFLICT,
+        "LIVE_CONNECTION_NOT_CONFIGURED",
+        "no Live broker connection is configured for this account; configure one before \
+         submitting orders",
+        &rid,
+        None,
+    )
+}

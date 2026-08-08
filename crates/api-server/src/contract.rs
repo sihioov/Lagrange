@@ -181,6 +181,11 @@ pub const ERROR_CODES: &[ErrorCodeDef] = &[
         "the Live kill switch is engaged; no node may start",
     ),
     ErrorCodeDef::new(
+        "LIVE_CONNECTION_NOT_CONFIGURED",
+        StatusCode::CONFLICT,
+        "no Live broker connection is configured for this account",
+    ),
+    ErrorCodeDef::new(
         "RISK_LIMIT_EXCEEDED",
         StatusCode::UNPROCESSABLE_ENTITY,
         "order risk limit violated",
@@ -774,6 +779,21 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
     route(
         "POST",
         "/api/v1/admin/live/connections",
+        Phase::Phase3,
+        true,
+        true,
+        false,
+        true,
+        None,
+        true,
+    ),
+    // Submitting an order. Owner-only, mutating, and IDEMPOTENT: the
+    // Idempotency-Key is not decoration here, it is the identity a
+    // retransmission repeats and therefore the only thing that can stop a
+    // timed-out retry from placing a second real order (FR-LIVE-003).
+    route(
+        "POST",
+        "/api/v1/admin/live/orders",
         Phase::Phase3,
         true,
         true,

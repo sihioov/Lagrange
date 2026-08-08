@@ -68,6 +68,10 @@ const ROUTES = [
   // Live (Phase 3, Owner-only)
   ["GET", "/api/v1/admin/live/connections", { owner: true, audit: true, phase: PHASE3 }],
   ["POST", "/api/v1/admin/live/connections", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
+  // The Idempotency-Key is not bookkeeping on this route: it is the identity a
+  // retransmission repeats, and the only thing stopping a timed-out retry from
+  // placing a second real order (FR-LIVE-003).
+  ["POST", "/api/v1/admin/live/orders", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
   ["POST", "/api/v1/admin/live/connections/{connection_id}/start", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
   ["POST", "/api/v1/admin/live/nodes/{node_id}/stop", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
   ["POST", "/api/v1/admin/live/kill-switch/enable", { mutating: true, idem: true, owner: true, audit: true, phase: PHASE3 }],
@@ -96,6 +100,7 @@ const ERROR_CODES = [
   ["INVALID_STRATEGY_PARAMETER", 422], ["UNSUPPORTED_MARKET_CURRENCY", 422],
   ["BACKTEST_CAPACITY_EXCEEDED", 429], ["RESULT_INTEGRITY_FAILED", 422],
   ["LIVE_RECONCILIATION_REQUIRED", 409], ["LIVE_KILL_SWITCH_ENGAGED", 409],
+  ["LIVE_CONNECTION_NOT_CONFIGURED", 409],
   ["RISK_LIMIT_EXCEEDED", 422],
   ["ORDER_STATE_UNKNOWN", 409],
   ["NOT_IMPLEMENTED", 501], ["INTERNAL", 500],
