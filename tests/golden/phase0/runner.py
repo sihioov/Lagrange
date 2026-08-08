@@ -146,8 +146,15 @@ def _adjusted_table(rows: list[dict]) -> pa.Table:
 def materialize_curated_zone(rows: list[dict], curated_root: Path) -> None:
     """Writes the deterministic curated parquet partitions (documented layout)."""
     bars_table = _bars_table(rows)
+    # `split` with a cumulative factor of 1.0, which is exactly what this
+    # series is: split-adjusted, over synthetic data that has no corporate
+    # actions to adjust for. The earlier value here was "NONE", which is not
+    # one of the two names the documented contract defines
+    # (crates/market-data/src/curate/adjust.rs: `split` | `total_return`), so
+    # the Rust reader rejected the file the Python writer had just produced.
+    # Nothing noticed because nothing on the Rust side had ever read it.
     adj_table = _adjusted_table(
-        [{**r, "adjustment_kind": "NONE", "adjustment_factor": 100_000_000,
+        [{**r, "adjustment_kind": "split", "adjustment_factor": 100_000_000,
           "adjustment_events": "[]"} for r in rows]
     )
     seen: set[tuple[str, str]] = set()

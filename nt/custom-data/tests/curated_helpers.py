@@ -133,10 +133,17 @@ def bars_table(rows: list[dict]) -> pa.Table:
 
 
 def adjusted_rows(bars: list[dict]) -> list[dict]:
-    """Adjusted rows: identical bars with cumulative factor 1.0 (scale-8)."""
+    """Adjusted rows: identical bars with cumulative factor 1.0 (scale-8).
+
+    `split`, not "NONE": this module claims to reproduce the documented
+    curated schema, and the contract defines exactly two adjustment kinds
+    (`split` | `total_return`, crates/market-data/src/curate/adjust.rs). A
+    fixture asserting a schema while writing a value that schema rejects is
+    not a fixture of that schema.
+    """
     out = []
     for row in bars:
-        out.append({**row, "adjustment_kind": "NONE", "adjustment_factor": 100_000_000,
+        out.append({**row, "adjustment_kind": "split", "adjustment_factor": 100_000_000,
                     "adjustment_events": "[]"})
     return out
 
