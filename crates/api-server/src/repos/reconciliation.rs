@@ -188,3 +188,33 @@ impl ReconciliationRepo {
         })
     }
 }
+
+/// Translates readiness into the Risk Gateway's check-5 input.
+///
+/// The ONLY mapping between the two, so the reconciler and the gate cannot
+/// drift apart. Each arm is a deliberate choice about how a denial is graded,
+/// because `snapshot::Reconciliation::Unknown` denies as `InputUnavailable`,
+/// which §15.3 grades CRITICAL:
+///
+/// * `Ready`   → `Green`. Trading permitted.
+/// * `Blocked` → `NotGreen`. A real, known difference: a policy denial
+///   (WARNING), not an incident. Someone must resolve it, but the system is
+///   working exactly as designed.
+/// * `Running` → `NotGreen` rather than `Unknown`. We DO know the state — a
+///   run is in progress — so this is not an absence of information, and
+///   paging CRITICAL every time a scheduled reconciliation overlaps an order
+///   would be alarm noise that trains people to ignore the grade.
+/// * `NeverReconciled` → `Unknown`, and therefore CRITICAL. This one IS an
+///   absence of information, and it is the state a fresh install, a restored
+///   backup, and a crashed-before-first-run process all land in. Waking
+///   someone for it is correct: an account that has never been reconciled has
+///   no established relationship to the broker at all, and that is exactly the
+///   situation FR-LIVE-004 exists to stop.
+pub fn gate_input(readiness: &Readiness) -> kis_client::reconciliation::GateReconciliation {
+    use kis_client::reconciliation::GateReconciliation;
+    match readiness {
+        Readiness::Ready { .. } => GateReconciliation::Green,
+        Readiness::Blocked { .. } | Readiness::Running { .. } => GateReconciliation::NotGreen,
+        Readiness::NeverReconciled => GateReconciliation::Unknown,
+    }
+}

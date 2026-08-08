@@ -220,3 +220,55 @@ async fn reconciliation_runs_are_scoped_per_connection() {
         "a different connection has its own readiness"
     );
 }
+
+#[tokio::test]
+async fn reconciliation_maps_readiness_onto_the_gate_input_exactly_once() {
+    use api_server::repos::reconciliation::gate_input;
+    use kis_client::reconciliation::GateReconciliation;
+
+    // The single mapping between readiness and Risk Gateway check 5. Two
+    // mappings, or none, would let the reconciler and the gate disagree about
+    // whether trading is allowed.
+    let run_id = Uuid::new_v4();
+    assert_eq!(
+        gate_input(&Readiness::Ready { run_id }),
+        GateReconciliation::Green
+    );
+    assert_eq!(
+        gate_input(&Readiness::Blocked {
+            run_id,
+            mismatch_count: 2
+        }),
+        GateReconciliation::NotGreen
+    );
+
+    // Running is NOT Unknown. We know the state -- a run is in progress -- so
+    // it is a policy denial (WARNING), not an absence of information. Grading
+    // every overlap of a scheduled run with an order as CRITICAL would be
+    // alarm noise that trains people to ignore the grade.
+    assert_eq!(
+        gate_input(&Readiness::Running { run_id }),
+        GateReconciliation::NotGreen
+    );
+
+    // NeverReconciled IS an absence of information, and deliberately CRITICAL:
+    // an account with no established relationship to the broker is the exact
+    // situation FR-LIVE-004 exists to stop.
+    assert_eq!(
+        gate_input(&Readiness::NeverReconciled),
+        GateReconciliation::Unknown
+    );
+
+    // Nothing but Ready permits trading, on either side of the mapping.
+    for r in [
+        Readiness::Blocked {
+            run_id,
+            mismatch_count: 1,
+        },
+        Readiness::Running { run_id },
+        Readiness::NeverReconciled,
+    ] {
+        assert!(!r.may_trade());
+        assert_ne!(gate_input(&r), GateReconciliation::Green);
+    }
+}

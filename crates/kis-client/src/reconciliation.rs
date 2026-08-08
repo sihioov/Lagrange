@@ -378,3 +378,23 @@ mod tests {
         assert!(!decimal_eq("100", "-100"));
     }
 }
+
+/// How reconciliation state reaches the Risk Gateway's check 5.
+///
+/// Deliberately a distinct type from `risk_gateway::snapshot::Reconciliation`
+/// rather than a re-export: `kis-client` must not depend on `risk-gateway`
+/// (the dependency runs the other way, through the approval token), and a
+/// shared type would couple two crates that should only agree on three
+/// values. `api_server::repos::reconciliation::gate_input` is the single
+/// place that produces one, and the api-server converts it to the gateway's
+/// own enum at the snapshot boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateReconciliation {
+    Green,
+    NotGreen,
+    /// No information at all — never reconciled. Denies as an INPUT failure,
+    /// graded CRITICAL, because an account with no established relationship
+    /// to the broker is an incident rather than a policy outcome.
+    Unknown,
+}
