@@ -3,7 +3,10 @@
 # (plan Todo 34). POSIX/CI twin of scripts/qa/failure-suite.ps1.
 #
 # Covers design §17 "Failure Injection" and the §16 fail-closed table, restricted
-# to what Phase 2 owns (the KIS/WebSocket rows are Phase 3, Todos 36-40).
+# Two lanes. `--phase 2` covers what Paper and recovery own; `--phase 3` covers
+# the KIS and Live rows, which were deliberately left empty until Todos 36-40
+# existed to be injected into. A suite that had shipped Phase 3 scenarios
+# earlier would have been asserting against code that was not there.
 #
 #   F1  DB 일시 장애                 api-server  failure_db_outage_*
 #   F2  워커 강제 종료 / OOM          job-queue   worker_death / zombie / retry_exhaustion
@@ -55,7 +58,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ "$phase" = "2" ] || { echo "USAGE: --phase 2 is required (Phase 3 faults land with Todos 36-40)" >&2; exit 2; }
+case "$phase" in
+  2|3) ;;
+  *) echo "USAGE: --phase {2|3} is required" >&2; exit 2 ;;
+esac
 command -v docker >/dev/null 2>&1 || { echo "ENV ERROR: docker not found on PATH" >&2; exit 2; }
 command -v cargo  >/dev/null 2>&1 || { echo "ENV ERROR: cargo not found on PATH" >&2; exit 2; }
 mkdir -p "$evidence_dir"
@@ -72,13 +78,23 @@ export DATABASE_URL="postgres://postgres:lagrange@127.0.0.1:${qa_port}/postgres"
 
 scenarios=0
 failed=0
+skipped_n=0
 results=""
 
 record() { # record <id> <name> <result> <detail>
   results="$results
 $1|$2|$3|$4"
   printf 'SCENARIO %-3s %-34s = %-6s %s\n' "$1" "$2" "$3" "$4"
-  [ "$3" = "PASS" ] || failed=$((failed+1))
+  # A SKIP is NOT a failure. It means an external prerequisite is absent -- a
+  # backup set that has to be built first -- and counting it as failed made the
+  # INCOMPLETE verdict below UNREACHABLE, so a suite missing one prerequisite
+  # reported itself as broken. That is the same "an external block reported as
+  # a defect" confusion the phase gates take such care to avoid.
+  case "$3" in
+    PASS) ;;
+    SKIP) skipped_n=$((skipped_n+1)) ;;
+    *)    failed=$((failed+1)) ;;
+  esac
   scenarios=$((scenarios+1))
 }
 
@@ -112,12 +128,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "== Phase 2 failure suite =="
+echo "== Phase $phase failure suite =="
 echo "   QA database: 127.0.0.1:$qa_port (disposable)"
 if ! qc up -d --wait qa-db >/dev/null 2>&1; then
   echo "ENV ERROR: the QA database did not become healthy" >&2
   exit 2
 fi
+
+if [ "$phase" = "2" ]; then
 
 # --- F1 DB 일시 장애 ----------------------------------------------------------
 run_tests F1 "DB transient outage" f1-db-outage.txt \
@@ -179,6 +197,65 @@ if [ -n "${LAGRANGE_QA_BACKUP_SET:-}" ] && [ -n "${LAGRANGE_QA_BACKUP_SIDECAR:-}
 else
   record F8 "restore failure drills" SKIP \
     "set LAGRANGE_QA_BACKUP_SET and _SIDECAR (build one with scripts/backup/create.sh)"
+fi
+
+fi
+
+if [ "$phase" = "3" ]; then
+
+# --- L1 KIS 429 / 500 / timeout -----------------------------------------------
+# The transport rows of design §17. A 429 must back off rather than hammer, a
+# 500 must not be mistaken for a rejection, and a TIMEOUT must not be treated
+# as either -- that last one is the whole of AT-09.
+run_tests L1 "rate limit backs off" l1-rate-limit.txt \
+  -p kis-client --lib rate_limit
+run_tests L1b "transient errors retry, ambiguous ones do not" l1b-retry.txt \
+  -p kis-client --lib retry
+
+# --- L2 타임아웃 -> UNKNOWN ----------------------------------------------------
+# A timeout proves NOTHING. Resubmitting on one places a second real order
+# against an account that may already hold the first.
+run_tests L2 "timeout becomes UNKNOWN, never a retry" l2-unknown.txt \
+  -p kis-client --test live_order_state unknown
+run_tests L2b "one intent yields at most one order" l2b-one-order.txt \
+  -p kis-client --test live_order_state at_most_one
+
+# --- L3 WebSocket 유실 ---------------------------------------------------------
+# A dropped socket means fills may have been missed. The gap is closed by
+# reconciliation, not by hoping the socket catches up.
+run_tests L3 "missed fills are found by reconciliation" l3-websocket-gap.txt \
+  -p kis-client --test reconciliation a_missing_fill
+run_tests L3b "a resend moves neither state nor ledger" l3b-resend.txt \
+  -p kis-client --test live_order_state duplicate_and_stale_fills
+
+# --- L4 중복 / 순서역전 이벤트 (Live) -------------------------------------------
+run_tests L4 "cumulative fills are order-insensitive" l4-out-of-order.txt \
+  -p kis-client --test live_order_state cumulative
+run_tests L4b "a duplicate fill never reaches the ledger twice" l4b-duplicate-fill.txt \
+  -p portfolio-model --test live_order_state duplicate
+
+# --- L5 DB 쓰기 실패 -> 신규 주문 차단 ------------------------------------------
+# §16. A decision that cannot be recorded must not authorise an order: after a
+# restart there would be nothing to reconcile against.
+run_tests L5 "an unrecordable decision denies" l5-db-write-fail.txt \
+  -p risk-gateway a_failed_write_denies
+run_tests L5b "one decision per intent, append-only" l5b-append-only.txt \
+  -p api-server --test risk_store
+
+# --- L6 대사 불일치 -> 거래 차단 ------------------------------------------------
+run_tests L6 "an unexplained mismatch blocks" l6-mismatch.txt \
+  -p kis-client --test reconciliation _blocks
+run_tests L6b "readiness gates the gate" l6b-readiness.txt \
+  -p api-server --test reconciliation_store
+
+# --- L7 Kill Switch -------------------------------------------------------------
+run_tests L7 "kill switch blocks, and cannot be lifted unreconciled" l7-kill-switch.txt \
+  -p api-server --test live_rbac kill_switch
+
+# --- L8 재시작 -> 대사 전 거래 불가 ---------------------------------------------
+run_tests L8 "a restarted node cannot trade until reconciled" l8-restart.txt \
+  -p risk-gateway reproduced_exactly_after_a_restart
+
 fi
 
 # --- correlation-linked audit -------------------------------------------------
@@ -248,19 +325,19 @@ fi
 # --- verdict -------------------------------------------------------------------
 echo
 skipped="$(printf '%s\n' "$results" | awk -F'|' '$3=="SKIP"' | wc -l | tr -d ' ')"
-passed=$(( scenarios - failed ))
+passed=$(( scenarios - failed - skipped ))
 printf 'SCENARIOS: %d passed, %d failed, %d skipped (of %d)\n' \
-  "$((passed - skipped))" "$failed" "$skipped" "$scenarios"
+  "$passed" "$failed" "$skipped" "$scenarios"
 
 if [ "$failed" -ne 0 ]; then
-  echo "VERDICT: PHASE2_FAULTS_FAILED"
+  echo "VERDICT: PHASE${phase}_FAULTS_FAILED"
   exit 1
 fi
 if [ "$skipped" -ne 0 ]; then
   # A skip is not a pass. The suite reports a distinct verdict so a partial run
   # can never be quoted as full Phase 2 fault coverage.
-  echo "VERDICT: PHASE2_FAULTS_INCOMPLETE"
+  echo "VERDICT: PHASE${phase}_FAULTS_INCOMPLETE"
   exit 0
 fi
-echo "VERDICT: PHASE2_FAULTS_PASSED"
+echo "VERDICT: PHASE${phase}_FAULTS_PASSED"
 exit 0
