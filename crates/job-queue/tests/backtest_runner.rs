@@ -421,12 +421,28 @@ impl StrategyResolver for BaselineResolver {
 /// size threshold would be a heuristic standing in for the number the worker
 /// already states, and the whole point of these tests is that "it produced a
 /// file" is not the same claim as "it produced results".
-fn reported_rows(scratch: &std::path::Path, artifact_type: &str) -> Option<u64> {
+fn status_of(scratch: &std::path::Path) -> Option<serde_json::Value> {
     let status_path = walk(scratch)
         .into_iter()
         .find(|p| p.ends_with("status.json"))?;
     let raw = std::fs::read_to_string(&status_path).ok()?;
-    let status: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// The normalized result the worker published, which carries fee AMOUNTS.
+///
+/// `status.json` reports only row counts, and a fees artifact holding one row
+/// of zero is what the uncharged version produced -- so anything asserting
+/// costs has to read the values.
+fn normalized_result(scratch: &std::path::Path) -> Option<serde_json::Value> {
+    let path = walk(scratch)
+        .into_iter()
+        .find(|p| p.ends_with("result.json"))?;
+    serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()
+}
+
+fn reported_rows(scratch: &std::path::Path, artifact_type: &str) -> Option<u64> {
+    let status = status_of(scratch)?;
     status
         .get("artifacts")?
         .as_array()?
@@ -480,6 +496,69 @@ async fn a_baseline_backtest_produces_orders_rather_than_an_empty_success() {
              is the silent failure this test exists to catch"
         );
     }
+
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn a_fill_is_charged_the_profile_the_runner_resolved() {
+    // Backtests used to report zero fees on every fill, so an equity curve
+    // was the one a strategy would have earned paying nothing. Nothing
+    // complained: the normalizer, the cash ledger, the fees artifact and the
+    // metrics all consumed the zeros.
+    //
+    // The FEES artifact is what proves it now. A non-empty one can only come
+    // from a fill that was actually charged, and the cash ledger identity
+    // (`cash == initial - fills - fees`) is checked by the normalizer on the
+    // way out -- so a run that charged fees but did not pay them fails before
+    // it is published.
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
+    let owner = seed_owner(&db.pool).await;
+    submit_backtest(&queue, owner).await.expect("submit");
+
+    let resolver = BaselineResolver {
+        strategy_id: "buy_and_hold",
+        strategy_path: "strategies.buy_and_hold.adapter:BuyAndHoldAdapter",
+        config_path: "strategies.buy_and_hold.adapter:BuyAndHoldConfig",
+        parameters: None,
+    };
+    let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
+        .await
+        .expect("runner");
+    assert!(
+        matches!(outcome, Outcome::Succeeded { .. }),
+        "the run must survive the ledger check with fees charged: {outcome:?}"
+    );
+
+    // The row COUNT proves nothing: a fees artifact with one row and a zero
+    // amount is exactly what the broken version produced. The AMOUNT is the
+    // assertion, and it is pinned to arithmetic done by hand rather than to
+    // whatever the code happens to emit:
+    //
+    //   notional   = 9700 x 102502400 / 10_000 = 99,427,328 KRW
+    //   commission = max(99,427,328 x 0.00015, 1,000) = 14,914.0992 KRW
+    //
+    // A rate that drifts, a min_commission that stops applying, or a profile
+    // that silently resolves to something else all fail here.
+    let result = normalized_result(scratch.path()).expect("result.json");
+    let commission = result["fees"][0]["commission"]["amount"]
+        .as_str()
+        .expect("a fee entry with an amount");
+    assert_eq!(
+        commission, "14914.0992",
+        "the fill was not charged what the resolved profile says it costs"
+    );
+    let total_cost = result["metrics"]["total_cost"]
+        .as_f64()
+        .expect("metrics report a total cost");
+    assert!(
+        total_cost > 0.0,
+        "metrics report {total_cost} in costs -- a strategy's returns would be          the ones it earned paying nothing"
+    );
 
     db.drop_db().await;
 }

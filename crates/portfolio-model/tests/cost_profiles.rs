@@ -267,3 +267,54 @@ proptest! {
         prop_assert!(t_hi.amount() >= t_lo.amount());
     }
 }
+
+// ---------------------------------------------------------------------------
+// Cross-language pin.
+//
+// Backtest fills are produced inside NautilusTrader, where this model cannot
+// reach them, so `nt/strategies/_costs.py` mirrors the formula. Two
+// implementations of one formula drift unless something holds them to the
+// same answers.
+//
+// Every case below is asserted with the identical inputs and the identical
+// expected value in `nt/strategies/tests/test_costs.py`. A change on either
+// side that is not made on both fails here or there.
+// ---------------------------------------------------------------------------
+
+/// A price at the domain's scale-4 representation.
+fn price_at(raw: i128) -> Price {
+    Price::from_fixed(FixedPoint::from_i128(raw, 4).expect("scale-4 price")).expect("valid price")
+}
+
+#[test]
+fn the_python_mirror_agrees_on_a_normal_commission() {
+    // 9700 x 10250.24 = 99,427,328 KRW; x 0.00015 = 14,914.0992.
+    let profile = CostProfile::krx_etf_default().expect("profile");
+    let cost = profile
+        .estimate(Side::Buy, &qty(9700), &price_at(102_502_400))
+        .expect("estimate");
+    assert_eq!(cost.commission.amount().to_string(), "14914.0992");
+    assert_eq!(cost.tax.amount().to_string(), "0.0000");
+}
+
+#[test]
+fn the_python_mirror_agrees_that_a_small_trade_pays_the_minimum() {
+    // 100 x 1000 = 100,000 KRW; x 0.00015 = 15 KRW, under the 1,000 floor.
+    let profile = CostProfile::krx_etf_default().expect("profile");
+    let cost = profile
+        .estimate(Side::Buy, &qty(100), &price_at(10_000_000))
+        .expect("estimate");
+    assert_eq!(cost.commission.amount().to_string(), "1000.0000");
+}
+
+#[test]
+fn the_python_mirror_agrees_on_a_sell_tax_when_one_is_configured() {
+    // 99,427,328 x 0.0018 = 178,969.1904. The ETF default is 0%, so this
+    // proves the branch rather than the setting.
+    let profile =
+        CostProfile::custom("0.00015", "1000", "0.0018", 10, "100000", "0.005").expect("profile");
+    let cost = profile
+        .estimate(Side::Sell, &qty(9700), &price_at(102_502_400))
+        .expect("estimate");
+    assert_eq!(cost.tax.amount().to_string(), "178969.1904");
+}
