@@ -61,10 +61,10 @@ pub struct NewBrokerConnection {
     pub secret_ref: String,
 }
 
-const CONNECTION_COLUMNS: &str = "id, label, profile, account_no_masked, account_product_code, \
-     app_key_ref, secret_ref, status, created_at, updated_at";
-const NODE_COLUMNS: &str =
-    "id, connection_id, status, process_id, started_at, stopped_at, stop_reason";
+// Column lists are written inline in each query rather than shared as
+// constants: sqlx's compile-time SQL audit rejects an interpolated fragment,
+// so a shared constant could only ever be checked by a test that the queries
+// themselves do not read — assurance that looks real and is not.
 
 #[derive(Debug, Clone)]
 pub struct LiveRepo {
@@ -228,20 +228,5 @@ impl LiveRepo {
         .map_err(TenancyError::from_sqlx)?;
         tx.commit().await.map_err(TenancyError::from_sqlx)?;
         Ok(now)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_column_lists_disclose_no_credential_value() {
-        // A guard on the SELECT lists themselves: `account_ref` (which points
-        // at the full account number) is deliberately NOT read back, so it
-        // cannot reach a DTO by someone adding a field later.
-        assert!(!CONNECTION_COLUMNS.contains("account_ref"));
-        assert!(CONNECTION_COLUMNS.contains("account_no_masked"));
-        assert!(NODE_COLUMNS.contains("connection_id"));
     }
 }
