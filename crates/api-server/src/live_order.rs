@@ -1,0 +1,252 @@
+//! Submitting a Live order: the orchestration that strings the pieces together
+//! (plan Todos 38-42).
+//!
+//! Every piece already existed and none of them called each other. This is the
+//! function that does, and it is generic over [`Transport`] so the whole path
+//! is testable against the simulator without credentials or a network.
+//!
+//! # The order of operations IS the safety
+//!
+//!   1. CLAIM the intent, keyed on the client's `Idempotency-Key`. An intent
+//!      that already exists returns its current state and goes no further --
+//!      re-entering the gate would hit 0018's one-decision-per-intent index,
+//!      report `NotPersisted` (CRITICAL), and page an operator for a benign
+//!      retry while telling the caller the order was refused when it had
+//!      actually been accepted.
+//!   2. GATE it. The approval is an unforgeable, single-use token that only a
+//!      gate run which BOTH approved and durably recorded can mint.
+//!   3. RECORD the approval, consuming the token. From here the intent is
+//!      submittable and the token cannot be used again.
+//!   4. SUBMIT, recording `SUBMITTING` BEFORE the request leaves. A crash
+//!      between the two leaves an intent that a startup sweep will find,
+//!      rather than one that looks untouched.
+//!   5. RECORD what came back.
+//!
+//! # Dry run
+//!
+//! Todo 42 asks for a staged `dry-run -> shadow -> low-value` rollout. A dry
+//! run here evaluates the twelve checks and reports what WOULD happen, and
+//! deliberately writes NOTHING -- no intent, no risk decision, no events.
+//!
+//! That is not laziness, it is the only correct shape. Recording a decision
+//! would consume the intent's one permitted gate decision (0018), so a real
+//! submission of the same order could never be authorised afterwards; and
+//! creating an intent row would leave reconciliation looking for an order at
+//! the broker that was never going to be sent. A dry run is a PREDICTION, and
+//! a prediction that mutates the world is not one.
+
+use crate::error::{TenancyError, TenancyResult};
+use crate::repos::order_intents::{Claim, NewOrderIntent, OrderIntentRepo};
+use crate::repos::risk::RiskRepo;
+use kis_client::mapping::{OrderRequest, OrderSide, OrderType};
+use kis_client::order_state::Event;
+use kis_client::rest::RestClient;
+use kis_client::retry::Sleeper;
+use kis_client::transport::Transport;
+use risk_gateway::{Decision, RiskLimits, RiskSnapshot};
+
+/// Whether the order is rehearsed or actually sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Evaluate and report; write nothing, send nothing.
+    DryRun,
+    /// The real thing.
+    Live,
+}
+
+/// What a submission attempt produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Submission {
+    /// A dry run. Nothing was written and nothing was sent.
+    Rehearsed {
+        would_submit: bool,
+        decision: Box<Decision>,
+    },
+    /// The intent already existed; this request changed nothing. The state is
+    /// whatever the FIRST request achieved.
+    AlreadySubmitted { intent_ref: String, state: String },
+    /// The gate refused. No order exists.
+    Denied {
+        intent_ref: String,
+        reason: String,
+        severity: String,
+    },
+    /// The broker acknowledged.
+    Accepted {
+        intent_ref: String,
+        broker_order_no: String,
+    },
+    /// The submission timed out. The broker MAY hold this order; it must be
+    /// resolved by a lookup and must never be resubmitted.
+    Unresolved {
+        intent_ref: String,
+        client_order_id: String,
+    },
+}
+
+/// Everything a submission needs that is not already in a repo.
+pub struct SubmitRequest {
+    pub intent: NewOrderIntent,
+    pub snapshot: RiskSnapshot,
+    pub limits: RiskLimits,
+    pub mode: Mode,
+}
+
+/// Runs the whole path.
+///
+/// Takes the repos and the broker client by reference so a caller can supply a
+/// simulator; nothing here knows or cares which it has.
+pub async fn submit<T: Transport, S: Sleeper>(
+    intents: &OrderIntentRepo,
+    risk: &RiskRepo,
+    broker: &RestClient<T, S>,
+    request: SubmitRequest,
+) -> TenancyResult<Submission> {
+    // --- dry run: decide, report, touch nothing ------------------------------
+    if request.mode == Mode::DryRun {
+        let decision = risk_gateway::evaluate(&request.snapshot, &request.limits);
+        return Ok(Submission::Rehearsed {
+            would_submit: decision.is_approved(),
+            decision: Box::new(decision),
+        });
+    }
+
+    // --- 1. claim ------------------------------------------------------------
+    let claim = intents.claim(request.intent.clone()).await?;
+    let intent_ref = claim.row().intent_ref.clone();
+    if let Claim::Existing(row) = claim {
+        // The retry path. Answer from what already happened rather than doing
+        // it again.
+        return Ok(Submission::AlreadySubmitted {
+            intent_ref: row.intent_ref,
+            state: row.state,
+        });
+    }
+
+    // --- 2. gate -------------------------------------------------------------
+    let mut snapshot = request.snapshot;
+    // The gate must assess THIS intent, not whatever the caller's snapshot
+    // happened to name.
+    snapshot.intent.intent_ref = intent_ref.clone();
+    let outcome = risk_gateway::evaluate_and_record(&snapshot, &request.limits, risk).await;
+    let decision = outcome.decision().clone();
+
+    let Some(approval) = outcome.into_approval() else {
+        // Record the denial on the intent so its history explains itself, then
+        // stop. No token was minted, so nothing below could run anyway.
+        let reason = decision
+            .reason
+            .map_or("UNKNOWN", |r| r.as_str())
+            .to_string();
+        let _ = intents
+            .append(
+                &intent_ref,
+                &Event::RiskDenied {
+                    reason: reason.clone(),
+                },
+            )
+            .await;
+        return Ok(Submission::Denied {
+            intent_ref,
+            reason,
+            severity: decision.severity().to_string(),
+        });
+    };
+
+    // --- 3. record the approval, consuming the token --------------------------
+    intents.record_approval(&intent_ref, approval).await?;
+
+    // --- 4. submit -----------------------------------------------------------
+    // SUBMITTING before the request leaves, so a crash mid-flight leaves an
+    // intent the startup sweep will find.
+    intents
+        .append(&intent_ref, &Event::SubmissionStarted)
+        .await?;
+
+    let order = OrderRequest {
+        client_order_id: intent_ref.clone(),
+        instrument_id: request.intent.instrument_id.clone(),
+        side: if request.intent.side.eq_ignore_ascii_case("SELL") {
+            OrderSide::Sell
+        } else {
+            OrderSide::Buy
+        },
+        order_type: if request.intent.price.is_some() {
+            OrderType::Limit
+        } else {
+            OrderType::Market
+        },
+        quantity: request
+            .intent
+            .quantity
+            .split('.')
+            .next()
+            .and_then(|w| w.parse::<u64>().ok())
+            .ok_or_else(|| TenancyError::InvalidState("quantity is not a whole number".into()))?,
+        price: request.intent.price.clone(),
+    };
+
+    match broker.submit_order(&order).await {
+        Ok(ack) => {
+            intents.append(&intent_ref, &Event::SubmissionSent).await?;
+            intents
+                .append(
+                    &intent_ref,
+                    &Event::BrokerAccepted {
+                        broker_order_no: ack.broker_order_no.clone(),
+                    },
+                )
+                .await?;
+            Ok(Submission::Accepted {
+                intent_ref,
+                broker_order_no: ack.broker_order_no,
+            })
+        }
+        Err(err) if is_ambiguous(&err) => {
+            // The one outcome that must never be reported as a failure: the
+            // broker may hold this order. UNKNOWN is recorded so nothing can
+            // resubmit it, and only a lookup settles it.
+            intents
+                .append(&intent_ref, &Event::SubmissionTimedOut)
+                .await?;
+            Ok(Submission::Unresolved {
+                intent_ref: intent_ref.clone(),
+                client_order_id: intent_ref,
+            })
+        }
+        Err(err) => {
+            // The request never left, or the broker refused outright. Either
+            // way no order exists, so the intent terminates as rejected and a
+            // retry is a NEW intent with a new gate run.
+            let reason = format!("{err}");
+            intents
+                .append(
+                    &intent_ref,
+                    &Event::BrokerRejected {
+                        reason: reason.clone(),
+                    },
+                )
+                .await?;
+            Ok(Submission::Denied {
+                intent_ref,
+                reason,
+                severity: "WARNING".to_string(),
+            })
+        }
+    }
+}
+
+/// Whether an error leaves the order's existence unresolved.
+///
+/// A free function rather than an inline match so the question is asked in one
+/// place. Getting this wrong in either direction is the whole hazard: treating
+/// ambiguity as failure invites a resubmission that doubles a live position,
+/// and treating a clean failure as ambiguity strands an order that never
+/// existed.
+fn is_ambiguous(err: &kis_client::rest::SubmitError) -> bool {
+    match err {
+        kis_client::rest::SubmitError::Broker(k) => k.is_ambiguous(),
+        // The guard refused before anything was sent. Nothing is unresolved.
+        kis_client::rest::SubmitError::Guard(_) => false,
+    }
+}
