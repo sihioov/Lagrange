@@ -54,3 +54,22 @@ debug = "line-tables-only"
 # inheritance being remembered, since these are the profiles that dominate.
 [profile.test]
 debug = "line-tables-only"
+
+# Dependencies carry NO debug info.
+#
+# `line-tables-only` above shrank the binaries and did nothing to the PDBs,
+# because on MSVC the .pdb is written whenever debug info is on at all. The
+# result, measured on 2026-08-09: 59 GB of the 95 GB target directory was
+# .pdb, and a single test binary linking polars wrote 790 MB of symbols while
+# a proc-macro crate wrote 1 MB. The symbols are almost entirely polars and
+# its tree, reached through selector -> factor-engine.
+#
+# Nobody steps through polars. What the suites consume is a backtrace naming
+# a file and line in THIS workspace, and the members keep `line-tables-only`
+# for exactly that -- only third-party code goes dark. Set this to 1 if you
+# ever do need to see inside a dependency frame.
+[profile.dev.package."*"]
+debug = 0
+
+[profile.test.package."*"]
+debug = 0
