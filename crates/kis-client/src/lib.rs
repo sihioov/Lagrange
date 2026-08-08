@@ -19,6 +19,7 @@ pub mod auth;
 pub mod clock;
 pub mod error;
 pub mod execution;
+pub mod idempotency;
 pub mod rate_limit;
 pub mod secret;
 
@@ -26,5 +27,6 @@ pub use auth::{AccessToken, TokenIssuer, TokenManager};
 pub use clock::{Clock, SystemClock, check_skew};
 pub use error::{KisError, RequestKind};
 pub use execution::{Applied, ExecutionReport, ExecutionTracker};
+pub use idempotency::{Claim, InMemoryIntentStore, IntentState, IntentStore, guard_submission};
 pub use rate_limit::{BucketKey, Permit, Quota, RateLimiter};
 pub use secret::{AccountNo, CredentialError, CredentialRef, CredentialSource, Secret};
