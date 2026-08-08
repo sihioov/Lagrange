@@ -103,7 +103,16 @@ test.describe("Live for the Owner", () => {
     page,
     request,
   }) => {
-    await setScenario(request, { liveMfa: "fresh", role: "owner", user: "u1" });
+    // `reconciliation: "green"` because since Todo 41 disengaging also
+    // requires a green reconciliation run. That precondition has its own
+    // coverage in live-kill-switch.spec.ts; here it is simply satisfied so
+    // this test keeps testing what it is about -- the stated reason.
+    await setScenario(request, {
+      liveMfa: "fresh",
+      reconciliation: "green",
+      role: "owner",
+      user: "u1",
+    });
     await page.goto("/live");
 
     const form = page.getByRole("form", { name: "Disengage kill switch" });

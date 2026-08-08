@@ -13,6 +13,16 @@ const defaultScenario = Object.freeze({
   paperAccount: "present",
   paperEntitlement: "active",
   liveMfa: "fresh",
+  // Never reconciled by default, matching `Readiness::NeverReconciled`: a
+  // fresh install, a restored backup and a crashed-before-first-run process
+  // all land there, and all of them must block. A test that wants Live
+  // re-enabled has to say so, which is the same order of events an operator
+  // faces.
+  //
+  // There is deliberately no `killSwitch` key: the page has no read route for
+  // the state yet and renders ENGAGED unconditionally, so a scenario key would
+  // imply a capability the product does not have.
+  reconciliation: "never",
   parity: "match",
   recommendation: "fresh",
   tradePagination: "normal",

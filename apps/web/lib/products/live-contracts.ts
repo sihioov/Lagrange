@@ -79,6 +79,12 @@ export function liveUnavailableReason(code: string): string {
       return "Live controls are restricted to the Owner.";
     case "LIVE_KILL_SWITCH_ENGAGED":
       return "The Live kill switch is engaged. No node can start until an Owner disengages it.";
+    case "LIVE_RECONCILIATION_REQUIRED":
+      // Names the next action rather than the refusal. An operator reading
+      // "reconciliation required" while looking at a kill-switch page has to
+      // guess what to do; the whole point of the block is that the books
+      // disagree with the broker and someone must resolve that first.
+      return "Live cannot be re-enabled until a reconciliation run finishes green. Run reconciliation and resolve any mismatch, then disengage.";
     default:
       return "Live controls are unavailable for this session.";
   }

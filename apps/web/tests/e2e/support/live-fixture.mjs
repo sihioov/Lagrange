@@ -69,13 +69,52 @@ export function liveResponse(request) {
       status: 200,
     };
   }
+  // DISENGAGING additionally requires a green reconciliation (FR-LIVE-004).
+  // The asymmetry below is the product's, not the fixture's: engaging is never
+  // refused, because a precondition on stopping Live is a precondition that
+  // fails at the worst possible moment.
   if (method === "POST" && pathname === "/api/v1/admin/live/kill-switch/disable") {
+    const readiness = readinessFor(scenario);
+    if (readiness !== "READY") {
+      return {
+        body: {
+          error: {
+            code: "LIVE_RECONCILIATION_REQUIRED",
+            details: { readiness },
+            message:
+              "Live requires a green reconciliation before the kill switch may be disengaged",
+            request_id: "request-synthetic-live",
+          },
+        },
+        status: 409,
+      };
+    }
     return { body: { engaged: false }, status: 200 };
   }
   if (method === "POST" && pathname === "/api/v1/admin/live/kill-switch/enable") {
     return { body: { engaged: true }, status: 200 };
   }
   return null;
+}
+
+/**
+ * The scenario's reconciliation readiness, in the server's own vocabulary.
+ *
+ * Mirrors `api_server::repos::reconciliation::Readiness::reason`. Only "green"
+ * yields READY — everything else blocks, including a run still in progress,
+ * because "we do not know yet" is not permission.
+ */
+function readinessFor(scenario) {
+  switch (scenario.reconciliation) {
+    case "green":
+      return "READY";
+    case "mismatch":
+      return "RECONCILIATION_MISMATCH";
+    case "running":
+      return "RECONCILIATION_IN_PROGRESS";
+    default:
+      return "NEVER_RECONCILED";
+  }
 }
 
 export const LIVE_FIXTURE_IDS = { CONNECTION_ID };

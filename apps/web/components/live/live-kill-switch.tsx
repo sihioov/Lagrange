@@ -49,12 +49,15 @@ export function LiveKillSwitch({ engaged }: LiveKillSwitchProps) {
       router.refresh();
     } catch (error) {
       if (error instanceof Error) {
-        // A step-up refusal is actionable; say what to do rather than echoing
-        // a code the reader would have to look up.
+        // A step-up or reconciliation refusal is actionable; say what to do
+        // rather than echoing a code the reader would have to look up. Every
+        // other error keeps the server's own message, which is more specific
+        // than anything this component could invent.
         const code = (error as { code?: string }).code ?? "";
+        const actionable = code.startsWith("STEP_UP_") || code === "LIVE_RECONCILIATION_REQUIRED";
         setState({
           kind: "error",
-          message: code.startsWith("STEP_UP_") ? liveUnavailableReason(code) : error.message,
+          message: actionable ? liveUnavailableReason(code) : error.message,
         });
         return;
       }
