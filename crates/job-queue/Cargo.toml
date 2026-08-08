@@ -6,6 +6,13 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# The factor values a baseline backtest decides from. Pulled in so the RUNNER
+# computes them with the same engine the paper and live paths use: a second
+# definition in Python would make a backtest disagree with the behaviour the
+# Paper promotion gate compares it against.
+factor-engine = { path = "../factor-engine" }
+market-data = { path = "../market-data" }
+domain = { path = "../domain" }
 # SQLx 0.9.x is the approved line (plan draft 2026-08-04 line 40; already in
 # Cargo.lock via migration-contract). `json` decodes payload_json into
 # serde_json::Value; `chrono` maps timestamptz columns; `macros` supplies the
