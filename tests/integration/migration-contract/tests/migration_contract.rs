@@ -780,6 +780,144 @@ async fn full_contract_body(
         "data_entitlements.status must be CHECK-enforced"
     );
 
+    // ------------------------------------------------------------------
+    // 12. Risk gateway (0018): one immutable decision per intent.
+    //
+    // Every assertion here corresponds to a claim the migration's comments
+    // make. A gate decision that could be edited, duplicated, or written
+    // half-populated would not be evidence of why an order was allowed, which
+    // is the only reason the row exists.
+    // ------------------------------------------------------------------
+    sqlx::query(
+        "INSERT INTO risk_limits (version, max_symbol_weight_bp, max_order_value, \
+         max_daily_order_value, max_daily_loss, max_data_age_secs) \
+         VALUES ('contract-v1', 3000, 1000000, 5000000, 500000, 300)",
+    )
+    .execute(owner)
+    .await?;
+
+    // A limit set that would deny every order is a misconfiguration, refused
+    // by CHECK exactly as the crate's constructor refuses it.
+    let zero_limit = sqlx::query(
+        "INSERT INTO risk_limits (version, max_symbol_weight_bp, max_order_value, \
+         max_daily_order_value, max_daily_loss, max_data_age_secs) \
+         VALUES ('contract-bad', 3000, 0, 5000000, 500000, 300)",
+    )
+    .execute(owner)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&zero_limit).as_deref(),
+        Some("23514"),
+        "a zero max_order_value must be CHECK-refused"
+    );
+
+    let gate_insert = "INSERT INTO risk_events (owner_user_id, event_type, severity, \
+         intent_ref, correlation_id, limits_version, decision, denied_by_check, reason_code, \
+         evaluated_at) VALUES ($1, 'LIVE_ORDER_GATE', $2, $3, 'corr-1', 'contract-v1', $4, $5, \
+         $6, now())";
+
+    sqlx::query(gate_insert)
+        .bind(uid)
+        .bind("INFO")
+        .bind("intent-contract-1")
+        .bind("APPROVED")
+        .bind(Option::<String>::None)
+        .bind("APPROVED")
+        .execute(&owner_actor)
+        .await?;
+
+    // One decision per intent, enforced by the partial unique index.
+    let duplicate = sqlx::query(gate_insert)
+        .bind(uid)
+        .bind("WARNING")
+        .bind("intent-contract-1")
+        .bind("DENIED")
+        .bind(Some("KILL_SWITCH"))
+        .bind("LIVE_KILL_SWITCH_ENGAGED")
+        .execute(&owner_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        pg_code(&duplicate).as_deref(),
+        Some("23505"),
+        "an intent may carry exactly one gate decision"
+    );
+
+    // A half-populated decision is the shape a partial write would take.
+    let incomplete = sqlx::query(
+        "INSERT INTO risk_events (owner_user_id, event_type, intent_ref, decision) \
+         VALUES ($1, 'LIVE_ORDER_GATE', 'intent-contract-2', 'APPROVED')",
+    )
+    .bind(uid)
+    .execute(&owner_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&incomplete).as_deref(),
+        Some("23514"),
+        "a gate decision missing its limits version or correlation id must be refused"
+    );
+
+    // An approval that names a denying check is self-contradictory.
+    let contradiction = sqlx::query(gate_insert)
+        .bind(uid)
+        .bind("INFO")
+        .bind("intent-contract-3")
+        .bind("APPROVED")
+        .bind(Some("KILL_SWITCH"))
+        .bind("APPROVED")
+        .execute(&owner_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        pg_code(&contradiction).as_deref(),
+        Some("23514"),
+        "an APPROVED decision must not name a denying check"
+    );
+
+    // The constraint applies to gate decisions only: other risk events keep
+    // 0007's shape and need none of these columns.
+    sqlx::query("INSERT INTO risk_events (owner_user_id, event_type) VALUES ($1, 'RATE_LIMIT')")
+        .bind(uid)
+        .execute(&owner_actor)
+        .await?;
+
+    // Append-only, even for the migration owner: the trigger refuses both.
+    let updated = sqlx::query("UPDATE risk_events SET decision = 'DENIED' WHERE intent_ref = $1")
+        .bind("intent-contract-1")
+        .execute(&owner_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        pg_code(&updated).as_deref(),
+        Some("42501"),
+        "a recorded risk decision must not be editable"
+    );
+    let deleted = sqlx::query("DELETE FROM risk_events WHERE intent_ref = $1")
+        .bind("intent-contract-1")
+        .execute(&owner_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        pg_code(&deleted).as_deref(),
+        Some("42501"),
+        "a recorded risk decision must not be deletable"
+    );
+
+    // And `app` -- the role the API actually runs as -- holds no grant to try.
+    for statement in [
+        "UPDATE risk_events SET decision = 'DENIED'",
+        "DELETE FROM risk_events",
+    ] {
+        let denied = sqlx::query(statement).execute(&app).await.unwrap_err();
+        assert_eq!(
+            pg_code(&denied).as_deref(),
+            Some("42501"),
+            "app must hold no mutation grant on risk_events: {statement}"
+        );
+    }
+
     drop(app);
     drop(aw);
     drop(wk);
