@@ -346,3 +346,49 @@ fn reconciliation_a_terminal_intent_is_not_expected_at_the_broker() {
     );
     assert!(out.is_green(), "{:?}", out.mismatches);
 }
+
+#[test]
+fn reconciliation_green_despite_an_in_flight_intent_is_the_callers_hazard() {
+    // A crash mid-submit leaves the intent in SUBMITTING, which is
+    // epistemically identical to UNKNOWN: the broker may or may not hold the
+    // order. Positions and cash can still agree, because the order may never
+    // have landed -- so this pass reports GREEN while the intent is still
+    // unresolved. That is DELIBERATE (flagging every in-flight intent would
+    // flap readiness during the ordinary submission window) and it is a
+    // hazard the caller must close.
+    let (mut local, broker) = agreeing();
+    local.working_intents.push(LocalIntent {
+        intent_ref: "oi-inflight".into(),
+        state: OrderIntentState::Submitting,
+    });
+
+    let out = reconcile(&local, &broker, NOW, MAX_AGE);
+    assert!(
+        out.is_green(),
+        "documented behaviour: an in-flight intent alone does not block"
+    );
+    assert!(
+        out.lookups_required.is_empty(),
+        "nothing to look up until it is swept"
+    );
+
+    // The startup sweep is what makes this safe: SubmissionTimedOut is a legal
+    // transition to UNKNOWN, and a swept intent IS flagged and IS blocking.
+    let swept = OrderIntentState::Submitting
+        .apply(&kis_client::order_state::Event::SubmissionTimedOut)
+        .expect("sweeping an in-flight intent is legal");
+    let swept = match swept {
+        kis_client::order_state::Applied::Moved(s) => s,
+        kis_client::order_state::Applied::NoChange => panic!("the sweep must move"),
+    };
+    assert_eq!(swept, OrderIntentState::Unknown);
+
+    let mut after_sweep = local.clone();
+    after_sweep.working_intents[0].state = swept;
+    let out = reconcile(&after_sweep, &broker, NOW, MAX_AGE);
+    assert!(
+        !out.is_green(),
+        "a swept intent blocks until a lookup settles it"
+    );
+    assert_eq!(out.lookups_required, vec!["oi-inflight".to_string()]);
+}

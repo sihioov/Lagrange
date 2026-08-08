@@ -190,6 +190,31 @@ impl ReconciliationOutcome {
 /// Pure: no clock, no network. `now_secs` is passed so a reconciliation can be
 /// replayed from stored snapshots and reach the same verdict, the same
 /// property the gate and the order machine rely on.
+///
+/// # Caller contract: sweep in-flight intents to `Unknown` FIRST
+///
+/// An intent sitting in `Submitting` or `Submitted` is epistemically
+/// identical to one in `Unknown` — the broker may or may not hold the order —
+/// but only `Unknown` is flagged here, and deliberately so. Flagging every
+/// in-flight intent unconditionally would make a runtime pass catch the
+/// ordinary 200ms submission window and flap readiness between green and
+/// blocked for no reason.
+///
+/// The consequence is a real hazard the caller must close: after a crash
+/// mid-submit, the intent stays `Submitting`, positions and cash may agree
+/// (the order may never have landed), and this function returns GREEN while
+/// `OrderIntentRepo::unresolved()` still lists it — two "may we trade?"
+/// signals disagreeing, which is the exact failure mode this module's single
+/// definition of green exists to prevent.
+///
+/// So a STARTUP pass must sweep first: take `unresolved()`, apply
+/// [`crate::order_state::Event::SubmissionTimedOut`] to every in-flight
+/// intent (a legal transition to `Unknown`), and only then reconcile. The
+/// swept intents are then flagged as [`Mismatch::UnresolvedIntent`] and
+/// demand the broker lookup that can actually settle them. A RUNTIME pass
+/// skips the sweep, because there an in-flight intent is simply young.
+/// `reconciliation_green_despite_an_in_flight_intent_is_the_callers_hazard`
+/// pins this.
 pub fn reconcile(
     local: &LocalAccountSnapshot,
     broker: &BrokerAccountSnapshot,
