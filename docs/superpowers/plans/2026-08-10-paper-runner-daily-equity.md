@@ -240,7 +240,7 @@ Run `git diff --check`, `git status --short`, and inspect the new binary help ou
 
 Change only the Phase 2/§4.3 statements that say the runner and daily equity are absent, record the implementation commit hashes and verification counts, and explicitly leave the external data/auth/KIS blockers and phase-0 approval decisions unchanged.
 
-- [ ] **Step 5: Commit the status update.**
+- [x] **Step 5: Commit the status update.**
 
 ```text
 git add docs/STATUS.md
