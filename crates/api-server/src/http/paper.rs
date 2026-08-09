@@ -510,6 +510,7 @@ pub async fn equity(
                     cash: p.cash,
                     positions_value: p.positions_value,
                     currency: p.currency,
+                    cash_reconciled: p.cash_reconciled,
                 })
                 .collect();
             (StatusCode::OK, Json(PageDto::new(items, next))).into_response()
@@ -586,6 +587,7 @@ pub async fn performance(
             positions_value: row.positions_value,
             currency: row.currency,
             return_pct,
+            cash_reconciled: row.cash_reconciled,
         });
     }
     (

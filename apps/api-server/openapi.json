@@ -5957,7 +5957,8 @@
           "equity",
           "cash",
           "positions_value",
-          "currency"
+          "currency",
+          "cash_reconciled"
         ],
         "properties": {
           "trading_date": {
@@ -5992,6 +5993,10 @@
               "null"
             ],
             "description": "Day-over-day return, computed on read from ledger-derived equity; absent on the first point"
+          },
+          "cash_reconciled": {
+            "type": "boolean",
+            "description": "Whether cash agrees with cash_ledger, the authority, as of this date"
           }
         }
       },
@@ -6343,7 +6348,8 @@
           "equity",
           "cash",
           "positions_value",
-          "currency"
+          "currency",
+          "cash_reconciled"
         ],
         "properties": {
           "trading_date": {
@@ -6362,6 +6368,10 @@
           },
           "currency": {
             "type": "string"
+          },
+          "cash_reconciled": {
+            "type": "boolean",
+            "description": "Whether cash agrees with cash_ledger, the authority, as of this date"
           }
         }
       },

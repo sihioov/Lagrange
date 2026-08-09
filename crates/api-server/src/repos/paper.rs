@@ -39,6 +39,16 @@ pub struct EquityRow {
     pub cash: String,
     pub positions_value: String,
     pub currency: String,
+    /// Whether `cash` agrees with `cash_ledger` as of this date.
+    ///
+    /// `accounts.rs` states the rule this system runs on: "current cash is
+    /// never cached here -- it is always derived by replaying `cash_ledger`".
+    /// `daily_equity.cash` is exactly such a cache, and nothing checked it
+    /// against the authority before serving it. `false` here means this row
+    /// is a stored number nobody has proven agrees with the ledger -- serve
+    /// it, but say so, rather than presenting it with the same confidence as
+    /// a reconciled figure.
+    pub cash_reconciled: bool,
 }
 
 /// Read-only repository over the Paper ledger tables.
@@ -109,6 +119,15 @@ impl PaperRepo {
     }
 
     /// Daily equity points (paginated by trading_date).
+    ///
+    /// `cash_reconciled` is computed against `cash_ledger` AS OF each row's
+    /// own `trading_date` -- the latest ledger balance whose event happened
+    /// on or before that date -- via a lateral join, so a historical point is
+    /// checked against what the ledger said back then, not against today's
+    /// balance. A date with no ledger event yet (impossible for a real
+    /// account, since `AccountRepo::create` seeds the opening deposit
+    /// atomically with the account) reconciles as `false` rather than being
+    /// silently treated as agreeing with nothing.
     pub async fn equity(
         &self,
         actor: &Actor,
@@ -119,14 +138,30 @@ impl PaperRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let sql = match after {
             Some(_) => {
-                "SELECT trading_date, equity::text, cash::text, positions_value::text, currency \
-                 FROM daily_equity WHERE account_id = $1 AND trading_date > $2::date \
-                 ORDER BY trading_date LIMIT $3"
+                "SELECT de.trading_date, de.equity::text, de.cash::text, \
+                        de.positions_value::text, de.currency, \
+                        (cl.balance IS NOT NULL AND cl.balance = de.cash) AS cash_reconciled \
+                 FROM daily_equity de \
+                 LEFT JOIN LATERAL ( \
+                     SELECT balance FROM cash_ledger \
+                     WHERE account_id = de.account_id AND ts::date <= de.trading_date \
+                     ORDER BY seq DESC LIMIT 1 \
+                 ) cl ON true \
+                 WHERE de.account_id = $1 AND de.trading_date > $2::date \
+                 ORDER BY de.trading_date LIMIT $3"
             }
             None => {
-                "SELECT trading_date, equity::text, cash::text, positions_value::text, currency \
-                 FROM daily_equity WHERE account_id = $1 \
-                 ORDER BY trading_date LIMIT $2"
+                "SELECT de.trading_date, de.equity::text, de.cash::text, \
+                        de.positions_value::text, de.currency, \
+                        (cl.balance IS NOT NULL AND cl.balance = de.cash) AS cash_reconciled \
+                 FROM daily_equity de \
+                 LEFT JOIN LATERAL ( \
+                     SELECT balance FROM cash_ledger \
+                     WHERE account_id = de.account_id AND ts::date <= de.trading_date \
+                     ORDER BY seq DESC LIMIT 1 \
+                 ) cl ON true \
+                 WHERE de.account_id = $1 \
+                 ORDER BY de.trading_date LIMIT $2"
             }
         };
         let mut q = sqlx::query_as::<_, EquityRow>(sql).bind(account_id);

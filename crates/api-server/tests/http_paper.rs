@@ -18,7 +18,10 @@ async fn http_paper_accounts_happy() {
             "/api/v1/paper/accounts",
             Some(&h.member),
             true,
-            json!({ "name": "member-paper-1", "currency": "KRW", "initial_cash": "10000000" }),
+            // Matches the daily_equity.cash seeded below, so the fixture's
+            // opening cash_ledger deposit agrees with the ledger authority
+            // and cash_reconciled reads true for the ordinary happy path.
+            json!({ "name": "member-paper-1", "currency": "KRW", "initial_cash": "40000000" }),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::CREATED);
@@ -27,7 +30,7 @@ async fn http_paper_accounts_happy() {
     assert_eq!(body["account_type"], "PAPER");
     assert_eq!(body["name"], "member-paper-1");
     assert_eq!(body["status"], "ACTIVE");
-    assert_eq!(body["initial_cash"], "10000000.0000");
+    assert_eq!(body["initial_cash"], "40000000.0000");
     assert_eq!(body["cost_profile_id"], "KRX_ETF_DEFAULT");
     let account_id = body["id"].as_str().unwrap().to_string();
     assert!(
@@ -100,11 +103,16 @@ async fn http_paper_accounts_happy() {
         ),
     )
     .await;
+    // Dated TODAY (CURRENT_DATE), not a fixed past date: the account's
+    // opening cash_ledger deposit is stamped `now()` by AccountRepo::create,
+    // so an as-of reconciliation against a date before the account existed
+    // would correctly find no ledger event yet and report unreconciled --
+    // truthfully, not as a bug in the check.
     h.seed_tenant(
         &h.member,
         &format!(
             "INSERT INTO daily_equity (id, account_id, owner_user_id, trading_date, equity, cash, positions_value, currency) VALUES \
-             (gen_random_uuid(), '{account_id}', '{owner}', '2026-01-30', 100123456.7890, 40000000.0000, 60123456.7890, 'KRW')",
+             (gen_random_uuid(), '{account_id}', '{owner}', CURRENT_DATE, 100123456.7890, 40000000.0000, 60123456.7890, 'KRW')",
             owner = h.member.user_id
         ),
     )
@@ -148,6 +156,10 @@ async fn http_paper_accounts_happy() {
     let body = Harness::body_json(resp).await;
     let points = body["items"].as_array().expect("equity points");
     assert_eq!(points[0]["equity"], "100123456.7890");
+    assert_eq!(
+        points[0]["cash_reconciled"], true,
+        "the seeded daily_equity.cash matches the account's opening cash_ledger deposit"
+    );
     h.teardown().await;
 }
 
@@ -288,5 +300,77 @@ async fn http_paper_accounts_fuzz_and_duplicate() {
     assert_eq!(status(&resp), StatusCode::BAD_REQUEST);
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "INVALID_PARAMETER");
+    h.teardown().await;
+}
+
+/// `daily_equity.cash` that disagrees with `cash_ledger` is served flagged,
+/// not silently passed through as if it agreed.
+///
+/// `repos::accounts` states the rule this system runs on: "current cash is
+/// never cached here -- it is always derived by replaying `cash_ledger`".
+/// `daily_equity.cash` is exactly such a cache, and until now nothing checked
+/// it against the authority before serving it to a caller.
+#[tokio::test]
+async fn http_paper_equity_flags_cash_that_disagrees_with_the_ledger() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let resp = h
+        .post(
+            "/api/v1/paper/accounts",
+            Some(&h.member),
+            true,
+            json!({ "name": "paper-divergent", "currency": "KRW", "initial_cash": "10000000" }),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::CREATED);
+    let account_id = Harness::body_json(resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // The opening deposit is 10,000,000; this row claims 40,000,000 on a date
+    // after it with no fill or deposit ever recorded to explain the gap.
+    h.seed_tenant(
+        &h.member,
+        &format!(
+            "INSERT INTO daily_equity (id, account_id, owner_user_id, trading_date, equity, cash, positions_value, currency) VALUES \
+             (gen_random_uuid(), '{account_id}', '{owner}', '2026-01-30', 40000000.0000, 40000000.0000, 0.0000, 'KRW')",
+            owner = h.member.user_id
+        ),
+    )
+    .await;
+
+    let resp = h
+        .get(
+            &format!("/api/v1/paper/accounts/{account_id}/equity"),
+            Some(&h.member),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    let points = body["items"].as_array().expect("equity points");
+    assert_eq!(points.len(), 1);
+    // The wrong number is still SERVED -- FR-PAPER-003 requires the curve be
+    // viewable -- but flagged rather than presented as settled.
+    assert_eq!(points[0]["cash"], "40000000.0000");
+    assert_eq!(
+        points[0]["cash_reconciled"], false,
+        "a stored cash figure that disagrees with cash_ledger must not be served silently"
+    );
+
+    // The same flag reaches the performance view.
+    let resp = h
+        .get(
+            &format!("/api/v1/paper/accounts/{account_id}/performance"),
+            Some(&h.member),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    let points = body["points"].as_array().expect("performance points");
+    assert_eq!(points[0]["cash_reconciled"], false);
+
     h.teardown().await;
 }

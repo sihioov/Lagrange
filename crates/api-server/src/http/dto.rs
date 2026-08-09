@@ -199,6 +199,10 @@ pub struct PerformancePointDto {
     pub currency: String,
     /// Day-over-day return as a decimal string; absent on the first point.
     pub return_pct: Option<String>,
+    /// Whether `cash` agrees with `cash_ledger`, the authority, as of this
+    /// date. `false` means this is a stored figure nobody has proven agrees
+    /// with the ledger -- served, not hidden, but not presented as settled.
+    pub cash_reconciled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -281,6 +285,9 @@ pub struct EquityPointDto {
     pub cash: String,
     pub positions_value: String,
     pub currency: String,
+    /// Whether `cash` agrees with `cash_ledger`, the authority, as of this
+    /// date. See `PerformancePointDto::cash_reconciled`.
+    pub cash_reconciled: bool,
 }
 
 // ---------------------------------------------------------------------------

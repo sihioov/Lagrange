@@ -547,7 +547,7 @@ const SCHEMAS = {
   },
   PerformancePoint: {
     type: "object",
-    required: ["trading_date", "equity", "cash", "positions_value", "currency"],
+    required: ["trading_date", "equity", "cash", "positions_value", "currency", "cash_reconciled"],
     properties: {
       trading_date: dateStr,
       equity: decimalStr,
@@ -555,6 +555,7 @@ const SCHEMAS = {
       positions_value: decimalStr,
       currency: { type: "string", enum: ["KRW"] },
       return_pct: { type: ["string", "null"], description: "Day-over-day return, computed on read from ledger-derived equity; absent on the first point" },
+      cash_reconciled: { type: "boolean", description: "Whether cash agrees with cash_ledger, the authority, as of this date" },
     },
   },
   Performance: {
@@ -676,13 +677,14 @@ const SCHEMAS = {
   },
   EquityPoint: {
     type: "object",
-    required: ["trading_date", "equity", "cash", "positions_value", "currency"],
+    required: ["trading_date", "equity", "cash", "positions_value", "currency", "cash_reconciled"],
     properties: {
       trading_date: dateStr,
       equity: { type: "string" },
       cash: { type: "string" },
       positions_value: { type: "string" },
       currency: { type: "string" },
+      cash_reconciled: { type: "boolean", description: "Whether cash agrees with cash_ledger, the authority, as of this date" },
     },
   },
   AdminDataset: {

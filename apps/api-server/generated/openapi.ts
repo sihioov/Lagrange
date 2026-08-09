@@ -1198,6 +1198,8 @@ export interface components {
             currency: "KRW";
             /** @description Day-over-day return, computed on read from ledger-derived equity; absent on the first point */
             return_pct?: string | null;
+            /** @description Whether cash agrees with cash_ledger, the authority, as of this date */
+            cash_reconciled: boolean;
         };
         Performance: {
             /** Format: uuid */
@@ -1312,6 +1314,8 @@ export interface components {
             cash: string;
             positions_value: string;
             currency: string;
+            /** @description Whether cash agrees with cash_ledger, the authority, as of this date */
+            cash_reconciled: boolean;
         };
         AdminDataset: {
             /** Format: uuid */
