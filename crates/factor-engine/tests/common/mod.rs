@@ -10,6 +10,7 @@ use std::path::Path;
 use domain::{ContentHash, Currency, FixedPoint, InstrumentId, Price, TradingDate, UtcTimestamp};
 use factor_engine::bars::Bars;
 use factor_engine::contract::FactorContext;
+use factor_engine::fundamentals::Fundamentals;
 use factor_engine::snapshot::FrozenUniverse;
 use market_data::CurateStore;
 use market_data::curate::adjust::{AdjustmentBar, AdjustmentKind};
@@ -26,6 +27,9 @@ pub struct TestCtx {
     pub universe: FrozenUniverse,
     pub bars: Bars,
     pub as_of: TradingDate,
+    /// Empty unless a test writes a fundamentals zone. Owned here for the same
+    /// reason the universe and bars are: `FactorContext` borrows it.
+    pub fundamentals: Fundamentals,
 }
 
 #[allow(dead_code)]
@@ -36,10 +40,14 @@ impl TestCtx {
         let store = CurateStore::new(dir);
         let bars = Bars::from_curated(&store, MARKET, DATASET_ID, VERSION, &universe, as_of)
             .expect("bars load");
+        let fundamentals =
+            Fundamentals::from_curated(&store, MARKET, VERSION, &universe, as_of)
+                .expect("fundamentals load");
         Self {
             universe,
             bars,
             as_of,
+            fundamentals,
         }
     }
 
@@ -49,6 +57,7 @@ impl TestCtx {
             as_of: self.as_of,
             universe: &self.universe,
             bars: &self.bars,
+            fundamentals: &self.fundamentals,
         }
     }
 }

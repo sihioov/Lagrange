@@ -78,6 +78,13 @@ pub struct FactorContext<'a> {
     pub universe: &'a FrozenUniverse,
     /// The resolved curated bars (typed series + lazy frame).
     pub bars: &'a Bars,
+    /// Point-in-time fundamentals, empty when the dataset carries none.
+    ///
+    /// Unlike `bars`, a value here must be read PER BAR DATE via
+    /// [`crate::fundamentals::Fundamentals::value_on`] rather than once for
+    /// the snapshot: the whole point of the type is that the answer changes
+    /// with the date you ask from. No shipped factor consumes it yet.
+    pub fundamentals: &'a crate::fundamentals::Fundamentals,
 }
 
 /// One factor value for one instrument on one bar date.

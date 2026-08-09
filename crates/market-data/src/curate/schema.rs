@@ -33,8 +33,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, Date32Array, Date32Builder, Decimal128Array, Decimal128Builder, Int64Array,
-    Int64Builder, StringBuilder, TimestampMicrosecondArray, TimestampMicrosecondBuilder,
+    Array, ArrayRef, Date32Array, Date32Builder, Decimal128Array, Decimal128Builder, Float64Array,
+    Float64Builder, Int64Array, Int64Builder, StringBuilder, TimestampMicrosecondArray,
+    TimestampMicrosecondBuilder,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use chrono::{Datelike, Duration, NaiveDate};
@@ -828,4 +829,112 @@ pub fn read_corporate_actions(path: &Path) -> Result<Vec<CorporateAction>, Curat
         }
     }
     Ok(rows)
+}
+
+/// One point-in-time fundamentals observation.
+///
+/// Two dates, and the distinction between them is the entire point.
+/// `period_end` says WHICH period the number describes; `known_from` says when
+/// it first became usable. A backtest stepping through 2020 must see the
+/// figure that was public in 2020, not the restatement published in 2021 --
+/// the requirements' §14 risk table names 미래정보 참조 as a cause of 허위 성과,
+/// and a single-date fundamentals table is how that happens silently.
+///
+/// `known_from` is defined as THE FIRST TRADING DATE THIS VALUE MAY BE USED.
+/// Announcements land after the close, so an ingester that maps an
+/// announcement timestamp to the same calendar day grants the strategy a day
+/// of foresight; the convention is stated here so that mapping is the
+/// ingester's explicit job rather than an assumption each reader re-invents.
+///
+/// `revision` orders restatements that share a `known_from`; 0 is the original.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CuratedFundamental {
+    pub instrument_id: InstrumentId,
+    /// The last day of the fiscal period this value describes.
+    ///
+    /// A date rather than a `2020Q1` label: dates order without anyone having
+    /// to agree on a fiscal-year convention, and Korean issuers do not all
+    /// share one.
+    pub period_end: TradingDate,
+    /// The metric name (e.g. `net_income`), free-form by design at this layer.
+    pub metric: String,
+    pub value: f64,
+    /// The first trading date this value may be used.
+    pub known_from: TradingDate,
+    /// Restatement ordinal within `(instrument, period_end)`; 0 is the original.
+    pub revision: i64,
+}
+
+impl CuratedSchema {
+    /// The point-in-time fundamentals table.
+    pub fn fundamentals() -> Schema {
+        Schema::new(vec![
+            Field::new("instrument_id", DataType::Utf8, false),
+            Field::new("period_end", DataType::Date32, false),
+            Field::new("metric", DataType::Utf8, false),
+            Field::new("value", DataType::Float64, false),
+            Field::new("known_from", DataType::Date32, false),
+            Field::new("revision", DataType::Int64, false),
+        ])
+    }
+}
+
+/// Writes the point-in-time fundamentals table to `path`.
+pub fn write_fundamentals(path: &Path, rows: &[CuratedFundamental]) -> Result<(), CurateError> {
+    let mut instrument = StringBuilder::new();
+    let mut period_end = Date32Builder::new();
+    let mut metric = StringBuilder::new();
+    let mut value = Float64Builder::new();
+    let mut known_from = Date32Builder::new();
+    let mut revision = Int64Builder::new();
+
+    for row in rows {
+        instrument.append_value(row.instrument_id.to_string());
+        period_end.append_value(date_to_days(row.period_end));
+        metric.append_value(&row.metric);
+        value.append_value(row.value);
+        known_from.append_value(date_to_days(row.known_from));
+        revision.append_value(row.revision);
+    }
+
+    let columns: Vec<ArrayRef> = vec![
+        Arc::new(instrument.finish()),
+        Arc::new(period_end.finish()),
+        Arc::new(metric.finish()),
+        Arc::new(value.finish()),
+        Arc::new(known_from.finish()),
+        Arc::new(revision.finish()),
+    ];
+    write_record_batch(path, CuratedSchema::fundamentals(), columns)
+}
+
+/// Reads the point-in-time fundamentals table from `path`.
+pub fn read_fundamentals(path: &Path) -> Result<Vec<CuratedFundamental>, CurateError> {
+    let mut rows = Vec::new();
+    for batch in read_batches(path)? {
+        for i in 0..batch.num_rows() {
+            let instrument_id = InstrumentId::parse(str_at(&batch, "instrument_id", i))
+                .map_err(|e| CurateError::StoreIo {
+                    context: "instrument_id parse".to_owned(),
+                    detail: e.to_string(),
+                })?;
+            rows.push(CuratedFundamental {
+                instrument_id,
+                period_end: date_at(&batch, "period_end", i)?,
+                metric: str_at(&batch, "metric", i).to_owned(),
+                value: f64_at(&batch, "value", i),
+                known_from: date_at(&batch, "known_from", i)?,
+                revision: i64_at(&batch, "revision", i),
+            });
+        }
+    }
+    Ok(rows)
+}
+
+fn f64_at(batch: &arrow::record_batch::RecordBatch, name: &str, i: usize) -> f64 {
+    batch
+        .column_by_name(name)
+        .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+        .map(|a| a.value(i))
+        .unwrap_or(f64::NAN)
 }

@@ -24,6 +24,7 @@
 pub mod bars;
 pub mod contract;
 pub mod factors;
+pub mod fundamentals;
 pub mod lazy_util;
 pub mod months;
 pub mod normalize;

@@ -246,6 +246,23 @@ impl CurateStore {
         dir.join("total_return_bars.parquet")
     }
 
+    /// `data/curated/fundamentals/market={m}/symbol={s}/version={v}/fundamentals.parquet`
+    ///
+    /// NOT partitioned by year, unlike bars. A fundamentals row is addressed by
+    /// two dates -- the period it describes and the date it became knowable --
+    /// and those disagree by design: a Q4 figure announced in March belongs to
+    /// the previous year by period and to this one by knowledge. Partitioning
+    /// on either would split the series a point-in-time read has to rejoin, and
+    /// would invite the reader to skip a partition it actually needs.
+    pub fn fundamentals_path(&self, market: &str, symbol: &str, version: u32) -> PathBuf {
+        self.curated_dir()
+            .join("fundamentals")
+            .join(format!("market={market}"))
+            .join(format!("symbol={symbol}"))
+            .join(format!("version={version}"))
+            .join("fundamentals.parquet")
+    }
+
     /// `data/curated/corporate_actions/market={m}/symbol={s}/year={y}/version={v}/corporate_actions.parquet`
     pub fn corporate_actions_path(
         &self,

@@ -230,10 +230,22 @@ impl<'a> FactorSnapshotBuilder<'a> {
             }
         }
 
+        // Resolved under the same as-of ceiling as the bars. Empty when the
+        // dataset carries no fundamentals zone, which every dataset does
+        // today -- the snapshot a shipped factor produces is unchanged.
+        let fundamentals = crate::fundamentals::Fundamentals::from_curated(
+            self.store,
+            self.market,
+            self.dataset_version,
+            &self.universe,
+            self.as_of,
+        )?;
+
         let ctx = FactorContext {
             as_of: self.as_of,
             universe: &self.universe,
             bars: &bars,
+            fundamentals: &fundamentals,
         };
         let mut raw: BTreeMap<(String, String), BTreeMap<FactorId, Option<f64>>> = BTreeMap::new();
         for f in &self.factors {
