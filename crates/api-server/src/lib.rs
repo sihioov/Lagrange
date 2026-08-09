@@ -27,6 +27,7 @@ pub mod contract;
 pub mod error;
 pub mod http;
 pub mod live_order;
+pub mod risk_snapshot;
 pub mod notify;
 pub mod observability;
 pub mod paper_session;

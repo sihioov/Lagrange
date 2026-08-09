@@ -43,7 +43,19 @@ use kis_client::order_state::Event;
 use kis_client::rest::RestClient;
 use kis_client::retry::Sleeper;
 use kis_client::transport::Transport;
+use crate::risk_snapshot::{parse_side, side_str};
+use domain::{Price, Quantity};
+use risk_gateway::snapshot::Side;
 use risk_gateway::{Decision, RiskLimits, RiskSnapshot};
+
+/// Wall-clock seconds, carried into the snapshot so a replay re-evaluates
+/// against the instant the decision was actually made.
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
 
 /// Whether the order is rehearsed or actually sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,23 +178,31 @@ pub async fn submit<T: Transport, S: Sleeper>(
     let order = OrderRequest {
         client_order_id: intent_ref.clone(),
         instrument_id: request.intent.instrument_id.clone(),
-        side: if request.intent.side.eq_ignore_ascii_case("SELL") {
-            OrderSide::Sell
-        } else {
-            OrderSide::Buy
+        // Parsed once at the route and carried typed ever since, so there is
+        // no arm here that can turn an unrecognised value into a BUY.
+        side: match parse_side(&request.intent.side) {
+            Some(Side::Sell) => OrderSide::Sell,
+            Some(Side::Buy) => OrderSide::Buy,
+            None => {
+                return Err(TenancyError::InvalidState(format!(
+                    "intent {intent_ref} carries an unrecognised side {:?}",
+                    request.intent.side
+                )));
+            }
         },
         order_type: if request.intent.price.is_some() {
             OrderType::Limit
         } else {
             OrderType::Market
         },
-        quantity: request
-            .intent
-            .quantity
-            .split('.')
-            .next()
-            .and_then(|w| w.parse::<u64>().ok())
-            .ok_or_else(|| TenancyError::InvalidState("quantity is not a whole number".into()))?,
+        quantity: Quantity::parse(&request.intent.quantity)
+            .map_err(|e| {
+                TenancyError::InvalidState(format!("intent {intent_ref} quantity is unusable: {e}"))
+            })?
+            .to_u64()
+            .map_err(|e| {
+                TenancyError::InvalidState(format!("intent {intent_ref} quantity overflows: {e}"))
+            })?,
         price: request.intent.price.clone(),
     };
 
@@ -274,9 +294,18 @@ use std::time::Duration;
 pub struct OrderInput {
     pub account_id: uuid::Uuid,
     pub instrument_id: String,
-    pub side: String,
-    pub quantity: String,
-    pub price: Option<String>,
+    /// Typed, because the route rejects anything that is not BUY or SELL.
+    ///
+    /// This was a `String` compared as `eq_ignore_ascii_case("SELL")` with a
+    /// bare `else` arm, so `"SEL"`, `"sell "`, `""` and every other value
+    /// became a BUY -- a typo silently reversing an order's direction.
+    pub side: Side,
+    /// Whole units. `Quantity::parse` refuses a fractional value, which is
+    /// what `kis_client::mapping::OrderRequest` documents it wants: "a
+    /// fractional quantity is a bug to surface, not round". The previous code
+    /// did the opposite, truncating "10.7" to 10 on the way to the broker.
+    pub quantity: Quantity,
+    pub price: Option<Price>,
     pub client_key: String,
     pub correlation_id: String,
     pub dry_run: bool,
@@ -323,23 +352,47 @@ pub async fn submit_through_connection(
     let intents = state.order_intents(&session.actor(), owner);
     let risk = state.risk(&session.actor(), owner, Some(input.account_id));
 
-    let mut snapshot = risk_gateway::testing::snapshot_all_green();
-    snapshot.intent.instrument_id = input.instrument_id.clone();
-    snapshot.correlation_id = input.correlation_id.clone();
+    // The gate must be asked about THIS order.
+    //
+    // What stood here was `risk_gateway::testing::snapshot_all_green()` with
+    // two fields overwritten, and `testing::limits()` beside it. The gate
+    // therefore approved a fixture -- a 10-unit buy at 7,250 against a
+    // fabricated account, measured against limits nobody configured -- while
+    // the caller's real order went to the broker. See `risk_snapshot` for the
+    // full account; the property that matters is that the snapshot below and
+    // the `OrderRequest` built later describe the same order.
+    let intent_ref = NewOrderIntent::mint_ref();
+    let snapshot = crate::risk_snapshot::for_submission(
+        &state.app_pool,
+        &state.reconciliation(&session.actor(), owner),
+        Some(connection.id),
+        state.live(&session.actor()).kill_switch_engaged().await.ok(),
+        &crate::risk_snapshot::GateOrder {
+            intent_ref: intent_ref.clone(),
+            account_id: input.account_id,
+            instrument_id: input.instrument_id.clone(),
+            side: input.side,
+            quantity: input.quantity,
+            price: input.price,
+            correlation_id: input.correlation_id.clone(),
+        },
+        now_secs(),
+    )
+    .await?;
 
     let request = SubmitRequest {
         intent: NewOrderIntent {
-            intent_ref: NewOrderIntent::mint_ref(),
+            intent_ref,
             account_id: input.account_id,
             instrument_id: input.instrument_id.clone(),
-            side: input.side.clone(),
-            quantity: input.quantity.clone(),
-            price: input.price.clone(),
+            side: side_str(input.side).to_string(),
+            quantity: input.quantity.as_decimal_string(),
+            price: input.price.map(|p| p.as_decimal_string()),
             correlation_id: input.correlation_id.clone(),
             client_key: input.client_key.clone(),
         },
         snapshot,
-        limits: risk_gateway::testing::limits(),
+        limits: crate::risk_snapshot::limits_for(&state.app_pool, owner).await?,
         mode: if input.dry_run {
             Mode::DryRun
         } else {

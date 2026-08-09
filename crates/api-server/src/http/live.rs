@@ -843,6 +843,50 @@ pub async fn submit_order(
         }
     };
 
+    // The order's own fields, parsed before anything is claimed.
+    //
+    // `side` used to travel as a bare String and was resolved downstream with
+    // `eq_ignore_ascii_case("SELL")` and a plain `else` arm, so "SEL", "sell "
+    // and "" all became BUY orders. `quantity` used to be truncated at the
+    // first '.', turning "10.7" into 10 -- the exact opposite of what
+    // `kis_client::mapping::OrderRequest` documents ("a fractional quantity is
+    // a bug to surface, not round"). Both are now the caller's problem to fix,
+    // answered at submission rather than reinterpreted in flight.
+    let Some(side) = crate::risk_snapshot::parse_side(&body.side) else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PARAMETER",
+            format!("side {:?} must be BUY or SELL", body.side),
+            &rid,
+            None,
+        );
+    };
+    let quantity = match domain::Quantity::parse(body.quantity.trim()) {
+        Ok(q) => q,
+        Err(e) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_PARAMETER",
+                format!("quantity {:?} must be a whole number of shares: {e}", body.quantity),
+                &rid,
+                None,
+            );
+        }
+    };
+    let price = match body.price.as_deref().map(str::trim).map(domain::Price::parse) {
+        None => None,
+        Some(Ok(p)) => Some(p),
+        Some(Err(e)) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_PARAMETER",
+                format!("price {:?} is not a valid price: {e}", body.price),
+                &rid,
+                None,
+            );
+        }
+    };
+
     let submission = match crate::live_order::submit_through_connection(
         &state,
         &session,
@@ -851,9 +895,9 @@ pub async fn submit_order(
         crate::live_order::OrderInput {
             account_id: body.account_id,
             instrument_id: body.instrument_id.clone(),
-            side: body.side.clone(),
-            quantity: body.quantity.clone(),
-            price: body.price.clone(),
+            side,
+            quantity,
+            price,
             client_key: client_key.to_string(),
             correlation_id: rid.clone(),
             dry_run: body.dry_run,
