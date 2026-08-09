@@ -310,6 +310,17 @@ async fn http_paper_accounts_fuzz_and_duplicate() {
 /// never cached here -- it is always derived by replaying `cash_ledger`".
 /// `daily_equity.cash` is exactly such a cache, and until now nothing checked
 /// it against the authority before serving it to a caller.
+/// The actual comparison arm: a ledger event EXISTS as of this date, and it
+/// disagrees with the stored figure.
+///
+/// This must be dated `CURRENT_DATE`, not a fixed past date. `daily_equity`'s
+/// own `cash_reconciled` is `(cl.balance IS NOT NULL AND cl.balance = de.cash)`
+/// (`repos::paper.rs`), and `AccountRepo::create` stamps the opening deposit
+/// with the column default `now()`. A row dated in the past would find NO
+/// ledger event at all (`cl.balance IS NULL`) and read `false` for that
+/// reason alone -- which would make this test pass even if the equality
+/// comparison were deleted entirely. Dating it today is what makes the
+/// inequality itself the thing under test.
 #[tokio::test]
 async fn http_paper_equity_flags_cash_that_disagrees_with_the_ledger() {
     let Some(h) = Harness::new().await else {
@@ -330,13 +341,14 @@ async fn http_paper_equity_flags_cash_that_disagrees_with_the_ledger() {
         .unwrap()
         .to_string();
 
-    // The opening deposit is 10,000,000; this row claims 40,000,000 on a date
-    // after it with no fill or deposit ever recorded to explain the gap.
+    // The opening deposit is 10,000,000, stamped `now()`. This row claims
+    // 40,000,000 for TODAY -- a real ledger event exists to compare against,
+    // and it disagrees.
     h.seed_tenant(
         &h.member,
         &format!(
             "INSERT INTO daily_equity (id, account_id, owner_user_id, trading_date, equity, cash, positions_value, currency) VALUES \
-             (gen_random_uuid(), '{account_id}', '{owner}', '2026-01-30', 40000000.0000, 40000000.0000, 0.0000, 'KRW')",
+             (gen_random_uuid(), '{account_id}', '{owner}', CURRENT_DATE, 40000000.0000, 40000000.0000, 0.0000, 'KRW')",
             owner = h.member.user_id
         ),
     )
@@ -357,7 +369,8 @@ async fn http_paper_equity_flags_cash_that_disagrees_with_the_ledger() {
     assert_eq!(points[0]["cash"], "40000000.0000");
     assert_eq!(
         points[0]["cash_reconciled"], false,
-        "a stored cash figure that disagrees with cash_ledger must not be served silently"
+        "a stored cash figure that disagrees with cash_ledger, when a ledger event exists to \
+         compare against, must not be served silently"
     );
 
     // The same flag reaches the performance view.
@@ -371,6 +384,60 @@ async fn http_paper_equity_flags_cash_that_disagrees_with_the_ledger() {
     let body = Harness::body_json(resp).await;
     let points = body["points"].as_array().expect("performance points");
     assert_eq!(points[0]["cash_reconciled"], false);
+
+    h.teardown().await;
+}
+
+/// The OTHER way `cash_reconciled` can be `false`: no ledger event exists yet
+/// as of the row's date at all. Distinguished from the test above so the two
+/// arms of `(cl.balance IS NOT NULL AND cl.balance = de.cash)` are each
+/// pinned by a case that isolates it.
+#[tokio::test]
+async fn http_paper_equity_flags_a_snapshot_dated_before_any_ledger_event() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let resp = h
+        .post(
+            "/api/v1/paper/accounts",
+            Some(&h.member),
+            true,
+            json!({ "name": "paper-predates-ledger", "currency": "KRW", "initial_cash": "10000000" }),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::CREATED);
+    let account_id = Harness::body_json(resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // The account's only cash_ledger row is stamped `now()` (today). A row
+    // dated in the past predates it, so there is no balance to compare
+    // against yet -- the NULL arm, not the inequality arm.
+    h.seed_tenant(
+        &h.member,
+        &format!(
+            "INSERT INTO daily_equity (id, account_id, owner_user_id, trading_date, equity, cash, positions_value, currency) VALUES \
+             (gen_random_uuid(), '{account_id}', '{owner}', '2026-01-30', 10000000.0000, 10000000.0000, 0.0000, 'KRW')",
+            owner = h.member.user_id
+        ),
+    )
+    .await;
+
+    let resp = h
+        .get(
+            &format!("/api/v1/paper/accounts/{account_id}/equity"),
+            Some(&h.member),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    let points = body["items"].as_array().expect("equity points");
+    assert_eq!(
+        points[0]["cash_reconciled"], false,
+        "a snapshot dated before the account's own ledger history has nothing to agree with yet"
+    );
 
     h.teardown().await;
 }

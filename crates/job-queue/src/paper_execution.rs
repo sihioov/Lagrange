@@ -299,13 +299,26 @@ pub async fn execute_session(
 /// `cost.rs` is explicit that rates are configuration and that any change is a
 /// new version; filling an account at a version it was never opened under would
 /// charge fees nobody agreed to, silently.
+///
+/// `account_type = 'PAPER'` is checked here, not assumed. This engine is the
+/// only writer of `orders`/`fills`/`cash_ledger` in the repository, and those
+/// same tables are what `risk_snapshot::account_state` reads to build the
+/// LIVE Risk Gateway's cash and position inputs. Nothing upstream of this
+/// function currently constrains `pending_targets.account_id` to a PAPER
+/// account (`repos::pending_targets::queue` performs no type check, and the
+/// migration puts no CHECK on it), so without this predicate a target queued
+/// against a LIVE account would let a simulator write FILLED orders and cash
+/// movements that never happened directly into the ledger the safety gate
+/// trusts. "No caller reaches this today" is not a reason to leave it open --
+/// that was exactly how `risk_gateway::testing::snapshot_all_green()` reached
+/// production earlier in this codebase's history.
 async fn account_profile(
     tx: &mut Transaction<'_, Postgres>,
     input: &SessionInput,
 ) -> Result<(CostProfile, Currency), ExecutionError> {
     let row: Option<(String, i32, String)> = sqlx::query_as(
         "SELECT cost_profile_id, cost_profile_version, currency FROM accounts \
-         WHERE id = $1 AND owner_user_id = $2 AND status = 'ACTIVE'",
+         WHERE id = $1 AND owner_user_id = $2 AND status = 'ACTIVE' AND account_type = 'PAPER'",
     )
     .bind(input.account_id)
     .bind(input.owner_user_id)
@@ -315,7 +328,7 @@ async fn account_profile(
     let (profile_id, version, currency) =
         row.ok_or_else(|| ExecutionError::AccountUnavailable {
             account_id: input.account_id,
-            detail: "no ACTIVE account with this owner".to_owned(),
+            detail: "no ACTIVE Paper account with this owner".to_owned(),
         })?;
 
     let profile = CostProfile::resolve(&profile_id).map_err(|e| {

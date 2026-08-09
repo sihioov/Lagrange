@@ -686,3 +686,97 @@ async fn a_session_never_moves_another_members_ledger() {
 
     h.teardown().await;
 }
+
+// ---------------------------------------------------------------------------
+// A target queued against a LIVE account executes nothing.
+// ---------------------------------------------------------------------------
+
+/// A LIVE account, seeded directly (no HTTP route creates one as PAPER-typed
+/// data would require -- this is the point: nothing gates this at the API
+/// today, so the engine itself must).
+async fn live_account(h: &Harness, u: &UserCtx, name: &str, cash: &str) -> Uuid {
+    let pool = common::actor_pool(&h.app_url, &u.user_id.to_string(), 2).await;
+    let account: Uuid = sqlx::query_scalar(
+        "INSERT INTO accounts (owner_user_id, account_type, name, currency) \
+         VALUES ($1, 'LIVE', $2, 'KRW') RETURNING id",
+    )
+    .bind(u.user_id)
+    .bind(name)
+    .fetch_one(&pool)
+    .await
+    .expect("live account");
+    sqlx::query(
+        "INSERT INTO cash_ledger (account_id, owner_user_id, seq, event_type, amount, balance, currency) \
+         VALUES ($1, $2, 1, 'DEPOSIT', $3::numeric, $3::numeric, 'KRW')",
+    )
+    .bind(account)
+    .bind(u.user_id)
+    .bind(cash)
+    .execute(&pool)
+    .await
+    .expect("live account funded");
+    account
+}
+
+/// The Paper engine is the only writer of `orders`/`fills`/`cash_ledger` in
+/// this repository, and those tables are what the LIVE Risk Gateway reads for
+/// its cash and position inputs (`risk_snapshot::account_state`). Nothing
+/// upstream constrains `pending_targets.account_id` to a PAPER account, so
+/// the engine's own guard is what stands between a queued target and writing
+/// simulated fills into a real account's ledger.
+#[tokio::test]
+async fn a_target_queued_against_a_live_account_executes_nothing() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let m = h.member.clone();
+    let account = live_account(&h, &m, "exec-live-guard", "10000000").await;
+    let config = strategy_config(&h, &m, "exec-live-guard-cfg").await;
+    let target = queue_target(
+        &h,
+        &m,
+        account,
+        config,
+        COMPUTED_ON,
+        EFFECTIVE_DATE,
+        targets_json(),
+    )
+    .await;
+
+    let data = curated_fixture();
+    let worker = h.worker_pool().await;
+    let outcome = run_and_settle(&h.state(), &worker, data.root(), &m.actor(), target)
+        .await
+        .expect("a session against the wrong account type still settles rather than hanging PENDING");
+
+    assert_eq!(
+        outcome.target.status, "SKIPPED",
+        "a LIVE account must never settle EXECUTED via the Paper engine"
+    );
+    assert_eq!(
+        outcome.severity,
+        AlertSeverity::Critical,
+        "queuing a target against a LIVE account is a caller error, escalated loudly"
+    );
+
+    let pool = common::actor_pool(&h.app_url, &m.user_id.to_string(), 2).await;
+    let orders: i64 = sqlx::query_scalar("SELECT count(*) FROM orders WHERE account_id = $1")
+        .bind(account)
+        .fetch_one(&pool)
+        .await
+        .expect("orders count");
+    let cash_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM cash_ledger WHERE account_id = $1")
+            .bind(account)
+            .fetch_one(&pool)
+            .await
+            .expect("cash_ledger count");
+    assert_eq!(orders, 0, "no simulated order may land in a LIVE account");
+    assert_eq!(
+        cash_rows, 1,
+        "only the real opening deposit -- no simulated cash movement"
+    );
+
+    h.teardown().await;
+}
