@@ -33,6 +33,27 @@ pub struct PendingTargetRow {
     pub created_at: DateTime<Utc>,
 }
 
+/// A pending target as seen by the trusted Paper worker.
+///
+/// Unlike [`PendingTargetRow`], this cross-tenant scan includes the owner UUID
+/// so the worker can establish the actor context before calling the normal
+/// actor-scoped settlement seam. The worker role is intentionally required at
+/// the call site; this type is not an alternative tenant API.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct WorkerPendingTargetRow {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    pub owner_user_id: Uuid,
+    pub strategy_config_id: Uuid,
+    pub computed_on: NaiveDate,
+    pub effective_date: NaiveDate,
+    pub targets_json: serde_json::Value,
+    pub dataset_version: Option<String>,
+    pub status: String,
+    pub executed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Input for queueing a target at close(T).
 #[derive(Debug, Clone)]
 pub struct NewPendingTarget {
@@ -53,6 +74,30 @@ pub struct PendingTargetRepo {
 impl PendingTargetRepo {
     pub fn new(pool: sqlx::PgPool) -> Self {
         Self { pool }
+    }
+
+    /// All due pending targets across tenants, for the trusted worker role.
+    ///
+    /// This query deliberately takes a pool rather than using the repository's
+    /// actor-scoped app pool. The Paper daemon serves every tenant and the
+    /// worker RLS policy is the explicit cross-tenant boundary; settlement
+    /// still re-enters the actor-scoped API seam before any notification.
+    pub async fn due_worker(
+        pool: &sqlx::PgPool,
+        session_date: NaiveDate,
+    ) -> TenancyResult<Vec<WorkerPendingTargetRow>> {
+        sqlx::query_as::<_, WorkerPendingTargetRow>(
+            "SELECT id, account_id, owner_user_id, strategy_config_id, computed_on, \
+                    effective_date, targets_json, dataset_version, status, \
+                    executed_at, created_at \
+             FROM pending_targets \
+             WHERE status = 'PENDING' AND effective_date <= $1 \
+             ORDER BY effective_date, account_id, id",
+        )
+        .bind(session_date)
+        .fetch_all(pool)
+        .await
+        .map_err(TenancyError::from_sqlx)
     }
 
     /// Queues a target for its effective session. Re-queueing the same

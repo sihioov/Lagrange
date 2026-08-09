@@ -27,11 +27,12 @@ pub mod contract;
 pub mod error;
 pub mod http;
 pub mod live_order;
-pub mod risk_snapshot;
 pub mod notify;
 pub mod observability;
+pub mod paper_runner;
 pub mod paper_session;
 pub mod repos;
+pub mod risk_snapshot;
 
 pub use error::{TenancyError, TenancyResult};
 pub use repos::accounts::{AccountRepo, AccountRow, NewAccount};
