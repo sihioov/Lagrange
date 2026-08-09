@@ -24,23 +24,18 @@ use portfolio_model::error::PortfolioError;
 use portfolio_model::paper_account::NewPaperAccount;
 use uuid::Uuid;
 
-/// Resolves the requested cost profile id to a real, versioned
-/// [`CostProfile`]. Only the shipped `KRX_ETF_DEFAULT` is selectable through
-/// this route today; `CUSTOM` needs explicit rate fields this body does not
-/// carry and is rejected rather than silently substituted.
-fn resolve_cost_profile(id: Option<&str>) -> Result<CostProfile, &'static str> {
-    match id.unwrap_or("KRX_ETF_DEFAULT") {
-        "KRX_ETF_DEFAULT" => CostProfile::krx_etf_default().map_err(|_| "cost profile invalid"),
-        "CUSTOM" => Err("CUSTOM cost profiles are not yet configurable through this route"),
-        _ => Err("unknown cost_profile_id"),
-    }
+/// Resolves the requested cost profile id to a real, versioned [`CostProfile`].
+///
+/// The match itself lives in `portfolio-model` beside `CostProfileId`, which
+/// owns the serde names; this only supplies the route's default for an absent
+/// field. Two hand-written copies of that match is how one profile ended up
+/// with two spellings.
+fn resolve_cost_profile(id: Option<&str>) -> Result<CostProfile, String> {
+    CostProfile::resolve(id.unwrap_or("KRX_ETF_DEFAULT")).map_err(|e| e.to_string())
 }
 
 fn cost_profile_id_str(profile: &CostProfile) -> &'static str {
-    match profile.profile_id {
-        portfolio_model::cost::CostProfileId::KrxEtfDefault => "KRX_ETF_DEFAULT",
-        portfolio_model::cost::CostProfileId::Custom => "CUSTOM",
-    }
+    profile.id_str()
 }
 
 fn portfolio_error_response(rid: &str, err: PortfolioError) -> Response {

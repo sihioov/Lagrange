@@ -16,7 +16,7 @@ fn backtest_request(dataset: &str) -> serde_json::Value {
         "end_date": "2026-01-30",
         "initial_cash": { "currency": "KRW", "amount": "100000000" },
         "benchmark": "069500.KRX",
-        "cost_profile_id": "krx-etf-default@2026-01",
+        "cost_profile_id": "KRX_ETF_DEFAULT",
         "execution_profile": "daily-close-next-open@1",
         "robustness": false
     })
@@ -455,5 +455,88 @@ async fn http_backtests_ownership_cancel_robustness_integrity() {
     assert_eq!(status(&resp), StatusCode::UNPROCESSABLE_ENTITY);
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "RESULT_INTEGRITY_FAILED");
+    h.teardown().await;
+}
+
+/// A cost_profile_id nobody can resolve is refused at submission.
+///
+/// This route used to write `cost_profile_id` into the job payload without
+/// looking at it, so an unresolvable profile became a job that failed in a
+/// worker minutes later -- and every backtest test in this repository had
+/// settled on `krx-etf-default@2026-01`, a spelling that resolved nowhere,
+/// precisely because nothing ever rejected it.
+///
+/// The absences are the point. A 400 that still left a `backtest_runs` row
+/// behind would leak a PENDING run that no job will ever advance.
+#[tokio::test]
+async fn http_backtests_unknown_cost_profile_is_refused_with_no_side_effects() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let cfg = seed_config(&h, &h.member).await;
+    let dataset = ready_dataset(&h).await;
+    let pool = h.member_pool().await;
+
+    let runs_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM backtest_runs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let jobs_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    for bad in ["krx-etf-default@2026-01", "krx-etf-default", "NOPE"] {
+        let mut req = backtest_request(&dataset);
+        req["strategy_config_id"] = json!(cfg);
+        req["cost_profile_id"] = json!(bad);
+        let resp = h
+            .post("/api/v1/backtests", Some(&h.member), true, req)
+            .await;
+        assert_eq!(
+            status(&resp),
+            StatusCode::BAD_REQUEST,
+            "cost_profile_id {bad:?} should be refused"
+        );
+        let body = Harness::body_json(resp).await;
+        assert_eq!(Harness::error_code(&body), "INVALID_PARAMETER");
+    }
+
+    let runs_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM backtest_runs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let jobs_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(runs_before, runs_after, "a refused submission wrote a run row");
+    assert_eq!(jobs_before, jobs_after, "a refused submission queued a job");
+    h.teardown().await;
+}
+
+/// `CUSTOM` is refused with its own code, not the generic unknown-id error.
+///
+/// "Never heard of it" and "known, not available yet" are different answers.
+/// Collapsing them sends someone hunting for a typo that is not there.
+#[tokio::test]
+async fn http_backtests_custom_cost_profile_is_refused_as_unsupported() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let cfg = seed_config(&h, &h.member).await;
+    let dataset = ready_dataset(&h).await;
+    let mut req = backtest_request(&dataset);
+    req["strategy_config_id"] = json!(cfg);
+    req["cost_profile_id"] = json!("CUSTOM");
+
+    let resp = h
+        .post("/api/v1/backtests", Some(&h.member), true, req)
+        .await;
+    assert_eq!(status(&resp), StatusCode::BAD_REQUEST);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(Harness::error_code(&body), "UNSUPPORTED_COST_PROFILE");
     h.teardown().await;
 }

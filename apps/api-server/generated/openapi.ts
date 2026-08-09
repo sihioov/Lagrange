@@ -1030,7 +1030,11 @@ export interface components {
              * @example 069500.KRX
              */
             benchmark: string;
-            cost_profile_id: string;
+            /**
+             * @description Same identities as an account's profile; CUSTOM is not yet selectable and is rejected rather than substituted
+             * @enum {string}
+             */
+            cost_profile_id: "KRX_ETF_DEFAULT" | "CUSTOM";
             /** @example daily-close-next-open@1 */
             execution_profile: string;
             /** @default false */

@@ -382,7 +382,7 @@ const SCHEMAS = {
         },
       },
       benchmark: { type: "string", example: "069500.KRX", description: "member of the fixed Korean ETF v1 universe" },
-      cost_profile_id: { type: "string" },
+      cost_profile_id: { type: "string", enum: ["KRX_ETF_DEFAULT", "CUSTOM"], description: "Same identities as an account's profile; CUSTOM is not yet selectable and is rejected rather than substituted" },
       execution_profile: { type: "string", example: "daily-close-next-open@1" },
       robustness: { type: "boolean", default: false },
     },

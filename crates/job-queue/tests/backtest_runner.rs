@@ -150,7 +150,7 @@ async fn submit_backtest_for(
                 "end_date": "2020-12-31",
                 "initial_cash": { "currency": "KRW", "amount": "100000000" },
                 "benchmark": "069500.KRX",
-                "cost_profile_id": "krx-etf-default",
+                "cost_profile_id": "KRX_ETF_DEFAULT",
                 "execution_profile": "next_open",
             }),
             priority: 10,

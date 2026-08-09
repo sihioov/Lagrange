@@ -5467,7 +5467,12 @@
             "description": "member of the fixed Korean ETF v1 universe"
           },
           "cost_profile_id": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "KRX_ETF_DEFAULT",
+              "CUSTOM"
+            ],
+            "description": "Same identities as an account's profile; CUSTOM is not yet selectable and is rejected rather than substituted"
           },
           "execution_profile": {
             "type": "string",

@@ -82,6 +82,30 @@ pub async fn create(
             None,
         );
     }
+    // The cost profile must resolve HERE, not in the runner.
+    //
+    // This route used to pass `cost_profile_id` into the job payload without
+    // looking at it, so an id that resolved nowhere became a job that failed
+    // minutes later in a worker -- if it failed at all. The paper route has
+    // always rejected the same input at submission. Both now call the one
+    // resolver in `portfolio-model`.
+    if let Err(e) = portfolio_model::cost::CostProfile::resolve(&body.cost_profile_id) {
+        use portfolio_model::cost::CostProfileLookupError as E;
+        // `CUSTOM` is a real identity whose rates this body does not carry;
+        // saying "unknown" would send someone hunting for a typo that is not
+        // there.
+        let code = match e {
+            E::CustomNotConfigurable => "UNSUPPORTED_COST_PROFILE",
+            _ => "INVALID_PARAMETER",
+        };
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            code,
+            format!("cost_profile_id {}: {e}", body.cost_profile_id),
+            &rid,
+            None,
+        );
+    }
     let cfg_id = match Uuid::parse_str(&body.strategy_config_id) {
         Ok(i) => i,
         Err(_) => {

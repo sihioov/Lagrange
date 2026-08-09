@@ -68,7 +68,71 @@ pub struct CostProfile {
     pub rebalance_threshold: FixedPoint,
 }
 
+/// Why a requested `cost_profile_id` did not resolve to a usable profile.
+///
+/// Two rejections, deliberately distinct. "Never heard of it" and "known, not
+/// available yet" are different answers to the submitter: one means the id is
+/// wrong, the other means the id is right and the feature is not built. A
+/// single generic error would send someone hunting for a typo that is not
+/// there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CostProfileLookupError {
+    /// The id matches no profile this build knows about.
+    Unknown,
+    /// `CUSTOM` is a real profile identity, but selecting it needs explicit
+    /// rate fields that no request body carries today.
+    CustomNotConfigurable,
+    /// The id resolved, but the shipped settings themselves are unusable.
+    ///
+    /// Carries the rendered cause rather than the [`PortfolioError`] itself,
+    /// which is neither `Clone` nor `Eq`; callers report this, they do not
+    /// branch on it.
+    Invalid(String),
+}
+
+impl std::fmt::Display for CostProfileLookupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unknown => write!(f, "unknown cost_profile_id"),
+            Self::CustomNotConfigurable => write!(
+                f,
+                "CUSTOM cost profiles are not yet configurable through this route"
+            ),
+            Self::Invalid(e) => write!(f, "the shipped cost profile is unusable: {e}"),
+        }
+    }
+}
+
 impl CostProfile {
+    /// Resolves a requested `cost_profile_id` to a real, versioned profile.
+    ///
+    /// ONE resolver, called by every route and by the backtest runner. The
+    /// spelling drift this replaces is what a second hand-written match costs:
+    /// `paper.rs` resolved the enum's own serde name `KRX_ETF_DEFAULT` while
+    /// `POST /api/v1/backtests` validated nothing at all, so every backtest
+    /// test in the repository settled on `krx-etf-default@2026-01` -- an id
+    /// that resolved nowhere, was never wired to anything, and could not fail
+    /// visibly because nothing checked it.
+    ///
+    /// The accepted spellings are exactly [`CostProfileId`]'s serde names, so
+    /// adding a profile cannot leave a route behind.
+    pub fn resolve(id: &str) -> Result<Self, CostProfileLookupError> {
+        match id {
+            "KRX_ETF_DEFAULT" => Self::krx_etf_default()
+                .map_err(|e| CostProfileLookupError::Invalid(e.to_string())),
+            "CUSTOM" => Err(CostProfileLookupError::CustomNotConfigurable),
+            _ => Err(CostProfileLookupError::Unknown),
+        }
+    }
+
+    /// The serde name of this profile's identity, for echoing back to a caller.
+    pub fn id_str(&self) -> &'static str {
+        match self.profile_id {
+            CostProfileId::KrxEtfDefault => "KRX_ETF_DEFAULT",
+            CostProfileId::Custom => "CUSTOM",
+        }
+    }
+
     /// The versioned `KRX_ETF_DEFAULT` profile.
     pub fn krx_etf_default() -> Result<Self, PortfolioError> {
         Ok(Self {

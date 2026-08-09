@@ -69,7 +69,7 @@ async fn http_qa_transcripts() {
         "end_date": "2026-01-30",
         "initial_cash": { "currency": "KRW", "amount": "100000000" },
         "benchmark": "069500.KRX",
-        "cost_profile_id": "krx-etf-default@2026-01",
+        "cost_profile_id": "KRX_ETF_DEFAULT",
         "execution_profile": "daily-close-next-open@1",
         "robustness": false
     });

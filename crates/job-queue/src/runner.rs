@@ -522,53 +522,42 @@ fn window_for(payload: &BacktestPayload) -> Result<Option<(String, String)>, Exe
 }
 
 fn cost_profile_for(payload: &BacktestPayload) -> Result<serde_json::Value, ExecError> {
-    use portfolio_model::cost::{CostProfile, CostProfileId};
+    use portfolio_model::cost::CostProfile;
 
     let id = payload
         .cost_profile_id
         .as_deref()
         .unwrap_or("KRX_ETF_DEFAULT");
-    // Two spellings of one profile reach this point, and both are load-bearing
-    // today.
+    // Defense in depth, not the primary check.
     //
-    // `paper.rs` resolves `KRX_ETF_DEFAULT`, which is the enum's own serde
-    // name. `POST /api/v1/backtests` passes `cost_profile_id` into the job
-    // payload WITHOUT validating it, and every backtest test in the repository
-    // sends `krx-etf-default@2026-01` — a versioned spelling that resolves
-    // nowhere and was never wired to anything.
+    // `POST /api/v1/backtests` now resolves this id at submission and answers
+    // 400, so an unresolvable profile should never reach a claimed job. It
+    // still might: rows queued before that validation existed, and any future
+    // path that enqueues without going through the route. Charging the
+    // default's fees under an id nobody could resolve would report costs the
+    // submitter never chose, so this fails rather than substitutes.
     //
-    // Accepting both is a compatibility shim, not the fix. The fix is for the
-    // route to validate the id the way the paper route does, so a profile
-    // nobody can resolve is a 400 at submission instead of a job that fails
-    // minutes later; that is an API change and is called out rather than made
-    // quietly here. What this does NOT do is accept anything else: an
-    // unrecognised id fails, because charging the default's fees under
-    // another profile's name would report costs the submitter never chose.
-    let profile = match id {
-        "KRX_ETF_DEFAULT" | "krx-etf-default" | "krx-etf-default@2026-01" => {
-            CostProfile::krx_etf_default().map_err(|e| ExecError::Permanent {
-                class: ErrorClass::Input,
-                code: "COST_PROFILE_INVALID",
-                reason: format!("the shipped cost profile is unusable: {e}"),
-            })?
-        }
-        // A CUSTOM profile needs explicit rates the payload does not carry.
-        // Substituting the default would charge a backtest fees the submitter
-        // never asked for and report them as if they had.
-        other => {
+    // Until this commit the arms here also accepted `krx-etf-default` and
+    // `krx-etf-default@2026-01`, spellings that resolved nowhere and that
+    // every backtest test in the repository had settled on precisely because
+    // nothing validated them. Both are gone; the route and this share one
+    // resolver whose accepted names are `CostProfileId`'s own.
+    let profile = match CostProfile::resolve(id) {
+        Ok(p) => p,
+        // Every rejection is PERMANENT. A payload row is written once at
+        // submit time, so no retry changes the id, and retrying would burn the
+        // job's attempts to reach the same answer three times.
+        Err(e) => {
             return Err(ExecError::Permanent {
                 class: ErrorClass::Input,
-                code: "UNKNOWN_COST_PROFILE",
-                reason: format!("cost profile {other:?} is not one this runner can resolve"),
+                code: "COST_PROFILE_INVALID",
+                reason: format!("cost_profile_id {id:?}: {e}"),
             });
         }
     };
 
     Ok(serde_json::json!({
-        "profile_id": match profile.profile_id {
-            CostProfileId::KrxEtfDefault => "KRX_ETF_DEFAULT",
-            CostProfileId::Custom => "CUSTOM",
-        },
+        "profile_id": profile.id_str(),
         "version": profile.version,
         // Decimal strings, not floats: a commission rate of 0.00015 has no
         // exact binary representation, and a fee that is off in the last digit
