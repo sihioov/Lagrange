@@ -88,20 +88,20 @@ pub struct GateOrder {
 
 /// Reads the account state the value checks divide and compare against.
 ///
-/// One row per source, all keyed on `account_id`; `positions` and
-/// `daily_equity` are shared tables, not Paper-only ones.
+/// Every number comes from the AUTHORITY, never from a snapshot of it.
+/// `repos::accounts` states the rule this system runs on: *"current cash is
+/// never cached here -- it is always derived by replaying `cash_ledger`"*. An
+/// earlier draft of this function read `daily_equity.cash`, a stored column
+/// that nothing in this repository writes outside tests, and which is exactly
+/// the second source of truth the ledger contract exists to prevent. The
+/// gate's affordability check would have depended on a number nobody
+/// maintains.
 ///
-/// NOTE: `daily_equity.cash` is a stored column, and nothing in this
-/// repository currently proves it agrees with `cash_ledger`, which is the
-/// authority. That gap is real and is tracked separately -- it is not created
-/// here, and using the stored value is strictly better than the fabricated one
-/// this replaces.
-/// Every read here runs inside an ACTOR transaction.
-///
-/// `daily_equity` and `positions` are under FORCE RLS (migration 0010), so a
-/// query on a bare pool sees zero rows and this function would report "risk
-/// inputs unavailable" for every account that exists. A test caught that; a
-/// production Live order would otherwise have failed the same way.
+/// Every read runs inside an ACTOR transaction: `cash_ledger`, `positions` and
+/// `daily_equity` are under FORCE RLS (migration 0010), so a query on a bare
+/// pool sees zero rows and this would report "unavailable" for every account
+/// that exists. A test caught that; a production Live order would have failed
+/// the same way.
 async fn account_state(
     pool: &sqlx::PgPool,
     actor: &Actor,
@@ -111,40 +111,92 @@ async fn account_state(
     let mut tx = begin_actor_tx(pool, actor).await?;
     let unavailable = |what: &str| {
         TenancyError::InvalidState(format!(
-            "risk inputs unavailable for account {account_id}: no {what}"
+            "risk inputs unavailable for account {account_id}: {what}"
         ))
     };
+    let krw = |s: &str| -> TenancyResult<Money> {
+        Money::parse(s, Currency::KRW)
+            .map_err(|e| TenancyError::InvalidState(format!("unreadable money {s:?}: {e}")))
+    };
 
-    let equity_row: Option<(String, String)> = sqlx::query_as(
-        "SELECT equity::text, cash::text FROM daily_equity \
-         WHERE account_id = $1 ORDER BY trading_date DESC LIMIT 1",
+    // Cash, twice, from one table by two routes.
+    //
+    // `balance` is the running total the writer maintained; `SUM(amount)` is
+    // that same total recomputed from the events themselves. They agree or the
+    // ledger contradicts itself, and an account whose own cash cannot be
+    // agreed on must not have an order approved against it.
+    //
+    // This is the reconciliation the gate check NAMED "ledger-reconciliation"
+    // does not perform: that suite runs `portfolio-model` in memory and never
+    // touches Postgres, so no test in this repository compares a stored cash
+    // figure against the events it is supposed to summarise.
+    let cash_row: Option<(Option<String>, String)> = sqlx::query_as(
+        "SELECT (SELECT balance::text FROM cash_ledger WHERE account_id = $1 \
+                  ORDER BY seq DESC LIMIT 1), \
+                COALESCE(SUM(amount), 0)::text \
+         FROM cash_ledger WHERE account_id = $1",
     )
     .bind(account_id)
     .fetch_optional(&mut *tx)
     .await
     .map_err(TenancyError::from_sqlx)?;
-    let (equity, cash) = equity_row.ok_or_else(|| unavailable("daily_equity row"))?;
 
-    // The previous close, for today's loss. Absent on an account's first day,
-    // which is a zero loss rather than a missing input.
-    let prev: Option<(String,)> = sqlx::query_as(
-        "SELECT equity::text FROM daily_equity \
-         WHERE account_id = $1 ORDER BY trading_date DESC OFFSET 1 LIMIT 1",
+    let (running, replayed) = cash_row.ok_or_else(|| unavailable("no cash_ledger history"))?;
+    let running = running.ok_or_else(|| unavailable("no cash_ledger history"))?;
+
+    let cash = krw(&running)?;
+    let replayed_cash = krw(&replayed)?;
+    if cash != replayed_cash {
+        return Err(unavailable(&format!(
+            "cash_ledger disagrees with itself -- running balance {}, events replay to {}",
+            cash.amount(),
+            replayed_cash.amount()
+        )));
+    }
+
+    // Positions at the cost basis this system holds. No market data source is
+    // wired here, and inventing a mark would be the same class of defect this
+    // module exists to remove. Cost basis is conservative for the weight check
+    // and is stated rather than implied.
+    let positions: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT instrument_id, quantity::text, avg_price::text FROM positions \
+         WHERE account_id = $1",
     )
     .bind(account_id)
-    .fetch_optional(&mut *tx)
+    .fetch_all(&mut *tx)
     .await
     .map_err(TenancyError::from_sqlx)?;
 
-    let position: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT quantity::text, avg_price::text FROM positions \
-         WHERE account_id = $1 AND instrument_id = $2",
-    )
-    .bind(account_id)
-    .bind(instrument_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(TenancyError::from_sqlx)?;
+    let mut positions_value = krw("0")?;
+    let mut available_quantity = Quantity::parse("0").expect("zero parses");
+    let mut position_value = krw("0")?;
+    for (id, qty, avg) in &positions {
+        let quantity = Quantity::parse(qty.split('.').next().unwrap_or("0")).map_err(|e| {
+            TenancyError::InvalidState(format!("unreadable position quantity {qty:?}: {e}"))
+        })?;
+        let value = match avg {
+            Some(p) => {
+                let unit = domain::Price::parse(p).map_err(|e| {
+                    TenancyError::InvalidState(format!("unreadable position price {p:?}: {e}"))
+                })?;
+                quantity.checked_mul_price(&unit, Currency::KRW).map_err(|e| {
+                    TenancyError::InvalidState(format!("position value overflows: {e}"))
+                })?
+            }
+            None => krw("0")?,
+        };
+        positions_value = positions_value
+            .checked_add(&value)
+            .map_err(|e| TenancyError::InvalidState(format!("equity overflows: {e}")))?;
+        if id == instrument_id {
+            available_quantity = quantity;
+            position_value = value;
+        }
+    }
+
+    let equity = cash
+        .checked_add(&positions_value)
+        .map_err(|e| TenancyError::InvalidState(format!("equity overflows: {e}")))?;
 
     // Orders already placed today. Denied intents never reached the broker and
     // must not consume the daily budget; anything from the approval onward did.
@@ -159,51 +211,57 @@ async fn account_state(
     .await
     .map_err(TenancyError::from_sqlx)?;
 
-    let krw = |s: &str| -> TenancyResult<Money> {
-        Money::parse(s, Currency::KRW)
-            .map_err(|e| TenancyError::InvalidState(format!("unreadable money {s:?}: {e}")))
-    };
+    // Today's loss needs a start-of-day baseline, and the only one this schema
+    // carries is a prior `daily_equity` row.
+    //
+    // An account whose ledger begins today has no prior day, and zero is then
+    // the true answer rather than a filler. An account with history but no
+    // snapshot has a genuinely missing baseline, and this refuses: a silent
+    // zero would mean check 10, the daily-loss limit, could never fire -- the
+    // same shape as the fee-summing check in this codebase that compared a
+    // timestamp against a date and was false forever.
+    let prior: Option<(String,)> = sqlx::query_as(
+        "SELECT equity::text FROM daily_equity \
+         WHERE account_id = $1 AND trading_date < CURRENT_DATE \
+         ORDER BY trading_date DESC LIMIT 1",
+    )
+    .bind(account_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(TenancyError::from_sqlx)?;
 
-    let equity_money = krw(&equity)?;
-    let (qty, avg_price) = match position {
-        Some((q, p)) => (q, p),
-        None => ("0".to_string(), None),
-    };
-    let quantity = Quantity::parse(qty.split('.').next().unwrap_or("0"))
-        .map_err(|e| TenancyError::InvalidState(format!("unreadable position quantity: {e}")))?;
-    // Valued at the average cost this system holds, not a live mark: no market
-    // data source is wired here, and inventing a price would be the same class
-    // of defect this module exists to remove.
-    let position_value = match avg_price {
-        Some(p) => {
-            let unit = domain::Price::parse(&p).map_err(|e| {
-                TenancyError::InvalidState(format!("unreadable position price {p:?}: {e}"))
-            })?;
-            quantity
-                .checked_mul_price(&unit, Currency::KRW)
-                .map_err(|e| TenancyError::InvalidState(format!("position value overflows: {e}")))?
-        }
-        None => krw("0")?,
-    };
-
-    let daily_loss = match prev {
+    let daily_loss = match prior {
         Some((p,)) => {
             let before = krw(&p)?;
-            // A profit is zero, not a negative loss, so the limit comparison
-            // has exactly one meaning (see AccountState::daily_loss).
-            before
-                .checked_sub(&equity_money)
-                .ok()
-                .filter(|d| !d.amount().is_negative())
-                .unwrap_or(krw("0")?)
+            // A profit is zero, not a negative loss, so the comparison against
+            // the limit has exactly one meaning (see AccountState::daily_loss).
+            match before.checked_sub(&equity) {
+                Ok(d) if !d.amount().is_negative() => d,
+                _ => krw("0")?,
+            }
         }
-        None => krw("0")?,
+        None => {
+            let older: Option<(bool,)> = sqlx::query_as(
+                "SELECT EXISTS (SELECT 1 FROM cash_ledger \
+                 WHERE account_id = $1 AND ts::date < CURRENT_DATE)",
+            )
+            .bind(account_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+            if older.map(|(b,)| b).unwrap_or(false) {
+                return Err(unavailable(
+                    "no start-of-day equity baseline, so today's loss cannot be measured",
+                ));
+            }
+            krw("0")?
+        }
     };
 
     Ok(AccountState {
-        equity: equity_money,
-        available_cash: krw(&cash)?,
-        available_quantity: quantity,
+        equity,
+        available_cash: cash,
+        available_quantity,
         position_value,
         daily_order_value: krw(&placed.map(|(s,)| s).unwrap_or_else(|| "0".into()))?,
         daily_loss,

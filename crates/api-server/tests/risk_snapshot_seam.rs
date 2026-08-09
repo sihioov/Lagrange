@@ -34,18 +34,19 @@ async fn seeded_account(h: &Harness) -> Uuid {
     .await
     .expect("account");
 
+    // The AUTHORITY, not a snapshot of it: one opening deposit, so the running
+    // balance and the replayed events agree.
     sqlx::query(
-        "INSERT INTO daily_equity \
-         (id, account_id, owner_user_id, trading_date, equity, cash, positions_value, currency) \
-         VALUES (gen_random_uuid(), $1, $2, CURRENT_DATE, 10000000.0000, 4000000.0000, \
-                 6000000.0000, 'KRW') \
-         ON CONFLICT (account_id, trading_date) DO NOTHING",
+        "INSERT INTO cash_ledger \
+         (account_id, owner_user_id, seq, event_type, amount, balance, currency) \
+         VALUES ($1, $2, 1, 'DEPOSIT', 4000000.0000, 4000000.0000, 'KRW') \
+         ON CONFLICT (account_id, seq) DO NOTHING",
     )
     .bind(account)
     .bind(h.owner.user_id)
     .execute(&pool)
     .await
-    .expect("equity");
+    .expect("ledger");
 
     sqlx::query(
         "INSERT INTO risk_limits (version, max_symbol_weight_bp, max_order_value, \
@@ -106,10 +107,67 @@ async fn the_snapshot_describes_the_submitted_order() {
     assert_eq!(snap.intent.intent_ref, submitted.intent_ref);
     assert_eq!(snap.intent.account_id, account.to_string());
 
-    // The account the checks divide by is this account, not a fabricated one.
-    // The fixture's equity was 1,000,000; the seeded account holds 10,000,000.
-    assert_eq!(snap.account.equity.amount().to_string(), "10000000.0000");
+    // The account the checks divide by is this account, not a fabricated one,
+    // and its cash comes from the ledger rather than a stored column. The
+    // fixture claimed 1,000,000 equity and 500,000 cash for every account
+    // that ever submitted an order.
     assert_eq!(snap.account.available_cash.amount().to_string(), "4000000.0000");
+    assert_eq!(snap.account.equity.amount().to_string(), "4000000.0000");
+
+    h.teardown().await;
+}
+
+/// A ledger that contradicts itself refuses to produce a snapshot.
+///
+/// `cash_ledger` carries both a running `balance` and the `amount` of each
+/// event, so the balance can be recomputed from the events and compared. The
+/// gate check named "ledger-reconciliation" never does this -- it runs
+/// `portfolio-model` in memory and never touches Postgres -- so before this,
+/// no test in the repository could tell a correct stored balance from a wrong
+/// one.
+///
+/// This is the check made to FIRE, which is the only way to know it can.
+#[tokio::test]
+async fn a_ledger_that_disagrees_with_itself_denies_the_order() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    let pool = actor_pool(&h.app_url, &h.owner.user_id.to_string(), 2).await;
+
+    // A second event whose running balance does not account for its own
+    // amount: replaying the events gives 4,500,000, the stored balance says
+    // 4,000,000. One of them is wrong and nothing here can tell which.
+    sqlx::query(
+        "INSERT INTO cash_ledger \
+         (account_id, owner_user_id, seq, event_type, amount, balance, currency) \
+         VALUES ($1, $2, 2, 'DEPOSIT', 500000.0000, 4000000.0000, 'KRW')",
+    )
+    .bind(account)
+    .bind(h.owner.user_id)
+    .execute(&pool)
+    .await
+    .expect("divergent ledger row");
+
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
+    let err = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &order(account, Side::Buy, "10", "7250"),
+        1_800_000_000,
+    )
+    .await
+    .expect_err("a self-contradicting ledger must not produce a snapshot");
+
+    let message = format!("{err:?}");
+    assert!(
+        message.contains("disagrees with itself"),
+        "the refusal must name what diverged: {message}"
+    );
 
     h.teardown().await;
 }
