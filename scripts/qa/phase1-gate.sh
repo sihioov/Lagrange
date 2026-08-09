@@ -29,6 +29,30 @@ ev_path="$evidence_dir/task-28-lagrange-station-implementation.json"
 transcript_dir="$evidence_dir/task-28-transcripts"
 wsl_db_url="${WSL_DATABASE_URL:-postgres://postgres:lagrange@127.0.0.1:5432/postgres}"
 skip_playwright="${PHASE1_SKIP_PLAYWRIGHT:-0}"
+
+# This twin runs INSIDE WSL. Refuse anywhere else rather than answer wrongly.
+#
+# `run_cargo` below replaces PATH with a Linux one ending in /root/.cargo/bin
+# and targets /root/lagrange-target. On Windows Git Bash those do not exist, so
+# `cargo` disappears -- and the failure surfaced as `cargo: command not found`
+# captured into a transcript and recorded as a SUITE FAILURE. E3, E4 and E5
+# were reported FAIL, E6 separately on `python3: command not found`, and the
+# gate went on to publish a verdict built from four checks that never ran. Run
+# under phase1-gate.ps1 with the same environment and all four PASS.
+#
+# A gate that cannot run must say so and stop: exit 2, no verdict. The tools
+# are probed at the paths run_cargo will actually use, not the caller's PATH,
+# because the caller's cargo is exactly the one that is about to be discarded.
+[ -x /root/.cargo/bin/cargo ] || {
+  echo "ENV ERROR: this is the inside-WSL twin (needs /root/.cargo/bin/cargo);" >&2
+  echo "           on Windows run scripts/qa/phase1-gate.ps1 instead" >&2
+  exit 2
+}
+command -v python3 >/dev/null 2>&1 || {
+  echo "ENV ERROR: python3 not found on PATH (E6 restore-policy needs it)" >&2
+  exit 2
+}
+
 mkdir -p "$evidence_dir" "$transcript_dir"
 
 checks=""

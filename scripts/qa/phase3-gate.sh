@@ -103,8 +103,28 @@ cleanup() { [ "$keep_db" -eq 1 ] || qc down -v --remove-orphans >/dev/null 2>&1 
 trap cleanup EXIT
 
 echo "== Phase 3 Live release gate =="
-if command -v docker >/dev/null 2>&1; then
-  qc up -d --wait qa-db >/dev/null 2>&1 || true
+# The QA database is REQUIRED, and a gate that cannot reach it must not emit a
+# verdict.
+#
+# This block used to be `if command -v docker; then qc up ... || true; fi`, and
+# both halves were wrong. `command -v docker` succeeds while Docker Desktop's
+# engine is stopped -- the CLI is on PATH either way -- and `|| true` then
+# swallowed the failed bring-up. Every check ran against a dead
+# 127.0.0.1:$qa_port, 8 of them recorded `cargo exit 101` (in fact
+# `PoolTimedOut`), and this gate published `VERDICT: DENIED`.
+#
+# That is the worst possible answer. DENIED means a real defect, and the header
+# above says so: it outranks BLOCKED precisely so a defect is never reported as
+# "waiting on someone else". Reporting a stopped daemon as a defect spends
+# somebody's day looking for a bug in code that was fine -- it cost one here.
+# Exit 2 already means "the gate could not run, no verdict"; this now uses it.
+command -v docker >/dev/null 2>&1 || {
+  echo "ENV ERROR: docker not found on PATH" >&2
+  exit 2
+}
+if ! qc up -d --wait qa-db >/dev/null 2>&1; then
+  echo "ENV ERROR: the QA database did not become healthy" >&2
+  exit 2
 fi
 
 # --- L1 AT-08 stale data --------------------------------------------------------

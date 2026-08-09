@@ -73,8 +73,18 @@ function Invoke-Check {
 }
 
 Write-Host "== Phase 3 Live release gate =="
-if (Get-Command docker -ErrorAction SilentlyContinue) {
-  & docker compose -p lagrange-qa -f $qaCompose up -d --wait qa-db *> $null
+# The QA database is REQUIRED, and a gate that cannot reach it must not emit a
+# verdict. See the POSIX twin for the full account: `Get-Command docker`
+# succeeds while Docker Desktop's engine is stopped, so the presence check is
+# not the guard -- the failed `up --wait` is. Without this, every check ran
+# against a dead 127.0.0.1:$qaPort and the gate published `VERDICT: DENIED`,
+# which claims a real defect in code that was fine.
+if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+  Write-Error "ENV ERROR: docker not found on PATH"; exit 2
+}
+& docker compose -p lagrange-qa -f $qaCompose up -d --wait qa-db *> $null
+if ($LASTEXITCODE -ne 0) {
+  Write-Error "ENV ERROR: the QA database did not become healthy"; exit 2
 }
 
 try {

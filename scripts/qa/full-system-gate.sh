@@ -30,7 +30,13 @@
 #   scripts/qa/full-system-gate.sh [--clean] [--include-failure]
 #                                  [--include-restore]
 #                                  [--include-vendor-when-configured]
-# Twin: scripts/qa/full-system-gate.ps1
+# No twin, deliberately. The phase gates each ship a .sh/.ps1 pair because
+# phase1's cargo lane is WSL-only and phase2/3 shell out to docker; this
+# composite does neither -- it reads evidence files and shells out to the phase
+# gates -- so the one script runs on both hosts, Git Bash included. The header
+# claimed a `full-system-gate.ps1` that has never existed, which is the kind of
+# thing someone discovers while looking for the reason their Windows run
+# behaved differently.
 set -u
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -112,7 +118,24 @@ v="$(read_verdict "$evidence_dir/task-35-lagrange-station-implementation.json")"
 add_phase phase2 "$v" "Phase 2 Paper, restart, restore"
 
 # --- phase 3 (always re-run: it is the one this wave is about) -------------------
-( cd "$root" && bash scripts/qa/phase3-gate.sh --keep-db ) >"$evidence_dir/f3-phase3.log" 2>&1 || true
+# `|| true` used to be here, and it hid the one exit code that matters.
+#
+# phase3-gate exits 2 for "could not run, no verdict" -- and when it does, it
+# has written no evidence. Swallowing that left the read below picking up
+# WHATEVER task-42 was already on disk, possibly days old, and presenting it as
+# this run's phase-3 result. A composite whose whole stated job is to notice
+# that a phase's evidence was never produced would have been the last place to
+# notice it.
+#
+# 2 propagates: this gate's own contract already reserves exit 2 for the same
+# meaning, and a composite that cannot see one of its phases has no verdict to
+# give either.
+( cd "$root" && bash scripts/qa/phase3-gate.sh --keep-db ) >"$evidence_dir/f3-phase3.log" 2>&1
+phase3_rc=$?
+if [ "$phase3_rc" -eq 2 ]; then
+  echo "ENV ERROR: phase3-gate could not run (exit 2); see $evidence_dir/f3-phase3.log" >&2
+  exit 2
+fi
 v="$(read_verdict "$evidence_dir/task-42-lagrange-station-implementation.json")"
 [ -n "$v" ] || v="MISSING"
 add_phase phase3 "$v" "Phase 3 Live safety invariants"
