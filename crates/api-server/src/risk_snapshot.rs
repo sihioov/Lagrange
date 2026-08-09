@@ -33,7 +33,9 @@
 //! When the account has no equity snapshot yet, this refuses and names the
 //! account.
 
+use crate::actor_tx::begin_actor_tx;
 use crate::error::{TenancyError, TenancyResult};
+use auth::entitlement::Actor;
 use crate::repos::reconciliation::{Readiness, ReconciliationRepo};
 use domain::{Currency, Money, Quantity};
 use risk_gateway::RiskLimits;
@@ -94,11 +96,19 @@ pub struct GateOrder {
 /// authority. That gap is real and is tracked separately -- it is not created
 /// here, and using the stored value is strictly better than the fabricated one
 /// this replaces.
+/// Every read here runs inside an ACTOR transaction.
+///
+/// `daily_equity` and `positions` are under FORCE RLS (migration 0010), so a
+/// query on a bare pool sees zero rows and this function would report "risk
+/// inputs unavailable" for every account that exists. A test caught that; a
+/// production Live order would otherwise have failed the same way.
 async fn account_state(
     pool: &sqlx::PgPool,
+    actor: &Actor,
     account_id: Uuid,
     instrument_id: &str,
 ) -> TenancyResult<AccountState> {
+    let mut tx = begin_actor_tx(pool, actor).await?;
     let unavailable = |what: &str| {
         TenancyError::InvalidState(format!(
             "risk inputs unavailable for account {account_id}: no {what}"
@@ -110,7 +120,7 @@ async fn account_state(
          WHERE account_id = $1 ORDER BY trading_date DESC LIMIT 1",
     )
     .bind(account_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(TenancyError::from_sqlx)?;
     let (equity, cash) = equity_row.ok_or_else(|| unavailable("daily_equity row"))?;
@@ -122,7 +132,7 @@ async fn account_state(
          WHERE account_id = $1 ORDER BY trading_date DESC OFFSET 1 LIMIT 1",
     )
     .bind(account_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(TenancyError::from_sqlx)?;
 
@@ -132,7 +142,7 @@ async fn account_state(
     )
     .bind(account_id)
     .bind(instrument_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(TenancyError::from_sqlx)?;
 
@@ -145,7 +155,7 @@ async fn account_state(
            AND state NOT IN ('DENIED', 'CLAIMED')",
     )
     .bind(account_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(TenancyError::from_sqlx)?;
 
@@ -214,7 +224,12 @@ async fn account_state(
 /// typed refusal: there is no safe default for "how much may this account lose
 /// today", and inventing one is how a limit stops being a decision somebody
 /// made.
-pub async fn limits_for(pool: &sqlx::PgPool, owner: Uuid) -> TenancyResult<RiskLimits> {
+pub async fn limits_for(
+    pool: &sqlx::PgPool,
+    actor: &Actor,
+    owner: Uuid,
+) -> TenancyResult<RiskLimits> {
+    let mut tx = begin_actor_tx(pool, actor).await?;
     let row: Option<(String, i32, String, String, String, i32)> = sqlx::query_as(
         "SELECT version, max_symbol_weight_bp, max_order_value::text, \
                 max_daily_order_value::text, max_daily_loss::text, max_data_age_secs \
@@ -223,7 +238,7 @@ pub async fn limits_for(pool: &sqlx::PgPool, owner: Uuid) -> TenancyResult<RiskL
          ORDER BY owner_user_id NULLS LAST LIMIT 1",
     )
     .bind(owner)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(TenancyError::from_sqlx)?;
 
@@ -257,13 +272,14 @@ pub async fn limits_for(pool: &sqlx::PgPool, owner: Uuid) -> TenancyResult<RiskL
 /// four unwired inputs are `Unknown`, which denies. Nothing here is a fixture.
 pub async fn for_submission(
     pool: &sqlx::PgPool,
+    actor: &Actor,
     reconciliation: &ReconciliationRepo,
     connection_id: Option<Uuid>,
     kill_switch_engaged: Option<bool>,
     order: &GateOrder,
     now_secs: i64,
 ) -> TenancyResult<RiskSnapshot> {
-    let account = account_state(pool, order.account_id, &order.instrument_id).await?;
+    let account = account_state(pool, actor, order.account_id, &order.instrument_id).await?;
 
     // An unreadable kill switch is `Unknown`, which denies. §16 is fail-closed
     // and "we could not tell" is not permission.

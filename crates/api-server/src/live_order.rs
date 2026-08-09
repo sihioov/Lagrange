@@ -364,6 +364,7 @@ pub async fn submit_through_connection(
     let intent_ref = NewOrderIntent::mint_ref();
     let snapshot = crate::risk_snapshot::for_submission(
         &state.app_pool,
+        &session.actor(),
         &state.reconciliation(&session.actor(), owner),
         Some(connection.id),
         state.live(&session.actor()).kill_switch_engaged().await.ok(),
@@ -392,7 +393,7 @@ pub async fn submit_through_connection(
             client_key: input.client_key.clone(),
         },
         snapshot,
-        limits: crate::risk_snapshot::limits_for(&state.app_pool, owner).await?,
+        limits: crate::risk_snapshot::limits_for(&state.app_pool, &session.actor(), owner).await?,
         mode: if input.dry_run {
             Mode::DryRun
         } else {
