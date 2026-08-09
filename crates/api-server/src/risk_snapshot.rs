@@ -198,13 +198,24 @@ async fn account_state(
         .checked_add(&positions_value)
         .map_err(|e| TenancyError::InvalidState(format!("equity overflows: {e}")))?;
 
-    // Orders already placed today. Denied intents never reached the broker and
-    // must not consume the daily budget; anything from the approval onward did.
+    // Orders already placed today, counted from the APPROVAL onward.
+    //
+    // The states are `kis_client::order_state::OrderIntentState`'s own strings
+    // and migration 0019 constrains the column to them. Two are excluded and
+    // for different reasons: `DENIED` never reached the broker, and
+    // `INTENT_CREATED` is an intent that was claimed and has not been through
+    // the gate -- a crashed submission leaves one, and charging it against the
+    // daily budget would shrink tomorrow's headroom for an order that never
+    // existed.
+    //
+    // An earlier draft of this query excluded 'CLAIMED', which is not a state
+    // this system has. It matched nothing, so INTENT_CREATED rows were counted
+    // -- the opposite of what the comment above it claimed.
     let placed: Option<(String,)> = sqlx::query_as(
         "SELECT COALESCE(SUM(quantity * COALESCE(price, 0)), 0)::text \
          FROM order_intents \
          WHERE account_id = $1 AND created_at::date = CURRENT_DATE \
-           AND state NOT IN ('DENIED', 'CLAIMED')",
+           AND state NOT IN ('DENIED', 'INTENT_CREATED')",
     )
     .bind(account_id)
     .fetch_optional(&mut *tx)
