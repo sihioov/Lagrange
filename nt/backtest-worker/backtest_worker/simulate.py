@@ -67,6 +67,42 @@ def _read_curated_rows(curated_root: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _apply_window(
+    rows: list[dict[str, Any]], start: str | None, end: str | None
+) -> list[dict[str, Any]]:
+    """Cut the bars to the period the user asked to simulate.
+
+    One filter, at the source. Fills, the equity curve, `_derive_positions`
+    and `_benchmark` all read `rows`, so filtering here is what keeps them
+    agreeing with each other; filtering in four places is how they stop.
+
+    Both bounds are INCLUSIVE -- a request for 2020-01-01..2020-12-31 means
+    the user wants 2020-12-31's bar, and an exclusive end would silently drop
+    the last day of every window anyone ever writes.
+
+    `trading_date` is a parquet `date32` read back as `"2020-01-20"`, and the
+    runner has already rejected any bound that is not `YYYY-MM-DD`, so both
+    sides of the comparison are zero-padded ISO dates and ordering by string
+    is ordering by date. This is worth stating because the ledger check in
+    this same worker compared a full timestamp against a date and was false
+    forever without ever looking wrong.
+    """
+    if start is None and end is None:
+        return rows
+    kept = [r for r in rows if (start is None or r["trading_date"] >= start)
+            and (end is None or r["trading_date"] <= end)]
+    if not kept:
+        # A zero-bar run that reports success would produce a flat equity
+        # curve and no fills -- a result indistinguishable from a strategy
+        # that chose not to trade. Name what was asked for and what exists.
+        dates = [r["trading_date"] for r in rows]
+        raise SimulateError(
+            f"no curated bars in [{start}, {end}]; "
+            f"dataset covers [{min(dates)}, {max(dates)}]"
+        )
+    return kept
+
+
 def _materialize_quotes(catalog, rows: list[dict[str, Any]], slippage_bps: int) -> None:
     from nautilus_trader.model.data import QuoteTick
     from nautilus_trader.model.identifiers import InstrumentId
@@ -107,6 +143,7 @@ def _run_backtest(request: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     catalog_dir = run_dir / "catalog"
 
     rows = _read_curated_rows(curated_root)
+    rows = _apply_window(rows, request.get("start_date"), request.get("end_date"))
     instruments = sorted({row["instrument_id"] for row in rows})
 
     builder = importlib.import_module("custom-data.catalog_builder")

@@ -87,6 +87,19 @@ pub struct BacktestPayload {
     pub dataset_version_id: Option<String>,
     pub initial_cash: Option<serde_json::Value>,
     pub cost_profile_id: Option<String>,
+    /// The period the user asked to simulate.
+    ///
+    /// `POST /api/v1/backtests` has always required both and has always put
+    /// them in the payload; until now this struct did not name them, so serde
+    /// dropped them and every run silently covered the whole dataset while the
+    /// stored row still said 2020-2021. A wrong number reported as the
+    /// requested one is worse than an error, because nothing looks wrong.
+    ///
+    /// `Option` rather than required: rows queued before this field existed,
+    /// and the phase-0 payloads, carry no window. Absent means the whole
+    /// dataset -- the previous behaviour, now the explicit one.
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
 }
 
 /// How a single claimed job finished.
@@ -263,6 +276,7 @@ pub async fn run_once<R: StrategyResolver>(
 ///
 /// Separated from `Outcome` because the distinction it carries is about
 /// RETRYABILITY, which the queue acts on, rather than about what to report.
+#[derive(Debug)]
 enum ExecError {
     /// No attempt can succeed. Settled permanently.
     Permanent {
@@ -403,6 +417,15 @@ async fn execute<R: StrategyResolver>(
         request["factor_series"] = serde_json::to_value(series)
             .map_err(|e| ExecError::Transient(format!("cannot serialise factors: {e}")))?;
     }
+    // Same shape as `factor_series` above, and for the same reason: a payload
+    // without a window must produce the request it produced before this field
+    // existed, byte for byte. Writing `"start_date": null` unconditionally
+    // would change phase-0's approved request.json without changing anything
+    // about phase-0.
+    if let Some((start, end)) = window_for(&payload)? {
+        request["start_date"] = serde_json::Value::String(start);
+        request["end_date"] = serde_json::Value::String(end);
+    }
 
     let request_path = run_dir.join("request.json");
     let status_path = run_dir.join("status.json");
@@ -440,6 +463,64 @@ async fn execute<R: StrategyResolver>(
 /// produced it. A backtest whose fees cannot be traced to a profile version
 /// is not reproducible, and reproducibility is the whole point of pinning the
 /// dataset, the seed, and the engine version alongside it.
+/// The simulation period, validated, or `None` for the whole dataset.
+///
+/// What the window bounds is what the SIMULATION SEES -- the bars fed to the
+/// engine. It deliberately does not bound the factor series, which stays
+/// full-history: a 200-day trend factor on the window's first day needs the
+/// 200 days before it, and a factor series cut to the window would be null
+/// exactly where the strategy first wants to trade.
+///
+/// The consequence is worth stating plainly, because it is a real limit and
+/// not an oversight: a strategy that derives its own signal from bars instead
+/// of from the factor series gets no warm-up either, and sees exactly the
+/// requested window. Loading warm-up bars while suppressing pre-window trading
+/// would need the fills, the equity curve's first point, and the benchmark's
+/// base all policed against a second date -- much more machinery than the
+/// honest simple rule earns.
+///
+/// Both halves must parse and be ordered. A payload row is written once at
+/// submit time, so neither failure can be fixed by retrying it.
+fn window_for(payload: &BacktestPayload) -> Result<Option<(String, String)>, ExecError> {
+    let malformed = |reason: String| ExecError::Permanent {
+        class: ErrorClass::Input,
+        code: "MALFORMED_PAYLOAD",
+        reason,
+    };
+    let parse = |label: &str, raw: &str| {
+        chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+            .map_err(|_| malformed(format!("{label} is not a YYYY-MM-DD date: {raw:?}")))
+    };
+
+    match (payload.start_date.as_deref(), payload.end_date.as_deref()) {
+        (None, None) => Ok(None),
+        // Half a window is not a window. Silently treating it as "from here to
+        // the end of the dataset" would answer a question nobody asked.
+        (Some(_), None) => Err(malformed("payload has start_date but no end_date".into())),
+        (None, Some(_)) => Err(malformed("payload has end_date but no start_date".into())),
+        (Some(start), Some(end)) => {
+            let (s, e) = (parse("start_date", start)?, parse("end_date", end)?);
+            if s > e {
+                return Err(malformed(format!(
+                    "start_date {start} is after end_date {end}"
+                )));
+            }
+            // NORMALIZED, never echoed back as written. chrono accepts
+            // `2020-1-1` for `%Y-%m-%d`, and the worker compares these against
+            // parquet `date32` values read back zero-padded as `2020-01-20`.
+            // `"2020-1-1" > "2020-01-20"` as strings -- so passing the raw
+            // text through would drop all of January while looking like it had
+            // honoured the request. Formatting from the parsed date makes the
+            // zero-padding an invariant of this function instead of a property
+            // the caller has to have got right.
+            Ok(Some((
+                s.format("%Y-%m-%d").to_string(),
+                e.format("%Y-%m-%d").to_string(),
+            )))
+        }
+    }
+}
+
 fn cost_profile_for(payload: &BacktestPayload) -> Result<serde_json::Value, ExecError> {
     use portfolio_model::cost::{CostProfile, CostProfileId};
 
@@ -620,4 +701,120 @@ async fn run_worker(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload(start: Option<&str>, end: Option<&str>) -> BacktestPayload {
+        BacktestPayload {
+            kind: None,
+            run_id: None,
+            strategy_config_id: None,
+            dataset_version_id: None,
+            initial_cash: None,
+            cost_profile_id: None,
+            start_date: start.map(str::to_string),
+            end_date: end.map(str::to_string),
+        }
+    }
+
+    fn rejection(start: Option<&str>, end: Option<&str>) -> String {
+        match window_for(&payload(start, end)) {
+            Err(ExecError::Permanent { class, code, reason }) => {
+                // The class drives the retry decision. A payload row is
+                // written once at submit time, so a window the runner cannot
+                // read is the submitter's to fix and retrying only burns the
+                // job's attempts.
+                assert_eq!(class, ErrorClass::Input);
+                assert_eq!(code, "MALFORMED_PAYLOAD");
+                reason
+            }
+            other => panic!("expected a permanent input error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_window_is_carried_through_as_written() {
+        let got = window_for(&payload(Some("2020-01-01"), Some("2020-12-31"))).unwrap();
+        assert_eq!(
+            got,
+            Some(("2020-01-01".to_string(), "2020-12-31".to_string()))
+        );
+    }
+
+    /// Absent is the whole dataset, and it must stay expressible.
+    ///
+    /// Jobs queued before this field existed carry no window, and neither do
+    /// the phase-0 payloads. `None` here is what keeps their request.json
+    /// byte-identical -- the approved phase-0 artifact hash depends on it.
+    #[test]
+    fn no_window_means_the_whole_dataset() {
+        assert_eq!(window_for(&payload(None, None)).unwrap(), None);
+    }
+
+    #[test]
+    fn a_single_day_window_is_legal() {
+        let got = window_for(&payload(Some("2020-06-15"), Some("2020-06-15"))).unwrap();
+        assert_eq!(
+            got,
+            Some(("2020-06-15".to_string(), "2020-06-15".to_string()))
+        );
+    }
+
+    /// Half a window is rejected rather than completed.
+    ///
+    /// Reading `start` alone as "from here to the end of the data" would
+    /// answer a question nobody asked, and the answer would look like a
+    /// normal result.
+    #[test]
+    fn half_a_window_is_not_a_window() {
+        assert!(rejection(Some("2020-01-01"), None).contains("no end_date"));
+        assert!(rejection(None, Some("2020-12-31")).contains("no start_date"));
+    }
+
+    #[test]
+    fn a_backwards_window_is_rejected() {
+        let reason = rejection(Some("2020-12-31"), Some("2020-01-01"));
+        assert!(reason.contains("after"), "unhelpful reason: {reason}");
+    }
+
+    /// Text that is not a date at all is rejected.
+    ///
+    /// The worker compares these against parquet `date32` values read back as
+    /// `"2020-01-20"`. A bound that is not a date would still compare -- as
+    /// strings, wrongly, and without ever failing.
+    #[test]
+    fn text_that_is_not_a_date_is_rejected() {
+        for bad in ["01/01/2020", "2020-01-01T00:00:00Z", "yesterday", ""] {
+            let reason = rejection(Some(bad), Some("2020-12-31"));
+            assert!(reason.contains(bad), "reason should quote {bad:?}: {reason}");
+        }
+    }
+
+    /// A date that parses but is not zero-padded is normalized, not echoed.
+    ///
+    /// This one was found by the test rather than reasoned about, and it is
+    /// the whole reason the function formats instead of passing text through.
+    /// `chrono` accepts `2020-1-1` for `%Y-%m-%d`; the worker then compares
+    /// that string against `2020-01-20`, and `"2020-1-1" > "2020-01-20"`, so
+    /// the run would have silently skipped January while reporting the window
+    /// the user asked for. Every bound leaving here is zero-padded.
+    #[test]
+    fn a_date_that_parses_but_is_not_padded_is_normalized() {
+        let got = window_for(&payload(Some("2020-1-1"), Some("2020-6-5"))).unwrap();
+        assert_eq!(
+            got,
+            Some(("2020-01-01".to_string(), "2020-06-05".to_string()))
+        );
+
+        // The property that matters, stated as the comparison the worker
+        // actually performs.
+        let (start, _) = got.unwrap();
+        assert!(
+            start.as_str() <= "2020-01-20",
+            "a January bar must fall inside a window starting 2020-1-1"
+        );
+    }
 }
