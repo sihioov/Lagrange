@@ -1,6 +1,6 @@
 # Lagrange Station — 상태 종합
 
-**기준일: 2026년 8월 10일 (2026-08-10)** · 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 이 날짜의 코드( `82882f9` )에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다.
+**기준일: 2026년 8월 10일 (2026-08-10)** · 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 이 날짜의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다. 이번 Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`이다.
 
 ---
 
@@ -49,7 +49,7 @@
 
 | 스위트 | 결과 |
 |---|---|
-| Rust 워크스페이스 | **1,040개 통과** (08-09 기준 1,026 → 이번 세션 +14, 검토 지적사항 수정분 포함) |
+| Rust 워크스페이스 | **1,051개 통과** (Paper runner/valuation 이음매 테스트 11개 추가 포함) |
 | Python (nt + 골든) | **239개 통과**, 1 스킵 — phase-0 골든 불변 |
 | Web (vitest + tsc) | **48개 통과**, `openapi:check` 클린, `tsc --noEmit` 클린 |
 | clippy (workspace, all-targets) | 클린 |
@@ -69,7 +69,7 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 
 - **Phase 0** — 완료. 골든 회귀가 모든 변경에서 불변으로 유지되고 있다.
 - **Phase 1** — 코드 완료. 외부 2건(E1/E2)만 남음.
-- **Phase 2** — **실행 경로(엔진) 구현 완료, 러너 데몬은 여전히 부재** (`ecef4b2`). `job_queue::paper_execution::execute_session`이 큐잉된 target을 실제로 체결해 `orders`/`fills`/`positions`/`cash_ledger`에 기록한다 — `portfolio_model::paper_flow`(이미 있던 순수 도메인 로직)를 그대로 재사용한 영속화 계층. `api_server::paper_session::run_and_settle`이 이걸 정산·통지와 묶는 진입점이지만, **이 시점 기준 실서비스 호출자가 없다** — `nt/paper-runner/`는 여전히 `.gitkeep`뿐이고 `pending_targets::due()`를 부르는 곳도 없다. 러너 데몬 부재는 기록된 결정(task-30/32)이며, 배포되지 않는 한 Paper 계좌는 실제로 거래하지 않는다. 6개 이음매 테스트(LIVE 계좌 오염 방지 포함)가 소유자 자신의 RLS 컨텍스트로 원장을 재확인한다(AT-07 교차 테넌트 격리 포함). Paper 표시 경로(`/equity`, `/performance`)도 `cash_ledger` 대조를 갖췄다(`e99385c`). **남은 것: 러너 데몬 자체, 그리고 `daily_equity`(종가 평가) 쓰기 — §4.3 참조.**
+- **Phase 2** — **실행 엔진·러너·종가 평가 경로 구현 완료** (`ecef4b2`, `cf8704a`, `8da6548`). `job_queue::paper_execution::execute_session`이 큐잉된 target을 실제로 체결해 `orders`/`fills`/`positions`/`cash_ledger`에 기록하고, `api_server::paper_session::run_and_settle`이 정산·패리티·통지를 수행한다. 새 `api_server::paper_runner::run_cycle`은 worker 역할의 전체 due target을 소유자 Actor로 재진입시켜 실행하고, 활성 PAPER 계좌를 스캔해 `job_queue::paper_valuation::value_account`를 호출한다. 종가 평가는 원장 현금 자기대조·보유 포지션별 curated close·미래 close 차단·cost profile 검증을 거쳐 `daily_equity`를 계좌/날짜별 불변·멱등으로 기록한다. `crates/api-server/src/bin/paper-runner.rs`가 `--once`/`--date`, 환경별 풀, 2초 polling/10초 backoff, Ctrl-C 종료를 제공한다. 실제 QA DB 이음매 테스트로 두 소유자 스캔, 실행·통지 중복 방지, 정확한 equity/cash/positions_value, missing/future/conflicting close, LIVE·교차 테넌트 거부를 검증했고, Python/Web/외부 데이터 권리 차단은 그대로다. 배포 서비스 등록과 운영 credential 주입은 별도 운영 작업이다.
 - **Phase 3** — 안전 불변식 검증 완료(L1~L11) + 이번 감사로 치명 결함 수정. 게이트 입력 5개 중 **2개 배선 완료**(`85f1902`: `strategy_promotion` ← 계좌의 활성 바인딩, `instrument_allowed` ← 고정 유니버스). 나머지 3개(장 세션·데이터 신선도·주문 충돌)는 이 저장소에 존재하지 않는 외부 출처가 필요해 여전히 `Unknown`이며, **라이브 주문은 현재도 승인되지 않는다** — 의도된 정직한 상태.
 - **Phase 4** — PIT 재무 팩터의 **골격 완료** (`cda7182`): 이중 시간축(기간 + 공시일), 바 날짜별 as-of 해석, 정정 공시 처리. 실제 재무 데이터가 오면 채우기만 하면 된다. 나머지 항목은 미착수 (§4.4).
 
@@ -116,7 +116,7 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 
 | 항목 | 내용 | 커밋 |
 |---|---|---|
-| **Paper 실행 경로** | `job_queue::paper_execution::execute_session` — 큐잉된 target을 실제 원장 기록으로. `portfolio_model::paper_flow::plan_session_open`(기존 순수 도메인 로직)을 재사용, `job-queue`에 위치(worker 역할 데몬, `api-server`가 이를 의존하는 방향이라 반대로는 못 둠). 5개 이음매 테스트가 소유자 RLS로 원장을 재확인, 재실행 이중 방지, 가격 없으면 전체 실패, 교차 테넌트 격리(AT-07) 검증 | `ecef4b2` |
+| **Paper 실행·러너·종가 평가** | `execute_session`/`run_and_settle` 경로에 worker-wide `run_cycle`과 `paper-runner` 바이너리를 연결했다. `value_account`가 `close_valuation_event`와 원장 자기대조를 사용해 불변·멱등 `daily_equity`를 기록한다. 11개 새 이음매 테스트가 정확한 금액, 미래·누락 close, 충돌, LIVE·교차 테넌트 거부, 대상/통지 중복 방지를 검증 | `cf8704a`, `8da6548` |
 | **게이트 입력 2개 배선** | `strategy_promotion` ← `accounts.active_binding`, `instrument_allowed` ← 고정 유니버스(`in_fixed_universe`, 기존 상수 재사용). 나머지 3개는 외부 출처가 없어 `Unknown` 유지 | `85f1902` |
 | **P6/P7 증거 복원** | 실제 백업 생성(`scripts/backup/create.sh`) → 격리 타깃 복구(`scripts/backup/restore-and-verify.sh`, `verdict: SUCCESS`) → 장애 주입 15개 시나리오 재검증. 조작 없이 실제 인프라로 재현 | (증거 재실행, 코드 변경 없음) |
 | **Paper 표시 현금 대조** | `PaperRepo::equity`가 `cash_ledger`와 as-of 대조(`LATERAL JOIN`)해 `cash_reconciled` 플래그를 반환. 불일치해도 화면은 보여주되(FR-PAPER-003) 사실대로 표시 | `e99385c` |
@@ -132,18 +132,18 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 
 ## 4. 앞으로 해야 할 일
 
-### 한눈에 보기 — 전부 "아직 한 번도 안 한" 항목이다 (재작업 아님)
+### 한눈에 보기 — 완료된 코드 작업과 남은 항목
 
 | # | 항목 | 누가 | 지금 시작 가능? |
 |---|---|---|---|
-| 1 | Paper 러너 데몬 | **코드 작업** | ✅ 바로 착수 가능 |
-| 2 | 리스크 게이트 입력 3개 배선 (장 캘린더·데이터 신선도·주문 충돌) | **코드 작업** | ⚠️ 착수 전 "외부 출처를 뭘로 할지" 결정 필요 |
-| 3 | phase-0 골든 가격 10,000배 스케일 버그 재승인 | **사장님 결정** | ⛔ 코드 작업 아님 — 승인 없이는 착수 자체가 금지 |
-| 4 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
-| 5 | `daily_equity`(종가 평가) 쓰기 | **코드 작업** | ✅ 바로 착수 가능 |
+| 1 | Paper 러너 데몬 | **코드 작업** | ✅ **완료** (`8da6548`) |
+| 2 | `daily_equity`(종가 평가) 쓰기 | **코드 작업** | ✅ **완료** (`cf8704a`) |
+| 3 | 리스크 게이트 입력 3개 배선 (장 캘린더·데이터 신선도·주문 충돌) | **코드 작업** | ⚠️ 착수 전 "외부 출처를 뭘로 할지" 결정 필요 |
+| 4 | phase-0 골든 가격 10,000배 스케일 버그 재승인 | **사장님 결정** | ⛔ 코드 작업 아님 — 승인 없이는 착수 자체가 금지 |
+| 5 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
 | 6 | KRX 계약 / Auth0 / KIS 실계좌 | **사장님 조달** | ⛔ 코드로 못 품 |
 
-1·2·5는 이번 세션에서 Paper **엔진**(체결 로직)을 만들면서 나온 **다음 조각**이지, 엔진 작업을 되돌리거나 다시 하는 게 아니다. 엔진은 완성돼 커밋 `ec81d73`에 있다.
+1·2는 이번 세션에 완료했다. Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가는 각각 `8da6548`·`cf8704a`에 있다. 남은 코드 작업은 리스크 게이트 입력 3개 배선이며, 외부 조달·소유자 결정 항목은 그대로다.
 
 ### 4.1 소유자만 할 수 있는 것 — 외부 조달 3건
 
@@ -163,11 +163,10 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
-1. **Paper 러너 데몬.** 엔진(`execute_session`)과 진입점(`run_and_settle`)은 있지만 이를 주기적으로 부르는 프로세스가 없다 — `backtest-runner.rs`와 같은 형태의 바이너리가 필요(worker 역할 풀, `pending_targets`를 테넌트 전체로 순회). 이게 배포되지 않으면 Paper 계좌는 실제로 거래하지 않는다.
-2. **`daily_equity`(종가 평가) 쓰기.** Paper 실행 경로(§3.5)는 세션 **시가**의 주문·체결·현금만 쓴다. 문서화된 흐름의 다음 단계인 `DailyBarClosedEvent(T+1)` 종가 평가(`close_valuation_event` 호출 + `daily_equity` upsert)는 의도적으로 미룸 — 시가 실행 시점엔 아직 없는 종가를 지어내지 않기 위함. 이게 있어야 자산곡선이 실제로 쌓인다.
-3. **리스크 게이트 입력 3개 잔여 배선.** `market_session`(시장 캘린더 서비스 필요), `data_freshness`(데이터셋 staleness 검사 필요), `IntentConflict`(미결 주문 충돌 탐지 필요) — 이 저장소에 아직 존재하지 않는 외부 출처가 있어야 해서 지어내지 않았다. **이 3개를 잇기 전까지 라이브 주문은 승인되지 않는다 — 의도된 상태.**
-4. **phase-0 데이터셋 가격 스케일 버그 수정** (§4.2-1 결정 이후). `synth_data.py`에서 `* 10_000` 제거 또는 pyarrow 스케일 적용 방식 수정, 골든 해시 재승인, 영향받는 다운스트림(있다면) 재검증.
-5. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화(이번 재실행도 E7은 스킵).
+1. **배포 서비스 등록·운영 설정.** `paper-runner` 바이너리는 구현됐지만 Compose/systemd 등 실제 배포 단위, worker/app/admin/audit URL 주입, `LAGRANGE_DATASET_ROOT` 운영 경로 등록은 아직 별도 운영 작업이다.
+2. **리스크 게이트 입력 3개 잔여 배선.** `market_session`(시장 캘린더 서비스 필요), `data_freshness`(데이터셋 staleness 검사 필요), `IntentConflict`(미결 주문 충돌 탐지 필요) — 이 저장소에 아직 존재하지 않는 외부 출처가 있어 지어내지 않았다. **이 3개를 잇기 전까지 라이브 주문은 승인되지 않는다 — 의도된 상태.**
+3. **phase-0 데이터셋 가격 스케일 버그 수정** (§4.2-1 결정 이후). `synth_data.py`에서 `* 10_000` 제거 또는 pyarrow 스케일 적용 방식 수정, 골든 해시 재승인, 영향받는 다운스트림(있다면) 재검증.
+4. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화(이번 재실행도 E7은 스킵).
 
 **작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 지금은 나머지 입력 3개가 `Unknown`이라 무해하지만, 그것들이 배선되는 순간 결정적 검사가 되니 그때 재검토할 것. `positions` upsert의 `ON CONFLICT ... DO UPDATE`가 갱신 절에서 소유자를 재확인하지 않는다 — 지금은 계좌-소유자가 1:1이라 안전하지만, 스키마 차원의 보강(`UNIQUE (account_id, owner_user_id, instrument_id)`)이 더 견고한 해법이다.
 

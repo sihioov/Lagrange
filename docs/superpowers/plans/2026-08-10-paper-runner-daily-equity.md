@@ -236,7 +236,7 @@ Run the repository's documented Rust, Python, web, and `openapi:check` commands 
 
 Run `git diff --check`, `git status --short`, and inspect the new binary help output. Confirm no LIVE account can be valued or executed, no future close is written, and no unrelated files changed.
 
-- [ ] **Step 4: Update the status snapshot.**
+- [x] **Step 4: Update the status snapshot.**
 
 Change only the Phase 2/§4.3 statements that say the runner and daily equity are absent, record the implementation commit hashes and verification counts, and explicitly leave the external data/auth/KIS blockers and phase-0 approval decisions unchanged.
 
