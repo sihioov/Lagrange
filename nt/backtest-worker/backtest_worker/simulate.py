@@ -190,7 +190,26 @@ def _run_backtest(request: dict[str, Any], run_dir: Path) -> dict[str, Any]:
         ))
 
     initial_cash = str(request.get("initial_cash", "100000000"))
+    # Bound the REPLAY, not just the quotes.
+    #
+    # Filtering `rows` bounds what `_materialize_quotes` writes, and that alone
+    # is not enough: `build_catalog` above populates the catalog from the FULL
+    # curated root, and the two session-event streams are read back out of that
+    # catalog. A run whose quotes stopped at the window still replayed every
+    # SessionOpenEvent and DailyBarClosedEvent in the dataset, so the engine
+    # produced an equity point per dataset day and the window changed nothing
+    # -- 260 points with a window, 260 without. The end-to-end test is what
+    # showed this; the unit test on the row filter passed throughout, because
+    # the row filter was never the thing that decided what the engine saw.
+    #
+    # `start`/`end` on the run config bound every stream at the source. The
+    # bars are dated at T00:00:00Z (09:00 KST, the Korean open), so the end
+    # bound runs to the close of `end_date` rather than its midnight, which
+    # would drop the final day.
+    window_start, window_end = request.get("start_date"), request.get("end_date")
     config = BacktestRunConfig(
+        start=_fmt_ts(window_start, "00:00:00+00:00") if window_start else None,
+        end=_fmt_ts(window_end, "23:59:59+00:00") if window_end else None,
         venues=[BacktestVenueConfig(
             name="KRX", oms_type="HEDGING", account_type="CASH",
             starting_balances=[f"{initial_cash} KRW"],
