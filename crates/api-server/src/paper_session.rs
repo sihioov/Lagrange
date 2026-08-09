@@ -24,11 +24,16 @@
 //! `NotFound` and never reaches the alert — one session yields one
 //! notification even under a duplicate claim.
 
+use std::path::Path;
+
 use auth::entitlement::Actor;
+use job_queue::paper_execution::{
+    ExecutionOutcome, SessionInput, execute_session, targets_from_json,
+};
 use result_model::paper_parity::{ParityReport, ParityStatus};
 use uuid::Uuid;
 
-use crate::error::TenancyResult;
+use crate::error::{TenancyError, TenancyResult};
 use crate::http::state::ApiState;
 use crate::notify::{AlertResult, AlertSeverity};
 use crate::repos::pending_targets::PendingTargetRow;
@@ -67,6 +72,81 @@ pub struct SettlementOutcome {
     pub parity: Option<ParityReport>,
     pub severity: AlertSeverity,
     pub alerts: AlertResult,
+}
+
+/// Runs one queued session end to end: execute, then settle and announce.
+///
+/// This is the entry point a real caller uses. `settle_and_announce` below
+/// records what a session DID; until now nothing produced that. The runner
+/// daemon wraps this in a polling loop over `pending_targets::due`; a direct
+/// call is the same path with the loop unrolled.
+///
+/// # Why the status guard is here and not in the engine
+///
+/// The target must still be `PENDING`. A `SKIPPED` target wrote nothing to the
+/// ledger, so `execute_session`'s own "already executed?" check would let it
+/// through and trade a terminally-settled session at the prices of whenever
+/// this was called. The engine cannot make that judgement — it is handed a
+/// session and executes it — and `plan_session_open`'s date guard cannot
+/// either, since the session date it compares against is the target's own.
+/// A non-`PENDING` target is reported as `NotFound`, exactly as a second
+/// runner's `settle` reports it.
+///
+/// The engine's [`ExecutionOutcome::AlreadyExecuted`] covers the ONE case this
+/// guard cannot: a crash between the engine's commit and the settle, which
+/// leaves a `PENDING` target whose orders are already in the ledger.
+///
+/// `worker_pool` is a `worker`-role pool, not the API's `app` pool: the ledger
+/// writes are the runner's, and this server has no worker connection of its
+/// own to reach for.
+pub async fn run_and_settle(
+    state: &ApiState,
+    worker_pool: &sqlx::PgPool,
+    dataset_root: &Path,
+    actor: &Actor,
+    target_id: Uuid,
+) -> TenancyResult<SettlementOutcome> {
+    let target = state.pending_targets().get(actor, target_id).await?;
+    if target.status != "PENDING" {
+        return Err(TenancyError::NotFound);
+    }
+
+    // The owner is the ACTOR, never a column of the row: the read above only
+    // returned it because RLS scoped it to this actor, so they are the same
+    // user by construction — and the engine binds it as its tenancy predicate.
+    let owner_user_id = crate::actor_tx::actor_uuid(actor)?;
+
+    let outcome = match session_input(&target, owner_user_id) {
+        Ok(input) => match execute_session(worker_pool, dataset_root, &input).await {
+            Ok(ExecutionOutcome::Executed { .. } | ExecutionOutcome::AlreadyExecuted { .. }) => {
+                SessionOutcome::Executed
+            }
+            Ok(ExecutionOutcome::NoTrade) => SessionOutcome::Blocked {
+                reason: "no rebalance was needed: every instrument was inside the rebalance \
+                         threshold or below the minimum trade size"
+                    .to_owned(),
+            },
+            Err(e) => SessionOutcome::Failed {
+                reason: e.to_string(),
+            },
+        },
+        Err(reason) => SessionOutcome::Failed { reason },
+    };
+
+    settle_and_announce(state, actor, target_id, outcome).await
+}
+
+/// Turns a queued row into the engine's input, or says why it cannot.
+fn session_input(target: &PendingTargetRow, owner_user_id: Uuid) -> Result<SessionInput, String> {
+    let effective_date = domain::TradingDate::parse(&target.effective_date.to_string())
+        .map_err(|e| format!("unreadable effective_date: {e}"))?;
+    let targets = targets_from_json(&target.targets_json).map_err(|e| e.to_string())?;
+    Ok(SessionInput {
+        account_id: target.account_id,
+        owner_user_id,
+        effective_date,
+        targets,
+    })
 }
 
 /// Settles the target and routes its notification.

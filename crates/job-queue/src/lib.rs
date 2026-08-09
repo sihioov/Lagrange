@@ -11,6 +11,7 @@
 pub mod batch;
 pub mod error;
 pub mod factor_series;
+pub mod paper_execution;
 pub mod queue;
 pub mod resolver;
 pub mod runner;

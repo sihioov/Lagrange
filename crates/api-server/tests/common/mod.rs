@@ -136,6 +136,11 @@ pub struct Harness {
     pub owner_pool: PgPool,
     /// base app-role URL used to build actor-GUC pools for queue calls.
     pub app_url: String,
+    /// worker-role URL: the daemon connection the Paper runner writes the
+    /// ledger through. The `worker` policies are `USING (true)` and carry no
+    /// actor GUC, so this pool needs none — every statement binds its own
+    /// `account_id`/`owner_user_id` predicate instead.
+    pub worker_url: String,
     /// Temp artifact tree the download route hashes against (C: temp, keeps
     /// D: safe; mirrors the read-only /data/artifacts mount in compose).
     pub artifact_root: std::path::PathBuf,
@@ -210,6 +215,7 @@ impl Harness {
         let app_url = conn_url(&super_url, "app", &db_name);
         let admin_url = conn_url(&super_url, "admin", &db_name);
         let audit_url = conn_url(&super_url, "audit_writer", &db_name);
+        let worker_url = conn_url(&super_url, "worker", &db_name);
 
         let owner_pool = pool(&owner_url, 4).await;
         MIGRATOR.run(&owner_pool).await.expect("migrations run");
@@ -245,6 +251,7 @@ impl Harness {
             audit_pool,
             owner_pool,
             app_url,
+            worker_url,
             artifact_root,
             state: None,
         };
@@ -357,6 +364,16 @@ impl Harness {
     /// GUC'd verification pool scoped to the member actor (tenant reads).
     pub async fn member_pool(&self) -> PgPool {
         actor_pool(&self.app_url, &self.member.user_id.to_string(), 2).await
+    }
+
+    /// A plain `worker`-role pool: the Paper runner's own connection.
+    ///
+    /// No actor GUC, deliberately. That is exactly the production shape — the
+    /// runner is a daemon serving every tenant — and it is what makes the
+    /// engine's explicit `account_id`/`owner_user_id` predicates load-bearing
+    /// rather than decorative.
+    pub async fn worker_pool(&self) -> PgPool {
+        pool(&self.worker_url, 4).await
     }
 
     /// The `pending_targets` repository over the harness app pool.
