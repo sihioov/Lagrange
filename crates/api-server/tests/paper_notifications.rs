@@ -99,6 +99,31 @@ async fn queue_target(h: &Harness, u: &UserCtx, account: &str, config: &str) -> 
         .id
 }
 
+/// Seeds the LEDGER side of an executed session: one order on the target's
+/// effective date.
+///
+/// `SessionOutcome::Executed` documents itself as "The session's orders and
+/// fills are in the ledger", and `settle_and_announce` now checks that rather
+/// than believing it. Before that check existed these tests settled EXECUTED
+/// against an empty ledger and asserted the user was told the session had
+/// completed -- which is precisely the false signal the check was added to
+/// stop. The premise now has to be established, so the assertions mean what
+/// they say.
+async fn seed_executed_session(h: &Harness, u: &UserCtx, account: &str) {
+    h.seed_tenant(
+        u,
+        &format!(
+            "INSERT INTO orders \
+             (account_id, owner_user_id, order_ref, instrument_id, side, quantity, price, \
+              status, created_at) \
+             VALUES ('{account}', '{owner}', 'order-{account}', '069500.KRX', 'BUY', \
+                     10, 7250, 'FILLED', '2026-01-06T00:30:00Z')",
+            owner = u.user_id
+        ),
+    )
+    .await;
+}
+
 /// Seeds the backtest side of the parity comparison: a SUCCEEDED
 /// recommendation run for the same config and close, with the weights the
 /// caller passes.
@@ -161,6 +186,7 @@ async fn a_matching_session_completes_with_an_info_notice() {
     .await;
     let target = queue_target(&h, &m, &account, &config).await;
 
+    seed_executed_session(&h, &m, &account).await;
     let outcome = settle_and_announce(&h.state(), &m.actor(), target, SessionOutcome::Executed)
         .await
         .expect("the runner settles and announces");
@@ -214,6 +240,7 @@ async fn a_divergent_session_warns_and_reaches_the_owner() {
     .await;
     let target = queue_target(&h, &m, &account, &config).await;
 
+    seed_executed_session(&h, &m, &account).await;
     let outcome = settle_and_announce(&h.state(), &m.actor(), target, SessionOutcome::Executed)
         .await
         .expect("settles and announces");
@@ -264,6 +291,7 @@ async fn a_session_without_a_backtest_warns_not_comparable() {
     // No recommendation run seeded: there is no backtest side at all.
     let target = queue_target(&h, &m, &account, &config).await;
 
+    seed_executed_session(&h, &m, &account).await;
     let outcome = settle_and_announce(&h.state(), &m.actor(), target, SessionOutcome::Executed)
         .await
         .expect("settles and announces");
@@ -384,6 +412,7 @@ async fn a_second_runner_claiming_the_same_session_announces_nothing() {
     let config = strategy_config(&h, &m, "notify-dup-cfg").await;
     let target = queue_target(&h, &m, &account, &config).await;
 
+    seed_executed_session(&h, &m, &account).await;
     settle_and_announce(&h.state(), &m.actor(), target, SessionOutcome::Executed)
         .await
         .expect("the first runner settles");
@@ -492,6 +521,7 @@ async fn two_members_settlements_never_cross_feeds() {
     let t1 = queue_target(&h, &m1, &acct1, &cfg1).await;
     queue_target(&h, &m2, &acct2, &cfg2).await;
 
+    seed_executed_session(&h, &m1, &acct1).await;
     settle_and_announce(&h.state(), &m1.actor(), t1, SessionOutcome::Executed)
         .await
         .expect("member 1 settles their own session");
@@ -508,5 +538,60 @@ async fn two_members_settlements_never_cross_feeds() {
         stolen.is_err(),
         "a foreign target is indistinguishable from missing"
     );
+    h.teardown().await;
+}
+
+/// A session claimed EXECUTED with nothing in the ledger is not announced as
+/// a completion.
+///
+/// `SessionOutcome::Executed` documents itself as "The session's orders and
+/// fills are in the ledger", and nothing used to check it. As of this writing
+/// no code in this server writes `orders`, `fills` or `positions` at all, so
+/// every `Executed` a runner could produce would have been this case: the
+/// target flipped to EXECUTED and the user told INFO -- the completion notice
+/// -- for a session that recorded nothing.
+///
+/// The downgrade is to `Failed`, not an error. Returning an error would leave
+/// the row PENDING, and `SessionOutcome`'s own comment explains why that is
+/// worse: "a PENDING row would be re-claimed forever". A runner claiming
+/// execution it cannot evidence is broken, which is what CRITICAL is for.
+#[tokio::test]
+async fn a_session_that_recorded_nothing_is_not_announced_as_complete() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let m = h.member.clone();
+    let account = paper_account(&h, &m, "notify-hollow").await;
+    let config = strategy_config(&h, &m, "notify-hollow-cfg").await;
+    let target = queue_target(&h, &m, &account, &config).await;
+
+    // No seed_executed_session: the ledger holds nothing for this session.
+    let outcome = settle_and_announce(&h.state(), &m.actor(), target, SessionOutcome::Executed)
+        .await
+        .expect("the session still settles rather than staying PENDING forever");
+
+    assert_eq!(
+        outcome.target.status, "SKIPPED",
+        "a session with no orders must not settle EXECUTED"
+    );
+    assert_eq!(
+        outcome.severity,
+        AlertSeverity::Critical,
+        "a runner that claims execution it cannot evidence is broken, not merely blocked"
+    );
+    assert!(
+        outcome.parity.is_none(),
+        "there is nothing to compare a session that traded nothing against"
+    );
+
+    let items = feed(&h, &m).await;
+    assert_eq!(items.len(), 1, "exactly one notice per session");
+    let body = format!("{items:?}");
+    assert!(
+        body.contains("recorded nothing"),
+        "the notice must say what was missing: {body}"
+    );
+
     h.teardown().await;
 }

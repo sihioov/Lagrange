@@ -79,6 +79,45 @@ pub async fn settle_and_announce(
     target_id: Uuid,
     outcome: SessionOutcome,
 ) -> TenancyResult<SettlementOutcome> {
+    // `Executed` is a claim about the ledger, so it is checked against the
+    // ledger.
+    //
+    // Its own documentation says "The session's orders and fills are in the
+    // ledger", and nothing verified that. A caller could settle a session
+    // EXECUTED and the user would be told INFO -- the completion notice --
+    // while no order, no fill and no cash movement had ever been recorded. As
+    // of this writing nothing in this server writes `orders`, `fills` or
+    // `positions` at all, so every `Executed` in production would have been
+    // exactly that: a completion notice for a session that did nothing.
+    //
+    // The floor is ONE ORDER, not one fill. A session that placed orders and
+    // filled none still executed -- the runner did its job and the market did
+    // not. A session that placed nothing did not execute, and the enum already
+    // has the right word for it: `Blocked` covers the deliberate no-trade
+    // cases (an entitlement pause, every instrument inside the rebalance
+    // threshold), so `Executed` with zero orders is not a legitimate state.
+    let target_peek = state.pending_targets().get(actor, target_id).await?;
+    let outcome = match &outcome {
+        SessionOutcome::Executed => {
+            match ledger_evidence(state, actor, &target_peek).await? {
+                true => outcome,
+                // Downgraded rather than refused. Returning an error would
+                // leave the row PENDING, and the enum's own comment explains
+                // why that is the worst option: "a PENDING row would be
+                // re-claimed forever". A runner claiming execution it cannot
+                // evidence is broken, which is what CRITICAL is for.
+                false => SessionOutcome::Failed {
+                    reason: format!(
+                        "settled EXECUTED but no order exists for account {} on {}; \
+                         the session recorded nothing",
+                        target_peek.account_id, target_peek.effective_date
+                    ),
+                },
+            }
+        }
+        _ => outcome,
+    };
+
     let target = state
         .pending_targets()
         .settle(actor, target_id, outcome.settled_status())
@@ -105,6 +144,37 @@ pub async fn settle_and_announce(
         severity,
         alerts,
     })
+}
+
+/// Whether the ledger holds anything for this session.
+///
+/// Runs inside an ACTOR transaction: `orders` is under FORCE RLS (migration
+/// 0010), so a bare pool sees zero rows and this would report "no evidence"
+/// for every session including the ones that genuinely traded.
+///
+/// The session is identified by its account and its EFFECTIVE date -- the
+/// trading date the target was for. `computed_on` is when the target was
+/// calculated, which is the previous close, so matching on it would look for
+/// orders a day before they could exist.
+async fn ledger_evidence(
+    state: &ApiState,
+    actor: &Actor,
+    target: &PendingTargetRow,
+) -> TenancyResult<bool> {
+    let mut tx = crate::actor_tx::begin_actor_tx(&state.app_pool, actor).await?;
+    let exists: Option<(bool,)> = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM orders \
+         WHERE account_id = $1 AND created_at::date = $2::date)",
+    )
+    .bind(target.account_id)
+    .bind(target.effective_date)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(crate::error::TenancyError::from_sqlx)?;
+    tx.commit()
+        .await
+        .map_err(crate::error::TenancyError::from_sqlx)?;
+    Ok(exists.map(|(b,)| b).unwrap_or(false))
 }
 
 /// Grades one settled session and writes its user-facing message.
