@@ -61,3 +61,12 @@ test-results/
 .idea/
 .DS_Store
 Thumbs.db
+
+# rustfmt backup files
+**/*.rs.bk
+
+# MSVC debug symbols, when written outside target/
+*.pdb
+
+# cargo-mutants output
+**/mutants.out*/
