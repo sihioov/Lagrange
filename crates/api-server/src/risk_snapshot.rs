@@ -15,14 +15,17 @@
 //!
 //! # Why `Unknown` is the honest default
 //!
-//! Four inputs have no source wired yet: the market session, dataset
-//! freshness, the strategy's promotion state, and the instrument allowlist.
-//! Each is its own source-of-truth decision and none is invented here.
-//! `checks.rs` is explicit -- *"Every `Unknown` input denies with
-//! `InputUnavailable`. §16 requires missing inputs to deny"* -- so an unwired
-//! input closes the gate instead of opening it. A Live order therefore cannot
-//! be approved today, and that is the correct state: it could not be safely
-//! approved before either, the system just did not say so.
+//! Two inputs -- `strategy_promotion` and `instrument_allowed` -- now read
+//! from this repository's existing sources of truth (`active_binding`, the
+//! fixed KRX ETF v1 universe). The remaining two, the market session and
+//! dataset freshness, have no source wired yet: each needs a market-calendar
+//! service and a dataset-staleness check that do not exist in this repo, and
+//! neither is invented here. `checks.rs` is explicit -- *"Every `Unknown`
+//! input denies with `InputUnavailable`. §16 requires missing inputs to
+//! deny"* -- so an unwired input closes the gate instead of opening it. A
+//! Live order therefore still cannot be approved today, and that remains the
+//! correct state: it could not be safely approved before either, the system
+//! just did not say so.
 //!
 //! # Why a missing row is an error and not a zero
 //!
@@ -35,8 +38,10 @@
 
 use crate::actor_tx::begin_actor_tx;
 use crate::error::{TenancyError, TenancyResult};
-use auth::entitlement::Actor;
+use crate::http::validation::in_fixed_universe;
+use crate::repos::accounts::AccountRepo;
 use crate::repos::reconciliation::{Readiness, ReconciliationRepo};
+use auth::entitlement::Actor;
 use domain::{Currency, Money, Quantity};
 use risk_gateway::RiskLimits;
 use risk_gateway::snapshot::{
@@ -350,6 +355,34 @@ pub async fn for_submission(
 ) -> TenancyResult<RiskSnapshot> {
     let account = account_state(pool, actor, order.account_id, &order.instrument_id).await?;
 
+    // A bound, ACTIVE strategy is this account's evidence of promotion to
+    // Live -- `account_strategy_bindings` already carries exactly that fact
+    // (`unbound_at IS NULL`), and it is scoped by the same actor transaction
+    // every other read here uses. An account with no active binding has
+    // nothing behind its order but a human typing into a form, which is
+    // `NotPromoted`, not `Unknown` -- the lookup SUCCEEDED and answered "no".
+    let strategy_promotion = match AccountRepo::new(pool.clone())
+        .active_binding(actor, order.account_id)
+        .await
+    {
+        Ok(Some(_)) => StrategyPromotion::LiveCandidate,
+        Ok(None) => StrategyPromotion::NotPromoted,
+        Err(_) => StrategyPromotion::Unknown,
+    };
+
+    // The fixed KRX ETF v1 universe (Todo 12) is a compiled-in constant, the
+    // same one `backtests.rs` checks a benchmark against -- not a fresh read
+    // of the manifest file, which would need its own IO error handling for a
+    // check that never actually goes stale between builds. There is
+    // therefore no "cannot be read" case for this input in this build; a
+    // future release that makes the universe a runtime-editable per-owner
+    // allowlist gets to reintroduce `Unknown` for its own IO failures.
+    let instrument_allowed = if in_fixed_universe(&order.instrument_id) {
+        Allowlisted::Allowed
+    } else {
+        Allowlisted::NotAllowed
+    };
+
     // An unreadable kill switch is `Unknown`, which denies. §16 is fail-closed
     // and "we could not tell" is not permission.
     let kill_switch = match kill_switch_engaged {
@@ -389,11 +422,8 @@ pub async fn for_submission(
         market_session: MarketSession::Unknown,
         // Dataset staleness for the instrument being traded.
         data_freshness: DataFreshness::Unknown,
-        // Whether the strategy behind this order is promoted to Live.
-        strategy_promotion: StrategyPromotion::Unknown,
-        // The owner's instrument allowlist. An empty allowlist must deny
-        // everything, so "not read" and "empty" agree here.
-        instrument_allowed: Allowlisted::Unknown,
+        strategy_promotion,
+        instrument_allowed,
         // --------------------------------------------------------------------
         reconciliation,
         account,

@@ -172,12 +172,14 @@ async fn a_ledger_that_disagrees_with_itself_denies_the_order() {
     h.teardown().await;
 }
 
-/// Unwired inputs deny. They are not quietly assumed green.
+/// Inputs with no source in this repository stay `Unknown` and deny. They are
+/// not quietly assumed green.
 ///
 /// `checks.rs`: "Every `Unknown` input denies with `InputUnavailable`. §16
-/// requires missing inputs to deny." Four inputs have no source yet, and this
-/// pins that they stay closed until one exists -- the fixture asserted the
-/// opposite for all four.
+/// requires missing inputs to deny." `market_session` and `data_freshness`
+/// have no source yet -- no calendar service, no staleness check -- and this
+/// pins that they stay closed until one exists rather than being fabricated
+/// the day someone is tempted to make a test pass.
 #[tokio::test]
 async fn inputs_without_a_source_stay_closed() {
     let Some(h) = Harness::new().await else {
@@ -201,15 +203,126 @@ async fn inputs_without_a_source_stay_closed() {
 
     assert_eq!(snap.market_session, MarketSession::Unknown);
     assert_eq!(snap.data_freshness, DataFreshness::Unknown);
-    assert_eq!(snap.strategy_promotion, StrategyPromotion::Unknown);
-    assert_eq!(snap.instrument_allowed, Allowlisted::Unknown);
     assert_eq!(snap.conflict, IntentConflict::Unknown);
 
-    // Which means even the fixture's own order is now refused.
-    let decision = risk_gateway::evaluate(&snap, &limits_for(&h.app_pool, &h.owner.actor(), h.owner.user_id).await.expect("limits"));
+    // Which means even an order with fully wired promotion/allowlist is still
+    // refused: three deliberately-unsourced inputs are enough on their own.
+    let decision = risk_gateway::evaluate(
+        &snap,
+        &limits_for(&h.app_pool, &h.owner.actor(), h.owner.user_id)
+            .await
+            .expect("limits"),
+    );
     assert!(
         !decision.is_approved(),
         "an order with unsourced inputs must not be approved"
+    );
+
+    h.teardown().await;
+}
+
+/// An account bound to an active, live-candidate strategy is NOT `Unknown`.
+///
+/// The lookup succeeds and answers "yes" -- `LiveCandidate`, not a guess.
+#[tokio::test]
+async fn a_bound_account_trading_an_allowed_instrument_is_promoted_and_allowed() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    let owner = &h.owner;
+
+    let config_resp = h
+        .send(
+            "POST",
+            "/api/v1/strategies/buy_and_hold/configs",
+            Some(owner),
+            true,
+            Some("test-rid-promo"),
+            Some("seam-promo-cfg"),
+            Some(serde_json::json!({
+                "strategy_version": "1.0.0",
+                "config": { "lookback": 200 },
+                "is_active": true,
+            })),
+        )
+        .await;
+    assert_eq!(config_resp.status(), axum::http::StatusCode::CREATED);
+    let config_id: Uuid = Harness::body_json(config_resp)
+        .await
+        .get("id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .expect("config id");
+
+    h.state()
+        .accounts()
+        .bind_strategy(
+            &owner.actor(),
+            account,
+            config_id,
+            "buy_and_hold",
+            "1.0.0",
+        )
+        .await
+        .expect("binding succeeds");
+
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), owner.actor(), owner.user_id);
+    let snap = for_submission(
+        &h.app_pool,
+        &owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        // 069500.KRX is a member of the fixed universe.
+        &order(account, Side::Buy, "10", "7250"),
+        1_800_000_000,
+    )
+    .await
+    .expect("snapshot builds");
+
+    assert_eq!(snap.strategy_promotion, StrategyPromotion::LiveCandidate);
+    assert_eq!(snap.instrument_allowed, Allowlisted::Allowed);
+
+    h.teardown().await;
+}
+
+/// An account with NO active binding is `NotPromoted`, and an instrument
+/// outside the fixed universe is `NotAllowed` -- both answers, not `Unknown`.
+#[tokio::test]
+async fn an_unbound_account_is_not_promoted_and_an_outside_instrument_is_not_allowed() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
+
+    let mut unlisted = order(account, Side::Buy, "10", "7250");
+    unlisted.instrument_id = "005930.KRX".to_owned(); // a real code, not a member.
+
+    let snap = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &unlisted,
+        1_800_000_000,
+    )
+    .await
+    .expect("snapshot builds");
+
+    assert_eq!(
+        snap.strategy_promotion,
+        StrategyPromotion::NotPromoted,
+        "no binding is a real answer, not an unknown"
+    );
+    assert_eq!(
+        snap.instrument_allowed,
+        Allowlisted::NotAllowed,
+        "a real instrument outside the fixed universe is refused by name"
     );
 
     h.teardown().await;
