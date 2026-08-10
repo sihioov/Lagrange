@@ -215,7 +215,7 @@ async fn create_contract_db(super_url: &str) -> Result<(String, PgPool), Box<dyn
     sqlx::raw_sql(BOOTSTRAP_SQL).execute(&super_new).await?;
     sqlx::raw_sql(ddl_for(
         &db,
-        "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, audit_writer, admin",
+        "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, audit_writer, research_writer, admin",
     ))
     .execute(&super_new)
     .await?;
@@ -360,7 +360,7 @@ async fn full_contract_body(
         owners.iter().all(|o| o == "migration_owner"),
         "all tables must be owned by migration_owner, got {owners:?}"
     );
-    for role in ["app", "worker", "audit_writer", "admin"] {
+    for role in ["app", "worker", "audit_writer", "research_writer", "admin"] {
         let bypass: bool =
             sqlx::query_scalar::<_, bool>("SELECT rolbypassrls FROM pg_roles WHERE rolname = $1")
                 .bind(role)
@@ -679,7 +679,239 @@ async fn full_contract_body(
     );
 
     // ------------------------------------------------------------------
-    // 9. sha256-hash columns enforce `^[0-9a-f]{64}$` (immutable manifests).
+    // 9. Research publication: stable Raw lineage, immutable calendar
+    //    history, and a narrowly-scoped publication writer.
+    // ------------------------------------------------------------------
+    let provenance_columns: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT column_name, data_type, is_nullable FROM information_schema.columns \
+         WHERE table_schema = 'public' AND table_name = 'data_batches' \
+         AND column_name IN ('source_batch_id', 'source_file_name', 'fetch_mode') \
+         ORDER BY column_name",
+    )
+    .fetch_all(owner)
+    .await?;
+    assert_eq!(
+        provenance_columns,
+        vec![
+            ("fetch_mode".into(), "text".into(), "YES".into()),
+            ("source_batch_id".into(), "uuid".into(), "YES".into()),
+            ("source_file_name".into(), "text".into(), "YES".into()),
+        ],
+        "data_batches must expose nullable Raw provenance columns"
+    );
+
+    let legacy_batch: Uuid = sqlx::query_scalar(
+        "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
+         content_sha256, bytes_size, retrieved_at) \
+         VALUES ('KRX', 'KR', '2026-02-01', 'REFERENCE', 'data/raw/legacy/1', $1, 1, now()) \
+         RETURNING id",
+    )
+    .bind("d".repeat(64))
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        legacy_batch.as_bytes().len() == 16,
+        "legacy rows need no provenance"
+    );
+
+    let source_batch_id = Uuid::parse_str("00000000-0000-0000-0000-000000000022").unwrap();
+    let publication_batch_sql = "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
+         content_sha256, bytes_size, retrieved_at, source_batch_id, source_file_name, fetch_mode) \
+         VALUES ('KRX', 'KR', '2026-02-02', 'REFERENCE', $1, $2, 1, now(), $3, 'master.csv', $4)";
+    sqlx::query(publication_batch_sql)
+        .bind("data/raw/published/1")
+        .bind("e".repeat(64))
+        .bind(source_batch_id)
+        .bind("credentialed")
+        .execute(owner)
+        .await?;
+    let duplicate_provenance = sqlx::query(publication_batch_sql)
+        .bind("data/raw/published/2")
+        .bind("f".repeat(64))
+        .bind(source_batch_id)
+        .bind("credentialed")
+        .execute(owner)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        pg_code(&duplicate_provenance).as_deref(),
+        Some("23505"),
+        "published Raw lineage must be unique per provider, market, batch, and file"
+    );
+    let incomplete_provenance = sqlx::query(
+        "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
+         content_sha256, bytes_size, retrieved_at, source_batch_id) \
+         VALUES ('KRX', 'KR', '2026-02-02', 'REFERENCE', 'data/raw/published/incomplete', $1, 1, now(), $2)",
+    )
+    .bind("0".repeat(64))
+    .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000023").unwrap())
+    .execute(owner)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&incomplete_provenance).as_deref(), Some("23514"));
+    let invalid_fetch_mode = sqlx::query(publication_batch_sql)
+        .bind("data/raw/published/invalid-mode")
+        .bind("1".repeat(64))
+        .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000024").unwrap())
+        .bind("CREDENTIALed")
+        .execute(owner)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&invalid_fetch_mode).as_deref(), Some("23514"));
+
+    let calendar_hash = "2".repeat(64);
+    let calendar_version_id: i64 = sqlx::query_scalar(
+        "INSERT INTO trading_calendar_versions \
+         (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
+         VALUES ('KRX', '2026-02-03', 'TRADING', 'Asia/Seoul', 'KRX', 'v1', $1, $2, now()) \
+         RETURNING id",
+    )
+    .bind(source_batch_id)
+    .bind(&calendar_hash)
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        calendar_version_id > 0,
+        "calendar history must use an identity key"
+    );
+    let duplicate_calendar_version = sqlx::query(
+        "INSERT INTO trading_calendar_versions \
+         (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
+         VALUES ('KRX', '2026-02-03', 'TRADING', 'Asia/Seoul', 'KRX', 'v1', $1, $2, now())",
+    )
+    .bind(source_batch_id)
+    .bind(&calendar_hash)
+    .execute(owner)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&duplicate_calendar_version).as_deref(),
+        Some("23505")
+    );
+    let invalid_calendar_hash = sqlx::query(
+        "INSERT INTO trading_calendar_versions \
+         (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
+         VALUES ('KRX', '2026-02-04', 'OPEN', 'UTC', 'KRX', 'v1', $1, 'bad', now())",
+    )
+    .bind(source_batch_id)
+    .execute(owner)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&invalid_calendar_hash).as_deref(), Some("23514"));
+    for reader in ["app", "worker", "admin"] {
+        let reader_pool = role_pool(super_url, db, reader).await?;
+        let visible: i64 = sqlx::query_scalar("SELECT count(*) FROM trading_calendar_versions")
+            .fetch_one(&reader_pool)
+            .await?;
+        assert!(
+            visible >= 1,
+            "{reader} must retain shared calendar history reads"
+        );
+    }
+    for statement in [
+        "UPDATE trading_calendar_versions SET source = 'tampered'",
+        "DELETE FROM trading_calendar_versions",
+    ] {
+        let append_only = sqlx::query(statement).execute(owner).await.unwrap_err();
+        assert_eq!(
+            pg_code(&append_only).as_deref(),
+            Some("55000"),
+            "{statement}"
+        );
+    }
+
+    let legacy_calendar: Uuid = sqlx::query_scalar(
+        "INSERT INTO trading_calendars (exchange, session_date, session_type, timezone, source, source_version) \
+         VALUES ('KRX', '2026-02-05', 'CLOSED', 'Asia/Seoul', 'KRX', 'legacy') RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        legacy_calendar.as_bytes().len() == 16,
+        "legacy calendar rows need no provenance"
+    );
+    let incomplete_projection = sqlx::query(
+        "INSERT INTO trading_calendars (exchange, session_date, session_type, timezone, source, source_version, source_batch_id) \
+         VALUES ('KRX', '2026-02-06', 'TRADING', 'Asia/Seoul', 'KRX', 'v1', $1)",
+    )
+    .bind(source_batch_id)
+    .execute(owner)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&incomplete_projection).as_deref(), Some("23514"));
+    let invalid_projection_hash = sqlx::query(
+        "INSERT INTO trading_calendars \
+         (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
+         VALUES ('KRX', '2026-02-06', 'TRADING', 'Asia/Seoul', 'KRX', 'v1', $1, 'BAD', now())",
+    )
+    .bind(source_batch_id)
+    .execute(owner)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&invalid_projection_hash).as_deref(), Some("23514"));
+
+    let rw = role_pool(super_url, db, "research_writer").await?;
+    let writable_source_batch = Uuid::parse_str("00000000-0000-0000-0000-000000000025").unwrap();
+    sqlx::query(publication_batch_sql)
+        .bind("data/raw/research-writer/1")
+        .bind("3".repeat(64))
+        .bind(writable_source_batch)
+        .bind("synthetic")
+        .execute(&rw)
+        .await?;
+    let raw_visible: i64 = sqlx::query_scalar("SELECT count(*) FROM data_batches")
+        .fetch_one(&rw)
+        .await?;
+    assert!(
+        raw_visible >= 1,
+        "research_writer must read published Raw batches"
+    );
+    sqlx::query(
+        "INSERT INTO trading_calendar_versions \
+         (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
+         VALUES ('KRX', '2026-02-07', 'TRADING', 'Asia/Seoul', 'KRX', 'writer-v1', $1, $2, now())",
+    )
+    .bind(writable_source_batch)
+    .bind("4".repeat(64))
+    .execute(&rw)
+    .await?;
+    let history_visible: i64 = sqlx::query_scalar("SELECT count(*) FROM trading_calendar_versions")
+        .fetch_one(&rw)
+        .await?;
+    assert!(
+        history_visible >= 1,
+        "research_writer must read published calendar history"
+    );
+    let projection_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO trading_calendars \
+         (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
+         VALUES ('KRX', '2026-02-08', 'TRADING', 'Asia/Seoul', 'KRX', 'writer-v1', $1, $2, now()) RETURNING id",
+    )
+    .bind(writable_source_batch)
+    .bind("5".repeat(64))
+    .fetch_one(&rw)
+    .await?;
+    sqlx::query("UPDATE trading_calendars SET source_version = 'writer-v2' WHERE id = $1")
+        .bind(projection_id)
+        .execute(&rw)
+        .await?;
+    for statement in [
+        "UPDATE data_batches SET kind = 'tampered'",
+        "DELETE FROM data_batches",
+        "DELETE FROM trading_calendars",
+        "DELETE FROM trading_calendar_versions",
+        "UPDATE trading_calendar_versions SET source = 'tampered'",
+        "SELECT * FROM orders",
+        "SELECT * FROM jobs",
+        "SELECT * FROM audit_logs",
+        "CREATE TABLE research_writer_hack (id integer)",
+    ] {
+        let denied = sqlx::query(statement).execute(&rw).await.unwrap_err();
+        assert_eq!(pg_code(&denied).as_deref(), Some("42501"), "{statement}");
+    }
+
+    // ------------------------------------------------------------------
+    // 10. sha256-hash columns enforce `^[0-9a-f]{64}$` (immutable manifests).
     // ------------------------------------------------------------------
     let bad_hash = sqlx::query(
         "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
@@ -1134,6 +1366,15 @@ async fn revert_and_rerun_body(
         jobs_gone.is_none(),
         "after revert, public.jobs must not exist"
     );
+    let calendar_history_gone: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT to_regclass('public.trading_calendar_versions')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        calendar_history_gone.is_none(),
+        "after revert, public.trading_calendar_versions must not exist"
+    );
 
     // Run again from scratch.
     MIGRATOR.run(owner).await?;
@@ -1150,6 +1391,16 @@ async fn revert_and_rerun_body(
         audit_back.as_deref(),
         Some("audit_logs"),
         "audit_logs must exist after re-run"
+    );
+    let calendar_history_back: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT to_regclass('public.trading_calendar_versions')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        calendar_history_back.as_deref(),
+        Some("trading_calendar_versions"),
+        "trading_calendar_versions must exist after re-run"
     );
 
     // Post-revert DB still enforces the five-state contract (deterministic).

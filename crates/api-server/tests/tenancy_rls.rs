@@ -53,11 +53,16 @@ DO $role$ BEGIN
   END IF;
 END $role$;
 DO $role$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'research_writer') THEN
+    CREATE ROLE research_writer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
+  END IF;
+END $role$;
+DO $role$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin') THEN
     CREATE ROLE admin LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
   END IF;
 END $role$;
-GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer, admin;
+GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer, research_writer, admin;
 GRANT CREATE ON SCHEMA public TO migration_owner;
 "#;
 
