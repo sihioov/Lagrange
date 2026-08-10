@@ -19,7 +19,7 @@ use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{
     FetchMode, RawEnvelope, RequestMetadata, ResponseKind, MARKET_KR, PROVIDER_KRX,
 };
-use market_data::storage::{BatchSpec, RawStore, StoreError};
+use market_data::storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};
 
 fn temp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ls-task8-{tag}-{}", BatchId::generate()));
@@ -563,9 +563,7 @@ fn read_rejects_symlinked_file_that_escapes_the_batch_directory() {
     fs::write(&outside, b"{}").expect("write outside target");
     fs::remove_file(&link).expect("remove stored file");
     if let Err(error) = symlink_file(&outside, &link) {
-        if error.kind() == std::io::ErrorKind::PermissionDenied
-            || error.raw_os_error() == Some(1314)
-        {
+        if error.raw_os_error() == Some(1314) {
             eprintln!("skipping symlink test: Windows privilege 1314 is unavailable");
             return;
         }
@@ -611,6 +609,61 @@ fn read_rejects_symlinked_file_that_escapes_the_batch_directory() {
         .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry)
         .expect_err("symlink escape must fail");
     assert!(matches!(err, StoreError::UnsafePath { .. }));
+}
+
+#[test]
+fn read_rejects_batch_ancestor_redirect_outside_trusted_raw_root() {
+    let root = temp_root("batch-ancestor-redirect");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let at = now("2026-08-05T05:00:00Z");
+    let env = envelope(batch, ResponseKind::Reference, "reference.json", b"{}", at);
+    let outside_provider = root.join("outside-provider");
+    let outside_batch = outside_provider
+        .join("market=kr")
+        .join("date=2020-01-31")
+        .join(format!("batch={batch}"));
+    fs::create_dir_all(&outside_batch).expect("create outside batch");
+    fs::write(outside_batch.join("reference.json"), &env.bytes).expect("write outside file");
+    fs::create_dir_all(root.join("raw")).expect("create raw root");
+    let alias = root.join("raw").join("provider=krx");
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::symlink_dir;
+        if let Err(error) = symlink_dir(&outside_provider, &alias) {
+            if error.raw_os_error() == Some(1314) {
+                eprintln!("skipping ancestor symlink test: Windows privilege 1314 is unavailable");
+                return;
+            }
+            panic!("create provider symlink: {error}");
+        }
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside_provider, &alias).expect("create provider symlink");
+
+    let entry = ManifestEntry {
+        batch_id: batch,
+        provider: PROVIDER_KRX.to_owned(),
+        market: MARKET_KR.to_owned(),
+        date: d,
+        retrieved_at: at,
+        mode: FetchMode::Synthetic,
+        entitlement_reference: None,
+        files: vec![FileEntry {
+            kind: env.kind,
+            file_name: env.file_name,
+            content_hash: env.content_hash,
+            size_bytes: env.bytes.len() as u64,
+            request: env.request,
+        }],
+    };
+
+    let error = store
+        .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry)
+        .expect_err("ancestor redirect must fail containment validation");
+    assert!(matches!(error, StoreError::UnsafePath { .. }));
 }
 
 #[test]
