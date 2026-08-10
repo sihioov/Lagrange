@@ -83,11 +83,15 @@ cargo run -p collectors -- ingest-and-publish-krx `
   --bundle tests/fixtures/kr-etf/contract
 ```
 
-`DATABASE_URL` belongs only to this manual publication command. It is required
-for `ingest-and-publish-krx`, is redacted from logs, and is not read by
-`ingest-krx` or `research-worker`. Both manual commands emit a JSON outcome on
-stdout and redacted diagnostics on stderr. Exit codes are 0 for success, 1 for
-CLI usage, and 2 for a typed ingest/publication failure.
+`DATABASE_URL` is required and used as database configuration only by
+`ingest-and-publish-krx`. Before command dispatch, the manual `collectors`
+process also reads any present `DATABASE_URL` solely to seed log redaction.
+Consequently, `ingest-krx` may read the value for redaction but never parses it,
+opens a database connection, or performs a database write. `research-worker`
+never reads `DATABASE_URL`; it uses only the discrete DB settings documented
+below. Both manual commands emit a JSON outcome on stdout and redacted
+diagnostics on stderr. Exit codes are 0 for success, 1 for CLI usage, and 2 for
+a typed ingest/publication failure.
 
 ## Worker commands
 
