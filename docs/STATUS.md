@@ -1,6 +1,6 @@
 # Lagrange Station — 상태 종합
 
-**기준일: 2026년 8월 10일 (2026-08-10)** · 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 이 날짜의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다. 이번 Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`이다.
+**기준일: 2026년 8월 11일 (2026-08-11)** · 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`이고, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지다.
 
 ---
 
@@ -30,7 +30,7 @@
 
 ## 2. 어디까지 왔나
 
-**한 줄 요약: 코드 검사는 전부 통과한다. 릴리스는 외부 조달 3건에 막혀 있고, 그 차단은 실패가 아니라 계획이 정한 정상 상태다.**
+**한 줄 요약: 기능·컴파일 검사는 통과한다. 릴리스는 외부 조달과 실제 KRX provider에 막혀 있고, 그 차단은 fail-closed 설계의 정상 상태다. 단, 저장소 전체 rustfmt gate에는 이번 문서 작업과 무관한 기존 12개 파일 drift가 남아 있다.**
 
 ### 2.1 게이트 판정 (2026-08-10 재실행, `--include-failure --include-restore` 포함)
 
@@ -43,16 +43,18 @@
 | PITR 복구 (restore) | 실제 백업 생성 → 격리 타깃 복구 → 검증 | **`PASS`** (`verdict: SUCCESS`) | — (복원 완료) |
 | **종합 (F3)** | — | **`BLOCKED_EXTERNAL`** | E1/E2/X1/X2 (외부 조달만 남음) |
 
-**코드 때문에 막힌 항목은 하나도 없다.** P6/P7은 08-08에 이미 통과했던 것이 08-09 증거 갱신 때 누락 옵션으로 덮어써졌던 것뿐이며, 08-10에 **진짜 백업 생성 → 진짜 격리 복구 → 진짜 장애 주입 15개 시나리오**로 재검증해 복원했다(조작 없음, 외부 판정 불변).
+**이 08-10 게이트 범위에서 코드 때문에 막힌 항목은 하나도 없다.** P6/P7은 08-08에 이미 통과했던 것이 08-09 증거 갱신 때 누락 옵션으로 덮어써졌던 것뿐이며, 08-10에 **진짜 백업 생성 → 진짜 격리 복구 → 진짜 장애 주입 15개 시나리오**로 재검증해 복원했다(조작 없음, 외부 판정 불변). 08-11에 추가된 연구 발행 경로의 완료 범위와 실제 KRX provider 잔여 작업은 §2.4·§3.7에 별도로 기록한다.
 
 ### 2.2 테스트 (기준일 최종 실행)
 
 | 스위트 | 결과 |
 |---|---|
-| Rust 워크스페이스 | **1,051개 통과** (Paper runner/valuation 이음매 테스트 11개 추가 포함) |
+| Rust 워크스페이스 (08-10 기록) | **1,051개 통과** (Paper runner/valuation 이음매 테스트 11개 추가 포함) |
+| Rust 워크스페이스 (08-11 재실행) | **1,192개 통과, 4개 의도적 ignore, 실패 binary 0개** — `--no-fail-fast`, QA PostgreSQL 포함 |
 | Python (nt + 골든) | **239개 통과**, 1 스킵 — phase-0 골든 불변 |
 | Web (vitest + tsc) | **48개 통과**, `openapi:check` 클린, `tsc --noEmit` 클린 |
-| clippy (workspace, all-targets) | 클린 |
+| clippy (workspace, all-targets, all-features) | `-D warnings` 클린 (08-11 재실행) |
+| rustfmt (workspace) | **기존 drift로 FAIL** — 12개 파일; 이번 문서 변경 파일에는 해당 없음 |
 
 ### 2.3 최종 판정 아티팩트 (`.omo/evidence/`)
 
@@ -68,7 +70,7 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 ### 2.4 단계별 실질 상태
 
 - **Phase 0** — 완료. 골든 회귀가 모든 변경에서 불변으로 유지되고 있다.
-- **Phase 1** — 코드 완료. 외부 2건(E1/E2)만 남음.
+- **Phase 1** — Raw→PostgreSQL 연구 메타데이터 발행 경로 완료. 각 수집은 먼저 불변 Raw batch와 append-only manifest로 내구화되고, 검증한 **같은 batch**의 `data_batches` 4행과 캘린더를 한 트랜잭션으로 발행한다. `trading_calendar_versions`는 정정 이력을 append-only로 보존하고 `trading_calendars`는 더 최신 `retrieved_at`만 현재 projection으로 전진시킨다. 시작 시 오래된 Raw부터 exact-batch 복구하며, retryable 실패 뒤 새 fetch보다 복구를 우선한다. `research-worker`는 16:30 KST 기본 일정, one-shot/daemon, 구조화 이벤트, 4일 신선도 healthcheck, synthetic-production 선차단을 제공한다. Compose는 secret 파일, UID 10001 Raw 초기화, migration/schema gate, 최소권한 `research_writer`를 연결했고, Risk Gateway는 발행된 캘린더와 최신 `EOD`만 소비한다. 단, 이는 synthetic fixture 기반 개발/QA 경로의 완료다. **라이선스·credential·entitlement를 실제 HTTP 요청에 적용하는 KRX provider는 아직 구현되지 않았고 실제 feed는 live가 아니다.** E1의 서면 권리와 E2뿐 아니라 실제 endpoint/credential 및 운영자 provisioning이 남아 있다.
 - **Phase 2** — **실행 엔진·러너·종가 평가 경로 구현 완료** (`ecef4b2`, `cf8704a`, `8da6548`). `job_queue::paper_execution::execute_session`이 큐잉된 target을 실제로 체결해 `orders`/`fills`/`positions`/`cash_ledger`에 기록하고, `api_server::paper_session::run_and_settle`이 정산·패리티·통지를 수행한다. 새 `api_server::paper_runner::run_cycle`은 worker 역할의 전체 due target을 소유자 Actor로 재진입시켜 실행하고, 활성 PAPER 계좌를 스캔해 `job_queue::paper_valuation::value_account`를 호출한다. 종가 평가는 원장 현금 자기대조·보유 포지션별 curated close·미래 close 차단·cost profile 검증을 거쳐 `daily_equity`를 계좌/날짜별 불변·멱등으로 기록한다. `crates/api-server/src/bin/paper-runner.rs`가 `--once`/`--date`, 환경별 풀, 2초 polling/10초 backoff, Ctrl-C 종료를 제공한다. 실제 QA DB 이음매 테스트로 두 소유자 스캔, 실행·통지 중복 방지, 정확한 equity/cash/positions_value, missing/future/conflicting close, LIVE·교차 테넌트 거부를 검증했고, Python/Web/외부 데이터 권리 차단은 그대로다. 호스트 배포 단위와 운영 credential 주입은 `deploy/systemd/paper-runner.service` 및 `paper-runner.env.example`로 등록했고, `scripts/qa/paper-runner-smoke.ps1`가 해당 유닛 정적 계약·QA DB 테스트·CLI smoke를 묶는다.
 - **Phase 3** — 안전 불변식 검증 완료(L1~L11) + 이번 감사로 치명 결함 수정. 게이트 입력 5개 모두 코드 수준에서 실제 원천에 연결됐다(`85f1902`: `strategy_promotion`/`instrument_allowed`, `d7d75c7`: KRX 세션·EOD batch freshness·actor-scoped intent conflict). 원천 행이 없거나 읽을 수 없으면 여전히 `Unknown`으로 닫히며, 운영 캘린더·데이터 수집 메타데이터가 준비되기 전까지 **라이브 주문은 승인되지 않는다** — 의도된 fail-closed 상태.
 - **Phase 4** — PIT 재무 팩터의 **골격 완료** (`cda7182`): 이중 시간축(기간 + 공시일), 바 날짜별 as-of 해석, 정정 공시 처리. 실제 재무 데이터가 오면 채우기만 하면 된다. 나머지 항목은 미착수 (§4.4).
@@ -128,6 +130,17 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 - 타깃 디렉터리 95GB → **13GB** (`9e79028`): MSVC는 디버그 정보가 켜져 있으면 PDB를 통째로 쓰므로, 의존성만 `debug = 0`. polars 링크 바이너리 하나의 심볼이 790MB → 173MB.
 - 단, **카고는 옛 산출물을 지우지 않는다** — 긴 세션 뒤 `cargo clean` 필요.
 
+### 3.7 연구 메타데이터 발행 경로 (2026-08-11)
+
+| 항목 | 내용 | 커밋 |
+|---|---|---|
+| **Raw→PostgreSQL 원자 발행** | 검증된 동일 source batch의 4개 파일 lineage를 `data_batches`에 기록하고, 캘린더 이력과 현재 projection을 같은 트랜잭션으로 발행한다. 충돌·부분 상태는 영구 오류로 닫힌다 | `bf041f5`~`96f4212` |
+| **정정·복구 계약** | 캘린더 version 이력은 append-only이고 최신 retrieval만 projection을 전진시킨다. Raw manifest를 oldest-first로 재생해 missing batch는 복구하고 complete batch는 exact replay로 검증한다 | `d5fcc38`~`bd1b62b` |
+| **worker·관측성** | `--once --date`, 16:30 KST daemon, startup recovery, 10초~600초 retry, stable JSON events/errors, 345600초 healthcheck, synthetic-production 선차단을 구현했다 | `125eac1`~`145cf68` |
+| **Compose·Risk 이음매** | `research_writer` 최소권한, secret 파일, Raw UID init, migration/schema gate, full Compose smoke를 연결했다. Risk Gateway의 session/freshness는 발행된 projection/`EOD`를 사용하며 `EOD_UNAVAILABLE`은 freshness에서 제외한다 | `30e2679`~`bb81837` |
+
+이 완료 판정은 저장·발행·복구·배포 **이음매**에 대한 것이다. 실제 라이선스 KRX HTTP transport, production credential/endpoint, entitlement-aware provider 동작, 외부 role/secret/data-volume provisioning은 구현·조달되지 않았다. 따라서 실제 KRX feed가 운영 중이라는 뜻이 아니다.
+
 ---
 
 ## 4. 앞으로 해야 할 일
@@ -138,18 +151,18 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 |---|---|---|---|
 | 1 | Paper 러너 데몬 | **코드 작업** | ✅ **완료** (`8da6548`) |
 | 2 | `daily_equity`(종가 평가) 쓰기 | **코드 작업** | ✅ **완료** (`cf8704a`) |
-| 3 | 리스크 게이트 입력 3개 배선 (장 캘린더·데이터 신선도·주문 충돌) | **코드 작업** | ⚠️ 착수 전 "외부 출처를 뭘로 할지" 결정 필요 |
+| 3 | 리스크 게이트 입력 3개 배선 (장 캘린더·데이터 신선도·주문 충돌) | **코드 작업** | ✅ **완료** (`d7d75c7`, 연구 발행 이음매 `30e2679`) |
 | 4 | phase-0 골든 가격 10,000배 스케일 버그 재승인 | **사장님 결정** | ⛔ 코드 작업 아님 — 승인 없이는 착수 자체가 금지 |
 | 5 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
-| 6 | KRX 계약 / Auth0 / KIS 실계좌 | **사장님 조달** | ⛔ 코드로 못 품 |
+| 6 | KRX 계약·실제 provider/credential/endpoint / Auth0 / KIS 실계좌 | **외부 구현·사장님 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
 
-1·2는 이번 세션에 완료했다. Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가는 각각 `8da6548`·`cf8704a`에 있다. 남은 코드 작업은 리스크 게이트 입력 3개 배선이며, 외부 조달·소유자 결정 항목은 그대로다.
+1·2는 Paper 세션에 완료했고, 3도 발행된 연구 메타데이터까지 이음매가 연결됐다. Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가는 각각 `8da6548`·`cf8704a`에 있다. 저장소 안의 synthetic Raw→PostgreSQL 경로와 리스크 소비 이음매는 완료됐지만, 실제 KRX provider 구현과 production credential/endpoint/운영자 provisioning은 외부 잔여 작업이다. 외부 조달·소유자 결정 항목도 그대로다.
 
 ### 4.1 소유자만 할 수 있는 것 — 외부 조달 3건
 
 | 항목 | 구체적으로 |
 |---|---|
-| **E1** KRX 서면 데이터 권리 | 실제 계약 아티팩트. 초대 사용자 5명 + 파생 분석물 커버. 현재 `configs/data-rights/`엔 예시와 스키마뿐 |
+| **E1** KRX 서면 데이터 권리 + 실제 공급자 | 초대 사용자 5명 + 파생 분석물을 포괄하는 계약 아티팩트, 라이선스·entitlement-aware KRX HTTP transport 구현, 실제 endpoint/credential, `research_writer` role·secret·Raw volume 운영자 provisioning. 현재 저장소에는 synthetic fixture와 발행 이음매만 있고 real feed는 live가 아님 |
 | **E2** Auth0 테넌트 | 실제 테넌트 + 자격증명 (vendor 스위트 실행용) |
 | **X1/X2** KIS 실계좌 | 실거래 자격증명 + 소액 실주문 증거 |
 
@@ -164,7 +177,7 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
 1. **배포 서비스 활성화.** `deploy/systemd/paper-runner.service`와 운영별 `/etc/lagrange/paper-runner.env`를 설치·시작하고, 실제 role-scoped DB URL과 curated dataset 마운트를 호스트 Secret Manager에서 주입해야 한다. 저장소에는 비밀값을 넣지 않는다.
-2. **리스크 게이트 운영 원천 활성화.** 코드 배선은 완료됐지만 운영 PostgreSQL에 KRX 캘린더와 EOD batch 메타데이터를 공급하고, 라이브 계정의 intent 상태를 정상적으로 유지해야 한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
+2. **실제 KRX provider와 운영 원천 활성화.** 코드의 synthetic 수집·발행·복구 배선은 완료됐지만, 라이선스·credential·entitlement-aware HTTP transport와 실제 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning해야 한다. 그 뒤 운영 PostgreSQL에 실제 KRX 캘린더와 EOD batch 메타데이터를 공급하고 라이브 계정의 intent 상태를 정상적으로 유지해야 한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 3. **phase-0 데이터셋 가격 스케일 버그 수정** (§4.2-1 결정 이후). `synth_data.py`에서 `* 10_000` 제거 또는 pyarrow 스케일 적용 방식 수정, 골든 해시 재승인, 영향받는 다운스트림(있다면) 재검증.
 4. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화(이번 재실행도 E7은 스킵).
 
