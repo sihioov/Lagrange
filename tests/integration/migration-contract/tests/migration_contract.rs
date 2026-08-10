@@ -54,9 +54,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 static MIGRATOR: Migrator = sqlx::migrate!("../../../migrations");
 
 const SOURCE_INDEX_UP_SQL: &str =
-    include_str!("../../../../migrations/0023_research_publication_source_index.up.sql");
+    include_str!("../../../../migrations/0024_research_publication_source_index.up.sql");
 const SOURCE_INDEX_DOWN_SQL: &str =
-    include_str!("../../../../migrations/0023_research_publication_source_index.down.sql");
+    include_str!("../../../../migrations/0024_research_publication_source_index.down.sql");
 const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
 
@@ -310,12 +310,12 @@ async fn full_contract_body(
     );
     for (name, sql, expected_statement) in [
         (
-            "0023 up",
+            "0024 up",
             SOURCE_INDEX_UP_SQL,
             "CREATE UNIQUE INDEX CONCURRENTLY data_batches_source_file_uq\nON data_batches (provider, market, source_batch_id, source_file_name)\nWHERE source_batch_id IS NOT NULL;",
         ),
         (
-            "0023 down",
+            "0024 down",
             SOURCE_INDEX_DOWN_SQL,
             "DROP INDEX CONCURRENTLY IF EXISTS data_batches_source_file_uq;",
         ),
@@ -350,23 +350,23 @@ async fn full_contract_body(
         .migrations
         .iter()
         .find(|migration| {
-            migration.version == 23 && migration.migration_type != MigrationType::ReversibleDown
+            migration.version == 24 && migration.migration_type != MigrationType::ReversibleDown
         })
-        .expect("0023 source-lineage index migration must exist");
+        .expect("0024 source-lineage index migration must exist");
     assert!(
         source_index_migration.no_tx,
-        "0023 must opt out of a transaction so PostgreSQL can build its index concurrently"
+        "0024 must opt out of a transaction so PostgreSQL can build its index concurrently"
     );
     let source_index_down_migration = MIGRATOR
         .migrations
         .iter()
         .find(|migration| {
-            migration.version == 23 && migration.migration_type == MigrationType::ReversibleDown
+            migration.version == 24 && migration.migration_type == MigrationType::ReversibleDown
         })
-        .expect("0023 source-lineage index down migration must exist");
+        .expect("0024 source-lineage index down migration must exist");
     assert!(
         source_index_down_migration.no_tx,
-        "0023 down must opt out of a transaction so PostgreSQL can drop its index concurrently"
+        "0024 down must opt out of a transaction so PostgreSQL can drop its index concurrently"
     );
 
     // Tables exist.
@@ -1592,6 +1592,147 @@ async fn revert_and_rerun_in_disposable_db() {
     }
 }
 
+/// The online-migration sequence has observable safe boundaries: 0022 adds
+/// NOT VALID checks under brief metadata locks, 0023 validates them after that
+/// transaction commits, and 0024 builds the populated-table index concurrently.
+#[tokio::test]
+async fn research_publication_migration_boundaries() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(v) => v,
+        Err(e) => panic!("setup failed: {e}"),
+    };
+    let result = research_publication_boundaries_body(&owner).await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(e) = result {
+        panic!("research-publication migration boundaries FAILED: {e}");
+    }
+}
+
+async fn research_publication_boundaries_body(owner: &PgPool) -> Result<(), Box<dyn Error>> {
+    const PUBLICATION_CHECKS: [&str; 4] = [
+        "data_batches_fetch_mode_check",
+        "data_batches_provenance_all_or_none_check",
+        "trading_calendars_content_sha256_check",
+        "trading_calendars_provenance_all_or_none_check",
+    ];
+
+    let validation_state = |expected: bool| async move {
+        let checks: Vec<(String, bool)> = sqlx::query_as(
+            "SELECT conname, convalidated FROM pg_constraint WHERE conname = ANY($1) ORDER BY conname",
+        )
+        .bind(PUBLICATION_CHECKS.as_slice())
+        .fetch_all(owner)
+        .await?;
+        let expected_checks = PUBLICATION_CHECKS
+            .iter()
+            .map(|name| (name.to_string(), expected))
+            .collect::<Vec<_>>();
+        Ok::<_, sqlx::Error>((checks, expected_checks))
+    };
+
+    MIGRATOR.run_to(22, owner).await?;
+    assert_eq!(applied_count(owner).await?, 22, "0022 must apply alone");
+    let (checks_after_0022, expected_unvalidated) = validation_state(false).await?;
+    assert_eq!(
+        checks_after_0022, expected_unvalidated,
+        "0022 must leave populated-table checks present but NOT VALID"
+    );
+    let source_batch_id = Uuid::parse_str("00000000-0000-0000-0000-000000000026").unwrap();
+    let invalid_writes = [
+        (
+            "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, content_sha256, bytes_size, retrieved_at, source_batch_id, source_file_name, fetch_mode) \
+             VALUES ('KRX', 'KR', '2026-03-01', 'REFERENCE', 'data/raw/boundary/fetch', $1, 1, now(), $2, 'source.csv', 'INVALID')",
+            true,
+        ),
+        (
+            "INSERT INTO trading_calendars (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
+             VALUES ('KRX', '2026-03-01', 'TRADING', 'Asia/Seoul', 'KRX', 'boundary', $1, 'invalid', now())",
+            false,
+        ),
+    ];
+    for (statement, has_hash_parameter) in invalid_writes {
+        let mut query = sqlx::query(statement);
+        if has_hash_parameter {
+            query = query.bind("a".repeat(64));
+        }
+        let invalid = query
+            .bind(source_batch_id)
+            .execute(owner)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            pg_code(&invalid).as_deref(),
+            Some("23514"),
+            "NOT VALID checks must still reject invalid new publication writes"
+        );
+    }
+
+    MIGRATOR.run_to(23, owner).await?;
+    assert_eq!(applied_count(owner).await?, 23, "0023 must validate checks");
+    let (checks_after_0023, expected_validated) = validation_state(true).await?;
+    assert_eq!(
+        checks_after_0023, expected_validated,
+        "0023 must finish publication checks validated"
+    );
+
+    let expected = up_migration_count() as i64;
+    MIGRATOR.run(owner).await?;
+    assert_eq!(
+        applied_count(owner).await?,
+        expected,
+        "final migration must add the concurrent source index"
+    );
+    let source_index: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.data_batches_source_file_uq')::text")
+            .fetch_one(owner)
+            .await?;
+    assert_eq!(source_index.as_deref(), Some("data_batches_source_file_uq"));
+
+    MIGRATOR.undo(owner, 23).await?;
+    assert_eq!(applied_count(owner).await?, 23, "0024 down must run first");
+    let source_index_gone: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.data_batches_source_file_uq')::text")
+            .fetch_one(owner)
+            .await?;
+    assert!(
+        source_index_gone.is_none(),
+        "0024 down must remove the index"
+    );
+    let (checks_after_0024_down, expected_still_validated) = validation_state(true).await?;
+    assert_eq!(checks_after_0024_down, expected_still_validated);
+
+    MIGRATOR.undo(owner, 22).await?;
+    assert_eq!(applied_count(owner).await?, 22, "0023 down must run second");
+    let (checks_after_0023_down, expected_restored_unvalidated) = validation_state(false).await?;
+    assert_eq!(
+        checks_after_0023_down, expected_restored_unvalidated,
+        "0023 down must restore 0022's NOT VALID boundary"
+    );
+
+    MIGRATOR.undo(owner, 21).await?;
+    assert_eq!(applied_count(owner).await?, 21, "0022 down must run last");
+    let history_gone: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.trading_calendar_versions')::text")
+            .fetch_one(owner)
+            .await?;
+    assert!(
+        history_gone.is_none(),
+        "0022 down must remove calendar history"
+    );
+
+    MIGRATOR.run(owner).await?;
+    assert_eq!(
+        applied_count(owner).await?,
+        expected,
+        "full reapply must restore all publication migration boundaries"
+    );
+    Ok(())
+}
+
 async fn revert_and_rerun_body(
     super_url: &str,
     db: &str,
@@ -1605,14 +1746,14 @@ async fn revert_and_rerun_body(
         "fresh DB must apply all {expected} migrations"
     );
 
-    // Revert 0023 first, then 0022 while all earlier tables remain. This proves its down
-    // migration removes its own contract rather than relying on 0003.down to
-    // hide omitted objects later in a full teardown.
-    MIGRATOR.undo(owner, 22).await?;
+    // Revert 0024 then 0023 before 0022 while all earlier tables remain.
+    // This proves each down migration restores its own boundary rather than
+    // relying on 0003.down to hide omitted objects in a full teardown.
+    MIGRATOR.undo(owner, 23).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
         expected - 1,
-        "undo to 0022 must revert only 0023"
+        "undo to 0023 must revert only 0024"
     );
     let source_index_gone: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('public.data_batches_source_file_uq')::text")
@@ -1620,7 +1761,13 @@ async fn revert_and_rerun_body(
             .await?;
     assert!(
         source_index_gone.is_none(),
-        "0023 down must remove the concurrent source-lineage index"
+        "0024 down must remove the concurrent source-lineage index"
+    );
+    MIGRATOR.undo(owner, 22).await?;
+    assert_eq!(
+        applied_count(owner).await? as usize,
+        expected - 2,
+        "undo to 0022 must revert only 0023"
     );
     sqlx::query(
         "CREATE UNIQUE INDEX data_batches_source_file_uq \
@@ -1632,7 +1779,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 21).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 2,
+        expected - 3,
         "undo to 0021 must revert only 0022"
     );
     for object in [

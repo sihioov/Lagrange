@@ -6,7 +6,7 @@
 --
 -- This migration stays transactional. `lock_timeout` bounds the brief
 -- metadata locks needed for column/constraint changes; the populated-table
--- unique index follows separately in nontransactional 0023.
+-- validation and unique index follow in separate migrations.
 
 SET LOCAL lock_timeout = '5s';
 
@@ -22,10 +22,6 @@ ALTER TABLE data_batches
             OR
             (source_batch_id IS NOT NULL AND source_file_name IS NOT NULL AND fetch_mode IS NOT NULL)
         ) NOT VALID;
-
-ALTER TABLE data_batches
-    VALIDATE CONSTRAINT data_batches_fetch_mode_check,
-    VALIDATE CONSTRAINT data_batches_provenance_all_or_none_check;
 
 CREATE TABLE trading_calendar_versions (
     id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -55,10 +51,6 @@ ALTER TABLE trading_calendars
             OR
             (source_batch_id IS NOT NULL AND content_sha256 IS NOT NULL AND retrieved_at IS NOT NULL)
         ) NOT VALID;
-
-ALTER TABLE trading_calendars
-    VALIDATE CONSTRAINT trading_calendars_content_sha256_check,
-    VALIDATE CONSTRAINT trading_calendars_provenance_all_or_none_check;
 
 CREATE FUNCTION trading_calendar_versions_reject_mutation() RETURNS trigger
 LANGUAGE plpgsql AS $fn$

@@ -1,5 +1,5 @@
 -- no-transaction
--- 0023: build the populated-table publication-lineage uniqueness guarantee
+-- 0024: build the populated-table publication-lineage uniqueness guarantee
 -- without blocking writers behind a transactional index build.
 -- Deployment must set a finite session lock_timeout externally (for example
 -- with PGOPTIONS): SQLx sends this file as one command and PostgreSQL requires
