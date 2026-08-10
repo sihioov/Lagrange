@@ -10,7 +10,6 @@ DROP POLICY IF EXISTS trading_calendars_select_research_writer ON trading_calend
 DROP POLICY IF EXISTS data_batches_insert_research_writer ON data_batches;
 DROP POLICY IF EXISTS data_batches_select_research_writer ON data_batches;
 
-REVOKE USAGE ON SEQUENCE trading_calendar_versions_id_seq FROM research_writer;
 REVOKE SELECT, INSERT ON TABLE trading_calendar_versions FROM research_writer;
 REVOKE SELECT, INSERT, UPDATE ON TABLE trading_calendars FROM research_writer;
 REVOKE SELECT, INSERT ON TABLE data_batches FROM research_writer;

@@ -759,6 +759,26 @@ async fn full_contract_body(
         .unwrap_err();
     assert_eq!(pg_code(&invalid_fetch_mode).as_deref(), Some("23514"));
 
+    let calendar_identity: (String, String, String) = sqlx::query_as(
+        "SELECT data_type, is_identity, identity_generation \
+         FROM information_schema.columns \
+         WHERE table_schema = 'public' AND table_name = 'trading_calendar_versions' \
+         AND column_name = 'id'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        calendar_identity,
+        ("bigint".into(), "YES".into(), "ALWAYS".into()),
+        "trading_calendar_versions.id must be bigint GENERATED ALWAYS AS IDENTITY"
+    );
+    let calendar_history_rls: bool = sqlx::query_scalar(
+        "SELECT relrowsecurity FROM pg_class WHERE oid = 'public.trading_calendar_versions'::regclass",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(calendar_history_rls, "calendar history must enable RLS");
+
     let calendar_hash = "2".repeat(64);
     let calendar_version_id: i64 = sqlx::query_scalar(
         "INSERT INTO trading_calendar_versions \
@@ -788,16 +808,50 @@ async fn full_contract_body(
         pg_code(&duplicate_calendar_version).as_deref(),
         Some("23505")
     );
+    let invalid_session_type = sqlx::query(
+        "INSERT INTO trading_calendar_versions \
+         (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
+         VALUES ('KRX', '2026-02-04', 'OPEN', 'Asia/Seoul', 'KRX', 'bad-session', $1, $2, now())",
+    )
+    .bind(source_batch_id)
+    .bind(&calendar_hash)
+    .execute(owner)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&invalid_session_type).as_deref(),
+        Some("23514"),
+        "calendar history must reject only an invalid session_type"
+    );
+    let invalid_timezone = sqlx::query(
+        "INSERT INTO trading_calendar_versions \
+         (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
+         VALUES ('KRX', '2026-02-05', 'TRADING', 'UTC', 'KRX', 'bad-timezone', $1, $2, now())",
+    )
+    .bind(source_batch_id)
+    .bind(&calendar_hash)
+    .execute(owner)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&invalid_timezone).as_deref(),
+        Some("23514"),
+        "calendar history must reject only an invalid timezone"
+    );
     let invalid_calendar_hash = sqlx::query(
         "INSERT INTO trading_calendar_versions \
          (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
-         VALUES ('KRX', '2026-02-04', 'OPEN', 'UTC', 'KRX', 'v1', $1, 'bad', now())",
+         VALUES ('KRX', '2026-02-06', 'TRADING', 'Asia/Seoul', 'KRX', 'bad-hash', $1, 'bad', now())",
     )
     .bind(source_batch_id)
     .execute(owner)
     .await
     .unwrap_err();
-    assert_eq!(pg_code(&invalid_calendar_hash).as_deref(), Some("23514"));
+    assert_eq!(
+        pg_code(&invalid_calendar_hash).as_deref(),
+        Some("23514"),
+        "calendar history must reject only an invalid content hash"
+    );
     for reader in ["app", "worker", "admin"] {
         let reader_pool = role_pool(super_url, db, reader).await?;
         let visible: i64 = sqlx::query_scalar("SELECT count(*) FROM trading_calendar_versions")
@@ -851,6 +905,82 @@ async fn full_contract_body(
     assert_eq!(pg_code(&invalid_projection_hash).as_deref(), Some("23514"));
 
     let rw = role_pool(super_url, db, "research_writer").await?;
+    for (table, expected) in [
+        ("data_batches", (true, true, false, false)),
+        ("trading_calendar_versions", (true, true, false, false)),
+        ("trading_calendars", (true, true, true, false)),
+    ] {
+        let actual: (bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT has_table_privilege('research_writer', $1, 'SELECT'), \
+                    has_table_privilege('research_writer', $1, 'INSERT'), \
+                    has_table_privilege('research_writer', $1, 'UPDATE'), \
+                    has_table_privilege('research_writer', $1, 'DELETE')",
+        )
+        .bind(table)
+        .fetch_one(owner)
+        .await?;
+        assert_eq!(
+            actual, expected,
+            "research_writer ACL must be exact for {table}"
+        );
+    }
+    let writer_policies: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT tablename, policyname, cmd FROM pg_policies \
+         WHERE schemaname = 'public' AND 'research_writer' = ANY(roles) \
+         ORDER BY tablename, policyname",
+    )
+    .fetch_all(owner)
+    .await?;
+    assert_eq!(
+        writer_policies,
+        vec![
+            (
+                "data_batches".into(),
+                "data_batches_insert_research_writer".into(),
+                "INSERT".into()
+            ),
+            (
+                "data_batches".into(),
+                "data_batches_select_research_writer".into(),
+                "SELECT".into()
+            ),
+            (
+                "trading_calendar_versions".into(),
+                "trading_calendar_versions_insert_research_writer".into(),
+                "INSERT".into()
+            ),
+            (
+                "trading_calendar_versions".into(),
+                "trading_calendar_versions_select_research_writer".into(),
+                "SELECT".into()
+            ),
+            (
+                "trading_calendars".into(),
+                "trading_calendars_insert_research_writer".into(),
+                "INSERT".into()
+            ),
+            (
+                "trading_calendars".into(),
+                "trading_calendars_select_research_writer".into(),
+                "SELECT".into()
+            ),
+            (
+                "trading_calendars".into(),
+                "trading_calendars_update_research_writer".into(),
+                "UPDATE".into()
+            ),
+        ],
+        "research_writer must have only the requested publication RLS policies"
+    );
+    let sequence_usage: bool = sqlx::query_scalar(
+        "SELECT has_sequence_privilege('research_writer', 'public.trading_calendar_versions_id_seq', 'USAGE')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        !sequence_usage,
+        "research_writer must not have direct identity-sequence usage"
+    );
     let writable_source_batch = Uuid::parse_str("00000000-0000-0000-0000-000000000025").unwrap();
     sqlx::query(publication_batch_sql)
         .bind("data/raw/research-writer/1")
@@ -881,6 +1011,15 @@ async fn full_contract_body(
     assert!(
         history_visible >= 1,
         "research_writer must read published calendar history"
+    );
+    let direct_sequence = sqlx::query("SELECT nextval('public.trading_calendar_versions_id_seq')")
+        .execute(&rw)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        pg_code(&direct_sequence).as_deref(),
+        Some("42501"),
+        "research_writer must not advance the calendar identity sequence directly"
     );
     let projection_id: Uuid = sqlx::query_scalar(
         "INSERT INTO trading_calendars \
@@ -1348,6 +1487,108 @@ async fn revert_and_rerun_body(
     assert_eq!(
         applied, expected,
         "fresh DB must apply all {expected} migrations"
+    );
+
+    // Revert only 0022 while all earlier tables remain. This proves its down
+    // migration removes its own contract rather than relying on 0003.down to
+    // hide omitted objects later in a full teardown.
+    MIGRATOR.undo(owner, 21).await?;
+    assert_eq!(
+        applied_count(owner).await? as usize,
+        expected - 1,
+        "undo to 0021 must revert only 0022"
+    );
+    for object in [
+        "public.trading_calendar_versions",
+        "public.data_batches_raw_lineage_key",
+    ] {
+        let gone: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
+            .bind(object)
+            .fetch_one(owner)
+            .await?;
+        assert!(gone.is_none(), "0022 down must remove {object}");
+    }
+    let remaining_0022_columns: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.columns \
+         WHERE table_schema = 'public' \
+         AND ((table_name = 'data_batches' AND column_name IN ('source_batch_id', 'source_file_name', 'fetch_mode')) \
+           OR (table_name = 'trading_calendars' AND column_name IN ('source_batch_id', 'content_sha256', 'retrieved_at')))",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        remaining_0022_columns, 0,
+        "0022 down must remove added columns"
+    );
+    let remaining_0022_constraints: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_constraint WHERE conname IN ( \
+         'data_batches_fetch_mode_check', 'data_batches_provenance_all_or_none_check', \
+         'trading_calendars_content_sha256_check', 'trading_calendars_provenance_all_or_none_check')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        remaining_0022_constraints, 0,
+        "0022 down must remove added constraints"
+    );
+    let function_gone: Option<String> = sqlx::query_scalar(
+        "SELECT to_regprocedure('public.trading_calendar_versions_reject_mutation()')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        function_gone.is_none(),
+        "0022 down must remove its trigger function"
+    );
+    let remaining_0022_policies: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_policies WHERE policyname IN ( \
+         'data_batches_select_research_writer', 'data_batches_insert_research_writer', \
+         'trading_calendars_select_research_writer', 'trading_calendars_insert_research_writer', \
+         'trading_calendars_update_research_writer', 'trading_calendar_versions_select_readers', \
+         'trading_calendar_versions_select_research_writer', 'trading_calendar_versions_insert_research_writer')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        remaining_0022_policies, 0,
+        "0022 down must remove its RLS policies"
+    );
+    for (table, privilege) in [("data_batches", "INSERT"), ("trading_calendars", "UPDATE")] {
+        let retained: bool =
+            sqlx::query_scalar("SELECT has_table_privilege('research_writer', $1, $2)")
+                .bind(table)
+                .bind(privilege)
+                .fetch_one(owner)
+                .await?;
+        assert!(
+            !retained,
+            "0022 down must revoke research_writer {privilege} on {table}"
+        );
+    }
+    let research_writer_survives: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'research_writer')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        research_writer_survives,
+        "0022 down must retain the externally created research_writer role"
+    );
+
+    MIGRATOR.run(owner).await?;
+    assert_eq!(
+        applied_count(owner).await? as usize,
+        expected,
+        "re-applying after 0022-only undo must restore 0022"
+    );
+    let calendar_history_restored: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.trading_calendar_versions')::text")
+            .fetch_one(owner)
+            .await?;
+    assert_eq!(
+        calendar_history_restored.as_deref(),
+        Some("trading_calendar_versions"),
+        "0022 up must restore calendar history after its standalone down"
     );
 
     // Undo every migration. sqlx 0.9's `undo` reverts migrations whose version

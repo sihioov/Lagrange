@@ -69,7 +69,6 @@ CREATE TRIGGER trading_calendar_versions_append_only
 GRANT SELECT, INSERT ON TABLE data_batches TO research_writer;
 GRANT SELECT, INSERT ON TABLE trading_calendar_versions TO research_writer;
 GRANT SELECT, INSERT, UPDATE ON TABLE trading_calendars TO research_writer;
-GRANT USAGE ON SEQUENCE trading_calendar_versions_id_seq TO research_writer;
 GRANT SELECT ON TABLE trading_calendar_versions TO app, worker, admin;
 
 CREATE POLICY data_batches_select_research_writer ON data_batches
