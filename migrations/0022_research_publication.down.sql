@@ -21,7 +21,7 @@ DROP TRIGGER IF EXISTS trading_calendar_versions_append_only ON trading_calendar
 DROP FUNCTION IF EXISTS trading_calendar_versions_reject_mutation();
 DROP TABLE IF EXISTS trading_calendar_versions;
 
--- 0023 normally drops this concurrently first. Retain this defensive cleanup
+-- 0024 normally drops this concurrently first. Retain this defensive cleanup
 -- so a direct 0022 rollback cannot leave an index over removed columns.
 DROP INDEX IF EXISTS data_batches_source_file_uq;
 
