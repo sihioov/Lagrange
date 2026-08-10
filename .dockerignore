@@ -1,0 +1,40 @@
+# Default-deny: only the source inputs copied by the collectors Dockerfile enter
+# the build context.
+**
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!crates/
+!crates/**
+!data-pipelines/
+!data-pipelines/collectors/
+!data-pipelines/collectors/**
+!apps/
+!apps/api-server/
+!apps/api-server/auth/
+!apps/api-server/auth/**
+!tests/
+!tests/integration/
+!tests/integration/migration-contract/
+!tests/integration/migration-contract/**
+!tests/fixtures/
+!tests/fixtures/kr-etf/
+!tests/fixtures/kr-etf/contract/
+!tests/fixtures/kr-etf/contract/**
+
+# Security and generated-output deny rules override the allowlist above.
+**/.git
+**/.git/**
+**/.worktrees
+**/.worktrees/**
+**/target
+**/target/**
+**/.env
+**/.env.*
+**/*.env
+**/credentials
+**/credentials/**
+**/secrets
+**/secrets/**
+**/raw
+**/raw/**

@@ -61,3 +61,29 @@ latest EOD publication healthy for four days. Override
 `RESEARCH_RUN_AT_KST` or `RESEARCH_MAX_PUBLICATION_AGE_SECS` operationally when
 needed. `EOD_UNAVAILABLE` means the provider has not published the requested
 trading day's EOD data yet; retry it after the provider's publication window.
+
+## Research worker deployment order
+
+Apply all SQL migrations with the migration-owner/admin procedure before
+starting `research-worker`. Compose runs `research-schema-check` as a fail-closed
+one-shot and refuses to launch the worker until the publication tables,
+provenance columns, indexes, and `research_writer` privilege contract exist.
+After applying or repairing migrations, restart with:
+
+```sh
+docker compose -f deploy/compose/compose.yml up -d research-worker
+```
+
+The Raw bind root must be owned by UID/GID `10001:10001` with mode `0750`.
+Compose normally enforces this through the isolated `research-raw-init`
+one-shot. For manual pre-provisioning on Linux, use the deployment data path:
+
+```sh
+install -d -m 0750 /srv/lagrange/data/raw
+chown 10001:10001 /srv/lagrange/data/raw
+chmod 0750 /srv/lagrange/data/raw
+```
+
+Set `LAGRANGE_DATA_DIR=/srv/lagrange/data` (or the appropriate parent) before
+starting Compose. The long-running worker remains unprivileged and never needs
+root.

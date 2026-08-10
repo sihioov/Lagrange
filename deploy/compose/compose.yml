@@ -196,6 +196,93 @@ services:
       start_period: 30s
 
   # ------------------------------------------------------------------
+  # research-raw-init — one-shot ownership fence for the Raw bind root.
+  # Root is used only for this chown/chmod; the filesystem root is read-only,
+  # the service has no network or secrets, and it cannot restart.
+  # ------------------------------------------------------------------
+  research-raw-init:
+    image: alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d # tag: 3.21
+    user: "0:0"
+    read_only: true
+    tmpfs:
+      - /tmp
+    network_mode: none
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["chown 10001:10001 /data/raw && chmod 0750 /data/raw"]
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
+
+  # ------------------------------------------------------------------
+  # research-schema-check — fail-closed migration/role contract gate.
+  # This service never migrates. Operators must apply migrations externally;
+  # only then can Compose start research-worker.
+  # ------------------------------------------------------------------
+  research-schema-check:
+    image: postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a # tag: 18.4
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PGPASSWORD="$$(cat "$$DB_PASSWORD_FILE")"
+        psql -X -v ON_ERROR_STOP=1 -h "$$DB_HOST" -p "$$DB_PORT" -U "$$DB_USER" -d "$$DB_NAME" <<'SQL'
+        DO $$schema$$
+        BEGIN
+          IF to_regclass('public.data_batches') IS NULL
+             OR to_regclass('public.trading_calendar_versions') IS NULL
+             OR to_regclass('public.trading_calendars') IS NULL THEN
+            RAISE EXCEPTION 'research publication tables are missing';
+          END IF;
+          IF (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'data_batches'
+                AND column_name IN ('source_batch_id', 'source_file_name', 'fetch_mode')) <> 3
+             OR (SELECT count(*) FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'trading_calendar_versions'
+                   AND column_name IN ('source_batch_id', 'content_sha256', 'retrieved_at', 'source_version')) <> 4
+             OR (SELECT count(*) FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'trading_calendars'
+                   AND column_name IN ('source_batch_id', 'content_sha256', 'retrieved_at')) <> 3 THEN
+            RAISE EXCEPTION 'research publication columns are missing';
+          END IF;
+          IF to_regclass('public.data_batches_source_file_uq') IS NULL
+             OR to_regclass('public.trading_calendar_versions_source_lookup_idx') IS NULL THEN
+            RAISE EXCEPTION 'research publication indexes are missing';
+          END IF;
+          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'research_writer' AND rolcanlogin)
+             OR NOT has_table_privilege('research_writer', 'public.data_batches', 'SELECT')
+             OR NOT has_table_privilege('research_writer', 'public.data_batches', 'INSERT')
+             OR has_table_privilege('research_writer', 'public.data_batches', 'UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+             OR NOT has_table_privilege('research_writer', 'public.trading_calendar_versions', 'SELECT')
+             OR NOT has_table_privilege('research_writer', 'public.trading_calendar_versions', 'INSERT')
+             OR has_table_privilege('research_writer', 'public.trading_calendar_versions', 'UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+             OR NOT has_table_privilege('research_writer', 'public.trading_calendars', 'SELECT')
+             OR NOT has_table_privilege('research_writer', 'public.trading_calendars', 'INSERT')
+             OR NOT has_table_privilege('research_writer', 'public.trading_calendars', 'UPDATE')
+             OR has_table_privilege('research_writer', 'public.trading_calendars', 'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+             OR has_schema_privilege('research_writer', 'public', 'CREATE') THEN
+            RAISE EXCEPTION 'research_writer role contract is not satisfied';
+          END IF;
+        END
+        $$schema$$;
+        SQL
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-lagrange}
+      DB_USER: ${POSTGRES_USER:-lagrange}
+      DB_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ------------------------------------------------------------------
   # research-worker — KRX ingestion/curation/catalog (Todo 8-13).
   # The ONLY data-collection worker; it needs internet egress for the
   # licensed KRX source, so it sits on `backend` (not internal).
@@ -247,6 +334,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      research-raw-init:
+        condition: service_completed_successfully
+      research-schema-check:
+        condition: service_completed_successfully
 
   # ------------------------------------------------------------------
   # nt-backtest-worker-1 / nt-backtest-worker-2 — NautilusTrader backtests
