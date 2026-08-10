@@ -221,6 +221,11 @@ services:
   research-schema-check:
     image: postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a # tag: 18.4
     read_only: true
+    user: "999:999"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     tmpfs:
       - /tmp
     restart: "no"
@@ -228,46 +233,7 @@ services:
     command:
       - |
         export PGPASSWORD="$$(cat "$$DB_PASSWORD_FILE")"
-        psql -X -v ON_ERROR_STOP=1 -h "$$DB_HOST" -p "$$DB_PORT" -U "$$DB_USER" -d "$$DB_NAME" <<'SQL'
-        DO $$schema$$
-        BEGIN
-          IF to_regclass('public.data_batches') IS NULL
-             OR to_regclass('public.trading_calendar_versions') IS NULL
-             OR to_regclass('public.trading_calendars') IS NULL THEN
-            RAISE EXCEPTION 'research publication tables are missing';
-          END IF;
-          IF (SELECT count(*) FROM information_schema.columns
-              WHERE table_schema = 'public' AND table_name = 'data_batches'
-                AND column_name IN ('source_batch_id', 'source_file_name', 'fetch_mode')) <> 3
-             OR (SELECT count(*) FROM information_schema.columns
-                 WHERE table_schema = 'public' AND table_name = 'trading_calendar_versions'
-                   AND column_name IN ('source_batch_id', 'content_sha256', 'retrieved_at', 'source_version')) <> 4
-             OR (SELECT count(*) FROM information_schema.columns
-                 WHERE table_schema = 'public' AND table_name = 'trading_calendars'
-                   AND column_name IN ('source_batch_id', 'content_sha256', 'retrieved_at')) <> 3 THEN
-            RAISE EXCEPTION 'research publication columns are missing';
-          END IF;
-          IF to_regclass('public.data_batches_source_file_uq') IS NULL
-             OR to_regclass('public.trading_calendar_versions_source_lookup_idx') IS NULL THEN
-            RAISE EXCEPTION 'research publication indexes are missing';
-          END IF;
-          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'research_writer' AND rolcanlogin)
-             OR NOT has_table_privilege('research_writer', 'public.data_batches', 'SELECT')
-             OR NOT has_table_privilege('research_writer', 'public.data_batches', 'INSERT')
-             OR has_table_privilege('research_writer', 'public.data_batches', 'UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
-             OR NOT has_table_privilege('research_writer', 'public.trading_calendar_versions', 'SELECT')
-             OR NOT has_table_privilege('research_writer', 'public.trading_calendar_versions', 'INSERT')
-             OR has_table_privilege('research_writer', 'public.trading_calendar_versions', 'UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
-             OR NOT has_table_privilege('research_writer', 'public.trading_calendars', 'SELECT')
-             OR NOT has_table_privilege('research_writer', 'public.trading_calendars', 'INSERT')
-             OR NOT has_table_privilege('research_writer', 'public.trading_calendars', 'UPDATE')
-             OR has_table_privilege('research_writer', 'public.trading_calendars', 'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
-             OR has_schema_privilege('research_writer', 'public', 'CREATE') THEN
-            RAISE EXCEPTION 'research_writer role contract is not satisfied';
-          END IF;
-        END
-        $$schema$$;
-        SQL
+        exec psql -X -v ON_ERROR_STOP=1 -h "$$DB_HOST" -p "$$DB_PORT" -U "$$DB_USER" -d "$$DB_NAME" -f /opt/lagrange/research-schema-check.sql
     environment:
       DB_HOST: postgres
       DB_PORT: "5432"
@@ -276,6 +242,11 @@ services:
       DB_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
+    volumes:
+      - type: bind
+        source: ./research-schema-check.sql
+        target: /opt/lagrange/research-schema-check.sql
+        read_only: true
     networks:
       - backend
     depends_on:
@@ -310,7 +281,7 @@ services:
       RESEARCH_FETCH_MODE: ${RESEARCH_FETCH_MODE:-synthetic}
       RESEARCH_RUN_AT_KST: ${RESEARCH_RUN_AT_KST:-16:30}
       RESEARCH_MAX_PUBLICATION_AGE_SECS: ${RESEARCH_MAX_PUBLICATION_AGE_SECS:-345600}
-      RESEARCH_RAW_ROOT: /data/raw
+      RESEARCH_RAW_ROOT: /data
       RESEARCH_SYNTHETIC_BUNDLE: /opt/lagrange/tests/fixtures/kr-etf/contract
       DB_HOST: postgres
       DB_PORT: "5432"

@@ -123,32 +123,31 @@ async fn market_session_for(pool: &sqlx::PgPool, actor: &Actor, now_secs: i64) -
 
 /// Returns the age of the newest KRX end-of-day batch at the decision instant.
 async fn data_freshness_for(pool: &sqlx::PgPool, actor: &Actor, now_secs: i64) -> DataFreshness {
-    let Some((now, _)) = timestamp_parts(now_secs) else {
+    let Some((now, seoul)) = timestamp_parts(now_secs) else {
         return DataFreshness::Unknown;
     };
     let mut tx = match begin_actor_tx(pool, actor).await {
         Ok(tx) => tx,
         Err(_) => return DataFreshness::Unknown,
     };
-    let row: Result<Option<(DateTime<Utc>,)>, _> = sqlx::query_as(
-        "SELECT retrieved_at FROM data_batches \
+    let row: Result<Option<(chrono::NaiveDate, DateTime<Utc>)>, _> = sqlx::query_as(
+        "SELECT batch_date, retrieved_at FROM data_batches \
          WHERE provider = 'KRX' AND market = 'KR' AND kind = 'EOD' \
-         ORDER BY retrieved_at DESC LIMIT 1",
+           AND batch_date <= $1 \
+         ORDER BY batch_date DESC, retrieved_at DESC LIMIT 1",
     )
+    .bind(seoul.date_naive())
     .fetch_optional(&mut *tx)
     .await;
     if tx.commit().await.is_err() {
         return DataFreshness::Unknown;
     }
-    let Ok(Some((retrieved_at,))) = row else {
+    let Ok(Some((batch_date, retrieved_at))) = row else {
         return DataFreshness::Unknown;
     };
-    let age = now.signed_duration_since(retrieved_at).num_seconds();
-    if age < 0 {
-        DataFreshness::Unknown
-    } else {
-        DataFreshness::Age(age)
-    }
+    market_data::freshness::applicable_eod_age(now, batch_date, retrieved_at)
+        .and_then(|age| i64::try_from(age.as_secs()).ok())
+        .map_or(DataFreshness::Unknown, DataFreshness::Age)
 }
 
 /// Detects a still-live intent for the same account and instrument.

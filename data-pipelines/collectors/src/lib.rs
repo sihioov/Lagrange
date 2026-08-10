@@ -3,8 +3,9 @@ mod sink;
 mod worker;
 
 pub use pipeline::{
-    FailureClass, PipelineError, PipelineStage, RecoveryBatchOutcome, RecoveryError,
-    RecoveryReport, RunOutcome, ingest_and_publish, provider_failure_class, recover_unpublished,
+    FailureClass, PipelineError, PipelineStage, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome,
+    RecoveryError, RecoveryPage, RecoveryReport, RunOutcome, ingest_and_publish,
+    provider_failure_class, recover_unpublished, recover_unpublished_page_with,
     recover_unpublished_with, store_failure_class,
 };
 pub use sink::{
@@ -17,6 +18,6 @@ pub use worker::{
     WorkerControl, WorkerError, WorkerEvent, WorkerEventClass, WorkerEventKind, WorkerObserver,
     WorkerPhase, WorkerRunOutcome, bootstrap_worker, bootstrap_worker_with, build_postgres_pool,
     current_kst_date, healthcheck, next_run_delay, publication_age, retry_delay,
-    run_internal_ingest, run_internal_recovery, run_internal_recovery_stream,
-    validate_synthetic_policy,
+    run_internal_ingest, run_internal_recovery, run_internal_recovery_page_stream,
+    run_internal_recovery_stream, validate_synthetic_policy,
 };

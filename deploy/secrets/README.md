@@ -65,9 +65,17 @@ trading day's EOD data yet; retry it after the provider's publication window.
 ## Research worker deployment order
 
 Apply all SQL migrations with the migration-owner/admin procedure before
-starting `research-worker`. Compose runs `research-schema-check` as a fail-closed
-one-shot and refuses to launch the worker until the publication tables,
-provenance columns, indexes, and `research_writer` privilege contract exist.
+starting `research-worker`. Concurrent migrations require a finite session
+lock timeout supplied outside the migration file:
+
+```sh
+PGOPTIONS='-c lock_timeout=5s' sqlx migrate run
+```
+
+Compose runs `research-schema-check` as a fail-closed one-shot and refuses to
+launch the worker until successful migrations 22–25 (with 25 latest), validated
+constraints, exact valid/ready indexes, RLS policies, append-only enforcement,
+and the exact `research_writer` role/grant contract exist.
 After applying or repairing migrations, restart with:
 
 ```sh
@@ -85,5 +93,7 @@ chmod 0750 /srv/lagrange/data/raw
 ```
 
 Set `LAGRANGE_DATA_DIR=/srv/lagrange/data` (or the appropriate parent) before
-starting Compose. The long-running worker remains unprivileged and never needs
-root.
+starting Compose. Compose binds its `raw` child at `/data/raw` and sets
+`RESEARCH_RAW_ROOT=/data`; `RawStore` appends `/raw`, so evidence appears at the
+host's `/srv/lagrange/data/raw/provider=...`, never under `raw/raw`. The
+long-running worker remains unprivileged and never needs root.

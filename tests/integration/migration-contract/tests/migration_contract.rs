@@ -63,6 +63,46 @@ const CALENDAR_VERSION_INDEX_DOWN_SQL: &str =
     include_str!("../../../../migrations/0025_research_calendar_version_lookup.down.sql");
 const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
+const RESEARCH_SCHEMA_GATE_SQL: &str =
+    include_str!("../../../../deploy/compose/research-schema-check.sql");
+
+#[test]
+fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
+    for token in [
+        "version BETWEEN 22 AND 25",
+        "max(version)",
+        "convalidated",
+        "indisunique",
+        "indisvalid",
+        "indisready",
+        "indislive",
+        "relrowsecurity",
+        "rolcanlogin",
+        "rolsuper",
+        "rolbypassrls",
+        "rolcreatedb",
+        "rolcreaterole",
+        "pg_auth_members",
+        "polcmd",
+        "polpermissive",
+        "tgenabled",
+        "tgtype",
+        "prosecdef",
+        "role_table_grants",
+        "has_schema_privilege",
+        "has_table_privilege",
+        "has_sequence_privilege",
+    ] {
+        assert!(
+            RESEARCH_SCHEMA_GATE_SQL.contains(token),
+            "tracked research schema gate is missing {token}"
+        );
+    }
+    for migration in [SOURCE_INDEX_UP_SQL, CALENDAR_VERSION_INDEX_UP_SQL] {
+        assert!(migration.contains("PGOPTIONS='-c lock_timeout=5s' sqlx migrate run"));
+        assert!(migration.contains("CONCURRENTLY"));
+    }
+}
 
 fn executable_sql(sql: &str) -> String {
     sql.lines()

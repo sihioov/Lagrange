@@ -39,6 +39,10 @@ pub enum PipelineError {
     Manifest {
         source: StoreError,
     },
+    InvalidRecoveryCursor {
+        cursor: BatchId,
+    },
+    InvalidRecoveryPageSize,
     Publication {
         batch_id: BatchId,
         source: PublicationError,
@@ -62,7 +66,9 @@ impl PipelineError {
     pub fn batch_id(&self) -> Option<BatchId> {
         match self {
             Self::Ingest { source } => source.batch_id(),
-            Self::Manifest { .. } => None,
+            Self::Manifest { .. }
+            | Self::InvalidRecoveryCursor { .. }
+            | Self::InvalidRecoveryPageSize => None,
             Self::Publication { batch_id, .. }
             | Self::Sink { batch_id, .. }
             | Self::PartialPublication { batch_id }
@@ -73,7 +79,9 @@ impl PipelineError {
     pub const fn stage(&self) -> PipelineStage {
         match self {
             Self::Ingest { .. } => PipelineStage::Ingest,
-            Self::Manifest { .. } => PipelineStage::ReadManifest,
+            Self::Manifest { .. }
+            | Self::InvalidRecoveryCursor { .. }
+            | Self::InvalidRecoveryPageSize => PipelineStage::ReadManifest,
             Self::Publication { .. } => PipelineStage::VerifyRaw,
             Self::Sink { stage, .. } => *stage,
             Self::PartialPublication { .. } => PipelineStage::PublicationState,
@@ -85,6 +93,7 @@ impl PipelineError {
         let retryable = match self {
             Self::Ingest { source } => ingest_error_is_retryable(source),
             Self::Manifest { source } => store_failure_class(source) == FailureClass::Retryable,
+            Self::InvalidRecoveryCursor { .. } | Self::InvalidRecoveryPageSize => false,
             Self::Publication { source, .. } => publication_error_is_retryable(source),
             Self::Sink { source, .. } => source.is_retryable(),
             Self::PartialPublication { .. } => false,
@@ -107,6 +116,15 @@ impl std::fmt::Display for PipelineError {
         match self {
             Self::Ingest { source } => write!(formatter, "{source}"),
             Self::Manifest { source } => write!(formatter, "read Raw manifest failed: {source}"),
+            Self::InvalidRecoveryCursor { cursor } => {
+                write!(
+                    formatter,
+                    "recovery cursor {cursor} is not in the canonical Raw manifest"
+                )
+            }
+            Self::InvalidRecoveryPageSize => {
+                formatter.write_str("recovery page size must be positive")
+            }
             Self::Publication { batch_id, source } => {
                 write!(formatter, "verify Raw batch {batch_id} failed: {source}")
             }
@@ -141,6 +159,7 @@ impl std::error::Error for PipelineError {
         match self {
             Self::Ingest { source } => Some(source),
             Self::Manifest { source } => Some(source),
+            Self::InvalidRecoveryCursor { .. } | Self::InvalidRecoveryPageSize => None,
             Self::Publication { source, .. } => Some(source),
             Self::Sink { source, .. } => Some(source),
             Self::PartialPublication { .. } => None,
@@ -230,6 +249,17 @@ pub struct RecoveryReport {
     pub skipped: Vec<BatchId>,
 }
 
+/// A bounded authoritative replay page. The cursor is the last exact batch
+/// whose outcome was emitted, and remains the input cursor for an empty page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecoveryPage {
+    pub cursor: Option<BatchId>,
+    pub has_more: bool,
+}
+
+/// Conservative bound for one contained recovery helper invocation.
+pub const RECOVERY_PAGE_SIZE: usize = 16;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecoveryBatchOutcome {
     Recovered {
@@ -317,6 +347,33 @@ pub async fn recover_unpublished_with<E, F>(
 where
     F: FnMut(RecoveryBatchOutcome) -> Result<(), E>,
 {
+    let mut cursor = None;
+    loop {
+        let page =
+            recover_unpublished_page_with(store, sink, cursor, RECOVERY_PAGE_SIZE, &mut observer)
+                .await?;
+        if !page.has_more {
+            return Ok(());
+        }
+        cursor = page.cursor;
+    }
+}
+
+pub async fn recover_unpublished_page_with<E, F>(
+    store: &RawStore,
+    sink: &dyn PublicationSink,
+    after: Option<BatchId>,
+    page_size: usize,
+    mut observer: F,
+) -> Result<RecoveryPage, RecoveryError<E>>
+where
+    F: FnMut(RecoveryBatchOutcome) -> Result<(), E>,
+{
+    if page_size == 0 {
+        return Err(RecoveryError::Pipeline(
+            PipelineError::InvalidRecoveryPageSize,
+        ));
+    }
     let mut entries = store
         .read_manifest(PROVIDER_KRX, MARKET_KR)
         .map_err(|source| RecoveryError::Pipeline(PipelineError::Manifest { source }))?;
@@ -326,7 +383,21 @@ where
             .then_with(|| left.batch_id.cmp(&right.batch_id))
     });
 
-    for manifest in entries {
+    let start = match after {
+        Some(cursor) => entries
+            .iter()
+            .position(|entry| entry.batch_id == cursor)
+            .map(|position| position + 1)
+            .ok_or(RecoveryError::Pipeline(
+                PipelineError::InvalidRecoveryCursor { cursor },
+            ))?,
+        None => 0,
+    };
+    let end = start.saturating_add(page_size).min(entries.len());
+    let has_more = end < entries.len();
+    let mut cursor = after;
+
+    for manifest in entries.into_iter().skip(start).take(page_size) {
         let batch_id = manifest.batch_id;
         let state = sink.publication_state(batch_id).await.map_err(|source| {
             RecoveryError::Pipeline(PipelineError::Sink {
@@ -352,6 +423,7 @@ where
                     date: manifest.date,
                 })
                 .map_err(|source| RecoveryError::Observer { batch_id, source })?;
+                cursor = Some(batch_id);
             }
             PublicationState::Complete => {
                 let bundle = PublicationBundle::from_raw(store, &manifest).map_err(|source| {
@@ -378,6 +450,7 @@ where
                     date: manifest.date,
                 })
                 .map_err(|source| RecoveryError::Observer { batch_id, source })?;
+                cursor = Some(batch_id);
             }
             PublicationState::Partial => {
                 return Err(RecoveryError::Pipeline(PipelineError::PartialPublication {
@@ -386,5 +459,5 @@ where
             }
         }
     }
-    Ok(())
+    Ok(RecoveryPage { cursor, has_more })
 }

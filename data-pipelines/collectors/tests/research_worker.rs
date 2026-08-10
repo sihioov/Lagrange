@@ -8,13 +8,13 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use collectors::{
     AppEnvironment, FailureClass, HealthcheckConfig, PipelineError, PipelineStage, PublicationSink,
-    PublicationState, PublishOutcome, RecoveryBatchOutcome, RecoveryError, RecoveryObserver,
-    ResearchBackend, ResearchWorker, ResearchWorkerConfig, SinkError, WaitOutcome,
-    WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent, WorkerEventClass,
+    PublicationState, PublishOutcome, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome, RecoveryError,
+    RecoveryObserver, ResearchBackend, ResearchWorker, ResearchWorkerConfig, SinkError,
+    WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent, WorkerEventClass,
     WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome, bootstrap_worker_with,
     build_postgres_pool, healthcheck, ingest_and_publish, next_run_delay, publication_age,
-    recover_unpublished, recover_unpublished_with, retry_delay, run_internal_recovery_stream,
-    store_failure_class, validate_synthetic_policy,
+    recover_unpublished, recover_unpublished_page_with, recover_unpublished_with, retry_delay,
+    run_internal_recovery_stream, store_failure_class, validate_synthetic_policy,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::contract::{MARKET_KR, PROVIDER_KRX, ResponseKind};
@@ -457,6 +457,100 @@ async fn pipeline_recovery_orders_missing_oldest_first_and_skips_complete() {
         *sink.state_calls.lock().unwrap(),
         vec![entries[1].batch_id, complete, entries[0].batch_id]
     );
+}
+
+#[tokio::test]
+async fn pipeline_recovery_pages_resume_by_canonical_batch_cursor() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let mut entries = Vec::new();
+    for day in 1..=5 {
+        entries.push(
+            ingest_bundle(
+                &store,
+                &provider(),
+                &request(&format!("2026-08-{day:02}T07:00:00Z")),
+                None,
+            )
+            .unwrap()
+            .entry,
+        );
+    }
+    let sink = FakeSink::default();
+    let mut observed = Vec::new();
+
+    let first = recover_unpublished_page_with(&store, &sink, None, 2, |outcome| {
+        observed.push(outcome);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(first.cursor, Some(entries[1].batch_id));
+    assert!(first.has_more);
+
+    // A concurrently appended later batch belongs to a later canonical page
+    // and is included without replaying the already emitted prefix.
+    let appended = ingest_bundle(&store, &provider(), &request("2026-08-06T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    let second = recover_unpublished_page_with(&store, &sink, first.cursor, 2, |outcome| {
+        observed.push(outcome);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(second.cursor, Some(entries[3].batch_id));
+    assert!(second.has_more);
+    let third = recover_unpublished_page_with(&store, &sink, second.cursor, 2, |outcome| {
+        observed.push(outcome);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(third.cursor, Some(appended.batch_id));
+    assert!(!third.has_more);
+
+    assert_eq!(
+        observed
+            .iter()
+            .map(|outcome| outcome.batch_id())
+            .collect::<Vec<_>>(),
+        entries
+            .iter()
+            .map(|entry| entry.batch_id)
+            .chain(std::iter::once(appended.batch_id))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        *sink.state_calls.lock().unwrap(),
+        observed
+            .iter()
+            .map(|outcome| outcome.batch_id())
+            .collect::<Vec<_>>(),
+        "resumed pages must never reprocess an emitted prefix"
+    );
+}
+
+#[tokio::test]
+async fn pipeline_recovery_rejects_a_missing_cursor_permanently() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None).unwrap();
+    let sink = FakeSink::default();
+    let missing = BatchId::generate();
+
+    let error = recover_unpublished_page_with(&store, &sink, Some(missing), 2, |_| {
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .await
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RecoveryError::Pipeline(PipelineError::InvalidRecoveryCursor { cursor })
+            if cursor == missing
+    ));
+    assert!(sink.state_calls.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1792,6 +1886,93 @@ fn configured_worker(backend: Arc<dyn ResearchBackend>) -> ResearchWorker {
     ResearchWorker::new(config, backend)
 }
 
+struct BudgetedCompleteRecoveryBackend {
+    batches: Vec<BatchId>,
+    cursor: AtomicUsize,
+    observed: Mutex<Vec<BatchId>>,
+    fetches: AtomicUsize,
+}
+
+#[async_trait]
+impl ResearchBackend for BudgetedCompleteRecoveryBackend {
+    async fn recover(
+        &self,
+        _control: &dyn WorkerControl,
+        observer: &dyn RecoveryObserver,
+    ) -> Result<(), WorkerError> {
+        let start = self.cursor.load(Ordering::SeqCst);
+        let end = start
+            .saturating_add(RECOVERY_PAGE_SIZE)
+            .min(self.batches.len());
+        let date = TradingDate::parse("2020-01-31").unwrap();
+        for batch_id in self.batches[start..end].iter().copied() {
+            observer.skipped(batch_id, date);
+            self.observed.lock().unwrap().push(batch_id);
+            self.cursor
+                .store(self.cursor.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+        }
+        if end < self.batches.len() {
+            // Models one helper's fixed 60-second budget expiring after a
+            // validated page. Restarting from the oldest batch could never
+            // finish this history; retaining the cursor advances every retry.
+            Err(WorkerError::Timeout {
+                phase: WorkerPhase::Recovery,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn has_eod(&self, _date: TradingDate) -> Result<bool, WorkerError> {
+        Ok(false)
+    }
+
+    async fn ingest(
+        &self,
+        _date: TradingDate,
+        _now: UtcTimestamp,
+        _control: &dyn WorkerControl,
+    ) -> Result<BatchId, WorkerError> {
+        self.fetches.fetch_add(1, Ordering::SeqCst);
+        Ok("00000000-0000-4000-8000-000000000099".parse().unwrap())
+    }
+}
+
+#[tokio::test]
+async fn recovery_cursor_advances_across_multiple_helper_budgets_then_fetches() {
+    let batches = (1..=(RECOVERY_PAGE_SIZE * 2 + 1))
+        .map(|index| {
+            format!("00000000-0000-4000-8000-{index:012}")
+                .parse::<BatchId>()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let backend = Arc::new(BudgetedCompleteRecoveryBackend {
+        batches: batches.clone(),
+        cursor: AtomicUsize::new(0),
+        observed: Mutex::new(Vec::new()),
+        fetches: AtomicUsize::new(0),
+    });
+    let control = FakeControl::default();
+
+    let outcome = configured_worker(backend.clone())
+        .run_once(TradingDate::parse("2020-01-31").unwrap(), &control)
+        .await
+        .unwrap();
+
+    assert!(matches!(outcome, WorkerRunOutcome::Published(_)));
+    assert_eq!(*backend.observed.lock().unwrap(), batches);
+    assert_eq!(
+        backend.cursor.load(Ordering::SeqCst),
+        RECOVERY_PAGE_SIZE * 2 + 1
+    );
+    assert_eq!(backend.fetches.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *control.sleeps.lock().unwrap(),
+        vec![Duration::from_secs(10), Duration::from_secs(20)]
+    );
+}
+
 #[tokio::test]
 async fn worker_once_recovers_first_and_skips_an_existing_eod() {
     let backend = Arc::new(FakeResearchBackend::default());
@@ -1843,6 +2024,36 @@ async fn worker_daemon_uses_injected_clock_and_default_or_override_schedule() {
             *control.sleeps.lock().unwrap(),
             vec![Duration::from_secs(30)]
         );
+    }
+}
+
+#[tokio::test]
+async fn worker_daemon_catches_up_immediately_at_or_after_schedule() {
+    for now in [
+        Utc.with_ymd_and_hms(2026, 8, 10, 7, 30, 0).unwrap(),
+        Utc.with_ymd_and_hms(2026, 8, 10, 9, 0, 0).unwrap(),
+    ] {
+        let backend = Arc::new(FakeResearchBackend::default());
+        backend.eod.lock().unwrap().push_back(Ok(true));
+        let control = ScheduleControl {
+            now,
+            sleeps: Mutex::new(Vec::new()),
+        };
+
+        assert_eq!(
+            configured_worker(backend.clone())
+                .run_daemon(&control)
+                .await
+                .unwrap(),
+            WorkerRunOutcome::Shutdown
+        );
+        assert_eq!(
+            *backend.events.lock().unwrap(),
+            vec!["recover", "has_eod:2026-08-10"],
+            "startup after the configured time performs one immediate catch-up"
+        );
+        assert_eq!(control.sleeps.lock().unwrap().len(), 1);
+        assert!(control.sleeps.lock().unwrap()[0] >= Duration::from_secs(22 * 60 * 60));
     }
 }
 
@@ -2331,7 +2542,7 @@ async fn worker_emits_recovery_batches_and_all_permanent_failures_with_context()
         .push_back(vec![(recovered, recovered_date)]);
     let daemon_observer = Arc::new(RecordingObserver::default());
     let daemon_control = ScheduleControl {
-        now: Utc.with_ymd_and_hms(2020, 1, 31, 8, 0, 0).unwrap(),
+        now: Utc.with_ymd_and_hms(2020, 1, 31, 7, 0, 0).unwrap(),
         sleeps: Mutex::new(Vec::new()),
     };
     configured_worker(daemon_backend)
@@ -2481,6 +2692,70 @@ async fn worker_health_requires_db_round_trip_and_fresh_real_eod() {
 
     db.writer.close().await;
     assert!(healthcheck(&db.writer, now, max_age).await.is_err());
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn worker_health_uses_batch_date_and_ignores_future_batches() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let now = Utc.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap();
+    let max_age = Duration::from_secs(345_600);
+
+    sqlx::query(
+        "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
+         content_sha256, bytes_size, retrieved_at) VALUES \
+         ('KRX','KR','2020-01-31','EOD','raw/historical-backfill',repeat('a',64),1,$1)",
+    )
+    .bind(now)
+    .execute(&db.supervisor)
+    .await
+    .unwrap();
+    let historical = healthcheck(&db.writer, now, max_age).await.unwrap_err();
+    assert!(matches!(
+        historical,
+        WorkerError::Unhealthy {
+            reason: collectors::HealthFailure::StaleEodPublication
+        }
+    ));
+    let historical_with_large_limit =
+        healthcheck(&db.writer, now, Duration::from_secs(500_000_000))
+            .await
+            .unwrap();
+    assert_eq!(
+        historical_with_large_limit.newest_eod_at,
+        Utc.with_ymd_and_hms(2020, 1, 31, 15, 0, 0).unwrap(),
+        "health output must report the effective KST batch-date boundary, not backfill retrieval"
+    );
+
+    sqlx::query(
+        "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
+         content_sha256, bytes_size, retrieved_at) VALUES \
+         ('KRX','KR','2026-08-09','EOD','raw/applicable',repeat('b',64),1,$1), \
+         ('KRX','KR','2026-08-11','EOD','raw/future-date',repeat('c',64),1,$2)",
+    )
+    .bind(now - chrono::Duration::hours(12))
+    .bind(now)
+    .execute(&db.supervisor)
+    .await
+    .unwrap();
+    let healthy = healthcheck(&db.writer, now, max_age).await.unwrap();
+    assert_eq!(healthy.age, Duration::from_secs(12 * 60 * 60));
+
+    sqlx::query(
+        "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
+         content_sha256, bytes_size, retrieved_at) VALUES \
+         ('KRX','KR','2026-08-10','EOD','raw/current',repeat('d',64),1,$1)",
+    )
+    .bind(now - chrono::Duration::seconds(60))
+    .execute(&db.supervisor)
+    .await
+    .unwrap();
+    let current = healthcheck(&db.writer, now, max_age).await.unwrap();
+    assert_eq!(current.age, Duration::from_secs(60));
+    assert_eq!(current.newest_eod_at, now - chrono::Duration::seconds(60));
+
     db.drop_db().await;
 }
 

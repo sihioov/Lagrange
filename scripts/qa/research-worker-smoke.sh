@@ -6,6 +6,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 compose_file="$root/deploy/compose/compose.yml"
 dockerfile="$root/data-pipelines/collectors/Dockerfile"
 dockerignore="$root/.dockerignore"
+gitattributes="$root/.gitattributes"
+schema_sql="$root/deploy/compose/research-schema-check.sql"
 secret_example="$root/deploy/secrets/db_research_password.example"
 static_only="${LAGRANGE_RESEARCH_SMOKE_STATIC_ONLY:-0}"
 self_test=0
@@ -28,10 +30,20 @@ validator_self_tests() (
   cp "$BASH_SOURCE" "$test_root/scripts/qa/research-worker-smoke.sh"
   cp "$compose_file" "$test_root/deploy/compose/compose.yml"
   cp "$dockerfile" "$test_root/data-pipelines/collectors/Dockerfile"
+  cp "$schema_sql" "$test_root/deploy/compose/research-schema-check.sql"
   if [ -f "$dockerignore" ]; then cp "$dockerignore" "$test_root/.dockerignore"; fi
+  if [ -f "$gitattributes" ]; then cp "$gitattributes" "$test_root/.gitattributes"; fi
   cp "$root/deploy/secrets/.gitignore" "$root/deploy/secrets/README.md" "$secret_example" "$test_root/deploy/secrets/"
   git -C "$test_root" init -q
   git -C "$test_root" add -f -- deploy/secrets
+  git -C "$test_root" config core.autocrlf true
+  sed 's/\r$//; s/$/\r/' "$test_root/scripts/qa/research-worker-smoke.sh" >"$test_root/scripts/qa/research-worker-smoke.sh.crlf"
+  mv "$test_root/scripts/qa/research-worker-smoke.sh.crlf" "$test_root/scripts/qa/research-worker-smoke.sh"
+  git -C "$test_root" add -- .gitattributes scripts/qa/research-worker-smoke.sh
+  git -C "$test_root" -c user.name=validator -c user.email=validator@example.invalid commit -q -m 'checkout fixture'
+  rm "$test_root/scripts/qa/research-worker-smoke.sh"
+  git -C "$test_root" checkout -q -- scripts/qa/research-worker-smoke.sh
+  if grep -q $'\r' "$test_root/scripts/qa/research-worker-smoke.sh"; then fail '.gitattributes did not preserve LF under a simulated autocrlf checkout'; fi
 
   test_script="$test_root/scripts/qa/research-worker-smoke.sh"
   test_compose="$test_root/deploy/compose/compose.yml"
@@ -43,11 +55,22 @@ validator_self_tests() (
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a read-only Raw mount'; fi
   cp "$test_compose.baseline" "$test_compose"
 
-  for mutation in DB_USER entrypoint healthcheck; do
+  cp "$test_root/deploy/compose/research-schema-check.sql" "$test_root/deploy/compose/research-schema-check.sql.baseline"
+  sed 's/has_sequence_privilege/has_sequence_permission/' "$test_root/deploy/compose/research-schema-check.sql.baseline" >"$test_root/deploy/compose/research-schema-check.sql"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a weakened schema gate'; fi
+  cp "$test_root/deploy/compose/research-schema-check.sql.baseline" "$test_root/deploy/compose/research-schema-check.sql"
+
+  printf '%s\n' 'scripts/qa/*.sh text eol=crlf' >"$test_root/.gitattributes"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted CRLF shell checkout semantics'; fi
+  cp "$gitattributes" "$test_root/.gitattributes"
+
+  for mutation in DB_USER entrypoint healthcheck schema-user schema-caps; do
     case "$mutation" in
       DB_USER) sed 's/^      DB_USER: research_writer$/      # DB_USER: research_writer/' "$test_compose.baseline" >"$test_compose" ;;
       entrypoint) sed 's|^    entrypoint: \["/usr/local/bin/research-worker"\]$|    # entrypoint: ["/usr/local/bin/research-worker"]|' "$test_compose.baseline" >"$test_compose" ;;
       healthcheck) sed 's|^      test: \["CMD", "/usr/local/bin/research-worker", "healthcheck"\]$|      # test: ["CMD", "/usr/local/bin/research-worker", "healthcheck"]|' "$test_compose.baseline" >"$test_compose" ;;
+      schema-user) sed 's/^    user: "999:999"$/    user: "0:0"/' "$test_compose.baseline" >"$test_compose" ;;
+      schema-caps) sed '0,/^      - ALL$/s//      - CHOWN/' "$test_compose.baseline" >"$test_compose" ;;
     esac
     if bash "$test_script" --static-only >/dev/null 2>&1; then fail "validator accepted commented-out $mutation"; fi
   done
@@ -126,7 +149,7 @@ require(worker.get("entrypoint") == ["/usr/local/bin/research-worker"], "researc
 expected_env = {
     "APP_ENV": "development", "RESEARCH_FETCH_MODE": "synthetic",
     "RESEARCH_RUN_AT_KST": "16:30", "RESEARCH_MAX_PUBLICATION_AGE_SECS": "345600",
-    "RESEARCH_RAW_ROOT": "/data/raw", "DB_HOST": "postgres", "DB_PORT": "5432",
+    "RESEARCH_RAW_ROOT": "/data", "DB_HOST": "postgres", "DB_PORT": "5432",
     "DB_NAME": "lagrange", "DB_USER": "research_writer",
     "DB_PASSWORD_FILE": "/run/secrets/db_research_password",
 }
@@ -162,11 +185,13 @@ require("chown 10001:10001 /data/raw" in init_command and "chmod 0750 /data/raw"
 schema = services["research-schema-check"]
 postgres = "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a"
 schema_secrets = {item.get("source") for item in schema.get("secrets", [])}
+schema_volumes = [volume for volume in schema.get("volumes", []) if volume.get("target") == "/opt/lagrange/research-schema-check.sql"]
 require(schema.get("image") == postgres and schema.get("read_only") is True and schema.get("restart") == "no", "research-schema-check runtime contract is incorrect")
-require((schema.get("depends_on", {}).get("postgres") or {}).get("condition") == "service_healthy" and "postgres_password" in schema_secrets, "research-schema-check dependency/secret is incorrect")
+require(schema.get("user") == "999:999" and "ALL" in schema.get("cap_drop", []) and "no-new-privileges:true" in schema.get("security_opt", []), "research-schema-check user/capability contract is incorrect")
+require((schema.get("depends_on", {}).get("postgres") or {}).get("condition") == "service_healthy" and schema_secrets == {"postgres_password"}, "research-schema-check dependency/secret is incorrect")
+require(len(schema_volumes) == 1 and schema_volumes[0].get("read_only") is True, "research-schema-check SQL mount is incorrect")
 schema_command = "\n".join(schema.get("command", []))
-for required in ("data_batches", "trading_calendar_versions", "trading_calendars", "data_batches_source_file_uq", "trading_calendar_versions_source_lookup_idx", "research_writer"):
-    require(required in schema_command, f"research-schema-check command is missing: {required}")
+require("/opt/lagrange/research-schema-check.sql" in schema_command, "research-schema-check command does not execute tracked SQL")
 
 for identity in ("db_app_password", "db_worker_password", "db_audit_password", "db_research_password"):
     require(identity in model.get("secrets", {}), f"Compose secret identity is missing: {identity}")
@@ -178,6 +203,8 @@ validate_compose
 
 [ -f "$dockerfile" ] || fail "missing worker Dockerfile: $dockerfile"
 [ -f "$dockerignore" ] || fail "missing Docker build-context policy: $dockerignore"
+[ -f "$schema_sql" ] || fail "missing tracked schema gate: $schema_sql"
+[ -f "$gitattributes" ] || fail "missing .gitattributes"
 [ -f "$secret_example" ] || fail "missing research DB secret example: $secret_example"
 docker_text="$(<"$dockerfile")"
 printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+rust:1\.97\.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900[[:space:]]+AS[[:space:]]+builder[[:space:]]*$' || fail 'Dockerfile missing the approved digest-pinned Rust builder'
@@ -191,8 +218,19 @@ while IFS= read -r line; do
 done < <(grep -i '^FROM[[:space:]]' "$dockerfile" || true)
 [ "$from_count" -gt 0 ] || fail 'Dockerfile has no FROM instructions'
 
-for pattern in '**' '!Cargo.toml' '!Cargo.lock' '!rust-toolchain.toml' '!crates/**' '!data-pipelines/collectors/**' '!apps/api-server/auth/**' '!tests/integration/migration-contract/**' '!tests/fixtures/kr-etf/contract/**' '**/target/**' '**/.git/**' '**/.worktrees/**' '**/.env.*' '**/credentials/**' '**/secrets/**' '**/raw/**'; do
+for pattern in '**' '!Cargo.toml' '!Cargo.lock' '!rust-toolchain.toml' '!crates/**' '!data-pipelines/collectors/**' '!apps/api-server/auth/**' '!tests/integration/migration-contract/**' '!tests/fixtures/kr-etf/contract/**' '**/target/**' '**/.git/**' '**/.worktrees/**' '**/.env.*' '**/credentials/**' '**/secrets/**' '**/raw/**' '**/*.pem' '**/*.key' '**/*.p12' '**/*.pfx'; do
   grep -Fxq -- "$pattern" "$dockerignore" || fail "Docker build-context policy is missing: $pattern"
+done
+grep -Eq '^scripts/qa/\*\.sh[[:space:]]+text[[:space:]]+eol=lf[[:space:]]*$' "$gitattributes" || fail 'scripts/qa shell scripts must be forced to LF by .gitattributes'
+schema_text="$(<"$schema_sql")"
+for token in _sqlx_migrations 'version BETWEEN 22 AND 25' 'max(version)' convalidated \
+  data_batches_source_file_uq trading_calendar_versions_source_lookup_idx \
+  indisunique indisvalid indisready indislive relrowsecurity research_writer \
+  rolcanlogin rolsuper rolbypassrls rolcreatedb rolcreaterole pg_auth_members \
+  pg_policy polcmd polpermissive trading_calendar_versions_append_only \
+  tgenabled tgtype prosecdef role_table_grants has_schema_privilege \
+  has_table_privilege has_sequence_privilege MAINTAIN; do
+  contains "$schema_text" "$token" 'research-schema-check SQL'
 done
 
 git_ls_files() {
@@ -269,7 +307,9 @@ export RESEARCH_RUN_AT_KST="$(TZ=Asia/Seoul date -d '+12 hours' +%H:%M 2>/dev/nu
 created=1
 audit_root="$temp_root/context-audit"
 audit_dockerfile="$temp_root/context-audit.Dockerfile"
-install -d "$audit_root/target" "$audit_root/credentials" "$audit_root/secrets" "$audit_root/data/raw"
+install -d "$audit_root/target" "$audit_root/credentials" "$audit_root/secrets" "$audit_root/data/raw" \
+  "$audit_root/crates/sentinel" "$audit_root/data-pipelines/collectors/sentinel" \
+  "$audit_root/apps/api-server/auth/sentinel" "$audit_root/tests/fixtures/kr-etf/contract/sentinel"
 cp "$dockerignore" "$audit_root/.dockerignore"
 printf '%s\n' '[workspace]' >"$audit_root/Cargo.toml"
 printf '%s' 'sentinel-not-a-secret' >"$audit_root/.env"
@@ -277,6 +317,10 @@ printf '%s' 'must-not-enter-context' >"$audit_root/target/sentinel"
 printf '%s' 'must-not-enter-context' >"$audit_root/credentials/sentinel"
 printf '%s' 'must-not-enter-context' >"$audit_root/secrets/sentinel"
 printf '%s' 'must-not-enter-context' >"$audit_root/data/raw/sentinel"
+printf '%s' 'must-not-enter-context' >"$audit_root/crates/sentinel/context.pem"
+printf '%s' 'must-not-enter-context' >"$audit_root/data-pipelines/collectors/sentinel/context.key"
+printf '%s' 'must-not-enter-context' >"$audit_root/apps/api-server/auth/sentinel/context.p12"
+printf '%s' 'must-not-enter-context' >"$audit_root/tests/fixtures/kr-etf/contract/sentinel/context.pfx"
 cat >"$audit_dockerfile" <<'DOCKERFILE'
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 COPY . /context
@@ -285,7 +329,11 @@ RUN test -f /context/Cargo.toml \
  && test ! -e /context/target/sentinel \
  && test ! -e /context/credentials/sentinel \
  && test ! -e /context/secrets/sentinel \
- && test ! -e /context/data/raw/sentinel
+ && test ! -e /context/data/raw/sentinel \
+ && test ! -e /context/crates/sentinel/context.pem \
+ && test ! -e /context/data-pipelines/collectors/sentinel/context.key \
+ && test ! -e /context/apps/api-server/auth/sentinel/context.p12 \
+ && test ! -e /context/tests/fixtures/kr-etf/contract/sentinel/context.pfx
 DOCKERFILE
 dkr build --no-cache -q -t "$context_audit_tag" -f "$(hostpath "$audit_dockerfile")" "$(hostpath "$audit_root")" >/dev/null || fail 'Docker build-context sentinel audit failed'
 rc up -d --wait postgres >/dev/null || fail 'PostgreSQL did not become healthy'
@@ -306,16 +354,76 @@ END
 SQL
 unset research_password escaped_password
 
+if rc run --rm --no-deps research-schema-check >/dev/null 2>&1; then
+  fail 'research-schema-check accepted an unmigrated database'
+fi
+dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U lagrange -d lagrange >/dev/null <<'SQL'
+CREATE TABLE _sqlx_migrations (
+  version bigint PRIMARY KEY,
+  description text NOT NULL,
+  installed_on timestamptz NOT NULL DEFAULT now(),
+  success boolean NOT NULL,
+  checksum bytea NOT NULL,
+  execution_time bigint NOT NULL
+);
+SQL
+
 while IFS= read -r migration; do
-  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U lagrange -d lagrange <"$migration" >/dev/null || fail "migration failed: ${migration##*/}"
+  transaction_args=(-1)
+  if grep -Eq '^-- no-transaction[[:space:]]*$' "$migration"; then transaction_args=(); fi
+  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T -e 'PGOPTIONS=-c lock_timeout=5s' postgres \
+    psql -X -q -v ON_ERROR_STOP=1 "${transaction_args[@]}" -U lagrange -d lagrange <"$migration" >/dev/null || fail "migration failed: ${migration##*/}"
+  migration_name="${migration##*/}"
+  migration_base="${migration_name%.up.sql}"
+  version=$((10#${migration_base:0:4}))
+  description="${migration_base:5}"
+  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U lagrange -d lagrange \
+    -c "INSERT INTO _sqlx_migrations(version, description, success, checksum, execution_time) VALUES ($version, '$description', true, decode(repeat('00', 32), 'hex'), 0)" >/dev/null || fail "migration ledger insert failed: $migration_name"
 done < <(find "$root/migrations" -maxdepth 1 -type f -name '*.up.sql' | sort)
 
+schema_gate_must_pass() {
+  rc run --rm --no-deps research-schema-check >/dev/null 2>&1 || fail "research-schema-check rejected $1"
+}
+schema_gate_must_fail() {
+  if rc run --rm --no-deps research-schema-check >/dev/null 2>&1; then fail "research-schema-check accepted $1"; fi
+}
+psql_admin() {
+  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U lagrange -d lagrange -c "$1" >/dev/null || fail "schema mutation command failed: $2"
+}
+
+schema_gate_must_pass 'the migrated database'
+psql_admin 'DROP INDEX CONCURRENTLY data_batches_source_file_uq' 'drop source index'
+psql_admin 'CREATE INDEX data_batches_source_file_uq ON data_batches (provider)' 'create drifted source index'
+schema_gate_must_fail 'a drifted same-name index'
+psql_admin 'DROP INDEX CONCURRENTLY data_batches_source_file_uq' 'drop drifted source index'
+psql_admin 'CREATE UNIQUE INDEX CONCURRENTLY data_batches_source_file_uq ON data_batches (provider, market, source_batch_id, source_file_name) WHERE source_batch_id IS NOT NULL' 'restore source index'
+schema_gate_must_pass 'the restored source index'
+psql_admin 'DROP POLICY data_batches_insert_research_writer ON data_batches' 'drop research policy'
+schema_gate_must_fail 'a missing research_writer policy'
+psql_admin 'CREATE POLICY data_batches_insert_research_writer ON data_batches FOR INSERT TO research_writer WITH CHECK (true)' 'restore research policy'
+schema_gate_must_pass 'the restored research_writer policy'
+psql_admin 'ALTER TABLE trading_calendar_versions DISABLE TRIGGER trading_calendar_versions_append_only' 'disable append-only trigger'
+schema_gate_must_fail 'a disabled append-only trigger'
+psql_admin 'ALTER TABLE trading_calendar_versions ENABLE TRIGGER trading_calendar_versions_append_only' 'enable append-only trigger'
+schema_gate_must_pass 'the restored append-only trigger'
+psql_admin 'GRANT DELETE ON orders TO research_writer' 'grant forbidden order privilege'
+schema_gate_must_fail 'a forbidden order-table grant'
+psql_admin 'REVOKE DELETE ON orders FROM research_writer' 'revoke forbidden order privilege'
+schema_gate_must_pass 'the restored least-privilege role'
+
 rc build research-worker || fail 'research-worker image build failed'
+command -v cargo >/dev/null 2>&1 || fail 'cargo is required to prove the manual --root Raw contract'
+manual_output="$(cargo run --quiet --locked -p collectors --bin collectors -- ingest-krx \
+  --root "$raw_root" --date 2020-01-31 --mode synthetic \
+  --bundle "$root/tests/fixtures/kr-etf/contract" --now 2020-01-31T08:00:00Z)" || fail 'manual collectors --root ingest failed'
+direct_manifest="$raw_root/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
+[ -f "$direct_manifest" ] || fail "direct host Raw manifest is missing: $direct_manifest"
+[ ! -e "$raw_root/raw/raw" ] || fail 'Raw evidence was nested under <data>/raw/raw'
+manual_manifest="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"])')" || fail 'manual collectors output was not valid JSON'
+[ "$(cd "$(dirname "$manual_manifest")" && pwd)/$(basename "$manual_manifest")" = "$(cd "$(dirname "$direct_manifest")" && pwd)/$(basename "$direct_manifest")" ] || fail "manual --root manifest mismatch: $manual_manifest"
 rc run --rm --no-deps research-raw-init || fail 'research-raw-init failed'
-rc run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -c 'probe="$RESEARCH_RAW_ROOT/.qa-write-probe"; : > "$probe"; rm -f "$probe"' || fail 'research-worker UID 10001 cannot write the Raw bind mount'
-rc run --rm --no-deps research-schema-check || fail 'research-schema-check rejected the migrated database'
+rc run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -c 'probe="$RESEARCH_RAW_ROOT/raw/.qa-write-probe"; : > "$probe"; rm -f "$probe"' || fail 'research-worker UID 10001 cannot write the Raw bind mount'
 rc up -d research-worker >/dev/null || fail 'research-worker service failed to start'
-rc run --rm --no-deps research-worker --once --date 2020-01-31 || fail 'first research-worker one-shot failed'
 
 healthy=0
 for _ in $(seq 1 30); do
@@ -335,6 +443,8 @@ WITH source AS (
 SELECT concat_ws('|',
   (SELECT count(DISTINCT source_batch_id) FROM data_batches WHERE provider = 'KRX' AND market = 'KR' AND batch_date = DATE '2020-01-31' AND source_batch_id IS NOT NULL),
   (SELECT count(*) FROM data_batches WHERE provider = 'KRX' AND market = 'KR' AND batch_date = DATE '2020-01-31'),
+  (SELECT count(source_batch_id) FROM data_batches WHERE provider = 'KRX' AND market = 'KR' AND batch_date = DATE '2020-01-31'),
+  (SELECT bool_and(b.source_batch_id = source.id) FROM data_batches b CROSS JOIN source WHERE b.provider = 'KRX' AND b.market = 'KR' AND b.batch_date = DATE '2020-01-31'),
   (SELECT count(*) FROM trading_calendar_versions WHERE exchange = 'KRX'),
   (SELECT count(*) FROM trading_calendars WHERE exchange = 'KRX'),
   (SELECT string_agg(DISTINCT kind, ',' ORDER BY kind) FROM data_batches WHERE provider = 'KRX' AND market = 'KR' AND batch_date = DATE '2020-01-31'),
@@ -345,7 +455,7 @@ SELECT concat_ws('|',
 ) FROM source;
 SQL
 )"
-  expected='1|4|2|2|CALENDAR,CORPORATE_ACTIONS,EOD,REFERENCE|2020-01-30:TRADING,2020-01-31:TRADING|2020-01-30:TRADING,2020-01-31:TRADING|t|t'
+  expected='1|4|4|t|2|2|CALENDAR,CORPORATE_ACTIONS,EOD,REFERENCE|2020-01-30:TRADING,2020-01-31:TRADING|2020-01-30:TRADING,2020-01-31:TRADING|t|t'
   [ "$value" = "$expected" ] || fail "publication evidence mismatch: $value"
   printf '%s' "$value"
 }

@@ -43,6 +43,7 @@ pub mod calendar;
 pub mod contract;
 pub mod curate;
 pub mod entitlement;
+pub mod freshness;
 pub mod ingest;
 pub mod instrument_master;
 pub mod provider;

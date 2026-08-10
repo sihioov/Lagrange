@@ -9,9 +9,9 @@ use chrono::Utc;
 use collectors::{
     HealthcheckConfig, WORKER_ENV_KEYS, WaitOutcome, WorkerControl, WorkerError, WorkerEvent,
     WorkerObserver, WorkerRunOutcome, bootstrap_worker, build_postgres_pool, healthcheck,
-    run_internal_ingest, run_internal_recovery_stream,
+    run_internal_ingest, run_internal_recovery_page_stream,
 };
-use domain::{TradingDate, UtcTimestamp};
+use domain::{BatchId, TradingDate, UtcTimestamp};
 use serde::Serialize;
 use tokio::sync::{Mutex, watch};
 
@@ -30,7 +30,7 @@ enum Command {
     Once(TradingDate),
     Healthcheck,
     Help,
-    InternalRecover,
+    InternalRecover(Option<BatchId>),
     InternalIngest(TradingDate, UtcTimestamp),
 }
 
@@ -56,6 +56,10 @@ struct SuccessRecord {
     date: Option<String>,
     newest_eod_at: Option<String>,
     age_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    has_more: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -141,7 +145,7 @@ async fn main() -> ExitCode {
         Command::Healthcheck => run_healthcheck(&values).await,
         Command::Once(date) => run_once(&values, date).await,
         Command::Daemon => run_daemon(&values).await,
-        Command::InternalRecover => run_internal_recover(&values).await,
+        Command::InternalRecover(after) => run_internal_recover(&values, after).await,
         Command::InternalIngest(date, now) => run_internal_collect(&values, date, now).await,
         Command::Help => unreachable!("help returned before worker setup"),
     };
@@ -160,7 +164,9 @@ async fn main() -> ExitCode {
 fn command_target_date(command: &Command) -> Option<TradingDate> {
     match command {
         Command::Once(date) | Command::InternalIngest(date, _) => Some(*date),
-        Command::Daemon | Command::Healthcheck | Command::Help | Command::InternalRecover => None,
+        Command::Daemon | Command::Healthcheck | Command::Help | Command::InternalRecover(_) => {
+            None
+        }
     }
 }
 
@@ -169,7 +175,18 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
         [] => Ok(Command::Daemon),
         [flag] if flag == "--help" || flag == "-h" => Ok(Command::Help),
         [command] if command == "healthcheck" => Ok(Command::Healthcheck),
-        [command] if command == "__research-internal-recover" => Ok(Command::InternalRecover),
+        [command] if command == "__research-internal-recover" => Ok(Command::InternalRecover(None)),
+        [command, after, cursor]
+            if command == "__research-internal-recover" && after == "--after" =>
+        {
+            cursor
+                .parse()
+                .map(Some)
+                .map(Command::InternalRecover)
+                .map_err(|_| WorkerError::InvalidConfig {
+                    key: "internal-recovery-cursor",
+                })
+        }
         [command, date, now] if command == "__research-internal-ingest" => {
             let date = TradingDate::parse(date).map_err(|_| WorkerError::InvalidConfig {
                 key: "internal-date",
@@ -257,15 +274,18 @@ async fn run_healthcheck(values: &HashMap<String, String>) -> Result<SuccessReco
         date: None,
         newest_eod_at: Some(status.newest_eod_at.to_rfc3339()),
         age_seconds: Some(status.age.as_secs()),
+        cursor: None,
+        has_more: None,
     })
 }
 
 async fn run_internal_recover(
     values: &HashMap<String, String>,
+    after: Option<BatchId>,
 ) -> Result<SuccessRecord, WorkerError> {
     let stdout = std::io::stdout();
     let mut writer = stdout.lock();
-    run_internal_recovery_stream(values, &mut writer).await?;
+    let page = run_internal_recovery_page_stream(values, after, &mut writer).await?;
     Ok(SuccessRecord {
         status: "ok",
         phase: "recovery",
@@ -274,6 +294,8 @@ async fn run_internal_recover(
         date: None,
         newest_eod_at: None,
         age_seconds: None,
+        cursor: page.cursor.map(|cursor| cursor.to_string()),
+        has_more: Some(page.has_more),
     })
 }
 
@@ -291,6 +313,8 @@ async fn run_internal_collect(
         date: Some(date.to_iso()),
         newest_eod_at: None,
         age_seconds: None,
+        cursor: None,
+        has_more: None,
     })
 }
 
@@ -308,6 +332,8 @@ fn run_record(outcome: WorkerRunOutcome, date: Option<TradingDate>) -> SuccessRe
         date: date.map(|date| date.to_iso()),
         newest_eod_at: None,
         age_seconds: None,
+        cursor: None,
+        has_more: None,
     }
 }
 

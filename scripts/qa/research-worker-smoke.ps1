@@ -13,6 +13,8 @@ $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $composeFile = Join-Path $root 'deploy/compose/compose.yml'
 $dockerfile = Join-Path $root 'data-pipelines/collectors/Dockerfile'
 $dockerignore = Join-Path $root '.dockerignore'
+$gitattributes = Join-Path $root '.gitattributes'
+$schemaSqlFile = Join-Path $root 'deploy/compose/research-schema-check.sql'
 $secretExample = Join-Path $root 'deploy/secrets/db_research_password.example'
 
 function Assert-Contains([string]$Text, [string]$Value, [string]$Context) {
@@ -28,10 +30,15 @@ function Invoke-ValidatorSelfTests {
             'scripts/qa', 'deploy/compose', 'deploy/secrets', 'data-pipelines/collectors'
         )) { New-Item -ItemType Directory -Path (Join-Path $testRoot $directory) -Force | Out-Null }
         Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $testRoot 'scripts/qa/research-worker-smoke.ps1')
+        Copy-Item -LiteralPath (Join-Path $root 'scripts/qa/research-worker-smoke.sh') -Destination (Join-Path $testRoot 'scripts/qa/research-worker-smoke.sh')
         Copy-Item -LiteralPath $composeFile -Destination (Join-Path $testRoot 'deploy/compose/compose.yml')
         Copy-Item -LiteralPath $dockerfile -Destination (Join-Path $testRoot 'data-pipelines/collectors/Dockerfile')
+        Copy-Item -LiteralPath $schemaSqlFile -Destination (Join-Path $testRoot 'deploy/compose/research-schema-check.sql')
         if (Test-Path -LiteralPath $dockerignore) {
             Copy-Item -LiteralPath $dockerignore -Destination (Join-Path $testRoot '.dockerignore')
+        }
+        if (Test-Path -LiteralPath $gitattributes) {
+            Copy-Item -LiteralPath $gitattributes -Destination (Join-Path $testRoot '.gitattributes')
         }
         foreach ($name in @('.gitignore', 'README.md', 'db_research_password.example')) {
             Copy-Item -LiteralPath (Join-Path $root "deploy/secrets/$name") -Destination (Join-Path $testRoot "deploy/secrets/$name")
@@ -40,6 +47,19 @@ function Invoke-ValidatorSelfTests {
         if ($LASTEXITCODE -ne 0) { throw 'self-test git init failed' }
         & git -C $testRoot add -f -- deploy/secrets *> $null
         if ($LASTEXITCODE -ne 0) { throw 'self-test git add failed' }
+
+        & git -C $testRoot config core.autocrlf true
+        $testSh = Join-Path $testRoot 'scripts/qa/research-worker-smoke.sh'
+        $crlf = (Get-Content -Raw -LiteralPath $testSh).Replace("`r`n", "`n").Replace("`n", "`r`n")
+        [IO.File]::WriteAllText($testSh, $crlf)
+        & git -C $testRoot add -- .gitattributes scripts/qa/research-worker-smoke.sh
+        & git -C $testRoot -c user.name=validator -c user.email=validator@example.invalid commit -q -m 'checkout fixture'
+        if ($LASTEXITCODE -ne 0) { throw 'self-test checkout fixture commit failed' }
+        Remove-Item -LiteralPath $testSh
+        & git -C $testRoot checkout -q -- scripts/qa/research-worker-smoke.sh
+        if ($LASTEXITCODE -ne 0 -or [IO.File]::ReadAllBytes($testSh) -contains 13) {
+            throw '.gitattributes did not preserve LF under a simulated autocrlf checkout'
+        }
 
         $testScript = Join-Path $testRoot 'scripts/qa/research-worker-smoke.ps1'
         $testCompose = Join-Path $testRoot 'deploy/compose/compose.yml'
@@ -59,10 +79,25 @@ function Invoke-ValidatorSelfTests {
         if ($LASTEXITCODE -eq 0) { throw 'validator accepted a read-only Raw mount' }
         [IO.File]::WriteAllText($testCompose, $baselineCompose)
 
+        $testSchemaSql = Join-Path $testRoot 'deploy/compose/research-schema-check.sql'
+        $baselineSchemaSql = Get-Content -Raw -LiteralPath $testSchemaSql
+        [IO.File]::WriteAllText($testSchemaSql, $baselineSchemaSql.Replace('has_sequence_privilege', 'has_sequence_permission'))
+        & pwsh -NoProfile -File $testScript -StaticOnly *> $null
+        if ($LASTEXITCODE -eq 0) { throw 'validator accepted a weakened schema gate' }
+        [IO.File]::WriteAllText($testSchemaSql, $baselineSchemaSql)
+
+        $testAttributes = Join-Path $testRoot '.gitattributes'
+        [IO.File]::WriteAllText($testAttributes, 'scripts/qa/*.sh text eol=crlf')
+        & pwsh -NoProfile -File $testScript -StaticOnly *> $null
+        if ($LASTEXITCODE -eq 0) { throw 'validator accepted CRLF shell checkout semantics' }
+        Copy-Item -LiteralPath $gitattributes -Destination $testAttributes -Force
+
         foreach ($mutation in @(
             @('DB_USER', '      DB_USER: research_writer', '      # DB_USER: research_writer'),
             @('entrypoint', '    entrypoint: ["/usr/local/bin/research-worker"]', '    # entrypoint: ["/usr/local/bin/research-worker"]'),
-            @('healthcheck', '      test: ["CMD", "/usr/local/bin/research-worker", "healthcheck"]', '      # test: ["CMD", "/usr/local/bin/research-worker", "healthcheck"]')
+            @('healthcheck', '      test: ["CMD", "/usr/local/bin/research-worker", "healthcheck"]', '      # test: ["CMD", "/usr/local/bin/research-worker", "healthcheck"]'),
+            @('schema-user', '    user: "999:999"', '    user: "0:0"'),
+            @('schema-caps', "    cap_drop:`n      - ALL", "    cap_drop:`n      - CHOWN")
         )) {
             [IO.File]::WriteAllText($testCompose, $baselineCompose.Replace($mutation[1], $mutation[2]))
             & pwsh -NoProfile -File $testScript -StaticOnly *> $null
@@ -124,7 +159,7 @@ function Invoke-StaticChecks {
     }
     $requiredEnvironment = [ordered]@{
         APP_ENV = 'development'; RESEARCH_FETCH_MODE = 'synthetic'; RESEARCH_RUN_AT_KST = '16:30'
-        RESEARCH_MAX_PUBLICATION_AGE_SECS = '345600'; RESEARCH_RAW_ROOT = '/data/raw'
+        RESEARCH_MAX_PUBLICATION_AGE_SECS = '345600'; RESEARCH_RAW_ROOT = '/data'
         DB_HOST = 'postgres'; DB_PORT = '5432'; DB_NAME = 'lagrange'; DB_USER = 'research_writer'
         DB_PASSWORD_FILE = '/run/secrets/db_research_password'
     }
@@ -177,12 +212,29 @@ function Invoke-StaticChecks {
     $postgresImage = 'postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a'
     $schemaSecrets = @($schema.secrets | ForEach-Object source)
     $schemaCommand = @($schema.command) -join "`n"
+    $schemaVolumes = @($schema.volumes | Where-Object target -eq '/opt/lagrange/research-schema-check.sql')
     if ($schema.image -ne $postgresImage -or $schema.read_only -ne $true -or $schema.restart -ne 'no' -or
-        $schema.depends_on.postgres.condition -ne 'service_healthy' -or $schemaSecrets -notcontains 'postgres_password') {
+        $schema.user -ne '999:999' -or @($schema.cap_drop) -notcontains 'ALL' -or
+        @($schema.security_opt) -notcontains 'no-new-privileges:true' -or
+        $schema.depends_on.postgres.condition -ne 'service_healthy' -or
+        $schemaSecrets.Count -ne 1 -or $schemaSecrets -notcontains 'postgres_password' -or
+        $schemaVolumes.Count -ne 1 -or $schemaVolumes[0].read_only -ne $true) {
         throw 'research-schema-check runtime contract is incorrect'
     }
-    foreach ($required in @('data_batches', 'trading_calendar_versions', 'trading_calendars', 'data_batches_source_file_uq', 'trading_calendar_versions_source_lookup_idx', 'research_writer')) {
-        Assert-Contains $schemaCommand $required 'research-schema-check command'
+    Assert-Contains $schemaCommand '/opt/lagrange/research-schema-check.sql' 'research-schema-check command'
+    if (-not (Test-Path -LiteralPath $schemaSqlFile)) { throw "missing tracked schema gate: $schemaSqlFile" }
+    $schemaSql = Get-Content -Raw -LiteralPath $schemaSqlFile
+    foreach ($required in @(
+        '_sqlx_migrations', 'version BETWEEN 22 AND 25', 'max(version)', 'convalidated',
+        'data_batches_source_file_uq', 'trading_calendar_versions_source_lookup_idx',
+        'indisunique', 'indisvalid', 'indisready', 'indislive', 'relrowsecurity',
+        'research_writer', 'rolcanlogin', 'rolsuper', 'rolbypassrls', 'rolcreatedb',
+        'rolcreaterole', 'pg_auth_members', 'pg_policy', 'polcmd', 'polpermissive',
+        'trading_calendar_versions_append_only', 'tgenabled', 'tgtype', 'prosecdef',
+        'role_table_grants', 'has_schema_privilege', 'has_table_privilege',
+        'has_sequence_privilege', 'MAINTAIN'
+    )) {
+        Assert-Contains $schemaSql $required 'research-schema-check SQL'
     }
 
     foreach ($identity in @('db_app_password', 'db_worker_password', 'db_audit_password', 'db_research_password')) {
@@ -212,8 +264,12 @@ function Invoke-StaticChecks {
         }
     }
     $ignoreLines = @(Get-Content -LiteralPath $dockerignore | ForEach-Object Trim)
-    foreach ($pattern in @('**', '!Cargo.toml', '!Cargo.lock', '!rust-toolchain.toml', '!crates/**', '!data-pipelines/collectors/**', '!apps/api-server/auth/**', '!tests/integration/migration-contract/**', '!tests/fixtures/kr-etf/contract/**', '**/target/**', '**/.git/**', '**/.worktrees/**', '**/.env.*', '**/credentials/**', '**/secrets/**', '**/raw/**')) {
+    foreach ($pattern in @('**', '!Cargo.toml', '!Cargo.lock', '!rust-toolchain.toml', '!crates/**', '!data-pipelines/collectors/**', '!apps/api-server/auth/**', '!tests/integration/migration-contract/**', '!tests/fixtures/kr-etf/contract/**', '**/target/**', '**/.git/**', '**/.worktrees/**', '**/.env.*', '**/credentials/**', '**/secrets/**', '**/raw/**', '**/*.pem', '**/*.key', '**/*.p12', '**/*.pfx')) {
         if ($ignoreLines -notcontains $pattern) { throw "Docker build-context policy is missing: $pattern" }
+    }
+    if (-not (Test-Path -LiteralPath $gitattributes) -or
+        (Get-Content -Raw -LiteralPath $gitattributes) -notmatch '(?m)^scripts/qa/\*\.sh\s+text\s+eol=lf\s*$') {
+        throw 'scripts/qa shell scripts must be forced to LF by .gitattributes'
     }
 
     $trackedSecrets = @(& git -C $root ls-files -- deploy/secrets)
@@ -272,6 +328,38 @@ function Invoke-Psql([string]$Sql) {
     if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL command failed' }
 }
 
+function Assert-SchemaGateFails([string]$Mutation) {
+    Invoke-ResearchCompose run --rm --no-deps research-schema-check *> $null
+    if ($LASTEXITCODE -eq 0) { throw "research-schema-check accepted $Mutation" }
+}
+
+function Assert-SchemaGatePasses([string]$Context) {
+    Invoke-ResearchCompose run --rm --no-deps research-schema-check
+    if ($LASTEXITCODE -ne 0) { throw "research-schema-check rejected $Context" }
+}
+
+function Invoke-SchemaGateMutationTests {
+    Invoke-Psql 'DROP INDEX CONCURRENTLY data_batches_source_file_uq; CREATE INDEX data_batches_source_file_uq ON data_batches (provider);' | Out-Null
+    Assert-SchemaGateFails 'a drifted same-name index'
+    Invoke-Psql 'DROP INDEX CONCURRENTLY data_batches_source_file_uq; CREATE UNIQUE INDEX CONCURRENTLY data_batches_source_file_uq ON data_batches (provider, market, source_batch_id, source_file_name) WHERE source_batch_id IS NOT NULL;' | Out-Null
+    Assert-SchemaGatePasses 'the restored source index'
+
+    Invoke-Psql 'DROP POLICY data_batches_insert_research_writer ON data_batches;' | Out-Null
+    Assert-SchemaGateFails 'a missing research_writer policy'
+    Invoke-Psql 'CREATE POLICY data_batches_insert_research_writer ON data_batches FOR INSERT TO research_writer WITH CHECK (true);' | Out-Null
+    Assert-SchemaGatePasses 'the restored research_writer policy'
+
+    Invoke-Psql 'ALTER TABLE trading_calendar_versions DISABLE TRIGGER trading_calendar_versions_append_only;' | Out-Null
+    Assert-SchemaGateFails 'a disabled append-only trigger'
+    Invoke-Psql 'ALTER TABLE trading_calendar_versions ENABLE TRIGGER trading_calendar_versions_append_only;' | Out-Null
+    Assert-SchemaGatePasses 'the restored append-only trigger'
+
+    Invoke-Psql 'GRANT DELETE ON orders TO research_writer;' | Out-Null
+    Assert-SchemaGateFails 'a forbidden order-table grant'
+    Invoke-Psql 'REVOKE DELETE ON orders FROM research_writer;' | Out-Null
+    Assert-SchemaGatePasses 'the restored least-privilege role'
+}
+
 function Get-PublicationEvidence {
     $sql = @'
 WITH source AS (
@@ -283,6 +371,8 @@ WITH source AS (
 SELECT concat_ws('|',
   (SELECT count(DISTINCT source_batch_id) FROM data_batches WHERE provider = 'KRX' AND market = 'KR' AND batch_date = DATE '2020-01-31' AND source_batch_id IS NOT NULL),
   (SELECT count(*) FROM data_batches WHERE provider = 'KRX' AND market = 'KR' AND batch_date = DATE '2020-01-31'),
+  (SELECT count(source_batch_id) FROM data_batches WHERE provider = 'KRX' AND market = 'KR' AND batch_date = DATE '2020-01-31'),
+  (SELECT bool_and(b.source_batch_id = source.id) FROM data_batches b CROSS JOIN source WHERE b.provider = 'KRX' AND b.market = 'KR' AND b.batch_date = DATE '2020-01-31'),
   (SELECT count(*) FROM trading_calendar_versions WHERE exchange = 'KRX'),
   (SELECT count(*) FROM trading_calendars WHERE exchange = 'KRX'),
   (SELECT string_agg(DISTINCT kind, ',' ORDER BY kind) FROM data_batches WHERE provider = 'KRX' AND market = 'KR' AND batch_date = DATE '2020-01-31'),
@@ -295,7 +385,7 @@ SELECT concat_ws('|',
     $value = $sql | & docker compose -p $project -f $composeFile exec -T postgres psql -X -qAt -v ON_ERROR_STOP=1 -U lagrange -d lagrange
     if ($LASTEXITCODE -ne 0) { throw 'publication evidence query failed' }
     $result = "$value".Trim()
-    $expected = '1|4|2|2|CALENDAR,CORPORATE_ACTIONS,EOD,REFERENCE|2020-01-30:TRADING,2020-01-31:TRADING|2020-01-30:TRADING,2020-01-31:TRADING|t|t'
+    $expected = '1|4|4|t|2|2|CALENDAR,CORPORATE_ACTIONS,EOD,REFERENCE|2020-01-30:TRADING,2020-01-31:TRADING|2020-01-30:TRADING,2020-01-31:TRADING|t|t'
     if ($result -ne $expected) { throw "publication evidence mismatch: $result" }
     $result
 }
@@ -303,7 +393,11 @@ SELECT concat_ws('|',
 function Invoke-BuildContextAudit {
     $auditRoot = Join-Path $tempRoot 'context-audit'
     $auditDockerfile = Join-Path $tempRoot 'context-audit.Dockerfile'
-    foreach ($directory in @('target', 'credentials', 'secrets', 'data/raw')) {
+    foreach ($directory in @(
+        'target', 'credentials', 'secrets', 'data/raw', 'crates/sentinel',
+        'data-pipelines/collectors/sentinel', 'apps/api-server/auth/sentinel',
+        'tests/fixtures/kr-etf/contract/sentinel'
+    )) {
         New-Item -ItemType Directory -Path (Join-Path $auditRoot $directory) -Force | Out-Null
     }
     Copy-Item -LiteralPath $dockerignore -Destination (Join-Path $auditRoot '.dockerignore')
@@ -313,6 +407,10 @@ function Invoke-BuildContextAudit {
     [IO.File]::WriteAllText((Join-Path $auditRoot 'credentials/sentinel'), 'must-not-enter-context')
     [IO.File]::WriteAllText((Join-Path $auditRoot 'secrets/sentinel'), 'must-not-enter-context')
     [IO.File]::WriteAllText((Join-Path $auditRoot 'data/raw/sentinel'), 'must-not-enter-context')
+    [IO.File]::WriteAllText((Join-Path $auditRoot 'crates/sentinel/context.pem'), 'must-not-enter-context')
+    [IO.File]::WriteAllText((Join-Path $auditRoot 'data-pipelines/collectors/sentinel/context.key'), 'must-not-enter-context')
+    [IO.File]::WriteAllText((Join-Path $auditRoot 'apps/api-server/auth/sentinel/context.p12'), 'must-not-enter-context')
+    [IO.File]::WriteAllText((Join-Path $auditRoot 'tests/fixtures/kr-etf/contract/sentinel/context.pfx'), 'must-not-enter-context')
     [IO.File]::WriteAllText($auditDockerfile, @'
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 COPY . /context
@@ -321,7 +419,11 @@ RUN test -f /context/Cargo.toml \
  && test ! -e /context/target/sentinel \
  && test ! -e /context/credentials/sentinel \
  && test ! -e /context/secrets/sentinel \
- && test ! -e /context/data/raw/sentinel
+ && test ! -e /context/data/raw/sentinel \
+ && test ! -e /context/crates/sentinel/context.pem \
+ && test ! -e /context/data-pipelines/collectors/sentinel/context.key \
+ && test ! -e /context/apps/api-server/auth/sentinel/context.p12 \
+ && test ! -e /context/tests/fixtures/kr-etf/contract/sentinel/context.pfx
 '@)
     & docker build --no-cache -q -t $contextAuditTag -f $auditDockerfile $auditRoot | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Docker build-context sentinel audit failed' }
@@ -365,24 +467,55 @@ END
     Invoke-Psql $roleSql | Out-Null
     $researchPassword = $null
 
+    Assert-SchemaGateFails 'an unmigrated database'
+    Invoke-Psql @'
+CREATE TABLE _sqlx_migrations (
+  version bigint PRIMARY KEY,
+  description text NOT NULL,
+  installed_on timestamptz NOT NULL DEFAULT now(),
+  success boolean NOT NULL,
+  checksum bytea NOT NULL,
+  execution_time bigint NOT NULL
+);
+'@ | Out-Null
+
     foreach ($migration in (Get-ChildItem -LiteralPath (Join-Path $root 'migrations') -Filter '*.up.sql' | Sort-Object Name)) {
-        Get-Content -Raw -LiteralPath $migration.FullName | & docker compose -p $project -f $composeFile exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U lagrange -d lagrange
+        $migrationSql = Get-Content -Raw -LiteralPath $migration.FullName
+        if ($migrationSql -match '(?m)^-- no-transaction\s*$') {
+            $migrationSql | & docker compose -p $project -f $composeFile exec -T -e 'PGOPTIONS=-c lock_timeout=5s' postgres psql -X -q -v ON_ERROR_STOP=1 -U lagrange -d lagrange
+        }
+        else {
+            $migrationSql | & docker compose -p $project -f $composeFile exec -T -e 'PGOPTIONS=-c lock_timeout=5s' postgres psql -X -q -1 -v ON_ERROR_STOP=1 -U lagrange -d lagrange
+        }
         if ($LASTEXITCODE -ne 0) { throw "migration failed: $($migration.Name)" }
+        $version = [int64]$migration.BaseName.Substring(0, 4)
+        $description = $migration.BaseName.Substring(5).Replace("'", "''")
+        Invoke-Psql "INSERT INTO _sqlx_migrations(version, description, success, checksum, execution_time) VALUES ($version, '$description', true, decode(repeat('00', 32), 'hex'), 0);" | Out-Null
     }
+
+    Assert-SchemaGatePasses 'the migrated database'
+    Invoke-SchemaGateMutationTests
 
     Invoke-ResearchCompose build research-worker
     if ($LASTEXITCODE -ne 0) { throw 'research-worker image build failed' }
+
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'cargo is required to prove the manual --root Raw contract' }
+    $manualOutput = @(& cargo run --quiet --locked -p collectors --bin collectors -- ingest-krx --root $rawRoot --date 2020-01-31 --mode synthetic --bundle (Join-Path $root 'tests/fixtures/kr-etf/contract') --now '2020-01-31T08:00:00Z')
+    if ($LASTEXITCODE -ne 0) { throw 'manual collectors --root ingest failed' }
+    $manual = ($manualOutput -join "`n") | ConvertFrom-Json
+    $directManifest = Join-Path $rawRoot 'raw/manifests/provider=KRX/market=KR/manifest.jsonl'
+    if (-not (Test-Path -LiteralPath $directManifest)) { throw "direct host Raw manifest is missing: $directManifest" }
+    if (Test-Path -LiteralPath (Join-Path $rawRoot 'raw/raw')) { throw 'Raw evidence was nested under <data>/raw/raw' }
+    if ([IO.Path]::GetFullPath($manual.manifest) -ne [IO.Path]::GetFullPath($directManifest)) {
+        throw "manual --root manifest mismatch: $($manual.manifest)"
+    }
+
     Invoke-ResearchCompose run --rm --no-deps research-raw-init
     if ($LASTEXITCODE -ne 0) { throw 'research-raw-init failed' }
-    Invoke-ResearchCompose run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -c 'probe="$RESEARCH_RAW_ROOT/.qa-write-probe"; : > "$probe"; rm -f "$probe"'
+    Invoke-ResearchCompose run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -c 'probe="$RESEARCH_RAW_ROOT/raw/.qa-write-probe"; : > "$probe"; rm -f "$probe"'
     if ($LASTEXITCODE -ne 0) { throw 'research-worker UID 10001 cannot write the Raw bind mount' }
-    Invoke-ResearchCompose run --rm --no-deps research-schema-check
-    if ($LASTEXITCODE -ne 0) { throw 'research-schema-check rejected the migrated database' }
     Invoke-ResearchCompose up -d research-worker | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'research-worker service failed to start' }
-
-    Invoke-ResearchCompose run --rm --no-deps research-worker --once --date 2020-01-31
-    if ($LASTEXITCODE -ne 0) { throw 'first research-worker one-shot failed' }
 
     $healthy = $false
     for ($attempt = 0; $attempt -lt 30; $attempt++) {

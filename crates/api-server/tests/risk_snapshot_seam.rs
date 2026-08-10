@@ -376,6 +376,82 @@ async fn risk_snapshot_consumes_metadata_published_from_canonical_raw() {
     h.teardown().await;
 }
 
+/// Publishing an old Raw batch today is a backfill, not current market data.
+/// Freshness is bounded by the end of the batch's Korean civil date even when
+/// the immutable evidence was retrieved years later.
+#[tokio::test]
+async fn historical_backfill_published_now_remains_stale() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    let now = "2026-08-10T00:00:00Z";
+    let fixture = raw_publication("2020-01-31", now);
+    let writer = research_writer_pool(&h).await;
+    PostgresPublicationSink::new(writer.clone())
+        .publish(&fixture.bundle)
+        .await
+        .expect("publish historical backfill");
+
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
+    let snap = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &order(account, Side::Buy, "10", "7250"),
+        utc_epoch(now),
+    )
+    .await
+    .expect("snapshot builds from historical backfill");
+
+    assert!(
+        matches!(snap.data_freshness, DataFreshness::Age(age) if age > 365 * 24 * 60 * 60),
+        "historical backfill must stay stale, got {:?}",
+        snap.data_freshness
+    );
+    writer.close().await;
+    h.teardown().await;
+}
+
+/// A publication claiming a future Korean batch date is inapplicable at the
+/// decision instant. It cannot supersede the latest true EOD on or before the
+/// current Korean civil date.
+#[tokio::test]
+async fn future_batch_date_never_supersedes_latest_applicable_eod() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    h.seed_shared(
+        "INSERT INTO data_batches \
+         (provider, market, batch_date, kind, storage_path, content_sha256, bytes_size, retrieved_at) \
+         VALUES \
+         ('KRX','KR','2026-08-09','EOD','qa/applicable',repeat('a',64),1,'2026-08-09 00:00:00+00'), \
+         ('KRX','KR','2026-08-11','EOD','qa/future-date',repeat('b',64),1,'2026-08-10 00:00:00+00')",
+    )
+    .await;
+
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
+    let snap = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &order(account, Side::Buy, "10", "7250"),
+        utc_epoch("2026-08-10T00:00:00Z"),
+    )
+    .await
+    .expect("snapshot builds using applicable EOD");
+
+    assert_eq!(snap.data_freshness, DataFreshness::Age(86_400));
+    h.teardown().await;
+}
+
 /// A successful collection without a target-date bar is publication evidence,
 /// but it is not EOD market data. Even when it is newer, `EOD_UNAVAILABLE`
 /// must neither invent freshness nor supersede the latest real EOD batch.
