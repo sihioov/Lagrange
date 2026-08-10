@@ -84,11 +84,15 @@ After applying or repairing migrations, restart with:
 docker compose -f deploy/compose/compose.yml up -d research-worker
 ```
 
-The Raw bind tree must be readable by UID/GID `10001:10001`, while its
-directories plus `manifest.jsonl` and `commit.lock` must remain writable.
-Compose enforces this recursively through the isolated `research-raw-init`
-one-shot without following symlinks or crossing filesystems. For manual
-pre-provisioning on Linux, create the deployment data path before Compose:
+The Raw bind tree must be readable by UID/GID `10001:10001`. Immutable evidence
+and `batch.json` are owner-read-only (`0440`), while directories (`0750`) plus
+`manifest.jsonl` and `commit.lock` (`0640`) remain writable. Unix recovery opens
+immutable files read-only when it re-establishes their durability. Compose
+enforces these modes recursively through the isolated `research-raw-init`
+one-shot. The initializer drops all Linux capabilities and adds back only
+`CHOWN`, `FOWNER`, and `DAC_OVERRIDE`; it has no network or secrets and does not
+follow symlinks or cross filesystems. For manual pre-provisioning on Linux,
+create the deployment data path before Compose:
 
 ```sh
 install -d -m 0750 /srv/lagrange/data/raw

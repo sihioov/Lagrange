@@ -251,10 +251,14 @@ exact normalized PK/unique/CHECK definition, required column type/nullability/
 identity/default, exact valid/ready index, RLS/policy, append-only trigger and
 normalized `pg_get_functiondef` body,
 role-attribute/membership, or exact grant drift. `research-raw-init` separately
-runs without network or secrets and recursively prepares existing directories
-and regular files on the Raw filesystem for UID/GID `10001:10001`. It does not
-follow symlinks or cross filesystems; directories are `0750`, immutable evidence
-is read-only to the worker, and `manifest.jsonl`/`commit.lock` remain writable.
+runs without network or secrets, drops all capabilities, adds back only
+`CHOWN`, `FOWNER`, and `DAC_OVERRIDE`, and recursively prepares existing
+directories and regular files on the Raw filesystem for UID/GID `10001:10001`.
+It does not follow symlinks or cross filesystems; directories are `0750`,
+immutable evidence and `batch.json` are `0440`, and only
+`manifest.jsonl`/`commit.lock` are `0640`. Unix orphan recovery opens immutable
+files read-only for `fsync`; Windows retains its required write-capable flush
+handle path.
 Only after PostgreSQL is healthy and both one-shots succeed may Compose start
 the unprivileged worker. If a host CLI writes new Raw content after this
 ownership transfer, rerun the init one-shot or use an operator-approved shared
@@ -286,11 +290,14 @@ The smoke creates an isolated Compose project, proves the gate fails before
 migrations and under same-name CHECK, dropped-column, index, policy, trigger,
 and overprivilege mutations, applies migrations with the finite external lock
 timeout, and restores a passing gate. A named-volume Linux probe also starts
-with nested host-owned Raw, proves UID 10001 can read evidence and append/lock
-the manifest after init, and proves an outside symlink target was untouched.
+with restrictive nested host-owned Raw, proves the minimal capability set can
+prepare it, then executes read-only `fsync` on `0440` evidence as UID 10001 and
+append/lock operations on the `0640` manifest files. It also proves an outside
+symlink target was untouched.
 It then creates Raw with manual `collectors ingest-krx --root <data>`, proves the
-direct host path (never `raw/raw`), and proves worker startup recovery publishes
-that same manifest before any fetch. It verifies health, all four equal non-null
+direct host path (never `raw/raw`), removes its manifest row to form a real
+orphan, and proves worker startup recovery re-syncs and restores that exact row
+before any fetch. It verifies health, all four equal non-null
 source batch IDs, and idempotent replay, then removes containers, volumes, local
 images, and temporary secret files in a `finally` block. Recovery itself is a
 worker startup/one-shot/daemon responsibility; there is no separate public

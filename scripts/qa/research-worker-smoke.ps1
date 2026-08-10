@@ -16,6 +16,7 @@ $dockerignore = Join-Path $root '.dockerignore'
 $gitattributes = Join-Path $root '.gitattributes'
 $schemaSqlFile = Join-Path $root 'deploy/compose/research-schema-check.sql'
 $secretExample = Join-Path $root 'deploy/secrets/db_research_password.example'
+$readOnlyFsyncProbe = Join-Path $root 'scripts/qa/read-only-fsync.rs'
 
 function Assert-Contains([string]$Text, [string]$Value, [string]$Context) {
     if ($Text.IndexOf($Value, [StringComparison]::Ordinal) -lt 0) {
@@ -31,6 +32,7 @@ function Invoke-ValidatorSelfTests {
         )) { New-Item -ItemType Directory -Path (Join-Path $testRoot $directory) -Force | Out-Null }
         Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $testRoot 'scripts/qa/research-worker-smoke.ps1')
         Copy-Item -LiteralPath (Join-Path $root 'scripts/qa/research-worker-smoke.sh') -Destination (Join-Path $testRoot 'scripts/qa/research-worker-smoke.sh')
+        Copy-Item -LiteralPath $readOnlyFsyncProbe -Destination (Join-Path $testRoot 'scripts/qa/read-only-fsync.rs')
         Copy-Item -LiteralPath $composeFile -Destination (Join-Path $testRoot 'deploy/compose/compose.yml')
         Copy-Item -LiteralPath $dockerfile -Destination (Join-Path $testRoot 'data-pipelines/collectors/Dockerfile')
         Copy-Item -LiteralPath $schemaSqlFile -Destination (Join-Path $testRoot 'deploy/compose/research-schema-check.sql')
@@ -80,6 +82,19 @@ function Invoke-ValidatorSelfTests {
         [IO.File]::WriteAllText($testCompose, $baselineCompose)
 
         [IO.File]::WriteAllText(
+            (Join-Path $testRoot 'scripts/qa/read-only-fsync.rs'),
+            (Get-Content -Raw -LiteralPath $readOnlyFsyncProbe).Replace('File::open(&path)', 'OpenOptions::new().write(true).open(&path)')
+        )
+        & pwsh -NoProfile -File $testScript -StaticOnly *> $null
+        if ($LASTEXITCODE -eq 0) { throw 'validator accepted a write-opening Raw fsync probe' }
+        Copy-Item -LiteralPath $readOnlyFsyncProbe -Destination (Join-Path $testRoot 'scripts/qa/read-only-fsync.rs') -Force
+
+        Add-Content -LiteralPath (Join-Path $testRoot '.dockerignore') -Value '!scripts/**'
+        & pwsh -NoProfile -File $testScript -StaticOnly *> $null
+        if ($LASTEXITCODE -eq 0) { throw 'validator accepted the QA fsync probe in the worker build context' }
+        Copy-Item -LiteralPath $dockerignore -Destination (Join-Path $testRoot '.dockerignore') -Force
+
+        [IO.File]::WriteAllText(
             $testCompose,
             $baselineCompose.Replace('find /data/raw -xdev -type d', 'find -L /data/raw -type l')
         )
@@ -104,8 +119,9 @@ function Invoke-ValidatorSelfTests {
             @('DB_USER', '      DB_USER: research_writer', '      # DB_USER: research_writer'),
             @('entrypoint', '    entrypoint: ["/usr/local/bin/research-worker"]', '    # entrypoint: ["/usr/local/bin/research-worker"]'),
             @('healthcheck', '      test: ["CMD", "/usr/local/bin/research-worker", "healthcheck"]', '      # test: ["CMD", "/usr/local/bin/research-worker", "healthcheck"]'),
+            @('raw-init-caps', '      - DAC_OVERRIDE', '      - SETUID'),
             @('schema-user', '    user: "999:999"', '    user: "0:0"'),
-            @('schema-caps', "    cap_drop:`n      - ALL", "    cap_drop:`n      - CHOWN")
+            @('schema-caps', "    user: `"999:999`"`n    cap_drop:`n      - ALL", "    user: `"999:999`"`n    cap_drop:`n      - CHOWN")
         )) {
             [IO.File]::WriteAllText($testCompose, $baselineCompose.Replace($mutation[1], $mutation[2]))
             & pwsh -NoProfile -File $testScript -StaticOnly *> $null
@@ -205,9 +221,13 @@ function Invoke-StaticChecks {
     $rawInit = $model.services.'research-raw-init'
     $alpineImage = 'alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d'
     $initRaw = @($rawInit.volumes | Where-Object target -eq '/data/raw')
+    $rawInitCapabilities = @($rawInit.cap_add | Sort-Object)
     if ($rawInit.image -ne $alpineImage -or $rawInit.user -ne '0:0' -or $rawInit.read_only -ne $true -or
         $rawInit.network_mode -ne 'none' -or $rawInit.restart -ne 'no' -or $initRaw.Count -ne 1 -or
         $initRaw[0].read_only -eq $true -or $initRaw[0].source -ne $rawVolumes[0].source -or
+        @($rawInit.cap_drop).Count -ne 1 -or @($rawInit.cap_drop)[0] -ne 'ALL' -or
+        ($rawInitCapabilities -join ',') -ne 'CHOWN,DAC_OVERRIDE,FOWNER' -or
+        @($rawInit.security_opt) -notcontains 'no-new-privileges:true' -or
         ($rawInit.PSObject.Properties.Name -contains 'secrets') -or ($rawInit.PSObject.Properties.Name -contains 'networks')) {
         throw 'research-raw-init isolation or Raw ownership contract is incorrect'
     }
@@ -263,7 +283,15 @@ function Invoke-StaticChecks {
 
     if (-not (Test-Path -LiteralPath $dockerfile)) { throw "missing worker Dockerfile: $dockerfile" }
     if (-not (Test-Path -LiteralPath $dockerignore)) { throw "missing Docker build-context policy: $dockerignore" }
+    if (-not (Test-Path -LiteralPath $readOnlyFsyncProbe)) { throw "missing read-only fsync probe: $readOnlyFsyncProbe" }
     if (-not (Test-Path -LiteralPath $secretExample)) { throw "missing research DB secret example: $secretExample" }
+    $probeText = Get-Content -Raw -LiteralPath $readOnlyFsyncProbe
+    foreach ($required in @('File::open(&path)', 'file.sync_all()')) {
+        Assert-Contains $probeText $required 'read-only fsync probe'
+    }
+    if ($probeText -match 'OpenOptions' -or $probeText -match '\.write\s*\(') {
+        throw 'read-only fsync probe must not request write access'
+    }
     $dockerText = Get-Content -Raw -LiteralPath $dockerfile
     if ($dockerText -notmatch '(?im)^FROM\s+rust:1\.97\.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900\s+AS\s+builder\s*$') {
         throw 'Dockerfile missing the approved digest-pinned Rust builder'
@@ -283,6 +311,9 @@ function Invoke-StaticChecks {
     $ignoreLines = @(Get-Content -LiteralPath $dockerignore | ForEach-Object Trim)
     foreach ($pattern in @('**', '!Cargo.toml', '!Cargo.lock', '!rust-toolchain.toml', '!crates/**', '!data-pipelines/collectors/**', '!apps/api-server/auth/**', '!tests/integration/migration-contract/**', '!tests/fixtures/kr-etf/contract/**', '**/target/**', '**/.git/**', '**/.worktrees/**', '**/.env.*', '**/credentials/**', '**/secrets/**', '**/raw/**', '**/*.pem', '**/*.key', '**/*.p12', '**/*.pfx')) {
         if ($ignoreLines -notcontains $pattern) { throw "Docker build-context policy is missing: $pattern" }
+    }
+    if (@($ignoreLines | Where-Object { $_ -match '^!scripts(?:/|$)' }).Count -ne 0) {
+        throw 'QA fsync probe must remain outside the worker build context'
     }
     if (-not (Test-Path -LiteralPath $gitattributes) -or
         (Get-Content -Raw -LiteralPath $gitattributes) -notmatch '(?m)^scripts/qa/\*\.sh\s+text\s+eol=lf\s*$') {
@@ -415,21 +446,26 @@ $fn$;
 
 function Invoke-RawInitOwnershipTest {
     $alpineImage = 'alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d'
+    $rustImage = 'rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900'
     $probeId = "lagrange-raw-init-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
     $rawVolume = "$probeId-raw"
     $outsideVolume = "$probeId-outside"
+    $binaryVolume = "$probeId-binary"
     try {
         & docker volume create $rawVolume *> $null
         if ($LASTEXITCODE -ne 0) { throw 'Raw init probe volume creation failed' }
         & docker volume create $outsideVolume *> $null
         if ($LASTEXITCODE -ne 0) { throw 'Raw init outside volume creation failed' }
+        & docker volume create $binaryVolume *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'Raw init fsync-probe volume creation failed' }
         & docker run --rm --network none --user 0:0 -v "${rawVolume}:/data/raw" -v "${outsideVolume}:/outside" $alpineImage /bin/sh -ec @'
 mkdir -p /data/raw/manifests/provider=KRX/market=KR /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture
 printf '{}\n' > /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
 : > /data/raw/manifests/provider=KRX/market=KR/commit.lock
 printf evidence > /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
-chmod 0644 /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl /data/raw/manifests/provider=KRX/market=KR/commit.lock /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
 chown -R 12345:12345 /data/raw
+find /data/raw -type d -exec chmod 0700 {} +
+chmod 0600 /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl /data/raw/manifests/provider=KRX/market=KR/commit.lock /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
 printf outside > /outside/sentinel
 chown 12345:12345 /outside/sentinel
 chmod 0600 /outside/sentinel
@@ -439,11 +475,20 @@ ln -s /outside /data/raw/outside-link
 
         $resolved = Invoke-ResearchCompose config --format json | ConvertFrom-Json
         $initCommand = @($resolved.services.'research-raw-init'.command) -join "`n"
-        & docker run --rm --network none --user 0:0 -v "${rawVolume}:/data/raw" -v "${outsideVolume}:/outside" $alpineImage /bin/sh -ec $initCommand
+        & docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true -v "${rawVolume}:/data/raw" -v "${outsideVolume}:/outside" $alpineImage /bin/sh -ec $initCommand
         if ($LASTEXITCODE -ne 0) { throw 'recursive Raw init probe failed' }
 
-        & docker run --rm --network none --user 10001:10001 -v "${rawVolume}:/data/raw" -v "${outsideVolume}:/outside" $alpineImage /bin/sh -ec @'
-test -r /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+        & docker run --rm --network none --user 0:0 --cap-drop ALL --security-opt no-new-privileges:true -v "${root}:/source:ro" -v "${binaryVolume}:/probe" $rustImage rustc -O -o /probe/read-only-fsync /source/scripts/qa/read-only-fsync.rs
+        if ($LASTEXITCODE -ne 0) { throw 'read-only fsync probe compilation failed' }
+
+        & docker run --rm --network none --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true -v "${rawVolume}:/data/raw" -v "${outsideVolume}:/outside" -v "${binaryVolume}:/probe:ro" $alpineImage /bin/sh -ec @'
+evidence=/data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+manifest=/data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
+lock=/data/raw/manifests/provider=KRX/market=KR/commit.lock
+test "$(stat -c '%u:%g:%a' "$evidence")" = 10001:10001:440
+test "$(stat -c '%u:%g:%a' "$manifest")" = 10001:10001:640
+test "$(stat -c '%u:%g:%a' "$lock")" = 10001:10001:640
+/probe/read-only-fsync "$evidence"
 printf recovered >> /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
 printf lock >> /data/raw/manifests/provider=KRX/market=KR/commit.lock
 '@
@@ -455,7 +500,7 @@ test "$(stat -c '%u:%g:%a' /outside/sentinel)" = 12345:12345:600
         if ($LASTEXITCODE -ne 0) { throw 'Raw init changed the outside symlink target' }
     }
     finally {
-        & docker volume rm -f $rawVolume $outsideVolume *> $null
+        & docker volume rm -f $rawVolume $outsideVolume $binaryVolume *> $null
     }
 }
 
@@ -495,7 +540,7 @@ function Invoke-BuildContextAudit {
     foreach ($directory in @(
         'target', 'credentials', 'secrets', 'data/raw', 'crates/sentinel',
         'data-pipelines/collectors/sentinel', 'apps/api-server/auth/sentinel',
-        'tests/fixtures/kr-etf/contract/sentinel'
+        'tests/fixtures/kr-etf/contract/sentinel', 'scripts/qa'
     )) {
         New-Item -ItemType Directory -Path (Join-Path $auditRoot $directory) -Force | Out-Null
     }
@@ -510,6 +555,7 @@ function Invoke-BuildContextAudit {
     [IO.File]::WriteAllText((Join-Path $auditRoot 'data-pipelines/collectors/sentinel/context.key'), 'must-not-enter-context')
     [IO.File]::WriteAllText((Join-Path $auditRoot 'apps/api-server/auth/sentinel/context.p12'), 'must-not-enter-context')
     [IO.File]::WriteAllText((Join-Path $auditRoot 'tests/fixtures/kr-etf/contract/sentinel/context.pfx'), 'must-not-enter-context')
+    Copy-Item -LiteralPath $readOnlyFsyncProbe -Destination (Join-Path $auditRoot 'scripts/qa/read-only-fsync.rs')
     [IO.File]::WriteAllText($auditDockerfile, @'
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 COPY . /context
@@ -522,7 +568,8 @@ RUN test -f /context/Cargo.toml \
  && test ! -e /context/crates/sentinel/context.pem \
  && test ! -e /context/data-pipelines/collectors/sentinel/context.key \
  && test ! -e /context/apps/api-server/auth/sentinel/context.p12 \
- && test ! -e /context/tests/fixtures/kr-etf/contract/sentinel/context.pfx
+ && test ! -e /context/tests/fixtures/kr-etf/contract/sentinel/context.pfx \
+ && test ! -e /context/scripts/qa/read-only-fsync.rs
 '@)
     & docker build --no-cache -q -t $contextAuditTag -f $auditDockerfile $auditRoot | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Docker build-context sentinel audit failed' }
@@ -612,8 +659,16 @@ CREATE TABLE _sqlx_migrations (
 
     Invoke-ResearchCompose run --rm --no-deps research-raw-init
     if ($LASTEXITCODE -ne 0) { throw 'research-raw-init failed' }
-    Invoke-ResearchCompose run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -c 'probe="$RESEARCH_RAW_ROOT/raw/.qa-write-probe"; : > "$probe"; rm -f "$probe"'
-    if ($LASTEXITCODE -ne 0) { throw 'research-worker UID 10001 cannot write the Raw bind mount' }
+    Invoke-ResearchCompose run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -ec @'
+manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
+test -s "$manifest"
+: > "$manifest"
+test ! -s "$manifest"
+probe="$RESEARCH_RAW_ROOT/raw/.qa-write-probe"
+: > "$probe"
+rm -f "$probe"
+'@
+    if ($LASTEXITCODE -ne 0) { throw 'research-worker UID 10001 cannot prepare the startup orphan' }
     Invoke-ResearchCompose up -d research-worker | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'research-worker service failed to start' }
 
@@ -624,6 +679,11 @@ CREATE TABLE _sqlx_migrations (
         Start-Sleep -Seconds 1
     }
     if (-not $healthy) { throw 'research-worker did not become functionally healthy' }
+    Invoke-ResearchCompose exec -T -e "EXPECTED_BATCH_ID=$($manual.batch_id)" research-worker /bin/sh -ec @'
+manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
+test "$(grep -Fc "$EXPECTED_BATCH_ID" "$manifest")" -eq 1
+'@
+    if ($LASTEXITCODE -ne 0) { throw 'startup orphan recovery did not restore the exact manifest row' }
 
     $before = Get-PublicationEvidence
     Invoke-ResearchCompose run --rm --no-deps research-worker --once --date 2020-01-31

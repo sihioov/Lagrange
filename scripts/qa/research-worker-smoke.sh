@@ -9,6 +9,7 @@ dockerignore="$root/.dockerignore"
 gitattributes="$root/.gitattributes"
 schema_sql="$root/deploy/compose/research-schema-check.sql"
 secret_example="$root/deploy/secrets/db_research_password.example"
+read_only_fsync_probe="$root/scripts/qa/read-only-fsync.rs"
 static_only="${LAGRANGE_RESEARCH_SMOKE_STATIC_ONLY:-0}"
 self_test=0
 
@@ -28,6 +29,7 @@ validator_self_tests() (
   trap 'rm -rf -- "$test_root"' EXIT
   mkdir -p "$test_root/scripts/qa" "$test_root/deploy/compose" "$test_root/deploy/secrets" "$test_root/data-pipelines/collectors"
   cp "$BASH_SOURCE" "$test_root/scripts/qa/research-worker-smoke.sh"
+  cp "$read_only_fsync_probe" "$test_root/scripts/qa/read-only-fsync.rs"
   cp "$compose_file" "$test_root/deploy/compose/compose.yml"
   cp "$dockerfile" "$test_root/data-pipelines/collectors/Dockerfile"
   cp "$schema_sql" "$test_root/deploy/compose/research-schema-check.sql"
@@ -55,6 +57,14 @@ validator_self_tests() (
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a read-only Raw mount'; fi
   cp "$test_compose.baseline" "$test_compose"
 
+  sed 's/File::open(&path)/OpenOptions::new().write(true).open(&path)/' "$read_only_fsync_probe" >"$test_root/scripts/qa/read-only-fsync.rs"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a write-opening Raw fsync probe'; fi
+  cp "$read_only_fsync_probe" "$test_root/scripts/qa/read-only-fsync.rs"
+
+  printf '%s\n' '!scripts/**' >>"$test_root/.dockerignore"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted the QA fsync probe in the worker build context'; fi
+  cp "$dockerignore" "$test_root/.dockerignore"
+
   sed 's#find /data/raw -xdev -type d#find -L /data/raw -type l#g' "$test_compose.baseline" >"$test_compose"
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a symlink-following Raw init'; fi
   cp "$test_compose.baseline" "$test_compose"
@@ -68,13 +78,14 @@ validator_self_tests() (
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted CRLF shell checkout semantics'; fi
   cp "$gitattributes" "$test_root/.gitattributes"
 
-  for mutation in DB_USER entrypoint healthcheck schema-user schema-caps; do
+  for mutation in DB_USER entrypoint healthcheck raw-init-caps schema-user schema-caps; do
     case "$mutation" in
       DB_USER) sed 's/^      DB_USER: research_writer$/      # DB_USER: research_writer/' "$test_compose.baseline" >"$test_compose" ;;
       entrypoint) sed 's|^    entrypoint: \["/usr/local/bin/research-worker"\]$|    # entrypoint: ["/usr/local/bin/research-worker"]|' "$test_compose.baseline" >"$test_compose" ;;
       healthcheck) sed 's|^      test: \["CMD", "/usr/local/bin/research-worker", "healthcheck"\]$|      # test: ["CMD", "/usr/local/bin/research-worker", "healthcheck"]|' "$test_compose.baseline" >"$test_compose" ;;
+      raw-init-caps) sed '0,/^      - DAC_OVERRIDE$/s//      - SETUID/' "$test_compose.baseline" >"$test_compose" ;;
       schema-user) sed 's/^    user: "999:999"$/    user: "0:0"/' "$test_compose.baseline" >"$test_compose" ;;
-      schema-caps) sed '0,/^      - ALL$/s//      - CHOWN/' "$test_compose.baseline" >"$test_compose" ;;
+      schema-caps) awk '/^      - ALL$/ { count++; if (count == 2) sub(/ALL/, "CHOWN") } { print }' "$test_compose.baseline" >"$test_compose" ;;
     esac
     if bash "$test_script" --static-only >/dev/null 2>&1; then fail "validator accepted commented-out $mutation"; fi
   done
@@ -182,6 +193,8 @@ alpine = "alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d650
 init_raw = [volume for volume in raw_init.get("volumes", []) if volume.get("target") == "/data/raw"]
 require(raw_init.get("image") == alpine and raw_init.get("user") == "0:0" and raw_init.get("read_only") is True, "research-raw-init identity/root filesystem is incorrect")
 require(raw_init.get("network_mode") == "none" and raw_init.get("restart") == "no" and "secrets" not in raw_init and "networks" not in raw_init, "research-raw-init isolation is incorrect")
+require(raw_init.get("cap_drop") == ["ALL"] and sorted(raw_init.get("cap_add", [])) == ["CHOWN", "DAC_OVERRIDE", "FOWNER"], "research-raw-init capability contract is incorrect")
+require("no-new-privileges:true" in raw_init.get("security_opt", []), "research-raw-init no-new-privileges contract is missing")
 require(len(init_raw) == 1 and not init_raw[0].get("read_only", False) and init_raw[0].get("source") == raw[0].get("source"), "research-raw-init Raw mount is incorrect")
 init_command = " ".join(raw_init.get("command", []))
 require("find /data/raw -xdev -type d" in init_command and "find /data/raw -xdev -type f" in init_command, "research-raw-init must recurse without crossing filesystems")
@@ -212,7 +225,12 @@ validate_compose
 [ -f "$dockerignore" ] || fail "missing Docker build-context policy: $dockerignore"
 [ -f "$schema_sql" ] || fail "missing tracked schema gate: $schema_sql"
 [ -f "$gitattributes" ] || fail "missing .gitattributes"
+[ -f "$read_only_fsync_probe" ] || fail "missing read-only fsync probe: $read_only_fsync_probe"
 [ -f "$secret_example" ] || fail "missing research DB secret example: $secret_example"
+probe_text="$(<"$read_only_fsync_probe")"
+contains "$probe_text" 'File::open(&path)' 'read-only fsync probe'
+contains "$probe_text" 'file.sync_all()' 'read-only fsync probe'
+if printf '%s\n' "$probe_text" | grep -Eq 'OpenOptions|\.write[[:space:]]*\('; then fail 'read-only fsync probe must not request write access'; fi
 docker_text="$(<"$dockerfile")"
 printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+rust:1\.97\.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900[[:space:]]+AS[[:space:]]+builder[[:space:]]*$' || fail 'Dockerfile missing the approved digest-pinned Rust builder'
 printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+alpine:3\.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d[[:space:]]*$' || fail 'Dockerfile missing the approved digest-pinned Alpine runtime'
@@ -228,6 +246,7 @@ done < <(grep -i '^FROM[[:space:]]' "$dockerfile" || true)
 for pattern in '**' '!Cargo.toml' '!Cargo.lock' '!rust-toolchain.toml' '!crates/**' '!data-pipelines/collectors/**' '!apps/api-server/auth/**' '!tests/integration/migration-contract/**' '!tests/fixtures/kr-etf/contract/**' '**/target/**' '**/.git/**' '**/.worktrees/**' '**/.env.*' '**/credentials/**' '**/secrets/**' '**/raw/**' '**/*.pem' '**/*.key' '**/*.p12' '**/*.pfx'; do
   grep -Fxq -- "$pattern" "$dockerignore" || fail "Docker build-context policy is missing: $pattern"
 done
+if grep -Eq '^!scripts(/|$)' "$dockerignore"; then fail 'QA fsync probe must remain outside the worker build context'; fi
 grep -Eq '^scripts/qa/\*\.sh[[:space:]]+text[[:space:]]+eol=lf[[:space:]]*$' "$gitattributes" || fail 'scripts/qa shell scripts must be forced to LF by .gitattributes'
 schema_text="$(<"$schema_sql")"
 for token in _sqlx_migrations 'version BETWEEN 22 AND 25' 'max(version)' convalidated \
@@ -294,28 +313,39 @@ trap cleanup EXIT
 
 raw_init_ownership_probe() (
   alpine='alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d'
+  rust_image='rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900'
   probe_id="${project}-raw-init"
   raw_volume="${probe_id}-raw"
   outside_volume="${probe_id}-outside"
-  trap 'dkr volume rm -f "$raw_volume" "$outside_volume" >/dev/null 2>&1 || true' EXIT
+  binary_volume="${probe_id}-binary"
+  trap 'dkr volume rm -f "$raw_volume" "$outside_volume" "$binary_volume" >/dev/null 2>&1 || true' EXIT
   dkr volume create "$raw_volume" >/dev/null || fail 'Raw init probe volume creation failed'
   dkr volume create "$outside_volume" >/dev/null || fail 'Raw init outside volume creation failed'
+  dkr volume create "$binary_volume" >/dev/null || fail 'Raw init fsync-probe volume creation failed'
   dkr run --rm --network none --user 0:0 -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
     mkdir -p /data/raw/manifests/provider=KRX/market=KR /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture
     printf "{}\n" > /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
     : > /data/raw/manifests/provider=KRX/market=KR/commit.lock
     printf evidence > /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
-    chmod 0644 /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl /data/raw/manifests/provider=KRX/market=KR/commit.lock /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
     chown -R 12345:12345 /data/raw
+    find /data/raw -type d -exec chmod 0700 {} +
+    chmod 0600 /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl /data/raw/manifests/provider=KRX/market=KR/commit.lock /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
     printf outside > /outside/sentinel
     chown 12345:12345 /outside/sentinel
     chmod 0600 /outside/sentinel
     ln -s /outside /data/raw/outside-link
   ' >/dev/null || fail 'Raw init ownership fixture setup failed'
   init_command="$(rc config --format json | python3 -c 'import json,sys; value=json.load(sys.stdin)["services"]["research-raw-init"]["command"]; print("\n".join(value) if isinstance(value,list) else value)')" || fail 'Raw init command extraction failed'
-  dkr run --rm --network none --user 0:0 -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec "$init_command" || fail 'recursive Raw init probe failed'
-  dkr run --rm --network none --user 10001:10001 -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
-    test -r /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+  dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec "$init_command" || fail 'recursive Raw init probe failed'
+  dkr run --rm --network none --user 0:0 --cap-drop ALL --security-opt no-new-privileges:true -v "$(hostpath "$root"):/source:ro" -v "${binary_volume}:/probe" "$rust_image" rustc -O -o /probe/read-only-fsync /source/scripts/qa/read-only-fsync.rs || fail 'read-only fsync probe compilation failed'
+  dkr run --rm --network none --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" -v "${binary_volume}:/probe:ro" "$alpine" /bin/sh -ec '
+    evidence=/data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+    manifest=/data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
+    lock=/data/raw/manifests/provider=KRX/market=KR/commit.lock
+    test "$(stat -c "%u:%g:%a" "$evidence")" = 10001:10001:440
+    test "$(stat -c "%u:%g:%a" "$manifest")" = 10001:10001:640
+    test "$(stat -c "%u:%g:%a" "$lock")" = 10001:10001:640
+    /probe/read-only-fsync "$evidence"
     printf recovered >> /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
     printf lock >> /data/raw/manifests/provider=KRX/market=KR/commit.lock
   ' || fail 'UID 10001 cannot use existing Raw files'
@@ -353,6 +383,7 @@ audit_dockerfile="$temp_root/context-audit.Dockerfile"
 install -d "$audit_root/target" "$audit_root/credentials" "$audit_root/secrets" "$audit_root/data/raw" \
   "$audit_root/crates/sentinel" "$audit_root/data-pipelines/collectors/sentinel" \
   "$audit_root/apps/api-server/auth/sentinel" "$audit_root/tests/fixtures/kr-etf/contract/sentinel"
+install -d "$audit_root/scripts/qa"
 cp "$dockerignore" "$audit_root/.dockerignore"
 printf '%s\n' '[workspace]' >"$audit_root/Cargo.toml"
 printf '%s' 'sentinel-not-a-secret' >"$audit_root/.env"
@@ -364,6 +395,7 @@ printf '%s' 'must-not-enter-context' >"$audit_root/crates/sentinel/context.pem"
 printf '%s' 'must-not-enter-context' >"$audit_root/data-pipelines/collectors/sentinel/context.key"
 printf '%s' 'must-not-enter-context' >"$audit_root/apps/api-server/auth/sentinel/context.p12"
 printf '%s' 'must-not-enter-context' >"$audit_root/tests/fixtures/kr-etf/contract/sentinel/context.pfx"
+cp "$read_only_fsync_probe" "$audit_root/scripts/qa/read-only-fsync.rs"
 cat >"$audit_dockerfile" <<'DOCKERFILE'
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 COPY . /context
@@ -376,7 +408,8 @@ RUN test -f /context/Cargo.toml \
  && test ! -e /context/crates/sentinel/context.pem \
  && test ! -e /context/data-pipelines/collectors/sentinel/context.key \
  && test ! -e /context/apps/api-server/auth/sentinel/context.p12 \
- && test ! -e /context/tests/fixtures/kr-etf/contract/sentinel/context.pfx
+ && test ! -e /context/tests/fixtures/kr-etf/contract/sentinel/context.pfx \
+ && test ! -e /context/scripts/qa/read-only-fsync.rs
 DOCKERFILE
 dkr build --no-cache -q -t "$context_audit_tag" -f "$(hostpath "$audit_dockerfile")" "$(hostpath "$audit_root")" >/dev/null || fail 'Docker build-context sentinel audit failed'
 rc up -d --wait postgres >/dev/null || fail 'PostgreSQL did not become healthy'
@@ -477,7 +510,15 @@ direct_manifest="$raw_root/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
 manual_manifest="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"])')" || fail 'manual collectors output was not valid JSON'
 [ "$(cd "$(dirname "$manual_manifest")" && pwd)/$(basename "$manual_manifest")" = "$(cd "$(dirname "$direct_manifest")" && pwd)/$(basename "$direct_manifest")" ] || fail "manual --root manifest mismatch: $manual_manifest"
 rc run --rm --no-deps research-raw-init || fail 'research-raw-init failed'
-rc run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -c 'probe="$RESEARCH_RAW_ROOT/raw/.qa-write-probe"; : > "$probe"; rm -f "$probe"' || fail 'research-worker UID 10001 cannot write the Raw bind mount'
+rc run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -ec '
+  manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
+  test -s "$manifest"
+  : > "$manifest"
+  test ! -s "$manifest"
+  probe="$RESEARCH_RAW_ROOT/raw/.qa-write-probe"
+  : > "$probe"
+  rm -f "$probe"
+' || fail 'research-worker UID 10001 cannot prepare the startup orphan'
 rc up -d research-worker >/dev/null || fail 'research-worker service failed to start'
 
 healthy=0
@@ -486,6 +527,11 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 [ "$healthy" -eq 1 ] || fail 'research-worker did not become functionally healthy'
+manual_batch_id="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["batch_id"])')" || fail 'manual collectors output omitted batch_id'
+rc exec -T -e "EXPECTED_BATCH_ID=$manual_batch_id" research-worker /bin/sh -ec '
+  manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
+  test "$(grep -Fc "$EXPECTED_BATCH_ID" "$manifest")" -eq 1
+' || fail 'startup orphan recovery did not restore the exact manifest row'
 
 publication_evidence() {
   local value

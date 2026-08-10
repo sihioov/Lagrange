@@ -29,7 +29,7 @@ use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
-use crate::contract::{FetchMode, RawEnvelope, ResponseKind, StoredFile, date_partition};
+use crate::contract::{date_partition, FetchMode, RawEnvelope, ResponseKind, StoredFile};
 
 /// Per-file record inside a manifest row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1189,7 +1189,7 @@ fn publish_batch_metadata_platform(
     final_path: &Path,
 ) -> Result<File, StoreError> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
 
     let file = temporary
         .reopen()
@@ -1297,10 +1297,7 @@ fn sorted_directories(path: &Path) -> Result<Vec<fs::DirEntry>, StoreError> {
 }
 
 fn sync_file(path: &Path, context: &str) -> Result<(), StoreError> {
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
+    open_file_for_sync(path)
         .and_then(|file| file.sync_all())
         .map_err(|source| {
             if source.kind() == std::io::ErrorKind::NotFound {
@@ -1312,6 +1309,28 @@ fn sync_file(path: &Path, context: &str) -> Result<(), StoreError> {
                 io_err(context, source)
             }
         })
+}
+
+// Linux permits fsync(2) on an O_RDONLY regular-file descriptor. Raw evidence
+// and batch.json are immutable and deliberately owner-read-only after
+// deployment initialization, so recovery must not request write access merely
+// to re-establish their durability before manifest exposure.
+#[cfg(unix)]
+fn open_file_for_sync(path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
+// FlushFileBuffers requires a write-capable Windows handle. Preserve the
+// established access mode there; Raw ACLs on Windows must grant that platform-
+// specific durability access to the worker.
+#[cfg(windows)]
+fn open_file_for_sync(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().read(true).write(true).open(path)
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn open_file_for_sync(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().read(true).write(true).open(path)
 }
 
 #[cfg(unix)]
@@ -1463,7 +1482,7 @@ fn io_err(context: &str, e: std::io::Error) -> StoreError {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Barrier, Mutex, mpsc};
+    use std::sync::{mpsc, Arc, Barrier, Mutex};
     use std::time::Duration;
 
     use super::*;
@@ -1783,16 +1802,12 @@ mod tests {
         );
 
         let synced_files = operations.synced_files.lock().unwrap();
-        assert!(
-            synced_files
-                .iter()
-                .any(|path| path.ends_with(entry.batch_json_file_name()))
-        );
-        assert!(
-            synced_files
-                .iter()
-                .any(|path| path.ends_with("reference.json"))
-        );
+        assert!(synced_files
+            .iter()
+            .any(|path| path.ends_with(entry.batch_json_file_name())));
+        assert!(synced_files
+            .iter()
+            .any(|path| path.ends_with("reference.json")));
         assert!(!operations.synced_directories.lock().unwrap().is_empty());
     }
 
@@ -1838,12 +1853,10 @@ mod tests {
         );
         assert!(batch_dir.exists());
         assert!(!batch_dir.join("batch.json").exists());
-        assert!(
-            store
-                .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(store
+            .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

@@ -65,4 +65,3 @@ passes. Existing disabled-trigger and other drift mutations remain.
 - RED then GREEN full Compose mutation for the no-op append-only function.
 - Focused market-data, collectors, migration-contract, static validators,
   strict clippy, formatting, diff checks, and full PowerShell Compose smoke.
-
