@@ -115,7 +115,7 @@ async fn market_session_for(pool: &sqlx::PgPool, actor: &Actor, now_secs: i64) -
     }
     match session_type.as_str() {
         "TRADING" if (MARKET_OPEN..MARKET_CLOSE).contains(&seoul.time()) => MarketSession::Open,
-        "TRADING" | "SETTLEMENT" => MarketSession::Closed,
+        "TRADING" | "SETTLEMENT" | "CLOSED" => MarketSession::Closed,
         "HALTED" => MarketSession::Halted,
         _ => MarketSession::Unknown,
     }

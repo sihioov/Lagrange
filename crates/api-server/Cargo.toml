@@ -45,6 +45,7 @@ tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+collectors = { path = "../../data-pipelines/collectors" }
 http-body-util = "0.1"
 # The Paper execution seam test writes its own curated bars: the phase-0
 # zone's absolute prices are 10,000x too large (see paper_execution_seam.rs),

@@ -56,6 +56,7 @@ dependencies = [
  "axum",
  "base64",
  "chrono",
+ "collectors",
  "domain",
  "hex",
  "hmac 0.12.1",

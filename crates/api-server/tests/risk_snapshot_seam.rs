@@ -14,12 +14,79 @@ mod common;
 
 use api_server::repos::reconciliation::ReconciliationRepo;
 use api_server::risk_snapshot::{GateOrder, for_submission, limits_for, parse_side, side_str};
+use collectors::{PostgresPublicationSink, PublicationSink, PublishOutcome};
 use common::{Harness, actor_pool};
-use domain::{Price, Quantity};
+use domain::{Price, Quantity, TradingDate, UtcTimestamp};
+use market_data::contract::MARKET_KR;
+use market_data::ingest::{IngestRequest, ingest_bundle};
+use market_data::provider::{KrxProvider, RecordedBundle};
+use market_data::publication::{DataBatchKind, PublicationBundle};
+use market_data::storage::RawStore;
 use risk_gateway::snapshot::{
     Allowlisted, DataFreshness, IntentConflict, MarketSession, Side, StrategyPromotion,
 };
+use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
+
+const CONTRACT_BUNDLE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/kr-etf/contract"
+);
+
+struct RawPublicationFixture {
+    bundle: PublicationBundle,
+    _raw_root: tempfile::TempDir,
+}
+
+fn raw_publication(target_date: &str, retrieved_at: &str) -> RawPublicationFixture {
+    let raw_root = tempfile::tempdir().expect("raw fixture root");
+    let store = RawStore::new(raw_root.path());
+    let provider = KrxProvider::synthetic(
+        RecordedBundle::open(CONTRACT_BUNDLE).expect("canonical recorded bundle"),
+    );
+    let outcome = ingest_bundle(
+        &store,
+        &provider,
+        &IngestRequest::new(
+            MARKET_KR.to_owned(),
+            TradingDate::parse(target_date).expect("target date"),
+            UtcTimestamp::parse_rfc3339(retrieved_at).expect("retrieved_at"),
+        ),
+        None,
+    )
+    .expect("persist canonical Raw fixture");
+    let manifest = store
+        .read_manifest("krx", "kr")
+        .expect("read Raw manifest")
+        .into_iter()
+        .find(|entry| entry.batch_id == outcome.batch_id)
+        .expect("persisted Raw manifest");
+    let bundle = PublicationBundle::from_raw(&store, &manifest).expect("verified publication");
+    RawPublicationFixture {
+        bundle,
+        _raw_root: raw_root,
+    }
+}
+
+async fn research_writer_pool(h: &Harness) -> sqlx::PgPool {
+    let options = h
+        .app_url
+        .parse::<sqlx::postgres::PgConnectOptions>()
+        .expect("app URL parses")
+        .username("research_writer");
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .expect("research writer connects")
+}
+
+fn utc_epoch(timestamp: &str) -> i64 {
+    timestamp
+        .parse::<chrono::DateTime<chrono::Utc>>()
+        .expect("UTC timestamp")
+        .timestamp()
+}
 
 async fn seeded_account(h: &Harness) -> Uuid {
     let pool = actor_pool(&h.app_url, &h.owner.user_id.to_string(), 2).await;
@@ -267,6 +334,108 @@ async fn wired_inputs_read_calendar_batch_and_open_intents() {
     h.teardown().await;
 }
 
+/// Raw provider evidence becomes the exact shared metadata read by the Live
+/// risk snapshot. There are no test inserts into either metadata table here:
+/// the production research-writer sink owns the publication boundary.
+#[tokio::test]
+async fn risk_snapshot_consumes_metadata_published_from_canonical_raw() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    let fixture = raw_publication("2020-01-31", "2020-01-31T00:29:00Z");
+    assert_eq!(fixture.bundle.files[0].kind, DataBatchKind::Eod);
+
+    let writer = research_writer_pool(&h).await;
+    let sink = PostgresPublicationSink::new(writer.clone());
+    assert_eq!(
+        sink.publish(&fixture.bundle)
+            .await
+            .expect("publish metadata"),
+        PublishOutcome::Published
+    );
+
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
+    let snap = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &order(account, Side::Buy, "10", "7250"),
+        utc_epoch("2020-01-31T00:30:00Z"),
+    )
+    .await
+    .expect("snapshot builds from published metadata");
+
+    assert_eq!(snap.market_session, MarketSession::Open);
+    assert_eq!(snap.data_freshness, DataFreshness::Age(60));
+
+    writer.close().await;
+    h.teardown().await;
+}
+
+/// A successful collection without a target-date bar is publication evidence,
+/// but it is not EOD market data. Even when it is newer, `EOD_UNAVAILABLE`
+/// must neither invent freshness nor supersede the latest real EOD batch.
+#[tokio::test]
+async fn eod_unavailable_publication_never_counts_as_fresh_eod() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    let writer = research_writer_pool(&h).await;
+    let sink = PostgresPublicationSink::new(writer.clone());
+    let unavailable = raw_publication("2020-02-03", "2020-02-03T00:29:00Z");
+    assert_eq!(
+        unavailable.bundle.files[0].kind,
+        DataBatchKind::EodUnavailable
+    );
+    sink.publish(&unavailable.bundle)
+        .await
+        .expect("publish unavailable evidence");
+
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
+    let gate_order = order(account, Side::Buy, "10", "7250");
+    let now = utc_epoch("2020-02-03T00:30:00Z");
+    let without_eod = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &gate_order,
+        now,
+    )
+    .await
+    .expect("snapshot builds without EOD");
+    assert_eq!(without_eod.data_freshness, DataFreshness::Unknown);
+
+    let real_eod = raw_publication("2020-01-31", "2020-01-31T00:29:00Z");
+    assert_eq!(real_eod.bundle.files[0].kind, DataBatchKind::Eod);
+    sink.publish(&real_eod.bundle)
+        .await
+        .expect("publish prior real EOD");
+
+    let with_prior_eod = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &gate_order,
+        now,
+    )
+    .await
+    .expect("snapshot builds with prior EOD");
+    assert_eq!(with_prior_eod.data_freshness, DataFreshness::Age(259_260));
+
+    writer.close().await;
+    h.teardown().await;
+}
+
 /// A known closed session and an old batch are concrete answers, not missing
 /// inputs. The risk evaluator must therefore identify the data-age denial.
 #[tokio::test]
@@ -279,7 +448,7 @@ async fn closed_session_and_stale_batch_are_reported_by_name() {
     h.seed_shared(
         "INSERT INTO trading_calendars \
          (exchange, session_date, session_type, timezone, source, source_version) \
-         VALUES ('KRX', '2027-01-15', 'SETTLEMENT', 'Asia/Seoul', 'qa', 'v1') \
+         VALUES ('KRX', '2027-01-15', 'CLOSED', 'Asia/Seoul', 'qa', 'v1') \
          ON CONFLICT (exchange, session_date) DO UPDATE SET session_type = EXCLUDED.session_type",
     )
     .await;
