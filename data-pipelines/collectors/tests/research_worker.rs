@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use collectors::{
     FailureClass, PipelineError, PipelineStage, PublicationSink, PublicationState, PublishOutcome,
-    SinkError, ingest_and_publish, recover_unpublished,
+    SinkError, ingest_and_publish, recover_unpublished, store_failure_class,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::contract::{MARKET_KR, PROVIDER_KRX, ResponseKind};
@@ -702,6 +702,45 @@ fn pipeline_error_classification_matrix_is_structural() {
         source: SinkError::Conflict("different evidence".into()),
     };
     assert!(!permanent_sink.is_retryable());
+}
+
+#[test]
+fn cleanup_failure_class_follows_the_original_error_recursively() {
+    let permanent = StoreError::CleanupFailed {
+        path: "partial-batch".into(),
+        original: Box::new(StoreError::FileExists {
+            path: "immutable.json".into(),
+        }),
+        cleanup: std::io::Error::other("cleanup io is secondary"),
+    };
+    assert_eq!(store_failure_class(&permanent), FailureClass::Permanent);
+
+    let nested_permanent = StoreError::CleanupFailed {
+        path: "outer-partial-batch".into(),
+        original: Box::new(StoreError::CleanupFailed {
+            path: "inner-partial-batch".into(),
+            original: Box::new(StoreError::UnsafePath {
+                path: "escaped".into(),
+                reason: "outside Raw".into(),
+            }),
+            cleanup: std::io::Error::other("inner cleanup io is secondary"),
+        }),
+        cleanup: std::io::Error::other("outer cleanup io is secondary"),
+    };
+    assert_eq!(
+        store_failure_class(&nested_permanent),
+        FailureClass::Permanent
+    );
+
+    let retryable = StoreError::CleanupFailed {
+        path: "partial-batch".into(),
+        original: Box::new(StoreError::Io {
+            context: "write".into(),
+            source: std::io::Error::other("temporarily unavailable"),
+        }),
+        cleanup: std::io::Error::other("cleanup io is secondary"),
+    };
+    assert_eq!(store_failure_class(&retryable), FailureClass::Retryable);
 }
 
 #[test]

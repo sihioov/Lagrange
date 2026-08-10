@@ -1791,6 +1791,30 @@ mod tests {
     }
 
     #[test]
+    fn commit_lock_exclusive_handle_blocks_separate_nonblocking_shared_handle() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let exclusive = store
+            .open_commit_lock(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR)
+            .unwrap();
+        let shared = store
+            .open_commit_lock(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR)
+            .unwrap();
+
+        FileExt::lock_exclusive(&exclusive).unwrap();
+        let contention = FileExt::try_lock_shared(&shared).unwrap_err();
+        assert!(
+            contention.kind() == std::io::ErrorKind::WouldBlock
+                || contention.raw_os_error() == Some(33),
+            "expected nonblocking lock contention, got {contention:?}"
+        );
+
+        FileExt::unlock(&exclusive).unwrap();
+        FileExt::try_lock_shared(&shared).unwrap();
+        FileExt::unlock(&shared).unwrap();
+    }
+
+    #[test]
     fn directory_sync_failure_is_indeterminate_and_reader_recovers_same_batch() {
         let root = tempfile::tempdir().unwrap();
         let store = RawStore::new(root.path());

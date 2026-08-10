@@ -164,7 +164,9 @@ pub fn provider_failure_class(error: &ProviderError) -> FailureClass {
 
 pub fn store_failure_class(error: &StoreError) -> FailureClass {
     match error {
-        StoreError::Io { .. } | StoreError::CleanupFailed { .. } => FailureClass::Retryable,
+        StoreError::Io { .. } => FailureClass::Retryable,
+        // Cleanup I/O is secondary: callers act on the original operation's class.
+        StoreError::CleanupFailed { original, .. } => store_failure_class(original),
         StoreError::IndeterminateBatchCommit { source, .. } => store_failure_class(source),
         StoreError::FileExists { .. }
         | StoreError::UnsafeFileName { .. }
