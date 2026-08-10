@@ -1,14 +1,17 @@
 use std::collections::HashMap;
+use std::io::Write as _;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
 use collectors::{
-    HealthcheckConfig, WaitOutcome, WorkerControl, WorkerError, WorkerRunOutcome, bootstrap_worker,
-    build_postgres_pool, healthcheck,
+    HealthcheckConfig, WORKER_ENV_KEYS, WaitOutcome, WorkerControl, WorkerError, WorkerEvent,
+    WorkerEventKind, WorkerObserver, WorkerRunOutcome, bootstrap_worker, build_postgres_pool,
+    healthcheck, run_internal_ingest, run_internal_recovery,
 };
-use domain::TradingDate;
+use domain::{TradingDate, UtcTimestamp};
 use serde::Serialize;
 use tokio::sync::{Mutex, watch};
 
@@ -22,26 +25,13 @@ Database credentials use DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD_FIL
 DATABASE_URL is not used by this worker.
 ";
 
-const ENV_KEYS: &[&str] = &[
-    "APP_ENV",
-    "RESEARCH_FETCH_MODE",
-    "RESEARCH_RUN_AT_KST",
-    "RESEARCH_MAX_PUBLICATION_AGE_SECS",
-    "RESEARCH_RAW_ROOT",
-    "RESEARCH_SYNTHETIC_BUNDLE",
-    "DB_HOST",
-    "DB_PORT",
-    "DB_NAME",
-    "DB_USER",
-    "DB_PASSWORD_FILE",
-    "KRX_CREDENTIAL_FILE",
-];
-
 enum Command {
     Daemon,
     Once(TradingDate),
     Healthcheck,
     Help,
+    InternalRecover,
+    InternalIngest(TradingDate, UtcTimestamp),
 }
 
 #[derive(Serialize)]
@@ -63,6 +53,40 @@ struct SuccessRecord {
     date: Option<String>,
     newest_eod_at: Option<String>,
     age_seconds: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct EventRecord {
+    event: &'static str,
+    provider: &'static str,
+    market: &'static str,
+    target_date: Option<String>,
+    phase: &'static str,
+    class: &'static str,
+    batch_id: Option<String>,
+}
+
+struct JsonObserver;
+
+impl WorkerObserver for JsonObserver {
+    fn emit(&self, event: WorkerEvent) {
+        let record = EventRecord {
+            event: event.kind.as_str(),
+            provider: event.provider,
+            market: event.market,
+            target_date: event.target_date.map(|date| date.to_iso()),
+            phase: event.phase.as_str(),
+            class: match event.kind {
+                WorkerEventKind::Retrying => event.class.as_str(),
+                WorkerEventKind::Completed | WorkerEventKind::Skipped => "success",
+            },
+            batch_id: event.batch_id.map(|batch_id| batch_id.to_string()),
+        };
+        if let Ok(line) = serde_json::to_string(&record) {
+            println!("{line}");
+            let _ = std::io::stdout().flush();
+        }
+    }
 }
 
 struct SystemControl {
@@ -116,6 +140,8 @@ async fn main() -> ExitCode {
         Command::Healthcheck => run_healthcheck(&values).await,
         Command::Once(date) => run_once(&values, date).await,
         Command::Daemon => run_daemon(&values).await,
+        Command::InternalRecover => run_internal_recover(&values).await,
+        Command::InternalIngest(date, now) => run_internal_collect(&values, date, now).await,
         Command::Help => unreachable!("help returned before worker setup"),
     };
     match result {
@@ -135,6 +161,16 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
         [] => Ok(Command::Daemon),
         [flag] if flag == "--help" || flag == "-h" => Ok(Command::Help),
         [command] if command == "healthcheck" => Ok(Command::Healthcheck),
+        [command] if command == "__research-internal-recover" => Ok(Command::InternalRecover),
+        [command, date, now] if command == "__research-internal-ingest" => {
+            let date = TradingDate::parse(date).map_err(|_| WorkerError::InvalidConfig {
+                key: "internal-date",
+            })?;
+            let now = UtcTimestamp::parse_rfc3339(now).map_err(|_| WorkerError::InvalidConfig {
+                key: "internal-now",
+            })?;
+            Ok(Command::InternalIngest(date, now))
+        }
         [once, date_flag, date] if once == "--once" && date_flag == "--date" => {
             TradingDate::parse(date)
                 .map(Command::Once)
@@ -145,7 +181,7 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
 }
 
 fn environment_map() -> HashMap<String, String> {
-    ENV_KEYS
+    WORKER_ENV_KEYS
         .iter()
         .filter_map(|key| {
             std::env::var(key)
@@ -158,7 +194,7 @@ fn environment_map() -> HashMap<String, String> {
 fn system_control() -> SystemControl {
     let (sender, receiver) = watch::channel(false);
     tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
+        wait_for_shutdown_signal().await;
         let _ = sender.send(true);
     });
     SystemControl {
@@ -166,17 +202,36 @@ fn system_control() -> SystemControl {
     }
 }
 
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let Ok(mut terminate) = signal(SignalKind::terminate()) else {
+        let _ = tokio::signal::ctrl_c().await;
+        return;
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate.recv() => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 async fn run_once(
     values: &HashMap<String, String>,
     date: TradingDate,
 ) -> Result<SuccessRecord, WorkerError> {
-    let worker = bootstrap_worker(values)?;
+    let worker = bootstrap_worker(values)?.with_observer(Arc::new(JsonObserver));
     let outcome = worker.run_once(date, &system_control()).await?;
     Ok(run_record(outcome, Some(date)))
 }
 
 async fn run_daemon(values: &HashMap<String, String>) -> Result<SuccessRecord, WorkerError> {
-    let worker = bootstrap_worker(values)?;
+    let worker = bootstrap_worker(values)?.with_observer(Arc::new(JsonObserver));
     let outcome = worker.run_daemon(&system_control()).await?;
     Ok(run_record(outcome, None))
 }
@@ -194,6 +249,38 @@ async fn run_healthcheck(values: &HashMap<String, String>) -> Result<SuccessReco
         date: None,
         newest_eod_at: Some(status.newest_eod_at.to_rfc3339()),
         age_seconds: Some(status.age.as_secs()),
+    })
+}
+
+async fn run_internal_recover(
+    values: &HashMap<String, String>,
+) -> Result<SuccessRecord, WorkerError> {
+    run_internal_recovery(values).await?;
+    Ok(SuccessRecord {
+        status: "ok",
+        phase: "recovery",
+        outcome: "recovered",
+        batch_id: None,
+        date: None,
+        newest_eod_at: None,
+        age_seconds: None,
+    })
+}
+
+async fn run_internal_collect(
+    values: &HashMap<String, String>,
+    date: TradingDate,
+    now: UtcTimestamp,
+) -> Result<SuccessRecord, WorkerError> {
+    let batch_id = run_internal_ingest(values, date, now).await?;
+    Ok(SuccessRecord {
+        status: "ok",
+        phase: "publication",
+        outcome: "published",
+        batch_id: Some(batch_id.to_string()),
+        date: Some(date.to_iso()),
+        newest_eod_at: None,
+        age_seconds: None,
     })
 }
 
@@ -245,5 +332,10 @@ fn error_code(error: &WorkerError) -> &'static str {
         WorkerError::Database { .. } => "DATABASE_UNAVAILABLE",
         WorkerError::Unhealthy { .. } => "UNHEALTHY",
         WorkerError::Pipeline(_) => "PIPELINE_FAILED",
+        WorkerError::ChildIo => "HELPER_IO_FAILED",
+        WorkerError::ChildContainment => "HELPER_CONTAINMENT_FAILED",
+        WorkerError::ChildOutput => "HELPER_OUTPUT_INVALID",
+        WorkerError::ChildFailure { .. } => "HELPER_FAILED",
+        WorkerError::Shutdown => "SHUTDOWN",
     }
 }

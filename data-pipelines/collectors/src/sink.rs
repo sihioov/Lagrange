@@ -15,7 +15,7 @@ fn sqlstate_is_retryable(code: &str) -> bool {
     code.starts_with("08")
         || matches!(
             code,
-            "40001" | "40P01" | "55P03" | "57P01" | "57P02" | "57P03"
+            "40001" | "40P01" | "55P03" | "57014" | "57P01" | "57P02" | "57P03"
         )
 }
 
@@ -729,6 +729,7 @@ mod tests {
         assert!(sqlstate_is_retryable("40P01"));
         assert!(sqlstate_is_retryable("40001"));
         assert!(sqlstate_is_retryable("55P03"));
+        assert!(sqlstate_is_retryable("57014"));
         assert!(!sqlstate_is_retryable("23505"));
         assert!(!sqlstate_is_retryable("23514"));
     }

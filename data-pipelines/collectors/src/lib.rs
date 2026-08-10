@@ -12,7 +12,9 @@ pub use sink::{
 pub use worker::{
     AppEnvironment, DatabaseConfig, HealthFailure, HealthStatus, HealthcheckConfig,
     ProductionWorkerComponentFactory, ResearchBackend, ResearchWorker, ResearchWorkerConfig,
-    SecretValue, WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError, WorkerPhase,
-    WorkerRunOutcome, bootstrap_worker, bootstrap_worker_with, build_postgres_pool,
-    current_kst_date, healthcheck, next_run_delay, retry_delay, validate_synthetic_policy,
+    SecretValue, WORKER_ENV_KEYS, WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError,
+    WorkerEvent, WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome, bootstrap_worker,
+    bootstrap_worker_with, build_postgres_pool, current_kst_date, healthcheck, next_run_delay,
+    publication_age, retry_delay, run_internal_ingest, run_internal_recovery,
+    validate_synthetic_policy,
 };

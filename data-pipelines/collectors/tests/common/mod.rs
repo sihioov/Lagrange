@@ -117,6 +117,11 @@ pub struct ScratchDb {
 }
 
 impl ScratchDb {
+    #[allow(dead_code)]
+    pub fn database_name(&self) -> &str {
+        &self.name
+    }
+
     pub async fn create() -> Option<Self> {
         let supervisor_url = std::env::var("DATABASE_URL").ok()?;
         Some(

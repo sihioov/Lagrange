@@ -1,17 +1,18 @@
 use std::collections::{HashMap, VecDeque};
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use collectors::{
-    AppEnvironment, FailureClass, PipelineError, PipelineStage, PublicationSink, PublicationState,
-    PublishOutcome, ResearchBackend, ResearchWorker, ResearchWorkerConfig, SinkError, WaitOutcome,
-    WorkerComponentFactory, WorkerControl, WorkerError, WorkerPhase, WorkerRunOutcome,
-    bootstrap_worker_with, healthcheck, ingest_and_publish, next_run_delay, recover_unpublished,
-    retry_delay, store_failure_class, validate_synthetic_policy,
+    AppEnvironment, FailureClass, HealthcheckConfig, PipelineError, PipelineStage, PublicationSink,
+    PublicationState, PublishOutcome, ResearchBackend, ResearchWorker, ResearchWorkerConfig,
+    SinkError, WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent,
+    WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome, bootstrap_worker_with,
+    build_postgres_pool, healthcheck, ingest_and_publish, next_run_delay, publication_age,
+    recover_unpublished, retry_delay, store_failure_class, validate_synthetic_policy,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::contract::{MARKET_KR, PROVIDER_KRX, ResponseKind};
@@ -1286,6 +1287,93 @@ fn worker_cli_healthcheck_has_no_provider_or_raw_configuration_dependency() {
     assert!(!String::from_utf8_lossy(&output.stdout).contains("DATABASE_URL"));
 }
 
+#[tokio::test]
+async fn worker_cli_once_runs_collection_in_the_bounded_hidden_helper() {
+    let qa_url = std::env::var("DATABASE_URL")
+        .expect("required QA DATABASE_URL must be provided for worker process verification");
+    assert_eq!(
+        qa_url, "postgres://postgres:lagrange@127.0.0.1:55432/postgres",
+        "worker process verification must use the reviewed local PostgreSQL endpoint"
+    );
+    let db = ScratchDb::create()
+        .await
+        .expect("required QA PostgreSQL must be reachable");
+    let workspace = tempfile::tempdir().unwrap();
+    let raw_root = workspace.path().join("raw");
+    let password_file = workspace.path().join("db-password");
+    let stdout_file = workspace.path().join("worker-stdout");
+    let stderr_file = workspace.path().join("worker-stderr");
+    std::fs::write(&password_file, "lagrange\n").unwrap();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/kr-etf/contract")
+        .canonicalize()
+        .unwrap();
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_research-worker"));
+    command
+        .env_clear()
+        .env("APP_ENV", "development")
+        .env("RESEARCH_FETCH_MODE", "synthetic")
+        .env("RESEARCH_RAW_ROOT", &raw_root)
+        .env("RESEARCH_SYNTHETIC_BUNDLE", fixture)
+        .env("DB_HOST", "127.0.0.1")
+        .env("DB_PORT", "55432")
+        .env("DB_NAME", db.database_name())
+        .env("DB_USER", "research_writer")
+        .env("DB_PASSWORD_FILE", &password_file)
+        .args(["--once", "--date", "2020-01-31"])
+        .stdout(std::fs::File::create(&stdout_file).unwrap())
+        .stderr(std::fs::File::create(&stderr_file).unwrap());
+    #[cfg(windows)]
+    command.env("SYSTEMROOT", std::env::var("SYSTEMROOT").unwrap());
+    let mut child = command.spawn().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!(
+                "worker process exceeded watchdog; stdout events: {}; stderr: {}",
+                std::fs::read_to_string(&stdout_file).unwrap(),
+                std::fs::read_to_string(&stderr_file).unwrap()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    let stdout = std::fs::read(&stdout_file).unwrap();
+    let stderr = std::fs::read(&stderr_file).unwrap();
+
+    assert!(
+        status.success(),
+        "sanitized worker output: {}",
+        String::from_utf8_lossy(&stdout)
+    );
+    assert!(stderr.is_empty());
+    let records = String::from_utf8(stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 2, "completed event and final outcome");
+    assert_eq!(records[0]["event"], "completed");
+    assert_eq!(records[0]["provider"], "KRX");
+    assert_eq!(records[0]["market"], "KR");
+    assert_eq!(records[0]["target_date"], "2020-01-31");
+    assert_eq!(records[1]["status"], "ok");
+    assert_eq!(records[1]["outcome"], "published");
+    assert_eq!(records[0]["batch_id"], records[1]["batch_id"]);
+
+    let store = RawStore::new(raw_root);
+    let entries = store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(records[1]["batch_id"], entries[0].batch_id.to_string());
+
+    db.drop_db().await;
+}
+
 #[derive(Default)]
 struct FakeResearchBackend {
     events: Mutex<Vec<String>>,
@@ -1296,7 +1384,7 @@ struct FakeResearchBackend {
 
 #[async_trait]
 impl ResearchBackend for FakeResearchBackend {
-    async fn recover(&self) -> Result<(), WorkerError> {
+    async fn recover(&self, _control: &dyn WorkerControl) -> Result<(), WorkerError> {
         self.events.lock().unwrap().push("recover".to_owned());
         self.recover.lock().unwrap().pop_front().unwrap_or(Ok(()))
     }
@@ -1309,7 +1397,12 @@ impl ResearchBackend for FakeResearchBackend {
         self.eod.lock().unwrap().pop_front().unwrap_or(Ok(false))
     }
 
-    async fn ingest(&self, date: TradingDate, _now: UtcTimestamp) -> Result<BatchId, WorkerError> {
+    async fn ingest(
+        &self,
+        date: TradingDate,
+        _now: UtcTimestamp,
+        _control: &dyn WorkerControl,
+    ) -> Result<BatchId, WorkerError> {
         self.events
             .lock()
             .unwrap()
@@ -1516,6 +1609,299 @@ async fn worker_eod_unavailable_does_not_suppress_fetch_and_retry_resets_per_run
 }
 
 #[tokio::test]
+async fn worker_retryable_ingest_requires_recovery_before_any_fresh_fetch() {
+    let backend = Arc::new(FakeResearchBackend::default());
+    backend.recover.lock().unwrap().extend([
+        Ok(()),
+        Err(WorkerError::Io {
+            phase: WorkerPhase::Recovery,
+        }),
+        Err(WorkerError::Io {
+            phase: WorkerPhase::Recovery,
+        }),
+        Ok(()),
+    ]);
+    backend.eod.lock().unwrap().extend([Ok(false), Ok(true)]);
+    backend
+        .ingest
+        .lock()
+        .unwrap()
+        .push_back(Err(WorkerError::Database {
+            phase: WorkerPhase::Publication,
+            source: SinkError::RetryableDatabase(sqlx::Error::PoolClosed),
+        }));
+    let control = FakeControl::default();
+
+    assert_eq!(
+        configured_worker(backend.clone())
+            .run_once(TradingDate::parse("2020-01-31").unwrap(), &control)
+            .await
+            .unwrap(),
+        WorkerRunOutcome::AlreadyPublished
+    );
+    assert_eq!(
+        *backend.events.lock().unwrap(),
+        vec![
+            "recover",
+            "has_eod:2020-01-31",
+            "ingest:2020-01-31",
+            "recover",
+            "recover",
+            "recover",
+            "has_eod:2020-01-31",
+        ],
+        "no second provider fetch may begin until recovery succeeds"
+    );
+    assert_eq!(
+        *control.sleeps.lock().unwrap(),
+        vec![
+            Duration::from_secs(10),
+            Duration::from_secs(20),
+            Duration::from_secs(40),
+        ],
+        "exactly one backoff follows each retryable failure"
+    );
+}
+
+#[derive(Debug)]
+struct CountingProvider {
+    inner: KrxProvider,
+    calls: AtomicUsize,
+}
+
+impl EodProvider for CountingProvider {
+    fn provider_id(&self) -> &'static str {
+        self.inner.provider_id()
+    }
+
+    fn fetch_mode(&self) -> market_data::FetchMode {
+        self.inner.fetch_mode()
+    }
+
+    fn fetch(
+        &self,
+        request: &FetchRequest,
+    ) -> Result<Vec<market_data::RawEnvelope>, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.fetch(request)
+    }
+}
+
+#[derive(Default)]
+struct RetryPublicationSink;
+
+#[async_trait]
+impl PublicationSink for RetryPublicationSink {
+    async fn publication_state(&self, _batch_id: BatchId) -> Result<PublicationState, SinkError> {
+        unreachable!("fresh ingestion does not query publication state")
+    }
+
+    async fn publish(&self, _bundle: &PublicationBundle) -> Result<PublishOutcome, SinkError> {
+        Err(SinkError::RetryableDatabase(sqlx::Error::PoolClosed))
+    }
+
+    async fn has_eod(&self, _date: TradingDate) -> Result<bool, SinkError> {
+        Ok(false)
+    }
+}
+
+struct RecoveryPublicationSink {
+    failures_remaining: AtomicUsize,
+    state_batches: Mutex<Vec<BatchId>>,
+    publish_batches: Mutex<Vec<BatchId>>,
+    published: AtomicBool,
+}
+
+#[async_trait]
+impl PublicationSink for RecoveryPublicationSink {
+    async fn publication_state(&self, batch_id: BatchId) -> Result<PublicationState, SinkError> {
+        self.state_batches.lock().unwrap().push(batch_id);
+        if self
+            .failures_remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(SinkError::RetryableDatabase(sqlx::Error::PoolClosed));
+        }
+        Ok(PublicationState::Missing)
+    }
+
+    async fn publish(&self, bundle: &PublicationBundle) -> Result<PublishOutcome, SinkError> {
+        self.publish_batches
+            .lock()
+            .unwrap()
+            .push(bundle.source_batch_id);
+        self.published.store(true, Ordering::SeqCst);
+        Ok(PublishOutcome::Published)
+    }
+
+    async fn has_eod(&self, _date: TradingDate) -> Result<bool, SinkError> {
+        Ok(self.published.load(Ordering::SeqCst))
+    }
+}
+
+struct DurableRetryBackend {
+    store: RawStore,
+    provider: CountingProvider,
+    ingest_sink: RetryPublicationSink,
+    recovery_sink: RecoveryPublicationSink,
+}
+
+#[async_trait]
+impl ResearchBackend for DurableRetryBackend {
+    async fn recover(&self, _control: &dyn WorkerControl) -> Result<(), WorkerError> {
+        recover_unpublished(&self.store, &self.recovery_sink)
+            .await
+            .map(|_| ())
+            .map_err(WorkerError::Pipeline)
+    }
+
+    async fn has_eod(&self, date: TradingDate) -> Result<bool, WorkerError> {
+        self.recovery_sink
+            .has_eod(date)
+            .await
+            .map_err(|source| WorkerError::Database {
+                phase: WorkerPhase::DuplicateCheck,
+                source,
+            })
+    }
+
+    async fn ingest(
+        &self,
+        date: TradingDate,
+        now: UtcTimestamp,
+        _control: &dyn WorkerControl,
+    ) -> Result<BatchId, WorkerError> {
+        let request = IngestRequest::new(MARKET_KR.to_owned(), date, now);
+        ingest_and_publish(
+            &self.store,
+            &self.provider,
+            &request,
+            None,
+            &self.ingest_sink,
+        )
+        .await
+        .map(|outcome| outcome.manifest.batch_id)
+        .map_err(WorkerError::Pipeline)
+    }
+}
+
+#[tokio::test]
+async fn worker_db_outage_recovers_exact_durable_batch_without_raw_growth() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = Arc::new(DurableRetryBackend {
+        store: RawStore::new(root.path()),
+        provider: CountingProvider {
+            inner: provider(),
+            calls: AtomicUsize::new(0),
+        },
+        ingest_sink: RetryPublicationSink,
+        recovery_sink: RecoveryPublicationSink {
+            failures_remaining: AtomicUsize::new(2),
+            state_batches: Mutex::new(Vec::new()),
+            publish_batches: Mutex::new(Vec::new()),
+            published: AtomicBool::new(false),
+        },
+    });
+    let control = FakeControl::default();
+    let date = TradingDate::parse("2020-01-31").unwrap();
+
+    assert_eq!(
+        configured_worker(backend.clone())
+            .run_once(date, &control)
+            .await
+            .unwrap(),
+        WorkerRunOutcome::AlreadyPublished
+    );
+
+    let manifest = backend
+        .store
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .unwrap();
+    assert_eq!(manifest.len(), 1, "retries must not create new Raw batches");
+    let original_batch = manifest[0].batch_id;
+    assert_eq!(backend.provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *backend.recovery_sink.state_batches.lock().unwrap(),
+        vec![original_batch, original_batch, original_batch]
+    );
+    assert_eq!(
+        *backend.recovery_sink.publish_batches.lock().unwrap(),
+        vec![original_batch]
+    );
+    assert_eq!(
+        *control.sleeps.lock().unwrap(),
+        vec![
+            Duration::from_secs(10),
+            Duration::from_secs(20),
+            Duration::from_secs(40),
+        ]
+    );
+}
+
+#[derive(Default)]
+struct RecordingObserver(Mutex<Vec<WorkerEvent>>);
+
+impl WorkerObserver for RecordingObserver {
+    fn emit(&self, event: WorkerEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
+#[tokio::test]
+async fn worker_streams_sanitized_retry_completed_and_skipped_events() {
+    let date = TradingDate::parse("2020-01-31").unwrap();
+    let published_batch = BatchId::generate();
+    let published_backend = Arc::new(FakeResearchBackend::default());
+    published_backend.eod.lock().unwrap().extend([
+        Err(WorkerError::Io {
+            phase: WorkerPhase::DuplicateCheck,
+        }),
+        Ok(false),
+    ]);
+    published_backend
+        .ingest
+        .lock()
+        .unwrap()
+        .push_back(Ok(published_batch));
+    let published_observer = Arc::new(RecordingObserver::default());
+    let worker = configured_worker(published_backend).with_observer(published_observer.clone());
+
+    assert_eq!(
+        worker
+            .run_once(date, &FakeControl::default())
+            .await
+            .unwrap(),
+        WorkerRunOutcome::Published(published_batch)
+    );
+    let events = published_observer.0.lock().unwrap().clone();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].kind, WorkerEventKind::Retrying);
+    assert_eq!(events[0].provider, "KRX");
+    assert_eq!(events[0].market, "KR");
+    assert_eq!(events[0].target_date, Some(date));
+    assert_eq!(events[0].phase, WorkerPhase::DuplicateCheck);
+    assert_eq!(events[0].class, FailureClass::Retryable);
+    assert_eq!(events[0].batch_id, None);
+    assert_eq!(events[1].kind, WorkerEventKind::Completed);
+    assert_eq!(events[1].batch_id, Some(published_batch));
+
+    let skipped_backend = Arc::new(FakeResearchBackend::default());
+    skipped_backend.eod.lock().unwrap().push_back(Ok(true));
+    let skipped_observer = Arc::new(RecordingObserver::default());
+    configured_worker(skipped_backend)
+        .with_observer(skipped_observer.clone())
+        .run_once(date, &FakeControl::default())
+        .await
+        .unwrap();
+    let skipped = skipped_observer.0.lock().unwrap().clone();
+    assert_eq!(skipped.last().unwrap().kind, WorkerEventKind::Skipped);
+    assert_eq!(skipped.last().unwrap().target_date, Some(date));
+}
+
+#[tokio::test]
 async fn worker_permanent_errors_are_not_retried_and_shutdown_interrupts_backoff() {
     let permanent_backend = Arc::new(FakeResearchBackend::default());
     permanent_backend
@@ -1607,4 +1993,92 @@ async fn worker_health_requires_db_round_trip_and_fresh_real_eod() {
     db.writer.close().await;
     assert!(healthcheck(&db.writer, now, max_age).await.is_err());
     db.drop_db().await;
+}
+
+#[tokio::test]
+async fn worker_production_pool_uses_discrete_fields_role_limits_and_timeouts() {
+    let qa_url = std::env::var("DATABASE_URL")
+        .expect("required QA DATABASE_URL must be provided for production-pool verification");
+    assert_eq!(
+        qa_url, "postgres://postgres:lagrange@127.0.0.1:55432/postgres",
+        "final QA must use the reviewed local PostgreSQL endpoint"
+    );
+    let db = ScratchDb::create()
+        .await
+        .expect("required QA PostgreSQL must be reachable");
+    let values = HashMap::from([
+        ("DB_HOST".to_owned(), "127.0.0.1".to_owned()),
+        ("DB_PORT".to_owned(), "55432".to_owned()),
+        ("DB_NAME".to_owned(), db.database_name().to_owned()),
+        ("DB_USER".to_owned(), "research_writer".to_owned()),
+        ("DB_PASSWORD_FILE".to_owned(), "qa-password".to_owned()),
+    ]);
+    let config =
+        HealthcheckConfig::from_map_with_reader(&values, |_| Ok("lagrange\n".to_owned())).unwrap();
+    let pool = build_postgres_pool(&config.database);
+
+    let (one, current_user): (i32, String) = sqlx::query_as("SELECT 1, current_user::text")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(one, 1);
+    assert_eq!(current_user, "research_writer");
+    let statement_timeout: String = sqlx::query_scalar("SHOW statement_timeout")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let lock_timeout: String = sqlx::query_scalar("SHOW lock_timeout")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(statement_timeout, "15s");
+    assert_eq!(lock_timeout, "5s");
+    assert_eq!(pool.options().get_max_connections(), 4);
+    assert_eq!(
+        pool.options().get_acquire_timeout(),
+        Duration::from_secs(10)
+    );
+
+    let mut timed_connection = pool.acquire().await.unwrap();
+    sqlx::query("SET statement_timeout = '50ms'")
+        .execute(&mut *timed_connection)
+        .await
+        .unwrap();
+    let cancellation = sqlx::query("SELECT pg_sleep(0.2)")
+        .execute(&mut *timed_connection)
+        .await
+        .unwrap_err();
+    let cancellation = SinkError::from_sqlx(cancellation);
+    assert!(matches!(cancellation, SinkError::RetryableDatabase(_)));
+    assert_eq!(cancellation.to_string(), "retryable database failure");
+    drop(timed_connection);
+
+    pool.close().await;
+    db.drop_db().await;
+}
+
+#[test]
+fn worker_health_rejects_future_publications_and_accepts_exact_boundaries() {
+    let now = Utc.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap();
+    let max_age = Duration::from_secs(345_600);
+
+    assert_eq!(publication_age(now, now, max_age).unwrap(), Duration::ZERO);
+    assert_eq!(
+        publication_age(
+            now,
+            now - chrono::Duration::seconds(max_age.as_secs() as i64),
+            max_age,
+        )
+        .unwrap(),
+        max_age
+    );
+    for future in [
+        now + chrono::Duration::seconds(1),
+        now + chrono::Duration::days(3650),
+    ] {
+        assert!(matches!(
+            publication_age(now, future, max_age),
+            Err(collectors::HealthFailure::FutureEodPublication)
+        ));
+    }
 }
