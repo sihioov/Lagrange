@@ -1,6 +1,8 @@
 -- Reverse 0022 in dependency order. The externally provisioned
 -- research_writer role is deliberately retained.
 
+SET LOCAL lock_timeout = '5s';
+
 DROP POLICY IF EXISTS trading_calendar_versions_insert_research_writer ON trading_calendar_versions;
 DROP POLICY IF EXISTS trading_calendar_versions_select_research_writer ON trading_calendar_versions;
 DROP POLICY IF EXISTS trading_calendar_versions_select_readers ON trading_calendar_versions;
@@ -19,7 +21,9 @@ DROP TRIGGER IF EXISTS trading_calendar_versions_append_only ON trading_calendar
 DROP FUNCTION IF EXISTS trading_calendar_versions_reject_mutation();
 DROP TABLE IF EXISTS trading_calendar_versions;
 
-DROP INDEX IF EXISTS data_batches_raw_lineage_key;
+-- 0023 normally drops this concurrently first. Retain this defensive cleanup
+-- so a direct 0022 rollback cannot leave an index over removed columns.
+DROP INDEX IF EXISTS data_batches_source_file_uq;
 
 ALTER TABLE trading_calendars
     DROP CONSTRAINT IF EXISTS trading_calendars_provenance_all_or_none_check,

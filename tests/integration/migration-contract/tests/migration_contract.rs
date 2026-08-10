@@ -53,6 +53,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Migrations embedded at compile time from the workspace `migrations/` dir.
 static MIGRATOR: Migrator = sqlx::migrate!("../../../migrations");
 
+const SOURCE_INDEX_UP_SQL: &str =
+    include_str!("../../../../migrations/0023_research_publication_source_index.up.sql");
+const SOURCE_INDEX_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0023_research_publication_source_index.down.sql");
+const RESEARCH_PUBLICATION_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0022_research_publication.down.sql");
+
+fn executable_sql(sql: &str) -> String {
+    sql.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Role/schema bootstrap executed as superuser on each fresh database.
 const BOOTSTRAP_SQL: &str = include_str!("../bootstrap.sql");
 
@@ -289,6 +304,36 @@ async fn full_contract_body(
     // ------------------------------------------------------------------
     // 1. `sqlx migrate run` applies every migration; a second run is a no-op.
     // ------------------------------------------------------------------
+    assert!(
+        RESEARCH_PUBLICATION_DOWN_SQL.contains("SET LOCAL lock_timeout = '5s';"),
+        "0022 down must bound blocking rollback DDL with a transactional lock_timeout"
+    );
+    for (name, sql, expected_statement) in [
+        (
+            "0023 up",
+            SOURCE_INDEX_UP_SQL,
+            "CREATE UNIQUE INDEX CONCURRENTLY data_batches_source_file_uq\nON data_batches (provider, market, source_batch_id, source_file_name)\nWHERE source_batch_id IS NOT NULL;",
+        ),
+        (
+            "0023 down",
+            SOURCE_INDEX_DOWN_SQL,
+            "DROP INDEX CONCURRENTLY IF EXISTS data_batches_source_file_uq;",
+        ),
+    ] {
+        assert!(
+            sql.starts_with("-- no-transaction"),
+            "{name} must begin with SQLx's no-transaction directive"
+        );
+        assert!(
+            sql.contains("externally") && sql.contains("lock_timeout"),
+            "{name} must document externally supplied finite lock_timeout"
+        );
+        assert_eq!(
+            executable_sql(sql),
+            expected_statement,
+            "{name} must contain only the concurrent DDL statement"
+        );
+    }
     let expected = up_migration_count();
     assert!(expected > 0, "migrator must embed at least one migration");
     MIGRATOR.run(owner).await?;
@@ -300,6 +345,29 @@ async fn full_contract_body(
     MIGRATOR.run(owner).await?;
     let applied_again = applied_count(owner).await? as usize;
     assert_eq!(applied_again, applied, "second run must be a no-op");
+
+    let source_index_migration = MIGRATOR
+        .migrations
+        .iter()
+        .find(|migration| {
+            migration.version == 23 && migration.migration_type != MigrationType::ReversibleDown
+        })
+        .expect("0023 source-lineage index migration must exist");
+    assert!(
+        source_index_migration.no_tx,
+        "0023 must opt out of a transaction so PostgreSQL can build its index concurrently"
+    );
+    let source_index_down_migration = MIGRATOR
+        .migrations
+        .iter()
+        .find(|migration| {
+            migration.version == 23 && migration.migration_type == MigrationType::ReversibleDown
+        })
+        .expect("0023 source-lineage index down migration must exist");
+    assert!(
+        source_index_down_migration.no_tx,
+        "0023 down must opt out of a transaction so PostgreSQL can drop its index concurrently"
+    );
 
     // Tables exist.
     let jobs_class: Option<String> =
@@ -758,6 +826,38 @@ async fn full_contract_body(
         .await
         .unwrap_err();
     assert_eq!(pg_code(&invalid_fetch_mode).as_deref(), Some("23514"));
+    let publication_constraints: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT conname, convalidated FROM pg_constraint WHERE conname IN ( \
+         'data_batches_fetch_mode_check', 'data_batches_provenance_all_or_none_check', \
+         'trading_calendars_content_sha256_check', 'trading_calendars_provenance_all_or_none_check') \
+         ORDER BY conname",
+    )
+    .fetch_all(owner)
+    .await?;
+    assert_eq!(
+        publication_constraints,
+        vec![
+            ("data_batches_fetch_mode_check".into(), true),
+            ("data_batches_provenance_all_or_none_check".into(), true),
+            ("trading_calendars_content_sha256_check".into(), true),
+            (
+                "trading_calendars_provenance_all_or_none_check".into(),
+                true
+            ),
+        ],
+        "publication CHECK constraints must finish validated"
+    );
+    let source_lineage_index: (bool, bool) = sqlx::query_as(
+        "SELECT i.indisunique, i.indpred IS NOT NULL \
+         FROM pg_index i WHERE i.indexrelid = 'public.data_batches_source_file_uq'::regclass",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        source_lineage_index,
+        (true, true),
+        "source lineage index must be unique and partial"
+    );
 
     let calendar_identity: (String, String, String) = sqlx::query_as(
         "SELECT data_type, is_identity, identity_generation \
@@ -906,15 +1006,28 @@ async fn full_contract_body(
 
     let rw = role_pool(super_url, db, "research_writer").await?;
     for (table, expected) in [
-        ("data_batches", (true, true, false, false)),
-        ("trading_calendar_versions", (true, true, false, false)),
-        ("trading_calendars", (true, true, true, false)),
+        (
+            "data_batches",
+            (true, true, false, false, false, false, false, false),
+        ),
+        (
+            "trading_calendar_versions",
+            (true, true, false, false, false, false, false, false),
+        ),
+        (
+            "trading_calendars",
+            (true, true, true, false, false, false, false, false),
+        ),
     ] {
-        let actual: (bool, bool, bool, bool) = sqlx::query_as(
+        let actual: (bool, bool, bool, bool, bool, bool, bool, bool) = sqlx::query_as(
             "SELECT has_table_privilege('research_writer', $1, 'SELECT'), \
                     has_table_privilege('research_writer', $1, 'INSERT'), \
                     has_table_privilege('research_writer', $1, 'UPDATE'), \
-                    has_table_privilege('research_writer', $1, 'DELETE')",
+                    has_table_privilege('research_writer', $1, 'DELETE'), \
+                    has_table_privilege('research_writer', $1, 'TRUNCATE'), \
+                    has_table_privilege('research_writer', $1, 'REFERENCES'), \
+                    has_table_privilege('research_writer', $1, 'TRIGGER'), \
+                    has_table_privilege('research_writer', $1, 'MAINTAIN')",
         )
         .bind(table)
         .fetch_one(owner)
@@ -972,14 +1085,16 @@ async fn full_contract_body(
         ],
         "research_writer must have only the requested publication RLS policies"
     );
-    let sequence_usage: bool = sqlx::query_scalar(
-        "SELECT has_sequence_privilege('research_writer', 'public.trading_calendar_versions_id_seq', 'USAGE')",
+    let sequence_privileges: (bool, bool, bool) = sqlx::query_as(
+        "SELECT has_sequence_privilege('research_writer', 'public.trading_calendar_versions_id_seq', 'USAGE'), \
+                has_sequence_privilege('research_writer', 'public.trading_calendar_versions_id_seq', 'SELECT'), \
+                has_sequence_privilege('research_writer', 'public.trading_calendar_versions_id_seq', 'UPDATE')",
     )
     .fetch_one(owner)
     .await?;
     assert!(
-        !sequence_usage,
-        "research_writer must not have direct identity-sequence usage"
+        sequence_privileges == (false, false, false),
+        "research_writer must not have direct identity-sequence privileges"
     );
     let writable_source_batch = Uuid::parse_str("00000000-0000-0000-0000-000000000025").unwrap();
     sqlx::query(publication_batch_sql)
@@ -1037,6 +1152,7 @@ async fn full_contract_body(
     for statement in [
         "UPDATE data_batches SET kind = 'tampered'",
         "DELETE FROM data_batches",
+        "TRUNCATE TABLE data_batches",
         "DELETE FROM trading_calendars",
         "DELETE FROM trading_calendar_versions",
         "UPDATE trading_calendar_versions SET source = 'tampered'",
@@ -1489,18 +1605,39 @@ async fn revert_and_rerun_body(
         "fresh DB must apply all {expected} migrations"
     );
 
-    // Revert only 0022 while all earlier tables remain. This proves its down
+    // Revert 0023 first, then 0022 while all earlier tables remain. This proves its down
     // migration removes its own contract rather than relying on 0003.down to
     // hide omitted objects later in a full teardown.
-    MIGRATOR.undo(owner, 21).await?;
+    MIGRATOR.undo(owner, 22).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
         expected - 1,
+        "undo to 0022 must revert only 0023"
+    );
+    let source_index_gone: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.data_batches_source_file_uq')::text")
+            .fetch_one(owner)
+            .await?;
+    assert!(
+        source_index_gone.is_none(),
+        "0023 down must remove the concurrent source-lineage index"
+    );
+    sqlx::query(
+        "CREATE UNIQUE INDEX data_batches_source_file_uq \
+         ON data_batches (provider, market, source_batch_id, source_file_name) \
+         WHERE source_batch_id IS NOT NULL",
+    )
+    .execute(owner)
+    .await?;
+    MIGRATOR.undo(owner, 21).await?;
+    assert_eq!(
+        applied_count(owner).await? as usize,
+        expected - 2,
         "undo to 0021 must revert only 0022"
     );
     for object in [
         "public.trading_calendar_versions",
-        "public.data_batches_raw_lineage_key",
+        "public.data_batches_source_file_uq",
     ] {
         let gone: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
             .bind(object)
