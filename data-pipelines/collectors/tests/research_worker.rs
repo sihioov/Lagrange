@@ -831,6 +831,48 @@ fn pipeline_manual_publish_error_redacts_overlapping_database_secrets() {
 }
 
 #[test]
+fn pipeline_manual_publish_error_redacts_digest_authorization_parameters() {
+    let root = tempfile::tempdir().unwrap();
+    let authorization =
+        r#"authorization: Digest username="alice", realm="supersecret", response="hashvalue""#;
+    let output = Command::new(env!("CARGO_BIN_EXE_collectors"))
+        .env(
+            "DATABASE_URL",
+            "postgres://ignored:ignored@127.0.0.1:1/ignored",
+        )
+        .args([
+            "ingest-and-publish-krx",
+            "--root",
+            root.path().to_str().unwrap(),
+            "--date",
+            "2020-01-31",
+            "--mode",
+            "synthetic",
+            "--bundle",
+            authorization,
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["error_code"], "PROVIDER_UNAVAILABLE");
+    assert_eq!(json["class"], "permanent");
+    let visible_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(visible_output.contains("authorization: [REDACTED]"));
+    for secret_fragment in ["alice", "supersecret", "hashvalue", "Digest username"] {
+        assert!(
+            !visible_output.contains(secret_fragment),
+            "CLI output leaked an Authorization credential fragment"
+        );
+    }
+}
+
+#[test]
 fn pipeline_manual_durable_manifest_failure_reports_recoverable_batch_id() {
     let root = tempfile::tempdir().unwrap();
     let store = RawStore::new(root.path());

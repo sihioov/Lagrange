@@ -145,27 +145,17 @@ fn value_bounds_for_key(value: &str, key: &str) -> (usize, usize) {
 }
 
 fn authorization_value_bounds(value: &str) -> (usize, usize) {
-    let leading = value.len() - value.trim_start_matches(char::is_whitespace).len();
+    let leading = value
+        .find(|character: char| matches!(character, '\r' | '\n') || !character.is_whitespace())
+        .unwrap_or(value.len());
     let credential = &value[leading..];
     if matches!(credential.as_bytes().first(), Some(b'\'' | b'"')) {
         let (start, end) = value_bounds(credential);
         return (leading + start, leading + end);
     }
 
-    let scheme_end = unquoted_value_end(credential);
-    if scheme_end > 0 {
-        let after_scheme = &credential[scheme_end..];
-        let separator =
-            after_scheme.len() - after_scheme.trim_start_matches(char::is_whitespace).len();
-        if separator > 0 {
-            let token_start = scheme_end + separator;
-            let token_end = token_start + unquoted_value_end(&credential[token_start..]);
-            if token_end > token_start {
-                return (leading, leading + token_end);
-            }
-        }
-    }
-    (leading, leading + scheme_end)
+    let line_end = credential.find(['\r', '\n']).unwrap_or(credential.len());
+    (leading, leading + line_end)
 }
 
 fn value_bounds(value: &str) -> (usize, usize) {
@@ -382,5 +372,40 @@ mod tests {
             assert!(redactor.is_clean(&output), "output: {output:?}");
             assert_eq!(redactor.redact(&output), output);
         }
+    }
+
+    #[test]
+    fn authorization_redacts_multi_parameter_values_through_the_header_line() {
+        let redactor = Redactor::new();
+        let cases = [
+            (
+                r#"authorization: Digest username="alice", realm="supersecret", response="hashvalue""#,
+                "authorization: [REDACTED]",
+            ),
+            (
+                "AUTHORIZATION: AWS4-HMAC-SHA256 Credential=alice/20260810/ap-northeast-2/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=deadbeef\r\nX-Public: visible",
+                "AUTHORIZATION: [REDACTED]\r\nX-Public: visible",
+            ),
+            (
+                "Authorization:\"top\\\"secret\"\r\nX-Public: quoted-visible",
+                "Authorization:\"[REDACTED]\"\r\nX-Public: quoted-visible",
+            ),
+            (
+                "Authorization: Digest username=first, response=one\r\nX-Public: keep\r\naUtHoRiZaTiOn: aws4-hmac-sha256 Credential=second, Signature=two\r\nX-Tail: keep-too",
+                "Authorization: [REDACTED]\r\nX-Public: keep\r\naUtHoRiZaTiOn: [REDACTED]\r\nX-Tail: keep-too",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert!(!redactor.is_clean(input), "input: {input:?}");
+            let output = redactor.redact(input);
+            assert_eq!(output, expected, "input: {input:?}");
+            assert!(redactor.scan(&output).is_empty(), "output: {output:?}");
+            assert_eq!(redactor.redact(&output), output);
+        }
+
+        let empty_value = "Authorization:   \r\nX-Public: must-remain";
+        assert!(redactor.is_clean(empty_value));
+        assert_eq!(redactor.redact(empty_value), empty_value);
     }
 }
