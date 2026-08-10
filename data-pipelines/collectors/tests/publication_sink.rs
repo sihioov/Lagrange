@@ -1,6 +1,7 @@
 mod common;
 
 use std::collections::BTreeMap;
+use std::error::Error as _;
 
 use collectors::{
     PostgresPublicationSink, PublicationSink, PublicationState, PublishOutcome, SinkError,
@@ -105,6 +106,16 @@ async fn publishes_verified_bundle_with_exact_lineage_and_reports_state_and_eod(
         sink.has_eod(TradingDate::parse("2020-01-31").unwrap())
             .await
             .unwrap()
+    );
+    let lookup_index: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.trading_calendar_versions_source_lookup_idx')::text",
+    )
+    .fetch_one(&db.supervisor)
+    .await
+    .unwrap();
+    assert_eq!(
+        lookup_index.as_deref(),
+        Some("trading_calendar_versions_source_lookup_idx")
     );
 
     let rows = sqlx::query(
@@ -215,6 +226,60 @@ async fn publishes_verified_bundle_with_exact_lineage_and_reports_state_and_eod(
         PublishOutcome::AlreadyPublished
     );
     assert_eq!(counts(&db).await, before);
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn fractional_nanosecond_retrieval_time_replays_at_postgres_precision() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let mut fixture = synthetic_bundle("2026-08-05T07:00:00Z");
+    fixture.bundle.retrieved_at =
+        UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00.123456789Z").unwrap();
+    let sink = PostgresPublicationSink::new(db.writer.clone());
+    assert_eq!(
+        sink.publish(&fixture.bundle).await.unwrap(),
+        PublishOutcome::Published
+    );
+    assert_eq!(
+        sink.publish(&fixture.bundle).await.unwrap(),
+        PublishOutcome::AlreadyPublished
+    );
+
+    let expected = UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00.123456Z")
+        .unwrap()
+        .as_datetime();
+    let batch_times: Vec<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT retrieved_at FROM data_batches")
+            .fetch_all(&db.supervisor)
+            .await
+            .unwrap();
+    assert_eq!(batch_times.len(), 4);
+    assert!(
+        batch_times.iter().all(|value| *value == expected),
+        "stored batch times: {batch_times:?}"
+    );
+    let history_times: Vec<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT retrieved_at FROM trading_calendar_versions")
+            .fetch_all(&db.supervisor)
+            .await
+            .unwrap();
+    assert!(!history_times.is_empty());
+    assert!(
+        history_times.iter().all(|value| *value == expected),
+        "stored history times: {history_times:?}"
+    );
+    let projection_times: Vec<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT retrieved_at FROM trading_calendars")
+            .fetch_all(&db.supervisor)
+            .await
+            .unwrap();
+    assert!(!projection_times.is_empty());
+    assert!(
+        projection_times.iter().all(|value| *value == expected),
+        "stored projection times: {projection_times:?}"
+    );
     db.drop_db().await;
 }
 
@@ -638,6 +703,127 @@ async fn failures_roll_back_and_concurrent_same_batch_is_deterministic() {
     assert!(outcomes.contains(&PublishOutcome::Published));
     assert!(outcomes.contains(&PublishOutcome::AlreadyPublished));
     assert_eq!(counts(&db).await.0, 4);
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn advisory_lock_timeout_is_retryable_and_writes_nothing() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let fixture = synthetic_bundle("2026-08-05T07:00:00Z");
+    let lock_key = i64::from_be_bytes(
+        fixture.bundle.source_batch_id.as_uuid().as_bytes()[..8]
+            .try_into()
+            .unwrap(),
+    );
+    let mut blocker = db.supervisor.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(lock_key)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let timed_writer = db.writer_with_lock_timeout().await;
+    let sink = PostgresPublicationSink::new(timed_writer.clone());
+
+    let error = sink.publish(&fixture.bundle).await.unwrap_err();
+
+    assert!(matches!(&error, SinkError::RetryableDatabase(_)));
+    assert!(error.is_retryable());
+    assert_eq!(error.to_string(), "retryable database failure");
+    let source = error
+        .source()
+        .and_then(|source| source.downcast_ref::<sqlx::Error>())
+        .expect("retryable error retains SQLx source");
+    assert_eq!(
+        source
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("55P03")
+    );
+    assert_eq!(counts(&db).await, (0, 0, 0));
+    blocker.rollback().await.unwrap();
+    timed_writer.close().await;
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn database_unique_conflict_retains_a_sanitized_sqlx_source() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let fixture = synthetic_bundle("2026-08-05T07:00:00Z");
+    sqlx::raw_sql(
+        "CREATE FUNCTION fail_unique_publication() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN RAISE EXCEPTION 'injected unique detail' USING ERRCODE='23505'; END $$; \
+         CREATE TRIGGER fail_unique_publication BEFORE INSERT ON data_batches \
+         FOR EACH ROW EXECUTE FUNCTION fail_unique_publication();",
+    )
+    .execute(&db.supervisor)
+    .await
+    .unwrap();
+    let sink = PostgresPublicationSink::new(db.writer.clone());
+
+    let error = sink.publish(&fixture.bundle).await.unwrap_err();
+
+    assert!(matches!(&error, SinkError::DatabaseConflict { .. }));
+    assert!(!error.is_retryable());
+    assert_eq!(
+        error.to_string(),
+        "publication database conflict: source-file lineage is already occupied"
+    );
+    assert!(!error.to_string().contains("injected unique detail"));
+    let source = error
+        .source()
+        .and_then(|source| source.downcast_ref::<sqlx::Error>())
+        .expect("database conflict retains SQLx source");
+    assert_eq!(
+        source
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("23505")
+    );
+    assert_eq!(counts(&db).await, (0, 0, 0));
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn database_constraint_failure_is_permanent_and_retains_its_source() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let fixture = synthetic_bundle("2026-08-05T07:00:00Z");
+    sqlx::raw_sql(
+        "CREATE FUNCTION fail_constraint_publication() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN RAISE EXCEPTION 'injected constraint detail' USING ERRCODE='23514'; END $$; \
+         CREATE TRIGGER fail_constraint_publication BEFORE INSERT ON data_batches \
+         FOR EACH ROW EXECUTE FUNCTION fail_constraint_publication();",
+    )
+    .execute(&db.supervisor)
+    .await
+    .unwrap();
+    let sink = PostgresPublicationSink::new(db.writer.clone());
+
+    let error = sink.publish(&fixture.bundle).await.unwrap_err();
+
+    assert!(matches!(&error, SinkError::PermanentDatabase(_)));
+    assert!(!error.is_retryable());
+    assert_eq!(error.to_string(), "permanent database failure");
+    assert!(!error.to_string().contains("injected constraint detail"));
+    let source = error
+        .source()
+        .and_then(|source| source.downcast_ref::<sqlx::Error>())
+        .expect("permanent database error retains SQLx source");
+    assert_eq!(
+        source
+            .as_database_error()
+            .and_then(|database| database.code())
+            .as_deref(),
+        Some("23514")
+    );
+    assert_eq!(counts(&db).await, (0, 0, 0));
     db.drop_db().await;
 }
 

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, Utc};
-use domain::{BatchId, TradingDate};
+use chrono::{DateTime, NaiveDate, Timelike, Utc};
+use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::publication::{CalendarFact, DataBatchKind, PublicationBundle, PublicationFile};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
@@ -12,7 +12,18 @@ const RAW_PROVIDER: &str = "krx";
 const RAW_MARKET: &str = "kr";
 
 fn sqlstate_is_retryable(code: &str) -> bool {
-    code.starts_with("08") || matches!(code, "40001" | "40P01" | "57P01" | "57P02" | "57P03")
+    code.starts_with("08")
+        || matches!(
+            code,
+            "40001" | "40P01" | "55P03" | "57P01" | "57P02" | "57P03"
+        )
+}
+
+fn postgres_retrieved_at(timestamp: UtcTimestamp) -> DateTime<Utc> {
+    let timestamp = timestamp.as_datetime();
+    timestamp
+        .with_nanosecond(timestamp.nanosecond() / 1_000 * 1_000)
+        .expect("a truncated nanosecond is always valid")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,8 +45,16 @@ pub enum SinkError {
     Conflict(String),
     #[error("publication invariant violation: {0}")]
     Invariant(String),
-    #[error("retryable database failure: {0}")]
+    #[error("retryable database failure")]
     RetryableDatabase(#[source] sqlx::Error),
+    #[error("permanent database failure")]
+    PermanentDatabase(#[source] sqlx::Error),
+    #[error("publication database conflict: {context}")]
+    DatabaseConflict {
+        context: String,
+        #[source]
+        source: sqlx::Error,
+    },
 }
 
 impl SinkError {
@@ -59,14 +78,7 @@ impl SinkError {
         if retryable {
             Self::RetryableDatabase(error)
         } else {
-            let code = error
-                .as_database_error()
-                .and_then(|database| database.code())
-                .map(|code| code.into_owned());
-            Self::Invariant(match code {
-                Some(code) => format!("database operation failed with SQLSTATE {code}"),
-                None => "database operation failed".to_owned(),
-            })
+            Self::PermanentDatabase(error)
         }
     }
 }
@@ -263,7 +275,10 @@ fn semantic_conflict(error: sqlx::Error, context: impl Into<String>) -> SinkErro
         .and_then(|database| database.code())
         .is_some_and(|code| code == "23505")
     {
-        SinkError::Conflict(context.into())
+        SinkError::DatabaseConflict {
+            context: context.into(),
+            source: error,
+        }
     } else {
         SinkError::from_sqlx(error)
     }
@@ -306,6 +321,7 @@ async fn load_batch_rows(
 fn batch_rows_match(
     rows: &[ExistingBatchRow],
     bundle: &PublicationBundle,
+    retrieved_at: DateTime<Utc>,
 ) -> Result<(), SinkError> {
     let expected: BTreeMap<_, _> = bundle
         .files
@@ -334,7 +350,7 @@ fn batch_rows_match(
             || row.storage_path != file.storage_path
             || row.content_sha256 != file.content_sha256
             || row.bytes_size != size
-            || row.retrieved_at != bundle.retrieved_at.as_datetime()
+            || row.retrieved_at != retrieved_at
             || row.fetch_mode != bundle.fetch_mode.as_str()
         {
             return Err(SinkError::Conflict(format!(
@@ -349,6 +365,7 @@ fn batch_rows_match(
 async fn insert_batch_rows(
     tx: &mut Transaction<'_, Postgres>,
     bundle: &PublicationBundle,
+    retrieved_at: DateTime<Utc>,
 ) -> Result<(), SinkError> {
     for file in &bundle.files {
         sqlx::query(
@@ -364,7 +381,7 @@ async fn insert_batch_rows(
         .bind(&file.storage_path)
         .bind(&file.content_sha256)
         .bind(i64::try_from(file.bytes_size).expect("bundle size validated"))
-        .bind(bundle.retrieved_at.as_datetime())
+        .bind(retrieved_at)
         .bind(bundle.source_batch_id.as_uuid())
         .bind(&file.file_name)
         .bind(bundle.fetch_mode.as_str())
@@ -379,6 +396,7 @@ async fn verify_or_insert_history(
     tx: &mut Transaction<'_, Postgres>,
     bundle: &PublicationBundle,
     replay: bool,
+    retrieved_at: DateTime<Utc>,
 ) -> Result<(), SinkError> {
     lock_and_verify_source_versions(tx, bundle).await?;
     for fact in &bundle.calendar_facts {
@@ -415,7 +433,7 @@ async fn verify_or_insert_history(
             .bind(&fact.source_version)
             .bind(bundle.source_batch_id.as_uuid())
             .bind(&fact.content_sha256)
-            .bind(bundle.retrieved_at.as_datetime())
+            .bind(retrieved_at)
             .execute(&mut **tx)
             .await
             .map_err(SinkError::from_sqlx)?;
@@ -465,20 +483,20 @@ async fn lock_and_verify_source_versions(
             .iter()
             .find(|fact| fact.exchange == exchange && fact.source_version == source_version)
             .expect("source-version lock key came from a calendar fact");
-        let existing: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT source, timezone, content_sha256 FROM trading_calendar_versions \
-             WHERE exchange=$1 AND source_version=$2",
+        let mismatch: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM trading_calendar_versions \
+             WHERE exchange=$1 AND source_version=$2 \
+               AND (source <> $3 OR timezone <> $4 OR content_sha256 <> $5))",
         )
         .bind(exchange)
         .bind(source_version)
-        .fetch_all(&mut **tx)
+        .bind(&expected.source)
+        .bind(&expected.timezone)
+        .bind(&expected.content_sha256)
+        .fetch_one(&mut **tx)
         .await
         .map_err(SinkError::from_sqlx)?;
-        if existing.iter().any(|(source, timezone, hash)| {
-            source != &expected.source
-                || timezone != &expected.timezone
-                || hash != &expected.content_sha256
-        }) {
+        if mismatch {
             return Err(SinkError::Conflict(format!(
                 "calendar source version differs for {} {}",
                 exchange, source_version
@@ -532,6 +550,7 @@ async fn verify_or_advance_projections(
     tx: &mut Transaction<'_, Postgres>,
     bundle: &PublicationBundle,
     replay: bool,
+    retrieved_at: DateTime<Utc>,
 ) -> Result<(), SinkError> {
     for fact in &bundle.calendar_facts {
         let mut projection = locked_projection(tx, fact).await?;
@@ -557,7 +576,7 @@ async fn verify_or_advance_projections(
             .bind(&fact.source_version)
             .bind(bundle.source_batch_id.as_uuid())
             .bind(&fact.content_sha256)
-            .bind(bundle.retrieved_at.as_datetime())
+            .bind(retrieved_at)
             .execute(&mut **tx)
             .await
             .map_err(|error| semantic_conflict(error, "calendar projection insert conflict"))?;
@@ -574,21 +593,21 @@ async fn verify_or_advance_projections(
                 fact.exchange, fact.session_date
             )));
         }
-        let incoming_time = bundle.retrieved_at.as_datetime();
+        let incoming_time = retrieved_at;
         match projection.retrieved_at {
             None if replay => {
                 return Err(SinkError::Conflict(
                     "published batch has only a legacy calendar projection".to_owned(),
                 ));
             }
-            None => update_projection(tx, bundle, fact).await?,
+            None => update_projection(tx, bundle, fact, retrieved_at).await?,
             Some(existing_time) if incoming_time > existing_time && replay => {
                 return Err(SinkError::Conflict(
                     "published batch projection is older than its evidence".to_owned(),
                 ));
             }
             Some(existing_time) if incoming_time > existing_time => {
-                update_projection(tx, bundle, fact).await?
+                update_projection(tx, bundle, fact, retrieved_at).await?
             }
             Some(existing_time) if incoming_time == existing_time => {
                 if !projection_matches(&projection, fact) {
@@ -608,6 +627,7 @@ async fn update_projection(
     tx: &mut Transaction<'_, Postgres>,
     bundle: &PublicationBundle,
     fact: &CalendarFact,
+    retrieved_at: DateTime<Utc>,
 ) -> Result<(), SinkError> {
     sqlx::query(
         "UPDATE trading_calendars SET session_type=$3, timezone=$4, source=$5, \
@@ -622,7 +642,7 @@ async fn update_projection(
     .bind(&fact.source_version)
     .bind(bundle.source_batch_id.as_uuid())
     .bind(&fact.content_sha256)
-    .bind(bundle.retrieved_at.as_datetime())
+    .bind(retrieved_at)
     .execute(&mut **tx)
     .await
     .map_err(SinkError::from_sqlx)?;
@@ -653,6 +673,7 @@ impl PublicationSink for PostgresPublicationSink {
 
     async fn publish(&self, bundle: &PublicationBundle) -> Result<PublishOutcome, SinkError> {
         validate_bundle(bundle)?;
+        let retrieved_at = postgres_retrieved_at(bundle.retrieved_at);
         let mut tx = self.pool.begin().await.map_err(SinkError::from_sqlx)?;
         let lock_key = i64::from_be_bytes(
             bundle.source_batch_id.as_uuid().as_bytes()[..8]
@@ -668,12 +689,12 @@ impl PublicationSink for PostgresPublicationSink {
         let rows = load_batch_rows(&mut tx, bundle.source_batch_id).await?;
         let replay = !rows.is_empty();
         if replay {
-            batch_rows_match(&rows, bundle)?;
+            batch_rows_match(&rows, bundle, retrieved_at)?;
         } else {
-            insert_batch_rows(&mut tx, bundle).await?;
+            insert_batch_rows(&mut tx, bundle, retrieved_at).await?;
         }
-        verify_or_insert_history(&mut tx, bundle, replay).await?;
-        verify_or_advance_projections(&mut tx, bundle, replay).await?;
+        verify_or_insert_history(&mut tx, bundle, replay, retrieved_at).await?;
+        verify_or_advance_projections(&mut tx, bundle, replay, retrieved_at).await?;
         tx.commit().await.map_err(SinkError::from_sqlx)?;
         Ok(if replay {
             PublishOutcome::AlreadyPublished
@@ -698,14 +719,31 @@ impl PublicationSink for PostgresPublicationSink {
 
 #[cfg(test)]
 mod tests {
-    use super::sqlstate_is_retryable;
+    use std::error::Error as _;
+
+    use super::{SinkError, sqlstate_is_retryable};
 
     #[test]
     fn sqlstate_retry_classification_is_structural_and_stable() {
         assert!(sqlstate_is_retryable("08006"));
         assert!(sqlstate_is_retryable("40P01"));
         assert!(sqlstate_is_retryable("40001"));
+        assert!(sqlstate_is_retryable("55P03"));
         assert!(!sqlstate_is_retryable("23505"));
         assert!(!sqlstate_is_retryable("23514"));
+    }
+
+    #[test]
+    fn sqlx_error_classes_preserve_sources_with_sanitized_display() {
+        let retryable = SinkError::from_sqlx(sqlx::Error::PoolClosed);
+        assert!(matches!(&retryable, SinkError::RetryableDatabase(_)));
+        assert!(retryable.source().is_some());
+        assert_eq!(retryable.to_string(), "retryable database failure");
+
+        let permanent = SinkError::from_sqlx(sqlx::Error::RowNotFound);
+        assert!(matches!(&permanent, SinkError::PermanentDatabase(_)));
+        assert!(!permanent.is_retryable());
+        assert!(permanent.source().is_some());
+        assert_eq!(permanent.to_string(), "permanent database failure");
     }
 }

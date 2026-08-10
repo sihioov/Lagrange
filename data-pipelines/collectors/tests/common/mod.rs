@@ -9,7 +9,7 @@ use market_data::provider::{KrxProvider, RecordedBundle};
 use market_data::publication::PublicationBundle;
 use market_data::storage::RawStore;
 use sqlx::migrate::{MigrationType, Migrator};
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{Executor, PgPool};
 
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
@@ -46,6 +46,9 @@ DO $role$ BEGIN
     CREATE ROLE admin LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
   END IF;
 END $role$;
+"#;
+
+const SCHEMA_BOOTSTRAP_SQL: &str = r#"
 GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer, research_writer, admin;
 GRANT CREATE ON SCHEMA public TO migration_owner;
 "#;
@@ -54,18 +57,11 @@ fn ddl_for(db: &str, statement: &str) -> sqlx::AssertSqlSafe<String> {
     sqlx::AssertSqlSafe(statement.replace("{db}", db))
 }
 
-fn conn_url(base: &str, role: &str, db: &str) -> String {
-    let (scheme, rest) = base.split_once("://").expect("DATABASE_URL scheme");
-    let (auth, host_and_db) = rest.rsplit_once('@').expect("DATABASE_URL credentials");
-    let password = auth.split_once(':').map(|(_, password)| password);
-    let host = host_and_db
+fn database_url(base: &str, db: &str) -> String {
+    let (head, _) = base
         .rsplit_once('/')
-        .expect("DATABASE_URL database")
-        .0;
-    match password {
-        Some(password) => format!("{scheme}://{role}:{password}@{host}/{db}"),
-        None => format!("{scheme}://{role}@{host}/{db}"),
-    }
+        .expect("DATABASE_URL must contain a database path");
+    format!("{head}/{db}")
 }
 
 async fn pool(url: &str, max_connections: u32) -> Result<PgPool, sqlx::Error> {
@@ -73,6 +69,35 @@ async fn pool(url: &str, max_connections: u32) -> Result<PgPool, sqlx::Error> {
         .max_connections(max_connections)
         .acquire_timeout(Duration::from_secs(10))
         .connect(url)
+        .await
+}
+
+async fn effective_role_pool(
+    supervisor_url: &str,
+    db: &str,
+    role: &'static str,
+    lock_timeout: bool,
+    max_connections: u32,
+) -> Result<PgPool, sqlx::Error> {
+    let setup = match (role, lock_timeout) {
+        ("migration_owner", false) => "SET ROLE migration_owner",
+        ("research_writer", false) => "SET ROLE research_writer",
+        ("research_writer", true) => "SET ROLE research_writer; SET lock_timeout = '100ms'",
+        _ => unreachable!("test harness accepts only fixed effective roles"),
+    };
+    let options: PgConnectOptions = database_url(supervisor_url, db)
+        .parse()
+        .expect("supervisor DATABASE_URL parses for scratch database");
+    PgPoolOptions::new()
+        .max_connections(max_connections)
+        .acquire_timeout(Duration::from_secs(10))
+        .after_connect(move |connection, _metadata| {
+            Box::pin(async move {
+                sqlx::raw_sql(setup).execute(&mut *connection).await?;
+                Ok(())
+            })
+        })
+        .connect_with(options)
         .await
 }
 
@@ -108,6 +133,14 @@ impl ScratchDb {
             COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         let admin = pool(&supervisor_url, 2).await?;
+        let mut role_bootstrap = admin.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('lagrange-test-role-bootstrap'))")
+            .execute(&mut *role_bootstrap)
+            .await?;
+        sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
+            .execute(&mut *role_bootstrap)
+            .await?;
+        role_bootstrap.commit().await?;
         admin
             .execute(ddl_for(&name, "DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
             .await?;
@@ -116,8 +149,8 @@ impl ScratchDb {
             .await?;
         drop(admin);
 
-        let supervisor = pool(&conn_url(&supervisor_url, "postgres", &name), 4).await?;
-        sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
+        let supervisor = pool(&database_url(&supervisor_url, &name), 4).await?;
+        sqlx::raw_sql(SCHEMA_BOOTSTRAP_SQL)
             .execute(&supervisor)
             .await?;
         supervisor
@@ -127,7 +160,13 @@ impl ScratchDb {
             ))
             .await?;
 
-        let owner = pool(&conn_url(&supervisor_url, "migration_owner", &name), 2).await?;
+        let owner =
+            effective_role_pool(&supervisor_url, &name, "migration_owner", false, 2).await?;
+        let roles: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+            .fetch_one(&owner)
+            .await?;
+        assert_eq!(roles.0, "migration_owner");
+        assert_ne!(roles.0, roles.1);
         MIGRATOR.run(&owner).await?;
         let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
             .fetch_one(&owner)
@@ -135,17 +174,25 @@ impl ScratchDb {
         assert_eq!(applied as usize, up_migration_count());
         owner.close().await;
 
-        let writer = pool(&conn_url(&supervisor_url, "research_writer", &name), 4).await?;
-        let current_user: String = sqlx::query_scalar("SELECT current_user")
+        let writer =
+            effective_role_pool(&supervisor_url, &name, "research_writer", false, 4).await?;
+        let roles: (String, String) = sqlx::query_as("SELECT current_user, session_user")
             .fetch_one(&writer)
             .await?;
-        assert_eq!(current_user, "research_writer");
+        assert_eq!(roles.0, "research_writer");
+        assert_ne!(roles.0, roles.1);
         Ok(Self {
             supervisor,
             writer,
             name,
             supervisor_url,
         })
+    }
+
+    pub async fn writer_with_lock_timeout(&self) -> PgPool {
+        effective_role_pool(&self.supervisor_url, &self.name, "research_writer", true, 1)
+            .await
+            .expect("timed research_writer pool")
     }
 
     pub async fn drop_db(self) {

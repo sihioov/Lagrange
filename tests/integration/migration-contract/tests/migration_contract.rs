@@ -57,6 +57,10 @@ const SOURCE_INDEX_UP_SQL: &str =
     include_str!("../../../../migrations/0024_research_publication_source_index.up.sql");
 const SOURCE_INDEX_DOWN_SQL: &str =
     include_str!("../../../../migrations/0024_research_publication_source_index.down.sql");
+const CALENDAR_VERSION_INDEX_UP_SQL: &str =
+    include_str!("../../../../migrations/0025_research_calendar_version_lookup.up.sql");
+const CALENDAR_VERSION_INDEX_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0025_research_calendar_version_lookup.down.sql");
 const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
 
@@ -68,8 +72,10 @@ fn executable_sql(sql: &str) -> String {
         .join("\n")
 }
 
-/// Role/schema bootstrap executed as superuser on each fresh database.
+/// Database-local grants executed as supervisor on each fresh scratch database.
 const BOOTSTRAP_SQL: &str = include_str!("../bootstrap.sql");
+/// Cluster-global roles serialized in the supervisor database before scratch creation.
+const ROLE_BOOTSTRAP_SQL: &str = include_str!("../role-bootstrap.sql");
 
 /// Tenant tables that MUST carry an ownership column (design §7.3).
 const TENANT_TABLES: &[&str] = &[
@@ -128,9 +134,20 @@ async fn applied_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
         .await
 }
 
-/// Rewrite a superuser URL (`postgres://user[:pw]@host:port/db`) for a role
-/// and database. Password is preserved if present (disposable cluster uses
-/// trust auth, so it is normally empty).
+#[test]
+fn cluster_role_bootstrap_cannot_grant_scratch_schema_privileges() {
+    let executable = executable_sql(ROLE_BOOTSTRAP_SQL).to_ascii_uppercase();
+    assert!(!executable.contains("GRANT "));
+    assert!(!executable.contains("SCHEMA "));
+    let scratch_executable = executable_sql(BOOTSTRAP_SQL).to_ascii_uppercase();
+    assert!(!scratch_executable.contains("CREATE ROLE"));
+    assert!(!scratch_executable.contains("ALTER ROLE"));
+}
+
+/// Rewrite a supervisor URL (`postgres://user[:pw]@host:port/db`) for the
+/// legacy serving-role checks. Migration and research writer pools retain the
+/// supplied supervisor identity and assume their fixed effective role in
+/// `after_connect` instead.
 fn conn_url(super_url: &str, role: &str, db: &str) -> String {
     let (_scheme, rest) = super_url
         .split_once("://")
@@ -150,6 +167,50 @@ fn conn_url(super_url: &str, role: &str, db: &str) -> String {
     }
 }
 
+fn supervisor_db_url(super_url: &str, db: &str) -> String {
+    let (head, _) = super_url
+        .rsplit_once('/')
+        .expect("DATABASE_URL must contain a database path");
+    format!("{head}/{db}")
+}
+
+async fn effective_role_pool(
+    super_url: &str,
+    db: &str,
+    role: &'static str,
+    actor_user_id: Option<&str>,
+    max_connections: u32,
+) -> Result<PgPool, Box<dyn Error>> {
+    let setup = match role {
+        "migration_owner" => "SET ROLE migration_owner",
+        "research_writer" => "SET ROLE research_writer",
+        _ => return Err(format!("unsupported effective role {role}").into()),
+    };
+    let mut options: sqlx::postgres::PgConnectOptions = supervisor_db_url(super_url, db)
+        .parse()
+        .map_err(Box::<dyn Error>::from)?;
+    if let Some(user_id) = actor_user_id {
+        options = options.options([("app.actor_user_id", user_id.to_owned())]);
+    }
+    let pool = PgPoolOptions::new()
+        .max_connections(max_connections)
+        .after_connect(move |connection, _metadata| {
+            Box::pin(async move {
+                sqlx::raw_sql(setup).execute(&mut *connection).await?;
+                Ok(())
+            })
+        })
+        .connect_with(options)
+        .await
+        .map_err(Box::<dyn Error>::from)?;
+    let identities: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(identities.0, role);
+    assert_ne!(identities.0, identities.1);
+    Ok(pool)
+}
+
 /// A pool whose connections carry an explicit RLS actor context
 /// (`app.actor_user_id` startup option). Since migration 0010 forces row-level
 /// security on every tenant table, tenant reads (which are STRICT: the policy
@@ -163,6 +224,9 @@ async fn actor_pool(
     role: &str,
     user_id: &str,
 ) -> Result<PgPool, Box<dyn Error>> {
+    if role == "migration_owner" {
+        return effective_role_pool(super_url, db, "migration_owner", Some(user_id), 3).await;
+    }
     let opts: sqlx::postgres::PgConnectOptions = conn_url(super_url, role, db)
         .parse()
         .map_err(Box::<dyn Error>::from)?;
@@ -218,6 +282,14 @@ async fn create_contract_db(super_url: &str) -> Result<(String, PgPool), Box<dyn
         "generated database name must be a safe identifier"
     );
     let admin = admin_pool(super_url).await?;
+    let mut role_bootstrap = admin.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('lagrange-test-role-bootstrap'))")
+        .execute(&mut *role_bootstrap)
+        .await?;
+    sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
+        .execute(&mut *role_bootstrap)
+        .await?;
+    role_bootstrap.commit().await?;
     sqlx::query(ddl_for(&db, "DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
         .execute(&admin)
         .await?;
@@ -226,7 +298,7 @@ async fn create_contract_db(super_url: &str) -> Result<(String, PgPool), Box<dyn
         .await?;
     drop(admin);
 
-    let super_new = admin_pool(&conn_url(super_url, "postgres", &db)).await?;
+    let super_new = admin_pool(&supervisor_db_url(super_url, &db)).await?;
     sqlx::raw_sql(BOOTSTRAP_SQL).execute(&super_new).await?;
     sqlx::raw_sql(ddl_for(
         &db,
@@ -236,10 +308,12 @@ async fn create_contract_db(super_url: &str) -> Result<(String, PgPool), Box<dyn
     .await?;
     drop(super_new);
 
-    let owner = PgPoolOptions::new()
-        .max_connections(3)
-        .connect(&conn_url(super_url, "migration_owner", &db))
+    let owner = effective_role_pool(super_url, &db, "migration_owner", None, 3).await?;
+    let roles: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+        .fetch_one(&owner)
         .await?;
+    assert_eq!(roles.0, "migration_owner");
+    assert_ne!(roles.0, roles.1);
     Ok((db, owner))
 }
 
@@ -253,6 +327,9 @@ async fn drop_contract_db(super_url: &str, db: &str) -> Result<(), Box<dyn Error
 }
 
 async fn role_pool(super_url: &str, db: &str, role: &str) -> Result<PgPool, Box<dyn Error>> {
+    if role == "research_writer" {
+        return effective_role_pool(super_url, db, "research_writer", None, 2).await;
+    }
     let opts: sqlx::postgres::PgConnectOptions = conn_url(super_url, role, db)
         .parse()
         .map_err(Box::<dyn Error>::from)?;
@@ -319,6 +396,16 @@ async fn full_contract_body(
             SOURCE_INDEX_DOWN_SQL,
             "DROP INDEX CONCURRENTLY IF EXISTS data_batches_source_file_uq;",
         ),
+        (
+            "0025 up",
+            CALENDAR_VERSION_INDEX_UP_SQL,
+            "CREATE INDEX CONCURRENTLY trading_calendar_versions_source_lookup_idx\nON trading_calendar_versions (exchange, source_version)\nINCLUDE (source, timezone, content_sha256);",
+        ),
+        (
+            "0025 down",
+            CALENDAR_VERSION_INDEX_DOWN_SQL,
+            "DROP INDEX CONCURRENTLY IF EXISTS trading_calendar_versions_source_lookup_idx;",
+        ),
     ] {
         assert!(
             sql.starts_with("-- no-transaction"),
@@ -367,6 +454,47 @@ async fn full_contract_body(
     assert!(
         source_index_down_migration.no_tx,
         "0024 down must opt out of a transaction so PostgreSQL can drop its index concurrently"
+    );
+    let calendar_index_migration = MIGRATOR
+        .migrations
+        .iter()
+        .find(|migration| {
+            migration.version == 25 && migration.migration_type != MigrationType::ReversibleDown
+        })
+        .expect("0025 calendar source-version lookup migration must exist");
+    assert!(
+        calendar_index_migration.no_tx,
+        "0025 must opt out of a transaction so PostgreSQL can build its index concurrently"
+    );
+    let calendar_index_down_migration = MIGRATOR
+        .migrations
+        .iter()
+        .find(|migration| {
+            migration.version == 25 && migration.migration_type == MigrationType::ReversibleDown
+        })
+        .expect("0025 calendar source-version lookup down migration must exist");
+    assert!(
+        calendar_index_down_migration.no_tx,
+        "0025 down must opt out of a transaction so PostgreSQL can drop its index concurrently"
+    );
+    let calendar_index_shape: (i32, i32, bool, bool) = sqlx::query_as(
+        "SELECT indnkeyatts::integer, indnatts::integer, indisunique, indisvalid \
+         FROM pg_index WHERE indexrelid = \
+         'public.trading_calendar_versions_source_lookup_idx'::regclass",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(calendar_index_shape, (2, 5, false, true));
+    let calendar_index_definition: String = sqlx::query_scalar(
+        "SELECT pg_get_indexdef('public.trading_calendar_versions_source_lookup_idx'::regclass)",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        calendar_index_definition.contains(
+            "USING btree (exchange, source_version) INCLUDE (source, timezone, content_sha256)"
+        ),
+        "unexpected 0025 index definition: {calendar_index_definition}"
     );
 
     // Tables exist.
@@ -1679,21 +1807,56 @@ async fn research_publication_boundaries_body(owner: &PgPool) -> Result<(), Box<
         "0023 must finish publication checks validated"
     );
 
-    let expected = up_migration_count() as i64;
-    MIGRATOR.run(owner).await?;
+    MIGRATOR.run_to(24, owner).await?;
     assert_eq!(
         applied_count(owner).await?,
-        expected,
-        "final migration must add the concurrent source index"
+        24,
+        "0024 must add the concurrent source index"
     );
     let source_index: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('public.data_batches_source_file_uq')::text")
             .fetch_one(owner)
             .await?;
     assert_eq!(source_index.as_deref(), Some("data_batches_source_file_uq"));
+    let calendar_lookup_before_0025: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.trading_calendar_versions_source_lookup_idx')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(calendar_lookup_before_0025.is_none());
+
+    let expected = up_migration_count() as i64;
+    MIGRATOR.run(owner).await?;
+    assert_eq!(applied_count(owner).await?, expected);
+    let calendar_lookup: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.trading_calendar_versions_source_lookup_idx')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        calendar_lookup.as_deref(),
+        Some("trading_calendar_versions_source_lookup_idx")
+    );
+
+    MIGRATOR.undo(owner, 24).await?;
+    assert_eq!(applied_count(owner).await?, 24, "0025 down must run first");
+    let calendar_lookup_gone: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.trading_calendar_versions_source_lookup_idx')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(calendar_lookup_gone.is_none());
+    let source_index_retained: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.data_batches_source_file_uq')::text")
+            .fetch_one(owner)
+            .await?;
+    assert_eq!(
+        source_index_retained.as_deref(),
+        Some("data_batches_source_file_uq")
+    );
 
     MIGRATOR.undo(owner, 23).await?;
-    assert_eq!(applied_count(owner).await?, 23, "0024 down must run first");
+    assert_eq!(applied_count(owner).await?, 23, "0024 down must run second");
     let source_index_gone: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('public.data_batches_source_file_uq')::text")
             .fetch_one(owner)
@@ -1706,7 +1869,7 @@ async fn research_publication_boundaries_body(owner: &PgPool) -> Result<(), Box<
     assert_eq!(checks_after_0024_down, expected_still_validated);
 
     MIGRATOR.undo(owner, 22).await?;
-    assert_eq!(applied_count(owner).await?, 22, "0023 down must run second");
+    assert_eq!(applied_count(owner).await?, 22, "0023 down must run third");
     let (checks_after_0023_down, expected_restored_unvalidated) = validation_state(false).await?;
     assert_eq!(
         checks_after_0023_down, expected_restored_unvalidated,
@@ -1746,13 +1909,37 @@ async fn revert_and_rerun_body(
         "fresh DB must apply all {expected} migrations"
     );
 
-    // Revert 0024 then 0023 before 0022 while all earlier tables remain.
+    // Revert 0025, 0024, then 0023 before 0022 while all earlier tables remain.
     // This proves each down migration restores its own boundary rather than
     // relying on 0003.down to hide omitted objects in a full teardown.
-    MIGRATOR.undo(owner, 23).await?;
+    MIGRATOR.undo(owner, 24).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
         expected - 1,
+        "undo to 0024 must revert only 0025"
+    );
+    let calendar_lookup_gone: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.trading_calendar_versions_source_lookup_idx')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        calendar_lookup_gone.is_none(),
+        "0025 down must remove the concurrent calendar source-version index"
+    );
+    let source_index_retained: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.data_batches_source_file_uq')::text")
+            .fetch_one(owner)
+            .await?;
+    assert_eq!(
+        source_index_retained.as_deref(),
+        Some("data_batches_source_file_uq")
+    );
+
+    MIGRATOR.undo(owner, 23).await?;
+    assert_eq!(
+        applied_count(owner).await? as usize,
+        expected - 2,
         "undo to 0023 must revert only 0024"
     );
     let source_index_gone: Option<String> =
@@ -1766,7 +1953,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 22).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 2,
+        expected - 3,
         "undo to 0022 must revert only 0023"
     );
     sqlx::query(
@@ -1779,12 +1966,13 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 21).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 3,
+        expected - 4,
         "undo to 0021 must revert only 0022"
     );
     for object in [
         "public.trading_calendar_versions",
         "public.data_batches_source_file_uq",
+        "public.trading_calendar_versions_source_lookup_idx",
     ] {
         let gone: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
             .bind(object)
@@ -1874,6 +2062,15 @@ async fn revert_and_rerun_body(
         Some("trading_calendar_versions"),
         "0022 up must restore calendar history after its standalone down"
     );
+    let calendar_lookup_restored: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.trading_calendar_versions_source_lookup_idx')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        calendar_lookup_restored.as_deref(),
+        Some("trading_calendar_versions_source_lookup_idx")
+    );
 
     // Undo every migration. sqlx 0.9's `undo` reverts migrations whose version
     // is > target; target 0 therefore reverts everything (the pre-fix code
@@ -1900,6 +2097,12 @@ async fn revert_and_rerun_body(
         calendar_history_gone.is_none(),
         "after revert, public.trading_calendar_versions must not exist"
     );
+    let calendar_lookup_gone: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.trading_calendar_versions_source_lookup_idx')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(calendar_lookup_gone.is_none());
 
     // Run again from scratch.
     MIGRATOR.run(owner).await?;
@@ -1926,6 +2129,15 @@ async fn revert_and_rerun_body(
         calendar_history_back.as_deref(),
         Some("trading_calendar_versions"),
         "trading_calendar_versions must exist after re-run"
+    );
+    let calendar_lookup_back: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.trading_calendar_versions_source_lookup_idx')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        calendar_lookup_back.as_deref(),
+        Some("trading_calendar_versions_source_lookup_idx")
     );
 
     // Post-revert DB still enforces the five-state contract (deterministic).
