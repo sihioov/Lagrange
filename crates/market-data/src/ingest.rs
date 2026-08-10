@@ -3,17 +3,19 @@
 //! [`ingest_bundle`] drives one delivery end-to-end: the provider returns raw
 //! envelopes, the pipeline validates their structure, persists every byte
 //! unchanged into a fresh immutable batch, and appends one manifest row. Any
-//! failure is a typed [`IngestError`] and leaves no partial output.
+//! failure is a typed [`IngestError`] and leaves no incomplete evidence. A
+//! failure after the durable batch point can leave a validated orphan for
+//! [`RawStore::read_manifest`] recovery.
 
 use domain::{BatchId, TradingDate, UtcTimestamp};
 
 use crate::contract::{ResponseKind, StoredFile};
 use crate::provider::{EodProvider, ProviderError};
 use crate::storage::{BatchSpec, ManifestEntry, RawStore, StoreError};
-use crate::validate::{validate_response, ValidationError};
+use crate::validate::{ValidationError, validate_response};
 
 /// A typed failure of the whole ingestion pipeline.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum IngestError {
     /// The provider failed (timeout, credentials, unsafe file name, ...).
     Provider(ProviderError),
@@ -35,7 +37,15 @@ impl std::fmt::Display for IngestError {
     }
 }
 
-impl std::error::Error for IngestError {}
+impl std::error::Error for IngestError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Provider(source) => Some(source),
+            Self::Store(source) => Some(source),
+            Self::MalformedResponse { .. } => None,
+        }
+    }
+}
 
 impl From<ProviderError> for IngestError {
     fn from(e: ProviderError) -> Self {

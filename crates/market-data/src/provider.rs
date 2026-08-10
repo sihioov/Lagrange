@@ -53,7 +53,7 @@ impl FetchRequest {
 }
 
 /// The provider contract: fetch a delivery for one market/date.
-pub trait EodProvider: fmt::Debug {
+pub trait EodProvider: fmt::Debug + Send + Sync {
     /// Stable provider id (`krx`).
     fn provider_id(&self) -> &'static str;
     /// The fetch mode this provider instance runs in.
@@ -64,59 +64,60 @@ pub trait EodProvider: fmt::Debug {
 }
 
 /// Typed provider failure. Never a panic; never partial output downstream.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     /// The Owner-only credentialed mode requires real credentials (a licensed
     /// KRX contract reference). Absent credentials fail typed.
+    #[error("provider credentials unavailable ({credential_ref}): {detail}")]
     CredentialsUnavailable {
         credential_ref: String,
         detail: String,
     },
     /// The endpoint did not answer within its timeout budget.
+    #[error("provider endpoint timeout for {kind} after {timeout_secs}s")]
     EndpointTimeout {
         kind: ResponseKind,
         timeout_secs: u64,
     },
     /// The provider-supplied file name is not a plain name (path traversal).
+    #[error("provider returned unsafe file name {file_name:?} for {kind}")]
     UnsafeFileName {
         kind: ResponseKind,
         file_name: String,
     },
     /// A requested response class is not supported by this provider.
+    #[error("provider does not support {0}")]
     UnsupportedKind(ResponseKind),
-    /// I/O or recorded-bundle problems.
-    Io { context: String, detail: String },
+    /// Transient endpoint or transport I/O.
+    #[error("provider io failure ({context})")]
+    Io {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
+    /// Required recorded bundle metadata does not exist.
+    #[error("recorded bundle is missing {path}")]
+    RecordedBundleMissing { path: String },
+    /// A recorded bundle file cannot be read. Recorded fixtures are local
+    /// configuration, so this is permanent rather than endpoint I/O.
+    #[error("recorded bundle io failure ({context}) at {path}")]
+    RecordedBundleIo {
+        context: String,
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    /// `bundle.json` is not valid JSON for the recorded-bundle contract.
+    #[error("recorded bundle manifest is malformed at {path}")]
+    RecordedBundleParse {
+        path: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    /// The manifest is valid JSON but declares unsupported configuration.
+    #[error("recorded bundle configuration is invalid: {detail}")]
+    RecordedBundleInvalid { detail: String },
 }
-
-impl fmt::Display for ProviderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::CredentialsUnavailable {
-                credential_ref,
-                detail,
-            } => write!(
-                f,
-                "provider credentials unavailable ({credential_ref}): {detail}"
-            ),
-            Self::EndpointTimeout { kind, timeout_secs } => {
-                write!(
-                    f,
-                    "provider endpoint timeout for {kind} after {timeout_secs}s"
-                )
-            }
-            Self::UnsafeFileName { kind, file_name } => {
-                write!(
-                    f,
-                    "provider returned unsafe file name {file_name:?} for {kind}"
-                )
-            }
-            Self::UnsupportedKind(kind) => write!(f, "provider does not support {kind}"),
-            Self::Io { context, detail } => write!(f, "provider io failure ({context}): {detail}"),
-        }
-    }
-}
-
-impl std::error::Error for ProviderError {}
 
 /// A reference to a stored credential, e.g. `env:KRX_CREDENTIAL_REF`. The
 /// reference travels in metadata; the credential value never does.
@@ -241,9 +242,8 @@ impl RecordedBundle {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, ProviderError> {
         let root = root.into();
         if !root.join("bundle.json").is_file() {
-            return Err(ProviderError::Io {
-                context: "recorded-bundle".to_owned(),
-                detail: format!("{} has no bundle.json", root.display()),
+            return Err(ProviderError::RecordedBundleMissing {
+                path: root.join("bundle.json").display().to_string(),
             });
         }
         let _ = read_bundle_manifest(&root)?;
@@ -264,27 +264,28 @@ impl RecordedBundle {
                     timeout_secs: 30,
                 });
             }
-            return Err(ProviderError::Io {
-                context: "recorded-bundle".to_owned(),
+            return Err(ProviderError::RecordedBundleInvalid {
                 detail: format!("unknown simulate directive {sim:?}"),
             });
         }
 
         let mut out = Vec::new();
         for recorded in &manifest.responses {
-            let kind = ResponseKind::parse(&recorded.kind).ok_or_else(|| ProviderError::Io {
-                context: "recorded-bundle".to_owned(),
-                detail: format!("unknown response kind {:?}", recorded.kind),
+            let kind = ResponseKind::parse(&recorded.kind).ok_or_else(|| {
+                ProviderError::RecordedBundleInvalid {
+                    detail: format!("unknown response kind {:?}", recorded.kind),
+                }
             })?;
             if !req.kinds.contains(&kind) {
                 continue;
             }
             validate_plain_name(&recorded.file, kind)?;
-            let bytes =
-                fs::read(self.root.join(&recorded.file)).map_err(|e| ProviderError::Io {
-                    context: format!("recorded file {}", recorded.file),
-                    detail: e.to_string(),
-                })?;
+            let path = self.root.join(&recorded.file);
+            let bytes = fs::read(&path).map_err(|source| ProviderError::RecordedBundleIo {
+                context: format!("recorded response {}", recorded.file),
+                path: path.display().to_string(),
+                source,
+            })?;
             out.push(RawEnvelope::new(
                 req.batch_id,
                 kind,
@@ -304,13 +305,15 @@ impl RecordedBundle {
 }
 
 fn read_bundle_manifest(root: &Path) -> Result<RecordedBundleFile, ProviderError> {
-    let raw = fs::read_to_string(root.join("bundle.json")).map_err(|e| ProviderError::Io {
-        context: "recorded-bundle".to_owned(),
-        detail: format!("read bundle.json: {e}"),
+    let path = root.join("bundle.json");
+    let raw = fs::read_to_string(&path).map_err(|source| ProviderError::RecordedBundleIo {
+        context: "read bundle.json".to_owned(),
+        path: path.display().to_string(),
+        source,
     })?;
-    serde_json::from_str(&raw).map_err(|e| ProviderError::Io {
-        context: "recorded-bundle".to_owned(),
-        detail: format!("parse bundle.json: {e}"),
+    serde_json::from_str(&raw).map_err(|source| ProviderError::RecordedBundleParse {
+        path: path.display().to_string(),
+        source,
     })
 }
 

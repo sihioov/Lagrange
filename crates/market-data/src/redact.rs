@@ -90,19 +90,17 @@ impl Redactor {
 
 /// Finds the value bound to `key` via `key=` or `key:` (up to whitespace).
 fn value_after_key<'a>(text: &'a str, key: &str) -> Option<&'a str> {
-    for (needle, start) in [(format!("{key}="), 1), (format!("{key}:"), 1)] {
+    for needle in [format!("{key}="), format!("{key}:")] {
         let mut from = 0;
         while let Some(rel) = text[from..].find(&needle) {
-            let value_start = from + rel + start;
+            let value_start = from + rel + needle.len();
             let rest = &text[value_start..];
-            let value_end = rest
-                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-                .unwrap_or(rest.len());
-            let value = &rest[..value_end];
+            let (content_start, content_end) = value_bounds(rest);
+            let value = &rest[content_start..content_end];
             if !value.is_empty() && value != REDACTED {
                 return Some(value);
             }
-            from = value_start + value_end;
+            from = value_start + content_end.max(1);
         }
     }
     None
@@ -110,22 +108,46 @@ fn value_after_key<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 
 fn scrub_key_value(text: &str, key: &str) -> String {
     let mut out = text.to_owned();
-    for (needle, start) in [(format!("{key}="), 1), (format!("{key}:"), 1)] {
+    for needle in [format!("{key}="), format!("{key}:")] {
         let mut from = 0;
         while let Some(rel) = out[from..].find(&needle) {
-            let value_start = from + rel + start;
+            let value_start = from + rel + needle.len();
             let rest = &out[value_start..];
-            let value_end = rest
-                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-                .unwrap_or(rest.len());
-            let value = &rest[..value_end];
+            let (content_start, content_end) = value_bounds(rest);
+            let value = &rest[content_start..content_end];
             if !value.is_empty() && value != REDACTED {
-                out.replace_range(value_start..value_start + value_end, REDACTED);
+                out.replace_range(
+                    value_start + content_start..value_start + content_end,
+                    REDACTED,
+                );
+                from = value_start + content_start + REDACTED.len();
+            } else {
+                from = value_start + content_end.max(1);
             }
-            from = value_start + REDACTED.len();
         }
     }
     out
+}
+
+fn value_bounds(value: &str) -> (usize, usize) {
+    match value.as_bytes().first().copied() {
+        Some(quote @ (b'\'' | b'"')) => {
+            let start = 1;
+            let end = value[start..]
+                .bytes()
+                .position(|byte| byte == quote)
+                .map_or(value.len(), |position| start + position);
+            (start, end)
+        }
+        _ => {
+            let end = value
+                .find(|character: char| {
+                    character.is_whitespace() || character == '"' || character == '\''
+                })
+                .unwrap_or(value.len());
+            (0, end)
+        }
+    }
 }
 
 fn bearer_token(text: &str) -> Option<&str> {
@@ -218,5 +240,27 @@ mod tests {
         assert!(redactor.is_clean(&redacted));
         assert_eq!(redactor.redact(&redacted), redacted);
         assert_eq!(redactor.secrets, vec![database_url, password]);
+    }
+
+    #[test]
+    fn key_value_redaction_starts_after_the_complete_delimiter() {
+        let redactor = Redactor::new();
+        let input =
+            "KRX_APP_SECRET=alpha KRX_BASE_URL:'https://secret.example' KRX_APP_SECRET=beta";
+
+        assert_eq!(
+            redactor.scan(input),
+            vec![
+                "KRX_APP_SECRET=alpha",
+                "KRX_BASE_URL=https://secret.example"
+            ]
+        );
+        let output = redactor.redact(input);
+        assert_eq!(
+            output,
+            "KRX_APP_SECRET=[REDACTED] KRX_BASE_URL:'[REDACTED]' KRX_APP_SECRET=[REDACTED]"
+        );
+        assert!(redactor.is_clean(&output));
+        assert_eq!(redactor.redact(&output), output);
     }
 }

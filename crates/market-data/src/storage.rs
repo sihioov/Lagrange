@@ -12,20 +12,23 @@
 //! Invariants enforced here:
 //! - **Never overwrite Raw**: every delivery is a NEW batch dir; file writes use
 //!   exclusive `create_new`, so an existing file is never clobbered.
-//! - **No partial batches**: `store_batch` is all-or-nothing — on any failure the
-//!   batch dir is removed and nothing reaches the manifest.
+//! - **Crash-durable batches**: evidence and `batch.json` are synced before the
+//!   manifest is appended. Failures before that durable point clean up; a later
+//!   manifest failure preserves a discoverable orphan batch for recovery.
 //! - **Path traversal rejection**: provider file names must be plain names.
-//! - **Append-only manifest**: JSONL appended with `OpenOptions::append`; reads
-//!   verify stored bytes against the recorded content hash (tamper detection).
+//! - **Append-only manifest**: JSONL writes are serialized under a file lock;
+//!   reads verify stored bytes against the recorded content hash (tamper detection).
 
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
-use crate::contract::{date_partition, FetchMode, RawEnvelope, ResponseKind, StoredFile};
+use crate::contract::{FetchMode, RawEnvelope, ResponseKind, StoredFile, date_partition};
 
 /// Per-file record inside a manifest row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,7 +64,7 @@ impl ManifestEntry {
 }
 
 /// A typed failure from the raw zone.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum StoreError {
     /// A file already exists at the target path — Raw must never be overwritten.
     FileExists { path: String },
@@ -88,8 +91,35 @@ pub enum StoreError {
         recorded: String,
         actual: String,
     },
-    /// Filesystem or content-verification failure.
-    Io { context: String, detail: String },
+    /// A complete manifest record is malformed. Only an unterminated final
+    /// record is tolerated as a crash tail.
+    CorruptManifest {
+        path: String,
+        line: usize,
+        source: serde_json::Error,
+    },
+    /// A durable orphan's `batch.json` is malformed.
+    CorruptBatchMetadata {
+        path: String,
+        source: serde_json::Error,
+    },
+    /// A durable orphan's location and metadata disagree.
+    InvalidBatchMetadata { path: String, reason: String },
+    /// Immutable evidence named by committed metadata is missing.
+    MissingEvidence {
+        path: String,
+        source: std::io::Error,
+    },
+    /// Serialization failed before bytes could be committed.
+    Serialization {
+        context: String,
+        source: serde_json::Error,
+    },
+    /// Genuine filesystem create/read/write/sync/lock failure.
+    Io {
+        context: String,
+        source: std::io::Error,
+    },
 }
 
 impl std::fmt::Display for StoreError {
@@ -124,12 +154,46 @@ impl std::fmt::Display for StoreError {
                 f,
                 "raw content hash mismatch at {path}: recorded {recorded} != read {actual}"
             ),
-            Self::Io { context, detail } => write!(f, "raw store io failure ({context}): {detail}"),
+            Self::CorruptManifest { path, line, source } => write!(
+                f,
+                "corrupt Raw manifest record at {path} line {line}: {source}"
+            ),
+            Self::CorruptBatchMetadata { path, source } => {
+                write!(f, "corrupt Raw batch metadata at {path}: {source}")
+            }
+            Self::InvalidBatchMetadata { path, reason } => {
+                write!(f, "invalid Raw batch metadata at {path}: {reason}")
+            }
+            Self::MissingEvidence { path, .. } => {
+                write!(f, "immutable Raw evidence is missing at {path}")
+            }
+            Self::Serialization { context, source } => {
+                write!(f, "Raw serialization failure ({context}): {source}")
+            }
+            Self::Io { context, source } => {
+                write!(f, "raw store io failure ({context}): {source}")
+            }
         }
     }
 }
 
-impl std::error::Error for StoreError {}
+impl std::error::Error for StoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::CorruptManifest { source, .. }
+            | Self::CorruptBatchMetadata { source, .. }
+            | Self::Serialization { source, .. } => Some(source),
+            Self::MissingEvidence { source, .. } | Self::Io { source, .. } => Some(source),
+            Self::FileExists { .. }
+            | Self::UnsafeFileName { .. }
+            | Self::UnsafeScope { .. }
+            | Self::ScopeMismatch { .. }
+            | Self::UnsafePath { .. }
+            | Self::ContentHashMismatch { .. }
+            | Self::InvalidBatchMetadata { .. } => None,
+        }
+    }
+}
 
 /// Everything the raw zone needs to persist one delivery as a new batch.
 #[derive(Debug, Clone)]
@@ -192,8 +256,9 @@ impl RawStore {
 
     /// Persists one delivery as a new immutable batch and appends its manifest row.
     ///
-    /// All-or-nothing: on any failure the batch dir is removed and the manifest
-    /// is untouched.
+    /// Failures before evidence, metadata, and their directory entries are
+    /// synced remove the partial batch. Once that durable point is reached, a
+    /// manifest failure preserves the batch for orphan discovery.
     pub fn store_batch(
         &self,
         spec: &BatchSpec<'_>,
@@ -218,9 +283,11 @@ impl RawStore {
                 path: dir.display().to_string(),
             });
         }
-        let parent = dir.parent().ok_or_else(|| StoreError::Io {
-            context: "batch-dir-parent".to_owned(),
-            detail: dir.display().to_string(),
+        let parent = dir.parent().ok_or_else(|| {
+            io_err(
+                "batch-dir-parent",
+                std::io::Error::other(format!("{} has no parent", dir.display())),
+            )
         })?;
         fs::create_dir_all(parent).map_err(|e| io_err("create date partition", e))?;
         fs::create_dir(&dir)
@@ -246,6 +313,8 @@ impl RawStore {
             };
             out.write_all(&env.bytes)
                 .map_err(|e| cleanup(io_err(&format!("write {}", path.display()), e)))?;
+            out.sync_all()
+                .map_err(|e| cleanup(io_err(&format!("sync {}", path.display()), e)))?;
         }
 
         let entry = ManifestEntry {
@@ -271,10 +340,10 @@ impl RawStore {
                 .collect(),
         };
 
-        let json = serde_json::to_string_pretty(&entry).map_err(|e| {
-            cleanup(StoreError::Io {
+        let json = serde_json::to_string_pretty(&entry).map_err(|source| {
+            cleanup(StoreError::Serialization {
                 context: "batch.json serialize".to_owned(),
-                detail: e.to_string(),
+                source,
             })
         })?;
         let mut meta = OpenOptions::new()
@@ -284,9 +353,13 @@ impl RawStore {
             .map_err(|e| cleanup(io_err("create batch.json", e)))?;
         meta.write_all(json.as_bytes())
             .map_err(|e| cleanup(io_err("write batch.json", e)))?;
+        meta.sync_all()
+            .map_err(|e| cleanup(io_err("sync batch.json", e)))?;
+        drop(meta);
 
-        self.append_manifest(provider, market, &entry)
-            .map_err(cleanup)?;
+        sync_batch_directories(&dir).map_err(cleanup)?;
+
+        self.append_manifest(provider, market, &entry)?;
 
         Ok(entry)
     }
@@ -302,26 +375,87 @@ impl RawStore {
         validate_entry_scope(provider, market, entry)?;
         validate_manifest_file_names(entry)?;
         let path = self.manifest_path(provider, market);
-        let parent = path.parent().ok_or_else(|| StoreError::Io {
-            context: "manifest parent".to_owned(),
-            detail: path.display().to_string(),
+        let parent = path.parent().ok_or_else(|| {
+            io_err(
+                "manifest parent",
+                std::io::Error::other(format!("{} has no parent", path.display())),
+            )
         })?;
         fs::create_dir_all(parent).map_err(|e| io_err("create manifest dir", e))?;
+        let mut line = serde_json::to_vec(entry).map_err(|source| StoreError::Serialization {
+            context: "manifest entry serialize".to_owned(),
+            source,
+        })?;
+        line.push(b'\n');
         let mut f = OpenOptions::new()
+            .read(true)
+            .write(true)
             .create(true)
-            .append(true)
+            .truncate(false)
             .open(&path)
             .map_err(|e| io_err(&format!("open manifest {}", path.display()), e))?;
-        let mut line = serde_json::to_string(entry).map_err(|e| StoreError::Io {
-            context: "manifest entry serialize".to_owned(),
-            detail: e.to_string(),
-        })?;
-        line.push('\n');
-        f.write_all(line.as_bytes())
-            .map_err(|e| io_err("append manifest", e))
+        FileExt::lock_exclusive(&f).map_err(|e| io_err("lock manifest", e))?;
+
+        let result = (|| {
+            let mut bytes = Vec::new();
+            f.read_to_end(&mut bytes)
+                .map_err(|e| io_err("read manifest before append", e))?;
+            let mut existing = BTreeMap::new();
+            let mut existing_order = Vec::new();
+            parse_manifest_records(
+                provider,
+                market,
+                &path,
+                &bytes,
+                &mut existing,
+                &mut existing_order,
+            )?;
+            if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+                let tail_start = bytes
+                    .iter()
+                    .rposition(|byte| *byte == b'\n')
+                    .map_or(0, |position| position + 1);
+                match serde_json::from_slice::<ManifestEntry>(&bytes[tail_start..]) {
+                    Ok(tail_entry) => {
+                        validate_entry_scope(provider, market, &tail_entry)?;
+                        validate_manifest_file_names(&tail_entry)?;
+                        f.seek(SeekFrom::End(0))
+                            .map_err(|e| io_err("seek unterminated manifest end", e))?;
+                        f.write_all(b"\n")
+                            .map_err(|e| io_err("terminate complete manifest record", e))?;
+                    }
+                    Err(source) if source.is_eof() => {
+                        f.set_len(tail_start as u64)
+                            .map_err(|e| io_err("trim truncated manifest tail", e))?;
+                    }
+                    Err(source) => {
+                        return Err(StoreError::CorruptManifest {
+                            path: path.display().to_string(),
+                            line: bytes[..tail_start]
+                                .iter()
+                                .filter(|byte| **byte == b'\n')
+                                .count()
+                                + 1,
+                            source,
+                        });
+                    }
+                }
+            }
+            f.seek(SeekFrom::End(0))
+                .map_err(|e| io_err("seek manifest end", e))?;
+            f.write_all(&line)
+                .map_err(|e| io_err("append manifest", e))?;
+            f.sync_all().map_err(|e| io_err("sync manifest", e))
+        })();
+        let unlock = FileExt::unlock(&f).map_err(|e| io_err("unlock manifest", e));
+        result?;
+        unlock?;
+        sync_manifest_directories(parent)
     }
 
-    /// All manifest rows, oldest first. An absent manifest reads as empty.
+    /// All committed manifest rows plus durable orphan batches, oldest first.
+    /// An unterminated final manifest fragment is ignored as a crash tail;
+    /// malformed complete or middle records are permanent corruption.
     pub fn read_manifest(
         &self,
         provider: &str,
@@ -329,27 +463,135 @@ impl RawStore {
     ) -> Result<Vec<ManifestEntry>, StoreError> {
         validate_scope(provider, market)?;
         let path = self.manifest_path(provider, market);
-        if !path.exists() {
-            return Ok(Vec::new());
+        let mut entries = BTreeMap::new();
+        let mut manifest_order = Vec::new();
+        if path.exists() {
+            let mut f = File::open(&path)
+                .map_err(|e| io_err(&format!("open manifest {}", path.display()), e))?;
+            FileExt::lock_shared(&f).map_err(|e| io_err("lock manifest for read", e))?;
+            let mut bytes = Vec::new();
+            let read_result = f
+                .read_to_end(&mut bytes)
+                .map_err(|e| io_err("read manifest", e));
+            let unlock = FileExt::unlock(&f).map_err(|e| io_err("unlock manifest", e));
+            read_result?;
+            unlock?;
+            parse_manifest_records(
+                provider,
+                market,
+                &path,
+                &bytes,
+                &mut entries,
+                &mut manifest_order,
+            )?;
         }
-        let f = File::open(&path)
-            .map_err(|e| io_err(&format!("open manifest {}", path.display()), e))?;
-        let reader = BufReader::new(f);
-        let mut entries = Vec::new();
-        for (idx, line) in reader.lines().enumerate() {
-            let line = line.map_err(|e| io_err(&format!("read manifest line {idx}"), e))?;
-            if line.trim().is_empty() {
+        self.discover_orphan_batches(provider, market, &mut entries)?;
+        let mut orphan_ids: Vec<_> = entries
+            .keys()
+            .copied()
+            .filter(|batch_id| !manifest_order.contains(batch_id))
+            .collect();
+        orphan_ids.sort_by(|left, right| {
+            entries[left]
+                .retrieved_at
+                .cmp(&entries[right].retrieved_at)
+                .then_with(|| left.cmp(right))
+        });
+        manifest_order.extend(orphan_ids);
+        Ok(manifest_order
+            .into_iter()
+            .map(|batch_id| entries.remove(&batch_id).expect("ordered batch exists"))
+            .collect())
+    }
+
+    fn discover_orphan_batches(
+        &self,
+        provider: &str,
+        market: &str,
+        entries: &mut BTreeMap<BatchId, ManifestEntry>,
+    ) -> Result<(), StoreError> {
+        let provider_dir = self.provider_dir(provider, market);
+        if !provider_dir.exists() {
+            return Ok(());
+        }
+        for date_dir in sorted_directories(&provider_dir)? {
+            let date_path = date_dir.path();
+            let date_name = date_dir.file_name().to_string_lossy().into_owned();
+            let Some(date_text) = date_name.strip_prefix("date=") else {
                 continue;
-            }
-            let entry: ManifestEntry = serde_json::from_str(&line).map_err(|e| StoreError::Io {
-                context: format!("manifest line {idx}"),
-                detail: e.to_string(),
+            };
+            let date = TradingDate::parse(date_text).map_err(|error| {
+                StoreError::InvalidBatchMetadata {
+                    path: date_path.display().to_string(),
+                    reason: error.to_string(),
+                }
             })?;
-            validate_entry_scope(provider, market, &entry)?;
-            validate_manifest_file_names(&entry)?;
-            entries.push(entry);
+            for batch_dir in sorted_directories(&date_path)? {
+                let batch_path = batch_dir.path();
+                let batch_name = batch_dir.file_name().to_string_lossy().into_owned();
+                let Some(batch_text) = batch_name.strip_prefix("batch=") else {
+                    continue;
+                };
+                let batch_id = batch_text.parse::<BatchId>().map_err(|error| {
+                    StoreError::InvalidBatchMetadata {
+                        path: batch_path.display().to_string(),
+                        reason: error.to_string(),
+                    }
+                })?;
+                let metadata_path = batch_path.join("batch.json");
+                if !metadata_path.exists() {
+                    continue;
+                }
+                let (_, canonical_batch) =
+                    self.canonical_batch_dir(provider, market, &date, &batch_id)?;
+                let canonical_metadata = fs::canonicalize(&metadata_path).map_err(|source| {
+                    if source.kind() == std::io::ErrorKind::NotFound {
+                        StoreError::MissingEvidence {
+                            path: metadata_path.display().to_string(),
+                            source,
+                        }
+                    } else {
+                        io_err(&format!("canonicalize {}", metadata_path.display()), source)
+                    }
+                })?;
+                if canonical_metadata != canonical_batch.join("batch.json") {
+                    return Err(StoreError::UnsafePath {
+                        path: canonical_metadata.display().to_string(),
+                        reason: "batch.json must be a direct file in its canonical batch directory"
+                            .to_owned(),
+                    });
+                }
+                let metadata = fs::read(&canonical_metadata).map_err(|source| {
+                    if source.kind() == std::io::ErrorKind::NotFound {
+                        StoreError::MissingEvidence {
+                            path: metadata_path.display().to_string(),
+                            source,
+                        }
+                    } else {
+                        io_err(&format!("read {}", metadata_path.display()), source)
+                    }
+                })?;
+                let entry: ManifestEntry = serde_json::from_slice(&metadata).map_err(|source| {
+                    StoreError::CorruptBatchMetadata {
+                        path: metadata_path.display().to_string(),
+                        source,
+                    }
+                })?;
+                validate_entry_scope(provider, market, &entry)?;
+                validate_manifest_file_names(&entry)?;
+                if entry.date != date || entry.batch_id != batch_id {
+                    return Err(StoreError::InvalidBatchMetadata {
+                        path: metadata_path.display().to_string(),
+                        reason: format!(
+                            "directory identifies {date}/{batch_id}, metadata identifies {}/{}",
+                            entry.date, entry.batch_id
+                        ),
+                    });
+                }
+                merge_manifest_entry(entries, entry, &metadata_path)?;
+            }
         }
-        Ok(entries)
+        Ok(())
     }
 
     /// Reads a batch back and verifies every stored file against its recorded
@@ -369,8 +611,16 @@ impl RawStore {
         let mut out = Vec::with_capacity(entry.files.len());
         for file in &entry.files {
             let path = dir.join(&file.file_name);
-            let storage_path = fs::canonicalize(&path)
-                .map_err(|e| io_err(&format!("canonicalize {}", path.display()), e))?;
+            let storage_path = fs::canonicalize(&path).map_err(|source| {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    StoreError::MissingEvidence {
+                        path: path.display().to_string(),
+                        source,
+                    }
+                } else {
+                    io_err(&format!("canonicalize {}", path.display()), source)
+                }
+            })?;
             let expected_path = canonical_dir.join(&file.file_name);
             if !storage_path.starts_with(&raw_root)
                 || !storage_path.starts_with(&canonical_dir)
@@ -385,8 +635,16 @@ impl RawStore {
                     ),
                 });
             }
-            let bytes = fs::read(&storage_path)
-                .map_err(|e| io_err(&format!("read {}", path.display()), e))?;
+            let bytes = fs::read(&storage_path).map_err(|source| {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    StoreError::MissingEvidence {
+                        path: path.display().to_string(),
+                        source,
+                    }
+                } else {
+                    io_err(&format!("read {}", path.display()), source)
+                }
+            })?;
             let actual = ContentHash::from_bytes(&bytes);
             if actual != file.content_hash {
                 return Err(StoreError::ContentHashMismatch {
@@ -437,8 +695,19 @@ impl RawStore {
 
     fn canonical_raw_root(&self) -> Result<PathBuf, StoreError> {
         let raw_root = self.root.join("raw");
-        fs::canonicalize(&raw_root)
-            .map_err(|e| io_err(&format!("canonicalize raw root {}", raw_root.display()), e))
+        fs::canonicalize(&raw_root).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                StoreError::MissingEvidence {
+                    path: raw_root.display().to_string(),
+                    source,
+                }
+            } else {
+                io_err(
+                    &format!("canonicalize raw root {}", raw_root.display()),
+                    source,
+                )
+            }
+        })
     }
 
     fn canonical_batch_dir(
@@ -460,8 +729,16 @@ impl RawStore {
         for component in components {
             lexical.push(&component);
             expected.push(&component);
-            let actual = fs::canonicalize(&lexical)
-                .map_err(|e| io_err(&format!("canonicalize {}", lexical.display()), e))?;
+            let actual = fs::canonicalize(&lexical).map_err(|source| {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    StoreError::MissingEvidence {
+                        path: lexical.display().to_string(),
+                        source,
+                    }
+                } else {
+                    io_err(&format!("canonicalize {}", lexical.display()), source)
+                }
+            })?;
             if !actual.starts_with(&raw_root) || actual != expected {
                 return Err(StoreError::UnsafePath {
                     path: actual.display().to_string(),
@@ -474,6 +751,112 @@ impl RawStore {
         }
         Ok((raw_root, expected))
     }
+}
+
+fn parse_manifest_records(
+    provider: &str,
+    market: &str,
+    path: &Path,
+    bytes: &[u8],
+    entries: &mut BTreeMap<BatchId, ManifestEntry>,
+    manifest_order: &mut Vec<BatchId>,
+) -> Result<(), StoreError> {
+    let terminated = bytes.ends_with(b"\n");
+    let records: Vec<_> = bytes.split(|byte| *byte == b'\n').collect();
+    for (index, record) in records.iter().enumerate() {
+        if record.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let final_unterminated = index + 1 == records.len() && !terminated;
+        let entry = match serde_json::from_slice::<ManifestEntry>(record) {
+            Ok(entry) => entry,
+            Err(source) if final_unterminated && source.is_eof() => continue,
+            Err(source) => {
+                return Err(StoreError::CorruptManifest {
+                    path: path.display().to_string(),
+                    line: index + 1,
+                    source,
+                });
+            }
+        };
+        validate_entry_scope(provider, market, &entry)?;
+        validate_manifest_file_names(&entry)?;
+        let is_new = !entries.contains_key(&entry.batch_id);
+        let batch_id = entry.batch_id;
+        merge_manifest_entry(entries, entry, path)?;
+        if is_new {
+            manifest_order.push(batch_id);
+        }
+    }
+    Ok(())
+}
+
+fn merge_manifest_entry(
+    entries: &mut BTreeMap<BatchId, ManifestEntry>,
+    entry: ManifestEntry,
+    source_path: &Path,
+) -> Result<(), StoreError> {
+    if let Some(existing) = entries.get(&entry.batch_id) {
+        if existing == &entry {
+            return Ok(());
+        }
+        return Err(StoreError::InvalidBatchMetadata {
+            path: source_path.display().to_string(),
+            reason: format!("batch {} has conflicting metadata", entry.batch_id),
+        });
+    }
+    entries.insert(entry.batch_id, entry);
+    Ok(())
+}
+
+fn sorted_directories(path: &Path) -> Result<Vec<fs::DirEntry>, StoreError> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(path).map_err(|e| io_err(&format!("list {}", path.display()), e))? {
+        let entry = entry.map_err(|e| io_err("read directory entry", e))?;
+        if entry.path().is_dir() {
+            entries.push(entry);
+        }
+    }
+    entries.sort_by_key(fs::DirEntry::file_name);
+    Ok(entries)
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path, context: &str) -> Result<(), StoreError> {
+    File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| io_err(context, e))
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path, _context: &str) -> Result<(), StoreError> {
+    // std does not expose Windows directory handles with backup semantics;
+    // evidence files and metadata are still sync_all'd on every platform.
+    Ok(())
+}
+
+fn sync_batch_directories(batch_dir: &Path) -> Result<(), StoreError> {
+    let mut current = Some(batch_dir);
+    for _ in 0..6 {
+        let Some(path) = current else {
+            break;
+        };
+        sync_directory(path, &format!("sync Raw directory {}", path.display()))?;
+        current = path.parent();
+    }
+    Ok(())
+}
+
+fn sync_manifest_directories(manifest_parent: &Path) -> Result<(), StoreError> {
+    let mut current = Some(manifest_parent);
+    for _ in 0..5 {
+        let Some(path) = current else {
+            break;
+        };
+        sync_directory(path, &format!("sync manifest directory {}", path.display()))?;
+        current = path.parent();
+    }
+    Ok(())
 }
 
 /// A provider file name must be a plain name: no separators, no traversal, no
@@ -562,7 +945,7 @@ fn validate_manifest_file_names(entry: &ManifestEntry) -> Result<(), StoreError>
 fn io_err(context: &str, e: std::io::Error) -> StoreError {
     StoreError::Io {
         context: context.to_owned(),
-        detail: e.to_string(),
+        source: e,
     }
 }
 

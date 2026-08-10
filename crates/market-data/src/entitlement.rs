@@ -126,7 +126,10 @@ pub fn read_batch_gated(
         store
             .read_batch_bytes(&entry.provider, &entry.market, entry)
             .map_err(|e| match e {
-                StoreError::Io { context, detail } => RawAccessError::Io { context, detail },
+                StoreError::Io { context, source } => RawAccessError::Io {
+                    context,
+                    detail: source.to_string(),
+                },
                 other => RawAccessError::Io {
                     context: "raw-read".to_owned(),
                     detail: other.to_string(),

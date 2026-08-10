@@ -202,10 +202,53 @@ fn malformed_bundle_manifest_returns_typed_error() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(dir.path().join("bundle.json"), b"{ not json").expect("write bad bundle");
     let err = RecordedBundle::open(dir.path()).expect_err("bad bundle.json must fail typed");
-    assert!(
-        matches!(err, ProviderError::Io { .. }),
-        "expected typed Io error, got {err:?}"
-    );
+    assert!(matches!(err, ProviderError::RecordedBundleParse { .. }));
+}
+
+#[test]
+fn missing_bundle_manifest_is_typed_permanent_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    let error = RecordedBundle::open(dir.path()).unwrap_err();
+    assert!(matches!(error, ProviderError::RecordedBundleMissing { .. }));
+}
+
+#[test]
+fn unknown_directive_and_kind_are_typed_permanent_configuration() {
+    let directive = tempfile::tempdir().unwrap();
+    fs::write(
+        directive.path().join("bundle.json"),
+        r#"{"provider":"krx","market":"kr","schema_version":1,"simulate":"explode","responses":[]}"#,
+    )
+    .unwrap();
+    let error = KrxProvider::synthetic(RecordedBundle::open(directive.path()).unwrap())
+        .fetch(&request("2026-08-05T06:00:00Z"))
+        .unwrap_err();
+    assert!(matches!(error, ProviderError::RecordedBundleInvalid { .. }));
+
+    let kind = tempfile::tempdir().unwrap();
+    fs::write(
+        kind.path().join("bundle.json"),
+        r#"{"provider":"krx","market":"kr","schema_version":1,"responses":[{"kind":"mystery","file":"x.json","endpoint":"x"}]}"#,
+    )
+    .unwrap();
+    let error = KrxProvider::synthetic(RecordedBundle::open(kind.path()).unwrap())
+        .fetch(&request("2026-08-05T06:00:00Z"))
+        .unwrap_err();
+    assert!(matches!(error, ProviderError::RecordedBundleInvalid { .. }));
+}
+
+#[test]
+fn missing_recorded_response_is_typed_permanent_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("bundle.json"),
+        r#"{"provider":"krx","market":"kr","schema_version":1,"responses":[{"kind":"bars","file":"missing.json","endpoint":"x"}]}"#,
+    )
+    .unwrap();
+    let error = KrxProvider::synthetic(RecordedBundle::open(dir.path()).unwrap())
+        .fetch(&request("2026-08-05T06:00:00Z"))
+        .unwrap_err();
+    assert!(matches!(error, ProviderError::RecordedBundleIo { .. }));
 }
 
 #[test]

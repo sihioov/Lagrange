@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use collectors::{
     FailureClass, PipelineError, PipelineStage, PostgresPublicationSink, PublishOutcome,
-    ingest_and_publish,
+    ingest_and_publish, provider_failure_class,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::EodProvider;
@@ -246,7 +246,7 @@ fn provider(args: &ParsedArgs, log: &Log<'_>) -> Result<KrxProvider, CliFailure>
                     )),
                     CommandKind::Publish => CliFailure::Publish {
                         error_code: "PROVIDER_UNAVAILABLE",
-                        class: FailureClass::Retryable,
+                        class: provider_failure_class(&error),
                         batch_id: None,
                         message: format!("recorded bundle {:?} unreadable: {error}", args.bundle),
                     },

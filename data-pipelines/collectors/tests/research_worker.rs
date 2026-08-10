@@ -148,6 +148,18 @@ async fn pipeline_ingest_and_publish_persists_raw_before_publishing() {
     );
 }
 
+#[test]
+fn pipeline_ingest_and_publish_future_is_send() {
+    fn assert_send<T: Send>(_: T) {}
+
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let provider = provider();
+    let request = request("2026-08-05T07:00:00Z");
+    let sink = FakeSink::default();
+    assert_send(ingest_and_publish(&store, &provider, &request, None, &sink));
+}
+
 #[derive(Debug)]
 struct FailingProvider;
 
@@ -284,6 +296,23 @@ async fn pipeline_recovery_reuses_the_failed_publication_batch_without_reingesti
 }
 
 #[tokio::test]
+async fn pipeline_recovery_publishes_a_durable_orphan_batch() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let entry = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    std::fs::remove_file(store.manifest_path(PROVIDER_KRX, MARKET_KR)).unwrap();
+    let sink = FakeSink::default();
+
+    let report = recover_unpublished(&store, &sink).await.unwrap();
+
+    assert_eq!(report.recovered, vec![entry.batch_id]);
+    assert!(report.skipped.is_empty());
+    assert_eq!(*sink.publish_calls.lock().unwrap(), vec![entry.batch_id]);
+}
+
+#[tokio::test]
 async fn pipeline_recovery_orders_missing_oldest_first_and_skips_complete() {
     let root = tempfile::tempdir().unwrap();
     let store = RawStore::new(root.path());
@@ -300,18 +329,67 @@ async fn pipeline_recovery_orders_missing_oldest_first_and_skips_complete() {
         );
     }
     let complete = entries[2].batch_id;
-    let sink = FakeSink::default().with_state(complete, PublicationState::Complete);
+    let sink = FakeSink::default()
+        .with_state(complete, PublicationState::Complete)
+        .with_outcome(PublishOutcome::AlreadyPublished);
 
     let report = recover_unpublished(&store, &sink).await.unwrap();
 
     let expected_recovered = vec![entries[1].batch_id, entries[0].batch_id];
     assert_eq!(report.recovered, expected_recovered);
     assert_eq!(report.skipped, vec![complete]);
-    assert_eq!(*sink.publish_calls.lock().unwrap(), expected_recovered);
+    assert_eq!(
+        *sink.publish_calls.lock().unwrap(),
+        vec![entries[1].batch_id, complete, entries[0].batch_id]
+    );
     assert_eq!(
         *sink.state_calls.lock().unwrap(),
         vec![entries[1].batch_id, complete, entries[0].batch_id]
     );
+}
+
+#[tokio::test]
+async fn pipeline_complete_state_requires_authoritative_exact_replay() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let entry = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    let sink = FakeSink::default()
+        .with_state(entry.batch_id, PublicationState::Complete)
+        .with_publish_error(SinkError::Conflict("missing publication history".into()));
+
+    let error = recover_unpublished(&store, &sink).await.unwrap_err();
+
+    assert_eq!(error.batch_id(), Some(entry.batch_id));
+    assert_eq!(error.failure_class(), FailureClass::Permanent);
+    assert_eq!(error.stage(), PipelineStage::Publish);
+    assert!(matches!(
+        error,
+        PipelineError::Sink {
+            source: SinkError::Conflict(_),
+            ..
+        }
+    ));
+    assert_eq!(*sink.publish_calls.lock().unwrap(), vec![entry.batch_id]);
+}
+
+#[tokio::test]
+async fn pipeline_complete_state_accepts_already_published_and_records_skipped() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let entry = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    let sink = FakeSink::default()
+        .with_state(entry.batch_id, PublicationState::Complete)
+        .with_outcome(PublishOutcome::AlreadyPublished);
+
+    let report = recover_unpublished(&store, &sink).await.unwrap();
+
+    assert!(report.recovered.is_empty());
+    assert_eq!(report.skipped, vec![entry.batch_id]);
+    assert_eq!(*sink.publish_calls.lock().unwrap(), vec![entry.batch_id]);
 }
 
 #[tokio::test]
@@ -393,7 +471,7 @@ fn pipeline_error_classification_matrix_is_structural() {
         (
             ProviderError::Io {
                 context: "fixture".into(),
-                detail: "offline".into(),
+                source: std::io::Error::other("offline"),
             },
             true,
         ),
@@ -412,6 +490,33 @@ fn pipeline_error_classification_matrix_is_structural() {
             false,
         ),
         (ProviderError::UnsupportedKind(ResponseKind::Bars), false),
+        (
+            ProviderError::RecordedBundleMissing {
+                path: "bundle.json".into(),
+            },
+            false,
+        ),
+        (
+            ProviderError::RecordedBundleIo {
+                context: "recorded response".into(),
+                path: "missing.json".into(),
+                source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
+            },
+            false,
+        ),
+        (
+            ProviderError::RecordedBundleParse {
+                path: "bundle.json".into(),
+                source: serde_json::from_str::<serde_json::Value>("{").unwrap_err(),
+            },
+            false,
+        ),
+        (
+            ProviderError::RecordedBundleInvalid {
+                detail: "unknown response kind".into(),
+            },
+            false,
+        ),
     ];
     for (source, retryable) in provider_cases {
         let error = PipelineError::Ingest {
@@ -432,7 +537,7 @@ fn pipeline_error_classification_matrix_is_structural() {
         PipelineError::Ingest {
             source: IngestError::Store(StoreError::Io {
                 context: "write".into(),
-                detail: "offline".into(),
+                source: std::io::Error::other("offline"),
             }),
         }
         .is_retryable()
@@ -442,7 +547,7 @@ fn pipeline_error_classification_matrix_is_structural() {
         (
             StoreError::Io {
                 context: "read".into(),
-                detail: "offline".into(),
+                source: std::io::Error::other("offline"),
             },
             true,
         ),
@@ -486,6 +591,21 @@ fn pipeline_error_classification_matrix_is_structural() {
             },
             false,
         ),
+        (
+            StoreError::MissingEvidence {
+                path: "missing.json".into(),
+                source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
+            },
+            false,
+        ),
+        (
+            StoreError::CorruptManifest {
+                path: "manifest.jsonl".into(),
+                line: 1,
+                source: serde_json::from_str::<serde_json::Value>("not-json").unwrap_err(),
+            },
+            false,
+        ),
     ];
     for (source, retryable) in store_cases {
         let error = PipelineError::Manifest { source };
@@ -497,7 +617,7 @@ fn pipeline_error_classification_matrix_is_structural() {
         batch_id,
         source: PublicationError::Store(StoreError::Io {
             context: "read".into(),
-            detail: "offline".into(),
+            source: std::io::Error::other("offline"),
         }),
     };
     assert!(io_publication.is_retryable());
@@ -521,6 +641,39 @@ fn pipeline_error_classification_matrix_is_structural() {
         source: SinkError::Conflict("different evidence".into()),
     };
     assert!(!permanent_sink.is_retryable());
+}
+
+#[test]
+fn pipeline_error_sources_traverse_nested_provider_store_and_parse_causes() {
+    use std::error::Error as _;
+
+    let error = PipelineError::Ingest {
+        source: IngestError::Provider(ProviderError::RecordedBundleParse {
+            path: "bundle.json".into(),
+            source: serde_json::from_str::<serde_json::Value>("{").unwrap_err(),
+        }),
+    };
+
+    let ingest = error.source().expect("pipeline retains ingest source");
+    let provider = ingest.source().expect("ingest retains provider source");
+    let parse = provider.source().expect("provider retains JSON source");
+    assert!(parse.downcast_ref::<serde_json::Error>().is_some());
+
+    let store_error = PipelineError::Publication {
+        batch_id: BatchId::generate(),
+        source: PublicationError::Store(StoreError::MissingEvidence {
+            path: "missing.json".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
+        }),
+    };
+    let publication = store_error
+        .source()
+        .expect("pipeline retains publication source");
+    let store = publication
+        .source()
+        .expect("publication retains store source");
+    let io = store.source().expect("store retains IO source");
+    assert!(io.downcast_ref::<std::io::Error>().is_some());
 }
 
 #[test]
@@ -607,7 +760,7 @@ fn pipeline_manual_publish_error_redacts_overlapping_database_secrets() {
     assert_eq!(output.status.code(), Some(2));
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["error_code"], "PROVIDER_UNAVAILABLE");
-    assert_eq!(json["class"], "retryable");
+    assert_eq!(json["class"], "permanent");
     let visible_output = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),

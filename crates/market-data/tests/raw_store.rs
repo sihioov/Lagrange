@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{
-    FetchMode, RawEnvelope, RequestMetadata, ResponseKind, MARKET_KR, PROVIDER_KRX,
+    FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind,
 };
 use market_data::storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};
 
@@ -169,6 +169,293 @@ fn manifest_is_append_only() {
 }
 
 #[test]
+fn concurrent_manifest_appends_are_serialized_without_lost_records() {
+    use std::sync::{Arc, Barrier};
+
+    let root = temp_root("manifest-lock");
+    let store = RawStore::new(&root);
+    let date = date("2020-01-31");
+    let barrier = Arc::new(Barrier::new(8));
+    let mut threads = Vec::new();
+    for index in 0..8 {
+        let store = store.clone();
+        let barrier = barrier.clone();
+        threads.push(std::thread::spawn(move || {
+            let entry = ManifestEntry {
+                batch_id: BatchId::generate(),
+                provider: PROVIDER_KRX.to_owned(),
+                market: MARKET_KR.to_owned(),
+                date,
+                retrieved_at: now("2026-08-05T01:00:00Z"),
+                mode: FetchMode::Synthetic,
+                entitlement_reference: Some(format!("entry-{index}-{}", "x".repeat(128 * 1024))),
+                files: Vec::new(),
+            };
+            barrier.wait();
+            store
+                .append_manifest(PROVIDER_KRX, MARKET_KR, &entry)
+                .unwrap();
+            entry.batch_id
+        }));
+    }
+    let mut expected: Vec<_> = threads
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect();
+    expected.sort();
+
+    let entries = store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap();
+    let mut actual: Vec<_> = entries.iter().map(|entry| entry.batch_id).collect();
+    actual.sort();
+    assert_eq!(actual, expected);
+    let raw = fs::read_to_string(store.manifest_path(PROVIDER_KRX, MARKET_KR)).unwrap();
+    assert_eq!(raw.lines().count(), 8);
+    for line in raw.lines() {
+        serde_json::from_str::<ManifestEntry>(line).unwrap();
+    }
+}
+
+#[test]
+fn durable_orphan_batch_is_discovered_without_a_manifest_record() {
+    let root = temp_root("orphan");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    fs::remove_file(store.manifest_path(PROVIDER_KRX, MARKET_KR)).unwrap();
+
+    assert_eq!(
+        store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap(),
+        vec![entry]
+    );
+}
+
+#[test]
+fn truncated_final_manifest_record_is_ignored_and_next_append_repairs_it() {
+    let root = temp_root("truncated-tail");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let first = BatchId::generate();
+    let first_entry = store
+        .store_batch(
+            &spec(first, &d, None),
+            &[envelope(
+                first,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    use std::io::Write as _;
+    let mut manifest = fs::OpenOptions::new()
+        .append(true)
+        .open(&manifest_path)
+        .unwrap();
+    manifest.write_all(br#"{"batch_id":"#).unwrap();
+    drop(manifest);
+
+    assert_eq!(
+        store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap(),
+        vec![first_entry.clone()]
+    );
+
+    let second = BatchId::generate();
+    let second_entry = store
+        .store_batch(
+            &spec(second, &d, None),
+            &[envelope(
+                second,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-06T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let entries = store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap();
+    assert_eq!(entries, vec![first_entry, second_entry]);
+    let raw = fs::read_to_string(manifest_path).unwrap();
+    assert!(raw.ends_with('\n'));
+    assert_eq!(raw.lines().count(), 2);
+    for line in raw.lines() {
+        serde_json::from_str::<ManifestEntry>(line).unwrap();
+    }
+}
+
+#[test]
+fn complete_unterminated_manifest_record_is_preserved_and_terminated_on_append() {
+    let root = temp_root("unterminated-complete");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let first = BatchId::generate();
+    let first_entry = store
+        .store_batch(
+            &spec(first, &d, None),
+            &[envelope(
+                first,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let mut raw = fs::read(&path).unwrap();
+    assert_eq!(raw.pop(), Some(b'\n'));
+    fs::write(&path, raw).unwrap();
+    assert_eq!(
+        store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap(),
+        vec![first_entry.clone()]
+    );
+
+    let second = BatchId::generate();
+    let second_entry = store
+        .store_batch(
+            &spec(second, &d, None),
+            &[envelope(
+                second,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-06T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+
+    assert_eq!(
+        store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap(),
+        vec![first_entry, second_entry]
+    );
+    let raw = fs::read_to_string(path).unwrap();
+    assert_eq!(raw.lines().count(), 2);
+    assert!(raw.ends_with('\n'));
+}
+
+#[test]
+fn corrupt_complete_or_middle_manifest_record_is_permanent() {
+    let root = temp_root("corrupt-manifest");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let mut stored = Vec::new();
+    for timestamp in ["2026-08-05T01:00:00Z", "2026-08-06T01:00:00Z"] {
+        let batch = BatchId::generate();
+        stored.push(
+            store
+                .store_batch(
+                    &spec(batch, &d, None),
+                    &[envelope(
+                        batch,
+                        ResponseKind::Reference,
+                        "reference.json",
+                        b"{}",
+                        now(timestamp),
+                    )],
+                )
+                .unwrap(),
+        );
+    }
+    let path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let first = serde_json::to_string(&stored[0]).unwrap();
+    let second = serde_json::to_string(&stored[1]).unwrap();
+    fs::write(&path, format!("{first}\nnot-json\n{second}\n")).unwrap();
+
+    assert!(matches!(
+        store.read_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::CorruptManifest { line: 2, .. })
+    ));
+    let before_append = fs::read(&path).unwrap();
+    assert!(matches!(
+        store.append_manifest(PROVIDER_KRX, MARKET_KR, &stored[0]),
+        Err(StoreError::CorruptManifest { line: 2, .. })
+    ));
+    assert_eq!(fs::read(&path).unwrap(), before_append);
+
+    fs::write(&path, "not-json\n").unwrap();
+    assert!(matches!(
+        store.read_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::CorruptManifest { line: 1, .. })
+    ));
+}
+
+#[test]
+fn manifest_append_failure_preserves_durable_batch_for_orphan_recovery() {
+    let root = temp_root("append-failure");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    fs::create_dir_all(&manifest_path).unwrap();
+
+    let error = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap_err();
+    assert!(matches!(error, StoreError::Io { .. }));
+    let batch_dir = store.batch_dir(PROVIDER_KRX, MARKET_KR, &d, &batch);
+    assert!(batch_dir.join("reference.json").is_file());
+    assert!(batch_dir.join("batch.json").is_file());
+
+    fs::remove_dir(&manifest_path).unwrap();
+    let recovered = store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].batch_id, batch);
+}
+
+#[test]
+fn missing_immutable_evidence_is_typed_permanent_corruption() {
+    let root = temp_root("missing-evidence");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    fs::remove_file(
+        store
+            .batch_dir(PROVIDER_KRX, MARKET_KR, &d, &batch)
+            .join("reference.json"),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        store.read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry),
+        Err(StoreError::MissingEvidence { .. })
+    ));
+}
+
+#[test]
 fn manifest_entry_round_trips_through_json() {
     let root = temp_root("roundtrip");
     let store = RawStore::new(&root);
@@ -240,10 +527,12 @@ fn path_traversal_filenames_rejected_with_no_partial_batch() {
         dirs.is_empty(),
         "no batch dirs may exist after rejected deliveries: {dirs:?}"
     );
-    assert!(store
-        .read_manifest(PROVIDER_KRX, MARKET_KR)
-        .expect("manifest")
-        .is_empty());
+    assert!(
+        store
+            .read_manifest(PROVIDER_KRX, MARKET_KR)
+            .expect("manifest")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -275,10 +564,12 @@ fn within_batch_collision_fails_without_partial_batch() {
         dirs.is_empty(),
         "failed batch must leave no batch dir: {dirs:?}"
     );
-    assert!(store
-        .read_manifest(PROVIDER_KRX, MARKET_KR)
-        .expect("manifest")
-        .is_empty());
+    assert!(
+        store
+            .read_manifest(PROVIDER_KRX, MARKET_KR)
+            .expect("manifest")
+            .is_empty()
+    );
 }
 
 #[test]

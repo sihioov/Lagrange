@@ -51,6 +51,11 @@ pub enum PipelineError {
     PartialPublication {
         batch_id: BatchId,
     },
+    UnexpectedPublishOutcome {
+        batch_id: BatchId,
+        state: PublicationState,
+        outcome: PublishOutcome,
+    },
 }
 
 impl PipelineError {
@@ -59,7 +64,8 @@ impl PipelineError {
             Self::Ingest { .. } | Self::Manifest { .. } => None,
             Self::Publication { batch_id, .. }
             | Self::Sink { batch_id, .. }
-            | Self::PartialPublication { batch_id } => Some(*batch_id),
+            | Self::PartialPublication { batch_id }
+            | Self::UnexpectedPublishOutcome { batch_id, .. } => Some(*batch_id),
         }
     }
 
@@ -70,16 +76,18 @@ impl PipelineError {
             Self::Publication { .. } => PipelineStage::VerifyRaw,
             Self::Sink { stage, .. } => *stage,
             Self::PartialPublication { .. } => PipelineStage::PublicationState,
+            Self::UnexpectedPublishOutcome { .. } => PipelineStage::Publish,
         }
     }
 
     pub fn failure_class(&self) -> FailureClass {
         let retryable = match self {
             Self::Ingest { source } => ingest_error_is_retryable(source),
-            Self::Manifest { source } => store_error_is_retryable(source),
+            Self::Manifest { source } => store_failure_class(source) == FailureClass::Retryable,
             Self::Publication { source, .. } => publication_error_is_retryable(source),
             Self::Sink { source, .. } => source.is_retryable(),
             Self::PartialPublication { .. } => false,
+            Self::UnexpectedPublishOutcome { .. } => false,
         };
         if retryable {
             FailureClass::Retryable
@@ -115,6 +123,14 @@ impl std::fmt::Display for PipelineError {
                     "publication state is partial for batch {batch_id}"
                 )
             }
+            Self::UnexpectedPublishOutcome {
+                batch_id,
+                state,
+                outcome,
+            } => write!(
+                formatter,
+                "publication state {state:?} returned unexpected outcome {outcome:?} for batch {batch_id}"
+            ),
         }
     }
 }
@@ -127,31 +143,71 @@ impl std::error::Error for PipelineError {
             Self::Publication { source, .. } => Some(source),
             Self::Sink { source, .. } => Some(source),
             Self::PartialPublication { .. } => None,
+            Self::UnexpectedPublishOutcome { .. } => None,
         }
     }
 }
 
-fn provider_error_is_retryable(error: &ProviderError) -> bool {
-    matches!(
-        error,
-        ProviderError::EndpointTimeout { .. } | ProviderError::Io { .. }
-    )
+pub fn provider_failure_class(error: &ProviderError) -> FailureClass {
+    match error {
+        ProviderError::EndpointTimeout { .. } | ProviderError::Io { .. } => FailureClass::Retryable,
+        ProviderError::CredentialsUnavailable { .. }
+        | ProviderError::UnsafeFileName { .. }
+        | ProviderError::UnsupportedKind(_)
+        | ProviderError::RecordedBundleMissing { .. }
+        | ProviderError::RecordedBundleIo { .. }
+        | ProviderError::RecordedBundleParse { .. }
+        | ProviderError::RecordedBundleInvalid { .. } => FailureClass::Permanent,
+    }
 }
 
-fn store_error_is_retryable(error: &StoreError) -> bool {
-    matches!(error, StoreError::Io { .. })
+pub fn store_failure_class(error: &StoreError) -> FailureClass {
+    match error {
+        StoreError::Io { .. } => FailureClass::Retryable,
+        StoreError::FileExists { .. }
+        | StoreError::UnsafeFileName { .. }
+        | StoreError::UnsafeScope { .. }
+        | StoreError::ScopeMismatch { .. }
+        | StoreError::UnsafePath { .. }
+        | StoreError::ContentHashMismatch { .. }
+        | StoreError::CorruptManifest { .. }
+        | StoreError::CorruptBatchMetadata { .. }
+        | StoreError::InvalidBatchMetadata { .. }
+        | StoreError::MissingEvidence { .. }
+        | StoreError::Serialization { .. } => FailureClass::Permanent,
+    }
 }
 
 fn ingest_error_is_retryable(error: &IngestError) -> bool {
     match error {
-        IngestError::Provider(source) => provider_error_is_retryable(source),
-        IngestError::Store(source) => store_error_is_retryable(source),
+        IngestError::Provider(source) => provider_failure_class(source) == FailureClass::Retryable,
+        IngestError::Store(source) => store_failure_class(source) == FailureClass::Retryable,
         IngestError::MalformedResponse { .. } => false,
     }
 }
 
 fn publication_error_is_retryable(error: &PublicationError) -> bool {
-    matches!(error, PublicationError::Store(source) if store_error_is_retryable(source))
+    match error {
+        PublicationError::Store(source) => store_failure_class(source) == FailureClass::Retryable,
+        PublicationError::UnsupportedManifestScope { .. }
+        | PublicationError::SizeMismatch { .. }
+        | PublicationError::SizeExceedsPostgresBigint { .. }
+        | PublicationError::UnexpectedContentHash { .. }
+        | PublicationError::NonUtf8StoragePath { .. }
+        | PublicationError::ReadbackFileCountMismatch { .. }
+        | PublicationError::ReadbackFileNameMismatch { .. }
+        | PublicationError::MalformedBars { .. }
+        | PublicationError::InvalidBarDate { .. }
+        | PublicationError::MalformedCalendar { .. }
+        | PublicationError::UnsupportedCalendarTimezone { .. }
+        | PublicationError::InvalidCalendarSessionTimes { .. }
+        | PublicationError::InvalidCalendarDate { .. }
+        | PublicationError::InvalidCalendarTimestamp { .. }
+        | PublicationError::InconsistentCalendarInstant { .. }
+        | PublicationError::CalendarDateBothSessionAndHoliday { .. }
+        | PublicationError::ConflictingCalendarFact { .. }
+        | PublicationError::ConflictingCalendarProvenance { .. } => false,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +259,7 @@ pub async fn recover_unpublished(
     entries.sort_by(|left, right| {
         left.retrieved_at
             .cmp(&right.retrieved_at)
-            .then_with(|| left.batch_id.to_string().cmp(&right.batch_id.to_string()))
+            .then_with(|| left.batch_id.cmp(&right.batch_id))
     });
 
     let mut report = RecoveryReport::default();
@@ -230,7 +286,26 @@ pub async fn recover_unpublished(
                     })?;
                 report.recovered.push(batch_id);
             }
-            PublicationState::Complete => report.skipped.push(batch_id),
+            PublicationState::Complete => {
+                let bundle = PublicationBundle::from_raw(store, &manifest)
+                    .map_err(|source| PipelineError::Publication { batch_id, source })?;
+                let outcome =
+                    sink.publish(&bundle)
+                        .await
+                        .map_err(|source| PipelineError::Sink {
+                            batch_id,
+                            stage: PipelineStage::Publish,
+                            source,
+                        })?;
+                if outcome != PublishOutcome::AlreadyPublished {
+                    return Err(PipelineError::UnexpectedPublishOutcome {
+                        batch_id,
+                        state,
+                        outcome,
+                    });
+                }
+                report.skipped.push(batch_id);
+            }
             PublicationState::Partial => {
                 return Err(PipelineError::PartialPublication { batch_id });
             }
