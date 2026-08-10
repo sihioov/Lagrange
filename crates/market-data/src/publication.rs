@@ -1,11 +1,11 @@
 //! Typed, transport-neutral publication records derived from immutable Raw batches.
 
-use chrono::{FixedOffset, Timelike};
+use chrono::{FixedOffset, TimeZone, Utc};
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use serde::Deserialize;
 
-use crate::contract::{FetchMode, ResponseKind};
-use crate::storage::{ManifestEntry, RawStore, StoreError};
+use crate::contract::{FetchMode, ResponseKind, StoredFile};
+use crate::storage::{FileEntry, ManifestEntry, RawStore, StoreError};
 
 /// Stable batch kind stored by downstream publication sinks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -92,6 +92,16 @@ pub enum PublicationError {
     UnexpectedContentHash { file_name: String, value: String },
     #[error("non-UTF8 storage path for {file_name}")]
     NonUtf8StoragePath { file_name: String },
+    #[error("verified Raw file count differs from manifest: manifest={manifest_count}, read={read_count}")]
+    ReadbackFileCountMismatch {
+        manifest_count: usize,
+        read_count: usize,
+    },
+    #[error("verified Raw file name differs from manifest: manifest={manifest_file_name}, read={read_file_name}")]
+    ReadbackFileNameMismatch {
+        manifest_file_name: String,
+        read_file_name: String,
+    },
     #[error("malformed bars file {file_name}: {reason}")]
     MalformedBars { file_name: String, reason: String },
     #[error("invalid bar date in {file_name}: {value}")]
@@ -170,49 +180,41 @@ struct CalendarHoliday {
     date: String,
 }
 
+struct VerifiedRawFile<'a> {
+    entry: &'a FileEntry,
+    bytes: &'a [u8],
+    content_sha256: String,
+    storage_path: String,
+}
+
 impl PublicationBundle {
     /// Reads every file back through Raw verification before producing any facts.
     pub fn from_raw(store: &RawStore, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
         let stored = store.read_batch_bytes(&manifest.provider, &manifest.market, manifest)?;
-        let mut files = Vec::with_capacity(manifest.files.len());
-        let mut calendar_facts = Vec::new();
+        if stored.len() != manifest.files.len() {
+            return Err(PublicationError::ReadbackFileCountMismatch {
+                manifest_count: manifest.files.len(),
+                read_count: stored.len(),
+            });
+        }
 
-        for (entry, stored_file) in manifest.files.iter().zip(stored.iter()) {
-            if entry.size_bytes > i64::MAX as u64 {
-                return Err(PublicationError::SizeExceedsPostgresBigint {
-                    file_name: entry.file_name.clone(),
-                    size: entry.size_bytes,
-                });
-            }
-            let read_size = stored_file.bytes.len() as u64;
-            if entry.size_bytes != read_size {
-                return Err(PublicationError::SizeMismatch {
-                    file_name: entry.file_name.clone(),
-                    manifest_size: entry.size_bytes,
-                    read_size,
-                });
-            }
-            let content_sha256 = database_hash(&entry.file_name, entry.content_hash.as_str())?;
-            let path = store
-                .batch_dir(
-                    &manifest.provider,
-                    &manifest.market,
-                    &manifest.date,
-                    &manifest.batch_id,
-                )
-                .join(&entry.file_name);
-            let storage_path = path.into_os_string().into_string().map_err(|_| {
-                PublicationError::NonUtf8StoragePath {
-                    file_name: entry.file_name.clone(),
-                }
-            })?;
-            let kind = match entry.kind {
+        let verified_files: Vec<_> = manifest
+            .files
+            .iter()
+            .zip(&stored)
+            .map(|(entry, stored_file)| validate_file_metadata(store, manifest, entry, stored_file))
+            .collect::<Result<_, _>>()?;
+
+        let mut files = Vec::with_capacity(verified_files.len());
+        let mut calendar_facts = Vec::new();
+        for verified in verified_files {
+            let kind = match verified.entry.kind {
                 ResponseKind::Bars => {
-                    classify_bars(&entry.file_name, &stored_file.bytes, manifest.date)?
+                    classify_bars(&verified.entry.file_name, verified.bytes, manifest.date)?
                 }
                 ResponseKind::Reference => DataBatchKind::Reference,
                 ResponseKind::Calendar => {
-                    let facts = parse_calendar(&entry.file_name, &stored_file.bytes)?;
+                    let facts = parse_calendar(&verified.entry.file_name, verified.bytes)?;
                     for fact in facts {
                         insert_calendar_fact(&mut calendar_facts, fact)?;
                     }
@@ -221,11 +223,11 @@ impl PublicationBundle {
                 ResponseKind::CorporateActions => DataBatchKind::CorporateActions,
             };
             files.push(PublicationFile {
-                file_name: entry.file_name.clone(),
+                file_name: verified.entry.file_name.clone(),
                 kind,
-                content_sha256,
-                storage_path,
-                bytes_size: entry.size_bytes,
+                content_sha256: verified.content_sha256,
+                storage_path: verified.storage_path,
+                bytes_size: verified.entry.size_bytes,
             });
         }
         calendar_facts.sort_by_key(|fact: &CalendarFact| fact.session_date);
@@ -241,6 +243,55 @@ impl PublicationBundle {
             calendar_facts,
         })
     }
+}
+
+fn validate_file_metadata<'a>(
+    store: &RawStore,
+    manifest: &ManifestEntry,
+    entry: &'a FileEntry,
+    stored_file: &'a StoredFile,
+) -> Result<VerifiedRawFile<'a>, PublicationError> {
+    if entry.file_name != stored_file.file_name {
+        return Err(PublicationError::ReadbackFileNameMismatch {
+            manifest_file_name: entry.file_name.clone(),
+            read_file_name: stored_file.file_name.clone(),
+        });
+    }
+    if entry.size_bytes > i64::MAX as u64 {
+        return Err(PublicationError::SizeExceedsPostgresBigint {
+            file_name: entry.file_name.clone(),
+            size: entry.size_bytes,
+        });
+    }
+    let read_size = stored_file.bytes.len() as u64;
+    if entry.size_bytes != read_size {
+        return Err(PublicationError::SizeMismatch {
+            file_name: entry.file_name.clone(),
+            manifest_size: entry.size_bytes,
+            read_size,
+        });
+    }
+    let content_sha256 = database_hash(&entry.file_name, entry.content_hash.as_str())?;
+    let path = store
+        .batch_dir(
+            &manifest.provider,
+            &manifest.market,
+            &manifest.date,
+            &manifest.batch_id,
+        )
+        .join(&entry.file_name);
+    let storage_path =
+        path.into_os_string()
+            .into_string()
+            .map_err(|_| PublicationError::NonUtf8StoragePath {
+                file_name: entry.file_name.clone(),
+            })?;
+    Ok(VerifiedRawFile {
+        entry,
+        bytes: &stored_file.bytes,
+        content_sha256,
+        storage_path,
+    })
 }
 
 fn parse_calendar(file_name: &str, bytes: &[u8]) -> Result<Vec<CalendarFact>, PublicationError> {
@@ -335,12 +386,16 @@ fn verify_calendar_instant(
         }
     })?;
     let seoul_offset = FixedOffset::east_opt(9 * 60 * 60).expect("valid Seoul offset");
-    let local = timestamp.as_datetime().with_timezone(&seoul_offset);
-    if local.date_naive() != date.as_naive_date()
-        || local.time().hour() != expected_hour
-        || local.time().minute() != expected_minute
-        || local.time().second() != 0
-    {
+    let expected_local = date
+        .as_naive_date()
+        .and_hms_opt(expected_hour, expected_minute, 0)
+        .expect("contract session time is valid");
+    let expected_utc = seoul_offset
+        .from_local_datetime(&expected_local)
+        .single()
+        .expect("Asia/Seoul fixed offset has one local instant")
+        .with_timezone(&Utc);
+    if timestamp.as_datetime() != expected_utc {
         return Err(PublicationError::InconsistentCalendarInstant {
             file_name: file_name.to_owned(),
             date: date.to_iso(),

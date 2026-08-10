@@ -211,6 +211,30 @@ fn from_raw_rejects_manifest_size_above_postgres_bigint() {
 }
 
 #[test]
+fn from_raw_validates_all_evidence_before_parsing_an_earlier_malformed_payload() {
+    let store = RawStore::new(temp_root("evidence-before-parse"));
+    let mut entry = store_files(
+        &store,
+        &[
+            (ResponseKind::Bars, "malformed-bars.json", b"{".to_vec()),
+            (ResponseKind::Reference, "oversized.json", b"{}".to_vec()),
+        ],
+    );
+    entry.files[1].size_bytes = i64::MAX as u64 + 1;
+
+    let error = PublicationBundle::from_raw(&store, &entry)
+        .expect_err("later evidence validation must win over malformed payload parsing");
+
+    assert!(matches!(
+        error,
+        PublicationError::SizeExceedsPostgresBigint {
+            ref file_name,
+            ..
+        } if file_name == "oversized.json"
+    ));
+}
+
+#[test]
 fn from_raw_marks_valid_empty_bars_as_eod_unavailable() {
     let store = RawStore::new(temp_root("unavailable"));
     let entry = store_files(
@@ -378,6 +402,38 @@ fn from_raw_rejects_inconsistent_calendar_instants_and_dates_present_in_both_lis
     assert!(matches!(
         both_error,
         PublicationError::CalendarDateBothSessionAndHoliday { .. }
+    ));
+}
+
+#[test]
+fn from_raw_rejects_calendar_session_instants_with_fractional_seconds() {
+    let store = RawStore::new(temp_root("calendar-fractional-instant"));
+    let entry = store_files(
+        &store,
+        &[(
+            ResponseKind::Calendar,
+            "fractional.json",
+            calendar_payload(
+                "Asia/Seoul",
+                "source",
+                "09:00:00",
+                "15:30:00",
+                r#"[{"date":"2020-01-31","open_utc":"2020-01-31T00:00:00.500Z","close_utc":"2020-01-31T06:30:00Z"}]"#,
+                "[]",
+            ),
+        )],
+    );
+
+    let error = PublicationBundle::from_raw(&store, &entry)
+        .expect_err("fractional-second session instant must fail");
+
+    assert!(matches!(
+        error,
+        PublicationError::InconsistentCalendarInstant {
+            ref field,
+            ref file_name,
+            ..
+        } if field == "open_utc" && file_name == "fractional.json"
     ));
 }
 
