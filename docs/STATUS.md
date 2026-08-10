@@ -70,7 +70,7 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 - **Phase 0** — 완료. 골든 회귀가 모든 변경에서 불변으로 유지되고 있다.
 - **Phase 1** — 코드 완료. 외부 2건(E1/E2)만 남음.
 - **Phase 2** — **실행 엔진·러너·종가 평가 경로 구현 완료** (`ecef4b2`, `cf8704a`, `8da6548`). `job_queue::paper_execution::execute_session`이 큐잉된 target을 실제로 체결해 `orders`/`fills`/`positions`/`cash_ledger`에 기록하고, `api_server::paper_session::run_and_settle`이 정산·패리티·통지를 수행한다. 새 `api_server::paper_runner::run_cycle`은 worker 역할의 전체 due target을 소유자 Actor로 재진입시켜 실행하고, 활성 PAPER 계좌를 스캔해 `job_queue::paper_valuation::value_account`를 호출한다. 종가 평가는 원장 현금 자기대조·보유 포지션별 curated close·미래 close 차단·cost profile 검증을 거쳐 `daily_equity`를 계좌/날짜별 불변·멱등으로 기록한다. `crates/api-server/src/bin/paper-runner.rs`가 `--once`/`--date`, 환경별 풀, 2초 polling/10초 backoff, Ctrl-C 종료를 제공한다. 실제 QA DB 이음매 테스트로 두 소유자 스캔, 실행·통지 중복 방지, 정확한 equity/cash/positions_value, missing/future/conflicting close, LIVE·교차 테넌트 거부를 검증했고, Python/Web/외부 데이터 권리 차단은 그대로다. 호스트 배포 단위와 운영 credential 주입은 `deploy/systemd/paper-runner.service` 및 `paper-runner.env.example`로 등록했고, `scripts/qa/paper-runner-smoke.ps1`가 해당 유닛 정적 계약·QA DB 테스트·CLI smoke를 묶는다.
-- **Phase 3** — 안전 불변식 검증 완료(L1~L11) + 이번 감사로 치명 결함 수정. 게이트 입력 5개 중 **2개 배선 완료**(`85f1902`: `strategy_promotion` ← 계좌의 활성 바인딩, `instrument_allowed` ← 고정 유니버스). 나머지 3개(장 세션·데이터 신선도·주문 충돌)는 이 저장소에 존재하지 않는 외부 출처가 필요해 여전히 `Unknown`이며, **라이브 주문은 현재도 승인되지 않는다** — 의도된 정직한 상태.
+- **Phase 3** — 안전 불변식 검증 완료(L1~L11) + 이번 감사로 치명 결함 수정. 게이트 입력 5개 모두 코드 수준에서 실제 원천에 연결됐다(`85f1902`: `strategy_promotion`/`instrument_allowed`, `d7d75c7`: KRX 세션·EOD batch freshness·actor-scoped intent conflict). 원천 행이 없거나 읽을 수 없으면 여전히 `Unknown`으로 닫히며, 운영 캘린더·데이터 수집 메타데이터가 준비되기 전까지 **라이브 주문은 승인되지 않는다** — 의도된 fail-closed 상태.
 - **Phase 4** — PIT 재무 팩터의 **골격 완료** (`cda7182`): 이중 시간축(기간 + 공시일), 바 날짜별 as-of 해석, 정정 공시 처리. 실제 재무 데이터가 오면 채우기만 하면 된다. 나머지 항목은 미착수 (§4.4).
 
 ---
@@ -117,7 +117,7 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 | 항목 | 내용 | 커밋 |
 |---|---|---|
 | **Paper 실행·러너·종가 평가** | `execute_session`/`run_and_settle` 경로에 worker-wide `run_cycle`과 `paper-runner` 바이너리를 연결했다. `value_account`가 `close_valuation_event`와 원장 자기대조를 사용해 불변·멱등 `daily_equity`를 기록한다. 11개 새 이음매 테스트가 정확한 금액, 미래·누락 close, 충돌, LIVE·교차 테넌트 거부, 대상/통지 중복 방지를 검증 | `cf8704a`, `8da6548` |
-| **게이트 입력 2개 배선** | `strategy_promotion` ← `accounts.active_binding`, `instrument_allowed` ← 고정 유니버스(`in_fixed_universe`, 기존 상수 재사용). 나머지 3개는 외부 출처가 없어 `Unknown` 유지 | `85f1902` |
+| **게이트 입력 5개 배선** | `strategy_promotion`/`instrument_allowed`에 이어 `market_session` ← `trading_calendars`, `data_freshness` ← 최신 KRX EOD `data_batches.retrieved_at`, `IntentConflict` ← actor-scoped 미종결 `order_intents`. 누락·오류는 `Unknown`으로 유지 | `85f1902`, `d7d75c7` |
 | **P6/P7 증거 복원** | 실제 백업 생성(`scripts/backup/create.sh`) → 격리 타깃 복구(`scripts/backup/restore-and-verify.sh`, `verdict: SUCCESS`) → 장애 주입 15개 시나리오 재검증. 조작 없이 실제 인프라로 재현 | (증거 재실행, 코드 변경 없음) |
 | **Paper 표시 현금 대조** | `PaperRepo::equity`가 `cash_ledger`와 as-of 대조(`LATERAL JOIN`)해 `cash_reconciled` 플래그를 반환. 불일치해도 화면은 보여주되(FR-PAPER-003) 사실대로 표시 | `e99385c` |
 
@@ -164,11 +164,11 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
 1. **배포 서비스 활성화.** `deploy/systemd/paper-runner.service`와 운영별 `/etc/lagrange/paper-runner.env`를 설치·시작하고, 실제 role-scoped DB URL과 curated dataset 마운트를 호스트 Secret Manager에서 주입해야 한다. 저장소에는 비밀값을 넣지 않는다.
-2. **리스크 게이트 입력 3개 잔여 배선.** `market_session`(시장 캘린더 서비스 필요), `data_freshness`(데이터셋 staleness 검사 필요), `IntentConflict`(미결 주문 충돌 탐지 필요) — 이 저장소에 아직 존재하지 않는 외부 출처가 있어 지어내지 않았다. **이 3개를 잇기 전까지 라이브 주문은 승인되지 않는다 — 의도된 상태.**
+2. **리스크 게이트 운영 원천 활성화.** 코드 배선은 완료됐지만 운영 PostgreSQL에 KRX 캘린더와 EOD batch 메타데이터를 공급하고, 라이브 계정의 intent 상태를 정상적으로 유지해야 한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 3. **phase-0 데이터셋 가격 스케일 버그 수정** (§4.2-1 결정 이후). `synth_data.py`에서 `* 10_000` 제거 또는 pyarrow 스케일 적용 방식 수정, 골든 해시 재승인, 영향받는 다운스트림(있다면) 재검증.
 4. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화(이번 재실행도 E7은 스킵).
 
-**작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 지금은 나머지 입력 3개가 `Unknown`이라 무해하지만, 그것들이 배선되는 순간 결정적 검사가 되니 그때 재검토할 것. `positions` upsert의 `ON CONFLICT ... DO UPDATE`가 갱신 절에서 소유자를 재확인하지 않는다 — 지금은 계좌-소유자가 1:1이라 안전하지만, 스키마 차원의 보강(`UNIQUE (account_id, owner_user_id, instrument_id)`)이 더 견고한 해법이다.
+**작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. `positions` upsert의 `ON CONFLICT ... DO UPDATE`가 갱신 절에서 소유자를 재확인하지 않는다 — 지금은 계좌-소유자가 1:1이라 안전하지만, 스키마 차원의 보강(`UNIQUE (account_id, owner_user_id, instrument_id)`)이 더 견고한 해법이다.
 
 ### 4.4 Phase 4 잔여
 
