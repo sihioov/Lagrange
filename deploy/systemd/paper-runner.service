@@ -1,0 +1,30 @@
+[Unit]
+Description=Lagrange Paper runner
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/lagrange/bin/paper-runner
+
+[Service]
+Type=simple
+User=lagrange
+Group=lagrange
+WorkingDirectory=/opt/lagrange
+EnvironmentFile=/etc/lagrange/paper-runner.env
+ExecStart=/opt/lagrange/bin/paper-runner
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+
+# The runner only reads the curated dataset and writes through PostgreSQL.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/lagrange/data/phase0
+ReadWritePaths=/var/lib/lagrange
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
