@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use serde::{Deserialize, Serialize};
 
-use crate::contract::{FetchMode, RawEnvelope, ResponseKind, StoredFile, date_partition};
+use crate::contract::{date_partition, FetchMode, RawEnvelope, ResponseKind, StoredFile};
 
 /// Per-file record inside a manifest row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +67,27 @@ pub enum StoreError {
     FileExists { path: String },
     /// The provider file name is not a plain name (traversal, separators, ...).
     UnsafeFileName { file_name: String, reason: String },
+    /// Provider or market would be unsafe as a filesystem path component.
+    UnsafeScope {
+        component: String,
+        value: String,
+        reason: String,
+    },
+    /// An embedded manifest scope differs from the requested trusted scope.
+    ScopeMismatch {
+        expected_provider: String,
+        expected_market: String,
+        actual_provider: String,
+        actual_market: String,
+    },
+    /// A canonicalized path leaves the intended immutable batch directory.
+    UnsafePath { path: String, reason: String },
+    /// Read-back bytes differ from the content hash recorded in immutable Raw.
+    ContentHashMismatch {
+        path: String,
+        recorded: String,
+        actual: String,
+    },
     /// Filesystem or content-verification failure.
     Io { context: String, detail: String },
 }
@@ -80,6 +101,29 @@ impl std::fmt::Display for StoreError {
             Self::UnsafeFileName { file_name, reason } => {
                 write!(f, "unsafe raw file name {file_name:?}: {reason}")
             }
+            Self::UnsafeScope {
+                component,
+                value,
+                reason,
+            } => write!(f, "unsafe raw {component} scope {value:?}: {reason}"),
+            Self::ScopeMismatch {
+                expected_provider,
+                expected_market,
+                actual_provider,
+                actual_market,
+            } => write!(
+                f,
+                "raw scope mismatch: requested {expected_provider}/{expected_market}, entry {actual_provider}/{actual_market}"
+            ),
+            Self::UnsafePath { path, reason } => write!(f, "unsafe raw path {path:?}: {reason}"),
+            Self::ContentHashMismatch {
+                path,
+                recorded,
+                actual,
+            } => write!(
+                f,
+                "raw content hash mismatch at {path}: recorded {recorded} != read {actual}"
+            ),
             Self::Io { context, detail } => write!(f, "raw store io failure ({context}): {detail}"),
         }
     }
@@ -163,11 +207,9 @@ impl RawStore {
             entitlement_reference,
             mode,
         } = *spec;
+        validate_scope(provider, market)?;
         for env in envelopes {
-            validate_file_name(&env.file_name).map_err(|reason| StoreError::UnsafeFileName {
-                file_name: env.file_name.clone(),
-                reason,
-            })?;
+            validate_file_entry_name(&env.file_name)?;
         }
 
         let dir = self.batch_dir(provider, market, date, &batch_id);
@@ -254,6 +296,9 @@ impl RawStore {
         market: &str,
         entry: &ManifestEntry,
     ) -> Result<(), StoreError> {
+        validate_scope(provider, market)?;
+        validate_entry_scope(provider, market, entry)?;
+        validate_manifest_file_names(entry)?;
         let path = self.manifest_path(provider, market);
         let parent = path.parent().ok_or_else(|| StoreError::Io {
             context: "manifest parent".to_owned(),
@@ -280,6 +325,7 @@ impl RawStore {
         provider: &str,
         market: &str,
     ) -> Result<Vec<ManifestEntry>, StoreError> {
+        validate_scope(provider, market)?;
         let path = self.manifest_path(provider, market);
         if !path.exists() {
             return Ok(Vec::new());
@@ -297,6 +343,8 @@ impl RawStore {
                 context: format!("manifest line {idx}"),
                 detail: e.to_string(),
             })?;
+            validate_entry_scope(provider, market, &entry)?;
+            validate_manifest_file_names(&entry)?;
             entries.push(entry);
         }
         Ok(entries)
@@ -310,27 +358,37 @@ impl RawStore {
         market: &str,
         entry: &ManifestEntry,
     ) -> Result<Vec<StoredFile>, StoreError> {
+        validate_scope(provider, market)?;
+        validate_entry_scope(provider, market, entry)?;
+        validate_manifest_file_names(entry)?;
         let dir = self.batch_dir(provider, market, &entry.date, &entry.batch_id);
+        let canonical_dir = fs::canonicalize(&dir)
+            .map_err(|e| io_err(&format!("canonicalize batch dir {}", dir.display()), e))?;
         let mut out = Vec::with_capacity(entry.files.len());
         for file in &entry.files {
             let path = dir.join(&file.file_name);
-            let bytes =
-                fs::read(&path).map_err(|e| io_err(&format!("read {}", path.display()), e))?;
+            let storage_path = fs::canonicalize(&path)
+                .map_err(|e| io_err(&format!("canonicalize {}", path.display()), e))?;
+            if !storage_path.starts_with(&canonical_dir) {
+                return Err(StoreError::UnsafePath {
+                    path: storage_path.display().to_string(),
+                    reason: format!("escapes batch directory {}", canonical_dir.display()),
+                });
+            }
+            let bytes = fs::read(&storage_path)
+                .map_err(|e| io_err(&format!("read {}", path.display()), e))?;
             let actual = ContentHash::from_bytes(&bytes);
             if actual != file.content_hash {
-                return Err(StoreError::Io {
-                    context: "content-hash-verification".to_owned(),
-                    detail: format!(
-                        "{}: recorded {} != read {}",
-                        path.display(),
-                        file.content_hash,
-                        actual
-                    ),
+                return Err(StoreError::ContentHashMismatch {
+                    path: storage_path.display().to_string(),
+                    recorded: file.content_hash.to_string(),
+                    actual: actual.to_string(),
                 });
             }
             out.push(StoredFile {
                 file_name: file.file_name.clone(),
                 bytes,
+                storage_path: path,
             });
         }
         Ok(out)
@@ -343,6 +401,7 @@ impl RawStore {
         market: &str,
         date: &TradingDate,
     ) -> Result<Vec<BatchId>, StoreError> {
+        validate_scope(provider, market)?;
         let dir = self
             .provider_dir(provider, market)
             .join(date_partition(date));
@@ -387,6 +446,60 @@ fn validate_file_name(name: &str) -> Result<(), String> {
     }
     if name.bytes().any(|b| b.is_ascii_control()) {
         return Err("contains control characters".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_file_entry_name(name: &str) -> Result<(), StoreError> {
+    validate_file_name(name).map_err(|reason| StoreError::UnsafeFileName {
+        file_name: name.to_owned(),
+        reason,
+    })
+}
+
+fn validate_scope_component(component: &str, value: &str) -> Result<(), StoreError> {
+    let valid = !value.is_empty()
+        && value.len() <= 96
+        && value != "."
+        && value != ".."
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+    if valid {
+        Ok(())
+    } else {
+        Err(StoreError::UnsafeScope {
+            component: component.to_owned(),
+            value: value.to_owned(),
+            reason: "must be a bounded plain path component".to_owned(),
+        })
+    }
+}
+
+fn validate_scope(provider: &str, market: &str) -> Result<(), StoreError> {
+    validate_scope_component("provider", provider)?;
+    validate_scope_component("market", market)
+}
+
+fn validate_entry_scope(
+    provider: &str,
+    market: &str,
+    entry: &ManifestEntry,
+) -> Result<(), StoreError> {
+    if entry.provider != provider || entry.market != market {
+        return Err(StoreError::ScopeMismatch {
+            expected_provider: provider.to_owned(),
+            expected_market: market.to_owned(),
+            actual_provider: entry.provider.clone(),
+            actual_market: entry.market.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_manifest_file_names(entry: &ManifestEntry) -> Result<(), StoreError> {
+    for file in &entry.files {
+        validate_file_entry_name(&file.file_name)?;
     }
     Ok(())
 }

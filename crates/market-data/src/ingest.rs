@@ -10,7 +10,7 @@ use domain::{BatchId, TradingDate, UtcTimestamp};
 use crate::contract::{ResponseKind, StoredFile};
 use crate::provider::{EodProvider, ProviderError};
 use crate::storage::{BatchSpec, ManifestEntry, RawStore, StoreError};
-use crate::validate::{ValidationError, validate_response};
+use crate::validate::{validate_response, ValidationError};
 
 /// A typed failure of the whole ingestion pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +122,9 @@ pub fn ingest_bundle(
         .map(|e| StoredFile {
             file_name: e.file_name.clone(),
             bytes: e.bytes.clone(),
+            storage_path: store
+                .batch_dir(&entry.provider, &entry.market, &entry.date, &entry.batch_id)
+                .join(&e.file_name),
         })
         .collect();
 

@@ -63,6 +63,14 @@ fn store_files(store: &RawStore, files: &[(ResponseKind, &str, Vec<u8>)]) -> Man
         .expect("store batch")
 }
 
+fn reopen_manifest(store: &RawStore) -> ManifestEntry {
+    store
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("reopen manifest")
+        .pop()
+        .expect("stored manifest entry")
+}
+
 fn calendar_payload(
     timezone: &str,
     source: &str,
@@ -77,6 +85,20 @@ fn calendar_payload(
     .into_bytes()
 }
 
+fn calendar_payload_with_id(calendar_id: &str, sessions: &str) -> Vec<u8> {
+    String::from_utf8(calendar_payload(
+        "Asia/Seoul",
+        "source",
+        "09:00:00",
+        "15:30:00",
+        sessions,
+        "[]",
+    ))
+    .expect("calendar payload UTF-8")
+    .replace("krx-test", calendar_id)
+    .into_bytes()
+}
+
 #[test]
 fn from_raw_maps_contract_bars_for_target_date_to_eod() {
     let store = RawStore::new(temp_root("contract"));
@@ -87,8 +109,9 @@ fn from_raw_maps_contract_bars_for_target_date_to_eod() {
         UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00Z").expect("time"),
     );
     let outcome = ingest_bundle(&store, &provider, &request, None).expect("ingest");
+    let reopened = reopen_manifest(&store);
 
-    let publication = PublicationBundle::from_raw(&store, &outcome.entry).expect("publication");
+    let publication = PublicationBundle::from_raw(&store, &reopened).expect("publication");
 
     assert_eq!(publication.files.len(), 4);
     assert_eq!(publication.files[0].kind, DataBatchKind::Eod);
@@ -146,9 +169,10 @@ fn from_raw_publishes_calendar_trading_sessions_with_stable_provenance() {
         TradingDate::parse("2020-01-31").expect("date"),
         UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00Z").expect("time"),
     );
-    let outcome = ingest_bundle(&store, &provider, &request, None).expect("ingest");
+    ingest_bundle(&store, &provider, &request, None).expect("ingest");
+    let reopened = reopen_manifest(&store);
 
-    let publication = PublicationBundle::from_raw(&store, &outcome.entry).expect("publication");
+    let publication = PublicationBundle::from_raw(&store, &reopened).expect("publication");
 
     assert_eq!(publication.calendar_facts.len(), 2);
     assert_eq!(publication.calendar_facts[0].exchange, "KRX");
@@ -166,6 +190,14 @@ fn from_raw_publishes_calendar_trading_sessions_with_stable_provenance() {
         publication.calendar_facts[0].source_version,
         "krx-2020-01-synthetic:schema-1"
     );
+    assert_eq!(
+        publication.calendar_facts[0].content_sha256,
+        reopened.files[2]
+            .content_hash
+            .as_str()
+            .strip_prefix("sha256:")
+            .unwrap()
+    );
 }
 
 #[test]
@@ -176,12 +208,13 @@ fn from_raw_publishes_explicit_calendar_holidays_as_closed_without_inferring_mis
         "/../../tests/fixtures/kr-etf/2020-01-31/calendar.json"
     ))
     .expect("calendar fixture");
-    let entry = store_files(
+    store_files(
         &store,
         &[(ResponseKind::Calendar, "calendar.json", calendar)],
     );
+    let reopened = reopen_manifest(&store);
 
-    let publication = PublicationBundle::from_raw(&store, &entry).expect("publication");
+    let publication = PublicationBundle::from_raw(&store, &reopened).expect("publication");
 
     assert!(publication.calendar_facts.iter().any(|fact| {
         fact.session_date.to_iso() == "2020-01-24"
@@ -237,12 +270,13 @@ fn from_raw_validates_all_evidence_before_parsing_an_earlier_malformed_payload()
 #[test]
 fn from_raw_marks_valid_empty_bars_as_eod_unavailable() {
     let store = RawStore::new(temp_root("unavailable"));
-    let entry = store_files(
+    store_files(
         &store,
         &[(ResponseKind::Bars, "bars.json", br#"{"bars":[]}"#.to_vec())],
     );
+    let reopened = reopen_manifest(&store);
 
-    let publication = PublicationBundle::from_raw(&store, &entry).expect("publication");
+    let publication = PublicationBundle::from_raw(&store, &reopened).expect("publication");
 
     assert_eq!(publication.files[0].kind, DataBatchKind::EodUnavailable);
 }
@@ -267,7 +301,10 @@ fn from_raw_rejects_tampered_later_file_before_returning_a_bundle() {
 
     let error = PublicationBundle::from_raw(&store, &entry).expect_err("tampering must fail");
 
-    assert!(matches!(error, PublicationError::Store(_)));
+    assert!(matches!(
+        error,
+        PublicationError::Store(market_data::storage::StoreError::ContentHashMismatch { .. })
+    ));
 }
 
 #[test]
@@ -448,15 +485,45 @@ fn from_raw_deduplicates_identical_calendar_facts_and_rejects_conflicts() {
         r#"[{"date":"2020-01-31","open_utc":"2020-01-31T00:00:00Z","close_utc":"2020-01-31T06:30:00Z"}]"#,
         "[]",
     );
-    let duplicate = store_files(
+    store_files(
         &store,
         &[
             (ResponseKind::Calendar, "first.json", session.clone()),
-            (ResponseKind::Calendar, "second.json", session),
+            (ResponseKind::Calendar, "second.json", session.clone()),
         ],
     );
-    let publication = PublicationBundle::from_raw(&store, &duplicate).expect("duplicates dedupe");
+    let reopened_duplicate = reopen_manifest(&store);
+    let publication =
+        PublicationBundle::from_raw(&store, &reopened_duplicate).expect("duplicates dedupe");
     assert_eq!(publication.calendar_facts.len(), 1);
+    assert_eq!(
+        publication.calendar_facts[0].content_sha256,
+        reopened_duplicate.files[0]
+            .content_hash
+            .as_str()
+            .strip_prefix("sha256:")
+            .unwrap()
+    );
+
+    let mut semantically_identical_different_bytes = session.clone();
+    semantically_identical_different_bytes.push(b' ');
+    let different_bytes = store_files(
+        &store,
+        &[
+            (ResponseKind::Calendar, "original.json", session.clone()),
+            (
+                ResponseKind::Calendar,
+                "whitespace.json",
+                semantically_identical_different_bytes,
+            ),
+        ],
+    );
+    let different_bytes_error = PublicationBundle::from_raw(&store, &different_bytes)
+        .expect_err("same source version must not point at different raw bytes");
+    assert!(matches!(
+        different_bytes_error,
+        PublicationError::ConflictingCalendarFact { .. }
+    ));
 
     let conflict = store_files(
         &store,
@@ -492,4 +559,78 @@ fn from_raw_deduplicates_identical_calendar_facts_and_rejects_conflicts() {
         error,
         PublicationError::ConflictingCalendarFact { .. }
     ));
+}
+
+#[test]
+fn publication_rejects_non_krx_manifest_scope_before_raw_path_access() {
+    let store = RawStore::new(temp_root("publication-scope"));
+    let mut entry = store_files(
+        &store,
+        &[(ResponseKind::Reference, "reference.json", b"{}".to_vec())],
+    );
+    entry.market = "other-market".to_owned();
+
+    let error = PublicationBundle::from_raw(&store, &entry)
+        .expect_err("publication scope must be constrained before raw reads");
+
+    assert!(matches!(
+        error,
+        PublicationError::UnsupportedManifestScope { .. }
+    ));
+}
+
+#[test]
+fn calendar_facts_are_content_addressed_and_canonically_ordered() {
+    let store = RawStore::new(temp_root("calendar-ordering"));
+    let date_31 = r#"[{"date":"2020-01-31","open_utc":"2020-01-31T00:00:00Z","close_utc":"2020-01-31T06:30:00Z"}]"#;
+    let date_30 = r#"[{"date":"2020-01-30","open_utc":"2020-01-30T00:00:00Z","close_utc":"2020-01-30T06:30:00Z"}]"#;
+    store_files(
+        &store,
+        &[
+            (
+                ResponseKind::Calendar,
+                "z.json",
+                calendar_payload_with_id("z-version", date_31),
+            ),
+            (
+                ResponseKind::Calendar,
+                "a.json",
+                calendar_payload_with_id("a-version", date_31),
+            ),
+            (
+                ResponseKind::Calendar,
+                "earlier.json",
+                calendar_payload_with_id("earlier-version", date_30),
+            ),
+        ],
+    );
+    let reopened = reopen_manifest(&store);
+
+    let publication = PublicationBundle::from_raw(&store, &reopened).expect("publication");
+
+    assert_eq!(DataBatchKind::Eod.as_db_str(), "EOD");
+    assert_eq!(DataBatchKind::EodUnavailable.as_db_str(), "EOD_UNAVAILABLE");
+    assert_eq!(DataBatchKind::Reference.as_db_str(), "REFERENCE");
+    assert_eq!(DataBatchKind::Calendar.as_db_str(), "CALENDAR");
+    assert_eq!(
+        DataBatchKind::CorporateActions.as_db_str(),
+        "CORPORATE_ACTIONS"
+    );
+    assert_eq!(CalendarSessionType::Trading.as_db_str(), "TRADING");
+    assert_eq!(CalendarSessionType::Closed.as_db_str(), "CLOSED");
+    assert_eq!(
+        publication
+            .calendar_facts
+            .iter()
+            .map(|fact| (fact.session_date.to_iso(), fact.source_version.clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "2020-01-30".to_owned(),
+                "earlier-version:schema-1".to_owned()
+            ),
+            ("2020-01-31".to_owned(), "a-version:schema-1".to_owned()),
+            ("2020-01-31".to_owned(), "z-version:schema-1".to_owned()),
+        ]
+    );
 }

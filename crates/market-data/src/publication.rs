@@ -1,10 +1,12 @@
 //! Typed, transport-neutral publication records derived from immutable Raw batches.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use chrono::{FixedOffset, TimeZone, Utc};
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use serde::Deserialize;
 
-use crate::contract::{FetchMode, ResponseKind, StoredFile};
+use crate::contract::{FetchMode, ResponseKind, StoredFile, MARKET_KR, PROVIDER_KRX};
 use crate::storage::{FileEntry, ManifestEntry, RawStore, StoreError};
 
 /// Stable batch kind stored by downstream publication sinks.
@@ -74,12 +76,22 @@ pub struct CalendarFact {
     pub timezone: String,
     pub source: String,
     pub source_version: String,
+    pub content_sha256: String,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum PublicationError {
     #[error("verified Raw read failed: {0}")]
     Store(#[from] StoreError),
+    #[error(
+        "publication supports only {expected_provider}/{expected_market}, got {provider}/{market}"
+    )]
+    UnsupportedManifestScope {
+        expected_provider: &'static str,
+        expected_market: &'static str,
+        provider: String,
+        market: String,
+    },
     #[error("manifest size mismatch for {file_name}: manifest={manifest_size}, read={read_size}")]
     SizeMismatch {
         file_name: String,
@@ -190,7 +202,15 @@ struct VerifiedRawFile<'a> {
 impl PublicationBundle {
     /// Reads every file back through Raw verification before producing any facts.
     pub fn from_raw(store: &RawStore, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
-        let stored = store.read_batch_bytes(&manifest.provider, &manifest.market, manifest)?;
+        if manifest.provider != PROVIDER_KRX || manifest.market != MARKET_KR {
+            return Err(PublicationError::UnsupportedManifestScope {
+                expected_provider: PROVIDER_KRX,
+                expected_market: MARKET_KR,
+                provider: manifest.provider.clone(),
+                market: manifest.market.clone(),
+            });
+        }
+        let stored = store.read_batch_bytes(PROVIDER_KRX, MARKET_KR, manifest)?;
         if stored.len() != manifest.files.len() {
             return Err(PublicationError::ReadbackFileCountMismatch {
                 manifest_count: manifest.files.len(),
@@ -202,11 +222,11 @@ impl PublicationBundle {
             .files
             .iter()
             .zip(&stored)
-            .map(|(entry, stored_file)| validate_file_metadata(store, manifest, entry, stored_file))
+            .map(|(entry, stored_file)| validate_file_metadata(entry, stored_file))
             .collect::<Result<_, _>>()?;
 
         let mut files = Vec::with_capacity(verified_files.len());
-        let mut calendar_facts = Vec::new();
+        let mut calendar_facts = BTreeMap::new();
         for verified in verified_files {
             let kind = match verified.entry.kind {
                 ResponseKind::Bars => {
@@ -214,7 +234,11 @@ impl PublicationBundle {
                 }
                 ResponseKind::Reference => DataBatchKind::Reference,
                 ResponseKind::Calendar => {
-                    let facts = parse_calendar(&verified.entry.file_name, verified.bytes)?;
+                    let facts = parse_calendar(
+                        &verified.entry.file_name,
+                        verified.bytes,
+                        &verified.content_sha256,
+                    )?;
                     for fact in facts {
                         insert_calendar_fact(&mut calendar_facts, fact)?;
                     }
@@ -230,8 +254,6 @@ impl PublicationBundle {
                 bytes_size: verified.entry.size_bytes,
             });
         }
-        calendar_facts.sort_by_key(|fact: &CalendarFact| fact.session_date);
-
         Ok(Self {
             source_batch_id: manifest.batch_id,
             provider: manifest.provider.clone(),
@@ -240,14 +262,12 @@ impl PublicationBundle {
             retrieved_at: manifest.retrieved_at,
             fetch_mode: manifest.mode,
             files,
-            calendar_facts,
+            calendar_facts: calendar_facts.into_values().collect(),
         })
     }
 }
 
 fn validate_file_metadata<'a>(
-    store: &RawStore,
-    manifest: &ManifestEntry,
     entry: &'a FileEntry,
     stored_file: &'a StoredFile,
 ) -> Result<VerifiedRawFile<'a>, PublicationError> {
@@ -272,20 +292,14 @@ fn validate_file_metadata<'a>(
         });
     }
     let content_sha256 = database_hash(&entry.file_name, entry.content_hash.as_str())?;
-    let path = store
-        .batch_dir(
-            &manifest.provider,
-            &manifest.market,
-            &manifest.date,
-            &manifest.batch_id,
-        )
-        .join(&entry.file_name);
-    let storage_path =
-        path.into_os_string()
-            .into_string()
-            .map_err(|_| PublicationError::NonUtf8StoragePath {
-                file_name: entry.file_name.clone(),
-            })?;
+    let storage_path = stored_file
+        .storage_path
+        .clone()
+        .into_os_string()
+        .into_string()
+        .map_err(|_| PublicationError::NonUtf8StoragePath {
+            file_name: entry.file_name.clone(),
+        })?;
     Ok(VerifiedRawFile {
         entry,
         bytes: &stored_file.bytes,
@@ -294,7 +308,11 @@ fn validate_file_metadata<'a>(
     })
 }
 
-fn parse_calendar(file_name: &str, bytes: &[u8]) -> Result<Vec<CalendarFact>, PublicationError> {
+fn parse_calendar(
+    file_name: &str,
+    bytes: &[u8],
+    content_sha256: &str,
+) -> Result<Vec<CalendarFact>, PublicationError> {
     let doc: CalendarDoc =
         serde_json::from_slice(bytes).map_err(|error| PublicationError::MalformedCalendar {
             file_name: file_name.to_owned(),
@@ -328,10 +346,12 @@ fn parse_calendar(file_name: &str, bytes: &[u8]) -> Result<Vec<CalendarFact>, Pu
 
     let source_version = format!("{}:schema-{}", doc.calendar_id, doc.schema_version);
     let mut facts = Vec::with_capacity(doc.sessions.len() + doc.holidays.len());
+    let mut session_dates = BTreeSet::new();
     for session in doc.sessions {
         let date = calendar_date(file_name, &session.date)?;
         verify_calendar_instant(file_name, &date, "open_utc", &session.open_utc, 9, 0)?;
         verify_calendar_instant(file_name, &date, "close_utc", &session.close_utc, 15, 30)?;
+        session_dates.insert(date);
         facts.push(CalendarFact {
             exchange: "KRX".to_owned(),
             session_date: date,
@@ -339,13 +359,12 @@ fn parse_calendar(file_name: &str, bytes: &[u8]) -> Result<Vec<CalendarFact>, Pu
             timezone: "Asia/Seoul".to_owned(),
             source: doc.source.clone(),
             source_version: source_version.clone(),
+            content_sha256: content_sha256.to_owned(),
         });
     }
     for holiday in doc.holidays {
         let date = calendar_date(file_name, &holiday.date)?;
-        if facts.iter().any(|fact| {
-            fact.session_date == date && fact.session_type == CalendarSessionType::Trading
-        }) {
+        if session_dates.contains(&date) {
             return Err(PublicationError::CalendarDateBothSessionAndHoliday {
                 file_name: file_name.to_owned(),
                 date: date.to_iso(),
@@ -358,6 +377,7 @@ fn parse_calendar(file_name: &str, bytes: &[u8]) -> Result<Vec<CalendarFact>, Pu
             timezone: "Asia/Seoul".to_owned(),
             source: doc.source.clone(),
             source_version: source_version.clone(),
+            content_sha256: content_sha256.to_owned(),
         });
     }
     Ok(facts)
@@ -407,14 +427,15 @@ fn verify_calendar_instant(
 }
 
 fn insert_calendar_fact(
-    facts: &mut Vec<CalendarFact>,
+    facts: &mut BTreeMap<(TradingDate, String, String), CalendarFact>,
     incoming: CalendarFact,
 ) -> Result<(), PublicationError> {
-    if let Some(existing) = facts.iter().find(|existing| {
-        existing.exchange == incoming.exchange
-            && existing.session_date == incoming.session_date
-            && existing.source_version == incoming.source_version
-    }) {
+    let key = (
+        incoming.session_date,
+        incoming.exchange.clone(),
+        incoming.source_version.clone(),
+    );
+    if let Some(existing) = facts.get(&key) {
         if existing == &incoming {
             return Ok(());
         }
@@ -424,7 +445,7 @@ fn insert_calendar_fact(
             source_version: incoming.source_version,
         });
     }
-    facts.push(incoming);
+    facts.insert(key, incoming);
     Ok(())
 }
 

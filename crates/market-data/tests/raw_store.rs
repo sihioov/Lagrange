@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{
-    FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind,
+    FetchMode, RawEnvelope, RequestMetadata, ResponseKind, MARKET_KR, PROVIDER_KRX,
 };
 use market_data::storage::{BatchSpec, RawStore, StoreError};
 
@@ -240,12 +240,10 @@ fn path_traversal_filenames_rejected_with_no_partial_batch() {
         dirs.is_empty(),
         "no batch dirs may exist after rejected deliveries: {dirs:?}"
     );
-    assert!(
-        store
-            .read_manifest(PROVIDER_KRX, MARKET_KR)
-            .expect("manifest")
-            .is_empty()
-    );
+    assert!(store
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("manifest")
+        .is_empty());
 }
 
 #[test]
@@ -277,12 +275,10 @@ fn within_batch_collision_fails_without_partial_batch() {
         dirs.is_empty(),
         "failed batch must leave no batch dir: {dirs:?}"
     );
-    assert!(
-        store
-            .read_manifest(PROVIDER_KRX, MARKET_KR)
-            .expect("manifest")
-            .is_empty()
-    );
+    assert!(store
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("manifest")
+        .is_empty());
 }
 
 #[test]
@@ -312,14 +308,207 @@ fn read_detects_tampered_batch() {
         .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry)
         .expect_err("tampered content must be detected on read");
     match err {
-        StoreError::Io { context, detail } => {
-            assert!(
-                context.to_lowercase().contains("hash") || detail.to_lowercase().contains("hash"),
-                "tamper error must mention the hash check, got {context} / {detail}"
-            );
+        StoreError::ContentHashMismatch {
+            path,
+            recorded,
+            actual,
+        } => {
+            assert!(path.ends_with("reference.json"));
+            assert_eq!(recorded, entry.files[0].content_hash.to_string());
+            assert_ne!(recorded, actual);
         }
-        other => panic!("expected StoreError::Io for tampered batch, got {other:?}"),
+        other => panic!("expected StoreError::ContentHashMismatch, got {other:?}"),
     }
+}
+
+#[test]
+fn read_rejects_manifest_scope_mismatch_before_path_access() {
+    let root = temp_root("scope-mismatch");
+    let store = RawStore::new(&root);
+    let at = now("2026-08-05T05:00:00Z");
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let mut entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                at,
+            )],
+        )
+        .expect("stores");
+    entry.provider = "other-provider".to_owned();
+
+    let err = store
+        .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry)
+        .expect_err("scope mismatch must fail before reading a different scope");
+
+    assert!(matches!(err, StoreError::ScopeMismatch { .. }));
+}
+
+#[test]
+fn raw_store_rejects_unsafe_scope_and_deserialized_file_names() {
+    let root = temp_root("unsafe-scope");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let unsafe_scope = store
+        .store_batch(
+            &BatchSpec {
+                provider: "../outside",
+                market: MARKET_KR,
+                date: &d,
+                batch_id: batch,
+                entitlement_reference: None,
+                mode: FetchMode::Synthetic,
+            },
+            &[],
+        )
+        .expect_err("unsafe provider scope must fail");
+    assert!(matches!(unsafe_scope, StoreError::UnsafeScope { .. }));
+
+    let unsafe_market = store
+        .store_batch(
+            &BatchSpec {
+                provider: PROVIDER_KRX,
+                market: "C:\\outside",
+                date: &d,
+                batch_id: BatchId::generate(),
+                entitlement_reference: None,
+                mode: FetchMode::Synthetic,
+            },
+            &[],
+        )
+        .expect_err("unsafe market scope must fail");
+    assert!(matches!(unsafe_market, StoreError::UnsafeScope { .. }));
+
+    let entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T05:00:00Z"),
+            )],
+        )
+        .expect("store safe batch");
+    let mut untrusted = entry.clone();
+    untrusted.files[0].file_name = "../outside.json".to_owned();
+    let err = store
+        .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &untrusted)
+        .expect_err("deserialized traversal name must fail before join");
+    assert!(matches!(err, StoreError::UnsafeFileName { .. }));
+}
+
+#[test]
+fn read_manifest_rejects_embedded_scope_mismatch() {
+    let root = temp_root("manifest-scope-mismatch");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let mut entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T05:00:00Z"),
+            )],
+        )
+        .expect("store safe batch");
+    entry.market = "other-market".to_owned();
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    fs::write(
+        &manifest_path,
+        format!("{}\n", serde_json::to_string(&entry).unwrap()),
+    )
+    .expect("replace test manifest");
+
+    let err = store
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect_err("embedded scope mismatch must fail");
+    assert!(matches!(err, StoreError::ScopeMismatch { .. }));
+}
+
+#[test]
+fn read_manifest_revalidates_deserialized_file_names() {
+    let root = temp_root("manifest-file-name");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let mut entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T05:00:00Z"),
+            )],
+        )
+        .expect("store safe batch");
+    entry.files[0].file_name = r"..\outside.json".to_owned();
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    fs::write(
+        &manifest_path,
+        format!("{}\n", serde_json::to_string(&entry).unwrap()),
+    )
+    .expect("replace test manifest");
+
+    let err = store
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect_err("unsafe manifest file name must fail");
+    assert!(matches!(err, StoreError::UnsafeFileName { .. }));
+}
+
+#[cfg(windows)]
+#[test]
+fn read_rejects_symlinked_file_that_escapes_the_batch_directory() {
+    use std::os::windows::fs::symlink_file;
+
+    let root = temp_root("symlink-escape");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T05:00:00Z"),
+            )],
+        )
+        .expect("store safe batch");
+    let link = store
+        .batch_dir(PROVIDER_KRX, MARKET_KR, &d, &batch)
+        .join("reference.json");
+    let outside = root.join("outside.json");
+    fs::write(&outside, b"{}").expect("write outside target");
+    fs::remove_file(&link).expect("remove stored file");
+    if let Err(error) = symlink_file(&outside, &link) {
+        if error.kind() == std::io::ErrorKind::PermissionDenied
+            || error.raw_os_error() == Some(1314)
+        {
+            return;
+        }
+        panic!("create symlink: {error}");
+    }
+
+    let err = store
+        .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry)
+        .expect_err("symlink escape must fail");
+    assert!(matches!(err, StoreError::UnsafePath { .. }));
 }
 
 #[test]

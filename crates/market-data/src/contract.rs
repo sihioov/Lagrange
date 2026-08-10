@@ -19,6 +19,8 @@
 //! envelope — the [`crate::redact::Redactor`] scans every log line, but the raw
 //! metadata itself never carries credentials.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
@@ -171,6 +173,8 @@ pub struct StoredFile {
     pub file_name: String,
     /// The stored bytes, verified against the recorded content hash.
     pub bytes: Vec<u8>,
+    /// Canonical validated storage path inside the immutable batch directory.
+    pub storage_path: PathBuf,
 }
 
 /// The date partition key used by the raw zone: `date=YYYY-MM-DD`.
