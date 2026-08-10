@@ -31,8 +31,10 @@ impl Redactor {
     /// Registers secret values that must never appear in logs.
     pub fn add_secret(&mut self, secret: impl Into<String>) {
         let secret = secret.into();
-        if secret.len() >= 3 {
+        if secret.len() >= 3 && !self.secrets.contains(&secret) {
             self.secrets.push(secret);
+            self.secrets
+                .sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
         }
     }
 
@@ -185,5 +187,36 @@ mod tests {
         let once = redactor.redact("KRX_CREDENTIAL_REF=sk-live-x");
         let twice = redactor.redact(&once);
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn overlapping_secrets_are_redacted_longest_first_and_deduplicated() {
+        let password = "review_password";
+        let database_url =
+            "postgres://review_user:review_password@review-host.example/review_database";
+        let mut redactor = Redactor::new();
+        redactor.add_secret(password);
+        redactor.add_secret(database_url);
+        redactor.add_secret(password);
+
+        let input = format!("connect {database_url} with password {password}");
+        assert!(!redactor.is_clean(&input));
+        let redacted = redactor.redact(&input);
+
+        for secret_fragment in [
+            database_url,
+            password,
+            "review_user",
+            "review-host.example",
+            "review_database",
+        ] {
+            assert!(
+                !redacted.contains(secret_fragment),
+                "redacted output leaked {secret_fragment:?}: {redacted}"
+            );
+        }
+        assert!(redactor.is_clean(&redacted));
+        assert_eq!(redactor.redact(&redacted), redacted);
+        assert_eq!(redactor.secrets, vec![database_url, password]);
     }
 }
