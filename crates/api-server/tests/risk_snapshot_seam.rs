@@ -111,7 +111,10 @@ async fn the_snapshot_describes_the_submitted_order() {
     // and its cash comes from the ledger rather than a stored column. The
     // fixture claimed 1,000,000 equity and 500,000 cash for every account
     // that ever submitted an order.
-    assert_eq!(snap.account.available_cash.amount().to_string(), "4000000.0000");
+    assert_eq!(
+        snap.account.available_cash.amount().to_string(),
+        "4000000.0000"
+    );
     assert_eq!(snap.account.equity.amount().to_string(), "4000000.0000");
 
     h.teardown().await;
@@ -172,14 +175,13 @@ async fn a_ledger_that_disagrees_with_itself_denies_the_order() {
     h.teardown().await;
 }
 
-/// Inputs with no source in this repository stay `Unknown` and deny. They are
-/// not quietly assumed green.
+/// Inputs without a calendar or batch stay `Unknown` and deny. The intent
+/// table, however, is an existing source: an empty account has a concrete
+/// `None` answer rather than an unavailable one.
 ///
 /// `checks.rs`: "Every `Unknown` input denies with `InputUnavailable`. §16
-/// requires missing inputs to deny." `market_session` and `data_freshness`
-/// have no source yet -- no calendar service, no staleness check -- and this
-/// pins that they stay closed until one exists rather than being fabricated
-/// the day someone is tempted to make a test pass.
+/// requires missing inputs to deny." Calendar and batch rows remain required;
+/// conflict detection can answer `None` from an empty actor-scoped query.
 #[tokio::test]
 async fn inputs_without_a_source_stay_closed() {
     let Some(h) = Harness::new().await else {
@@ -203,10 +205,10 @@ async fn inputs_without_a_source_stay_closed() {
 
     assert_eq!(snap.market_session, MarketSession::Unknown);
     assert_eq!(snap.data_freshness, DataFreshness::Unknown);
-    assert_eq!(snap.conflict, IntentConflict::Unknown);
+    assert_eq!(snap.conflict, IntentConflict::None);
 
     // Which means even an order with fully wired promotion/allowlist is still
-    // refused: three deliberately-unsourced inputs are enough on their own.
+    // refused: the two missing metadata sources are enough on their own.
     let decision = risk_gateway::evaluate(
         &snap,
         &limits_for(&h.app_pool, &h.owner.actor(), h.owner.user_id)
@@ -218,6 +220,178 @@ async fn inputs_without_a_source_stay_closed() {
         "an order with unsourced inputs must not be approved"
     );
 
+    h.teardown().await;
+}
+
+/// The three Phase 3 inputs come from the shared metadata and the actor's
+/// intent table, not from a test fixture.
+#[tokio::test]
+async fn wired_inputs_read_calendar_batch_and_open_intents() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    h.seed_shared(
+        "INSERT INTO trading_calendars \
+         (exchange, session_date, session_type, timezone, source, source_version) \
+         VALUES ('KRX', '2027-01-15', 'TRADING', 'Asia/Seoul', 'qa', 'v1') \
+         ON CONFLICT (exchange, session_date) DO UPDATE SET session_type = EXCLUDED.session_type, \
+             timezone = EXCLUDED.timezone",
+    )
+    .await;
+    h.seed_shared(
+        "INSERT INTO data_batches \
+         (provider, market, batch_date, kind, storage_path, content_sha256, bytes_size, retrieved_at) \
+         VALUES ('KRX', 'KR', '2027-01-15', 'EOD', 'qa/eod', repeat('a', 64), 1, \
+                 '2027-01-15 00:29:00+00')",
+    )
+    .await;
+
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
+    let snap = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &order(account, Side::Buy, "10", "7250"),
+        1_799_973_000, // 2027-01-15 09:30:00 KST
+    )
+    .await
+    .expect("snapshot builds");
+
+    assert_eq!(snap.market_session, MarketSession::Open);
+    assert_eq!(snap.data_freshness, DataFreshness::Age(60));
+    assert_eq!(snap.conflict, IntentConflict::None);
+    h.teardown().await;
+}
+
+/// A known closed session and an old batch are concrete answers, not missing
+/// inputs. The risk evaluator must therefore identify the data-age denial.
+#[tokio::test]
+async fn closed_session_and_stale_batch_are_reported_by_name() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    h.seed_shared(
+        "INSERT INTO trading_calendars \
+         (exchange, session_date, session_type, timezone, source, source_version) \
+         VALUES ('KRX', '2027-01-15', 'SETTLEMENT', 'Asia/Seoul', 'qa', 'v1') \
+         ON CONFLICT (exchange, session_date) DO UPDATE SET session_type = EXCLUDED.session_type",
+    )
+    .await;
+    h.seed_shared(
+        "INSERT INTO data_batches \
+         (provider, market, batch_date, kind, storage_path, content_sha256, bytes_size, retrieved_at) \
+         VALUES ('KRX', 'KR', '2027-01-14', 'EOD', 'qa/eod-old', repeat('b', 64), 1, \
+                 '2027-01-14 00:00:00+00')",
+    )
+    .await;
+
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
+    let snap = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &order(account, Side::Buy, "10", "7250"),
+        1_799_996_400, // 2027-01-15 16:00:00 KST
+    )
+    .await
+    .expect("snapshot builds");
+
+    assert_eq!(snap.market_session, MarketSession::Closed);
+    assert_eq!(snap.data_freshness, DataFreshness::Age(111_600));
+    let decision = risk_gateway::evaluate(
+        &snap,
+        &limits_for(&h.app_pool, &h.owner.actor(), h.owner.user_id)
+            .await
+            .expect("limits"),
+    );
+    assert!(!decision.is_approved());
+    assert_eq!(
+        decision.reason,
+        Some(risk_gateway::DenyReason::MarketSessionClosed)
+    );
+    h.teardown().await;
+}
+
+/// An active intent for the same account/instrument is a concrete conflict;
+/// an intent owned by another actor is invisible through FORCE RLS.
+#[tokio::test]
+async fn active_intent_conflict_is_tenant_scoped() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    let owner_pool = actor_pool(&h.app_url, &h.owner.user_id.to_string(), 2).await;
+    sqlx::query(
+        "INSERT INTO order_intents \
+         (intent_ref, owner_user_id, account_id, instrument_id, side, quantity, price, correlation_id, state) \
+         VALUES ('oi-active-seam', $1, $2, '069500.KRX', 'BUY', 1, 7250, 'corr-active', 'RISK_APPROVED')",
+    )
+    .bind(h.owner.user_id)
+    .bind(account)
+    .execute(&owner_pool)
+    .await
+    .expect("active intent");
+
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
+    let snap = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &order(account, Side::Buy, "10", "7250"),
+        1_799_973_000,
+    )
+    .await
+    .expect("snapshot builds");
+    assert_eq!(snap.conflict, IntentConflict::Conflicting);
+    h.teardown().await;
+}
+
+/// A calendar row with an unsupported timezone cannot be used to infer an
+/// open session and must remain fail-closed.
+#[tokio::test]
+async fn unsupported_calendar_timezone_stays_unknown() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let account = seeded_account(&h).await;
+    h.seed_shared(
+        "INSERT INTO trading_calendars \
+         (exchange, session_date, session_type, timezone, source, source_version) \
+         VALUES ('KRX', '2027-01-15', 'TRADING', 'UTC', 'qa', 'v1')",
+    )
+    .await;
+    h.seed_shared(
+        "INSERT INTO data_batches \
+         (provider, market, batch_date, kind, storage_path, content_sha256, bytes_size, retrieved_at) \
+         VALUES ('KRX', 'KR', '2027-01-15', 'EOD', 'qa/eod-tz', repeat('c', 64), 1, \
+                 '2027-01-15 00:29:00+00')",
+    )
+    .await;
+    let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
+    let snap = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &order(account, Side::Buy, "10", "7250"),
+        1_799_973_000,
+    )
+    .await
+    .expect("snapshot builds");
+    assert_eq!(snap.market_session, MarketSession::Unknown);
     h.teardown().await;
 }
 
@@ -258,13 +432,7 @@ async fn a_bound_account_trading_an_allowed_instrument_is_promoted_and_allowed()
 
     h.state()
         .accounts()
-        .bind_strategy(
-            &owner.actor(),
-            account,
-            config_id,
-            "buy_and_hold",
-            "1.0.0",
-        )
+        .bind_strategy(&owner.actor(), account, config_id, "buy_and_hold", "1.0.0")
         .await
         .expect("binding succeeds");
 

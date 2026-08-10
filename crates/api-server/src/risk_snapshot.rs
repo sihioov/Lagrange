@@ -15,17 +15,13 @@
 //!
 //! # Why `Unknown` is the honest default
 //!
-//! Two inputs -- `strategy_promotion` and `instrument_allowed` -- now read
-//! from this repository's existing sources of truth (`active_binding`, the
-//! fixed KRX ETF v1 universe). The remaining two, the market session and
-//! dataset freshness, have no source wired yet: each needs a market-calendar
-//! service and a dataset-staleness check that do not exist in this repo, and
-//! neither is invented here. `checks.rs` is explicit -- *"Every `Unknown`
-//! input denies with `InputUnavailable`. §16 requires missing inputs to
-//! deny"* -- so an unwired input closes the gate instead of opening it. A
-//! Live order therefore still cannot be approved today, and that remains the
-//! correct state: it could not be safely approved before either, the system
-//! just did not say so.
+//! All three formerly-unsourced inputs now read from this repository's
+//! existing sources of truth: the KRX session table, KRX EOD batch manifests,
+//! and actor-scoped order intents. `checks.rs` is explicit -- *"Every
+//! `Unknown` input denies with `InputUnavailable`. §16 requires missing inputs
+//! to deny"* -- so a missing or unreadable source closes the gate instead of
+//! opening it. A Live order therefore still cannot be approved unless every
+//! source answers concretely and the other checks are green.
 //!
 //! # Why a missing row is an error and not a zero
 //!
@@ -42,6 +38,7 @@ use crate::http::validation::in_fixed_universe;
 use crate::repos::accounts::AccountRepo;
 use crate::repos::reconciliation::{Readiness, ReconciliationRepo};
 use auth::entitlement::Actor;
+use chrono::{DateTime, FixedOffset, NaiveTime, Utc};
 use domain::{Currency, Money, Quantity};
 use risk_gateway::RiskLimits;
 use risk_gateway::snapshot::{
@@ -70,6 +67,120 @@ pub fn side_str(side: Side) -> &'static str {
     match side {
         Side::Buy => "BUY",
         Side::Sell => "SELL",
+    }
+}
+
+const SEOUL_OFFSET: i32 = 9 * 60 * 60;
+const MARKET_OPEN: NaiveTime = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+const MARKET_CLOSE: NaiveTime = NaiveTime::from_hms_opt(15, 30, 0).unwrap();
+
+fn timestamp_parts(now_secs: i64) -> Option<(DateTime<Utc>, DateTime<FixedOffset>)> {
+    if now_secs < 0 {
+        return None;
+    }
+    let utc = DateTime::<Utc>::from_timestamp(now_secs, 0)?;
+    let seoul = utc.with_timezone(&FixedOffset::east_opt(SEOUL_OFFSET)?);
+    Some((utc, seoul))
+}
+
+/// Reads the materialized KRX session for the timestamp being evaluated.
+///
+/// A calendar row is an answer only when its timezone and exchange contract
+/// are the ones this gate understands. Any source/parse failure stays
+/// `Unknown`, because guessing that a missing calendar row means "open" would
+/// be an order-permitting default.
+async fn market_session_for(pool: &sqlx::PgPool, actor: &Actor, now_secs: i64) -> MarketSession {
+    let Some((_, seoul)) = timestamp_parts(now_secs) else {
+        return MarketSession::Unknown;
+    };
+    let mut tx = match begin_actor_tx(pool, actor).await {
+        Ok(tx) => tx,
+        Err(_) => return MarketSession::Unknown,
+    };
+    let row: Result<Option<(String, String)>, _> = sqlx::query_as(
+        "SELECT session_type, timezone FROM trading_calendars \
+         WHERE exchange = 'KRX' AND session_date = $1",
+    )
+    .bind(seoul.date_naive())
+    .fetch_optional(&mut *tx)
+    .await;
+    if tx.commit().await.is_err() {
+        return MarketSession::Unknown;
+    }
+    let Ok(Some((session_type, timezone))) = row else {
+        return MarketSession::Unknown;
+    };
+    if timezone != "Asia/Seoul" {
+        return MarketSession::Unknown;
+    }
+    match session_type.as_str() {
+        "TRADING" if (MARKET_OPEN..MARKET_CLOSE).contains(&seoul.time()) => MarketSession::Open,
+        "TRADING" | "SETTLEMENT" => MarketSession::Closed,
+        "HALTED" => MarketSession::Halted,
+        _ => MarketSession::Unknown,
+    }
+}
+
+/// Returns the age of the newest KRX end-of-day batch at the decision instant.
+async fn data_freshness_for(pool: &sqlx::PgPool, actor: &Actor, now_secs: i64) -> DataFreshness {
+    let Some((now, _)) = timestamp_parts(now_secs) else {
+        return DataFreshness::Unknown;
+    };
+    let mut tx = match begin_actor_tx(pool, actor).await {
+        Ok(tx) => tx,
+        Err(_) => return DataFreshness::Unknown,
+    };
+    let row: Result<Option<(DateTime<Utc>,)>, _> = sqlx::query_as(
+        "SELECT retrieved_at FROM data_batches \
+         WHERE provider = 'KRX' AND market = 'KR' AND kind = 'EOD' \
+         ORDER BY retrieved_at DESC LIMIT 1",
+    )
+    .fetch_optional(&mut *tx)
+    .await;
+    if tx.commit().await.is_err() {
+        return DataFreshness::Unknown;
+    }
+    let Ok(Some((retrieved_at,))) = row else {
+        return DataFreshness::Unknown;
+    };
+    let age = now.signed_duration_since(retrieved_at).num_seconds();
+    if age < 0 {
+        DataFreshness::Unknown
+    } else {
+        DataFreshness::Age(age)
+    }
+}
+
+/// Detects a still-live intent for the same account and instrument.
+async fn intent_conflict_for(
+    pool: &sqlx::PgPool,
+    actor: &Actor,
+    account_id: Uuid,
+    instrument_id: &str,
+) -> IntentConflict {
+    let mut tx = match begin_actor_tx(pool, actor).await {
+        Ok(tx) => tx,
+        Err(_) => return IntentConflict::Unknown,
+    };
+    let result: Result<bool, _> = sqlx::query_scalar(
+        "SELECT EXISTS (\
+           SELECT 1 FROM order_intents \
+           WHERE account_id = $1 AND instrument_id = $2 \
+             AND state IN ('INTENT_CREATED', 'RISK_APPROVED', 'SUBMITTING', \
+                           'SUBMITTED', 'UNKNOWN', 'ACCEPTED', 'PARTIALLY_FILLED')\
+         )",
+    )
+    .bind(account_id)
+    .bind(instrument_id)
+    .fetch_one(&mut *tx)
+    .await;
+    if tx.commit().await.is_err() {
+        return IntentConflict::Unknown;
+    }
+    match result {
+        Ok(true) => IntentConflict::Conflicting,
+        Ok(false) => IntentConflict::None,
+        Err(_) => IntentConflict::Unknown,
     }
 }
 
@@ -184,9 +295,11 @@ async fn account_state(
                 let unit = domain::Price::parse(p).map_err(|e| {
                     TenancyError::InvalidState(format!("unreadable position price {p:?}: {e}"))
                 })?;
-                quantity.checked_mul_price(&unit, Currency::KRW).map_err(|e| {
-                    TenancyError::InvalidState(format!("position value overflows: {e}"))
-                })?
+                quantity
+                    .checked_mul_price(&unit, Currency::KRW)
+                    .map_err(|e| {
+                        TenancyError::InvalidState(format!("position value overflows: {e}"))
+                    })?
             }
             None => krw("0")?,
         };
@@ -316,8 +429,8 @@ pub async fn limits_for(
     .await
     .map_err(TenancyError::from_sqlx)?;
 
-    let (version, weight_bp, order_value, daily_order_value, daily_loss, data_age) =
-        row.ok_or_else(|| {
+    let (version, weight_bp, order_value, daily_order_value, daily_loss, data_age) = row
+        .ok_or_else(|| {
             TenancyError::InvalidState(format!(
                 "no risk_limits row for owner {owner} and no global default; \
                  a Live order cannot be checked against limits nobody configured"
@@ -342,8 +455,8 @@ pub async fn limits_for(
 
 /// Builds the snapshot the gate evaluates for a real submission.
 ///
-/// `kill_switch` and `reconciliation` are read from their repositories. The
-/// four unwired inputs are `Unknown`, which denies. Nothing here is a fixture.
+/// `kill_switch`, reconciliation, market session, data freshness, and intent
+/// conflict are read from their repositories. Nothing here is a fixture.
 pub async fn for_submission(
     pool: &sqlx::PgPool,
     actor: &Actor,
@@ -404,6 +517,10 @@ pub async fn for_submission(
         Ok(Readiness::NeverReconciled) | Err(_) => Reconciliation::Unknown,
     };
 
+    let market_session = market_session_for(pool, actor, now_secs).await;
+    let data_freshness = data_freshness_for(pool, actor, now_secs).await;
+    let conflict = intent_conflict_for(pool, actor, order.account_id, &order.instrument_id).await;
+
     Ok(RiskSnapshot {
         intent: OrderIntent {
             intent_ref: order.intent_ref.clone(),
@@ -416,20 +533,13 @@ pub async fn for_submission(
         correlation_id: order.correlation_id.clone(),
         evaluated_at_secs: now_secs,
         kill_switch,
-        // --- not wired; each denies until it has a source of truth ----------
-        // A market calendar service. Until then an order cannot demonstrate it
-        // was placed in a session that accepts orders.
-        market_session: MarketSession::Unknown,
-        // Dataset staleness for the instrument being traded.
-        data_freshness: DataFreshness::Unknown,
+        market_session,
+        data_freshness,
         strategy_promotion,
         instrument_allowed,
         // --------------------------------------------------------------------
         reconciliation,
         account,
-        // Open-order conflict detection is not wired. Submitting while blind to
-        // what is already working is how an account ends up double-filled, so
-        // this denies rather than assuming None.
-        conflict: IntentConflict::Unknown,
+        conflict,
     })
 }
