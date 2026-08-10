@@ -247,6 +247,7 @@ function Invoke-StaticChecks {
         'research_writer', 'rolcanlogin', 'rolsuper', 'rolbypassrls', 'rolcreatedb',
         'rolcreaterole', 'pg_auth_members', 'pg_policy', 'polcmd', 'polpermissive',
         'trading_calendar_versions_append_only', 'tgenabled', 'tgtype', 'prosecdef',
+        'pg_get_functiondef', 'regexp_replace', 'actual_function', 'expected_function',
         'role_table_grants', 'has_schema_privilege', 'has_table_privilege',
         'has_sequence_privilege', 'MAINTAIN'
     )) {
@@ -379,6 +380,32 @@ function Invoke-SchemaGateMutationTests {
     Assert-SchemaGateFails 'a disabled append-only trigger'
     Invoke-Psql 'ALTER TABLE trading_calendar_versions ENABLE TRIGGER trading_calendar_versions_append_only;' | Out-Null
     Assert-SchemaGatePasses 'the restored append-only trigger'
+
+    Invoke-Psql @'
+CREATE OR REPLACE FUNCTION public.trading_calendar_versions_reject_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+BEGIN
+    IF false THEN
+        RAISE EXCEPTION
+            'trading_calendar_versions is append-only: % is refused', TG_OP
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NULL;
+END
+$fn$;
+'@ | Out-Null
+    Assert-SchemaGateFails 'a same-name message-preserving no-op append-only function'
+    Invoke-Psql @'
+CREATE OR REPLACE FUNCTION public.trading_calendar_versions_reject_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+BEGIN
+    RAISE EXCEPTION
+        'trading_calendar_versions is append-only: % is refused', TG_OP
+        USING ERRCODE = '55000';
+END
+$fn$;
+'@ | Out-Null
+    Assert-SchemaGatePasses 'the restored exact append-only function'
 
     Invoke-Psql 'GRANT DELETE ON orders TO research_writer;' | Out-Null
     Assert-SchemaGateFails 'a forbidden order-table grant'

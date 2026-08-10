@@ -170,7 +170,7 @@ accepts the no-op function.
 On the disposable migrated Compose database, query:
 
 ```sql
-SELECT regexp_replace(btrim(pg_get_functiondef(p.oid)), E'\\s+', ' ', 'g')
+SELECT btrim(regexp_replace(pg_get_functiondef(p.oid), E'\\s+', ' ', 'g'))
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public'

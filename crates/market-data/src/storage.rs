@@ -275,6 +275,8 @@ trait BatchCommitOps: Send + Sync {
     fn sync_batch_directories(&self, batch_dir: &Path) -> Result<(), StoreError> {
         sync_batch_directories(batch_dir)
     }
+
+    fn before_commit_lock(&self) {}
 }
 
 #[derive(Debug)]
@@ -294,12 +296,33 @@ trait ManifestReadOps: Send + Sync {
     fn sync_batch_directories(&self, batch_dir: &Path) -> Result<(), StoreError> {
         sync_batch_directories(batch_dir)
     }
+
+    fn before_manifest_append(&self, _entry: &ManifestEntry) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn sync_manifest_file(&self, file: &File) -> Result<(), StoreError> {
+        file.sync_all()
+            .map_err(|error| io_err("sync manifest", error))
+    }
+
+    fn sync_manifest_directories(&self, manifest_parent: &Path) -> Result<(), StoreError> {
+        sync_manifest_directories(manifest_parent)
+    }
 }
 
 #[derive(Debug)]
 struct SystemManifestReadOps;
 
 impl ManifestReadOps for SystemManifestReadOps {}
+
+#[derive(Debug)]
+struct LockedManifest {
+    path: PathBuf,
+    file: File,
+    entries: BTreeMap<BatchId, ManifestEntry>,
+    order: Vec<BatchId>,
+}
 
 impl RawStore {
     /// `root` is the `data/` directory; raw files live under `root/raw/...`.
@@ -471,6 +494,7 @@ impl RawStore {
         let prepared = prepare_batch_metadata(&dir, &entry).map_err(cleanup)?;
         operations.before_metadata_publish().map_err(cleanup)?;
         let commit_lock = self.open_commit_lock(provider, market).map_err(cleanup)?;
+        operations.before_commit_lock();
         FileExt::lock_exclusive(&commit_lock)
             .map_err(|error| cleanup(io_err("lock Raw commit", error)))?;
         let commit_result = (|| {
@@ -539,6 +563,18 @@ impl RawStore {
         market: &str,
         entry: &ManifestEntry,
     ) -> Result<(), StoreError> {
+        self.append_manifest_locked_with_ops(provider, market, entry, &SystemManifestReadOps)
+    }
+
+    fn append_manifest_locked_with_ops<O: ManifestReadOps + ?Sized>(
+        &self,
+        provider: &str,
+        market: &str,
+        entry: &ManifestEntry,
+        operations: &O,
+    ) -> Result<(), StoreError> {
+        validate_entry_scope(provider, market, entry)?;
+        validate_manifest_file_names(entry)?;
         let path = self.manifest_path(provider, market);
         let parent = path.parent().ok_or_else(|| {
             io_err(
@@ -547,40 +583,31 @@ impl RawStore {
             )
         })?;
         fs::create_dir_all(parent).map_err(|e| io_err("create manifest dir", e))?;
-        let mut line = serde_json::to_vec(entry).map_err(|source| StoreError::Serialization {
-            context: "manifest entry serialize".to_owned(),
-            source,
-        })?;
-        line.push(b'\n');
-        let mut f = OpenOptions::new()
+        let mut manifest = self.open_validated_manifest_locked(provider, market, &path)?;
+        self.append_manifest_entry_already_locked(&mut manifest, entry, operations)?;
+        operations.sync_manifest_file(&manifest.file)?;
+        operations.sync_manifest_directories(parent)
+    }
+
+    fn open_validated_manifest_locked(
+        &self,
+        provider: &str,
+        market: &str,
+        path: &Path,
+    ) -> Result<LockedManifest, StoreError> {
+        let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(&path)
+            .open(path)
             .map_err(|e| io_err(&format!("open manifest {}", path.display()), e))?;
         let mut bytes = Vec::new();
-        f.read_to_end(&mut bytes)
+        file.read_to_end(&mut bytes)
             .map_err(|e| io_err("read manifest before append", e))?;
-        let mut existing = BTreeMap::new();
-        let mut existing_order = Vec::new();
-        parse_manifest_records(
-            provider,
-            market,
-            &path,
-            &bytes,
-            &mut existing,
-            &mut existing_order,
-        )?;
-        if existing.get(&entry.batch_id) == Some(entry) {
-            return Ok(());
-        }
-        if existing.contains_key(&entry.batch_id) {
-            return Err(StoreError::ManifestConflict {
-                path: path.display().to_string(),
-                batch_id: entry.batch_id,
-            });
-        }
+        let mut entries = BTreeMap::new();
+        let mut order = Vec::new();
+        parse_manifest_records(provider, market, path, &bytes, &mut entries, &mut order)?;
         if !bytes.is_empty() && !bytes.ends_with(b"\n") {
             let tail_start = bytes
                 .iter()
@@ -590,13 +617,13 @@ impl RawStore {
                 Ok(tail_entry) => {
                     validate_entry_scope(provider, market, &tail_entry)?;
                     validate_manifest_file_names(&tail_entry)?;
-                    f.seek(SeekFrom::End(0))
+                    file.seek(SeekFrom::End(0))
                         .map_err(|e| io_err("seek unterminated manifest end", e))?;
-                    f.write_all(b"\n")
+                    file.write_all(b"\n")
                         .map_err(|e| io_err("terminate complete manifest record", e))?;
                 }
                 Err(source) if source.is_eof() => {
-                    f.set_len(tail_start as u64)
+                    file.set_len(tail_start as u64)
                         .map_err(|e| io_err("trim truncated manifest tail", e))?;
                 }
                 Err(source) => {
@@ -612,12 +639,45 @@ impl RawStore {
                 }
             }
         }
-        f.seek(SeekFrom::End(0))
+
+        file.seek(SeekFrom::End(0))
             .map_err(|e| io_err("seek manifest end", e))?;
-        f.write_all(&line)
+        Ok(LockedManifest {
+            path: path.to_owned(),
+            file,
+            entries,
+            order,
+        })
+    }
+
+    fn append_manifest_entry_already_locked<O: ManifestReadOps + ?Sized>(
+        &self,
+        manifest: &mut LockedManifest,
+        entry: &ManifestEntry,
+        operations: &O,
+    ) -> Result<(), StoreError> {
+        if manifest.entries.get(&entry.batch_id) == Some(entry) {
+            return Ok(());
+        }
+        if manifest.entries.contains_key(&entry.batch_id) {
+            return Err(StoreError::ManifestConflict {
+                path: manifest.path.display().to_string(),
+                batch_id: entry.batch_id,
+            });
+        }
+        operations.before_manifest_append(entry)?;
+        let mut line = serde_json::to_vec(entry).map_err(|source| StoreError::Serialization {
+            context: "manifest entry serialize".to_owned(),
+            source,
+        })?;
+        line.push(b'\n');
+        manifest
+            .file
+            .write_all(&line)
             .map_err(|e| io_err("append manifest", e))?;
-        f.sync_all().map_err(|e| io_err("sync manifest", e))?;
-        sync_manifest_directories(parent)
+        manifest.entries.insert(entry.batch_id, entry.clone());
+        manifest.order.push(entry.batch_id);
+        Ok(())
     }
 
     /// All committed manifest rows plus durable orphan batches, oldest first.
@@ -629,6 +689,90 @@ impl RawStore {
         market: &str,
     ) -> Result<Vec<ManifestEntry>, StoreError> {
         self.read_manifest_with_ops(provider, market, &SystemManifestReadOps)
+    }
+
+    /// Returns recovery's durable append-order snapshot.
+    ///
+    /// Unlike [`Self::read_manifest`], this takes the commit lock exclusively
+    /// and appends every verified orphan to the JSONL manifest before exposing
+    /// it. A returned batch ID therefore identifies an immutable manifest line,
+    /// never a synthetic orphan suffix position.
+    pub fn read_reconciled_manifest(
+        &self,
+        provider: &str,
+        market: &str,
+    ) -> Result<Vec<ManifestEntry>, StoreError> {
+        self.read_reconciled_manifest_with_ops(provider, market, &SystemManifestReadOps)
+    }
+
+    fn read_reconciled_manifest_with_ops<O: ManifestReadOps + ?Sized>(
+        &self,
+        provider: &str,
+        market: &str,
+        operations: &O,
+    ) -> Result<Vec<ManifestEntry>, StoreError> {
+        validate_scope(provider, market)?;
+        let commit_lock = self.open_commit_lock(provider, market)?;
+        FileExt::lock_exclusive(&commit_lock)
+            .map_err(|error| io_err("lock Raw commit for manifest reconciliation", error))?;
+        let result = self.read_reconciled_manifest_locked(provider, market, operations);
+        let unlock = FileExt::unlock(&commit_lock)
+            .map_err(|error| io_err("unlock reconciled Raw commit", error));
+        let entries = result?;
+        unlock?;
+        Ok(entries)
+    }
+
+    fn read_reconciled_manifest_locked<O: ManifestReadOps + ?Sized>(
+        &self,
+        provider: &str,
+        market: &str,
+        operations: &O,
+    ) -> Result<Vec<ManifestEntry>, StoreError> {
+        let path = self.manifest_path(provider, market);
+        let parent = path.parent().ok_or_else(|| {
+            io_err(
+                "manifest parent",
+                std::io::Error::other(format!("{} has no parent", path.display())),
+            )
+        })?;
+        fs::create_dir_all(parent).map_err(|error| io_err("create manifest dir", error))?;
+        let mut manifest = self.open_validated_manifest_locked(provider, market, &path)?;
+
+        self.discover_orphan_batches(provider, market, &mut manifest.entries, operations)?;
+        let manifest_ids: BTreeSet<_> = manifest.order.iter().copied().collect();
+        let mut orphan_ids: Vec<_> = manifest
+            .entries
+            .keys()
+            .copied()
+            .filter(|batch_id| !manifest_ids.contains(batch_id))
+            .collect();
+        orphan_ids.sort_by(|left, right| {
+            manifest.entries[left]
+                .retrieved_at
+                .cmp(&manifest.entries[right].retrieved_at)
+                .then_with(|| left.cmp(right))
+        });
+        for batch_id in orphan_ids {
+            let entry = manifest
+                .entries
+                .remove(&batch_id)
+                .expect("discovered orphan exists");
+            self.append_manifest_entry_already_locked(&mut manifest, &entry, operations)?;
+        }
+        operations.sync_manifest_file(&manifest.file)?;
+        operations.sync_manifest_directories(parent)?;
+
+        Ok(manifest
+            .order
+            .into_iter()
+            .map(|batch_id| {
+                manifest
+                    .entries
+                    .remove(&batch_id)
+                    .expect("durable manifest batch exists")
+            })
+            .collect())
     }
 
     fn read_manifest_with_ops<O: ManifestReadOps + ?Sized>(
@@ -1415,6 +1559,62 @@ mod tests {
     }
 
     #[derive(Debug)]
+    struct PausingOrphanAppend {
+        reached: mpsc::Sender<()>,
+        release: Arc<Barrier>,
+    }
+
+    impl ManifestReadOps for PausingOrphanAppend {
+        fn before_manifest_append(&self, _entry: &ManifestEntry) -> Result<(), StoreError> {
+            self.reached.send(()).unwrap();
+            self.release.wait();
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailBeforeOrphanAppend(AtomicBool);
+
+    impl ManifestReadOps for FailBeforeOrphanAppend {
+        fn before_manifest_append(&self, _entry: &ManifestEntry) -> Result<(), StoreError> {
+            if self.0.swap(false, Ordering::SeqCst) {
+                Err(io_err(
+                    "injected pre-append failure",
+                    std::io::Error::other("injected pre-append failure"),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailManifestSync(AtomicBool);
+
+    impl ManifestReadOps for FailManifestSync {
+        fn sync_manifest_file(&self, file: &File) -> Result<(), StoreError> {
+            if self.0.swap(false, Ordering::SeqCst) {
+                Err(io_err(
+                    "injected manifest sync failure",
+                    std::io::Error::other("injected manifest sync failure"),
+                ))
+            } else {
+                file.sync_all()
+                    .map_err(|error| io_err("sync manifest", error))
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct CommitLockAttemptProbe(mpsc::Sender<()>);
+
+    impl BatchCommitOps for CommitLockAttemptProbe {
+        fn before_commit_lock(&self) {
+            self.0.send(()).unwrap();
+        }
+    }
+
+    #[derive(Debug)]
     struct SharedLockProbe {
         before: mpsc::Sender<()>,
         after: mpsc::Sender<()>,
@@ -1444,6 +1644,23 @@ mod tests {
                 mode: FetchMode::Synthetic,
             },
         )
+    }
+
+    fn store_test_batch(store: &RawStore, batch_id: BatchId) -> ManifestEntry {
+        let date = TradingDate::parse("2020-01-31").unwrap();
+        store
+            .store_batch(
+                &BatchSpec {
+                    provider: crate::contract::PROVIDER_KRX,
+                    market: crate::contract::MARKET_KR,
+                    date: &date,
+                    batch_id,
+                    entitlement_reference: None,
+                    mode: FetchMode::Synthetic,
+                },
+                &[test_envelope(batch_id)],
+            )
+            .unwrap()
     }
 
     #[test]
@@ -1889,5 +2106,146 @@ mod tests {
         );
         reader.join().unwrap();
         assert!(batch_dir.join("batch.json").exists());
+    }
+
+    #[test]
+    fn reconciled_manifest_lock_orders_orphan_before_waiting_normal_writer() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let orphan = store_test_batch(&store, BatchId::generate());
+        fs::remove_file(
+            store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR),
+        )
+        .unwrap();
+
+        let (orphan_reached_tx, orphan_reached_rx) = mpsc::channel();
+        let release = Arc::new(Barrier::new(2));
+        let reconcile_store = store.clone();
+        let reconcile_release = Arc::clone(&release);
+        let reconcile = std::thread::spawn(move || {
+            reconcile_store.read_reconciled_manifest_with_ops(
+                crate::contract::PROVIDER_KRX,
+                crate::contract::MARKET_KR,
+                &PausingOrphanAppend {
+                    reached: orphan_reached_tx,
+                    release: reconcile_release,
+                },
+            )
+        });
+        orphan_reached_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+
+        let normal_id = BatchId::generate();
+        let writer_store = store.clone();
+        let (attempt_tx, attempt_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let date = TradingDate::parse("2020-01-31").unwrap();
+            let result = writer_store.store_batch_with_commit_ops(
+                &BatchSpec {
+                    provider: crate::contract::PROVIDER_KRX,
+                    market: crate::contract::MARKET_KR,
+                    date: &date,
+                    batch_id: normal_id,
+                    entitlement_reference: None,
+                    mode: FetchMode::Synthetic,
+                },
+                &[test_envelope(normal_id)],
+                &CommitLockAttemptProbe(attempt_tx),
+            );
+            result_tx.send(result).unwrap();
+        });
+        attempt_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            result_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+
+        release.wait();
+        assert_eq!(reconcile.join().unwrap().unwrap(), vec![orphan.clone()]);
+        let normal = result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        writer.join().unwrap();
+        assert_eq!(
+            store
+                .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR,)
+                .unwrap(),
+            vec![orphan, normal],
+        );
+    }
+
+    #[test]
+    fn reconciled_manifest_pre_append_fault_leaves_orphan_for_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let orphan = store_test_batch(&store, BatchId::generate());
+        let manifest_path =
+            store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR);
+        fs::remove_file(&manifest_path).unwrap();
+
+        let failure = store.read_reconciled_manifest_with_ops(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &FailBeforeOrphanAppend(AtomicBool::new(true)),
+        );
+        assert!(matches!(failure, Err(StoreError::Io { .. })));
+        assert_eq!(
+            store
+                .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR,)
+                .unwrap(),
+            vec![orphan.clone()],
+        );
+
+        assert_eq!(
+            store
+                .read_reconciled_manifest(
+                    crate::contract::PROVIDER_KRX,
+                    crate::contract::MARKET_KR,
+                )
+                .unwrap(),
+            vec![orphan],
+        );
+        assert_eq!(
+            fs::read_to_string(manifest_path).unwrap().lines().count(),
+            1
+        );
+    }
+
+    #[test]
+    fn reconciled_manifest_post_write_fault_deduplicates_identical_replay() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let orphan = store_test_batch(&store, BatchId::generate());
+        let manifest_path =
+            store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR);
+        fs::remove_file(&manifest_path).unwrap();
+
+        let failure = store.read_reconciled_manifest_with_ops(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &FailManifestSync(AtomicBool::new(true)),
+        );
+        assert!(matches!(failure, Err(StoreError::Io { .. })));
+        assert_eq!(
+            fs::read_to_string(&manifest_path).unwrap().lines().count(),
+            1
+        );
+
+        assert_eq!(
+            store
+                .read_reconciled_manifest(
+                    crate::contract::PROVIDER_KRX,
+                    crate::contract::MARKET_KR,
+                )
+                .unwrap(),
+            vec![orphan],
+        );
+        assert_eq!(
+            fs::read_to_string(manifest_path).unwrap().lines().count(),
+            1
+        );
     }
 }

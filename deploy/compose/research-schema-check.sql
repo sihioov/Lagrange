@@ -205,9 +205,27 @@ BEGIN
       AND f.prorettype = 'trigger'::regtype
       AND NOT f.prosecdef
       AND l.lanname = 'plpgsql'
-      AND f.prosrc LIKE '%trading_calendar_versions is append-only%'
   ) THEN
     RAISE EXCEPTION 'append-only trigger/function is missing, disabled, or drifted';
+  END IF;
+
+  IF EXISTS (
+    WITH actual_function(definition) AS (
+      SELECT btrim(regexp_replace(pg_get_functiondef(f.oid), E'\\s+', ' ', 'g'))
+      FROM pg_proc f
+      JOIN pg_namespace n ON n.oid = f.pronamespace
+      WHERE n.nspname = 'public'
+        AND f.proname = 'trading_calendar_versions_reject_mutation'
+    ), expected_function(definition) AS (VALUES
+      ('CREATE OR REPLACE FUNCTION public.trading_calendar_versions_reject_mutation() RETURNS trigger LANGUAGE plpgsql AS $function$ BEGIN RAISE EXCEPTION ''trading_calendar_versions is append-only: % is refused'', TG_OP USING ERRCODE = ''55000''; END $function$')
+    )
+    SELECT 1 FROM (
+      (SELECT definition FROM actual_function EXCEPT SELECT definition FROM expected_function)
+      UNION ALL
+      (SELECT definition FROM expected_function EXCEPT SELECT definition FROM actual_function)
+    ) function_drift
+  ) THEN
+    RAISE EXCEPTION 'append-only trigger function definition is missing or drifted';
   END IF;
 
   IF EXISTS (

@@ -598,6 +598,69 @@ async fn pipeline_recovery_pages_resume_by_canonical_batch_cursor() {
 }
 
 #[tokio::test]
+async fn pipeline_recovery_reconciles_orphan_before_later_normal_append() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let orphan = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    std::fs::remove_file(store.manifest_path(PROVIDER_KRX, MARKET_KR)).unwrap();
+
+    let sink = FakeSink::default();
+    let mut observed = Vec::new();
+    let first = recover_unpublished_page_with(
+        &store,
+        &sink,
+        RecoveryPosition::default(),
+        1,
+        |outcome, _snapshot_high_water| {
+            observed.push(outcome.batch_id());
+            Ok::<_, std::convert::Infallible>(())
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.snapshot_high_water, Some(orphan.batch_id));
+    assert_eq!(first.cursor, Some(orphan.batch_id));
+    assert!(!first.has_more);
+
+    let normal = ingest_bundle(&store, &provider(), &request("2026-08-06T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    let suffix = recover_unpublished_page_with(
+        &store,
+        &sink,
+        RecoveryPosition {
+            snapshot_after: first.snapshot_high_water,
+            snapshot_high_water: None,
+            cursor: None,
+        },
+        1,
+        |outcome, _snapshot_high_water| {
+            observed.push(outcome.batch_id());
+            Ok::<_, std::convert::Infallible>(())
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(suffix.snapshot_high_water, Some(normal.batch_id));
+    assert_eq!(suffix.cursor, Some(normal.batch_id));
+    assert!(!suffix.has_more);
+    assert_eq!(observed, vec![orphan.batch_id, normal.batch_id]);
+    assert_eq!(
+        store
+            .read_manifest(PROVIDER_KRX, MARKET_KR)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.batch_id)
+            .collect::<Vec<_>>(),
+        vec![orphan.batch_id, normal.batch_id],
+        "recovery high-water identities must be durable manifest lines"
+    );
+}
+
+#[tokio::test]
 async fn pipeline_recovery_drains_a_backdated_append_in_a_followup_snapshot() {
     let root = tempfile::tempdir().unwrap();
     let store = RawStore::new(root.path());

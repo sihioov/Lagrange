@@ -174,8 +174,15 @@ seconds. Retry backoff is stable exponential delay from 10 seconds, capped at
 
 ### Recovery, failures, and events
 
-Recovery captures the append-order manifest's immutable batch-ID high-water,
-then sorts only that fixed prefix oldest-first by `retrieved_at` and batch ID.
+Before recovery captures a high-water, it takes the Raw commit lock exclusively,
+fully validates and repairs the JSONL tail, re-syncs every canonical orphan's
+evidence, and durably appends those orphans to the manifest without a nested
+lock. The manifest file and parent directories are synced before exposure, so
+every returned high-water batch ID identifies an immutable JSONL line rather
+than a synthetic orphan suffix. A normal writer waits behind reconciliation;
+an orphan `O` observed first and a concurrent normal batch `N` therefore commit
+in durable order `[O, N]`. Recovery then sorts only that fixed prefix
+oldest-first by `retrieved_at` and batch ID.
 Each contained helper emits at most 16 strict per-batch NDJSON events plus a
 terminal `snapshot_high_water`/cursor/`has_more`. Events carry the same
 high-water so the parent can retain the last validated snapshot and cursor
@@ -241,7 +248,8 @@ The Compose `research-schema-check` does not migrate. It runs as the pinned
 PostgreSQL image's non-root UID with all capabilities dropped, a read-only root,
 and only the administrator secret. It fails closed on migration-ledger,
 exact normalized PK/unique/CHECK definition, required column type/nullability/
-identity/default, exact valid/ready index, RLS/policy, append-only trigger,
+identity/default, exact valid/ready index, RLS/policy, append-only trigger and
+normalized `pg_get_functiondef` body,
 role-attribute/membership, or exact grant drift. `research-raw-init` separately
 runs without network or secrets and recursively prepares existing directories
 and regular files on the Raw filesystem for UID/GID `10001:10001`. It does not

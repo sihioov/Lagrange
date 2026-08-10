@@ -236,7 +236,8 @@ for token in _sqlx_migrations 'version BETWEEN 22 AND 25' 'max(version)' convali
   indisunique indisvalid indisready indislive relrowsecurity research_writer \
   rolcanlogin rolsuper rolbypassrls rolcreatedb rolcreaterole pg_auth_members \
   pg_policy polcmd polpermissive trading_calendar_versions_append_only \
-  tgenabled tgtype prosecdef role_table_grants has_schema_privilege \
+  tgenabled tgtype prosecdef pg_get_functiondef regexp_replace actual_function expected_function \
+  role_table_grants has_schema_privilege \
   has_table_privilege has_sequence_privilege MAINTAIN; do
   contains "$schema_text" "$token" 'research-schema-check SQL'
 done
@@ -456,6 +457,10 @@ psql_admin 'ALTER TABLE trading_calendar_versions DISABLE TRIGGER trading_calend
 schema_gate_must_fail 'a disabled append-only trigger'
 psql_admin 'ALTER TABLE trading_calendar_versions ENABLE TRIGGER trading_calendar_versions_append_only' 'enable append-only trigger'
 schema_gate_must_pass 'the restored append-only trigger'
+psql_admin "CREATE OR REPLACE FUNCTION public.trading_calendar_versions_reject_mutation() RETURNS trigger LANGUAGE plpgsql AS \$fn\$ BEGIN IF false THEN RAISE EXCEPTION 'trading_calendar_versions is append-only: % is refused', TG_OP USING ERRCODE = '55000'; END IF; RETURN NULL; END \$fn\$" 'replace append-only function with message-preserving no-op'
+schema_gate_must_fail 'a same-name message-preserving no-op append-only function'
+psql_admin "CREATE OR REPLACE FUNCTION public.trading_calendar_versions_reject_mutation() RETURNS trigger LANGUAGE plpgsql AS \$fn\$ BEGIN RAISE EXCEPTION 'trading_calendar_versions is append-only: % is refused', TG_OP USING ERRCODE = '55000'; END \$fn\$" 'restore exact append-only function'
+schema_gate_must_pass 'the restored exact append-only function'
 psql_admin 'GRANT DELETE ON orders TO research_writer' 'grant forbidden order privilege'
 schema_gate_must_fail 'a forbidden order-table grant'
 psql_admin 'REVOKE DELETE ON orders FROM research_writer' 'revoke forbidden order privilege'

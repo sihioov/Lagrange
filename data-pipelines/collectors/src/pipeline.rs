@@ -426,7 +426,7 @@ where
         ));
     }
     let mut entries = store
-        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .read_reconciled_manifest(PROVIDER_KRX, MARKET_KR)
         .map_err(|source| RecoveryError::Pipeline(PipelineError::Manifest { source }))?;
     let boundary_index = position
         .snapshot_after
