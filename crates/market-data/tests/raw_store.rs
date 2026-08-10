@@ -169,6 +169,64 @@ fn manifest_is_append_only() {
 }
 
 #[test]
+fn identical_manifest_append_is_a_byte_preserving_no_op() {
+    let root = temp_root("manifest-idempotent");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let before = fs::read(&path).unwrap();
+
+    store
+        .append_manifest(PROVIDER_KRX, MARKET_KR, &entry)
+        .unwrap();
+
+    assert_eq!(fs::read(path).unwrap(), before);
+}
+
+#[test]
+fn conflicting_manifest_append_for_same_batch_is_typed_and_preserves_bytes() {
+    let root = temp_root("manifest-conflict");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let before = fs::read(&path).unwrap();
+    let mut conflicting = entry;
+    conflicting.entitlement_reference = Some("different-contract".to_owned());
+
+    assert!(matches!(
+        store.append_manifest(PROVIDER_KRX, MARKET_KR, &conflicting),
+        Err(StoreError::ManifestConflict { batch_id, .. }) if batch_id == batch
+    ));
+    assert_eq!(fs::read(path).unwrap(), before);
+}
+
+#[test]
 fn concurrent_manifest_appends_are_serialized_without_lost_records() {
     use std::sync::{Arc, Barrier};
 
@@ -413,7 +471,13 @@ fn manifest_append_failure_preserves_durable_batch_for_orphan_recovery() {
             )],
         )
         .unwrap_err();
-    assert!(matches!(error, StoreError::Io { .. }));
+    match error {
+        StoreError::ManifestAfterDurableBatch { entry, source } => {
+            assert_eq!(entry.batch_id, batch);
+            assert!(matches!(*source, StoreError::Io { .. }));
+        }
+        other => panic!("expected durable manifest failure, got {other:?}"),
+    }
     let batch_dir = store.batch_dir(PROVIDER_KRX, MARKET_KR, &d, &batch);
     assert!(batch_dir.join("reference.json").is_file());
     assert!(batch_dir.join("batch.json").is_file());

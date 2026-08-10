@@ -16,7 +16,7 @@ use market_data::contract::{
     FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind,
 };
 use market_data::entitlement::{RawAccessError, RawVisibility, raw_visibility, read_batch_gated};
-use market_data::storage::{BatchSpec, ManifestEntry, RawStore};
+use market_data::storage::{BatchSpec, ManifestEntry, RawStore, StoreError};
 
 fn d(s: &str) -> CalendarDate {
     CalendarDate::parse(s).expect("valid date")
@@ -184,6 +184,28 @@ fn member_read_allowed_when_entitlement_active() {
         .expect("ACTIVE entitlement must allow a Member read");
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].bytes, br#"{"bars":[]}"#);
+}
+
+#[test]
+fn raw_access_error_preserves_the_typed_store_source() {
+    use std::error::Error as _;
+
+    let service = EntitlementService::new(vec![entitlement(
+        "ent_krx_2026_0001",
+        EntitlementState::Active,
+    )]);
+    let (store, entry) = batch_in_store("source");
+    let evidence = store
+        .batch_dir(PROVIDER_KRX, MARKET_KR, &entry.date, &entry.batch_id)
+        .join("bars.json");
+    fs::remove_file(evidence).unwrap();
+
+    let error = read_batch_gated(&store, &entry, &service, &member_request()).unwrap_err();
+    let source = error.source().expect("RawAccessError source");
+    assert!(matches!(
+        source.downcast_ref::<StoreError>(),
+        Some(StoreError::MissingEvidence { .. })
+    ));
 }
 
 #[test]

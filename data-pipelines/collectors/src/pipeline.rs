@@ -59,9 +59,10 @@ pub enum PipelineError {
 }
 
 impl PipelineError {
-    pub const fn batch_id(&self) -> Option<BatchId> {
+    pub fn batch_id(&self) -> Option<BatchId> {
         match self {
-            Self::Ingest { .. } | Self::Manifest { .. } => None,
+            Self::Ingest { source } => source.batch_id(),
+            Self::Manifest { .. } => None,
             Self::Publication { batch_id, .. }
             | Self::Sink { batch_id, .. }
             | Self::PartialPublication { batch_id }
@@ -164,6 +165,7 @@ pub fn provider_failure_class(error: &ProviderError) -> FailureClass {
 pub fn store_failure_class(error: &StoreError) -> FailureClass {
     match error {
         StoreError::Io { .. } => FailureClass::Retryable,
+        StoreError::ManifestAfterDurableBatch { source, .. } => store_failure_class(source),
         StoreError::FileExists { .. }
         | StoreError::UnsafeFileName { .. }
         | StoreError::UnsafeScope { .. }
@@ -174,7 +176,8 @@ pub fn store_failure_class(error: &StoreError) -> FailureClass {
         | StoreError::CorruptBatchMetadata { .. }
         | StoreError::InvalidBatchMetadata { .. }
         | StoreError::MissingEvidence { .. }
-        | StoreError::Serialization { .. } => FailureClass::Permanent,
+        | StoreError::Serialization { .. }
+        | StoreError::ManifestConflict { .. } => FailureClass::Permanent,
     }
 }
 

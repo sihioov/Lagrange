@@ -72,7 +72,7 @@ pub fn governing_entitlement_reference(
 }
 
 /// A typed failure of the Member-facing raw read path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum RawAccessError {
     /// The request requires an ACTIVE data entitlement on the batch's dataset.
     DataEntitlementRequired { batch_id: BatchId, detail: String },
@@ -81,7 +81,7 @@ pub enum RawAccessError {
     /// No such batch (not in the manifest).
     NotFound { batch_id: BatchId },
     /// Filesystem or content-verification failure.
-    Io { context: String, detail: String },
+    Io { context: String, source: StoreError },
 }
 
 impl std::fmt::Display for RawAccessError {
@@ -100,12 +100,21 @@ impl std::fmt::Display for RawAccessError {
                 )
             }
             Self::NotFound { batch_id } => write!(f, "raw batch {batch_id} not found"),
-            Self::Io { context, detail } => write!(f, "raw read io failure ({context}): {detail}"),
+            Self::Io { context, source } => write!(f, "raw read io failure ({context}): {source}"),
         }
     }
 }
 
-impl std::error::Error for RawAccessError {}
+impl std::error::Error for RawAccessError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::DataEntitlementRequired { .. }
+            | Self::OwnerOnlyDevelopmentPath { .. }
+            | Self::NotFound { .. } => None,
+        }
+    }
+}
 
 /// Member-facing read of one raw batch, gated through the shared
 /// [`EntitlementService`] (fail closed).
@@ -125,15 +134,9 @@ pub fn read_batch_gated(
     let read = |store: &RawStore| -> Result<Vec<StoredFile>, RawAccessError> {
         store
             .read_batch_bytes(&entry.provider, &entry.market, entry)
-            .map_err(|e| match e {
-                StoreError::Io { context, source } => RawAccessError::Io {
-                    context,
-                    detail: source.to_string(),
-                },
-                other => RawAccessError::Io {
-                    context: "raw-read".to_owned(),
-                    detail: other.to_string(),
-                },
+            .map_err(|source| RawAccessError::Io {
+                context: "raw-read".to_owned(),
+                source,
             })
     };
 

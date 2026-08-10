@@ -47,6 +47,15 @@ impl std::error::Error for IngestError {
     }
 }
 
+impl IngestError {
+    pub fn batch_id(&self) -> Option<BatchId> {
+        match self {
+            Self::Store(source) => source.batch_id(),
+            Self::Provider(_) | Self::MalformedResponse { .. } => None,
+        }
+    }
+}
+
 impl From<ProviderError> for IngestError {
     fn from(e: ProviderError) -> Self {
         Self::Provider(e)

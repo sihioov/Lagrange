@@ -235,6 +235,49 @@ async fn pipeline_raw_store_failure_never_calls_sink() {
 }
 
 #[tokio::test]
+async fn pipeline_durable_manifest_failure_exposes_recoverable_batch_id() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    std::fs::create_dir_all(&manifest_path).unwrap();
+    let sink = FakeSink::default();
+
+    let error = ingest_and_publish(
+        &store,
+        &provider(),
+        &request("2026-08-05T07:00:00Z"),
+        None,
+        &sink,
+    )
+    .await
+    .unwrap_err();
+
+    let batch_id = error.batch_id().expect("durable batch id");
+    assert_eq!(error.failure_class(), FailureClass::Retryable);
+    {
+        use std::error::Error as _;
+        let ingest = error.source().expect("pipeline ingest source");
+        let durable = ingest.source().expect("durable store source");
+        let manifest = durable.source().expect("manifest failure source");
+        assert!(matches!(
+            manifest.downcast_ref::<StoreError>(),
+            Some(StoreError::Io { .. })
+        ));
+    }
+    assert!(matches!(
+        error,
+        PipelineError::Ingest {
+            source: IngestError::Store(StoreError::ManifestAfterDurableBatch { .. })
+        }
+    ));
+    assert!(sink.publish_calls.lock().unwrap().is_empty());
+    std::fs::remove_dir(&manifest_path).unwrap();
+    let entries = store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].batch_id, batch_id);
+}
+
+#[tokio::test]
 async fn pipeline_retryable_publish_failure_retains_the_durable_batch() {
     let root = tempfile::tempdir().unwrap();
     let store = RawStore::new(root.path());
@@ -606,6 +649,13 @@ fn pipeline_error_classification_matrix_is_structural() {
             },
             false,
         ),
+        (
+            StoreError::ManifestConflict {
+                path: "manifest.jsonl".into(),
+                batch_id: BatchId::generate(),
+            },
+            false,
+        ),
     ];
     for (source, retryable) in store_cases {
         let error = PipelineError::Manifest { source };
@@ -778,4 +828,45 @@ fn pipeline_manual_publish_error_redacts_overlapping_database_secrets() {
             "CLI output leaked a database secret fragment"
         );
     }
+}
+
+#[test]
+fn pipeline_manual_durable_manifest_failure_reports_recoverable_batch_id() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    std::fs::create_dir_all(&manifest_path).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_collectors"))
+        .env(
+            "DATABASE_URL",
+            "postgres://ignored:ignored@127.0.0.1:1/ignored",
+        )
+        .args([
+            "ingest-and-publish-krx",
+            "--root",
+            root.path().to_str().unwrap(),
+            "--date",
+            "2020-01-31",
+            "--mode",
+            "synthetic",
+            "--bundle",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/fixtures/kr-etf/contract"
+            ),
+            "--now",
+            "2026-08-05T07:00:00Z",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["error_code"], "INGEST_FAILED");
+    assert_eq!(json["class"], "retryable");
+    let batch_id: BatchId = json["batch_id"].as_str().unwrap().parse().unwrap();
+    std::fs::remove_dir(&manifest_path).unwrap();
+    let recovered = store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].batch_id, batch_id);
 }

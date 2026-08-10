@@ -19,7 +19,7 @@
 //! - **Append-only manifest**: JSONL writes are serialized under a file lock;
 //!   reads verify stored bytes against the recorded content hash (tamper detection).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -115,6 +115,14 @@ pub enum StoreError {
         context: String,
         source: serde_json::Error,
     },
+    /// The batch metadata and evidence are durable, but manifest commit failed.
+    /// Recovery must reuse this exact entry rather than recapture provider data.
+    ManifestAfterDurableBatch {
+        entry: Box<ManifestEntry>,
+        source: Box<StoreError>,
+    },
+    /// The manifest already contains different metadata for this batch id.
+    ManifestConflict { path: String, batch_id: BatchId },
     /// Genuine filesystem create/read/write/sync/lock failure.
     Io {
         context: String,
@@ -170,6 +178,15 @@ impl std::fmt::Display for StoreError {
             Self::Serialization { context, source } => {
                 write!(f, "Raw serialization failure ({context}): {source}")
             }
+            Self::ManifestAfterDurableBatch { entry, source } => write!(
+                f,
+                "Raw batch {} is durable but manifest commit failed: {source}",
+                entry.batch_id
+            ),
+            Self::ManifestConflict { path, batch_id } => write!(
+                f,
+                "Raw manifest {path} already contains conflicting metadata for batch {batch_id}"
+            ),
             Self::Io { context, source } => {
                 write!(f, "raw store io failure ({context}): {source}")
             }
@@ -184,13 +201,24 @@ impl std::error::Error for StoreError {
             | Self::CorruptBatchMetadata { source, .. }
             | Self::Serialization { source, .. } => Some(source),
             Self::MissingEvidence { source, .. } | Self::Io { source, .. } => Some(source),
+            Self::ManifestAfterDurableBatch { source, .. } => Some(source.as_ref()),
             Self::FileExists { .. }
             | Self::UnsafeFileName { .. }
             | Self::UnsafeScope { .. }
             | Self::ScopeMismatch { .. }
             | Self::UnsafePath { .. }
             | Self::ContentHashMismatch { .. }
-            | Self::InvalidBatchMetadata { .. } => None,
+            | Self::InvalidBatchMetadata { .. }
+            | Self::ManifestConflict { .. } => None,
+        }
+    }
+}
+
+impl StoreError {
+    pub fn batch_id(&self) -> Option<BatchId> {
+        match self {
+            Self::ManifestAfterDurableBatch { entry, .. } => Some(entry.batch_id),
+            _ => None,
         }
     }
 }
@@ -211,6 +239,19 @@ pub struct BatchSpec<'a> {
 pub struct RawStore {
     root: PathBuf,
 }
+
+trait BatchCommitOps: Send + Sync {
+    fn after_metadata_visible(&self) {}
+
+    fn sync_batch_directories(&self, batch_dir: &Path) -> Result<(), StoreError> {
+        sync_batch_directories(batch_dir)
+    }
+}
+
+#[derive(Debug)]
+struct SystemBatchCommitOps;
+
+impl BatchCommitOps for SystemBatchCommitOps {}
 
 impl RawStore {
     /// `root` is the `data/` directory; raw files live under `root/raw/...`.
@@ -254,6 +295,30 @@ impl RawStore {
             .join("manifest.jsonl")
     }
 
+    fn commit_lock_path(&self, provider: &str, market: &str) -> PathBuf {
+        self.manifest_path(provider, market)
+            .with_file_name("commit.lock")
+    }
+
+    fn open_commit_lock(&self, provider: &str, market: &str) -> Result<File, StoreError> {
+        let path = self.commit_lock_path(provider, market);
+        let parent = path.parent().ok_or_else(|| {
+            io_err(
+                "commit lock parent",
+                std::io::Error::other(format!("{} has no parent", path.display())),
+            )
+        })?;
+        fs::create_dir_all(parent)
+            .map_err(|error| io_err("create commit lock directory", error))?;
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|error| io_err(&format!("open commit lock {}", path.display()), error))
+    }
+
     /// Persists one delivery as a new immutable batch and appends its manifest row.
     ///
     /// Failures before evidence, metadata, and their directory entries are
@@ -263,6 +328,15 @@ impl RawStore {
         &self,
         spec: &BatchSpec<'_>,
         envelopes: &[RawEnvelope],
+    ) -> Result<ManifestEntry, StoreError> {
+        self.store_batch_with_commit_ops(spec, envelopes, &SystemBatchCommitOps)
+    }
+
+    fn store_batch_with_commit_ops<O: BatchCommitOps + ?Sized>(
+        &self,
+        spec: &BatchSpec<'_>,
+        envelopes: &[RawEnvelope],
+        operations: &O,
     ) -> Result<ManifestEntry, StoreError> {
         let BatchSpec {
             provider,
@@ -341,14 +415,36 @@ impl RawStore {
         };
 
         let prepared = prepare_batch_metadata(&dir, &entry).map_err(cleanup)?;
-        publish_batch_metadata(prepared, &dir.join(entry.batch_json_file_name()))
-            .map_err(cleanup)?;
-
-        sync_batch_directories(&dir).map_err(cleanup)?;
-
-        self.append_manifest(provider, market, &entry)?;
-
-        Ok(entry)
+        let commit_lock = self.open_commit_lock(provider, market).map_err(cleanup)?;
+        FileExt::lock_exclusive(&commit_lock)
+            .map_err(|error| cleanup(io_err("lock Raw commit", error)))?;
+        let commit_result = (|| {
+            publish_batch_metadata(prepared, &dir.join(entry.batch_json_file_name()))
+                .map_err(cleanup)?;
+            operations.after_metadata_visible();
+            operations.sync_batch_directories(&dir).map_err(cleanup)?;
+            self.append_manifest_locked(provider, market, &entry)
+                .map_err(|source| StoreError::ManifestAfterDurableBatch {
+                    entry: Box::new(entry.clone()),
+                    source: Box::new(source),
+                })?;
+            Ok(entry)
+        })();
+        let unlock_result =
+            FileExt::unlock(&commit_lock).map_err(|error| io_err("unlock Raw commit", error));
+        match commit_result {
+            Err(error) => {
+                let _ = unlock_result;
+                Err(error)
+            }
+            Ok(entry) => {
+                unlock_result.map_err(|source| StoreError::ManifestAfterDurableBatch {
+                    entry: Box::new(entry.clone()),
+                    source: Box::new(source),
+                })?;
+                Ok(entry)
+            }
+        }
     }
 
     /// Appends one manifest row (JSONL). Never rewrites existing rows.
@@ -361,6 +457,21 @@ impl RawStore {
         validate_scope(provider, market)?;
         validate_entry_scope(provider, market, entry)?;
         validate_manifest_file_names(entry)?;
+        let commit_lock = self.open_commit_lock(provider, market)?;
+        FileExt::lock_exclusive(&commit_lock).map_err(|error| io_err("lock Raw commit", error))?;
+        let result = self.append_manifest_locked(provider, market, entry);
+        let unlock =
+            FileExt::unlock(&commit_lock).map_err(|error| io_err("unlock Raw commit", error));
+        result?;
+        unlock
+    }
+
+    fn append_manifest_locked(
+        &self,
+        provider: &str,
+        market: &str,
+        entry: &ManifestEntry,
+    ) -> Result<(), StoreError> {
         let path = self.manifest_path(provider, market);
         let parent = path.parent().ok_or_else(|| {
             io_err(
@@ -381,62 +492,64 @@ impl RawStore {
             .truncate(false)
             .open(&path)
             .map_err(|e| io_err(&format!("open manifest {}", path.display()), e))?;
-        FileExt::lock_exclusive(&f).map_err(|e| io_err("lock manifest", e))?;
-
-        let result = (|| {
-            let mut bytes = Vec::new();
-            f.read_to_end(&mut bytes)
-                .map_err(|e| io_err("read manifest before append", e))?;
-            let mut existing = BTreeMap::new();
-            let mut existing_order = Vec::new();
-            parse_manifest_records(
-                provider,
-                market,
-                &path,
-                &bytes,
-                &mut existing,
-                &mut existing_order,
-            )?;
-            if !bytes.is_empty() && !bytes.ends_with(b"\n") {
-                let tail_start = bytes
-                    .iter()
-                    .rposition(|byte| *byte == b'\n')
-                    .map_or(0, |position| position + 1);
-                match serde_json::from_slice::<ManifestEntry>(&bytes[tail_start..]) {
-                    Ok(tail_entry) => {
-                        validate_entry_scope(provider, market, &tail_entry)?;
-                        validate_manifest_file_names(&tail_entry)?;
-                        f.seek(SeekFrom::End(0))
-                            .map_err(|e| io_err("seek unterminated manifest end", e))?;
-                        f.write_all(b"\n")
-                            .map_err(|e| io_err("terminate complete manifest record", e))?;
-                    }
-                    Err(source) if source.is_eof() => {
-                        f.set_len(tail_start as u64)
-                            .map_err(|e| io_err("trim truncated manifest tail", e))?;
-                    }
-                    Err(source) => {
-                        return Err(StoreError::CorruptManifest {
-                            path: path.display().to_string(),
-                            line: bytes[..tail_start]
-                                .iter()
-                                .filter(|byte| **byte == b'\n')
-                                .count()
-                                + 1,
-                            source,
-                        });
-                    }
+        let mut bytes = Vec::new();
+        f.read_to_end(&mut bytes)
+            .map_err(|e| io_err("read manifest before append", e))?;
+        let mut existing = BTreeMap::new();
+        let mut existing_order = Vec::new();
+        parse_manifest_records(
+            provider,
+            market,
+            &path,
+            &bytes,
+            &mut existing,
+            &mut existing_order,
+        )?;
+        if existing.get(&entry.batch_id) == Some(entry) {
+            return Ok(());
+        }
+        if existing.contains_key(&entry.batch_id) {
+            return Err(StoreError::ManifestConflict {
+                path: path.display().to_string(),
+                batch_id: entry.batch_id,
+            });
+        }
+        if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+            let tail_start = bytes
+                .iter()
+                .rposition(|byte| *byte == b'\n')
+                .map_or(0, |position| position + 1);
+            match serde_json::from_slice::<ManifestEntry>(&bytes[tail_start..]) {
+                Ok(tail_entry) => {
+                    validate_entry_scope(provider, market, &tail_entry)?;
+                    validate_manifest_file_names(&tail_entry)?;
+                    f.seek(SeekFrom::End(0))
+                        .map_err(|e| io_err("seek unterminated manifest end", e))?;
+                    f.write_all(b"\n")
+                        .map_err(|e| io_err("terminate complete manifest record", e))?;
+                }
+                Err(source) if source.is_eof() => {
+                    f.set_len(tail_start as u64)
+                        .map_err(|e| io_err("trim truncated manifest tail", e))?;
+                }
+                Err(source) => {
+                    return Err(StoreError::CorruptManifest {
+                        path: path.display().to_string(),
+                        line: bytes[..tail_start]
+                            .iter()
+                            .filter(|byte| **byte == b'\n')
+                            .count()
+                            + 1,
+                        source,
+                    });
                 }
             }
-            f.seek(SeekFrom::End(0))
-                .map_err(|e| io_err("seek manifest end", e))?;
-            f.write_all(&line)
-                .map_err(|e| io_err("append manifest", e))?;
-            f.sync_all().map_err(|e| io_err("sync manifest", e))
-        })();
-        let unlock = FileExt::unlock(&f).map_err(|e| io_err("unlock manifest", e));
-        result?;
-        unlock?;
+        }
+        f.seek(SeekFrom::End(0))
+            .map_err(|e| io_err("seek manifest end", e))?;
+        f.write_all(&line)
+            .map_err(|e| io_err("append manifest", e))?;
+        f.sync_all().map_err(|e| io_err("sync manifest", e))?;
         sync_manifest_directories(parent)
     }
 
@@ -449,20 +562,30 @@ impl RawStore {
         market: &str,
     ) -> Result<Vec<ManifestEntry>, StoreError> {
         validate_scope(provider, market)?;
+        let commit_lock = self.open_commit_lock(provider, market)?;
+        FileExt::lock_shared(&commit_lock).map_err(|error| io_err("lock Raw commit", error))?;
+        let result = self.read_manifest_locked(provider, market);
+        let unlock =
+            FileExt::unlock(&commit_lock).map_err(|error| io_err("unlock Raw commit", error));
+        let entries = result?;
+        unlock?;
+        Ok(entries)
+    }
+
+    fn read_manifest_locked(
+        &self,
+        provider: &str,
+        market: &str,
+    ) -> Result<Vec<ManifestEntry>, StoreError> {
         let path = self.manifest_path(provider, market);
         let mut entries = BTreeMap::new();
         let mut manifest_order = Vec::new();
         if path.exists() {
             let mut f = File::open(&path)
                 .map_err(|e| io_err(&format!("open manifest {}", path.display()), e))?;
-            FileExt::lock_shared(&f).map_err(|e| io_err("lock manifest for read", e))?;
             let mut bytes = Vec::new();
-            let read_result = f
-                .read_to_end(&mut bytes)
-                .map_err(|e| io_err("read manifest", e));
-            let unlock = FileExt::unlock(&f).map_err(|e| io_err("unlock manifest", e));
-            read_result?;
-            unlock?;
+            f.read_to_end(&mut bytes)
+                .map_err(|e| io_err("read manifest", e))?;
             parse_manifest_records(
                 provider,
                 market,
@@ -473,10 +596,11 @@ impl RawStore {
             )?;
         }
         self.discover_orphan_batches(provider, market, &mut entries)?;
+        let manifest_ids: BTreeSet<_> = manifest_order.iter().copied().collect();
         let mut orphan_ids: Vec<_> = entries
             .keys()
             .copied()
-            .filter(|batch_id| !manifest_order.contains(batch_id))
+            .filter(|batch_id| !manifest_ids.contains(batch_id))
             .collect();
         orphan_ids.sort_by(|left, right| {
             entries[left]
@@ -763,19 +887,76 @@ fn prepare_batch_metadata(
 fn publish_batch_metadata(
     temporary: tempfile::NamedTempFile,
     final_path: &Path,
-) -> Result<(), StoreError> {
-    temporary
-        .persist_noclobber(final_path)
-        .map(|_| ())
-        .map_err(|error| {
-            if error.error.kind() == std::io::ErrorKind::AlreadyExists {
-                StoreError::FileExists {
-                    path: final_path.display().to_string(),
-                }
-            } else {
-                io_err("publish batch.json", error.error)
+) -> Result<File, StoreError> {
+    publish_batch_metadata_platform(temporary, final_path)
+}
+
+#[cfg(not(windows))]
+fn publish_batch_metadata_platform(
+    temporary: tempfile::NamedTempFile,
+    final_path: &Path,
+) -> Result<File, StoreError> {
+    let file = temporary.persist_noclobber(final_path).map_err(|error| {
+        if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            StoreError::FileExists {
+                path: final_path.display().to_string(),
             }
-        })
+        } else {
+            io_err("publish batch.json", error.error)
+        }
+    })?;
+    file.sync_all()
+        .map_err(|error| io_err("sync published batch.json", error))?;
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn publish_batch_metadata_platform(
+    temporary: tempfile::NamedTempFile,
+    final_path: &Path,
+) -> Result<File, StoreError> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+
+    let temporary_path = temporary.into_temp_path();
+    let source: Vec<u16> = temporary_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let destination: Vec<u16> = final_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: both paths are stable, NUL-terminated UTF-16 buffers for the
+    // duration of the call. Omitting MOVEFILE_REPLACE_EXISTING preserves Raw.
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(if error.kind() == std::io::ErrorKind::AlreadyExists {
+            StoreError::FileExists {
+                path: final_path.display().to_string(),
+            }
+        } else {
+            io_err("publish batch.json with write-through rename", error)
+        });
+    }
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(final_path)
+        .map_err(|error| io_err("open published batch.json", error))?;
+    file.sync_all()
+        .map_err(|error| io_err("sync published batch.json", error))?;
+    Ok(file)
 }
 
 fn parse_manifest_records(
@@ -853,11 +1034,29 @@ fn sync_directory(path: &Path, context: &str) -> Result<(), StoreError> {
         .map_err(|e| io_err(context, e))
 }
 
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path, _context: &str) -> Result<(), StoreError> {
-    // std does not expose Windows directory handles with backup semantics;
-    // evidence files and metadata are still sync_all'd on every platform.
-    Ok(())
+#[cfg(windows)]
+fn sync_directory(path: &Path, context: &str) -> Result<(), StoreError> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| io_err(context, error))
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn sync_directory(path: &Path, context: &str) -> Result<(), StoreError> {
+    Err(io_err(
+        context,
+        std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            format!("directory durability is unsupported for {}", path.display()),
+        ),
+    ))
 }
 
 fn sync_batch_directories(batch_dir: &Path) -> Result<(), StoreError> {
@@ -976,9 +1175,51 @@ fn io_err(context: &str, e: std::io::Error) -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Barrier};
+    use std::sync::{Arc, Barrier, mpsc};
+    use std::time::Duration;
 
     use super::*;
+
+    #[derive(Debug)]
+    struct PausingCommit {
+        visible: Barrier,
+        release: Barrier,
+        fail_directory_sync: bool,
+    }
+
+    impl BatchCommitOps for PausingCommit {
+        fn after_metadata_visible(&self) {
+            self.visible.wait();
+            self.release.wait();
+        }
+
+        fn sync_batch_directories(&self, batch_dir: &Path) -> Result<(), StoreError> {
+            if self.fail_directory_sync {
+                Err(io_err(
+                    "injected batch directory sync",
+                    std::io::Error::other("injected directory sync failure"),
+                ))
+            } else {
+                super::sync_batch_directories(batch_dir)
+            }
+        }
+    }
+
+    fn test_envelope(batch_id: BatchId) -> RawEnvelope {
+        RawEnvelope::new(
+            batch_id,
+            ResponseKind::Reference,
+            "reference.json".to_owned(),
+            b"{}".to_vec(),
+            UtcTimestamp::parse_rfc3339("2026-08-10T00:00:00Z").unwrap(),
+            crate::contract::RequestMetadata {
+                endpoint: "test".to_owned(),
+                query: Vec::new(),
+                headers: Vec::new(),
+                mode: FetchMode::Synthetic,
+            },
+        )
+    }
 
     #[test]
     fn file_name_validation_rejects_traversal() {
@@ -1040,7 +1281,12 @@ mod tests {
         drop(prepared);
         assert!(!partial_path.exists());
         let prepared = prepare_batch_metadata(&batch_dir, &entry).unwrap();
-        publish_batch_metadata(prepared, &batch_dir.join("batch.json")).unwrap();
+        let committed_file =
+            publish_batch_metadata(prepared, &batch_dir.join("batch.json")).unwrap();
+        assert_eq!(
+            committed_file.metadata().unwrap().len(),
+            fs::metadata(batch_dir.join("batch.json")).unwrap().len()
+        );
         sync_directory(&batch_dir, "sync committed batch metadata").unwrap();
         assert_eq!(
             store
@@ -1059,5 +1305,147 @@ mod tests {
         let committed: ManifestEntry =
             serde_json::from_slice(&fs::read(batch_dir.join("batch.json")).unwrap()).unwrap();
         assert_eq!(committed, entry);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_directory_flush_is_real_and_fails_closed() {
+        let root = tempfile::tempdir().unwrap();
+        sync_directory(root.path(), "flush existing Windows directory").unwrap();
+
+        let injected = PausingCommit {
+            visible: Barrier::new(1),
+            release: Barrier::new(1),
+            fail_directory_sync: true,
+        };
+        assert!(matches!(
+            injected.sync_batch_directories(root.path()),
+            Err(StoreError::Io { .. })
+        ));
+
+        let missing = root.path().join("missing-directory");
+        assert!(matches!(
+            sync_directory(&missing, "flush missing Windows directory"),
+            Err(StoreError::Io { .. })
+        ));
+    }
+
+    #[test]
+    fn reader_blocks_while_visible_metadata_is_not_yet_durable() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let batch_id = BatchId::generate();
+        let date = TradingDate::parse("2020-01-31").unwrap();
+        let operations = Arc::new(PausingCommit {
+            visible: Barrier::new(2),
+            release: Barrier::new(2),
+            fail_directory_sync: false,
+        });
+
+        let writer_store = store.clone();
+        let writer_operations = Arc::clone(&operations);
+        let writer = std::thread::spawn(move || {
+            let spec = BatchSpec {
+                provider: crate::contract::PROVIDER_KRX,
+                market: crate::contract::MARKET_KR,
+                date: &date,
+                batch_id,
+                entitlement_reference: None,
+                mode: FetchMode::Synthetic,
+            };
+            writer_store.store_batch_with_commit_ops(
+                &spec,
+                &[test_envelope(batch_id)],
+                writer_operations.as_ref(),
+            )
+        });
+        operations.visible.wait();
+
+        let reader_store = store.clone();
+        let (reader_started_tx, reader_started_rx) = mpsc::channel();
+        let (reader_result_tx, reader_result_rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            reader_started_tx.send(()).unwrap();
+            let result = reader_store
+                .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR);
+            reader_result_tx.send(result).unwrap();
+        });
+        reader_started_rx.recv().unwrap();
+        assert!(
+            reader_result_rx
+                .recv_timeout(Duration::from_millis(100))
+                .is_err()
+        );
+
+        operations.release.wait();
+        let written = writer.join().unwrap().unwrap();
+        let visible = reader_result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        reader.join().unwrap();
+        assert_eq!(visible, vec![written]);
+    }
+
+    #[test]
+    fn directory_sync_failure_cleans_visible_metadata_before_reader_unblocks() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let batch_id = BatchId::generate();
+        let date = TradingDate::parse("2020-01-31").unwrap();
+        let batch_dir = store.batch_dir(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &date,
+            &batch_id,
+        );
+        let operations = Arc::new(PausingCommit {
+            visible: Barrier::new(2),
+            release: Barrier::new(2),
+            fail_directory_sync: true,
+        });
+
+        let writer_store = store.clone();
+        let writer_operations = Arc::clone(&operations);
+        let writer = std::thread::spawn(move || {
+            let spec = BatchSpec {
+                provider: crate::contract::PROVIDER_KRX,
+                market: crate::contract::MARKET_KR,
+                date: &date,
+                batch_id,
+                entitlement_reference: None,
+                mode: FetchMode::Synthetic,
+            };
+            writer_store.store_batch_with_commit_ops(
+                &spec,
+                &[test_envelope(batch_id)],
+                writer_operations.as_ref(),
+            )
+        });
+        operations.visible.wait();
+
+        let reader_store = store.clone();
+        let (result_tx, result_rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            result_tx
+                .send(
+                    reader_store
+                        .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR),
+                )
+                .unwrap();
+        });
+        assert!(result_rx.recv_timeout(Duration::from_millis(100)).is_err());
+
+        operations.release.wait();
+        assert!(matches!(writer.join().unwrap(), Err(StoreError::Io { .. })));
+        assert!(
+            result_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+        reader.join().unwrap();
+        assert!(!batch_dir.exists());
     }
 }

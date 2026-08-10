@@ -92,10 +92,10 @@ impl Redactor {
 fn value_after_key<'a>(text: &'a str, key: &str) -> Option<&'a str> {
     for needle in [format!("{key}="), format!("{key}:")] {
         let mut from = 0;
-        while let Some(rel) = text[from..].find(&needle) {
-            let value_start = from + rel + needle.len();
+        while let Some(found) = find_ascii_case_insensitive(text, &needle, from) {
+            let value_start = found + needle.len();
             let rest = &text[value_start..];
-            let (content_start, content_end) = value_bounds(rest);
+            let (content_start, content_end) = value_bounds_for_key(rest, key);
             let value = &rest[content_start..content_end];
             if !value.is_empty() && value != REDACTED {
                 return Some(value);
@@ -110,10 +110,10 @@ fn scrub_key_value(text: &str, key: &str) -> String {
     let mut out = text.to_owned();
     for needle in [format!("{key}="), format!("{key}:")] {
         let mut from = 0;
-        while let Some(rel) = out[from..].find(&needle) {
-            let value_start = from + rel + needle.len();
+        while let Some(found) = find_ascii_case_insensitive(&out, &needle, from) {
+            let value_start = found + needle.len();
             let rest = &out[value_start..];
-            let (content_start, content_end) = value_bounds(rest);
+            let (content_start, content_end) = value_bounds_for_key(rest, key);
             let value = &rest[content_start..content_end];
             if !value.is_empty() && value != REDACTED {
                 out.replace_range(
@@ -129,25 +129,72 @@ fn scrub_key_value(text: &str, key: &str) -> String {
     out
 }
 
+fn find_ascii_case_insensitive(text: &str, needle: &str, from: usize) -> Option<usize> {
+    text.as_bytes()[from..]
+        .windows(needle.len())
+        .position(|candidate| candidate.eq_ignore_ascii_case(needle.as_bytes()))
+        .map(|position| from + position)
+}
+
+fn value_bounds_for_key(value: &str, key: &str) -> (usize, usize) {
+    if key.eq_ignore_ascii_case("Authorization") {
+        authorization_value_bounds(value)
+    } else {
+        value_bounds(value)
+    }
+}
+
+fn authorization_value_bounds(value: &str) -> (usize, usize) {
+    let leading = value.len() - value.trim_start_matches(char::is_whitespace).len();
+    let credential = &value[leading..];
+    if matches!(credential.as_bytes().first(), Some(b'\'' | b'"')) {
+        let (start, end) = value_bounds(credential);
+        return (leading + start, leading + end);
+    }
+
+    let scheme_end = unquoted_value_end(credential);
+    if scheme_end > 0 {
+        let after_scheme = &credential[scheme_end..];
+        let separator =
+            after_scheme.len() - after_scheme.trim_start_matches(char::is_whitespace).len();
+        if separator > 0 {
+            let token_start = scheme_end + separator;
+            let token_end = token_start + unquoted_value_end(&credential[token_start..]);
+            if token_end > token_start {
+                return (leading, leading + token_end);
+            }
+        }
+    }
+    (leading, leading + scheme_end)
+}
+
 fn value_bounds(value: &str) -> (usize, usize) {
     match value.as_bytes().first().copied() {
         Some(quote @ (b'\'' | b'"')) => {
             let start = 1;
-            let end = value[start..]
-                .bytes()
-                .position(|byte| byte == quote)
-                .map_or(value.len(), |position| start + position);
+            let mut escaped = false;
+            let mut end = value.len();
+            for (position, byte) in value.as_bytes()[start..].iter().copied().enumerate() {
+                if byte == b'\\' {
+                    escaped = !escaped;
+                    continue;
+                }
+                if byte == quote && !escaped {
+                    end = start + position;
+                    break;
+                }
+                escaped = false;
+            }
             (start, end)
         }
-        _ => {
-            let end = value
-                .find(|character: char| {
-                    character.is_whitespace() || character == '"' || character == '\''
-                })
-                .unwrap_or(value.len());
-            (0, end)
-        }
+        _ => (0, unquoted_value_end(value)),
     }
+}
+
+fn unquoted_value_end(value: &str) -> usize {
+    value
+        .find(|character: char| character.is_whitespace() || character == '"' || character == '\'')
+        .unwrap_or(value.len())
 }
 
 fn next_search_start(value_start: usize, value: &str, content_end: usize) -> usize {
@@ -159,14 +206,20 @@ fn next_search_start(value_start: usize, value: &str, content_end: usize) -> usi
 }
 
 fn bearer_token(text: &str) -> Option<&str> {
-    let needle = "Bearer ";
+    let needle = "Bearer";
     let mut from = 0;
-    while let Some(rel) = text[from..].find(needle) {
-        let token_start = from + rel + needle.len();
+    while let Some(found) = find_ascii_case_insensitive(text, needle, from) {
+        let separator_start = found + needle.len();
+        let separator = &text[separator_start..];
+        let separator_len =
+            separator.len() - separator.trim_start_matches(char::is_whitespace).len();
+        if separator_len == 0 {
+            from = separator_start;
+            continue;
+        }
+        let token_start = separator_start + separator_len;
         let rest = &text[token_start..];
-        let token_end = rest
-            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-            .unwrap_or(rest.len());
+        let token_end = unquoted_value_end(rest);
         let token = &rest[..token_end];
         if !token.is_empty() && token != REDACTED {
             return Some(token);
@@ -178,14 +231,20 @@ fn bearer_token(text: &str) -> Option<&str> {
 
 fn scrub_bearer(text: &str) -> String {
     let mut out = text.to_owned();
-    let needle = "Bearer ";
+    let needle = "Bearer";
     let mut from = 0;
-    while let Some(rel) = out[from..].find(needle) {
-        let token_start = from + rel + needle.len();
+    while let Some(found) = find_ascii_case_insensitive(&out, needle, from) {
+        let separator_start = found + needle.len();
+        let separator = &out[separator_start..];
+        let separator_len =
+            separator.len() - separator.trim_start_matches(char::is_whitespace).len();
+        if separator_len == 0 {
+            from = separator_start;
+            continue;
+        }
+        let token_start = separator_start + separator_len;
         let rest = &out[token_start..];
-        let token_end = rest
-            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-            .unwrap_or(rest.len());
+        let token_end = unquoted_value_end(rest);
         let token = &rest[..token_end];
         if !token.is_empty() && token != REDACTED {
             out.replace_range(token_start..token_start + token_end, REDACTED);
@@ -296,5 +355,32 @@ mod tests {
         assert_eq!(output, "KRX_APP_SECRET=\u{3000}KRX_APP_SECRET:[REDACTED]");
         assert!(redactor.is_clean(&output));
         assert_eq!(redactor.redact(&output), output);
+    }
+
+    #[test]
+    fn authorization_redaction_is_case_insensitive_and_escape_aware() {
+        let redactor = Redactor::new();
+        let cases = [
+            (
+                r#"Authorization:"top\"secret""#,
+                r#"Authorization:"[REDACTED]""#,
+            ),
+            ("Authorization:Bearer secret", "Authorization:[REDACTED]"),
+            ("authorization: bearer secret", "authorization: [REDACTED]"),
+            ("Authorization:Basic abc123", "Authorization:[REDACTED]"),
+            (
+                r#"Authorization:"top\"secret" authorization: bearer second"#,
+                r#"Authorization:"[REDACTED]" authorization: [REDACTED]"#,
+            ),
+            ("auth=bEaReR secret", "auth=bEaReR [REDACTED]"),
+        ];
+
+        for (input, expected) in cases {
+            assert!(!redactor.scan(input).is_empty(), "input: {input:?}");
+            let output = redactor.redact(input);
+            assert_eq!(output, expected, "input: {input:?}");
+            assert!(redactor.is_clean(&output), "output: {output:?}");
+            assert_eq!(redactor.redact(&output), output);
+        }
     }
 }

@@ -16,3 +16,6 @@ arrow = { version = "59.1.0", default-features = false, features = ["prettyprint
 parquet = { version = "59.1.0", default-features = false, features = ["arrow", "snap"] }
 fs2 = "0.4"
 tempfile = "3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
