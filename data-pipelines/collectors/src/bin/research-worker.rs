@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use collectors::{
     HealthcheckConfig, WORKER_ENV_KEYS, WaitOutcome, WorkerControl, WorkerError, WorkerEvent,
-    WorkerEventKind, WorkerObserver, WorkerRunOutcome, bootstrap_worker, build_postgres_pool,
-    healthcheck, run_internal_ingest, run_internal_recovery,
+    WorkerObserver, WorkerRunOutcome, bootstrap_worker, build_postgres_pool, healthcheck,
+    run_internal_ingest, run_internal_recovery_stream,
 };
 use domain::{TradingDate, UtcTimestamp};
 use serde::Serialize;
@@ -38,6 +38,9 @@ enum Command {
 struct ErrorRecord {
     status: &'static str,
     error_code: &'static str,
+    provider: &'static str,
+    market: &'static str,
+    target_date: Option<String>,
     phase: &'static str,
     class: &'static str,
     batch_id: Option<String>,
@@ -76,10 +79,7 @@ impl WorkerObserver for JsonObserver {
             market: event.market,
             target_date: event.target_date.map(|date| date.to_iso()),
             phase: event.phase.as_str(),
-            class: match event.kind {
-                WorkerEventKind::Retrying => event.class.as_str(),
-                WorkerEventKind::Completed | WorkerEventKind::Skipped => "success",
-            },
+            class: event.class.as_str(),
             batch_id: event.batch_id.map(|batch_id| batch_id.to_string()),
         };
         if let Ok(line) = serde_json::to_string(&record) {
@@ -128,13 +128,14 @@ async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match parse_args(&args) {
         Ok(command) => command,
-        Err(error) => return report_error(&error),
+        Err(error) => return report_error(&error, None),
     };
     if matches!(command, Command::Help) {
         print!("{USAGE}");
         return ExitCode::SUCCESS;
     }
 
+    let target_date = command_target_date(&command);
     let values = environment_map();
     let result = match command {
         Command::Healthcheck => run_healthcheck(&values).await,
@@ -152,7 +153,14 @@ async fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
-        Err(error) => report_error(&error),
+        Err(error) => report_error(&error, target_date.or_else(|| error.target_date())),
+    }
+}
+
+fn command_target_date(command: &Command) -> Option<TradingDate> {
+    match command {
+        Command::Once(date) | Command::InternalIngest(date, _) => Some(*date),
+        Command::Daemon | Command::Healthcheck | Command::Help | Command::InternalRecover => None,
     }
 }
 
@@ -255,7 +263,9 @@ async fn run_healthcheck(values: &HashMap<String, String>) -> Result<SuccessReco
 async fn run_internal_recover(
     values: &HashMap<String, String>,
 ) -> Result<SuccessRecord, WorkerError> {
-    run_internal_recovery(values).await?;
+    let stdout = std::io::stdout();
+    let mut writer = stdout.lock();
+    run_internal_recovery_stream(values, &mut writer).await?;
     Ok(SuccessRecord {
         status: "ok",
         phase: "recovery",
@@ -301,10 +311,13 @@ fn run_record(outcome: WorkerRunOutcome, date: Option<TradingDate>) -> SuccessRe
     }
 }
 
-fn report_error(error: &WorkerError) -> ExitCode {
+fn report_error(error: &WorkerError, target_date: Option<TradingDate>) -> ExitCode {
     let record = ErrorRecord {
         status: "error",
         error_code: error_code(error),
+        provider: "KRX",
+        market: "KR",
+        target_date: target_date.map(|date| date.to_iso()),
         phase: error.phase().as_str(),
         class: error.failure_class().as_str(),
         batch_id: error.batch_id().map(|batch_id| batch_id.to_string()),
@@ -313,7 +326,7 @@ fn report_error(error: &WorkerError) -> ExitCode {
     println!(
         "{}",
         serde_json::to_string(&record).unwrap_or_else(|_| {
-            "{\"status\":\"error\",\"error_code\":\"SERIALIZATION_FAILED\",\"phase\":\"config\",\"class\":\"permanent\",\"batch_id\":null}".to_owned()
+            "{\"status\":\"error\",\"error_code\":\"SERIALIZATION_FAILED\",\"provider\":\"KRX\",\"market\":\"KR\",\"target_date\":null,\"phase\":\"config\",\"class\":\"permanent\",\"batch_id\":null}".to_owned()
         })
     );
     ExitCode::from(2)
@@ -332,10 +345,11 @@ fn error_code(error: &WorkerError) -> &'static str {
         WorkerError::Database { .. } => "DATABASE_UNAVAILABLE",
         WorkerError::Unhealthy { .. } => "UNHEALTHY",
         WorkerError::Pipeline(_) => "PIPELINE_FAILED",
-        WorkerError::ChildIo => "HELPER_IO_FAILED",
-        WorkerError::ChildContainment => "HELPER_CONTAINMENT_FAILED",
-        WorkerError::ChildOutput => "HELPER_OUTPUT_INVALID",
+        WorkerError::ChildIo { .. } => "HELPER_IO_FAILED",
+        WorkerError::ChildContainment { .. } => "HELPER_CONTAINMENT_FAILED",
+        WorkerError::ChildOutput { .. } => "HELPER_OUTPUT_INVALID",
         WorkerError::ChildFailure { .. } => "HELPER_FAILED",
+        WorkerError::Cycle { source, .. } => error_code(source),
         WorkerError::Shutdown => "SHUTDOWN",
     }
 }

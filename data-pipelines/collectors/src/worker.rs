@@ -17,12 +17,13 @@ use market_data::provider::{EodProvider, KrxProvider, ProviderError, RecordedBun
 use market_data::storage::RawStore;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::{
-    FailureClass, PipelineError, PostgresPublicationSink, PublicationSink, SinkError,
-    ingest_and_publish, provider_failure_class, recover_unpublished,
+    FailureClass, PipelineError, PostgresPublicationSink, PublicationSink, RecoveryBatchOutcome,
+    RecoveryError, SinkError, ingest_and_publish, provider_failure_class, recover_unpublished,
+    recover_unpublished_with,
 };
 
 const DEFAULT_RUN_AT_KST: &str = "16:30";
@@ -125,11 +126,11 @@ pub enum WorkerError {
     #[error("research worker is unhealthy: {reason}")]
     Unhealthy { reason: HealthFailure },
     #[error("research helper process failed to start or communicate")]
-    ChildIo,
+    ChildIo { phase: WorkerPhase },
     #[error("research helper process could not be contained")]
-    ChildContainment,
+    ChildContainment { phase: WorkerPhase },
     #[error("research helper process returned invalid output")]
-    ChildOutput,
+    ChildOutput { phase: WorkerPhase },
     #[error("research worker shutdown requested")]
     Shutdown,
     #[error("research helper process reported failure")]
@@ -138,6 +139,12 @@ pub enum WorkerError {
         class: FailureClass,
         batch_id: Option<BatchId>,
     },
+    #[error("research worker cycle failed")]
+    Cycle {
+        target_date: TradingDate,
+        #[source]
+        source: Box<WorkerError>,
+    },
     #[error("research pipeline failed")]
     Pipeline(#[source] PipelineError),
 }
@@ -145,7 +152,9 @@ pub enum WorkerError {
 impl WorkerError {
     pub fn failure_class(&self) -> FailureClass {
         match self {
-            Self::Io { .. } | Self::Timeout { .. } | Self::ChildIo => FailureClass::Retryable,
+            Self::Io { .. } | Self::Timeout { .. } | Self::ChildIo { .. } => {
+                FailureClass::Retryable
+            }
             Self::Pipeline(source) => source.failure_class(),
             Self::Provider(source) => provider_failure_class(source),
             Self::Database { source, .. } => {
@@ -156,14 +165,15 @@ impl WorkerError {
                 }
             }
             Self::ChildFailure { class, .. } => *class,
+            Self::Cycle { source, .. } => source.failure_class(),
             Self::MissingConfig { .. }
             | Self::InvalidConfig { .. }
             | Self::SyntheticForbidden { .. }
             | Self::SecretFile { .. }
             | Self::ProviderNotConfigured
             | Self::Unhealthy { .. }
-            | Self::ChildContainment
-            | Self::ChildOutput
+            | Self::ChildContainment { .. }
+            | Self::ChildOutput { .. }
             | Self::Shutdown => FailureClass::Permanent,
         }
     }
@@ -177,8 +187,11 @@ impl WorkerError {
             Self::ProviderNotConfigured | Self::Provider(_) => WorkerPhase::Provider,
             Self::Database { phase, .. } => *phase,
             Self::Unhealthy { .. } => WorkerPhase::Health,
-            Self::ChildIo | Self::ChildContainment | Self::ChildOutput => WorkerPhase::Ingest,
+            Self::ChildIo { phase }
+            | Self::ChildContainment { phase }
+            | Self::ChildOutput { phase } => *phase,
             Self::ChildFailure { phase, .. } => *phase,
+            Self::Cycle { source, .. } => source.phase(),
             Self::Shutdown => WorkerPhase::Ingest,
             Self::Io { phase } | Self::Timeout { phase } => *phase,
             Self::Pipeline(source) => match source.stage() {
@@ -195,6 +208,14 @@ impl WorkerError {
         match self {
             Self::Pipeline(source) => source.batch_id(),
             Self::ChildFailure { batch_id, .. } => *batch_id,
+            Self::Cycle { source, .. } => source.batch_id(),
+            _ => None,
+        }
+    }
+
+    pub fn target_date(&self) -> Option<TradingDate> {
+        match self {
+            Self::Cycle { target_date, .. } => Some(*target_date),
             _ => None,
         }
     }
@@ -258,7 +279,11 @@ pub trait WorkerControl: Send + Sync {
 
 #[async_trait]
 pub trait ResearchBackend: Send + Sync + 'static {
-    async fn recover(&self, control: &dyn WorkerControl) -> Result<(), WorkerError>;
+    async fn recover(
+        &self,
+        control: &dyn WorkerControl,
+        observer: &dyn RecoveryObserver,
+    ) -> Result<(), WorkerError>;
     async fn has_eod(&self, date: TradingDate) -> Result<bool, WorkerError>;
     async fn ingest(
         &self,
@@ -278,6 +303,8 @@ pub enum WorkerRunOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerEventKind {
     Retrying,
+    Failed,
+    Recovered,
     Completed,
     Skipped,
 }
@@ -286,8 +313,27 @@ impl WorkerEventKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Retrying => "retrying",
+            Self::Failed => "failed",
+            Self::Recovered => "recovered",
             Self::Completed => "completed",
             Self::Skipped => "skipped",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerEventClass {
+    Success,
+    Retryable,
+    Permanent,
+}
+
+impl WorkerEventClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Retryable => "retryable",
+            Self::Permanent => "permanent",
         }
     }
 }
@@ -299,12 +345,46 @@ pub struct WorkerEvent {
     pub market: &'static str,
     pub target_date: Option<TradingDate>,
     pub phase: WorkerPhase,
-    pub class: FailureClass,
+    pub class: WorkerEventClass,
     pub batch_id: Option<BatchId>,
 }
 
 pub trait WorkerObserver: Send + Sync + 'static {
     fn emit(&self, event: WorkerEvent);
+}
+
+pub trait RecoveryObserver: Send + Sync {
+    fn recovered(&self, batch_id: BatchId);
+    fn skipped(&self, batch_id: BatchId);
+}
+
+struct ContextRecoveryObserver<'a> {
+    observer: &'a dyn WorkerObserver,
+    target_date: Option<TradingDate>,
+}
+
+impl RecoveryObserver for ContextRecoveryObserver<'_> {
+    fn recovered(&self, batch_id: BatchId) {
+        self.emit(WorkerEventKind::Recovered, batch_id);
+    }
+
+    fn skipped(&self, batch_id: BatchId) {
+        self.emit(WorkerEventKind::Skipped, batch_id);
+    }
+}
+
+impl ContextRecoveryObserver<'_> {
+    fn emit(&self, kind: WorkerEventKind, batch_id: BatchId) {
+        self.observer.emit(WorkerEvent {
+            kind,
+            provider: "KRX",
+            market: "KR",
+            target_date: self.target_date,
+            phase: WorkerPhase::Recovery,
+            class: WorkerEventClass::Success,
+            batch_id: Some(batch_id),
+        });
+    }
 }
 
 struct NoopObserver;
@@ -383,7 +463,9 @@ pub fn bootstrap_worker(values: &HashMap<String, String>) -> Result<ResearchWork
     if config.fetch_mode == FetchMode::Credentialed {
         return Err(WorkerError::ProviderNotConfigured);
     }
-    let executable = std::env::current_exe().map_err(|_| WorkerError::ChildIo)?;
+    let executable = std::env::current_exe().map_err(|_| WorkerError::ChildIo {
+        phase: WorkerPhase::Config,
+    })?;
     let system_root = validated_system_root()?;
     let pool = build_postgres_pool(&config.database);
     let backend = Arc::new(ProcessResearchBackend {
@@ -402,11 +484,21 @@ struct PipelineResearchBackend {
 
 #[async_trait]
 impl ResearchBackend for PipelineResearchBackend {
-    async fn recover(&self, _control: &dyn WorkerControl) -> Result<(), WorkerError> {
-        recover_unpublished(&self.store, &self.sink)
+    async fn recover(
+        &self,
+        _control: &dyn WorkerControl,
+        observer: &dyn RecoveryObserver,
+    ) -> Result<(), WorkerError> {
+        let report = recover_unpublished(&self.store, &self.sink)
             .await
-            .map(|_| ())
-            .map_err(WorkerError::Pipeline)
+            .map_err(WorkerError::Pipeline)?;
+        for batch_id in report.recovered {
+            observer.recovered(batch_id);
+        }
+        for batch_id in report.skipped {
+            observer.skipped(batch_id);
+        }
+        Ok(())
     }
 
     async fn has_eod(&self, date: TradingDate) -> Result<bool, WorkerError> {
@@ -450,6 +542,7 @@ impl ProcessResearchBackend {
         &self,
         args: Vec<OsString>,
         phase: WorkerPhase,
+        expected_date: Option<TradingDate>,
         control: &dyn WorkerControl,
     ) -> Result<Option<BatchId>, WorkerError> {
         match supervise_child(
@@ -459,6 +552,7 @@ impl ProcessResearchBackend {
                 env: self.env.clone(),
             },
             WHOLE_ATTEMPT_TIMEOUT,
+            phase,
             control,
         )
         .await?
@@ -466,11 +560,11 @@ impl ProcessResearchBackend {
             SupervisedChildOutcome::TimedOut => Err(WorkerError::Timeout { phase }),
             SupervisedChildOutcome::Shutdown => Err(WorkerError::Shutdown),
             SupervisedChildOutcome::Completed { success, stdout } => {
-                let decoded = decode_helper_output(&stdout, phase);
+                let decoded = decode_helper_output(&stdout, phase, expected_date);
                 match (success, decoded) {
                     (true, Ok(batch_id)) => Ok(batch_id),
                     (false, Err(error @ WorkerError::ChildFailure { .. })) => Err(error),
-                    _ => Err(WorkerError::ChildOutput),
+                    _ => Err(WorkerError::ChildOutput { phase }),
                 }
             }
         }
@@ -479,18 +573,22 @@ impl ProcessResearchBackend {
 
 #[async_trait]
 impl ResearchBackend for ProcessResearchBackend {
-    async fn recover(&self, control: &dyn WorkerControl) -> Result<(), WorkerError> {
-        let batch_id = self
-            .helper(
-                vec![OsString::from("__research-internal-recover")],
-                WorkerPhase::Recovery,
-                control,
-            )
-            .await?;
-        if batch_id.is_some() {
-            return Err(WorkerError::ChildOutput);
-        }
-        Ok(())
+    async fn recover(
+        &self,
+        control: &dyn WorkerControl,
+        observer: &dyn RecoveryObserver,
+    ) -> Result<(), WorkerError> {
+        supervise_recovery_child(
+            ChildSpec {
+                executable: self.executable.clone(),
+                args: vec![OsString::from("__research-internal-recover")],
+                env: self.env.clone(),
+            },
+            WHOLE_ATTEMPT_TIMEOUT,
+            control,
+            observer,
+        )
+        .await
     }
 
     async fn has_eod(&self, date: TradingDate) -> Result<bool, WorkerError> {
@@ -516,23 +614,57 @@ impl ResearchBackend for ProcessResearchBackend {
                 OsString::from(now.to_rfc3339()),
             ],
             WorkerPhase::Ingest,
+            Some(date),
             control,
         )
         .await?
-        .ok_or(WorkerError::ChildOutput)
+        .ok_or(WorkerError::ChildOutput {
+            phase: WorkerPhase::Ingest,
+        })
     }
 }
 
 pub async fn run_internal_recovery(values: &HashMap<String, String>) -> Result<(), WorkerError> {
+    run_internal_recovery_stream(values, &mut io::sink()).await
+}
+
+pub async fn run_internal_recovery_stream<W>(
+    values: &HashMap<String, String>,
+    writer: &mut W,
+) -> Result<(), WorkerError>
+where
+    W: io::Write,
+{
     let config = ResearchWorkerConfig::from_map(values)?;
     let factory = ProductionWorkerComponentFactory;
     let store = factory.build_store(&config)?;
     let pool = factory.build_pool(&config)?;
     let sink = PostgresPublicationSink::new(pool);
-    recover_unpublished(&store, &sink)
-        .await
-        .map(|_| ())
-        .map_err(WorkerError::Pipeline)
+    recover_unpublished_with(&store, &sink, |outcome| {
+        let (event, batch_id) = match outcome {
+            RecoveryBatchOutcome::Recovered(batch_id) => ("recovered", batch_id),
+            RecoveryBatchOutcome::Skipped(batch_id) => ("skipped", batch_id),
+        };
+        serde_json::to_writer(
+            &mut *writer,
+            &RecoveryItemWire {
+                status: "event",
+                event,
+                phase: "recovery",
+                batch_id,
+            },
+        )
+        .map_err(io::Error::other)?;
+        writer.write_all(b"\n")?;
+        writer.flush()
+    })
+    .await
+    .map_err(|error| match error {
+        RecoveryError::Pipeline(source) => WorkerError::Pipeline(source),
+        RecoveryError::Observer { .. } => WorkerError::Io {
+            phase: WorkerPhase::Recovery,
+        },
+    })
 }
 
 pub async fn run_internal_ingest(
@@ -679,8 +811,15 @@ impl ResearchWorker {
                 return Ok(WorkerRunOutcome::Shutdown);
             }
             let date = current_kst_date(control.now_utc());
-            if self.run_target_with_retry(date, control).await? == WorkerRunOutcome::Shutdown {
-                return Ok(WorkerRunOutcome::Shutdown);
+            match self.run_target_with_retry(date, control).await {
+                Ok(WorkerRunOutcome::Shutdown) => return Ok(WorkerRunOutcome::Shutdown),
+                Ok(_) => {}
+                Err(source) => {
+                    return Err(WorkerError::Cycle {
+                        target_date: date,
+                        source: Box::new(source),
+                    });
+                }
             }
         }
     }
@@ -691,8 +830,12 @@ impl ResearchWorker {
         target_date: Option<TradingDate>,
     ) -> Result<bool, WorkerError> {
         let mut failures = 0;
+        let recovery_observer = ContextRecoveryObserver {
+            observer: self.observer.as_ref(),
+            target_date,
+        };
         loop {
-            match self.backend.recover(control).await {
+            match self.backend.recover(control, &recovery_observer).await {
                 Ok(()) => return Ok(true),
                 Err(WorkerError::Shutdown) => return Ok(false),
                 Err(error) if error.failure_class() == FailureClass::Retryable => {
@@ -702,7 +845,10 @@ impl ResearchWorker {
                     }
                     failures = failures.saturating_add(1);
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    self.emit_failure(target_date, &error);
+                    return Err(error);
+                }
             }
         }
     }
@@ -714,9 +860,13 @@ impl ResearchWorker {
     ) -> Result<WorkerRunOutcome, WorkerError> {
         let mut failures = 0;
         let mut needs_recovery = false;
+        let recovery_observer = ContextRecoveryObserver {
+            observer: self.observer.as_ref(),
+            target_date: Some(date),
+        };
         loop {
             if needs_recovery {
-                match self.backend.recover(control).await {
+                match self.backend.recover(control, &recovery_observer).await {
                     Ok(()) => {
                         needs_recovery = false;
                         continue;
@@ -731,7 +881,10 @@ impl ResearchWorker {
                         failures = failures.saturating_add(1);
                         continue;
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => {
+                        self.emit_failure(Some(date), &error);
+                        return Err(error);
+                    }
                 }
             }
 
@@ -750,7 +903,7 @@ impl ResearchWorker {
                         market: "KR",
                         target_date: Some(date),
                         phase: WorkerPhase::DuplicateCheck,
-                        class: FailureClass::Permanent,
+                        class: WorkerEventClass::Success,
                         batch_id: None,
                     });
                     return Ok(WorkerRunOutcome::AlreadyPublished);
@@ -767,7 +920,10 @@ impl ResearchWorker {
                     failures = failures.saturating_add(1);
                     continue;
                 }
-                AttemptOutcome::Completed(Err(error)) => return Err(error),
+                AttemptOutcome::Completed(Err(error)) => {
+                    self.emit_failure(Some(date), &error);
+                    return Err(error);
+                }
             }
 
             match self
@@ -786,7 +942,7 @@ impl ResearchWorker {
                         market: "KR",
                         target_date: Some(date),
                         phase: WorkerPhase::Publication,
-                        class: FailureClass::Permanent,
+                        class: WorkerEventClass::Success,
                         batch_id: Some(batch_id),
                     });
                     return Ok(WorkerRunOutcome::Published(batch_id));
@@ -800,7 +956,10 @@ impl ResearchWorker {
                     }
                     failures = failures.saturating_add(1);
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    self.emit_failure(Some(date), &error);
+                    return Err(error);
+                }
             }
         }
     }
@@ -812,7 +971,22 @@ impl ResearchWorker {
             market: "KR",
             target_date,
             phase: error.phase(),
-            class: FailureClass::Retryable,
+            class: WorkerEventClass::Retryable,
+            batch_id: error.batch_id(),
+        });
+    }
+
+    fn emit_failure(&self, target_date: Option<TradingDate>, error: &WorkerError) {
+        self.observer.emit(WorkerEvent {
+            kind: WorkerEventKind::Failed,
+            provider: "KRX",
+            market: "KR",
+            target_date,
+            phase: error.phase(),
+            class: match error.failure_class() {
+                FailureClass::Retryable => WorkerEventClass::Retryable,
+                FailureClass::Permanent => WorkerEventClass::Permanent,
+            },
             batch_id: error.batch_id(),
         });
     }
@@ -861,6 +1035,12 @@ struct HelperWireRecord {
     status: String,
     #[serde(default)]
     error_code: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    market: Option<String>,
+    #[serde(default)]
+    target_date: Option<String>,
     phase: String,
     #[serde(default)]
     class: Option<String>,
@@ -876,6 +1056,15 @@ struct HelperWireRecord {
     newest_eod_at: Option<String>,
     #[serde(default)]
     age_seconds: Option<u64>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryItemWire<'a> {
+    status: &'a str,
+    event: &'a str,
+    phase: &'a str,
+    batch_id: BatchId,
 }
 
 fn helper_environment(
@@ -929,28 +1118,40 @@ fn validate_system_root(path: PathBuf) -> Result<PathBuf, WorkerError> {
 fn decode_helper_output(
     output: &[u8],
     default_phase: WorkerPhase,
+    expected_date: Option<TradingDate>,
 ) -> Result<Option<BatchId>, WorkerError> {
     if output.len() as u64 > CHILD_OUTPUT_LIMIT {
-        return Err(WorkerError::ChildOutput);
+        return Err(WorkerError::ChildOutput {
+            phase: default_phase,
+        });
     }
     let record: HelperWireRecord =
-        serde_json::from_slice(output).map_err(|_| WorkerError::ChildOutput)?;
+        serde_json::from_slice(output).map_err(|_| WorkerError::ChildOutput {
+            phase: default_phase,
+        })?;
     let batch_id = record
         .batch_id
         .as_deref()
         .map(str::parse)
         .transpose()
-        .map_err(|_| WorkerError::ChildOutput)?;
-    let phase = parse_worker_phase(&record.phase)?;
+        .map_err(|_| WorkerError::ChildOutput {
+            phase: default_phase,
+        })?;
+    let phase = parse_worker_phase(&record.phase, default_phase)?;
     match record.status.as_str() {
         "ok" => {
             if record.error_code.is_some()
+                || record.provider.is_some()
+                || record.market.is_some()
+                || record.target_date.is_some()
                 || record.class.is_some()
                 || record.message.is_some()
                 || record.newest_eod_at.is_some()
                 || record.age_seconds.is_some()
             {
-                return Err(WorkerError::ChildOutput);
+                return Err(WorkerError::ChildOutput {
+                    phase: default_phase,
+                });
             }
             match default_phase {
                 WorkerPhase::Recovery
@@ -968,11 +1169,14 @@ fn decode_helper_output(
                         && record
                             .date
                             .as_deref()
-                            .is_some_and(|date| TradingDate::parse(date).is_ok()) =>
+                            .and_then(|date| TradingDate::parse(date).ok())
+                            == expected_date =>
                 {
                     Ok(batch_id)
                 }
-                _ => Err(WorkerError::ChildOutput),
+                _ => Err(WorkerError::ChildOutput {
+                    phase: default_phase,
+                }),
             }
         }
         "error" => {
@@ -988,13 +1192,30 @@ fn decode_helper_output(
                 || record.date.is_some()
                 || record.newest_eod_at.is_some()
                 || record.age_seconds.is_some()
+                || record.provider.as_deref() != Some("KRX")
+                || record.market.as_deref() != Some("KR")
+                || record
+                    .target_date
+                    .as_deref()
+                    .map(TradingDate::parse)
+                    .transpose()
+                    .map_err(|_| WorkerError::ChildOutput {
+                        phase: default_phase,
+                    })?
+                    != expected_date
             {
-                return Err(WorkerError::ChildOutput);
+                return Err(WorkerError::ChildOutput {
+                    phase: default_phase,
+                });
             }
             let class = match record.class.as_deref() {
                 Some("retryable") => FailureClass::Retryable,
                 Some("permanent") => FailureClass::Permanent,
-                _ => return Err(WorkerError::ChildOutput),
+                _ => {
+                    return Err(WorkerError::ChildOutput {
+                        phase: default_phase,
+                    });
+                }
             };
             Err(WorkerError::ChildFailure {
                 phase,
@@ -1002,11 +1223,16 @@ fn decode_helper_output(
                 batch_id,
             })
         }
-        _ => Err(WorkerError::ChildOutput),
+        _ => Err(WorkerError::ChildOutput {
+            phase: default_phase,
+        }),
     }
 }
 
-fn parse_worker_phase(value: &str) -> Result<WorkerPhase, WorkerError> {
+fn parse_worker_phase(
+    value: &str,
+    invoking_phase: WorkerPhase,
+) -> Result<WorkerPhase, WorkerError> {
     match value {
         "config" => Ok(WorkerPhase::Config),
         "provider" => Ok(WorkerPhase::Provider),
@@ -1016,13 +1242,154 @@ fn parse_worker_phase(value: &str) -> Result<WorkerPhase, WorkerError> {
         "publication" => Ok(WorkerPhase::Publication),
         "health" => Ok(WorkerPhase::Health),
         "database" => Ok(WorkerPhase::Database),
-        _ => Err(WorkerError::ChildOutput),
+        _ => Err(WorkerError::ChildOutput {
+            phase: invoking_phase,
+        }),
+    }
+}
+
+enum RecoveryLine {
+    Batch(RecoveryBatchOutcome),
+    Terminal(Result<(), WorkerError>),
+}
+
+fn decode_recovery_line(line: &[u8]) -> Result<RecoveryLine, WorkerError> {
+    #[derive(serde::Deserialize)]
+    struct Status<'a> {
+        status: &'a str,
+    }
+
+    let phase = WorkerPhase::Recovery;
+    let status: Status<'_> =
+        serde_json::from_slice(line).map_err(|_| WorkerError::ChildOutput { phase })?;
+    if status.status == "event" {
+        let record: RecoveryItemWire<'_> =
+            serde_json::from_slice(line).map_err(|_| WorkerError::ChildOutput { phase })?;
+        if record.status != "event" || record.phase != "recovery" {
+            return Err(WorkerError::ChildOutput { phase });
+        }
+        let outcome = match record.event {
+            "recovered" => RecoveryBatchOutcome::Recovered(record.batch_id),
+            "skipped" => RecoveryBatchOutcome::Skipped(record.batch_id),
+            _ => return Err(WorkerError::ChildOutput { phase }),
+        };
+        Ok(RecoveryLine::Batch(outcome))
+    } else {
+        match decode_helper_output(line, phase, None) {
+            Ok(None) => Ok(RecoveryLine::Terminal(Ok(()))),
+            Ok(Some(_)) => Err(WorkerError::ChildOutput { phase }),
+            Err(error @ WorkerError::ChildFailure { .. }) => Ok(RecoveryLine::Terminal(Err(error))),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+async fn read_bounded_line<R>(reader: &mut R) -> Result<Option<Vec<u8>>, WorkerError>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let phase = WorkerPhase::Recovery;
+    let mut line = Vec::new();
+    let read = (&mut *reader)
+        .take(CHILD_OUTPUT_LIMIT + 2)
+        .read_until(b'\n', &mut line)
+        .await
+        .map_err(|_| WorkerError::ChildIo { phase })?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if line.last() != Some(&b'\n') {
+        return Err(WorkerError::ChildOutput { phase });
+    }
+    line.pop();
+    if line.len() as u64 > CHILD_OUTPUT_LIMIT {
+        return Err(WorkerError::ChildOutput { phase });
+    }
+    Ok(Some(line))
+}
+
+async fn supervise_recovery_child(
+    spec: ChildSpec,
+    timeout: Duration,
+    control: &dyn WorkerControl,
+    observer: &dyn RecoveryObserver,
+) -> Result<(), WorkerError> {
+    let phase = WorkerPhase::Recovery;
+    let mut child = Command::new(&spec.executable)
+        .args(&spec.args)
+        .env_clear()
+        .envs(spec.env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|_| WorkerError::ChildIo { phase })?;
+    let stdout = child.stdout.take().ok_or(WorkerError::ChildIo { phase })?;
+    let mut reader = BufReader::new(stdout);
+    let deadline = tokio::time::sleep(timeout);
+    tokio::pin!(deadline);
+    let mut terminal = None;
+    let mut stdout_eof = false;
+    let mut exit_success = None;
+
+    while !stdout_eof || exit_success.is_none() {
+        tokio::select! {
+            biased;
+            line = read_bounded_line(&mut reader), if !stdout_eof => {
+                match line {
+                    Ok(Some(line)) => {
+                        if terminal.is_some() {
+                            terminate_and_reap(&mut child, phase).await?;
+                            return Err(WorkerError::ChildOutput { phase });
+                        }
+                        match decode_recovery_line(&line) {
+                            Ok(RecoveryLine::Batch(RecoveryBatchOutcome::Recovered(batch_id))) => {
+                                observer.recovered(batch_id);
+                            }
+                            Ok(RecoveryLine::Batch(RecoveryBatchOutcome::Skipped(batch_id))) => {
+                                observer.skipped(batch_id);
+                            }
+                            Ok(RecoveryLine::Terminal(result)) => terminal = Some(result),
+                            Err(error) => {
+                                terminate_and_reap(&mut child, phase).await?;
+                                return Err(error);
+                            }
+                        }
+                    }
+                    Ok(None) => stdout_eof = true,
+                    Err(error) => {
+                        terminate_and_reap(&mut child, phase).await?;
+                        return Err(error);
+                    }
+                }
+            }
+            status = child.wait(), if exit_success.is_none() => {
+                exit_success = Some(status.map_err(|_| WorkerError::ChildIo { phase })?.success());
+            }
+            _ = &mut deadline => {
+                terminate_and_reap(&mut child, phase).await?;
+                return Err(WorkerError::Timeout { phase });
+            }
+            _ = control.wait(None) => {
+                terminate_and_reap(&mut child, phase).await?;
+                return Err(WorkerError::Shutdown);
+            }
+        }
+    }
+
+    match (exit_success, terminal) {
+        (Some(true), Some(Ok(()))) => Ok(()),
+        (Some(false), Some(Err(error @ WorkerError::ChildFailure { .. }))) => Err(error),
+        (Some(false), None) => Err(WorkerError::ChildIo { phase }),
+        _ => Err(WorkerError::ChildOutput { phase }),
     }
 }
 
 async fn supervise_child(
     spec: ChildSpec,
     timeout: Duration,
+    phase: WorkerPhase,
     control: &dyn WorkerControl,
 ) -> Result<SupervisedChildOutcome, WorkerError> {
     let mut child = Command::new(&spec.executable)
@@ -1034,8 +1401,8 @@ async fn supervise_child(
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|_| WorkerError::ChildIo)?;
-    let stdout = child.stdout.take().ok_or(WorkerError::ChildIo)?;
+        .map_err(|_| WorkerError::ChildIo { phase })?;
+    let stdout = child.stdout.take().ok_or(WorkerError::ChildIo { phase })?;
     let mut reader = tokio::spawn(async move {
         let mut output = Vec::new();
         stdout
@@ -1051,14 +1418,14 @@ async fn supervise_child(
     loop {
         tokio::select! {
             status = child.wait() => {
-                let status = status.map_err(|_| WorkerError::ChildIo)?;
+                let status = status.map_err(|_| WorkerError::ChildIo { phase })?;
                 let output = match finished_output.take() {
                     Some(output) => output,
-                    None => reader.await.map_err(|_| WorkerError::ChildIo)?
-                        .map_err(|_| WorkerError::ChildIo)?,
+                    None => reader.await.map_err(|_| WorkerError::ChildIo { phase })?
+                        .map_err(|_| WorkerError::ChildIo { phase })?,
                 };
                 if output.len() as u64 > CHILD_OUTPUT_LIMIT {
-                    return Err(WorkerError::ChildOutput);
+                    return Err(WorkerError::ChildOutput { phase });
                 }
                 return Ok(SupervisedChildOutcome::Completed {
                     success: status.success(),
@@ -1067,23 +1434,23 @@ async fn supervise_child(
             }
             read = &mut reader, if finished_output.is_none() => {
                 let output = read
-                    .map_err(|_| WorkerError::ChildIo)?
-                    .map_err(|_| WorkerError::ChildIo)?;
+                    .map_err(|_| WorkerError::ChildIo { phase })?
+                    .map_err(|_| WorkerError::ChildIo { phase })?;
                 if output.len() as u64 > CHILD_OUTPUT_LIMIT {
-                    terminate_and_reap(&mut child).await?;
-                    return Err(WorkerError::ChildOutput);
+                    terminate_and_reap(&mut child, phase).await?;
+                    return Err(WorkerError::ChildOutput { phase });
                 }
                 finished_output = Some(output);
             }
             _ = &mut deadline => {
-                terminate_and_reap(&mut child).await?;
+                terminate_and_reap(&mut child, phase).await?;
                 if finished_output.is_none() {
                     let _ = reader.await;
                 }
                 return Ok(SupervisedChildOutcome::TimedOut);
             }
             _ = control.wait(None) => {
-                terminate_and_reap(&mut child).await?;
+                terminate_and_reap(&mut child, phase).await?;
                 if finished_output.is_none() {
                     let _ = reader.await;
                 }
@@ -1093,16 +1460,19 @@ async fn supervise_child(
     }
 }
 
-async fn terminate_and_reap(child: &mut tokio::process::Child) -> Result<(), WorkerError> {
+async fn terminate_and_reap(
+    child: &mut tokio::process::Child,
+    phase: WorkerPhase,
+) -> Result<(), WorkerError> {
     match child.start_kill() {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::InvalidInput => {}
-        Err(_) => return Err(WorkerError::ChildContainment),
+        Err(_) => return Err(WorkerError::ChildContainment { phase }),
     }
     tokio::time::timeout(CHILD_REAP_TIMEOUT, child.wait())
         .await
-        .map_err(|_| WorkerError::ChildContainment)?
-        .map_err(|_| WorkerError::ChildContainment)?;
+        .map_err(|_| WorkerError::ChildContainment { phase })?
+        .map_err(|_| WorkerError::ChildContainment { phase })?;
     Ok(())
 }
 
@@ -1338,15 +1708,30 @@ mod process_tests {
     use std::collections::HashMap;
     use std::ffi::OsString;
     use std::path::PathBuf;
+    use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
     use async_trait::async_trait;
     use chrono::Utc;
 
     use super::{
-        ChildSpec, SupervisedChildOutcome, WaitOutcome, WorkerControl, WorkerPhase,
-        decode_helper_output, helper_environment, supervise_child,
+        ChildSpec, RecoveryObserver, SupervisedChildOutcome, WaitOutcome, WorkerControl,
+        WorkerPhase, decode_helper_output, decode_recovery_line, helper_environment,
+        supervise_child, supervise_recovery_child,
     };
+
+    #[derive(Default)]
+    struct RecoveryBatches(Mutex<Vec<domain::BatchId>>);
+
+    impl RecoveryObserver for RecoveryBatches {
+        fn recovered(&self, batch_id: domain::BatchId) {
+            self.0.lock().unwrap().push(batch_id);
+        }
+
+        fn skipped(&self, batch_id: domain::BatchId) {
+            self.0.lock().unwrap().push(batch_id);
+        }
+    }
 
     struct NeverShutdown;
 
@@ -1417,6 +1802,73 @@ mod process_tests {
         }
     }
 
+    #[cfg(windows)]
+    fn recovery_protocol_child_spec(heartbeat: PathBuf, case: &str) -> ChildSpec {
+        let script = r#"
+$event = '{"status":"event","event":"recovered","phase":"recovery","batch_id":"00000000-0000-4000-8000-000000000001"}'
+[IO.File]::AppendAllText($env:RESEARCH_TEST_HEARTBEAT, 'x')
+[Console]::Out.WriteLine($event)
+if ($env:RESEARCH_TEST_CASE -eq 'oversized') {
+  [Console]::Out.WriteLine(('x' * 4097))
+} else {
+  [Console]::Out.WriteLine('{"status":"ok","phase":"recovery","outcome":"recovered","batch_id":null,"date":null,"newest_eod_at":null,"age_seconds":null}')
+  [Console]::Out.WriteLine('{"unexpected":true}')
+}
+[Console]::Out.Flush()
+while ($true) {
+  [IO.File]::AppendAllText($env:RESEARCH_TEST_HEARTBEAT, 'x')
+  Start-Sleep -Milliseconds 10
+}
+"#;
+        ChildSpec {
+            executable: PathBuf::from("powershell.exe"),
+            args: vec![
+                OsString::from("-NoLogo"),
+                OsString::from("-NoProfile"),
+                OsString::from("-NonInteractive"),
+                OsString::from("-Command"),
+                OsString::from(script),
+            ],
+            env: HashMap::from([
+                (OsString::from("RESEARCH_TEST_CASE"), OsString::from(case)),
+                (
+                    OsString::from("RESEARCH_TEST_HEARTBEAT"),
+                    heartbeat.into_os_string(),
+                ),
+                (
+                    OsString::from("SYSTEMROOT"),
+                    std::env::var_os("SYSTEMROOT").unwrap(),
+                ),
+            ]),
+        }
+    }
+
+    #[cfg(unix)]
+    fn recovery_protocol_child_spec(heartbeat: PathBuf, case: &str) -> ChildSpec {
+        let script = r#"
+printf x >> "$RESEARCH_TEST_HEARTBEAT"
+printf '%s\n' '{"status":"event","event":"recovered","phase":"recovery","batch_id":"00000000-0000-4000-8000-000000000001"}'
+if [ "$RESEARCH_TEST_CASE" = oversized ]; then
+  printf '%04097d\n' 0 | tr '0' x
+else
+  printf '%s\n' '{"status":"ok","phase":"recovery","outcome":"recovered","batch_id":null,"date":null,"newest_eod_at":null,"age_seconds":null}'
+  printf '%s\n' '{"unexpected":true}'
+fi
+while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
+"#;
+        ChildSpec {
+            executable: PathBuf::from("/bin/sh"),
+            args: vec![OsString::from("-c"), OsString::from(script)],
+            env: HashMap::from([
+                (OsString::from("RESEARCH_TEST_CASE"), OsString::from(case)),
+                (
+                    OsString::from("RESEARCH_TEST_HEARTBEAT"),
+                    heartbeat.into_os_string(),
+                ),
+            ]),
+        }
+    }
+
     #[test]
     fn helper_environment_is_an_explicit_allowlist() {
         let system_root = tempfile::tempdir().unwrap();
@@ -1467,28 +1919,71 @@ mod process_tests {
         let batch_id = domain::BatchId::generate();
         let error = decode_helper_output(
             format!(
-                "{{\"status\":\"error\",\"error_code\":\"DATABASE_UNAVAILABLE\",\"phase\":\"publication\",\"class\":\"retryable\",\"batch_id\":\"{batch_id}\",\"message\":\"research pipeline failed\"}}"
+                "{{\"status\":\"error\",\"error_code\":\"DATABASE_UNAVAILABLE\",\"provider\":\"KRX\",\"market\":\"KR\",\"target_date\":null,\"phase\":\"publication\",\"class\":\"retryable\",\"batch_id\":\"{batch_id}\",\"message\":\"research pipeline failed\"}}"
             )
             .as_bytes(),
             WorkerPhase::Ingest,
+            None,
         )
         .unwrap_err();
         assert_eq!(error.failure_class(), crate::FailureClass::Retryable);
         assert_eq!(error.batch_id(), Some(batch_id));
         assert!(matches!(
-            decode_helper_output(b"not-json", WorkerPhase::Recovery),
-            Err(super::WorkerError::ChildOutput)
+            decode_helper_output(b"not-json", WorkerPhase::Recovery, None),
+            Err(super::WorkerError::ChildOutput {
+                phase: WorkerPhase::Recovery
+            })
         ));
         assert!(matches!(
-            decode_helper_output(&vec![b'x'; 4097], WorkerPhase::Recovery),
-            Err(super::WorkerError::ChildOutput)
+            decode_helper_output(&vec![b'x'; 4097], WorkerPhase::Recovery, None),
+            Err(super::WorkerError::ChildOutput {
+                phase: WorkerPhase::Recovery
+            })
         ));
         assert!(matches!(
             decode_helper_output(
                 b"{\"status\":\"ok\",\"phase\":\"recovery\",\"outcome\":\"recovered\",\"batch_id\":null,\"date\":null,\"newest_eod_at\":null,\"age_seconds\":null,\"unexpected\":true}",
                 WorkerPhase::Recovery,
+                None,
             ),
-            Err(super::WorkerError::ChildOutput)
+            Err(super::WorkerError::ChildOutput {
+                phase: WorkerPhase::Recovery
+            })
+        ));
+        assert!(matches!(
+            decode_recovery_line(
+                b"{\"status\":\"event\",\"event\":\"recovered\",\"phase\":\"recovery\",\"batch_id\":\"00000000-0000-4000-8000-000000000001\",\"unknown\":true}"
+            ),
+            Err(super::WorkerError::ChildOutput {
+                phase: WorkerPhase::Recovery
+            })
+        ));
+    }
+
+    #[test]
+    fn helper_failures_preserve_phase_and_ingest_success_requires_exact_date() {
+        for phase in [WorkerPhase::Recovery, WorkerPhase::Ingest] {
+            for error in [
+                super::WorkerError::ChildIo { phase },
+                super::WorkerError::ChildContainment { phase },
+                super::WorkerError::ChildOutput { phase },
+            ] {
+                assert_eq!(error.phase(), phase);
+            }
+        }
+
+        let expected = domain::TradingDate::parse("2020-01-31").unwrap();
+        let wrong = domain::TradingDate::parse("2020-02-03").unwrap();
+        let batch_id = domain::BatchId::generate();
+        let output = format!(
+            "{{\"status\":\"ok\",\"phase\":\"publication\",\"outcome\":\"published\",\"batch_id\":\"{batch_id}\",\"date\":\"{}\",\"newest_eod_at\":null,\"age_seconds\":null}}",
+            wrong.to_iso()
+        );
+        assert!(matches!(
+            decode_helper_output(output.as_bytes(), WorkerPhase::Ingest, Some(expected),),
+            Err(super::WorkerError::ChildOutput {
+                phase: WorkerPhase::Ingest
+            })
         ));
     }
 
@@ -1509,6 +2004,7 @@ mod process_tests {
         let outcome = supervise_child(
             blocking_child_spec(heartbeat.clone()),
             Duration::from_millis(250),
+            WorkerPhase::Recovery,
             &NeverShutdown,
         )
         .await
@@ -1527,6 +2023,7 @@ mod process_tests {
         let outcome = supervise_child(
             blocking_child_spec(heartbeat.clone()),
             Duration::from_secs(5),
+            WorkerPhase::Ingest,
             &ShutdownSoon,
         )
         .await
@@ -1545,14 +2042,74 @@ mod process_tests {
         let error = supervise_child(
             oversized_child_spec(heartbeat.clone()),
             Duration::from_secs(5),
+            WorkerPhase::Recovery,
             &NeverShutdown,
         )
         .await
         .unwrap_err();
 
-        assert!(matches!(error, super::WorkerError::ChildOutput));
+        assert!(matches!(
+            error,
+            super::WorkerError::ChildOutput {
+                phase: WorkerPhase::Recovery
+            }
+        ));
         assert!(started.elapsed() < Duration::from_secs(2));
         assert_heartbeat_stops(&heartbeat).await;
+    }
+
+    #[tokio::test]
+    async fn recovery_stream_rejects_oversized_and_post_terminal_records_after_reap() {
+        for case in ["oversized", "trailing"] {
+            let dir = tempfile::tempdir().unwrap();
+            let heartbeat = dir.path().join(format!("{case}-heartbeat"));
+            let observer = RecoveryBatches::default();
+            let started = Instant::now();
+            let error = supervise_recovery_child(
+                recovery_protocol_child_spec(heartbeat.clone(), case),
+                Duration::from_secs(5),
+                &NeverShutdown,
+                &observer,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(
+                error,
+                super::WorkerError::ChildOutput {
+                    phase: WorkerPhase::Recovery
+                }
+            ));
+            assert_eq!(
+                observer.0.lock().unwrap().len(),
+                1,
+                "the one valid pre-failure record is delivered"
+            );
+            assert!(started.elapsed() < Duration::from_secs(2));
+            assert_heartbeat_stops(&heartbeat).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn helper_spawn_errors_retain_both_invoking_phases() {
+        for phase in [WorkerPhase::Recovery, WorkerPhase::Ingest] {
+            let error = supervise_child(
+                ChildSpec {
+                    executable: PathBuf::from("definitely-missing-research-helper"),
+                    args: Vec::new(),
+                    env: HashMap::new(),
+                },
+                Duration::from_secs(1),
+                phase,
+                &NeverShutdown,
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                super::WorkerError::ChildIo { phase: actual } if actual == phase
+            ));
+        }
     }
 
     #[test]

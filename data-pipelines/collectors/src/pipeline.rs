@@ -230,6 +230,26 @@ pub struct RecoveryReport {
     pub skipped: Vec<BatchId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryBatchOutcome {
+    Recovered(BatchId),
+    Skipped(BatchId),
+}
+
+impl RecoveryBatchOutcome {
+    pub const fn batch_id(self) -> BatchId {
+        match self {
+            Self::Recovered(batch_id) | Self::Skipped(batch_id) => batch_id,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum RecoveryError<E> {
+    Pipeline(PipelineError),
+    Observer { batch_id: BatchId, source: E },
+}
+
 pub async fn ingest_and_publish(
     store: &RawStore,
     provider: &dyn EodProvider,
@@ -261,63 +281,92 @@ pub async fn recover_unpublished(
     store: &RawStore,
     sink: &dyn PublicationSink,
 ) -> Result<RecoveryReport, PipelineError> {
+    let mut report = RecoveryReport::default();
+    let result = recover_unpublished_with(store, sink, |outcome| {
+        match outcome {
+            RecoveryBatchOutcome::Recovered(batch_id) => report.recovered.push(batch_id),
+            RecoveryBatchOutcome::Skipped(batch_id) => report.skipped.push(batch_id),
+        }
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .await;
+    match result {
+        Ok(()) => Ok(report),
+        Err(RecoveryError::Pipeline(error)) => Err(error),
+        Err(RecoveryError::Observer { source, .. }) => match source {},
+    }
+}
+
+pub async fn recover_unpublished_with<E, F>(
+    store: &RawStore,
+    sink: &dyn PublicationSink,
+    mut observer: F,
+) -> Result<(), RecoveryError<E>>
+where
+    F: FnMut(RecoveryBatchOutcome) -> Result<(), E>,
+{
     let mut entries = store
         .read_manifest(PROVIDER_KRX, MARKET_KR)
-        .map_err(|source| PipelineError::Manifest { source })?;
+        .map_err(|source| RecoveryError::Pipeline(PipelineError::Manifest { source }))?;
     entries.sort_by(|left, right| {
         left.retrieved_at
             .cmp(&right.retrieved_at)
             .then_with(|| left.batch_id.cmp(&right.batch_id))
     });
 
-    let mut report = RecoveryReport::default();
     for manifest in entries {
         let batch_id = manifest.batch_id;
-        let state =
-            sink.publication_state(batch_id)
-                .await
-                .map_err(|source| PipelineError::Sink {
-                    batch_id,
-                    stage: PipelineStage::PublicationState,
-                    source,
-                })?;
+        let state = sink.publication_state(batch_id).await.map_err(|source| {
+            RecoveryError::Pipeline(PipelineError::Sink {
+                batch_id,
+                stage: PipelineStage::PublicationState,
+                source,
+            })
+        })?;
         match state {
             PublicationState::Missing => {
-                let bundle = PublicationBundle::from_raw(store, &manifest)
-                    .map_err(|source| PipelineError::Publication { batch_id, source })?;
-                sink.publish(&bundle)
-                    .await
-                    .map_err(|source| PipelineError::Sink {
+                let bundle = PublicationBundle::from_raw(store, &manifest).map_err(|source| {
+                    RecoveryError::Pipeline(PipelineError::Publication { batch_id, source })
+                })?;
+                sink.publish(&bundle).await.map_err(|source| {
+                    RecoveryError::Pipeline(PipelineError::Sink {
                         batch_id,
                         stage: PipelineStage::Publish,
                         source,
-                    })?;
-                report.recovered.push(batch_id);
+                    })
+                })?;
+                observer(RecoveryBatchOutcome::Recovered(batch_id))
+                    .map_err(|source| RecoveryError::Observer { batch_id, source })?;
             }
             PublicationState::Complete => {
-                let bundle = PublicationBundle::from_raw(store, &manifest)
-                    .map_err(|source| PipelineError::Publication { batch_id, source })?;
-                let outcome =
-                    sink.publish(&bundle)
-                        .await
-                        .map_err(|source| PipelineError::Sink {
-                            batch_id,
-                            stage: PipelineStage::Publish,
-                            source,
-                        })?;
-                if outcome != PublishOutcome::AlreadyPublished {
-                    return Err(PipelineError::UnexpectedPublishOutcome {
+                let bundle = PublicationBundle::from_raw(store, &manifest).map_err(|source| {
+                    RecoveryError::Pipeline(PipelineError::Publication { batch_id, source })
+                })?;
+                let outcome = sink.publish(&bundle).await.map_err(|source| {
+                    RecoveryError::Pipeline(PipelineError::Sink {
                         batch_id,
-                        state,
-                        outcome,
-                    });
+                        stage: PipelineStage::Publish,
+                        source,
+                    })
+                })?;
+                if outcome != PublishOutcome::AlreadyPublished {
+                    return Err(RecoveryError::Pipeline(
+                        PipelineError::UnexpectedPublishOutcome {
+                            batch_id,
+                            state,
+                            outcome,
+                        },
+                    ));
                 }
-                report.skipped.push(batch_id);
+                observer(RecoveryBatchOutcome::Skipped(batch_id))
+                    .map_err(|source| RecoveryError::Observer { batch_id, source })?;
             }
             PublicationState::Partial => {
-                return Err(PipelineError::PartialPublication { batch_id });
+                return Err(RecoveryError::Pipeline(PipelineError::PartialPublication {
+                    batch_id,
+                }));
             }
         }
     }
-    Ok(report)
+    Ok(())
 }

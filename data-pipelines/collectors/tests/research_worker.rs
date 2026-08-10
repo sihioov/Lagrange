@@ -8,11 +8,13 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use collectors::{
     AppEnvironment, FailureClass, HealthcheckConfig, PipelineError, PipelineStage, PublicationSink,
-    PublicationState, PublishOutcome, ResearchBackend, ResearchWorker, ResearchWorkerConfig,
-    SinkError, WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent,
+    PublicationState, PublishOutcome, RecoveryBatchOutcome, RecoveryError, RecoveryObserver,
+    ResearchBackend, ResearchWorker, ResearchWorkerConfig, SinkError, WaitOutcome,
+    WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent, WorkerEventClass,
     WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome, bootstrap_worker_with,
     build_postgres_pool, healthcheck, ingest_and_publish, next_run_delay, publication_age,
-    recover_unpublished, retry_delay, store_failure_class, validate_synthetic_policy,
+    recover_unpublished, recover_unpublished_with, retry_delay, run_internal_recovery_stream,
+    store_failure_class, validate_synthetic_policy,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::contract::{MARKET_KR, PROVIDER_KRX, ResponseKind};
@@ -44,6 +46,18 @@ fn request(at: &str) -> IngestRequest {
         TradingDate::parse("2020-01-31").unwrap(),
         UtcTimestamp::parse_rfc3339(at).unwrap(),
     )
+}
+
+struct AlwaysFailWriter;
+
+impl std::io::Write for AlwaysFailWriter {
+    fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("closed recovery stream"))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::other("closed recovery stream"))
+    }
 }
 
 type PublishCheck = Arc<dyn Fn(&PublicationBundle) + Send + Sync>;
@@ -348,6 +362,45 @@ async fn pipeline_recovery_reuses_the_failed_publication_batch_without_reingesti
         *recovery_sink.publish_calls.lock().unwrap(),
         vec![original_batch]
     );
+}
+
+#[tokio::test]
+async fn pipeline_recovery_callback_is_after_db_outcome_and_failure_stops_next_batch() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let first = ingest_bundle(&store, &provider(), &request("2026-08-04T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    let second = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    let sink = FakeSink::default();
+    let mut observed = Vec::new();
+
+    let error = recover_unpublished_with(&store, &sink, |outcome| {
+        observed.push(outcome);
+        Err(std::io::Error::other("closed recovery event stream"))
+    })
+    .await
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RecoveryError::Observer {
+            batch_id,
+            source: _
+        } if batch_id == first.batch_id
+    ));
+    assert_eq!(
+        observed,
+        vec![RecoveryBatchOutcome::Recovered(first.batch_id)]
+    );
+    assert_eq!(
+        *sink.publish_calls.lock().unwrap(),
+        vec![first.batch_id],
+        "callback runs after first DB outcome and stops before the next batch"
+    );
+    assert_ne!(first.batch_id, second.batch_id);
 }
 
 #[tokio::test]
@@ -1240,6 +1293,9 @@ fn worker_cli_help_and_argument_errors_are_stable_json() {
     assert_eq!(error["phase"], "config");
     assert_eq!(error["class"], "permanent");
     assert!(error["batch_id"].is_null());
+    assert_eq!(error["provider"], "KRX");
+    assert_eq!(error["market"], "KR");
+    assert!(error["target_date"].is_null());
 }
 
 #[test]
@@ -1259,6 +1315,9 @@ fn worker_cli_uses_discrete_db_keys_and_enforces_fence_before_secret_files() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["error_code"], "SYNTHETIC_FORBIDDEN");
     assert_eq!(json["phase"], "config");
+    assert_eq!(json["provider"], "KRX");
+    assert_eq!(json["market"], "KR");
+    assert_eq!(json["target_date"], "2020-01-31");
     let visible = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -1284,6 +1343,9 @@ fn worker_cli_healthcheck_has_no_provider_or_raw_configuration_dependency() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["error_code"], "MISSING_CONFIG");
     assert_eq!(json["phase"], "config");
+    assert_eq!(json["provider"], "KRX");
+    assert_eq!(json["market"], "KR");
+    assert!(json["target_date"].is_null());
     assert!(!String::from_utf8_lossy(&output.stdout).contains("DATABASE_URL"));
 }
 
@@ -1374,19 +1436,238 @@ async fn worker_cli_once_runs_collection_in_the_bounded_hidden_helper() {
     db.drop_db().await;
 }
 
+#[tokio::test]
+async fn worker_cli_permanent_ingest_failure_streams_failed_then_contextual_error() {
+    let qa_url = std::env::var("DATABASE_URL")
+        .expect("required QA DATABASE_URL must be provided for worker error verification");
+    assert_eq!(
+        qa_url,
+        "postgres://postgres:lagrange@127.0.0.1:55432/postgres"
+    );
+    let db = ScratchDb::create()
+        .await
+        .expect("required QA PostgreSQL must be reachable");
+    let workspace = tempfile::tempdir().unwrap();
+    let raw_root = workspace.path().join("raw");
+    let password_file = workspace.path().join("db-password");
+    std::fs::write(&password_file, "lagrange\n").unwrap();
+    let malformed_fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/kr-etf/contract-variants/malformed-bars")
+        .canonicalize()
+        .unwrap();
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_research-worker"));
+    command
+        .env_clear()
+        .env("APP_ENV", "development")
+        .env("RESEARCH_FETCH_MODE", "synthetic")
+        .env("RESEARCH_RAW_ROOT", &raw_root)
+        .env("RESEARCH_SYNTHETIC_BUNDLE", malformed_fixture)
+        .env("DB_HOST", "127.0.0.1")
+        .env("DB_PORT", "55432")
+        .env("DB_NAME", db.database_name())
+        .env("DB_USER", "research_writer")
+        .env("DB_PASSWORD_FILE", &password_file)
+        .args(["--once", "--date", "2020-01-31"]);
+    #[cfg(windows)]
+    command.env("SYSTEMROOT", std::env::var("SYSTEMROOT").unwrap());
+    let output = command.output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+    let records = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 2, "failed event followed by final error");
+    assert_eq!(records[0]["event"], "failed");
+    assert_eq!(records[0]["class"], "permanent");
+    assert_eq!(records[1]["status"], "error");
+    assert_eq!(records[1]["class"], "permanent");
+    for record in &records {
+        assert_eq!(record["provider"], "KRX");
+        assert_eq!(record["market"], "KR");
+        assert_eq!(record["target_date"], "2020-01-31");
+        assert_eq!(record["phase"], "ingest");
+    }
+    assert_eq!(records[0]["batch_id"], records[1]["batch_id"]);
+
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() {
+    let qa_url = std::env::var("DATABASE_URL")
+        .expect("required QA DATABASE_URL must be provided for recovery stream verification");
+    assert_eq!(
+        qa_url, "postgres://postgres:lagrange@127.0.0.1:55432/postgres",
+        "recovery stream verification must use the reviewed local PostgreSQL endpoint"
+    );
+    let db = ScratchDb::create()
+        .await
+        .expect("required QA PostgreSQL must be reachable");
+    let workspace = tempfile::tempdir().unwrap();
+    let raw_root = workspace.path().join("raw");
+    let password_file = workspace.path().join("db-password");
+    std::fs::write(&password_file, "lagrange\n").unwrap();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/kr-etf/contract")
+        .canonicalize()
+        .unwrap();
+    let store = RawStore::new(&raw_root);
+    let orphan = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+
+    for expected_recovery_event in ["recovered", "skipped"] {
+        let stdout_file = workspace
+            .path()
+            .join(format!("{expected_recovery_event}-stdout"));
+        let stderr_file = workspace
+            .path()
+            .join(format!("{expected_recovery_event}-stderr"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_research-worker"));
+        command
+            .env_clear()
+            .env("APP_ENV", "development")
+            .env("RESEARCH_FETCH_MODE", "synthetic")
+            .env("RESEARCH_RAW_ROOT", &raw_root)
+            .env("RESEARCH_SYNTHETIC_BUNDLE", &fixture)
+            .env("DB_HOST", "127.0.0.1")
+            .env("DB_PORT", "55432")
+            .env("DB_NAME", db.database_name())
+            .env("DB_USER", "research_writer")
+            .env("DB_PASSWORD_FILE", &password_file)
+            .args(["--once", "--date", "2020-01-31"])
+            .stdout(std::fs::File::create(&stdout_file).unwrap())
+            .stderr(std::fs::File::create(&stderr_file).unwrap());
+        #[cfg(windows)]
+        command.env("SYSTEMROOT", std::env::var("SYSTEMROOT").unwrap());
+        let mut child = command.spawn().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("recovery stream worker exceeded watchdog");
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        };
+        assert!(status.success());
+        assert!(std::fs::read(&stderr_file).unwrap().is_empty());
+        let stdout = std::fs::read_to_string(&stdout_file).unwrap();
+        let records = stdout
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 3, "recovery, cycle skip, final outcome");
+        assert_eq!(records[0]["event"], expected_recovery_event);
+        assert_eq!(records[0]["class"], "success");
+        assert_eq!(records[0]["phase"], "recovery");
+        assert_eq!(records[0]["target_date"], "2020-01-31");
+        assert_eq!(records[0]["batch_id"], orphan.batch_id.to_string());
+        assert_eq!(records[1]["event"], "skipped");
+        assert!(records[1]["batch_id"].is_null());
+        assert_eq!(records[2]["outcome"], "already_published");
+    }
+
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn worker_recovery_write_failure_is_retryable_and_exact_replay_is_skipped() {
+    let qa_url = std::env::var("DATABASE_URL")
+        .expect("required QA DATABASE_URL must be provided for recovery writer verification");
+    assert_eq!(
+        qa_url,
+        "postgres://postgres:lagrange@127.0.0.1:55432/postgres"
+    );
+    let db = ScratchDb::create()
+        .await
+        .expect("required QA PostgreSQL must be reachable");
+    let workspace = tempfile::tempdir().unwrap();
+    let raw_root = workspace.path().join("raw");
+    let password_file = workspace.path().join("db-password");
+    std::fs::write(&password_file, "lagrange\n").unwrap();
+    let store = RawStore::new(&raw_root);
+    let orphan = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    let mut values = worker_config(&[("APP_ENV", "development")]);
+    values.insert(
+        "RESEARCH_RAW_ROOT".to_owned(),
+        raw_root.to_string_lossy().into_owned(),
+    );
+    values.insert("DB_HOST".to_owned(), "127.0.0.1".to_owned());
+    values.insert("DB_PORT".to_owned(), "55432".to_owned());
+    values.insert("DB_NAME".to_owned(), db.database_name().to_owned());
+    values.insert("DB_USER".to_owned(), "research_writer".to_owned());
+    values.insert(
+        "DB_PASSWORD_FILE".to_owned(),
+        password_file.to_string_lossy().into_owned(),
+    );
+
+    let error = run_internal_recovery_stream(&values, &mut AlwaysFailWriter)
+        .await
+        .unwrap_err();
+    assert_eq!(error.phase(), WorkerPhase::Recovery);
+    assert_eq!(error.failure_class(), FailureClass::Retryable);
+
+    let mut replay_output = Vec::new();
+    run_internal_recovery_stream(&values, &mut replay_output)
+        .await
+        .unwrap();
+    let replay: serde_json::Value = serde_json::from_slice(&replay_output).unwrap();
+    assert_eq!(replay["event"], "skipped");
+    assert_eq!(replay["batch_id"], orphan.batch_id.to_string());
+
+    db.drop_db().await;
+}
+
 #[derive(Default)]
 struct FakeResearchBackend {
     events: Mutex<Vec<String>>,
     recover: Mutex<VecDeque<Result<(), WorkerError>>>,
+    recovered: Mutex<VecDeque<Vec<BatchId>>>,
+    recovery_skipped: Mutex<VecDeque<Vec<BatchId>>>,
     eod: Mutex<VecDeque<Result<bool, WorkerError>>>,
     ingest: Mutex<VecDeque<Result<BatchId, WorkerError>>>,
 }
 
 #[async_trait]
 impl ResearchBackend for FakeResearchBackend {
-    async fn recover(&self, _control: &dyn WorkerControl) -> Result<(), WorkerError> {
+    async fn recover(
+        &self,
+        _control: &dyn WorkerControl,
+        observer: &dyn RecoveryObserver,
+    ) -> Result<(), WorkerError> {
         self.events.lock().unwrap().push("recover".to_owned());
-        self.recover.lock().unwrap().pop_front().unwrap_or(Ok(()))
+        let result = self.recover.lock().unwrap().pop_front().unwrap_or(Ok(()));
+        if result.is_ok() {
+            for batch_id in self
+                .recovered
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_default()
+            {
+                observer.recovered(batch_id);
+            }
+            for batch_id in self
+                .recovery_skipped
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_default()
+            {
+                observer.skipped(batch_id);
+            }
+        }
+        result
     }
 
     async fn has_eod(&self, date: TradingDate) -> Result<bool, WorkerError> {
@@ -1424,6 +1705,25 @@ struct FakeControl {
 struct ScheduleControl {
     now: chrono::DateTime<Utc>,
     sleeps: Mutex<Vec<Duration>>,
+}
+
+struct OneCycleControl {
+    now: chrono::DateTime<Utc>,
+}
+
+#[async_trait]
+impl WorkerControl for OneCycleControl {
+    fn now_utc(&self) -> chrono::DateTime<Utc> {
+        self.now
+    }
+
+    async fn wait(&self, duration: Option<Duration>) -> WaitOutcome {
+        if duration.is_some() {
+            WaitOutcome::Elapsed
+        } else {
+            std::future::pending().await
+        }
+    }
 }
 
 #[async_trait]
@@ -1524,6 +1824,36 @@ async fn worker_daemon_uses_injected_clock_and_default_or_override_schedule() {
             vec![Duration::from_secs(30)]
         );
     }
+}
+
+#[tokio::test]
+async fn worker_daemon_error_retains_the_current_kst_cycle_date() {
+    let backend = Arc::new(FakeResearchBackend::default());
+    backend
+        .eod
+        .lock()
+        .unwrap()
+        .push_back(Err(WorkerError::Database {
+            phase: WorkerPhase::DuplicateCheck,
+            source: SinkError::PermanentDatabase(sqlx::Error::RowNotFound),
+        }));
+    let observer = Arc::new(RecordingObserver::default());
+    let error = configured_worker(backend)
+        .with_observer(observer.clone())
+        .run_daemon(&OneCycleControl {
+            now: Utc.with_ymd_and_hms(2026, 8, 10, 7, 30, 0).unwrap(),
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        error.target_date(),
+        Some(TradingDate::parse("2026-08-10").unwrap())
+    );
+    assert_eq!(error.phase(), WorkerPhase::DuplicateCheck);
+    let failed = observer.0.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(failed.kind, WorkerEventKind::Failed);
+    assert_eq!(failed.target_date, error.target_date());
 }
 
 #[tokio::test]
@@ -1751,11 +2081,21 @@ struct DurableRetryBackend {
 
 #[async_trait]
 impl ResearchBackend for DurableRetryBackend {
-    async fn recover(&self, _control: &dyn WorkerControl) -> Result<(), WorkerError> {
-        recover_unpublished(&self.store, &self.recovery_sink)
+    async fn recover(
+        &self,
+        _control: &dyn WorkerControl,
+        observer: &dyn RecoveryObserver,
+    ) -> Result<(), WorkerError> {
+        let report = recover_unpublished(&self.store, &self.recovery_sink)
             .await
-            .map(|_| ())
-            .map_err(WorkerError::Pipeline)
+            .map_err(WorkerError::Pipeline)?;
+        for batch_id in report.recovered {
+            observer.recovered(batch_id);
+        }
+        for batch_id in report.skipped {
+            observer.skipped(batch_id);
+        }
+        Ok(())
     }
 
     async fn has_eod(&self, date: TradingDate) -> Result<bool, WorkerError> {
@@ -1883,9 +2223,10 @@ async fn worker_streams_sanitized_retry_completed_and_skipped_events() {
     assert_eq!(events[0].market, "KR");
     assert_eq!(events[0].target_date, Some(date));
     assert_eq!(events[0].phase, WorkerPhase::DuplicateCheck);
-    assert_eq!(events[0].class, FailureClass::Retryable);
+    assert_eq!(events[0].class, WorkerEventClass::Retryable);
     assert_eq!(events[0].batch_id, None);
     assert_eq!(events[1].kind, WorkerEventKind::Completed);
+    assert_eq!(events[1].class, WorkerEventClass::Success);
     assert_eq!(events[1].batch_id, Some(published_batch));
 
     let skipped_backend = Arc::new(FakeResearchBackend::default());
@@ -1898,7 +2239,105 @@ async fn worker_streams_sanitized_retry_completed_and_skipped_events() {
         .unwrap();
     let skipped = skipped_observer.0.lock().unwrap().clone();
     assert_eq!(skipped.last().unwrap().kind, WorkerEventKind::Skipped);
+    assert_eq!(skipped.last().unwrap().class, WorkerEventClass::Success);
     assert_eq!(skipped.last().unwrap().target_date, Some(date));
+}
+
+#[tokio::test]
+async fn worker_emits_recovery_batches_and_all_permanent_failures_with_context() {
+    let date = TradingDate::parse("2020-01-31").unwrap();
+    let recovered = BatchId::generate();
+    let replayed = BatchId::generate();
+    let recovery_backend = Arc::new(FakeResearchBackend::default());
+    recovery_backend
+        .recovered
+        .lock()
+        .unwrap()
+        .push_back(vec![recovered]);
+    recovery_backend
+        .recovery_skipped
+        .lock()
+        .unwrap()
+        .push_back(vec![replayed]);
+    recovery_backend.eod.lock().unwrap().push_back(Ok(true));
+    let recovery_observer = Arc::new(RecordingObserver::default());
+    configured_worker(recovery_backend)
+        .with_observer(recovery_observer.clone())
+        .run_once(date, &FakeControl::default())
+        .await
+        .unwrap();
+    let recovery_events = recovery_observer.0.lock().unwrap().clone();
+    assert_eq!(
+        recovery_events
+            .iter()
+            .map(|event| (event.kind, event.class, event.batch_id, event.target_date))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                WorkerEventKind::Recovered,
+                WorkerEventClass::Success,
+                Some(recovered),
+                Some(date),
+            ),
+            (
+                WorkerEventKind::Skipped,
+                WorkerEventClass::Success,
+                Some(replayed),
+                Some(date),
+            ),
+            (
+                WorkerEventKind::Skipped,
+                WorkerEventClass::Success,
+                None,
+                Some(date),
+            ),
+        ]
+    );
+
+    for (phase, setup) in [
+        (WorkerPhase::Recovery, "recovery"),
+        (WorkerPhase::DuplicateCheck, "duplicate"),
+        (WorkerPhase::Publication, "ingest"),
+    ] {
+        let backend = Arc::new(FakeResearchBackend::default());
+        let batch_id = BatchId::generate();
+        let error = match phase {
+            WorkerPhase::Recovery => WorkerError::InvalidConfig { key: "recovery" },
+            WorkerPhase::DuplicateCheck => WorkerError::Database {
+                phase,
+                source: SinkError::PermanentDatabase(sqlx::Error::RowNotFound),
+            },
+            WorkerPhase::Publication => WorkerError::Pipeline(PipelineError::Sink {
+                batch_id,
+                stage: PipelineStage::Publish,
+                source: SinkError::PermanentDatabase(sqlx::Error::RowNotFound),
+            }),
+            _ => unreachable!(),
+        };
+        match setup {
+            "recovery" => backend.recover.lock().unwrap().push_back(Err(error)),
+            "duplicate" => backend.eod.lock().unwrap().push_back(Err(error)),
+            "ingest" => {
+                backend.eod.lock().unwrap().push_back(Ok(false));
+                backend.ingest.lock().unwrap().push_back(Err(error));
+            }
+            _ => unreachable!(),
+        }
+        let observer = Arc::new(RecordingObserver::default());
+        let returned = configured_worker(backend)
+            .with_observer(observer.clone())
+            .run_once(date, &FakeControl::default())
+            .await
+            .unwrap_err();
+        let failed = observer.0.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(failed.kind, WorkerEventKind::Failed);
+        assert_eq!(failed.class, WorkerEventClass::Permanent);
+        assert_eq!(failed.provider, "KRX");
+        assert_eq!(failed.market, "KR");
+        assert_eq!(failed.target_date, Some(date));
+        assert_eq!(failed.phase, returned.phase());
+        assert_eq!(failed.batch_id, returned.batch_id());
+    }
 }
 
 #[tokio::test]
