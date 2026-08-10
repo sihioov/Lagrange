@@ -40,8 +40,18 @@
 Provision `db_research_password` outside Git by copying
 `db_research_password.example` to `db_research_password`, replacing the
 placeholder with a randomly generated password, and restricting the file to
-the operator account. In an interactive administrator `psql` session, run
-`\password research_writer` and enter that exact same password at the prompt.
+the operator account. Then use an interactive administrator `psql` session to
+create the role when absent, ensure it can log in, and set its password:
+
+```psql
+SELECT 'CREATE ROLE research_writer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE'
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'research_writer')
+\gexec
+ALTER ROLE research_writer LOGIN;
+\password research_writer
+```
+
+Enter the exact same password stored in `db_research_password` at the prompt.
 This avoids putting the credential in shell history, process arguments,
 Compose configuration, or logs. Never add the real file to Git; the directory
 `.gitignore` intentionally preserves only `*.example` files.

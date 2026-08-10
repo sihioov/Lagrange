@@ -3,7 +3,10 @@
   Static and functional smoke test for the research-worker Compose service.
 #>
 [CmdletBinding()]
-param([switch]$StaticOnly)
+param(
+    [switch]$StaticOnly,
+    [switch]$SelfTest
+)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -14,6 +17,63 @@ $secretExample = Join-Path $root 'deploy/secrets/db_research_password.example'
 function Assert-Contains([string]$Text, [string]$Value, [string]$Context) {
     if ($Text.IndexOf($Value, [StringComparison]::Ordinal) -lt 0) {
         throw "$Context missing required value: $Value"
+    }
+}
+
+function Invoke-ValidatorSelfTests {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) "lagrange-research-validator-$([guid]::NewGuid().ToString('N'))"
+    try {
+        foreach ($directory in @(
+            'scripts/qa', 'deploy/compose', 'deploy/secrets', 'data-pipelines/collectors'
+        )) { New-Item -ItemType Directory -Path (Join-Path $testRoot $directory) -Force | Out-Null }
+        Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $testRoot 'scripts/qa/research-worker-smoke.ps1')
+        Copy-Item -LiteralPath $composeFile -Destination (Join-Path $testRoot 'deploy/compose/compose.yml')
+        Copy-Item -LiteralPath $dockerfile -Destination (Join-Path $testRoot 'data-pipelines/collectors/Dockerfile')
+        foreach ($name in @('.gitignore', 'README.md', 'db_research_password.example')) {
+            Copy-Item -LiteralPath (Join-Path $root "deploy/secrets/$name") -Destination (Join-Path $testRoot "deploy/secrets/$name")
+        }
+        & git -C $testRoot init -q
+        if ($LASTEXITCODE -ne 0) { throw 'self-test git init failed' }
+        & git -C $testRoot add -f -- deploy/secrets *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'self-test git add failed' }
+
+        $testScript = Join-Path $testRoot 'scripts/qa/research-worker-smoke.ps1'
+        $testCompose = Join-Path $testRoot 'deploy/compose/compose.yml'
+        $testDockerfile = Join-Path $testRoot 'data-pipelines/collectors/Dockerfile'
+        & pwsh -NoProfile -File $testScript -StaticOnly *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'self-test baseline fixture must pass' }
+
+        $baselineCompose = Get-Content -Raw -LiteralPath $testCompose
+        [IO.File]::WriteAllText(
+            $testCompose,
+            $baselineCompose.Replace(
+                '${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw',
+                '${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw:ro'
+            )
+        )
+        & pwsh -NoProfile -File $testScript -StaticOnly *> $null
+        if ($LASTEXITCODE -eq 0) { throw 'validator accepted a read-only Raw mount' }
+        [IO.File]::WriteAllText($testCompose, $baselineCompose)
+
+        $baselineDockerfile = Get-Content -Raw -LiteralPath $testDockerfile
+        $lowercasePinned = [regex]::Replace($baselineDockerfile, '(?m)^FROM ', 'from ', 1)
+        [IO.File]::WriteAllText($testDockerfile, $lowercasePinned)
+        & pwsh -NoProfile -File $testScript -StaticOnly *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'validator rejected a lowercase digest-pinned FROM' }
+
+        $lowercaseUnpinned = [regex]::Replace(
+            $lowercasePinned,
+            '(?im)^from\s+rust:1\.97\.1-alpine@sha256:[0-9a-f]{64}',
+            'from rust:1.97.1-alpine',
+            1
+        )
+        [IO.File]::WriteAllText($testDockerfile, $lowercaseUnpinned)
+        & pwsh -NoProfile -File $testScript -StaticOnly *> $null
+        if ($LASTEXITCODE -eq 0) { throw 'validator accepted a lowercase unpinned FROM' }
+        Write-Host 'RESEARCH_WORKER_SMOKE: validator self-test PASS'
+    }
+    finally {
+        Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -43,12 +103,21 @@ function Invoke-StaticChecks {
         'DB_USER: research_writer',
         'DB_PASSWORD_FILE: /run/secrets/db_research_password',
         '- db_research_password',
-        '${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw',
         'test: ["CMD", "/usr/local/bin/research-worker", "healthcheck"]'
     )) { Assert-Contains $worker $required 'research-worker service' }
 
     if ($worker -match '(?i)time\.sleep|\bsleep\b|python\s+-c') {
         throw 'research-worker service still contains a sleep/Python placeholder'
+    }
+    $rawMounts = @($worker -split "`r?`n" | Where-Object {
+        $_ -match '^\s*-\s+[^#]+:/data/raw(?::[^#\s]+)?\s*(?:#.*)?$'
+    })
+    if ($rawMounts.Count -ne 1) {
+        throw "research-worker must have exactly one volume targeting /data/raw; found $($rawMounts.Count)"
+    }
+    $rawMount = $rawMounts[0].Trim()
+    if ($rawMount -notmatch '^-\s+[^#]+:/data/raw(?::rw)?\s*(?:#.*)?$') {
+        throw "research-worker Raw mount must be read/write with mode absent or rw: $rawMount"
     }
     foreach ($line in ($worker -split "`r?`n")) {
         if ($line -match ':/data/(curated|nautilus_catalog|artifacts)(?:/[^\s:]*)?(?:\s|$)' -and $line -notmatch ':ro(?:\s|$)') {
@@ -68,14 +137,18 @@ function Invoke-StaticChecks {
     if (-not (Test-Path -LiteralPath $dockerfile)) { throw "missing worker Dockerfile: $dockerfile" }
     if (-not (Test-Path -LiteralPath $secretExample)) { throw "missing research DB secret example: $secretExample" }
     $dockerText = Get-Content -Raw -LiteralPath $dockerfile
-    Assert-Contains $dockerText 'FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS builder' 'Dockerfile'
-    Assert-Contains $dockerText 'FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d' 'Dockerfile'
+    if ($dockerText -notmatch '(?im)^FROM\s+rust:1\.97\.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900\s+AS\s+builder\s*$') {
+        throw 'Dockerfile missing the approved digest-pinned Rust builder'
+    }
+    if ($dockerText -notmatch '(?im)^FROM\s+alpine:3\.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d\s*$') {
+        throw 'Dockerfile missing the approved digest-pinned Alpine runtime'
+    }
     Assert-Contains $dockerText 'cargo build --locked --release --package collectors --bin research-worker' 'Dockerfile'
     Assert-Contains $dockerText 'ENTRYPOINT ["/usr/local/bin/research-worker"]' 'Dockerfile'
-    $fromLines = @($dockerText -split "`r?`n" | Where-Object { $_ -match '^FROM\s+' })
+    $fromLines = @($dockerText -split "`r?`n" | Where-Object { $_ -match '(?i)^FROM\s+' })
     if ($fromLines.Count -eq 0) { throw 'Dockerfile has no FROM instructions' }
     foreach ($line in $fromLines) {
-        if ($line -notmatch '^FROM\s+[^\s]+@sha256:[0-9a-f]{64}(?:\s+AS\s+[A-Za-z0-9._-]+)?$') {
+        if ($line -notmatch '(?i)^FROM\s+[^\s]+@sha256:[0-9a-f]{64}(?:\s+AS\s+[A-Za-z0-9._-]+)?$') {
             throw "Dockerfile FROM is not immutable: $line"
         }
     }
@@ -95,6 +168,11 @@ function New-RandomSecret {
     $bytes = [byte[]]::new(32)
     [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
     [Convert]::ToBase64String($bytes)
+}
+
+if ($SelfTest) {
+    Invoke-ValidatorSelfTests
+    exit 0
 }
 
 Invoke-StaticChecks
@@ -149,7 +227,7 @@ SELECT concat_ws('|',
 }
 
 try {
-    New-Item -ItemType Directory -Path $rawRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $rawRoot 'raw') -Force | Out-Null
     [IO.File]::WriteAllText($postgresSecret, (New-RandomSecret))
     [IO.File]::WriteAllText($researchSecret, (New-RandomSecret))
     [IO.File]::WriteAllText($krxSecret, 'unused-in-synthetic-smoke')
@@ -192,6 +270,8 @@ END
 
     Invoke-ResearchCompose build research-worker
     if ($LASTEXITCODE -ne 0) { throw 'research-worker image build failed' }
+    Invoke-ResearchCompose run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -c 'probe="$RESEARCH_RAW_ROOT/.qa-write-probe"; : > "$probe"; rm -f "$probe"'
+    if ($LASTEXITCODE -ne 0) { throw 'research-worker UID 10001 cannot write the Raw bind mount' }
     Invoke-ResearchCompose up -d --no-deps research-worker | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'research-worker service failed to start' }
 
