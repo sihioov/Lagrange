@@ -117,16 +117,7 @@ pub fn ingest_bundle(
     };
     let entry = store.store_batch(&spec, &envelopes)?;
 
-    let files = envelopes
-        .iter()
-        .map(|e| StoredFile {
-            file_name: e.file_name.clone(),
-            bytes: e.bytes.clone(),
-            storage_path: store
-                .batch_dir(&entry.provider, &entry.market, &entry.date, &entry.batch_id)
-                .join(&e.file_name),
-        })
-        .collect();
+    let files = store.read_batch_bytes(&entry.provider, &entry.market, &entry)?;
 
     Ok(IngestOutcome {
         batch_id,

@@ -385,6 +385,21 @@ fn raw_store_rejects_unsafe_scope_and_deserialized_file_names() {
         .expect_err("unsafe market scope must fail");
     assert!(matches!(unsafe_market, StoreError::UnsafeScope { .. }));
 
+    let trailing_dot_scope = store
+        .store_batch(
+            &BatchSpec {
+                provider: "krx.",
+                market: MARKET_KR,
+                date: &d,
+                batch_id: BatchId::generate(),
+                entitlement_reference: None,
+                mode: FetchMode::Synthetic,
+            },
+            &[],
+        )
+        .expect_err("Windows-ambiguous scope must fail");
+    assert!(matches!(trailing_dot_scope, StoreError::UnsafeScope { .. }));
+
     let entry = store
         .store_batch(
             &spec(batch, &d, None),
@@ -403,6 +418,23 @@ fn raw_store_rejects_unsafe_scope_and_deserialized_file_names() {
         .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &untrusted)
         .expect_err("deserialized traversal name must fail before join");
     assert!(matches!(err, StoreError::UnsafeFileName { .. }));
+
+    let trailing_space_file = store
+        .store_batch(
+            &spec(BatchId::generate(), &d, None),
+            &[envelope(
+                BatchId::generate(),
+                ResponseKind::Reference,
+                "reference.json ",
+                b"{}",
+                now("2026-08-05T05:00:00Z"),
+            )],
+        )
+        .expect_err("Windows-ambiguous file name must fail");
+    assert!(matches!(
+        trailing_space_file,
+        StoreError::UnsafeFileName { .. }
+    ));
 }
 
 #[test]
@@ -469,6 +501,40 @@ fn read_manifest_revalidates_deserialized_file_names() {
     assert!(matches!(err, StoreError::UnsafeFileName { .. }));
 }
 
+#[test]
+fn read_returns_the_canonical_file_path_that_was_verified() {
+    let root = temp_root("canonical-returned-path");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T05:00:00Z"),
+            )],
+        )
+        .expect("store safe batch");
+
+    let files = store
+        .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry)
+        .expect("read batch");
+
+    assert_eq!(
+        files[0].storage_path,
+        fs::canonicalize(
+            store
+                .batch_dir(PROVIDER_KRX, MARKET_KR, &d, &batch)
+                .join("reference.json")
+        )
+        .expect("canonical object path")
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn read_rejects_symlinked_file_that_escapes_the_batch_directory() {
@@ -500,10 +566,46 @@ fn read_rejects_symlinked_file_that_escapes_the_batch_directory() {
         if error.kind() == std::io::ErrorKind::PermissionDenied
             || error.raw_os_error() == Some(1314)
         {
+            eprintln!("skipping symlink test: Windows privilege 1314 is unavailable");
             return;
         }
         panic!("create symlink: {error}");
     }
+
+    let err = store
+        .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry)
+        .expect_err("symlink escape must fail");
+    assert!(matches!(err, StoreError::UnsafePath { .. }));
+}
+
+#[cfg(unix)]
+#[test]
+fn read_rejects_symlinked_file_that_escapes_the_batch_directory() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root("symlink-escape");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T05:00:00Z"),
+            )],
+        )
+        .expect("store safe batch");
+    let link = store
+        .batch_dir(PROVIDER_KRX, MARKET_KR, &d, &batch)
+        .join("reference.json");
+    let outside = root.join("outside.json");
+    fs::write(&outside, b"{}").expect("write outside target");
+    fs::remove_file(&link).expect("remove stored file");
+    symlink(&outside, &link).expect("create symlink");
 
     let err = store
         .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry)

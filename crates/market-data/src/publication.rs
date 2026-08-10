@@ -151,6 +151,8 @@ pub enum PublicationError {
         date: TradingDate,
         source_version: String,
     },
+    #[error("conflicting calendar provenance for source version {source_version}")]
+    ConflictingCalendarProvenance { source_version: String },
 }
 
 #[derive(Deserialize)]
@@ -199,6 +201,19 @@ struct VerifiedRawFile<'a> {
     storage_path: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CalendarProvenance {
+    source: String,
+    timezone: String,
+    content_sha256: String,
+}
+
+struct ParsedCalendar {
+    source_version: String,
+    provenance: CalendarProvenance,
+    facts: Vec<CalendarFact>,
+}
+
 impl PublicationBundle {
     /// Reads every file back through Raw verification before producing any facts.
     pub fn from_raw(store: &RawStore, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
@@ -227,6 +242,7 @@ impl PublicationBundle {
 
         let mut files = Vec::with_capacity(verified_files.len());
         let mut calendar_facts = BTreeMap::new();
+        let mut calendar_provenance = BTreeMap::new();
         for verified in verified_files {
             let kind = match verified.entry.kind {
                 ResponseKind::Bars => {
@@ -234,12 +250,17 @@ impl PublicationBundle {
                 }
                 ResponseKind::Reference => DataBatchKind::Reference,
                 ResponseKind::Calendar => {
-                    let facts = parse_calendar(
+                    let parsed = parse_calendar(
                         &verified.entry.file_name,
                         verified.bytes,
                         &verified.content_sha256,
                     )?;
-                    for fact in facts {
+                    register_calendar_provenance(
+                        &mut calendar_provenance,
+                        &parsed.source_version,
+                        &parsed.provenance,
+                    )?;
+                    for fact in parsed.facts {
                         insert_calendar_fact(&mut calendar_facts, fact)?;
                     }
                     DataBatchKind::Calendar
@@ -312,7 +333,7 @@ fn parse_calendar(
     file_name: &str,
     bytes: &[u8],
     content_sha256: &str,
-) -> Result<Vec<CalendarFact>, PublicationError> {
+) -> Result<ParsedCalendar, PublicationError> {
     let doc: CalendarDoc =
         serde_json::from_slice(bytes).map_err(|error| PublicationError::MalformedCalendar {
             file_name: file_name.to_owned(),
@@ -380,7 +401,32 @@ fn parse_calendar(
             content_sha256: content_sha256.to_owned(),
         });
     }
-    Ok(facts)
+    Ok(ParsedCalendar {
+        source_version,
+        provenance: CalendarProvenance {
+            source: doc.source,
+            timezone: doc.timezone,
+            content_sha256: content_sha256.to_owned(),
+        },
+        facts,
+    })
+}
+
+fn register_calendar_provenance(
+    provenances: &mut BTreeMap<String, CalendarProvenance>,
+    source_version: &str,
+    incoming: &CalendarProvenance,
+) -> Result<(), PublicationError> {
+    match provenances.get(source_version) {
+        Some(existing) if existing == incoming => Ok(()),
+        Some(_) => Err(PublicationError::ConflictingCalendarProvenance {
+            source_version: source_version.to_owned(),
+        }),
+        None => {
+            provenances.insert(source_version.to_owned(), incoming.clone());
+            Ok(())
+        }
+    }
 }
 
 fn calendar_date(file_name: &str, value: &str) -> Result<TradingDate, PublicationError> {

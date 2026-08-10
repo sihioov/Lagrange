@@ -137,15 +137,18 @@ fn from_raw_maps_contract_bars_for_target_date_to_eod() {
     assert!(!publication.files[0].content_sha256.contains("sha256:"));
     assert_eq!(
         publication.files[0].storage_path,
-        store
-            .batch_dir(
-                PROVIDER_KRX,
-                MARKET_KR,
-                &outcome.entry.date,
-                &outcome.entry.batch_id
-            )
-            .join("bars-response.json")
-            .to_string_lossy()
+        fs::canonicalize(
+            store
+                .batch_dir(
+                    PROVIDER_KRX,
+                    MARKET_KR,
+                    &outcome.entry.date,
+                    &outcome.entry.batch_id
+                )
+                .join("bars-response.json")
+        )
+        .expect("canonical raw object")
+        .to_string_lossy()
     );
     assert_eq!(
         publication.files[0].bytes_size,
@@ -522,7 +525,7 @@ fn from_raw_deduplicates_identical_calendar_facts_and_rejects_conflicts() {
         .expect_err("same source version must not point at different raw bytes");
     assert!(matches!(
         different_bytes_error,
-        PublicationError::ConflictingCalendarFact { .. }
+        PublicationError::ConflictingCalendarProvenance { .. }
     ));
 
     let conflict = store_files(
@@ -557,7 +560,7 @@ fn from_raw_deduplicates_identical_calendar_facts_and_rejects_conflicts() {
     let error = PublicationBundle::from_raw(&store, &conflict).expect_err("conflict must fail");
     assert!(matches!(
         error,
-        PublicationError::ConflictingCalendarFact { .. }
+        PublicationError::ConflictingCalendarProvenance { .. }
     ));
 }
 
@@ -576,6 +579,48 @@ fn publication_rejects_non_krx_manifest_scope_before_raw_path_access() {
     assert!(matches!(
         error,
         PublicationError::UnsupportedManifestScope { .. }
+    ));
+}
+
+#[test]
+fn calendar_source_version_cannot_span_different_raw_bytes_for_disjoint_dates() {
+    let store = RawStore::new(temp_root("calendar-provenance-across-dates"));
+    let entry = store_files(
+        &store,
+        &[
+            (
+                ResponseKind::Calendar,
+                "first.json",
+                calendar_payload(
+                    "Asia/Seoul",
+                    "source",
+                    "09:00:00",
+                    "15:30:00",
+                    r#"[{"date":"2020-01-30","open_utc":"2020-01-30T00:00:00Z","close_utc":"2020-01-30T06:30:00Z"}]"#,
+                    "[]",
+                ),
+            ),
+            (
+                ResponseKind::Calendar,
+                "second.json",
+                calendar_payload(
+                    "Asia/Seoul",
+                    "source",
+                    "09:00:00",
+                    "15:30:00",
+                    r#"[{"date":"2020-01-31","open_utc":"2020-01-31T00:00:00Z","close_utc":"2020-01-31T06:30:00Z"}]"#,
+                    "[]",
+                ),
+            ),
+        ],
+    );
+
+    let error = PublicationBundle::from_raw(&store, &entry)
+        .expect_err("one source version must not silently refer to different raw bytes");
+
+    assert!(matches!(
+        error,
+        PublicationError::ConflictingCalendarProvenance { .. }
     ));
 }
 

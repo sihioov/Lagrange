@@ -230,6 +230,8 @@ impl RawStore {
             let _ = fs::remove_dir_all(&dir);
             e
         };
+        self.canonical_batch_dir(provider, market, date, &batch_id)
+            .map_err(cleanup)?;
 
         for env in envelopes {
             let path = dir.join(&env.file_name);
@@ -362,17 +364,25 @@ impl RawStore {
         validate_entry_scope(provider, market, entry)?;
         validate_manifest_file_names(entry)?;
         let dir = self.batch_dir(provider, market, &entry.date, &entry.batch_id);
-        let canonical_dir = fs::canonicalize(&dir)
-            .map_err(|e| io_err(&format!("canonicalize batch dir {}", dir.display()), e))?;
+        let (raw_root, canonical_dir) =
+            self.canonical_batch_dir(provider, market, &entry.date, &entry.batch_id)?;
         let mut out = Vec::with_capacity(entry.files.len());
         for file in &entry.files {
             let path = dir.join(&file.file_name);
             let storage_path = fs::canonicalize(&path)
                 .map_err(|e| io_err(&format!("canonicalize {}", path.display()), e))?;
-            if !storage_path.starts_with(&canonical_dir) {
+            let expected_path = canonical_dir.join(&file.file_name);
+            if !storage_path.starts_with(&raw_root)
+                || !storage_path.starts_with(&canonical_dir)
+                || storage_path != expected_path
+            {
                 return Err(StoreError::UnsafePath {
                     path: storage_path.display().to_string(),
-                    reason: format!("escapes batch directory {}", canonical_dir.display()),
+                    reason: format!(
+                        "must be the direct file inside batch {} below raw root {}",
+                        canonical_dir.display(),
+                        raw_root.display()
+                    ),
                 });
             }
             let bytes = fs::read(&storage_path)
@@ -388,7 +398,7 @@ impl RawStore {
             out.push(StoredFile {
                 file_name: file.file_name.clone(),
                 bytes,
-                storage_path: path,
+                storage_path,
             });
         }
         Ok(out)
@@ -424,6 +434,46 @@ impl RawStore {
         }
         Ok(ids)
     }
+
+    fn canonical_raw_root(&self) -> Result<PathBuf, StoreError> {
+        let raw_root = self.root.join("raw");
+        fs::canonicalize(&raw_root)
+            .map_err(|e| io_err(&format!("canonicalize raw root {}", raw_root.display()), e))
+    }
+
+    fn canonical_batch_dir(
+        &self,
+        provider: &str,
+        market: &str,
+        date: &TradingDate,
+        batch_id: &BatchId,
+    ) -> Result<(PathBuf, PathBuf), StoreError> {
+        let raw_root = self.canonical_raw_root()?;
+        let components = [
+            format!("provider={provider}"),
+            format!("market={market}"),
+            date_partition(date),
+            format!("batch={batch_id}"),
+        ];
+        let mut lexical = self.root.join("raw");
+        let mut expected = raw_root.clone();
+        for component in components {
+            lexical.push(&component);
+            expected.push(&component);
+            let actual = fs::canonicalize(&lexical)
+                .map_err(|e| io_err(&format!("canonicalize {}", lexical.display()), e))?;
+            if !actual.starts_with(&raw_root) || actual != expected {
+                return Err(StoreError::UnsafePath {
+                    path: actual.display().to_string(),
+                    reason: format!(
+                        "unexpected symlink or redirect below raw root {}",
+                        raw_root.display()
+                    ),
+                });
+            }
+        }
+        Ok((raw_root, expected))
+    }
 }
 
 /// A provider file name must be a plain name: no separators, no traversal, no
@@ -444,6 +494,9 @@ fn validate_file_name(name: &str) -> Result<(), String> {
     if name.contains(':') {
         return Err("contains a drive/colon character".to_owned());
     }
+    if name.ends_with('.') || name.ends_with(' ') {
+        return Err("has a Windows-ambiguous trailing dot or space".to_owned());
+    }
     if name.bytes().any(|b| b.is_ascii_control()) {
         return Err("contains control characters".to_owned());
     }
@@ -462,6 +515,8 @@ fn validate_scope_component(component: &str, value: &str) -> Result<(), StoreErr
         && value.len() <= 96
         && value != "."
         && value != ".."
+        && !value.ends_with('.')
+        && !value.ends_with(' ')
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
