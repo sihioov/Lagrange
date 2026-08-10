@@ -1,11 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::{TimeZone, Utc};
 use collectors::{
-    FailureClass, PipelineError, PipelineStage, PublicationSink, PublicationState, PublishOutcome,
-    SinkError, ingest_and_publish, recover_unpublished, store_failure_class,
+    AppEnvironment, FailureClass, PipelineError, PipelineStage, PublicationSink, PublicationState,
+    PublishOutcome, ResearchBackend, ResearchWorker, ResearchWorkerConfig, SinkError, WaitOutcome,
+    WorkerComponentFactory, WorkerControl, WorkerError, WorkerPhase, WorkerRunOutcome,
+    bootstrap_worker_with, healthcheck, ingest_and_publish, next_run_delay, recover_unpublished,
+    retry_delay, store_failure_class, validate_synthetic_policy,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::contract::{MARKET_KR, PROVIDER_KRX, ResponseKind};
@@ -15,6 +21,11 @@ use market_data::provider::{
 };
 use market_data::publication::{PublicationBundle, PublicationError};
 use market_data::storage::{RawStore, StoreError};
+use sqlx::PgPool;
+
+#[allow(dead_code)]
+mod common;
+use common::ScratchDb;
 
 fn provider() -> KrxProvider {
     KrxProvider::synthetic(
@@ -989,4 +1000,611 @@ fn pipeline_manual_durable_manifest_failure_reports_recoverable_batch_id() {
     let recovered = store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap();
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].batch_id, batch_id);
+}
+
+fn worker_config(overrides: &[(&str, &str)]) -> HashMap<String, String> {
+    let mut values = HashMap::from([
+        ("APP_ENV".to_owned(), "qa".to_owned()),
+        ("RESEARCH_FETCH_MODE".to_owned(), "synthetic".to_owned()),
+        ("RESEARCH_RAW_ROOT".to_owned(), "var/research".to_owned()),
+        ("DB_HOST".to_owned(), "127.0.0.1".to_owned()),
+        ("DB_PORT".to_owned(), "55432".to_owned()),
+        ("DB_NAME".to_owned(), "lagrange".to_owned()),
+        ("DB_USER".to_owned(), "research_writer".to_owned()),
+        ("DB_PASSWORD_FILE".to_owned(), "db-password".to_owned()),
+    ]);
+    for (key, value) in overrides {
+        values.insert((*key).to_owned(), (*value).to_owned());
+    }
+    values
+}
+
+#[test]
+fn worker_config_parses_defaults_and_trims_file_secret() {
+    let values = worker_config(&[]);
+    let config = ResearchWorkerConfig::from_map_with_reader(&values, |path| {
+        assert_eq!(path.to_string_lossy(), "db-password");
+        Ok("  password from file\r\n".to_owned())
+    })
+    .unwrap();
+
+    assert_eq!(config.app_env, AppEnvironment::Qa);
+    assert_eq!(config.fetch_mode, market_data::FetchMode::Synthetic);
+    assert_eq!(config.run_at_kst.format("%H:%M").to_string(), "16:30");
+    assert_eq!(config.max_publication_age.as_secs(), 345_600);
+    assert_eq!(config.raw_root.to_string_lossy(), "var/research");
+    assert_eq!(config.database.host, "127.0.0.1");
+    assert_eq!(config.database.port, 55432);
+    assert_eq!(config.database.name, "lagrange");
+    assert_eq!(config.database.user, "research_writer");
+    assert_eq!(config.database.password.expose(), "password from file");
+    assert!(!format!("{config:?}").contains("password from file"));
+}
+
+#[test]
+fn worker_config_parses_schedule_and_max_age_overrides() {
+    let values = worker_config(&[
+        ("APP_ENV", "development"),
+        ("RESEARCH_FETCH_MODE", "credentialed"),
+        ("RESEARCH_RUN_AT_KST", "07:05"),
+        ("RESEARCH_MAX_PUBLICATION_AGE_SECS", "42"),
+        ("KRX_CREDENTIAL_FILE", "provider-secret"),
+    ]);
+    let config = ResearchWorkerConfig::from_map_with_reader(&values, |path| {
+        Ok(match path.to_string_lossy().as_ref() {
+            "db-password" => "db-secret\n",
+            "provider-secret" => "provider-secret-value\n",
+            other => panic!("unexpected secret path {other}"),
+        }
+        .to_owned())
+    })
+    .unwrap();
+
+    assert_eq!(config.app_env, AppEnvironment::Development);
+    assert_eq!(config.fetch_mode, market_data::FetchMode::Credentialed);
+    assert_eq!(config.run_at_kst.format("%H:%M").to_string(), "07:05");
+    assert_eq!(config.max_publication_age.as_secs(), 42);
+}
+
+#[test]
+fn worker_config_rejects_invalid_and_missing_values_without_secret_contents() {
+    for (key, value) in [
+        ("APP_ENV", "staging"),
+        ("RESEARCH_FETCH_MODE", "auto"),
+        ("RESEARCH_RUN_AT_KST", "25:00"),
+        ("RESEARCH_MAX_PUBLICATION_AGE_SECS", "0"),
+        ("DB_PORT", "70000"),
+        ("RESEARCH_RAW_ROOT", "  "),
+    ] {
+        let values = worker_config(&[(key, value)]);
+        let error = ResearchWorkerConfig::from_map_with_reader(&values, |_| {
+            Ok("do-not-disclose".to_owned())
+        })
+        .unwrap_err();
+        assert!(matches!(error, WorkerError::InvalidConfig { .. }));
+        assert!(!error.to_string().contains("do-not-disclose"));
+    }
+
+    for failure in [
+        std::io::Error::new(std::io::ErrorKind::NotFound, "secret-value"),
+        std::io::Error::new(std::io::ErrorKind::PermissionDenied, "secret-value"),
+    ] {
+        let values = worker_config(&[]);
+        let error = ResearchWorkerConfig::from_map_with_reader(&values, |_| {
+            Err(std::io::Error::new(failure.kind(), "secret-value"))
+        })
+        .unwrap_err();
+        assert!(matches!(error, WorkerError::SecretFile { .. }));
+        assert!(!error.to_string().contains("secret-value"));
+    }
+
+    let error = ResearchWorkerConfig::from_map_with_reader(&worker_config(&[]), |_| {
+        Ok(" \r\n\t".to_owned())
+    })
+    .unwrap_err();
+    assert!(matches!(error, WorkerError::SecretFile { .. }));
+}
+
+#[test]
+fn worker_synthetic_policy_is_fail_closed_and_precedes_secret_reads() {
+    for app_env in ["production", "staging", "", "prod"] {
+        let values = worker_config(&[("APP_ENV", app_env)]);
+        let reads = std::cell::Cell::new(0);
+        let error = ResearchWorkerConfig::from_map_with_reader(&values, |_| {
+            reads.set(reads.get() + 1);
+            Ok("must-not-be-read".to_owned())
+        })
+        .unwrap_err();
+        assert_eq!(reads.get(), 0, "policy must precede secret reads");
+        if app_env == "production" {
+            assert!(matches!(error, WorkerError::SyntheticForbidden { .. }));
+        } else {
+            assert!(matches!(error, WorkerError::InvalidConfig { .. }));
+        }
+    }
+
+    assert!(
+        validate_synthetic_policy(AppEnvironment::Qa, market_data::FetchMode::Synthetic).is_ok()
+    );
+    assert!(
+        validate_synthetic_policy(
+            AppEnvironment::Development,
+            market_data::FetchMode::Synthetic
+        )
+        .is_ok()
+    );
+    assert!(matches!(
+        validate_synthetic_policy(
+            AppEnvironment::Production,
+            market_data::FetchMode::Synthetic
+        ),
+        Err(WorkerError::SyntheticForbidden { .. })
+    ));
+}
+
+#[derive(Default)]
+struct ConstructionSpy {
+    provider: AtomicUsize,
+    store: AtomicUsize,
+    pool: AtomicUsize,
+}
+
+impl WorkerComponentFactory for ConstructionSpy {
+    fn build_provider(
+        &self,
+        _config: &ResearchWorkerConfig,
+    ) -> Result<Arc<dyn EodProvider>, WorkerError> {
+        self.provider.fetch_add(1, Ordering::SeqCst);
+        panic!("provider construction must be fenced")
+    }
+
+    fn build_store(&self, _config: &ResearchWorkerConfig) -> Result<RawStore, WorkerError> {
+        self.store.fetch_add(1, Ordering::SeqCst);
+        panic!("Raw store construction must be fenced")
+    }
+
+    fn build_pool(&self, _config: &ResearchWorkerConfig) -> Result<PgPool, WorkerError> {
+        self.pool.fetch_add(1, Ordering::SeqCst);
+        panic!("pool construction must be fenced")
+    }
+}
+
+#[test]
+fn worker_production_fence_precedes_all_construction_and_filesystem_access() {
+    let values = worker_config(&[("APP_ENV", "production")]);
+    let reads = AtomicUsize::new(0);
+    let factory = ConstructionSpy::default();
+
+    let error = bootstrap_worker_with(
+        &values,
+        |_| {
+            reads.fetch_add(1, Ordering::SeqCst);
+            panic!("secret file must not be read")
+        },
+        &factory,
+    )
+    .err()
+    .expect("production synthetic is rejected");
+
+    assert!(matches!(error, WorkerError::SyntheticForbidden { .. }));
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    assert_eq!(factory.provider.load(Ordering::SeqCst), 0);
+    assert_eq!(factory.store.load(Ordering::SeqCst), 0);
+    assert_eq!(factory.pool.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn worker_schedule_uses_fixed_kst_civil_time_and_exponential_backoff() {
+    let before = Utc.with_ymd_and_hms(2026, 8, 10, 7, 29, 30).unwrap();
+    let at = chrono::NaiveTime::parse_from_str("16:30", "%H:%M").unwrap();
+    assert_eq!(
+        next_run_delay(before, at),
+        std::time::Duration::from_secs(30)
+    );
+
+    let passed = Utc.with_ymd_and_hms(2026, 8, 10, 7, 30, 1).unwrap();
+    assert_eq!(
+        next_run_delay(passed, at),
+        std::time::Duration::from_secs(86_399)
+    );
+
+    let delays: Vec<_> = (0..9)
+        .map(|failure| retry_delay(failure).as_secs())
+        .collect();
+    assert_eq!(delays, vec![10, 20, 40, 80, 160, 320, 600, 600, 600]);
+
+    assert_eq!(
+        collectors::current_kst_date(Utc.with_ymd_and_hms(2026, 8, 9, 15, 30, 0).unwrap()).to_iso(),
+        "2026-08-10"
+    );
+}
+
+#[test]
+fn worker_cli_help_and_argument_errors_are_stable_json() {
+    let help = Command::new(env!("CARGO_BIN_EXE_research-worker"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    let help_text = String::from_utf8(help.stdout).unwrap();
+    assert!(help_text.contains("--once --date YYYY-MM-DD"));
+    assert!(help_text.contains("healthcheck"));
+
+    let missing_date = Command::new(env!("CARGO_BIN_EXE_research-worker"))
+        .arg("--once")
+        .output()
+        .unwrap();
+    assert_eq!(missing_date.status.code(), Some(2));
+    let error: serde_json::Value = serde_json::from_slice(&missing_date.stdout).unwrap();
+    assert_eq!(error["phase"], "config");
+    assert_eq!(error["class"], "permanent");
+    assert!(error["batch_id"].is_null());
+}
+
+#[test]
+fn worker_cli_uses_discrete_db_keys_and_enforces_fence_before_secret_files() {
+    let output = Command::new(env!("CARGO_BIN_EXE_research-worker"))
+        .env_clear()
+        .env("APP_ENV", "production")
+        .env("RESEARCH_FETCH_MODE", "synthetic")
+        .env(
+            "DATABASE_URL",
+            "postgres://leaked-user:leaked-password@leaked-host/db",
+        )
+        .args(["--once", "--date", "2020-01-31"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["error_code"], "SYNTHETIC_FORBIDDEN");
+    assert_eq!(json["phase"], "config");
+    let visible = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for secret in ["leaked-user", "leaked-password", "leaked-host"] {
+        assert!(!visible.contains(secret));
+    }
+}
+
+#[test]
+fn worker_cli_healthcheck_has_no_provider_or_raw_configuration_dependency() {
+    let output = Command::new(env!("CARGO_BIN_EXE_research-worker"))
+        .env_clear()
+        .env(
+            "DATABASE_URL",
+            "postgres://ignored:ignored@127.0.0.1/ignored",
+        )
+        .arg("healthcheck")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["error_code"], "MISSING_CONFIG");
+    assert_eq!(json["phase"], "config");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("DATABASE_URL"));
+}
+
+#[derive(Default)]
+struct FakeResearchBackend {
+    events: Mutex<Vec<String>>,
+    recover: Mutex<VecDeque<Result<(), WorkerError>>>,
+    eod: Mutex<VecDeque<Result<bool, WorkerError>>>,
+    ingest: Mutex<VecDeque<Result<BatchId, WorkerError>>>,
+}
+
+#[async_trait]
+impl ResearchBackend for FakeResearchBackend {
+    async fn recover(&self) -> Result<(), WorkerError> {
+        self.events.lock().unwrap().push("recover".to_owned());
+        self.recover.lock().unwrap().pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn has_eod(&self, date: TradingDate) -> Result<bool, WorkerError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("has_eod:{}", date.to_iso()));
+        self.eod.lock().unwrap().pop_front().unwrap_or(Ok(false))
+    }
+
+    async fn ingest(&self, date: TradingDate, _now: UtcTimestamp) -> Result<BatchId, WorkerError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("ingest:{}", date.to_iso()));
+        self.ingest
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Ok(BatchId::generate()))
+    }
+}
+
+#[derive(Default)]
+struct FakeControl {
+    sleeps: Mutex<Vec<Duration>>,
+    shutdown_on_sleep: bool,
+}
+
+struct ScheduleControl {
+    now: chrono::DateTime<Utc>,
+    sleeps: Mutex<Vec<Duration>>,
+}
+
+#[async_trait]
+impl WorkerControl for ScheduleControl {
+    fn now_utc(&self) -> chrono::DateTime<Utc> {
+        self.now
+    }
+
+    async fn wait(&self, duration: Option<Duration>) -> WaitOutcome {
+        match duration {
+            Some(duration) => {
+                self.sleeps.lock().unwrap().push(duration);
+                WaitOutcome::Shutdown
+            }
+            None => std::future::pending().await,
+        }
+    }
+}
+
+#[async_trait]
+impl WorkerControl for FakeControl {
+    fn now_utc(&self) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 8, 10, 7, 30, 0).unwrap()
+    }
+
+    async fn wait(&self, duration: Option<Duration>) -> WaitOutcome {
+        match duration {
+            Some(duration) => {
+                self.sleeps.lock().unwrap().push(duration);
+                if self.shutdown_on_sleep {
+                    WaitOutcome::Shutdown
+                } else {
+                    WaitOutcome::Elapsed
+                }
+            }
+            None => std::future::pending().await,
+        }
+    }
+}
+
+fn configured_worker(backend: Arc<dyn ResearchBackend>) -> ResearchWorker {
+    let config = ResearchWorkerConfig::from_map_with_reader(&worker_config(&[]), |_| {
+        Ok("password".to_owned())
+    })
+    .unwrap();
+    ResearchWorker::new(config, backend)
+}
+
+#[tokio::test]
+async fn worker_once_recovers_first_and_skips_an_existing_eod() {
+    let backend = Arc::new(FakeResearchBackend::default());
+    backend.eod.lock().unwrap().push_back(Ok(true));
+    let worker = configured_worker(backend.clone());
+    let date = TradingDate::parse("2020-01-31").unwrap();
+
+    let result = worker
+        .run_once(date, &FakeControl::default())
+        .await
+        .unwrap();
+
+    assert_eq!(result, WorkerRunOutcome::AlreadyPublished);
+    assert_eq!(
+        *backend.events.lock().unwrap(),
+        vec!["recover", "has_eod:2020-01-31"]
+    );
+}
+
+#[tokio::test]
+async fn worker_daemon_uses_injected_clock_and_default_or_override_schedule() {
+    for (override_time, now) in [
+        (None, Utc.with_ymd_and_hms(2026, 8, 10, 7, 29, 30).unwrap()),
+        (
+            Some("07:05"),
+            Utc.with_ymd_and_hms(2026, 8, 9, 22, 4, 30).unwrap(),
+        ),
+    ] {
+        let backend = Arc::new(FakeResearchBackend::default());
+        let mut values = worker_config(&[]);
+        if let Some(run_at) = override_time {
+            values.insert("RESEARCH_RUN_AT_KST".to_owned(), run_at.to_owned());
+        }
+        let config =
+            ResearchWorkerConfig::from_map_with_reader(&values, |_| Ok("password".to_owned()))
+                .unwrap();
+        let worker = ResearchWorker::new(config, backend.clone());
+        let control = ScheduleControl {
+            now,
+            sleeps: Mutex::new(Vec::new()),
+        };
+
+        assert_eq!(
+            worker.run_daemon(&control).await.unwrap(),
+            WorkerRunOutcome::Shutdown
+        );
+        assert_eq!(*backend.events.lock().unwrap(), vec!["recover"]);
+        assert_eq!(
+            *control.sleeps.lock().unwrap(),
+            vec![Duration::from_secs(30)]
+        );
+    }
+}
+
+#[tokio::test]
+async fn worker_retries_startup_recovery_before_target_work() {
+    let backend = Arc::new(FakeResearchBackend::default());
+    backend.recover.lock().unwrap().extend([
+        Err(WorkerError::Io {
+            phase: WorkerPhase::Recovery,
+        }),
+        Ok(()),
+    ]);
+    backend.eod.lock().unwrap().push_back(Ok(true));
+    let control = FakeControl::default();
+
+    assert_eq!(
+        configured_worker(backend.clone())
+            .run_once(TradingDate::parse("2020-01-31").unwrap(), &control)
+            .await
+            .unwrap(),
+        WorkerRunOutcome::AlreadyPublished
+    );
+    assert_eq!(
+        *backend.events.lock().unwrap(),
+        vec!["recover", "recover", "has_eod:2020-01-31"]
+    );
+    assert_eq!(
+        *control.sleeps.lock().unwrap(),
+        vec![Duration::from_secs(10)]
+    );
+}
+
+#[tokio::test]
+async fn worker_eod_unavailable_does_not_suppress_fetch_and_retry_resets_per_run() {
+    let backend = Arc::new(FakeResearchBackend::default());
+    backend.eod.lock().unwrap().extend([
+        Err(WorkerError::Io {
+            phase: WorkerPhase::DuplicateCheck,
+        }),
+        Err(WorkerError::Io {
+            phase: WorkerPhase::DuplicateCheck,
+        }),
+        Ok(false),
+        Err(WorkerError::Io {
+            phase: WorkerPhase::DuplicateCheck,
+        }),
+        Ok(false),
+    ]);
+    let first_batch = BatchId::generate();
+    let second_batch = BatchId::generate();
+    backend
+        .ingest
+        .lock()
+        .unwrap()
+        .extend([Ok(first_batch), Ok(second_batch)]);
+    let worker = configured_worker(backend);
+
+    let first_control = FakeControl::default();
+    assert_eq!(
+        worker
+            .run_once(TradingDate::parse("2020-01-31").unwrap(), &first_control)
+            .await
+            .unwrap(),
+        WorkerRunOutcome::Published(first_batch)
+    );
+    assert_eq!(
+        *first_control.sleeps.lock().unwrap(),
+        vec![Duration::from_secs(10), Duration::from_secs(20)]
+    );
+
+    let second_control = FakeControl::default();
+    assert_eq!(
+        worker
+            .run_once(TradingDate::parse("2020-02-01").unwrap(), &second_control)
+            .await
+            .unwrap(),
+        WorkerRunOutcome::Published(second_batch)
+    );
+    assert_eq!(
+        *second_control.sleeps.lock().unwrap(),
+        vec![Duration::from_secs(10)],
+        "retry counters reset after a successful cycle"
+    );
+}
+
+#[tokio::test]
+async fn worker_permanent_errors_are_not_retried_and_shutdown_interrupts_backoff() {
+    let permanent_backend = Arc::new(FakeResearchBackend::default());
+    permanent_backend
+        .eod
+        .lock()
+        .unwrap()
+        .push_back(Err(WorkerError::InvalidConfig {
+            key: "test-permanent",
+        }));
+    let permanent_control = FakeControl::default();
+    let error = configured_worker(permanent_backend)
+        .run_once(
+            TradingDate::parse("2020-01-31").unwrap(),
+            &permanent_control,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.failure_class(), FailureClass::Permanent);
+    assert!(permanent_control.sleeps.lock().unwrap().is_empty());
+
+    let retryable_backend = Arc::new(FakeResearchBackend::default());
+    retryable_backend
+        .eod
+        .lock()
+        .unwrap()
+        .push_back(Err(WorkerError::Io {
+            phase: WorkerPhase::DuplicateCheck,
+        }));
+    let shutdown_control = FakeControl {
+        shutdown_on_sleep: true,
+        ..FakeControl::default()
+    };
+    let result = configured_worker(retryable_backend)
+        .run_once(TradingDate::parse("2020-01-31").unwrap(), &shutdown_control)
+        .await
+        .unwrap();
+    assert_eq!(result, WorkerRunOutcome::Shutdown);
+    assert_eq!(
+        *shutdown_control.sleeps.lock().unwrap(),
+        vec![Duration::from_secs(10)]
+    );
+}
+
+#[tokio::test]
+async fn worker_health_requires_db_round_trip_and_fresh_real_eod() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let now = Utc.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap();
+    let max_age = Duration::from_secs(345_600);
+
+    let missing = healthcheck(&db.writer, now, max_age).await.unwrap_err();
+    assert_eq!(missing.phase(), WorkerPhase::Health);
+
+    sqlx::query(
+        "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
+         content_sha256, bytes_size, retrieved_at) VALUES \
+         ('KRX','KR','2026-08-10','EOD_UNAVAILABLE','raw/unavailable',repeat('a',64),1,$1)",
+    )
+    .bind(now)
+    .execute(&db.supervisor)
+    .await
+    .unwrap();
+    assert!(healthcheck(&db.writer, now, max_age).await.is_err());
+
+    sqlx::query(
+        "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
+         content_sha256, bytes_size, retrieved_at) VALUES \
+         ('KRX','KR','2026-08-01','EOD','raw/stale',repeat('b',64),1,$1)",
+    )
+    .bind(now - chrono::Duration::days(5))
+    .execute(&db.supervisor)
+    .await
+    .unwrap();
+    assert!(healthcheck(&db.writer, now, max_age).await.is_err());
+
+    sqlx::query(
+        "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
+         content_sha256, bytes_size, retrieved_at) VALUES \
+         ('KRX','KR','2026-08-09','EOD','raw/fresh',repeat('c',64),1,$1)",
+    )
+    .bind(now - chrono::Duration::hours(12))
+    .execute(&db.supervisor)
+    .await
+    .unwrap();
+    let healthy = healthcheck(&db.writer, now, max_age).await.unwrap();
+    assert_eq!(healthy.age.as_secs(), 12 * 60 * 60);
+
+    db.writer.close().await;
+    assert!(healthcheck(&db.writer, now, max_age).await.is_err());
+    db.drop_db().await;
 }
