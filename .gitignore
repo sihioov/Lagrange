@@ -53,6 +53,7 @@ test-results/
 **/test-results/
 *.tsbuildinfo
 .playwright-mcp/
+.worktrees/
 .omc/
 !.omc/skills/
 
