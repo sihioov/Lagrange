@@ -340,22 +340,9 @@ impl RawStore {
                 .collect(),
         };
 
-        let json = serde_json::to_string_pretty(&entry).map_err(|source| {
-            cleanup(StoreError::Serialization {
-                context: "batch.json serialize".to_owned(),
-                source,
-            })
-        })?;
-        let mut meta = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(dir.join(entry.batch_json_file_name()))
-            .map_err(|e| cleanup(io_err("create batch.json", e)))?;
-        meta.write_all(json.as_bytes())
-            .map_err(|e| cleanup(io_err("write batch.json", e)))?;
-        meta.sync_all()
-            .map_err(|e| cleanup(io_err("sync batch.json", e)))?;
-        drop(meta);
+        let prepared = prepare_batch_metadata(&dir, &entry).map_err(cleanup)?;
+        publish_batch_metadata(prepared, &dir.join(entry.batch_json_file_name()))
+            .map_err(cleanup)?;
 
         sync_batch_directories(&dir).map_err(cleanup)?;
 
@@ -753,6 +740,44 @@ impl RawStore {
     }
 }
 
+fn prepare_batch_metadata(
+    batch_dir: &Path,
+    entry: &ManifestEntry,
+) -> Result<tempfile::NamedTempFile, StoreError> {
+    let json = serde_json::to_vec_pretty(entry).map_err(|source| StoreError::Serialization {
+        context: "batch.json serialize".to_owned(),
+        source,
+    })?;
+    let mut temporary = tempfile::NamedTempFile::new_in(batch_dir)
+        .map_err(|error| io_err("create temporary batch metadata", error))?;
+    temporary
+        .write_all(&json)
+        .map_err(|error| io_err("write temporary batch metadata", error))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|error| io_err("sync temporary batch metadata", error))?;
+    Ok(temporary)
+}
+
+fn publish_batch_metadata(
+    temporary: tempfile::NamedTempFile,
+    final_path: &Path,
+) -> Result<(), StoreError> {
+    temporary
+        .persist_noclobber(final_path)
+        .map(|_| ())
+        .map_err(|error| {
+            if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+                StoreError::FileExists {
+                    path: final_path.display().to_string(),
+                }
+            } else {
+                io_err("publish batch.json", error.error)
+            }
+        })
+}
+
 fn parse_manifest_records(
     provider: &str,
     market: &str,
@@ -951,6 +976,8 @@ fn io_err(context: &str, e: std::io::Error) -> StoreError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
+
     use super::*;
 
     #[test]
@@ -964,5 +991,73 @@ mod tests {
                 "{good:?} must be accepted"
             );
         }
+    }
+
+    #[test]
+    fn orphan_scan_never_observes_partially_written_batch_metadata() {
+        let root = tempfile::tempdir().expect("temp root");
+        let store = RawStore::new(root.path());
+        let date = TradingDate::parse("2020-01-31").unwrap();
+        let batch_id = BatchId::generate();
+        let entry = ManifestEntry {
+            batch_id,
+            provider: crate::contract::PROVIDER_KRX.to_owned(),
+            market: crate::contract::MARKET_KR.to_owned(),
+            date,
+            retrieved_at: UtcTimestamp::parse_rfc3339("2026-08-10T00:00:00Z").unwrap(),
+            mode: FetchMode::Synthetic,
+            entitlement_reference: None,
+            files: Vec::new(),
+        };
+        let batch_dir = store.batch_dir(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &date,
+            &batch_id,
+        );
+        fs::create_dir_all(&batch_dir).unwrap();
+
+        let mut prepared = prepare_batch_metadata(&batch_dir, &entry).unwrap();
+        assert_ne!(prepared.path(), batch_dir.join("batch.json"));
+        assert!(!batch_dir.join("batch.json").exists());
+        prepared.as_file_mut().set_len(0).unwrap();
+        prepared.as_file_mut().seek(SeekFrom::Start(0)).unwrap();
+        prepared.write_all(b"{").unwrap();
+        prepared.as_file().sync_all().unwrap();
+        let partial_path = prepared.path().to_owned();
+        assert_eq!(fs::read(&partial_path).unwrap(), b"{");
+
+        let start = Arc::new(Barrier::new(2));
+        let scanner_store = store.clone();
+        let scanner_start = Arc::clone(&start);
+        let scanner = std::thread::spawn(move || {
+            scanner_start.wait();
+            scanner_store.read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR)
+        });
+        start.wait();
+        assert!(scanner.join().unwrap().unwrap().is_empty());
+
+        drop(prepared);
+        assert!(!partial_path.exists());
+        let prepared = prepare_batch_metadata(&batch_dir, &entry).unwrap();
+        publish_batch_metadata(prepared, &batch_dir.join("batch.json")).unwrap();
+        sync_directory(&batch_dir, "sync committed batch metadata").unwrap();
+        assert_eq!(
+            store
+                .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR,)
+                .unwrap(),
+            vec![entry.clone()]
+        );
+
+        let replacement = prepare_batch_metadata(&batch_dir, &entry).unwrap();
+        let replacement_path = replacement.path().to_owned();
+        assert!(matches!(
+            publish_batch_metadata(replacement, &batch_dir.join("batch.json")),
+            Err(StoreError::FileExists { .. })
+        ));
+        assert!(!replacement_path.exists());
+        let committed: ManifestEntry =
+            serde_json::from_slice(&fs::read(batch_dir.join("batch.json")).unwrap()).unwrap();
+        assert_eq!(committed, entry);
     }
 }

@@ -100,7 +100,7 @@ fn value_after_key<'a>(text: &'a str, key: &str) -> Option<&'a str> {
             if !value.is_empty() && value != REDACTED {
                 return Some(value);
             }
-            from = value_start + content_end.max(1);
+            from = next_search_start(value_start, rest, content_end);
         }
     }
     None
@@ -122,7 +122,7 @@ fn scrub_key_value(text: &str, key: &str) -> String {
                 );
                 from = value_start + content_start + REDACTED.len();
             } else {
-                from = value_start + content_end.max(1);
+                from = next_search_start(value_start, rest, content_end);
             }
         }
     }
@@ -147,6 +147,14 @@ fn value_bounds(value: &str) -> (usize, usize) {
                 .unwrap_or(value.len());
             (0, end)
         }
+    }
+}
+
+fn next_search_start(value_start: usize, value: &str, content_end: usize) -> usize {
+    if content_end > 0 {
+        value_start + content_end
+    } else {
+        value_start + value.chars().next().map_or(0, char::len_utf8)
     }
 }
 
@@ -260,6 +268,32 @@ mod tests {
             output,
             "KRX_APP_SECRET=[REDACTED] KRX_BASE_URL:'[REDACTED]' KRX_APP_SECRET=[REDACTED]"
         );
+        assert!(redactor.is_clean(&output));
+        assert_eq!(redactor.redact(&output), output);
+    }
+
+    #[test]
+    fn empty_terminal_and_repeated_empty_values_are_stable() {
+        let redactor = Redactor::new();
+        for input in [
+            "KRX_APP_SECRET=",
+            "KRX_APP_SECRET= KRX_APP_SECRET:",
+            "앞 KRX_APP_SECRET= 뒤 KRX_APP_SECRET:",
+        ] {
+            assert!(redactor.scan(input).is_empty(), "input: {input:?}");
+            assert_eq!(redactor.redact(input), input);
+            assert!(redactor.is_clean(input));
+        }
+    }
+
+    #[test]
+    fn multibyte_whitespace_between_empty_and_nonempty_values_is_utf8_safe() {
+        let redactor = Redactor::new();
+        let input = "KRX_APP_SECRET=\u{3000}KRX_APP_SECRET:비밀";
+
+        assert_eq!(redactor.scan(input), vec!["KRX_APP_SECRET=비밀"]);
+        let output = redactor.redact(input);
+        assert_eq!(output, "KRX_APP_SECRET=\u{3000}KRX_APP_SECRET:[REDACTED]");
         assert!(redactor.is_clean(&output));
         assert_eq!(redactor.redact(&output), output);
     }

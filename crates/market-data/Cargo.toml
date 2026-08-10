@@ -15,6 +15,4 @@ thiserror = "2.0"
 arrow = { version = "59.1.0", default-features = false, features = ["prettyprint"] }
 parquet = { version = "59.1.0", default-features = false, features = ["arrow", "snap"] }
 fs2 = "0.4"
-
-[dev-dependencies]
 tempfile = "3"
