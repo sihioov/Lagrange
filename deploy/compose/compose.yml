@@ -17,8 +17,8 @@
 # Service code is added by later todos (8, 22, 27, 33, 36-42); this file
 # defines the structure: digest-pinned base images, healthcheck contracts
 # (endpoints the real services must serve), networks, secrets, and mounts.
-# Worker healthchecks are process-alive placeholders replaced by real
-# liveness probes in the owning todo.
+# Placeholder worker healthchecks are replaced by real liveness probes in
+# each service's owning todo.
 
 name: lagrange-station
 
@@ -132,7 +132,7 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
-      DB_USER: lagrange_app
+      DB_USER: app
       DB_PASSWORD_FILE: /run/secrets/db_app_password
       SESSION_COOKIE_SECURE: "true"
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:-}
@@ -199,42 +199,47 @@ services:
   # research-worker — KRX ingestion/curation/catalog (Todo 8-13).
   # The ONLY data-collection worker; it needs internet egress for the
   # licensed KRX source, so it sits on `backend` (not internal).
-  # Writes raw/curated/catalog; everything it reads is read-only.
+  # Writes Raw evidence only. Publication metadata is written through the
+  # dedicated least-privilege research_writer database role.
   # ------------------------------------------------------------------
   research-worker:
-    image: python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db # tag: 3.12.10-slim
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+    entrypoint: ["/usr/local/bin/research-worker"]
     init: true
     restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp
     logging: *default-logging
-    command: ["python", "-c", "import time; time.sleep(1e9)"] # placeholder; replaced in Todo 8
     cpus: "2"
     mem_limit: 4g
     environment:
+      # Development/QA defaults to the deterministic fixture. Setting
+      # APP_ENV=production while leaving synthetic mode enabled is rejected
+      # by the binary before it reads secrets or touches the filesystem.
+      APP_ENV: ${APP_ENV:-development}
+      RESEARCH_FETCH_MODE: ${RESEARCH_FETCH_MODE:-synthetic}
+      RESEARCH_RUN_AT_KST: ${RESEARCH_RUN_AT_KST:-16:30}
+      RESEARCH_MAX_PUBLICATION_AGE_SECS: ${RESEARCH_MAX_PUBLICATION_AGE_SECS:-345600}
+      RESEARCH_RAW_ROOT: /data/raw
+      RESEARCH_SYNTHETIC_BUNDLE: /opt/lagrange/tests/fixtures/kr-etf/contract
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
-      DB_USER: lagrange_app
-      DB_PASSWORD_FILE: /run/secrets/db_app_password
-      KRX_API_KEY_FILE: /run/secrets/krx_api_key
-      DATA_RAW_DIR: /data/raw
-      DATA_CURATED_DIR: /data/curated
-      DATA_CATALOG_DIR: /data/nautilus_catalog
+      DB_USER: research_writer
+      DB_PASSWORD_FILE: /run/secrets/db_research_password
+      KRX_CREDENTIAL_FILE: /run/secrets/krx_api_key
     secrets:
-      - db_app_password
+      - db_research_password
       - krx_api_key
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
-      - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated
-      - ${LAGRANGE_DATA_DIR:-../data}/nautilus_catalog:/data/nautilus_catalog
-      - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}:/data/artifacts
     networks:
       - backend
     healthcheck:
-      # Process-alive placeholder; real liveness lands with the worker code.
-      test: ["CMD-SHELL", "python -c 'import sys'"]
+      test: ["CMD", "/usr/local/bin/research-worker", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -264,7 +269,7 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
-      DB_USER: lagrange_worker
+      DB_USER: worker
       DB_PASSWORD_FILE: /run/secrets/db_worker_password
       DATA_CATALOG_DIR: /data/nautilus_catalog
       DATA_CURATED_DIR: /data/curated
@@ -302,7 +307,7 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
-      DB_USER: lagrange_worker
+      DB_USER: worker
       DB_PASSWORD_FILE: /run/secrets/db_worker_password
       DATA_CATALOG_DIR: /data/nautilus_catalog
       DATA_CURATED_DIR: /data/curated
@@ -343,7 +348,7 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
-      DB_USER: lagrange_app
+      DB_USER: app
       DB_PASSWORD_FILE: /run/secrets/db_app_password
       ARTIFACT_PAPER_DIR: /data/artifacts/paper
     secrets:
@@ -384,7 +389,7 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
-      DB_USER: lagrange_app
+      DB_USER: app
       DB_PASSWORD_FILE: /run/secrets/db_app_password
       ARTIFACT_REPORT_DIR: /data/artifacts/reports
     secrets:
@@ -462,7 +467,7 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
-      DB_USER: lagrange_app
+      DB_USER: app
       DB_PASSWORD_FILE: /run/secrets/db_app_password
       KIS_APP_KEY_FILE: /run/secrets/kis_app_key
       KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret
@@ -497,11 +502,13 @@ services:
 # ----------------------------------------------------------------------
 secrets:
   postgres_password:
-    file: ../secrets/postgres_password
+    file: ${LAGRANGE_POSTGRES_PASSWORD_SECRET_SOURCE:-../secrets/postgres_password}
   db_app_password:
     file: ../secrets/db_app_password
   db_worker_password:
     file: ../secrets/db_worker_password
+  db_research_password:
+    file: ${LAGRANGE_DB_RESEARCH_PASSWORD_SECRET_SOURCE:-../secrets/db_research_password}
   db_audit_password:
     file: ../secrets/db_audit_password
   session_secret:
@@ -511,7 +518,7 @@ secrets:
   auth0_client_secret:
     file: ../secrets/auth0_client_secret
   krx_api_key:
-    file: ../secrets/krx_api_key
+    file: ${LAGRANGE_KRX_API_KEY_SECRET_SOURCE:-../secrets/krx_api_key}
   kis_app_key:
     file: ../secrets/kis_app_key
   kis_app_secret:
