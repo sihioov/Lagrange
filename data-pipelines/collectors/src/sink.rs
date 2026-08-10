@@ -11,6 +11,10 @@ const DB_MARKET: &str = "KR";
 const RAW_PROVIDER: &str = "krx";
 const RAW_MARKET: &str = "kr";
 
+fn sqlstate_is_retryable(code: &str) -> bool {
+    code.starts_with("08") || matches!(code, "40001" | "40P01" | "57P01" | "57P02" | "57P03")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublishOutcome {
     Published,
@@ -47,13 +51,9 @@ impl SinkError {
             | sqlx::Error::PoolTimedOut
             | sqlx::Error::PoolClosed
             | sqlx::Error::WorkerCrashed => true,
-            sqlx::Error::Database(database) => database.code().is_some_and(|code| {
-                code.starts_with("08")
-                    || matches!(
-                        code.as_ref(),
-                        "40001" | "40P01" | "57P01" | "57P02" | "57P03"
-                    )
-            }),
+            sqlx::Error::Database(database) => database
+                .code()
+                .is_some_and(|code| sqlstate_is_retryable(code.as_ref())),
             _ => false,
         };
         if retryable {
@@ -693,5 +693,19 @@ impl PublicationSink for PostgresPublicationSink {
         .fetch_one(&self.pool)
         .await
         .map_err(SinkError::from_sqlx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sqlstate_is_retryable;
+
+    #[test]
+    fn sqlstate_retry_classification_is_structural_and_stable() {
+        assert!(sqlstate_is_retryable("08006"));
+        assert!(sqlstate_is_retryable("40P01"));
+        assert!(sqlstate_is_retryable("40001"));
+        assert!(!sqlstate_is_retryable("23505"));
+        assert!(!sqlstate_is_retryable("23514"));
     }
 }

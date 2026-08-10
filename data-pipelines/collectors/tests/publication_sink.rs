@@ -159,6 +159,55 @@ async fn publishes_verified_bundle_with_exact_lineage_and_reports_state_and_eod(
         projection_count as usize,
         fixture.bundle.calendar_facts.len()
     );
+    let fact = fixture
+        .bundle
+        .calendar_facts
+        .first()
+        .expect("calendar fact");
+    type PersistedCalendarFact = (
+        String,
+        chrono::NaiveDate,
+        String,
+        String,
+        String,
+        String,
+        uuid::Uuid,
+        String,
+        chrono::DateTime<chrono::Utc>,
+    );
+    let history: PersistedCalendarFact = sqlx::query_as(
+        "SELECT exchange, session_date, session_type, timezone, source, source_version, \
+                source_batch_id, content_sha256, retrieved_at \
+         FROM trading_calendar_versions \
+         WHERE exchange=$1 AND session_date=$2 AND source_version=$3",
+    )
+    .bind(&fact.exchange)
+    .bind(fact.session_date.as_naive_date())
+    .bind(&fact.source_version)
+    .fetch_one(&db.supervisor)
+    .await
+    .unwrap();
+    let projection: PersistedCalendarFact = sqlx::query_as(
+        "SELECT exchange, session_date, session_type, timezone, source, source_version, \
+                source_batch_id, content_sha256, retrieved_at \
+         FROM trading_calendars WHERE exchange=$1 AND session_date=$2",
+    )
+    .bind(&fact.exchange)
+    .bind(fact.session_date.as_naive_date())
+    .fetch_one(&db.supervisor)
+    .await
+    .unwrap();
+    for persisted in [&history, &projection] {
+        assert_eq!(persisted.0, fact.exchange);
+        assert_eq!(persisted.1, fact.session_date.as_naive_date());
+        assert_eq!(persisted.2, fact.session_type.as_db_str());
+        assert_eq!(persisted.3, fact.timezone);
+        assert_eq!(persisted.4, fact.source);
+        assert_eq!(persisted.5, fact.source_version);
+        assert_eq!(persisted.6, fixture.bundle.source_batch_id.as_uuid());
+        assert_eq!(persisted.7, fact.content_sha256);
+        assert_eq!(persisted.8, fixture.bundle.retrieved_at.as_datetime());
+    }
 
     let before = counts(&db).await;
     assert_eq!(
