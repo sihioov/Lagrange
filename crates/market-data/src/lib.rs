@@ -46,6 +46,7 @@ pub mod entitlement;
 pub mod ingest;
 pub mod instrument_master;
 pub mod provider;
+pub mod publication;
 pub mod quality;
 pub mod redact;
 pub mod storage;
@@ -71,6 +72,10 @@ pub use instrument_master::{
 };
 pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
+};
+pub use publication::{
+    CalendarFact, CalendarSessionType, DataBatchKind, PublicationBundle, PublicationError,
+    PublicationFile,
 };
 pub use quality::{
     AdminApproval, ApprovalAudit, DataUse, DataUseDenial, ExclusionRecord, FreshnessPolicy,
