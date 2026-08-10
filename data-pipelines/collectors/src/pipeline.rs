@@ -164,8 +164,8 @@ pub fn provider_failure_class(error: &ProviderError) -> FailureClass {
 
 pub fn store_failure_class(error: &StoreError) -> FailureClass {
     match error {
-        StoreError::Io { .. } => FailureClass::Retryable,
-        StoreError::ManifestAfterDurableBatch { source, .. } => store_failure_class(source),
+        StoreError::Io { .. } | StoreError::CleanupFailed { .. } => FailureClass::Retryable,
+        StoreError::IndeterminateBatchCommit { source, .. } => store_failure_class(source),
         StoreError::FileExists { .. }
         | StoreError::UnsafeFileName { .. }
         | StoreError::UnsafeScope { .. }
@@ -185,6 +185,9 @@ fn ingest_error_is_retryable(error: &IngestError) -> bool {
     match error {
         IngestError::Provider(source) => provider_failure_class(source) == FailureClass::Retryable,
         IngestError::Store(source) => store_failure_class(source) == FailureClass::Retryable,
+        IngestError::Readback { source, .. } => {
+            store_failure_class(source) == FailureClass::Retryable
+        }
         IngestError::MalformedResponse { .. } => false,
     }
 }

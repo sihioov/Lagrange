@@ -300,6 +300,38 @@ fn durable_orphan_batch_is_discovered_without_a_manifest_record() {
 }
 
 #[test]
+fn durable_orphan_with_missing_evidence_is_not_exposed() {
+    let root = temp_root("orphan-missing-evidence");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    fs::remove_file(store.manifest_path(PROVIDER_KRX, MARKET_KR)).unwrap();
+    fs::remove_file(
+        store
+            .batch_dir(PROVIDER_KRX, MARKET_KR, &d, &batch)
+            .join(&entry.files[0].file_name),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        store.read_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::MissingEvidence { .. })
+    ));
+}
+
+#[test]
 fn truncated_final_manifest_record_is_ignored_and_next_append_repairs_it() {
     let root = temp_root("truncated-tail");
     let store = RawStore::new(&root);
@@ -472,7 +504,7 @@ fn manifest_append_failure_preserves_durable_batch_for_orphan_recovery() {
         )
         .unwrap_err();
     match error {
-        StoreError::ManifestAfterDurableBatch { entry, source } => {
+        StoreError::IndeterminateBatchCommit { entry, source } => {
             assert_eq!(entry.batch_id, batch);
             assert!(matches!(*source, StoreError::Io { .. }));
         }

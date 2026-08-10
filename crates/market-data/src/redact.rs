@@ -130,6 +130,9 @@ fn scrub_key_value(text: &str, key: &str) -> String {
 }
 
 fn find_ascii_case_insensitive(text: &str, needle: &str, from: usize) -> Option<usize> {
+    if from > text.len() || !text.is_char_boundary(from) {
+        return None;
+    }
     text.as_bytes()[from..]
         .windows(needle.len())
         .position(|candidate| candidate.eq_ignore_ascii_case(needle.as_bytes()))
@@ -145,9 +148,7 @@ fn value_bounds_for_key(value: &str, key: &str) -> (usize, usize) {
 }
 
 fn authorization_value_bounds(value: &str) -> (usize, usize) {
-    let leading = value
-        .find(|character: char| matches!(character, '\r' | '\n') || !character.is_whitespace())
-        .unwrap_or(value.len());
+    let leading = inline_whitespace_prefix_len(value);
     let credential = &value[leading..];
     if matches!(credential.as_bytes().first(), Some(b'\'' | b'"')) {
         let (start, end) = value_bounds(credential);
@@ -195,14 +196,19 @@ fn next_search_start(value_start: usize, value: &str, content_end: usize) -> usi
     }
 }
 
+fn inline_whitespace_prefix_len(value: &str) -> usize {
+    value
+        .find(|character: char| matches!(character, '\r' | '\n') || !character.is_whitespace())
+        .unwrap_or(value.len())
+}
+
 fn bearer_token(text: &str) -> Option<&str> {
     let needle = "Bearer";
     let mut from = 0;
     while let Some(found) = find_ascii_case_insensitive(text, needle, from) {
         let separator_start = found + needle.len();
         let separator = &text[separator_start..];
-        let separator_len =
-            separator.len() - separator.trim_start_matches(char::is_whitespace).len();
+        let separator_len = inline_whitespace_prefix_len(separator);
         if separator_len == 0 {
             from = separator_start;
             continue;
@@ -214,7 +220,7 @@ fn bearer_token(text: &str) -> Option<&str> {
         if !token.is_empty() && token != REDACTED {
             return Some(token);
         }
-        from = token_start + token_end;
+        from = next_search_start(token_start, rest, token_end);
     }
     None
 }
@@ -226,8 +232,7 @@ fn scrub_bearer(text: &str) -> String {
     while let Some(found) = find_ascii_case_insensitive(&out, needle, from) {
         let separator_start = found + needle.len();
         let separator = &out[separator_start..];
-        let separator_len =
-            separator.len() - separator.trim_start_matches(char::is_whitespace).len();
+        let separator_len = inline_whitespace_prefix_len(separator);
         if separator_len == 0 {
             from = separator_start;
             continue;
@@ -238,8 +243,10 @@ fn scrub_bearer(text: &str) -> String {
         let token = &rest[..token_end];
         if !token.is_empty() && token != REDACTED {
             out.replace_range(token_start..token_start + token_end, REDACTED);
+            from = token_start + REDACTED.len();
+        } else {
+            from = next_search_start(token_start, rest, token_end);
         }
-        from = token_start + REDACTED.len();
     }
     out
 }
@@ -407,5 +414,29 @@ mod tests {
         let empty_value = "Authorization:   \r\nX-Public: must-remain";
         assert!(redactor.is_clean(empty_value));
         assert_eq!(redactor.redact(empty_value), empty_value);
+    }
+
+    #[test]
+    fn empty_bearer_occurrences_are_utf8_safe_stable_and_clean() {
+        let redactor = Redactor::new();
+        for input in [
+            "Bearer ",
+            "Bearer \r\n",
+            "Bearer \r\nBearer \r\n",
+            "앞 Bearer \r\n뒤",
+            "앞 Bearer \u{3000}",
+        ] {
+            assert!(redactor.scan(input).is_empty(), "input: {input:?}");
+            assert!(redactor.is_clean(input), "input: {input:?}");
+            assert_eq!(redactor.redact(input), input);
+            assert_eq!(redactor.redact(&redactor.redact(input)), input);
+        }
+
+        let non_ascii_token = "앞 bEaReR \u{3000}비밀 뒤";
+        assert!(!redactor.is_clean(non_ascii_token));
+        assert_eq!(
+            redactor.redact(non_ascii_token),
+            "앞 bEaReR \u{3000}[REDACTED] 뒤"
+        );
     }
 }

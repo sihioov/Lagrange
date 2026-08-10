@@ -267,7 +267,7 @@ async fn pipeline_durable_manifest_failure_exposes_recoverable_batch_id() {
     assert!(matches!(
         error,
         PipelineError::Ingest {
-            source: IngestError::Store(StoreError::ManifestAfterDurableBatch { .. })
+            source: IngestError::Store(StoreError::IndeterminateBatchCommit { .. })
         }
     ));
     assert!(sink.publish_calls.lock().unwrap().is_empty());
@@ -594,6 +594,17 @@ fn pipeline_error_classification_matrix_is_structural() {
             },
             true,
         ),
+        (
+            StoreError::CleanupFailed {
+                path: "partial-batch".into(),
+                original: Box::new(StoreError::Io {
+                    context: "write".into(),
+                    source: std::io::Error::other("offline"),
+                }),
+                cleanup: std::io::Error::other("cleanup unavailable"),
+            },
+            true,
+        ),
         (StoreError::FileExists { path: "x".into() }, false),
         (
             StoreError::UnsafeFileName {
@@ -723,6 +734,34 @@ fn pipeline_error_sources_traverse_nested_provider_store_and_parse_causes() {
         .source()
         .expect("publication retains store source");
     let io = store.source().expect("store retains IO source");
+    assert!(io.downcast_ref::<std::io::Error>().is_some());
+}
+
+#[test]
+fn pipeline_post_store_readback_error_retains_batch_source_and_class() {
+    use std::error::Error as _;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let entry = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    let batch_id = entry.batch_id;
+    let error = PipelineError::Ingest {
+        source: IngestError::Readback {
+            entry: Box::new(entry),
+            source: StoreError::Io {
+                context: "post-store readback".to_owned(),
+                source: std::io::Error::other("temporarily unavailable"),
+            },
+        },
+    };
+
+    assert_eq!(error.batch_id(), Some(batch_id));
+    assert_eq!(error.failure_class(), FailureClass::Retryable);
+    let ingest = error.source().unwrap();
+    let store = ingest.source().unwrap();
+    let io = store.source().unwrap();
     assert!(io.downcast_ref::<std::io::Error>().is_some());
 }
 

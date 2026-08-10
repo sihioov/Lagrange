@@ -12,9 +12,10 @@
 //! Invariants enforced here:
 //! - **Never overwrite Raw**: every delivery is a NEW batch dir; file writes use
 //!   exclusive `create_new`, so an existing file is never clobbered.
-//! - **Crash-durable batches**: evidence and `batch.json` are synced before the
-//!   manifest is appended. Failures before that durable point clean up; a later
-//!   manifest failure preserves a discoverable orphan batch for recovery.
+//! - **Crash-durable batches**: evidence is synced before atomic `batch.json`
+//!   publication. Pre-publication failures clean up; once final metadata is
+//!   visible, any later failure preserves an indeterminate batch for recovery.
+//!   Orphan discovery re-syncs its files and directory hierarchy before exposure.
 //! - **Path traversal rejection**: provider file names must be plain names.
 //! - **Append-only manifest**: JSONL writes are serialized under a file lock;
 //!   reads verify stored bytes against the recorded content hash (tamper detection).
@@ -115,9 +116,15 @@ pub enum StoreError {
         context: String,
         source: serde_json::Error,
     },
-    /// The batch metadata and evidence are durable, but manifest commit failed.
-    /// Recovery must reuse this exact entry rather than recapture provider data.
-    ManifestAfterDurableBatch {
+    /// Removal of a pre-visible partial batch failed; both causes are retained.
+    CleanupFailed {
+        path: String,
+        original: Box<StoreError>,
+        cleanup: std::io::Error,
+    },
+    /// Final metadata is visible, but a later durability or manifest step failed.
+    /// Recovery must re-sync and reuse this exact entry rather than recapture.
+    IndeterminateBatchCommit {
         entry: Box<ManifestEntry>,
         source: Box<StoreError>,
     },
@@ -178,9 +185,17 @@ impl std::fmt::Display for StoreError {
             Self::Serialization { context, source } => {
                 write!(f, "Raw serialization failure ({context}): {source}")
             }
-            Self::ManifestAfterDurableBatch { entry, source } => write!(
+            Self::CleanupFailed {
+                path,
+                original,
+                cleanup,
+            } => write!(
                 f,
-                "Raw batch {} is durable but manifest commit failed: {source}",
+                "Raw partial batch cleanup failed at {path} after {original}: {cleanup}"
+            ),
+            Self::IndeterminateBatchCommit { entry, source } => write!(
+                f,
+                "Raw batch {} is visible but commit durability is indeterminate: {source}",
                 entry.batch_id
             ),
             Self::ManifestConflict { path, batch_id } => write!(
@@ -201,7 +216,8 @@ impl std::error::Error for StoreError {
             | Self::CorruptBatchMetadata { source, .. }
             | Self::Serialization { source, .. } => Some(source),
             Self::MissingEvidence { source, .. } | Self::Io { source, .. } => Some(source),
-            Self::ManifestAfterDurableBatch { source, .. } => Some(source.as_ref()),
+            Self::CleanupFailed { original, .. } => Some(original.as_ref()),
+            Self::IndeterminateBatchCommit { source, .. } => Some(source.as_ref()),
             Self::FileExists { .. }
             | Self::UnsafeFileName { .. }
             | Self::UnsafeScope { .. }
@@ -217,7 +233,7 @@ impl std::error::Error for StoreError {
 impl StoreError {
     pub fn batch_id(&self) -> Option<BatchId> {
         match self {
-            Self::ManifestAfterDurableBatch { entry, .. } => Some(entry.batch_id),
+            Self::IndeterminateBatchCommit { entry, .. } => Some(entry.batch_id),
             _ => None,
         }
     }
@@ -241,6 +257,19 @@ pub struct RawStore {
 }
 
 trait BatchCommitOps: Send + Sync {
+    fn before_metadata_publish(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn cleanup_batch(&self, batch_dir: &Path) -> std::io::Result<()> {
+        fs::remove_dir_all(batch_dir)
+    }
+
+    fn sync_published_metadata(&self, file: &File) -> Result<(), StoreError> {
+        file.sync_all()
+            .map_err(|error| io_err("sync published batch.json", error))
+    }
+
     fn after_metadata_visible(&self) {}
 
     fn sync_batch_directories(&self, batch_dir: &Path) -> Result<(), StoreError> {
@@ -252,6 +281,25 @@ trait BatchCommitOps: Send + Sync {
 struct SystemBatchCommitOps;
 
 impl BatchCommitOps for SystemBatchCommitOps {}
+
+trait ManifestReadOps: Send + Sync {
+    fn before_shared_lock(&self) {}
+
+    fn after_shared_lock(&self) {}
+
+    fn sync_file(&self, path: &Path) -> Result<(), StoreError> {
+        sync_file(path, &format!("re-sync orphan file {}", path.display()))
+    }
+
+    fn sync_batch_directories(&self, batch_dir: &Path) -> Result<(), StoreError> {
+        sync_batch_directories(batch_dir)
+    }
+}
+
+#[derive(Debug)]
+struct SystemManifestReadOps;
+
+impl ManifestReadOps for SystemManifestReadOps {}
 
 impl RawStore {
     /// `root` is the `data/` directory; raw files live under `root/raw/...`.
@@ -321,9 +369,9 @@ impl RawStore {
 
     /// Persists one delivery as a new immutable batch and appends its manifest row.
     ///
-    /// Failures before evidence, metadata, and their directory entries are
-    /// synced remove the partial batch. Once that durable point is reached, a
-    /// manifest failure preserves the batch for orphan discovery.
+    /// Failures before final metadata publication remove the partial batch.
+    /// Once `batch.json` is visible, any later failure preserves the batch with
+    /// its exact identity so orphan discovery can re-sync it before exposure.
     pub fn store_batch(
         &self,
         spec: &BatchSpec<'_>,
@@ -367,9 +415,15 @@ impl RawStore {
         fs::create_dir(&dir)
             .map_err(|e| io_err(&format!("create batch dir {}", dir.display()), e))?;
 
-        let cleanup = |e: StoreError| -> StoreError {
-            let _ = fs::remove_dir_all(&dir);
-            e
+        let cleanup = |original: StoreError| -> StoreError {
+            match operations.cleanup_batch(&dir) {
+                Ok(()) => original,
+                Err(cleanup) => StoreError::CleanupFailed {
+                    path: dir.display().to_string(),
+                    original: Box::new(original),
+                    cleanup,
+                },
+            }
         };
         self.canonical_batch_dir(provider, market, date, &batch_id)
             .map_err(cleanup)?;
@@ -415,16 +469,29 @@ impl RawStore {
         };
 
         let prepared = prepare_batch_metadata(&dir, &entry).map_err(cleanup)?;
+        operations.before_metadata_publish().map_err(cleanup)?;
         let commit_lock = self.open_commit_lock(provider, market).map_err(cleanup)?;
         FileExt::lock_exclusive(&commit_lock)
             .map_err(|error| cleanup(io_err("lock Raw commit", error)))?;
         let commit_result = (|| {
-            publish_batch_metadata(prepared, &dir.join(entry.batch_json_file_name()))
-                .map_err(cleanup)?;
+            let published =
+                publish_batch_metadata(prepared, &dir.join(entry.batch_json_file_name()))
+                    .map_err(cleanup)?;
+            operations
+                .sync_published_metadata(&published)
+                .map_err(|source| StoreError::IndeterminateBatchCommit {
+                    entry: Box::new(entry.clone()),
+                    source: Box::new(source),
+                })?;
             operations.after_metadata_visible();
-            operations.sync_batch_directories(&dir).map_err(cleanup)?;
+            operations.sync_batch_directories(&dir).map_err(|source| {
+                StoreError::IndeterminateBatchCommit {
+                    entry: Box::new(entry.clone()),
+                    source: Box::new(source),
+                }
+            })?;
             self.append_manifest_locked(provider, market, &entry)
-                .map_err(|source| StoreError::ManifestAfterDurableBatch {
+                .map_err(|source| StoreError::IndeterminateBatchCommit {
                     entry: Box::new(entry.clone()),
                     source: Box::new(source),
                 })?;
@@ -438,7 +505,7 @@ impl RawStore {
                 Err(error)
             }
             Ok(entry) => {
-                unlock_result.map_err(|source| StoreError::ManifestAfterDurableBatch {
+                unlock_result.map_err(|source| StoreError::IndeterminateBatchCommit {
                     entry: Box::new(entry.clone()),
                     source: Box::new(source),
                 })?;
@@ -561,10 +628,21 @@ impl RawStore {
         provider: &str,
         market: &str,
     ) -> Result<Vec<ManifestEntry>, StoreError> {
+        self.read_manifest_with_ops(provider, market, &SystemManifestReadOps)
+    }
+
+    fn read_manifest_with_ops<O: ManifestReadOps + ?Sized>(
+        &self,
+        provider: &str,
+        market: &str,
+        operations: &O,
+    ) -> Result<Vec<ManifestEntry>, StoreError> {
         validate_scope(provider, market)?;
         let commit_lock = self.open_commit_lock(provider, market)?;
+        operations.before_shared_lock();
         FileExt::lock_shared(&commit_lock).map_err(|error| io_err("lock Raw commit", error))?;
-        let result = self.read_manifest_locked(provider, market);
+        operations.after_shared_lock();
+        let result = self.read_manifest_locked(provider, market, operations);
         let unlock =
             FileExt::unlock(&commit_lock).map_err(|error| io_err("unlock Raw commit", error));
         let entries = result?;
@@ -572,10 +650,11 @@ impl RawStore {
         Ok(entries)
     }
 
-    fn read_manifest_locked(
+    fn read_manifest_locked<O: ManifestReadOps + ?Sized>(
         &self,
         provider: &str,
         market: &str,
+        operations: &O,
     ) -> Result<Vec<ManifestEntry>, StoreError> {
         let path = self.manifest_path(provider, market);
         let mut entries = BTreeMap::new();
@@ -595,7 +674,7 @@ impl RawStore {
                 &mut manifest_order,
             )?;
         }
-        self.discover_orphan_batches(provider, market, &mut entries)?;
+        self.discover_orphan_batches(provider, market, &mut entries, operations)?;
         let manifest_ids: BTreeSet<_> = manifest_order.iter().copied().collect();
         let mut orphan_ids: Vec<_> = entries
             .keys()
@@ -615,11 +694,12 @@ impl RawStore {
             .collect())
     }
 
-    fn discover_orphan_batches(
+    fn discover_orphan_batches<O: ManifestReadOps + ?Sized>(
         &self,
         provider: &str,
         market: &str,
         entries: &mut BTreeMap<BatchId, ManifestEntry>,
+        operations: &O,
     ) -> Result<(), StoreError> {
         let provider_dir = self.provider_dir(provider, market);
         if !provider_dir.exists() {
@@ -653,7 +733,7 @@ impl RawStore {
                 if !metadata_path.exists() {
                     continue;
                 }
-                let (_, canonical_batch) =
+                let (raw_root, canonical_batch) =
                     self.canonical_batch_dir(provider, market, &date, &batch_id)?;
                 let canonical_metadata = fs::canonicalize(&metadata_path).map_err(|source| {
                     if source.kind() == std::io::ErrorKind::NotFound {
@@ -699,10 +779,61 @@ impl RawStore {
                         ),
                     });
                 }
+                if !entries.contains_key(&entry.batch_id) {
+                    self.resync_orphan_batch(
+                        &entry,
+                        &batch_path,
+                        &raw_root,
+                        &canonical_batch,
+                        &canonical_metadata,
+                        operations,
+                    )?;
+                }
                 merge_manifest_entry(entries, entry, &metadata_path)?;
             }
         }
         Ok(())
+    }
+
+    fn resync_orphan_batch<O: ManifestReadOps + ?Sized>(
+        &self,
+        entry: &ManifestEntry,
+        batch_path: &Path,
+        raw_root: &Path,
+        canonical_batch: &Path,
+        canonical_metadata: &Path,
+        operations: &O,
+    ) -> Result<(), StoreError> {
+        for file in &entry.files {
+            let path = batch_path.join(&file.file_name);
+            let canonical_file = fs::canonicalize(&path).map_err(|source| {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    StoreError::MissingEvidence {
+                        path: path.display().to_string(),
+                        source,
+                    }
+                } else {
+                    io_err(&format!("canonicalize {}", path.display()), source)
+                }
+            })?;
+            let expected = canonical_batch.join(&file.file_name);
+            if !canonical_file.starts_with(raw_root)
+                || !canonical_file.starts_with(canonical_batch)
+                || canonical_file != expected
+            {
+                return Err(StoreError::UnsafePath {
+                    path: canonical_file.display().to_string(),
+                    reason: format!(
+                        "orphan evidence must be a direct file inside {} below raw root {}",
+                        canonical_batch.display(),
+                        raw_root.display()
+                    ),
+                });
+            }
+            operations.sync_file(&canonical_file)?;
+        }
+        operations.sync_file(canonical_metadata)?;
+        operations.sync_batch_directories(canonical_batch)
     }
 
     /// Reads a batch back and verifies every stored file against its recorded
@@ -905,8 +1036,6 @@ fn publish_batch_metadata_platform(
             io_err("publish batch.json", error.error)
         }
     })?;
-    file.sync_all()
-        .map_err(|error| io_err("sync published batch.json", error))?;
     Ok(file)
 }
 
@@ -918,6 +1047,9 @@ fn publish_batch_metadata_platform(
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
 
+    let file = temporary
+        .reopen()
+        .map_err(|error| io_err("open temporary batch.json for final sync", error))?;
     let temporary_path = temporary.into_temp_path();
     let source: Vec<u16> = temporary_path
         .as_os_str()
@@ -949,13 +1081,6 @@ fn publish_batch_metadata_platform(
         });
     }
 
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(final_path)
-        .map_err(|error| io_err("open published batch.json", error))?;
-    file.sync_all()
-        .map_err(|error| io_err("sync published batch.json", error))?;
     Ok(file)
 }
 
@@ -1025,6 +1150,24 @@ fn sorted_directories(path: &Path) -> Result<Vec<fs::DirEntry>, StoreError> {
     }
     entries.sort_by_key(fs::DirEntry::file_name);
     Ok(entries)
+}
+
+fn sync_file(path: &Path, context: &str) -> Result<(), StoreError> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                StoreError::MissingEvidence {
+                    path: path.display().to_string(),
+                    source,
+                }
+            } else {
+                io_err(context, source)
+            }
+        })
 }
 
 #[cfg(unix)]
@@ -1175,7 +1318,8 @@ fn io_err(context: &str, e: std::io::Error) -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Barrier, mpsc};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Barrier, Mutex, mpsc};
     use std::time::Duration;
 
     use super::*;
@@ -1202,6 +1346,87 @@ mod tests {
             } else {
                 super::sync_batch_directories(batch_dir)
             }
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailingFinalMetadataSync;
+
+    impl BatchCommitOps for FailingFinalMetadataSync {
+        fn sync_published_metadata(&self, _file: &File) -> Result<(), StoreError> {
+            Err(io_err(
+                "injected final batch.json sync",
+                std::io::Error::other("injected final metadata sync failure"),
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailingPreVisibleCleanup;
+
+    impl BatchCommitOps for FailingPreVisibleCleanup {
+        fn before_metadata_publish(&self) -> Result<(), StoreError> {
+            Err(io_err(
+                "injected pre-visible failure",
+                std::io::Error::other("injected pre-visible failure"),
+            ))
+        }
+
+        fn cleanup_batch(&self, _batch_dir: &Path) -> std::io::Result<()> {
+            Err(std::io::Error::other("injected cleanup failure"))
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecoverySyncProbe {
+        fail_file_sync: AtomicBool,
+        fail_directory_sync: AtomicBool,
+        synced_files: Mutex<Vec<PathBuf>>,
+        synced_directories: Mutex<Vec<PathBuf>>,
+    }
+
+    impl ManifestReadOps for RecoverySyncProbe {
+        fn sync_file(&self, path: &Path) -> Result<(), StoreError> {
+            self.synced_files.lock().unwrap().push(path.to_owned());
+            if self.fail_file_sync.load(Ordering::SeqCst) {
+                Err(io_err(
+                    "injected orphan file sync",
+                    std::io::Error::other("injected orphan file sync failure"),
+                ))
+            } else {
+                sync_file(path, "re-sync orphan file")
+            }
+        }
+
+        fn sync_batch_directories(&self, batch_dir: &Path) -> Result<(), StoreError> {
+            self.synced_directories
+                .lock()
+                .unwrap()
+                .push(batch_dir.to_owned());
+            if self.fail_directory_sync.load(Ordering::SeqCst) {
+                Err(io_err(
+                    "injected orphan directory sync",
+                    std::io::Error::other("injected orphan directory sync failure"),
+                ))
+            } else {
+                super::sync_batch_directories(batch_dir)
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct SharedLockProbe {
+        before: mpsc::Sender<()>,
+        after: mpsc::Sender<()>,
+    }
+
+    impl ManifestReadOps for SharedLockProbe {
+        fn before_shared_lock(&self) {
+            self.before.send(()).unwrap();
+        }
+
+        fn after_shared_lock(&self) {
+            self.after.send(()).unwrap();
         }
     }
 
@@ -1232,6 +1457,176 @@ mod tests {
                 "{good:?} must be accepted"
             );
         }
+    }
+
+    #[test]
+    fn final_metadata_sync_failure_is_indeterminate_and_preserves_exact_batch() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let date = TradingDate::parse("2020-01-31").unwrap();
+        let batch_id = BatchId::generate();
+        let spec = BatchSpec {
+            provider: crate::contract::PROVIDER_KRX,
+            market: crate::contract::MARKET_KR,
+            date: &date,
+            batch_id,
+            entitlement_reference: None,
+            mode: FetchMode::Synthetic,
+        };
+
+        let error = store
+            .store_batch_with_commit_ops(
+                &spec,
+                &[test_envelope(batch_id)],
+                &FailingFinalMetadataSync,
+            )
+            .unwrap_err();
+        let entry = match error {
+            StoreError::IndeterminateBatchCommit { entry, source } => {
+                assert!(matches!(*source, StoreError::Io { .. }));
+                *entry
+            }
+            other => panic!("expected indeterminate batch commit, got {other:?}"),
+        };
+
+        assert_eq!(entry.batch_id, batch_id);
+        let batch_dir = store.batch_dir(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &date,
+            &batch_id,
+        );
+        assert!(batch_dir.join("batch.json").exists());
+        assert_eq!(
+            store
+                .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR)
+                .unwrap(),
+            vec![entry]
+        );
+    }
+
+    #[test]
+    fn orphan_is_resynced_before_exposure_and_failure_blocks_until_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let date = TradingDate::parse("2020-01-31").unwrap();
+        let batch_id = BatchId::generate();
+        let spec = BatchSpec {
+            provider: crate::contract::PROVIDER_KRX,
+            market: crate::contract::MARKET_KR,
+            date: &date,
+            batch_id,
+            entitlement_reference: None,
+            mode: FetchMode::Synthetic,
+        };
+        let entry = match store
+            .store_batch_with_commit_ops(
+                &spec,
+                &[test_envelope(batch_id)],
+                &FailingFinalMetadataSync,
+            )
+            .unwrap_err()
+        {
+            StoreError::IndeterminateBatchCommit { entry, .. } => *entry,
+            other => panic!("expected indeterminate batch commit, got {other:?}"),
+        };
+        let operations = RecoverySyncProbe::default();
+        operations.fail_file_sync.store(true, Ordering::SeqCst);
+
+        assert!(matches!(
+            store.read_manifest_with_ops(
+                crate::contract::PROVIDER_KRX,
+                crate::contract::MARKET_KR,
+                &operations,
+            ),
+            Err(StoreError::Io { .. })
+        ));
+        operations.fail_file_sync.store(false, Ordering::SeqCst);
+        operations.fail_directory_sync.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            store.read_manifest_with_ops(
+                crate::contract::PROVIDER_KRX,
+                crate::contract::MARKET_KR,
+                &operations,
+            ),
+            Err(StoreError::Io { .. })
+        ));
+        operations
+            .fail_directory_sync
+            .store(false, Ordering::SeqCst);
+        assert_eq!(
+            store
+                .read_manifest_with_ops(
+                    crate::contract::PROVIDER_KRX,
+                    crate::contract::MARKET_KR,
+                    &operations,
+                )
+                .unwrap(),
+            vec![entry.clone()]
+        );
+
+        let synced_files = operations.synced_files.lock().unwrap();
+        assert!(
+            synced_files
+                .iter()
+                .any(|path| path.ends_with(entry.batch_json_file_name()))
+        );
+        assert!(
+            synced_files
+                .iter()
+                .any(|path| path.ends_with("reference.json"))
+        );
+        assert!(!operations.synced_directories.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pre_visible_cleanup_failure_is_typed_and_leftover_is_not_exposed() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let date = TradingDate::parse("2020-01-31").unwrap();
+        let batch_id = BatchId::generate();
+        let spec = BatchSpec {
+            provider: crate::contract::PROVIDER_KRX,
+            market: crate::contract::MARKET_KR,
+            date: &date,
+            batch_id,
+            entitlement_reference: None,
+            mode: FetchMode::Synthetic,
+        };
+
+        let error = store
+            .store_batch_with_commit_ops(
+                &spec,
+                &[test_envelope(batch_id)],
+                &FailingPreVisibleCleanup,
+            )
+            .unwrap_err();
+        match error {
+            StoreError::CleanupFailed {
+                path,
+                original,
+                cleanup,
+            } => {
+                assert!(path.contains(&batch_id.to_string()));
+                assert!(matches!(*original, StoreError::Io { .. }));
+                assert_eq!(cleanup.to_string(), "injected cleanup failure");
+            }
+            other => panic!("expected typed cleanup failure, got {other:?}"),
+        }
+        let batch_dir = store.batch_dir(
+            crate::contract::PROVIDER_KRX,
+            crate::contract::MARKET_KR,
+            &date,
+            &batch_id,
+        );
+        assert!(batch_dir.exists());
+        assert!(!batch_dir.join("batch.json").exists());
+        assert!(
+            store
+                .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1362,23 +1757,31 @@ mod tests {
         operations.visible.wait();
 
         let reader_store = store.clone();
-        let (reader_started_tx, reader_started_rx) = mpsc::channel();
+        let (before_tx, before_rx) = mpsc::channel();
+        let (after_tx, after_rx) = mpsc::channel();
         let (reader_result_tx, reader_result_rx) = mpsc::channel();
         let reader = std::thread::spawn(move || {
-            reader_started_tx.send(()).unwrap();
-            let result = reader_store
-                .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR);
+            let probe = SharedLockProbe {
+                before: before_tx,
+                after: after_tx,
+            };
+            let result = reader_store.read_manifest_with_ops(
+                crate::contract::PROVIDER_KRX,
+                crate::contract::MARKET_KR,
+                &probe,
+            );
             reader_result_tx.send(result).unwrap();
         });
-        reader_started_rx.recv().unwrap();
-        assert!(
-            reader_result_rx
-                .recv_timeout(Duration::from_millis(100))
-                .is_err()
-        );
+        before_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(after_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+        assert!(matches!(
+            reader_result_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
 
         operations.release.wait();
         let written = writer.join().unwrap().unwrap();
+        after_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         let visible = reader_result_rx
             .recv_timeout(Duration::from_secs(2))
             .unwrap()
@@ -1388,7 +1791,7 @@ mod tests {
     }
 
     #[test]
-    fn directory_sync_failure_cleans_visible_metadata_before_reader_unblocks() {
+    fn directory_sync_failure_is_indeterminate_and_reader_recovers_same_batch() {
         let root = tempfile::tempdir().unwrap();
         let store = RawStore::new(root.path());
         let batch_id = BatchId::generate();
@@ -1425,27 +1828,42 @@ mod tests {
         operations.visible.wait();
 
         let reader_store = store.clone();
+        let (before_tx, before_rx) = mpsc::channel();
+        let (after_tx, after_rx) = mpsc::channel();
         let (result_tx, result_rx) = mpsc::channel();
         let reader = std::thread::spawn(move || {
+            let probe = SharedLockProbe {
+                before: before_tx,
+                after: after_tx,
+            };
             result_tx
-                .send(
-                    reader_store
-                        .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR),
-                )
+                .send(reader_store.read_manifest_with_ops(
+                    crate::contract::PROVIDER_KRX,
+                    crate::contract::MARKET_KR,
+                    &probe,
+                ))
                 .unwrap();
         });
-        assert!(result_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        before_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(after_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
 
         operations.release.wait();
-        assert!(matches!(writer.join().unwrap(), Err(StoreError::Io { .. })));
-        assert!(
+        let entry = match writer.join().unwrap().unwrap_err() {
+            StoreError::IndeterminateBatchCommit { entry, source } => {
+                assert!(matches!(*source, StoreError::Io { .. }));
+                *entry
+            }
+            other => panic!("expected indeterminate directory sync, got {other:?}"),
+        };
+        after_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(
             result_rx
                 .recv_timeout(Duration::from_secs(2))
                 .unwrap()
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            vec![entry]
         );
         reader.join().unwrap();
-        assert!(!batch_dir.exists());
+        assert!(batch_dir.join("batch.json").exists());
     }
 }
