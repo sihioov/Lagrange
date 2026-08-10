@@ -393,7 +393,10 @@ async fn pipeline_recovery_callback_is_after_db_outcome_and_failure_stops_next_b
     ));
     assert_eq!(
         observed,
-        vec![RecoveryBatchOutcome::Recovered(first.batch_id)]
+        vec![RecoveryBatchOutcome::Recovered {
+            batch_id: first.batch_id,
+            date: first.date,
+        }]
     );
     assert_eq!(
         *sink.publish_calls.lock().unwrap(),
@@ -1516,9 +1519,24 @@ async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() 
         .canonicalize()
         .unwrap();
     let store = RawStore::new(&raw_root);
-    let orphan = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
+    let orphan_date = TradingDate::parse("2020-01-30").unwrap();
+    let orphan_request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        orphan_date,
+        UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00Z").unwrap(),
+    );
+    let orphan = ingest_bundle(&store, &provider(), &orphan_request, None)
         .unwrap()
         .entry;
+    sqlx::query(
+        "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
+         content_sha256, bytes_size, retrieved_at) VALUES \
+         ('KRX','KR','2020-01-31','EOD','raw/already-published',repeat('a',64),1,$1)",
+    )
+    .bind(Utc::now())
+    .execute(&db.supervisor)
+    .await
+    .unwrap();
 
     for expected_recovery_event in ["recovered", "skipped"] {
         let stdout_file = workspace
@@ -1568,9 +1586,10 @@ async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() 
         assert_eq!(records[0]["event"], expected_recovery_event);
         assert_eq!(records[0]["class"], "success");
         assert_eq!(records[0]["phase"], "recovery");
-        assert_eq!(records[0]["target_date"], "2020-01-31");
+        assert_eq!(records[0]["target_date"], orphan_date.to_iso());
         assert_eq!(records[0]["batch_id"], orphan.batch_id.to_string());
         assert_eq!(records[1]["event"], "skipped");
+        assert_eq!(records[1]["target_date"], "2020-01-31");
         assert!(records[1]["batch_id"].is_null());
         assert_eq!(records[2]["outcome"], "already_published");
     }
@@ -1624,6 +1643,7 @@ async fn worker_recovery_write_failure_is_retryable_and_exact_replay_is_skipped(
     let replay: serde_json::Value = serde_json::from_slice(&replay_output).unwrap();
     assert_eq!(replay["event"], "skipped");
     assert_eq!(replay["batch_id"], orphan.batch_id.to_string());
+    assert_eq!(replay["target_date"], orphan.date.to_iso());
 
     db.drop_db().await;
 }
@@ -1632,8 +1652,8 @@ async fn worker_recovery_write_failure_is_retryable_and_exact_replay_is_skipped(
 struct FakeResearchBackend {
     events: Mutex<Vec<String>>,
     recover: Mutex<VecDeque<Result<(), WorkerError>>>,
-    recovered: Mutex<VecDeque<Vec<BatchId>>>,
-    recovery_skipped: Mutex<VecDeque<Vec<BatchId>>>,
+    recovered: Mutex<VecDeque<Vec<(BatchId, TradingDate)>>>,
+    recovery_skipped: Mutex<VecDeque<Vec<(BatchId, TradingDate)>>>,
     eod: Mutex<VecDeque<Result<bool, WorkerError>>>,
     ingest: Mutex<VecDeque<Result<BatchId, WorkerError>>>,
 }
@@ -1648,23 +1668,23 @@ impl ResearchBackend for FakeResearchBackend {
         self.events.lock().unwrap().push("recover".to_owned());
         let result = self.recover.lock().unwrap().pop_front().unwrap_or(Ok(()));
         if result.is_ok() {
-            for batch_id in self
+            for (batch_id, date) in self
                 .recovered
                 .lock()
                 .unwrap()
                 .pop_front()
                 .unwrap_or_default()
             {
-                observer.recovered(batch_id);
+                observer.recovered(batch_id, date);
             }
-            for batch_id in self
+            for (batch_id, date) in self
                 .recovery_skipped
                 .lock()
                 .unwrap()
                 .pop_front()
                 .unwrap_or_default()
             {
-                observer.skipped(batch_id);
+                observer.skipped(batch_id, date);
             }
         }
         result
@@ -2086,16 +2106,23 @@ impl ResearchBackend for DurableRetryBackend {
         _control: &dyn WorkerControl,
         observer: &dyn RecoveryObserver,
     ) -> Result<(), WorkerError> {
-        let report = recover_unpublished(&self.store, &self.recovery_sink)
-            .await
-            .map_err(WorkerError::Pipeline)?;
-        for batch_id in report.recovered {
-            observer.recovered(batch_id);
+        let result = recover_unpublished_with(&self.store, &self.recovery_sink, |outcome| {
+            match outcome {
+                RecoveryBatchOutcome::Recovered { batch_id, date } => {
+                    observer.recovered(batch_id, date);
+                }
+                RecoveryBatchOutcome::Skipped { batch_id, date } => {
+                    observer.skipped(batch_id, date);
+                }
+            }
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .await;
+        match result {
+            Ok(()) => Ok(()),
+            Err(RecoveryError::Pipeline(error)) => Err(WorkerError::Pipeline(error)),
+            Err(RecoveryError::Observer { source, .. }) => match source {},
         }
-        for batch_id in report.skipped {
-            observer.skipped(batch_id);
-        }
-        Ok(())
     }
 
     async fn has_eod(&self, date: TradingDate) -> Result<bool, WorkerError> {
@@ -2246,6 +2273,8 @@ async fn worker_streams_sanitized_retry_completed_and_skipped_events() {
 #[tokio::test]
 async fn worker_emits_recovery_batches_and_all_permanent_failures_with_context() {
     let date = TradingDate::parse("2020-01-31").unwrap();
+    let recovered_date = TradingDate::parse("2020-01-30").unwrap();
+    let replayed_date = TradingDate::parse("2020-01-29").unwrap();
     let recovered = BatchId::generate();
     let replayed = BatchId::generate();
     let recovery_backend = Arc::new(FakeResearchBackend::default());
@@ -2253,12 +2282,12 @@ async fn worker_emits_recovery_batches_and_all_permanent_failures_with_context()
         .recovered
         .lock()
         .unwrap()
-        .push_back(vec![recovered]);
+        .push_back(vec![(recovered, recovered_date)]);
     recovery_backend
         .recovery_skipped
         .lock()
         .unwrap()
-        .push_back(vec![replayed]);
+        .push_back(vec![(replayed, replayed_date)]);
     recovery_backend.eod.lock().unwrap().push_back(Ok(true));
     let recovery_observer = Arc::new(RecordingObserver::default());
     configured_worker(recovery_backend)
@@ -2277,13 +2306,13 @@ async fn worker_emits_recovery_batches_and_all_permanent_failures_with_context()
                 WorkerEventKind::Recovered,
                 WorkerEventClass::Success,
                 Some(recovered),
-                Some(date),
+                Some(recovered_date),
             ),
             (
                 WorkerEventKind::Skipped,
                 WorkerEventClass::Success,
                 Some(replayed),
-                Some(date),
+                Some(replayed_date),
             ),
             (
                 WorkerEventKind::Skipped,
@@ -2293,6 +2322,27 @@ async fn worker_emits_recovery_batches_and_all_permanent_failures_with_context()
             ),
         ]
     );
+
+    let daemon_backend = Arc::new(FakeResearchBackend::default());
+    daemon_backend
+        .recovered
+        .lock()
+        .unwrap()
+        .push_back(vec![(recovered, recovered_date)]);
+    let daemon_observer = Arc::new(RecordingObserver::default());
+    let daemon_control = ScheduleControl {
+        now: Utc.with_ymd_and_hms(2020, 1, 31, 8, 0, 0).unwrap(),
+        sleeps: Mutex::new(Vec::new()),
+    };
+    configured_worker(daemon_backend)
+        .with_observer(daemon_observer.clone())
+        .run_daemon(&daemon_control)
+        .await
+        .unwrap();
+    let daemon_events = daemon_observer.0.lock().unwrap().clone();
+    assert_eq!(daemon_events.len(), 1);
+    assert_eq!(daemon_events[0].kind, WorkerEventKind::Recovered);
+    assert_eq!(daemon_events[0].target_date, Some(recovered_date));
 
     for (phase, setup) in [
         (WorkerPhase::Recovery, "recovery"),

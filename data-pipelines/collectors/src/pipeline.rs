@@ -1,4 +1,4 @@
-use domain::BatchId;
+use domain::{BatchId, TradingDate};
 use market_data::contract::{MARKET_KR, PROVIDER_KRX};
 use market_data::ingest::{IngestError, IngestRequest, ingest_bundle};
 use market_data::provider::{EodProvider, ProviderError};
@@ -232,14 +232,26 @@ pub struct RecoveryReport {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecoveryBatchOutcome {
-    Recovered(BatchId),
-    Skipped(BatchId),
+    Recovered {
+        batch_id: BatchId,
+        date: TradingDate,
+    },
+    Skipped {
+        batch_id: BatchId,
+        date: TradingDate,
+    },
 }
 
 impl RecoveryBatchOutcome {
     pub const fn batch_id(self) -> BatchId {
         match self {
-            Self::Recovered(batch_id) | Self::Skipped(batch_id) => batch_id,
+            Self::Recovered { batch_id, .. } | Self::Skipped { batch_id, .. } => batch_id,
+        }
+    }
+
+    pub const fn date(self) -> TradingDate {
+        match self {
+            Self::Recovered { date, .. } | Self::Skipped { date, .. } => date,
         }
     }
 }
@@ -284,8 +296,8 @@ pub async fn recover_unpublished(
     let mut report = RecoveryReport::default();
     let result = recover_unpublished_with(store, sink, |outcome| {
         match outcome {
-            RecoveryBatchOutcome::Recovered(batch_id) => report.recovered.push(batch_id),
-            RecoveryBatchOutcome::Skipped(batch_id) => report.skipped.push(batch_id),
+            RecoveryBatchOutcome::Recovered { batch_id, .. } => report.recovered.push(batch_id),
+            RecoveryBatchOutcome::Skipped { batch_id, .. } => report.skipped.push(batch_id),
         }
         Ok::<_, std::convert::Infallible>(())
     })
@@ -335,8 +347,11 @@ where
                         source,
                     })
                 })?;
-                observer(RecoveryBatchOutcome::Recovered(batch_id))
-                    .map_err(|source| RecoveryError::Observer { batch_id, source })?;
+                observer(RecoveryBatchOutcome::Recovered {
+                    batch_id,
+                    date: manifest.date,
+                })
+                .map_err(|source| RecoveryError::Observer { batch_id, source })?;
             }
             PublicationState::Complete => {
                 let bundle = PublicationBundle::from_raw(store, &manifest).map_err(|source| {
@@ -358,8 +373,11 @@ where
                         },
                     ));
                 }
-                observer(RecoveryBatchOutcome::Skipped(batch_id))
-                    .map_err(|source| RecoveryError::Observer { batch_id, source })?;
+                observer(RecoveryBatchOutcome::Skipped {
+                    batch_id,
+                    date: manifest.date,
+                })
+                .map_err(|source| RecoveryError::Observer { batch_id, source })?;
             }
             PublicationState::Partial => {
                 return Err(RecoveryError::Pipeline(PipelineError::PartialPublication {
