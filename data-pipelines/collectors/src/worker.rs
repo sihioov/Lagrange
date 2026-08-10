@@ -22,8 +22,9 @@ use tokio::process::Command;
 
 use crate::{
     FailureClass, PipelineError, PostgresPublicationSink, PublicationSink, RECOVERY_PAGE_SIZE,
-    RecoveryBatchOutcome, RecoveryError, RecoveryPage, SinkError, ingest_and_publish,
-    provider_failure_class, recover_unpublished_page_with, recover_unpublished_with,
+    RecoveryBatchOutcome, RecoveryError, RecoveryPage, RecoveryPosition, SinkError,
+    ingest_and_publish, provider_failure_class, recover_unpublished_page_with,
+    recover_unpublished_with,
 };
 
 const DEFAULT_RUN_AT_KST: &str = "16:30";
@@ -482,7 +483,7 @@ pub fn bootstrap_worker(values: &HashMap<String, String>) -> Result<ResearchWork
         executable,
         env: helper_environment(values, system_root.as_deref()),
         sink: PostgresPublicationSink::new(pool),
-        recovery_cursor: Mutex::new(None),
+        recovery_position: Mutex::new(RecoveryPosition::default()),
     });
     Ok(ResearchWorker::new(config, backend))
 }
@@ -546,7 +547,7 @@ struct ProcessResearchBackend {
     executable: PathBuf,
     env: HashMap<OsString, OsString>,
     sink: PostgresPublicationSink,
-    recovery_cursor: Mutex<Option<BatchId>>,
+    recovery_position: Mutex<RecoveryPosition>,
 }
 
 impl ProcessResearchBackend {
@@ -591,15 +592,23 @@ impl ResearchBackend for ProcessResearchBackend {
         observer: &dyn RecoveryObserver,
     ) -> Result<(), WorkerError> {
         loop {
-            let after =
+            let position =
                 *self
-                    .recovery_cursor
+                    .recovery_position
                     .lock()
                     .map_err(|_| WorkerError::ChildContainment {
                         phase: WorkerPhase::Recovery,
                     })?;
             let mut args = vec![OsString::from("__research-internal-recover")];
-            if let Some(cursor) = after {
+            if let Some(snapshot_after) = position.snapshot_after {
+                args.push(OsString::from("--snapshot-after"));
+                args.push(OsString::from(snapshot_after.to_string()));
+            }
+            if let Some(snapshot_high_water) = position.snapshot_high_water {
+                args.push(OsString::from("--snapshot-high-water"));
+                args.push(OsString::from(snapshot_high_water.to_string()));
+            }
+            if let Some(cursor) = position.cursor {
                 args.push(OsString::from("--after"));
                 args.push(OsString::from(cursor.to_string()));
             }
@@ -612,19 +621,32 @@ impl ResearchBackend for ProcessResearchBackend {
                 WHOLE_ATTEMPT_TIMEOUT,
                 control,
                 observer,
-                after,
-                &self.recovery_cursor,
+                position,
+                &self.recovery_position,
             )
             .await?;
-            if !page.has_more {
+            if page.has_more {
+                continue;
+            }
+            if page.snapshot_high_water == position.snapshot_after && page.cursor.is_none() {
                 *self
-                    .recovery_cursor
+                    .recovery_position
                     .lock()
                     .map_err(|_| WorkerError::ChildContainment {
                         phase: WorkerPhase::Recovery,
-                    })? = None;
+                    })? = RecoveryPosition::default();
                 return Ok(());
             }
+            *self
+                .recovery_position
+                .lock()
+                .map_err(|_| WorkerError::ChildContainment {
+                    phase: WorkerPhase::Recovery,
+                })? = RecoveryPosition {
+                snapshot_after: page.snapshot_high_water,
+                snapshot_high_water: None,
+                cursor: None,
+            };
         }
     }
 
@@ -674,12 +696,12 @@ pub async fn run_internal_recovery_stream<W>(
 where
     W: io::Write,
 {
-    run_internal_recovery_page_stream(values, None, writer).await
+    run_internal_recovery_page_stream(values, RecoveryPosition::default(), writer).await
 }
 
 pub async fn run_internal_recovery_page_stream<W>(
     values: &HashMap<String, String>,
-    after: Option<BatchId>,
+    position: RecoveryPosition,
     writer: &mut W,
 ) -> Result<RecoveryPage, WorkerError>
 where
@@ -690,25 +712,32 @@ where
     let store = factory.build_store(&config)?;
     let pool = factory.build_pool(&config)?;
     let sink = PostgresPublicationSink::new(pool);
-    recover_unpublished_page_with(&store, &sink, after, RECOVERY_PAGE_SIZE, |outcome| {
-        let (event, batch_id, date) = match outcome {
-            RecoveryBatchOutcome::Recovered { batch_id, date } => ("recovered", batch_id, date),
-            RecoveryBatchOutcome::Skipped { batch_id, date } => ("skipped", batch_id, date),
-        };
-        serde_json::to_writer(
-            &mut *writer,
-            &RecoveryItemWire {
-                status: "event",
-                event,
-                phase: "recovery",
-                batch_id,
-                target_date: date.to_iso(),
-            },
-        )
-        .map_err(io::Error::other)?;
-        writer.write_all(b"\n")?;
-        writer.flush()
-    })
+    recover_unpublished_page_with(
+        &store,
+        &sink,
+        position,
+        RECOVERY_PAGE_SIZE,
+        |outcome, snapshot_high_water| {
+            let (event, batch_id, date) = match outcome {
+                RecoveryBatchOutcome::Recovered { batch_id, date } => ("recovered", batch_id, date),
+                RecoveryBatchOutcome::Skipped { batch_id, date } => ("skipped", batch_id, date),
+            };
+            serde_json::to_writer(
+                &mut *writer,
+                &RecoveryItemWire {
+                    status: "event",
+                    event,
+                    phase: "recovery",
+                    batch_id,
+                    target_date: date.to_iso(),
+                    snapshot_high_water,
+                },
+            )
+            .map_err(io::Error::other)?;
+            writer.write_all(b"\n")?;
+            writer.flush()
+        },
+    )
     .await
     .map_err(|error| match error {
         RecoveryError::Pipeline(source) => WorkerError::Pipeline(source),
@@ -881,6 +910,9 @@ impl ResearchWorker {
         let startup_now = control.now_utc();
         if at_or_after_run_time(startup_now, self.config.run_at_kst) {
             let date = current_kst_date(startup_now);
+            if !self.recover_with_retry(control, Some(date)).await? {
+                return Ok(WorkerRunOutcome::Shutdown);
+            }
             match self.run_target_with_retry(date, control).await {
                 Ok(WorkerRunOutcome::Shutdown) => return Ok(WorkerRunOutcome::Shutdown),
                 Ok(_) => {}
@@ -898,6 +930,9 @@ impl ResearchWorker {
                 return Ok(WorkerRunOutcome::Shutdown);
             }
             let date = current_kst_date(control.now_utc());
+            if !self.recover_with_retry(control, Some(date)).await? {
+                return Ok(WorkerRunOutcome::Shutdown);
+            }
             match self.run_target_with_retry(date, control).await {
                 Ok(WorkerRunOutcome::Shutdown) => return Ok(WorkerRunOutcome::Shutdown),
                 Ok(_) => {}
@@ -1144,6 +1179,8 @@ struct HelperWireRecord {
     #[serde(default)]
     cursor: Option<String>,
     #[serde(default)]
+    snapshot_high_water: Option<String>,
+    #[serde(default)]
     has_more: Option<bool>,
 }
 
@@ -1155,6 +1192,7 @@ struct RecoveryItemWire<'a> {
     phase: &'a str,
     batch_id: BatchId,
     target_date: String,
+    snapshot_high_water: BatchId,
 }
 
 fn helper_environment(
@@ -1241,6 +1279,7 @@ fn decode_helper_output(
                 || record.newest_eod_at.is_some()
                 || record.age_seconds.is_some()
                 || record.cursor.is_some()
+                || record.snapshot_high_water.is_some()
                 || record.has_more.is_some()
             {
                 return Err(WorkerError::ChildOutput {
@@ -1287,6 +1326,7 @@ fn decode_helper_output(
                 || record.newest_eod_at.is_some()
                 || record.age_seconds.is_some()
                 || record.cursor.is_some()
+                || record.snapshot_high_water.is_some()
                 || record.has_more.is_some()
                 || record.provider.as_deref() != Some("KRX")
                 || record.market.as_deref() != Some("KR")
@@ -1345,7 +1385,10 @@ fn parse_worker_phase(
 }
 
 enum RecoveryLine {
-    Batch(RecoveryBatchOutcome),
+    Batch {
+        outcome: RecoveryBatchOutcome,
+        snapshot_high_water: BatchId,
+    },
     Terminal(Result<RecoveryPage, WorkerError>),
 }
 
@@ -1377,20 +1420,37 @@ fn decode_recovery_line(line: &[u8]) -> Result<RecoveryLine, WorkerError> {
             },
             _ => return Err(WorkerError::ChildOutput { phase }),
         };
-        Ok(RecoveryLine::Batch(outcome))
+        Ok(RecoveryLine::Batch {
+            outcome,
+            snapshot_high_water: record.snapshot_high_water,
+        })
     } else {
-        let record: HelperWireRecord =
-            serde_json::from_slice(line).map_err(|_| WorkerError::ChildOutput { phase })?;
-        if record.status == "ok" {
+        if status.status == "ok" {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct TerminalWire {
+                status: String,
+                phase: String,
+                outcome: String,
+                #[serde(default)]
+                batch_id: Option<String>,
+                #[serde(default)]
+                date: Option<String>,
+                #[serde(default)]
+                newest_eod_at: Option<String>,
+                #[serde(default)]
+                age_seconds: Option<u64>,
+                snapshot_high_water: serde_json::Value,
+                #[serde(default)]
+                cursor: Option<String>,
+                has_more: bool,
+            }
+            let record: TerminalWire =
+                serde_json::from_slice(line).map_err(|_| WorkerError::ChildOutput { phase })?;
             if record.phase != "recovery"
-                || record.outcome.as_deref() != Some("recovered")
-                || record.error_code.is_some()
-                || record.provider.is_some()
-                || record.market.is_some()
-                || record.target_date.is_some()
-                || record.class.is_some()
+                || record.status != "ok"
+                || record.outcome != "recovered"
                 || record.batch_id.is_some()
-                || record.message.is_some()
                 || record.date.is_some()
                 || record.newest_eod_at.is_some()
                 || record.age_seconds.is_some()
@@ -1403,13 +1463,27 @@ fn decode_recovery_line(line: &[u8]) -> Result<RecoveryLine, WorkerError> {
                 .map(str::parse)
                 .transpose()
                 .map_err(|_| WorkerError::ChildOutput { phase })?;
-            let has_more = record.has_more.ok_or(WorkerError::ChildOutput { phase })?;
+            let snapshot_high_water = match record.snapshot_high_water {
+                serde_json::Value::Null => None,
+                serde_json::Value::String(value) => Some(
+                    value
+                        .parse()
+                        .map_err(|_| WorkerError::ChildOutput { phase })?,
+                ),
+                _ => return Err(WorkerError::ChildOutput { phase }),
+            };
             Ok(RecoveryLine::Terminal(Ok(RecoveryPage {
+                snapshot_high_water,
                 cursor,
-                has_more,
+                has_more: record.has_more,
             })))
         } else {
-            if record.cursor.is_some() || record.has_more.is_some() {
+            let record: HelperWireRecord =
+                serde_json::from_slice(line).map_err(|_| WorkerError::ChildOutput { phase })?;
+            if record.cursor.is_some()
+                || record.snapshot_high_water.is_some()
+                || record.has_more.is_some()
+            {
                 return Err(WorkerError::ChildOutput { phase });
             }
             match decode_helper_output(line, phase, None) {
@@ -1451,14 +1525,14 @@ async fn supervise_recovery_child(
     timeout: Duration,
     control: &dyn WorkerControl,
     observer: &dyn RecoveryObserver,
-    after: Option<BatchId>,
-    progress: &Mutex<Option<BatchId>>,
+    position: RecoveryPosition,
+    progress: &Mutex<RecoveryPosition>,
 ) -> Result<RecoveryPage, WorkerError> {
     let phase = WorkerPhase::Recovery;
     if *progress
         .lock()
         .map_err(|_| WorkerError::ChildContainment { phase })?
-        != after
+        != position
     {
         return Err(WorkerError::ChildOutput { phase });
     }
@@ -1503,20 +1577,34 @@ async fn supervise_recovery_child(
                             return Err(WorkerError::ChildOutput { phase });
                         }
                         match decode_recovery_line(&line) {
-                            Ok(RecoveryLine::Batch(outcome)) => {
+                            Ok(RecoveryLine::Batch { outcome, snapshot_high_water }) => {
                                 let batch_id = outcome.batch_id();
                                 if seen.len() >= RECOVERY_PAGE_SIZE
-                                    || Some(batch_id) == after
+                                    || Some(batch_id) == position.cursor
                                     || seen.contains(&batch_id)
                                 {
                                     terminate_and_reap(&mut child, phase).await?;
                                     return Err(WorkerError::ChildOutput { phase });
                                 }
+                                let high_water_mismatch = {
+                                    let mut validated = progress.lock().map_err(|_| {
+                                        WorkerError::ChildContainment { phase }
+                                    })?;
+                                    let mismatch = validated
+                                        .snapshot_high_water
+                                        .is_some_and(|expected| expected != snapshot_high_water);
+                                    if !mismatch {
+                                        validated.snapshot_high_water = Some(snapshot_high_water);
+                                        validated.cursor = Some(batch_id);
+                                    }
+                                    mismatch
+                                };
+                                if high_water_mismatch {
+                                    terminate_and_reap(&mut child, phase).await?;
+                                    return Err(WorkerError::ChildOutput { phase });
+                                }
                                 notify_recovery_observer(observer, outcome);
                                 seen.push(batch_id);
-                                *progress.lock().map_err(|_| WorkerError::ChildContainment {
-                                    phase,
-                                })? = Some(batch_id);
                             }
                             Ok(RecoveryLine::Terminal(result)) => terminal = Some(result),
                             Err(error) => {
@@ -1537,14 +1625,22 @@ async fn supervise_recovery_child(
 
     match (exit_success, terminal) {
         (Some(true), Some(Ok(page))) => {
-            let validated_cursor = *progress
+            let mut validated = progress
                 .lock()
                 .map_err(|_| WorkerError::ChildContainment { phase })?;
-            if page.cursor != validated_cursor
+            if validated
+                .snapshot_high_water
+                .is_some_and(|expected| page.snapshot_high_water != Some(expected))
+                || position
+                    .snapshot_high_water
+                    .is_some_and(|expected| page.snapshot_high_water != Some(expected))
+                || page.cursor != validated.cursor
                 || (page.has_more && (page.cursor.is_none() || seen.len() != RECOVERY_PAGE_SIZE))
             {
                 return Err(WorkerError::ChildOutput { phase });
             }
+            validated.snapshot_high_water = page.snapshot_high_water;
+            validated.cursor = page.cursor;
             Ok(page)
         }
         (Some(false), Some(Err(error @ WorkerError::ChildFailure { .. }))) => Err(error),
@@ -1997,23 +2093,28 @@ mod process_tests {
         let script = r#"
 $batch = '00000000-0000-4000-8000-000000000001'
 $date = '2020-01-30'
+$highWater = '00000000-0000-4000-8000-000000000099'
 if ($env:RESEARCH_TEST_CASE -eq 'complete-second') {
   $batch = '00000000-0000-4000-8000-000000000002'
   $date = '2020-01-31'
 }
-$event = '{"status":"event","event":"recovered","phase":"recovery","batch_id":"' + $batch + '","target_date":"' + $date + '"}'
+$event = '{"status":"event","event":"recovered","phase":"recovery","batch_id":"' + $batch + '","target_date":"' + $date + '","snapshot_high_water":"' + $highWater + '"}'
+$terminalHighWater = $highWater
+if ($env:RESEARCH_TEST_CASE -eq 'mismatched-high-water') {
+  $terminalHighWater = '00000000-0000-4000-8000-000000000098'
+}
 [IO.File]::AppendAllText($env:RESEARCH_TEST_HEARTBEAT, 'x')
 [Console]::Out.WriteLine($event)
 if ($env:RESEARCH_TEST_CASE -eq 'oversized') {
   [Console]::Out.WriteLine(('x' * 4097))
 } elseif ($env:RESEARCH_TEST_CASE -ne 'partial-timeout') {
-  [Console]::Out.WriteLine('{"status":"ok","phase":"recovery","outcome":"recovered","batch_id":null,"date":null,"newest_eod_at":null,"age_seconds":null,"cursor":"' + $batch + '","has_more":false}')
+  [Console]::Out.WriteLine('{"status":"ok","phase":"recovery","outcome":"recovered","batch_id":null,"date":null,"newest_eod_at":null,"age_seconds":null,"snapshot_high_water":"' + $terminalHighWater + '","cursor":"' + $batch + '","has_more":false}')
 }
 if ($env:RESEARCH_TEST_CASE -eq 'trailing') {
   [Console]::Out.WriteLine('{"unexpected":true}')
 }
 [Console]::Out.Flush()
-if ($env:RESEARCH_TEST_CASE -eq 'complete-second') { exit 0 }
+if ($env:RESEARCH_TEST_CASE -in @('complete-second', 'mismatched-high-water')) { exit 0 }
 while ($true) {
   [IO.File]::AppendAllText($env:RESEARCH_TEST_HEARTBEAT, 'x')
   Start-Sleep -Milliseconds 10
@@ -2045,7 +2146,7 @@ while ($true) {
     #[cfg(windows)]
     fn continuous_recovery_child_spec(heartbeat: PathBuf) -> ChildSpec {
         let script = r#"
-$event = '{"status":"event","event":"recovered","phase":"recovery","batch_id":"00000000-0000-4000-8000-000000000001","target_date":"2020-01-30"}' + "`n"
+$event = '{"status":"event","event":"recovered","phase":"recovery","batch_id":"00000000-0000-4000-8000-000000000001","target_date":"2020-01-30","snapshot_high_water":"00000000-0000-4000-8000-000000000099"}' + "`n"
 $chunk = $event * 1024
 while ($true) {
   [IO.File]::AppendAllText($env:RESEARCH_TEST_HEARTBEAT, 'x')
@@ -2082,7 +2183,7 @@ while true; do
   printf x >> "$RESEARCH_TEST_HEARTBEAT"
   i=0
   while [ "$i" -lt 1024 ]; do
-    printf '%s\n' '{"status":"event","event":"recovered","phase":"recovery","batch_id":"00000000-0000-4000-8000-000000000001","target_date":"2020-01-30"}'
+    printf '%s\n' '{"status":"event","event":"recovered","phase":"recovery","batch_id":"00000000-0000-4000-8000-000000000001","target_date":"2020-01-30","snapshot_high_water":"00000000-0000-4000-8000-000000000099"}'
     i=$((i + 1))
   done
 done
@@ -2103,20 +2204,25 @@ done
 printf x >> "$RESEARCH_TEST_HEARTBEAT"
 batch=00000000-0000-4000-8000-000000000001
 date=2020-01-30
+high_water=00000000-0000-4000-8000-000000000099
+terminal_high_water=$high_water
+if [ "$RESEARCH_TEST_CASE" = mismatched-high-water ]; then
+  terminal_high_water=00000000-0000-4000-8000-000000000098
+fi
 if [ "$RESEARCH_TEST_CASE" = complete-second ]; then
   batch=00000000-0000-4000-8000-000000000002
   date=2020-01-31
 fi
-printf '%s\n' "{\"status\":\"event\",\"event\":\"recovered\",\"phase\":\"recovery\",\"batch_id\":\"$batch\",\"target_date\":\"$date\"}"
+printf '%s\n' "{\"status\":\"event\",\"event\":\"recovered\",\"phase\":\"recovery\",\"batch_id\":\"$batch\",\"target_date\":\"$date\",\"snapshot_high_water\":\"$high_water\"}"
 if [ "$RESEARCH_TEST_CASE" = oversized ]; then
   printf '%04097d\n' 0 | tr '0' x
 elif [ "$RESEARCH_TEST_CASE" != partial-timeout ]; then
-  printf '%s\n' "{\"status\":\"ok\",\"phase\":\"recovery\",\"outcome\":\"recovered\",\"batch_id\":null,\"date\":null,\"newest_eod_at\":null,\"age_seconds\":null,\"cursor\":\"$batch\",\"has_more\":false}"
+  printf '%s\n' "{\"status\":\"ok\",\"phase\":\"recovery\",\"outcome\":\"recovered\",\"batch_id\":null,\"date\":null,\"newest_eod_at\":null,\"age_seconds\":null,\"snapshot_high_water\":\"$terminal_high_water\",\"cursor\":\"$batch\",\"has_more\":false}"
 fi
 if [ "$RESEARCH_TEST_CASE" = trailing ]; then
   printf '%s\n' '{"unexpected":true}'
 fi
-if [ "$RESEARCH_TEST_CASE" = complete-second ]; then exit 0; fi
+if [ "$RESEARCH_TEST_CASE" = complete-second ] || [ "$RESEARCH_TEST_CASE" = mismatched-high-water ]; then exit 0; fi
 while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
 "#;
         ChildSpec {
@@ -2235,22 +2341,32 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
             decode_recovery_line(
                 b"{\"status\":\"event\",\"event\":\"recovered\",\"phase\":\"recovery\",\"batch_id\":\"00000000-0000-4000-8000-000000000001\",\"target_date\":\"2020-01-30\"}"
             ),
-            Ok(super::RecoveryLine::Batch(
-                crate::RecoveryBatchOutcome::Recovered { date, .. }
-            )) if date == domain::TradingDate::parse("2020-01-30").unwrap()
+            Err(super::WorkerError::ChildOutput {
+                phase: WorkerPhase::Recovery
+            })
         ));
         assert!(matches!(
             decode_recovery_line(
-                b"{\"status\":\"ok\",\"phase\":\"recovery\",\"outcome\":\"recovered\",\"batch_id\":null,\"date\":null,\"newest_eod_at\":null,\"age_seconds\":null,\"cursor\":\"00000000-0000-4000-8000-000000000001\",\"has_more\":true}"
+                b"{\"status\":\"event\",\"event\":\"recovered\",\"phase\":\"recovery\",\"batch_id\":\"00000000-0000-4000-8000-000000000001\",\"target_date\":\"2020-01-30\",\"snapshot_high_water\":\"00000000-0000-4000-8000-000000000099\"}"
+            ),
+            Ok(super::RecoveryLine::Batch {
+                outcome: crate::RecoveryBatchOutcome::Recovered { date, .. },
+                snapshot_high_water: _
+            }) if date == domain::TradingDate::parse("2020-01-30").unwrap()
+        ));
+        assert!(matches!(
+            decode_recovery_line(
+                b"{\"status\":\"ok\",\"phase\":\"recovery\",\"outcome\":\"recovered\",\"batch_id\":null,\"date\":null,\"newest_eod_at\":null,\"age_seconds\":null,\"snapshot_high_water\":\"00000000-0000-4000-8000-000000000099\",\"cursor\":\"00000000-0000-4000-8000-000000000001\",\"has_more\":true}"
             ),
             Ok(super::RecoveryLine::Terminal(Ok(crate::RecoveryPage {
                 cursor: Some(_),
-                has_more: true
+                has_more: true,
+                ..
             })))
         ));
         assert!(matches!(
             decode_recovery_line(
-                b"{\"status\":\"ok\",\"phase\":\"recovery\",\"outcome\":\"recovered\",\"batch_id\":null,\"date\":null,\"newest_eod_at\":null,\"age_seconds\":null,\"cursor\":null}"
+                b"{\"status\":\"ok\",\"phase\":\"recovery\",\"outcome\":\"recovered\",\"batch_id\":null,\"date\":null,\"newest_eod_at\":null,\"age_seconds\":null,\"cursor\":null,\"has_more\":false}"
             ),
             Err(super::WorkerError::ChildOutput {
                 phase: WorkerPhase::Recovery
@@ -2358,18 +2474,18 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
 
     #[tokio::test]
     async fn recovery_stream_rejects_oversized_and_post_terminal_records_after_reap() {
-        for case in ["oversized", "trailing"] {
+        for case in ["oversized", "trailing", "mismatched-high-water"] {
             let dir = tempfile::tempdir().unwrap();
             let heartbeat = dir.path().join(format!("{case}-heartbeat"));
             let observer = RecoveryBatches::default();
-            let progress = Mutex::new(None);
+            let progress = Mutex::new(crate::RecoveryPosition::default());
             let started = Instant::now();
             let error = supervise_recovery_child(
                 recovery_protocol_child_spec(heartbeat.clone(), case),
                 Duration::from_secs(5),
                 &NeverShutdown,
                 &observer,
-                None,
+                crate::RecoveryPosition::default(),
                 &progress,
             )
             .await
@@ -2395,7 +2511,7 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
     async fn recovery_timeout_preserves_last_event_cursor_and_resume_advances() {
         let dir = tempfile::tempdir().unwrap();
         let observer = RecoveryBatches::default();
-        let progress = Mutex::new(None);
+        let progress = Mutex::new(crate::RecoveryPosition::default());
         let first = "00000000-0000-4000-8000-000000000001"
             .parse::<domain::BatchId>()
             .unwrap();
@@ -2408,7 +2524,7 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
             Duration::from_secs(1),
             &NeverShutdown,
             &observer,
-            None,
+            crate::RecoveryPosition::default(),
             &progress,
         )
         .await
@@ -2419,14 +2535,28 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
                 phase: WorkerPhase::Recovery
             }
         ));
-        assert_eq!(*progress.lock().unwrap(), Some(first));
+        let high_water = "00000000-0000-4000-8000-000000000099"
+            .parse::<domain::BatchId>()
+            .unwrap();
+        assert_eq!(
+            *progress.lock().unwrap(),
+            crate::RecoveryPosition {
+                snapshot_after: None,
+                snapshot_high_water: Some(high_water),
+                cursor: Some(first),
+            }
+        );
 
         let page = supervise_recovery_child(
             recovery_protocol_child_spec(dir.path().join("resume"), "complete-second"),
             Duration::from_secs(5),
             &NeverShutdown,
             &observer,
-            Some(first),
+            crate::RecoveryPosition {
+                snapshot_after: None,
+                snapshot_high_water: Some(high_water),
+                cursor: Some(first),
+            },
             &progress,
         )
         .await
@@ -2455,7 +2585,7 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
             let dir = tempfile::tempdir().unwrap();
             let heartbeat = dir.path().join(format!("{case}-heartbeat"));
             let observer = RecoveryBatches::default();
-            let progress = Mutex::new(None);
+            let progress = Mutex::new(crate::RecoveryPosition::default());
             let shutdown = ShutdownAt(tokio::time::Instant::now() + Duration::from_millis(500));
             let control: &dyn WorkerControl = if case == "shutdown" {
                 &shutdown
@@ -2470,7 +2600,7 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
                     timeout,
                     control,
                     &observer,
-                    None,
+                    crate::RecoveryPosition::default(),
                     &progress,
                 ),
             )

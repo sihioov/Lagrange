@@ -9,12 +9,12 @@ use chrono::{TimeZone, Utc};
 use collectors::{
     AppEnvironment, FailureClass, HealthcheckConfig, PipelineError, PipelineStage, PublicationSink,
     PublicationState, PublishOutcome, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome, RecoveryError,
-    RecoveryObserver, ResearchBackend, ResearchWorker, ResearchWorkerConfig, SinkError,
-    WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent, WorkerEventClass,
-    WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome, bootstrap_worker_with,
-    build_postgres_pool, healthcheck, ingest_and_publish, next_run_delay, publication_age,
-    recover_unpublished, recover_unpublished_page_with, recover_unpublished_with, retry_delay,
-    run_internal_recovery_stream, store_failure_class, validate_synthetic_policy,
+    RecoveryObserver, RecoveryPosition, ResearchBackend, ResearchWorker, ResearchWorkerConfig,
+    SinkError, WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent,
+    WorkerEventClass, WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome,
+    bootstrap_worker_with, build_postgres_pool, healthcheck, ingest_and_publish, next_run_delay,
+    publication_age, recover_unpublished, recover_unpublished_page_with, recover_unpublished_with,
+    retry_delay, run_internal_recovery_stream, store_failure_class, validate_synthetic_policy,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::contract::{MARKET_KR, PROVIDER_KRX, ResponseKind};
@@ -479,36 +479,102 @@ async fn pipeline_recovery_pages_resume_by_canonical_batch_cursor() {
     let sink = FakeSink::default();
     let mut observed = Vec::new();
 
-    let first = recover_unpublished_page_with(&store, &sink, None, 2, |outcome| {
-        observed.push(outcome);
-        Ok::<_, std::convert::Infallible>(())
-    })
+    let first = recover_unpublished_page_with(
+        &store,
+        &sink,
+        RecoveryPosition::default(),
+        2,
+        |outcome, _snapshot_high_water| {
+            observed.push(outcome);
+            Ok::<_, std::convert::Infallible>(())
+        },
+    )
     .await
     .unwrap();
     assert_eq!(first.cursor, Some(entries[1].batch_id));
+    assert_eq!(first.snapshot_high_water, Some(entries[4].batch_id));
     assert!(first.has_more);
 
-    // A concurrently appended later batch belongs to a later canonical page
-    // and is included without replaying the already emitted prefix.
-    let appended = ingest_bundle(&store, &provider(), &request("2026-08-06T07:00:00Z"), None)
+    // An append after the fixed high-water belongs to the next snapshot even
+    // when its retrieved_at sorts before the current cursor.
+    let appended = ingest_bundle(&store, &provider(), &request("2026-07-31T07:00:00Z"), None)
         .unwrap()
         .entry;
-    let second = recover_unpublished_page_with(&store, &sink, first.cursor, 2, |outcome| {
-        observed.push(outcome);
-        Ok::<_, std::convert::Infallible>(())
-    })
+    let second = recover_unpublished_page_with(
+        &store,
+        &sink,
+        RecoveryPosition {
+            snapshot_after: None,
+            snapshot_high_water: first.snapshot_high_water,
+            cursor: first.cursor,
+        },
+        2,
+        |outcome, _snapshot_high_water| {
+            observed.push(outcome);
+            Ok::<_, std::convert::Infallible>(())
+        },
+    )
     .await
     .unwrap();
     assert_eq!(second.cursor, Some(entries[3].batch_id));
     assert!(second.has_more);
-    let third = recover_unpublished_page_with(&store, &sink, second.cursor, 2, |outcome| {
-        observed.push(outcome);
-        Ok::<_, std::convert::Infallible>(())
-    })
+    let third = recover_unpublished_page_with(
+        &store,
+        &sink,
+        RecoveryPosition {
+            snapshot_after: None,
+            snapshot_high_water: first.snapshot_high_water,
+            cursor: second.cursor,
+        },
+        2,
+        |outcome, _snapshot_high_water| {
+            observed.push(outcome);
+            Ok::<_, std::convert::Infallible>(())
+        },
+    )
     .await
     .unwrap();
-    assert_eq!(third.cursor, Some(appended.batch_id));
+    assert_eq!(third.cursor, Some(entries[4].batch_id));
     assert!(!third.has_more);
+
+    let fourth = recover_unpublished_page_with(
+        &store,
+        &sink,
+        RecoveryPosition {
+            snapshot_after: first.snapshot_high_water,
+            snapshot_high_water: None,
+            cursor: None,
+        },
+        2,
+        |outcome, _snapshot_high_water| {
+            observed.push(outcome);
+            Ok::<_, std::convert::Infallible>(())
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(fourth.snapshot_high_water, Some(appended.batch_id));
+    assert_eq!(fourth.cursor, Some(appended.batch_id));
+    assert!(!fourth.has_more);
+
+    let stable = recover_unpublished_page_with(
+        &store,
+        &sink,
+        RecoveryPosition {
+            snapshot_after: fourth.snapshot_high_water,
+            snapshot_high_water: None,
+            cursor: None,
+        },
+        2,
+        |_, _| -> Result<(), std::convert::Infallible> {
+            panic!("an unchanged high-water completion check must be empty")
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(stable.snapshot_high_water, fourth.snapshot_high_water);
+    assert_eq!(stable.cursor, None);
+    assert!(!stable.has_more);
 
     assert_eq!(
         observed
@@ -532,6 +598,62 @@ async fn pipeline_recovery_pages_resume_by_canonical_batch_cursor() {
 }
 
 #[tokio::test]
+async fn pipeline_recovery_drains_a_backdated_append_in_a_followup_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let mut original = Vec::new();
+    for at in [
+        "2026-08-03T07:00:00Z",
+        "2026-08-04T07:00:00Z",
+        "2026-08-05T07:00:00Z",
+    ] {
+        original.push(
+            ingest_bundle(&store, &provider(), &request(at), None)
+                .unwrap()
+                .entry,
+        );
+    }
+    let appended_id = Arc::new(Mutex::new(None));
+    let appended_id_for_hook = appended_id.clone();
+    let append_store = store.clone();
+    let appended = Arc::new(AtomicBool::new(false));
+    let appended_for_hook = appended.clone();
+    let sink = FakeSink {
+        publish_check: Some(Arc::new(move |_| {
+            if !appended_for_hook.swap(true, Ordering::SeqCst) {
+                let entry = ingest_bundle(
+                    &append_store,
+                    &provider(),
+                    &request("2026-07-31T07:00:00Z"),
+                    None,
+                )
+                .unwrap()
+                .entry;
+                *appended_id_for_hook.lock().unwrap() = Some(entry.batch_id);
+            }
+        })),
+        ..FakeSink::default()
+    };
+
+    let report = recover_unpublished(&store, &sink).await.unwrap();
+    let appended_id = appended_id.lock().unwrap().expect("hook appended a batch");
+
+    assert_eq!(
+        report.recovered,
+        original
+            .iter()
+            .map(|entry| entry.batch_id)
+            .chain(std::iter::once(appended_id))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        *sink.state_calls.lock().unwrap(),
+        report.recovered,
+        "the fixed prefix is not replayed and the new suffix is drained before completion"
+    );
+}
+
+#[tokio::test]
 async fn pipeline_recovery_rejects_a_missing_cursor_permanently() {
     let root = tempfile::tempdir().unwrap();
     let store = RawStore::new(root.path());
@@ -539,9 +661,18 @@ async fn pipeline_recovery_rejects_a_missing_cursor_permanently() {
     let sink = FakeSink::default();
     let missing = BatchId::generate();
 
-    let error = recover_unpublished_page_with(&store, &sink, Some(missing), 2, |_| {
-        Ok::<_, std::convert::Infallible>(())
-    })
+    let entry = store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap()[0].clone();
+    let error = recover_unpublished_page_with(
+        &store,
+        &sink,
+        RecoveryPosition {
+            snapshot_after: None,
+            snapshot_high_water: Some(entry.batch_id),
+            cursor: Some(missing),
+        },
+        2,
+        |_, _| Ok::<_, std::convert::Infallible>(()),
+    )
     .await
     .unwrap_err();
 
@@ -550,6 +681,48 @@ async fn pipeline_recovery_rejects_a_missing_cursor_permanently() {
         RecoveryError::Pipeline(PipelineError::InvalidRecoveryCursor { cursor })
             if cursor == missing
     ));
+    assert!(sink.state_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn pipeline_recovery_rejects_missing_snapshot_boundaries_permanently() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RawStore::new(root.path());
+    let entry = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
+        .unwrap()
+        .entry;
+    let sink = FakeSink::default();
+    let missing = BatchId::generate();
+
+    for position in [
+        RecoveryPosition {
+            snapshot_after: None,
+            snapshot_high_water: Some(missing),
+            cursor: None,
+        },
+        RecoveryPosition {
+            snapshot_after: Some(missing),
+            snapshot_high_water: None,
+            cursor: None,
+        },
+        RecoveryPosition {
+            snapshot_after: None,
+            snapshot_high_water: None,
+            cursor: Some(entry.batch_id),
+        },
+    ] {
+        let error = recover_unpublished_page_with(&store, &sink, position, 2, |_, _| {
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RecoveryError::Pipeline(ref source)
+                if source.failure_class() == FailureClass::Permanent
+                    && source.stage() == PipelineStage::ReadManifest
+        ));
+    }
     assert!(sink.state_calls.lock().unwrap().is_empty());
 }
 
@@ -1825,6 +1998,11 @@ struct OneCycleControl {
     now: chrono::DateTime<Utc>,
 }
 
+struct OneScheduledCycleControl {
+    now: chrono::DateTime<Utc>,
+    scheduled_waits: AtomicUsize,
+}
+
 #[async_trait]
 impl WorkerControl for OneCycleControl {
     fn now_utc(&self) -> chrono::DateTime<Utc> {
@@ -1836,6 +2014,24 @@ impl WorkerControl for OneCycleControl {
             WaitOutcome::Elapsed
         } else {
             std::future::pending().await
+        }
+    }
+}
+
+#[async_trait]
+impl WorkerControl for OneScheduledCycleControl {
+    fn now_utc(&self) -> chrono::DateTime<Utc> {
+        self.now
+    }
+
+    async fn wait(&self, duration: Option<Duration>) -> WaitOutcome {
+        if duration.is_none() {
+            return std::future::pending().await;
+        }
+        if self.scheduled_waits.fetch_add(1, Ordering::SeqCst) == 0 {
+            WaitOutcome::Elapsed
+        } else {
+            WaitOutcome::Shutdown
         }
     }
 }
@@ -2049,12 +2245,35 @@ async fn worker_daemon_catches_up_immediately_at_or_after_schedule() {
         );
         assert_eq!(
             *backend.events.lock().unwrap(),
-            vec!["recover", "has_eod:2026-08-10"],
+            vec!["recover", "recover", "has_eod:2026-08-10"],
             "startup after the configured time performs one immediate catch-up"
         );
         assert_eq!(control.sleeps.lock().unwrap().len(), 1);
         assert!(control.sleeps.lock().unwrap()[0] >= Duration::from_secs(22 * 60 * 60));
     }
+}
+
+#[tokio::test]
+async fn worker_daemon_recovers_immediately_before_each_scheduled_cycle() {
+    let backend = Arc::new(FakeResearchBackend::default());
+    backend.eod.lock().unwrap().push_back(Ok(true));
+    let control = OneScheduledCycleControl {
+        now: Utc.with_ymd_and_hms(2026, 8, 10, 7, 29, 30).unwrap(),
+        scheduled_waits: AtomicUsize::new(0),
+    };
+
+    assert_eq!(
+        configured_worker(backend.clone())
+            .run_daemon(&control)
+            .await
+            .unwrap(),
+        WorkerRunOutcome::Shutdown
+    );
+    assert_eq!(
+        *backend.events.lock().unwrap(),
+        vec!["recover", "recover", "has_eod:2026-08-10"],
+        "a post-completion-check append is recovered before the next fetch cycle"
+    );
 }
 
 #[tokio::test]

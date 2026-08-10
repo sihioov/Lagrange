@@ -19,39 +19,102 @@ BEGIN
     RAISE EXCEPTION 'research publication tables are missing';
   END IF;
 
-  IF (SELECT count(*)
+  IF EXISTS (
+    WITH actual(table_name, constraint_name, constraint_type, validated, definition) AS (
+      SELECT table_row.relname, constraint_row.conname,
+             constraint_row.contype::text, constraint_row.convalidated,
+             pg_get_constraintdef(constraint_row.oid, true)
       FROM pg_constraint constraint_row
       JOIN pg_class table_row ON table_row.oid = constraint_row.conrelid
       JOIN pg_namespace table_schema ON table_schema.oid = table_row.relnamespace
-      JOIN (VALUES
-        ('data_batches', 'data_batches_pkey', 'p'),
-        ('data_batches', 'data_batches_content_sha256_check', 'c'),
-        ('data_batches', 'data_batches_bytes_positive_check', 'c'),
-        ('data_batches', 'data_batches_fetch_mode_check', 'c'),
-        ('data_batches', 'data_batches_provenance_all_or_none_check', 'c'),
-        ('trading_calendars', 'trading_calendars_pkey', 'p'),
-        ('trading_calendars', 'trading_calendars_exchange_date_key', 'u'),
-        ('trading_calendars', 'trading_calendars_content_sha256_check', 'c'),
-        ('trading_calendars', 'trading_calendars_provenance_all_or_none_check', 'c'),
-        ('trading_calendar_versions', 'trading_calendar_versions_pkey', 'p'),
-        ('trading_calendar_versions', 'trading_calendar_versions_session_type_check', 'c'),
-        ('trading_calendar_versions', 'trading_calendar_versions_timezone_check', 'c'),
-        ('trading_calendar_versions', 'trading_calendar_versions_content_sha256_check', 'c'),
-        ('trading_calendar_versions', 'trading_calendar_versions_exchange_date_source_version_key', 'u')
-      ) expected(table_name, constraint_name, constraint_type)
-        ON expected.table_name = table_row.relname
-       AND expected.constraint_name = constraint_row.conname
-       AND expected.constraint_type = constraint_row.contype::text
-      WHERE table_schema.nspname = 'public' AND constraint_row.convalidated) <> 14
-     OR EXISTS (
-       SELECT 1 FROM pg_constraint
-       WHERE conrelid IN (
-         'public.data_batches'::regclass,
-         'public.trading_calendar_versions'::regclass,
-         'public.trading_calendars'::regclass
-       ) AND NOT convalidated
-     ) THEN
-    RAISE EXCEPTION 'research publication constraints are missing or unvalidated';
+      WHERE table_schema.nspname = 'public'
+        AND table_row.relname IN (
+          'data_batches', 'trading_calendars', 'trading_calendar_versions'
+        )
+        AND constraint_row.contype IN ('p', 'u', 'c')
+    ), expected(table_name, constraint_name, constraint_type, validated, definition) AS (VALUES
+      ('data_batches', 'data_batches_pkey', 'p', true, 'PRIMARY KEY (id)'),
+      ('data_batches', 'data_batches_content_sha256_check', 'c', true, 'CHECK (content_sha256 ~ ''^[0-9a-f]{64}$''::text)'),
+      ('data_batches', 'data_batches_bytes_positive_check', 'c', true, 'CHECK (bytes_size >= 0)'),
+      ('data_batches', 'data_batches_fetch_mode_check', 'c', true, 'CHECK (fetch_mode IS NULL OR (fetch_mode = ANY (ARRAY[''synthetic''::text, ''credentialed''::text])))'),
+      ('data_batches', 'data_batches_provenance_all_or_none_check', 'c', true, 'CHECK (source_batch_id IS NULL AND source_file_name IS NULL AND fetch_mode IS NULL OR source_batch_id IS NOT NULL AND source_file_name IS NOT NULL AND fetch_mode IS NOT NULL)'),
+      ('trading_calendars', 'trading_calendars_pkey', 'p', true, 'PRIMARY KEY (id)'),
+      ('trading_calendars', 'trading_calendars_exchange_date_key', 'u', true, 'UNIQUE (exchange, session_date)'),
+      ('trading_calendars', 'trading_calendars_content_sha256_check', 'c', true, 'CHECK (content_sha256 IS NULL OR content_sha256 ~ ''^[0-9a-f]{64}$''::text)'),
+      ('trading_calendars', 'trading_calendars_provenance_all_or_none_check', 'c', true, 'CHECK (source_batch_id IS NULL AND content_sha256 IS NULL AND retrieved_at IS NULL OR source_batch_id IS NOT NULL AND content_sha256 IS NOT NULL AND retrieved_at IS NOT NULL)'),
+      ('trading_calendar_versions', 'trading_calendar_versions_pkey', 'p', true, 'PRIMARY KEY (id)'),
+      ('trading_calendar_versions', 'trading_calendar_versions_session_type_check', 'c', true, 'CHECK (session_type = ANY (ARRAY[''TRADING''::text, ''CLOSED''::text]))'),
+      ('trading_calendar_versions', 'trading_calendar_versions_timezone_check', 'c', true, 'CHECK (timezone = ''Asia/Seoul''::text)'),
+      ('trading_calendar_versions', 'trading_calendar_versions_content_sha256_check', 'c', true, 'CHECK (content_sha256 ~ ''^[0-9a-f]{64}$''::text)'),
+      ('trading_calendar_versions', 'trading_calendar_versions_exchange_date_source_version_key', 'u', true, 'UNIQUE (exchange, session_date, source_version)')
+    )
+    (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+    UNION ALL
+    (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+  ) THEN
+    RAISE EXCEPTION 'research publication constraints are missing, unvalidated, or drifted';
+  END IF;
+
+  IF EXISTS (
+    WITH actual(table_name, column_name, data_type, not_null, identity_kind, default_expression) AS (
+      SELECT table_row.relname, column_row.attname,
+             format_type(column_row.atttypid, column_row.atttypmod),
+             column_row.attnotnull, column_row.attidentity::text,
+             COALESCE(pg_get_expr(default_row.adbin, default_row.adrelid), '')
+      FROM pg_attribute column_row
+      JOIN pg_class table_row ON table_row.oid = column_row.attrelid
+      JOIN pg_namespace table_schema ON table_schema.oid = table_row.relnamespace
+      LEFT JOIN pg_attrdef default_row
+        ON default_row.adrelid = column_row.attrelid
+       AND default_row.adnum = column_row.attnum
+      WHERE table_schema.nspname = 'public'
+        AND table_row.relname IN (
+          'data_batches', 'trading_calendars', 'trading_calendar_versions'
+        )
+        AND column_row.attnum > 0
+        AND NOT column_row.attisdropped
+    ), expected(table_name, column_name, data_type, not_null, identity_kind, default_expression) AS (VALUES
+      ('data_batches', 'id', 'uuid', true, '', 'gen_random_uuid()'),
+      ('data_batches', 'provider', 'text', true, '', ''),
+      ('data_batches', 'market', 'text', true, '', ''),
+      ('data_batches', 'batch_date', 'date', true, '', ''),
+      ('data_batches', 'kind', 'text', true, '', ''),
+      ('data_batches', 'storage_path', 'text', true, '', ''),
+      ('data_batches', 'content_sha256', 'text', true, '', ''),
+      ('data_batches', 'bytes_size', 'bigint', true, '', ''),
+      ('data_batches', 'retrieved_at', 'timestamp with time zone', true, '', ''),
+      ('data_batches', 'created_at', 'timestamp with time zone', true, '', 'now()'),
+      ('data_batches', 'source_batch_id', 'uuid', false, '', ''),
+      ('data_batches', 'source_file_name', 'text', false, '', ''),
+      ('data_batches', 'fetch_mode', 'text', false, '', ''),
+      ('trading_calendars', 'id', 'uuid', true, '', 'gen_random_uuid()'),
+      ('trading_calendars', 'exchange', 'text', true, '', ''),
+      ('trading_calendars', 'session_date', 'date', true, '', ''),
+      ('trading_calendars', 'session_type', 'text', true, '', ''),
+      ('trading_calendars', 'timezone', 'text', true, '', '''Asia/Seoul''::text'),
+      ('trading_calendars', 'source', 'text', true, '', ''),
+      ('trading_calendars', 'source_version', 'text', true, '', ''),
+      ('trading_calendars', 'created_at', 'timestamp with time zone', true, '', 'now()'),
+      ('trading_calendars', 'source_batch_id', 'uuid', false, '', ''),
+      ('trading_calendars', 'content_sha256', 'text', false, '', ''),
+      ('trading_calendars', 'retrieved_at', 'timestamp with time zone', false, '', ''),
+      ('trading_calendar_versions', 'id', 'bigint', true, 'a', ''),
+      ('trading_calendar_versions', 'exchange', 'text', true, '', ''),
+      ('trading_calendar_versions', 'session_date', 'date', true, '', ''),
+      ('trading_calendar_versions', 'session_type', 'text', true, '', ''),
+      ('trading_calendar_versions', 'timezone', 'text', true, '', ''),
+      ('trading_calendar_versions', 'source', 'text', true, '', ''),
+      ('trading_calendar_versions', 'source_version', 'text', true, '', ''),
+      ('trading_calendar_versions', 'source_batch_id', 'uuid', true, '', ''),
+      ('trading_calendar_versions', 'content_sha256', 'text', true, '', ''),
+      ('trading_calendar_versions', 'retrieved_at', 'timestamp with time zone', true, '', ''),
+      ('trading_calendar_versions', 'created_at', 'timestamp with time zone', true, '', 'now()')
+    )
+    (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+    UNION ALL
+    (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+  ) THEN
+    RAISE EXCEPTION 'research publication column contract is missing or drifted';
   END IF;
 
   SELECT pg_get_indexdef(indexrelid) INTO actual_definition

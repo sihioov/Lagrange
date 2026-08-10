@@ -73,24 +73,32 @@ PGOPTIONS='-c lock_timeout=5s' sqlx migrate run
 ```
 
 Compose runs `research-schema-check` as a fail-closed one-shot and refuses to
-launch the worker until successful migrations 22–25 (with 25 latest), validated
-constraints, exact valid/ready indexes, RLS policies, append-only enforcement,
-and the exact `research_writer` role/grant contract exist.
+launch the worker until successful migrations 22–25 (with 25 latest), exact
+normalized PK/unique/CHECK definitions, the required publication column
+type/nullability/identity/default contract, exact valid/ready indexes, RLS
+policies, append-only enforcement, and the exact `research_writer` role/grant
+contract exist.
 After applying or repairing migrations, restart with:
 
 ```sh
 docker compose -f deploy/compose/compose.yml up -d research-worker
 ```
 
-The Raw bind root must be owned by UID/GID `10001:10001` with mode `0750`.
-Compose normally enforces this through the isolated `research-raw-init`
-one-shot. For manual pre-provisioning on Linux, use the deployment data path:
+The Raw bind tree must be readable by UID/GID `10001:10001`, while its
+directories plus `manifest.jsonl` and `commit.lock` must remain writable.
+Compose enforces this recursively through the isolated `research-raw-init`
+one-shot without following symlinks or crossing filesystems. For manual
+pre-provisioning on Linux, create the deployment data path before Compose:
 
 ```sh
 install -d -m 0750 /srv/lagrange/data/raw
 chown 10001:10001 /srv/lagrange/data/raw
 chmod 0750 /srv/lagrange/data/raw
 ```
+
+If a host-side collector writes nested Raw content after Compose has transferred
+ownership, rerun `research-raw-init` or use an operator-approved shared group/
+ACL workflow. Do not recursively follow symlinks while repairing ownership.
 
 Set `LAGRANGE_DATA_DIR=/srv/lagrange/data` (or the appropriate parent) before
 starting Compose. Compose binds its `raw` child at `/data/raw` and sets

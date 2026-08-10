@@ -209,7 +209,13 @@ services:
     network_mode: none
     restart: "no"
     entrypoint: ["/bin/sh", "-ec"]
-    command: ["chown 10001:10001 /data/raw && chmod 0750 /data/raw"]
+    command:
+      - |
+        find /data/raw -xdev -type d -exec chown 10001:10001 {} +
+        find /data/raw -xdev -type d -exec chmod 0750 {} +
+        find /data/raw -xdev -type f -exec chown 10001:10001 {} +
+        find /data/raw -xdev -type f \( -name manifest.jsonl -o -name commit.lock \) -exec chmod 0640 {} +
+        find /data/raw -xdev -type f ! \( -name manifest.jsonl -o -name commit.lock \) -exec chmod 0440 {} +
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
 

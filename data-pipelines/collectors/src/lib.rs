@@ -4,7 +4,7 @@ mod worker;
 
 pub use pipeline::{
     FailureClass, PipelineError, PipelineStage, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome,
-    RecoveryError, RecoveryPage, RecoveryReport, RunOutcome, ingest_and_publish,
+    RecoveryError, RecoveryPage, RecoveryPosition, RecoveryReport, RunOutcome, ingest_and_publish,
     provider_failure_class, recover_unpublished, recover_unpublished_page_with,
     recover_unpublished_with, store_failure_class,
 };

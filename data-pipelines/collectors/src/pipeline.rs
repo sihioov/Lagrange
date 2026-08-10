@@ -42,6 +42,10 @@ pub enum PipelineError {
     InvalidRecoveryCursor {
         cursor: BatchId,
     },
+    InvalidRecoverySnapshotBoundary {
+        batch_id: BatchId,
+    },
+    InvalidRecoverySnapshotPosition,
     InvalidRecoveryPageSize,
     Publication {
         batch_id: BatchId,
@@ -68,6 +72,8 @@ impl PipelineError {
             Self::Ingest { source } => source.batch_id(),
             Self::Manifest { .. }
             | Self::InvalidRecoveryCursor { .. }
+            | Self::InvalidRecoverySnapshotBoundary { .. }
+            | Self::InvalidRecoverySnapshotPosition
             | Self::InvalidRecoveryPageSize => None,
             Self::Publication { batch_id, .. }
             | Self::Sink { batch_id, .. }
@@ -81,6 +87,8 @@ impl PipelineError {
             Self::Ingest { .. } => PipelineStage::Ingest,
             Self::Manifest { .. }
             | Self::InvalidRecoveryCursor { .. }
+            | Self::InvalidRecoverySnapshotBoundary { .. }
+            | Self::InvalidRecoverySnapshotPosition
             | Self::InvalidRecoveryPageSize => PipelineStage::ReadManifest,
             Self::Publication { .. } => PipelineStage::VerifyRaw,
             Self::Sink { stage, .. } => *stage,
@@ -93,7 +101,10 @@ impl PipelineError {
         let retryable = match self {
             Self::Ingest { source } => ingest_error_is_retryable(source),
             Self::Manifest { source } => store_failure_class(source) == FailureClass::Retryable,
-            Self::InvalidRecoveryCursor { .. } | Self::InvalidRecoveryPageSize => false,
+            Self::InvalidRecoveryCursor { .. }
+            | Self::InvalidRecoverySnapshotBoundary { .. }
+            | Self::InvalidRecoverySnapshotPosition
+            | Self::InvalidRecoveryPageSize => false,
             Self::Publication { source, .. } => publication_error_is_retryable(source),
             Self::Sink { source, .. } => source.is_retryable(),
             Self::PartialPublication { .. } => false,
@@ -121,6 +132,13 @@ impl std::fmt::Display for PipelineError {
                     formatter,
                     "recovery cursor {cursor} is not in the canonical Raw manifest"
                 )
+            }
+            Self::InvalidRecoverySnapshotBoundary { batch_id } => write!(
+                formatter,
+                "recovery snapshot boundary {batch_id} is not in the canonical Raw manifest"
+            ),
+            Self::InvalidRecoverySnapshotPosition => {
+                formatter.write_str("recovery cursor requires an immutable snapshot high-water")
             }
             Self::InvalidRecoveryPageSize => {
                 formatter.write_str("recovery page size must be positive")
@@ -159,7 +177,10 @@ impl std::error::Error for PipelineError {
         match self {
             Self::Ingest { source } => Some(source),
             Self::Manifest { source } => Some(source),
-            Self::InvalidRecoveryCursor { .. } | Self::InvalidRecoveryPageSize => None,
+            Self::InvalidRecoveryCursor { .. }
+            | Self::InvalidRecoverySnapshotBoundary { .. }
+            | Self::InvalidRecoverySnapshotPosition
+            | Self::InvalidRecoveryPageSize => None,
             Self::Publication { source, .. } => Some(source),
             Self::Sink { source, .. } => Some(source),
             Self::PartialPublication { .. } => None,
@@ -249,10 +270,21 @@ pub struct RecoveryReport {
     pub skipped: Vec<BatchId>,
 }
 
-/// A bounded authoritative replay page. The cursor is the last exact batch
-/// whose outcome was emitted, and remains the input cursor for an empty page.
+/// Stable position within an append-order Raw manifest snapshot. `snapshot_after`
+/// excludes the prefix consumed by earlier snapshots; `snapshot_high_water`
+/// freezes this snapshot; and `cursor` resumes its canonical sorted page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RecoveryPosition {
+    pub snapshot_after: Option<BatchId>,
+    pub snapshot_high_water: Option<BatchId>,
+    pub cursor: Option<BatchId>,
+}
+
+/// A bounded authoritative replay page. The high-water fixes the append-order
+/// snapshot and the cursor is the last exact batch whose outcome was emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecoveryPage {
+    pub snapshot_high_water: Option<BatchId>,
     pub cursor: Option<BatchId>,
     pub has_more: bool,
 }
@@ -347,57 +379,127 @@ pub async fn recover_unpublished_with<E, F>(
 where
     F: FnMut(RecoveryBatchOutcome) -> Result<(), E>,
 {
-    let mut cursor = None;
+    let mut position = RecoveryPosition::default();
     loop {
-        let page =
-            recover_unpublished_page_with(store, sink, cursor, RECOVERY_PAGE_SIZE, &mut observer)
-                .await?;
-        if !page.has_more {
+        let page = recover_unpublished_page_with(
+            store,
+            sink,
+            position,
+            RECOVERY_PAGE_SIZE,
+            |outcome, _snapshot_high_water| observer(outcome),
+        )
+        .await?;
+        if page.has_more {
+            position.snapshot_high_water = page.snapshot_high_water;
+            position.cursor = page.cursor;
+            continue;
+        }
+        if page.snapshot_high_water == position.snapshot_after && page.cursor.is_none() {
             return Ok(());
         }
-        cursor = page.cursor;
+        position = RecoveryPosition {
+            snapshot_after: page.snapshot_high_water,
+            snapshot_high_water: None,
+            cursor: None,
+        };
     }
 }
 
 pub async fn recover_unpublished_page_with<E, F>(
     store: &RawStore,
     sink: &dyn PublicationSink,
-    after: Option<BatchId>,
+    position: RecoveryPosition,
     page_size: usize,
     mut observer: F,
 ) -> Result<RecoveryPage, RecoveryError<E>>
 where
-    F: FnMut(RecoveryBatchOutcome) -> Result<(), E>,
+    F: FnMut(RecoveryBatchOutcome, BatchId) -> Result<(), E>,
 {
     if page_size == 0 {
         return Err(RecoveryError::Pipeline(
             PipelineError::InvalidRecoveryPageSize,
         ));
     }
+    if position.cursor.is_some() && position.snapshot_high_water.is_none() {
+        return Err(RecoveryError::Pipeline(
+            PipelineError::InvalidRecoverySnapshotPosition,
+        ));
+    }
     let mut entries = store
         .read_manifest(PROVIDER_KRX, MARKET_KR)
         .map_err(|source| RecoveryError::Pipeline(PipelineError::Manifest { source }))?;
-    entries.sort_by(|left, right| {
+    let boundary_index = position
+        .snapshot_after
+        .map(|boundary| {
+            entries
+                .iter()
+                .position(|entry| entry.batch_id == boundary)
+                .ok_or(RecoveryError::Pipeline(
+                    PipelineError::InvalidRecoverySnapshotBoundary { batch_id: boundary },
+                ))
+        })
+        .transpose()?;
+    let start_of_snapshot = boundary_index.map_or(0, |index| index + 1);
+    let high_water_index = match position.snapshot_high_water {
+        Some(high_water) => Some(
+            entries
+                .iter()
+                .position(|entry| entry.batch_id == high_water)
+                .ok_or(RecoveryError::Pipeline(
+                    PipelineError::InvalidRecoverySnapshotBoundary {
+                        batch_id: high_water,
+                    },
+                ))?,
+        ),
+        None => entries.len().checked_sub(1),
+    };
+    if position.snapshot_high_water.is_some()
+        && high_water_index.is_some_and(|index| index < start_of_snapshot)
+    {
+        return Err(RecoveryError::Pipeline(
+            PipelineError::InvalidRecoverySnapshotPosition,
+        ));
+    }
+    let snapshot_high_water = high_water_index
+        .map(|index| entries[index].batch_id)
+        .or(position.snapshot_after);
+    let end_of_snapshot = high_water_index
+        .map_or(start_of_snapshot, |index| index + 1)
+        .max(start_of_snapshot);
+    entries[start_of_snapshot..end_of_snapshot].sort_by(|left, right| {
         left.retrieved_at
             .cmp(&right.retrieved_at)
             .then_with(|| left.batch_id.cmp(&right.batch_id))
     });
 
-    let start = match after {
+    let start = match position.cursor {
         Some(cursor) => entries
             .iter()
             .position(|entry| entry.batch_id == cursor)
-            .map(|position| position + 1)
+            .filter(|manifest_position| {
+                *manifest_position >= start_of_snapshot && *manifest_position < end_of_snapshot
+            })
+            .and_then(|_| {
+                entries[start_of_snapshot..end_of_snapshot]
+                    .iter()
+                    .position(|entry| entry.batch_id == cursor)
+            })
+            .map(|cursor_position| cursor_position + 1)
             .ok_or(RecoveryError::Pipeline(
                 PipelineError::InvalidRecoveryCursor { cursor },
             ))?,
         None => 0,
     };
-    let end = start.saturating_add(page_size).min(entries.len());
-    let has_more = end < entries.len();
-    let mut cursor = after;
+    let snapshot_len = end_of_snapshot - start_of_snapshot;
+    let end = start.saturating_add(page_size).min(snapshot_len);
+    let has_more = end < snapshot_len;
+    let mut cursor = position.cursor;
 
-    for manifest in entries.into_iter().skip(start).take(page_size) {
+    for manifest in entries
+        .into_iter()
+        .skip(start_of_snapshot + start)
+        .take(end - start)
+    {
         let batch_id = manifest.batch_id;
         let state = sink.publication_state(batch_id).await.map_err(|source| {
             RecoveryError::Pipeline(PipelineError::Sink {
@@ -418,10 +520,13 @@ where
                         source,
                     })
                 })?;
-                observer(RecoveryBatchOutcome::Recovered {
-                    batch_id,
-                    date: manifest.date,
-                })
+                observer(
+                    RecoveryBatchOutcome::Recovered {
+                        batch_id,
+                        date: manifest.date,
+                    },
+                    snapshot_high_water.expect("a non-empty snapshot has a high-water"),
+                )
                 .map_err(|source| RecoveryError::Observer { batch_id, source })?;
                 cursor = Some(batch_id);
             }
@@ -445,10 +550,13 @@ where
                         },
                     ));
                 }
-                observer(RecoveryBatchOutcome::Skipped {
-                    batch_id,
-                    date: manifest.date,
-                })
+                observer(
+                    RecoveryBatchOutcome::Skipped {
+                        batch_id,
+                        date: manifest.date,
+                    },
+                    snapshot_high_water.expect("a non-empty snapshot has a high-water"),
+                )
                 .map_err(|source| RecoveryError::Observer { batch_id, source })?;
                 cursor = Some(batch_id);
             }
@@ -459,5 +567,9 @@ where
             }
         }
     }
-    Ok(RecoveryPage { cursor, has_more })
+    Ok(RecoveryPage {
+        snapshot_high_water,
+        cursor,
+        has_more,
+    })
 }

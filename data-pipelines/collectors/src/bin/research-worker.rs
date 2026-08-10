@@ -7,11 +7,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use collectors::{
-    HealthcheckConfig, WORKER_ENV_KEYS, WaitOutcome, WorkerControl, WorkerError, WorkerEvent,
-    WorkerObserver, WorkerRunOutcome, bootstrap_worker, build_postgres_pool, healthcheck,
-    run_internal_ingest, run_internal_recovery_page_stream,
+    HealthcheckConfig, RecoveryPosition, WORKER_ENV_KEYS, WaitOutcome, WorkerControl, WorkerError,
+    WorkerEvent, WorkerObserver, WorkerRunOutcome, bootstrap_worker, build_postgres_pool,
+    healthcheck, run_internal_ingest, run_internal_recovery_page_stream,
 };
-use domain::{BatchId, TradingDate, UtcTimestamp};
+use domain::{TradingDate, UtcTimestamp};
 use serde::Serialize;
 use tokio::sync::{Mutex, watch};
 
@@ -30,7 +30,7 @@ enum Command {
     Once(TradingDate),
     Healthcheck,
     Help,
-    InternalRecover(Option<BatchId>),
+    InternalRecover(RecoveryPosition),
     InternalIngest(TradingDate, UtcTimestamp),
 }
 
@@ -58,6 +58,8 @@ struct SuccessRecord {
     age_seconds: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot_high_water: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     has_more: Option<bool>,
 }
@@ -175,17 +177,8 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
         [] => Ok(Command::Daemon),
         [flag] if flag == "--help" || flag == "-h" => Ok(Command::Help),
         [command] if command == "healthcheck" => Ok(Command::Healthcheck),
-        [command] if command == "__research-internal-recover" => Ok(Command::InternalRecover(None)),
-        [command, after, cursor]
-            if command == "__research-internal-recover" && after == "--after" =>
-        {
-            cursor
-                .parse()
-                .map(Some)
-                .map(Command::InternalRecover)
-                .map_err(|_| WorkerError::InvalidConfig {
-                    key: "internal-recovery-cursor",
-                })
+        [command, recovery_args @ ..] if command == "__research-internal-recover" => {
+            parse_internal_recovery_args(recovery_args).map(Command::InternalRecover)
         }
         [command, date, now] if command == "__research-internal-ingest" => {
             let date = TradingDate::parse(date).map_err(|_| WorkerError::InvalidConfig {
@@ -203,6 +196,41 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
         }
         _ => Err(WorkerError::InvalidConfig { key: "arguments" }),
     }
+}
+
+fn parse_internal_recovery_args(args: &[String]) -> Result<RecoveryPosition, WorkerError> {
+    if !args.len().is_multiple_of(2) {
+        return Err(WorkerError::InvalidConfig {
+            key: "internal-recovery-position",
+        });
+    }
+    let mut position = RecoveryPosition::default();
+    for pair in args.chunks_exact(2) {
+        let value = pair[1].parse().map_err(|_| WorkerError::InvalidConfig {
+            key: "internal-recovery-position",
+        })?;
+        let target = match pair[0].as_str() {
+            "--snapshot-after" => &mut position.snapshot_after,
+            "--snapshot-high-water" => &mut position.snapshot_high_water,
+            "--after" => &mut position.cursor,
+            _ => {
+                return Err(WorkerError::InvalidConfig {
+                    key: "internal-recovery-position",
+                });
+            }
+        };
+        if target.replace(value).is_some() {
+            return Err(WorkerError::InvalidConfig {
+                key: "internal-recovery-position",
+            });
+        }
+    }
+    if position.cursor.is_some() && position.snapshot_high_water.is_none() {
+        return Err(WorkerError::InvalidConfig {
+            key: "internal-recovery-position",
+        });
+    }
+    Ok(position)
 }
 
 fn environment_map() -> HashMap<String, String> {
@@ -275,17 +303,18 @@ async fn run_healthcheck(values: &HashMap<String, String>) -> Result<SuccessReco
         newest_eod_at: Some(status.newest_eod_at.to_rfc3339()),
         age_seconds: Some(status.age.as_secs()),
         cursor: None,
+        snapshot_high_water: None,
         has_more: None,
     })
 }
 
 async fn run_internal_recover(
     values: &HashMap<String, String>,
-    after: Option<BatchId>,
+    position: RecoveryPosition,
 ) -> Result<SuccessRecord, WorkerError> {
     let stdout = std::io::stdout();
     let mut writer = stdout.lock();
-    let page = run_internal_recovery_page_stream(values, after, &mut writer).await?;
+    let page = run_internal_recovery_page_stream(values, position, &mut writer).await?;
     Ok(SuccessRecord {
         status: "ok",
         phase: "recovery",
@@ -295,6 +324,10 @@ async fn run_internal_recover(
         newest_eod_at: None,
         age_seconds: None,
         cursor: page.cursor.map(|cursor| cursor.to_string()),
+        snapshot_high_water: Some(
+            page.snapshot_high_water
+                .map(|high_water| high_water.to_string()),
+        ),
         has_more: Some(page.has_more),
     })
 }
@@ -314,6 +347,7 @@ async fn run_internal_collect(
         newest_eod_at: None,
         age_seconds: None,
         cursor: None,
+        snapshot_high_water: None,
         has_more: None,
     })
 }
@@ -333,6 +367,7 @@ fn run_record(outcome: WorkerRunOutcome, date: Option<TradingDate>) -> SuccessRe
         newest_eod_at: None,
         age_seconds: None,
         cursor: None,
+        snapshot_high_water: None,
         has_more: None,
     }
 }

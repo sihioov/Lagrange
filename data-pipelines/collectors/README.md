@@ -111,8 +111,10 @@ The daemon schedules the current Korean civil date once per day at
 `RESEARCH_RUN_AT_KST`, default `16:30` KST. A daemon started at or after that
 time performs one immediate current-KST-date catch-up after recovery, then
 schedules the next day. Starting before the configured time waits for today's
-slot. The one-shot and daemon both perform startup recovery before checking or
-fetching their target date. The duplicate check skips a date only when an `EOD`
+slot. The daemon repeats recovery immediately before every catch-up or scheduled
+cycle, so a Raw append racing the preceding completion check is consumed no
+later than the next cycle. The one-shot and daemon both perform startup recovery
+before checking or fetching their target date. The duplicate check skips a date only when an `EOD`
 row already exists, so restart catch-up is idempotent; `EOD_UNAVAILABLE` does
 not suppress a later retry.
 
@@ -172,14 +174,19 @@ seconds. Retry backoff is stable exponential delay from 10 seconds, capped at
 
 ### Recovery, failures, and events
 
-Recovery scans the append-only Raw manifest oldest-first by `retrieved_at` and
-batch ID. Each contained helper emits at most 16 strict per-batch NDJSON events
-plus a terminal immutable batch-ID cursor. The parent validates the cursor
-against that canonical order and retains the last validated event across a
-retryable timeout/failure, so the next 60-second helper resumes strictly after
-it. A commit whose event was lost is safely exact-replayed once. Appends after a
-cursor are picked up on later pages; an absent cursor is a permanent integrity
-failure. Only after all pages finish is the in-memory cursor reset, preserving
+Recovery captures the append-order manifest's immutable batch-ID high-water,
+then sorts only that fixed prefix oldest-first by `retrieved_at` and batch ID.
+Each contained helper emits at most 16 strict per-batch NDJSON events plus a
+terminal `snapshot_high_water`/cursor/`has_more`. Events carry the same
+high-water so the parent can retain the last validated snapshot and cursor
+across a retryable timeout/failure; the next 60-second helper resumes strictly
+after it. A commit whose event was lost is safely exact-replayed once. After a
+snapshot finishes, recovery consumes only the append suffix after its
+high-water and completes only when a fresh completion check observes the same
+append-order high-water. Thus a concurrently appended backdated batch cannot
+sort behind an already emitted cursor and be skipped. Missing or mismatched
+high-water/cursor values are permanent integrity failures. Only after an
+unchanged completion check is the in-memory position reset, preserving
 authoritative full-history replay on the next process start. For every exact
 source batch recovery checks PostgreSQL state:
 
@@ -233,11 +240,17 @@ PGOPTIONS='-c lock_timeout=5s' sqlx migrate run
 The Compose `research-schema-check` does not migrate. It runs as the pinned
 PostgreSQL image's non-root UID with all capabilities dropped, a read-only root,
 and only the administrator secret. It fails closed on migration-ledger,
-validated-constraint, exact valid/ready index, RLS/policy, append-only trigger,
+exact normalized PK/unique/CHECK definition, required column type/nullability/
+identity/default, exact valid/ready index, RLS/policy, append-only trigger,
 role-attribute/membership, or exact grant drift. `research-raw-init` separately
-runs without network or secrets, sets the Raw bind mount to UID/GID
-`10001:10001` and mode `0750`, and exits. Only after PostgreSQL is healthy and
-both one-shots succeed may Compose start the unprivileged worker.
+runs without network or secrets and recursively prepares existing directories
+and regular files on the Raw filesystem for UID/GID `10001:10001`. It does not
+follow symlinks or cross filesystems; directories are `0750`, immutable evidence
+is read-only to the worker, and `manifest.jsonl`/`commit.lock` remain writable.
+Only after PostgreSQL is healthy and both one-shots succeed may Compose start
+the unprivileged worker. If a host CLI writes new Raw content after this
+ownership transfer, rerun the init one-shot or use an operator-approved shared
+ownership workflow before restarting the worker.
 
 Compose deliberately keeps the host bind `${LAGRANGE_DATA_DIR}/raw:/data/raw`
 while setting `RESEARCH_RAW_ROOT=/data`, because `RawStore` itself appends the
@@ -262,8 +275,11 @@ pwsh -NoProfile -File scripts/qa/research-worker-smoke.ps1
 ```
 
 The smoke creates an isolated Compose project, proves the gate fails before
-migrations and under index/policy/trigger/overprivilege mutations, applies
-migrations with the finite external lock timeout, and restores a passing gate.
+migrations and under same-name CHECK, dropped-column, index, policy, trigger,
+and overprivilege mutations, applies migrations with the finite external lock
+timeout, and restores a passing gate. A named-volume Linux probe also starts
+with nested host-owned Raw, proves UID 10001 can read evidence and append/lock
+the manifest after init, and proves an outside symlink target was untouched.
 It then creates Raw with manual `collectors ingest-krx --root <data>`, proves the
 direct host path (never `raw/raw`), and proves worker startup recovery publishes
 that same manifest before any fetch. It verifies health, all four equal non-null

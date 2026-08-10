@@ -55,6 +55,10 @@ validator_self_tests() (
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a read-only Raw mount'; fi
   cp "$test_compose.baseline" "$test_compose"
 
+  sed 's#find /data/raw -xdev -type d#find -L /data/raw -type l#g' "$test_compose.baseline" >"$test_compose"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a symlink-following Raw init'; fi
+  cp "$test_compose.baseline" "$test_compose"
+
   cp "$test_root/deploy/compose/research-schema-check.sql" "$test_root/deploy/compose/research-schema-check.sql.baseline"
   sed 's/has_sequence_privilege/has_sequence_permission/' "$test_root/deploy/compose/research-schema-check.sql.baseline" >"$test_root/deploy/compose/research-schema-check.sql"
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a weakened schema gate'; fi
@@ -180,7 +184,10 @@ require(raw_init.get("image") == alpine and raw_init.get("user") == "0:0" and ra
 require(raw_init.get("network_mode") == "none" and raw_init.get("restart") == "no" and "secrets" not in raw_init and "networks" not in raw_init, "research-raw-init isolation is incorrect")
 require(len(init_raw) == 1 and not init_raw[0].get("read_only", False) and init_raw[0].get("source") == raw[0].get("source"), "research-raw-init Raw mount is incorrect")
 init_command = " ".join(raw_init.get("command", []))
-require("chown 10001:10001 /data/raw" in init_command and "chmod 0750 /data/raw" in init_command, "research-raw-init command is incorrect")
+require("find /data/raw -xdev -type d" in init_command and "find /data/raw -xdev -type f" in init_command, "research-raw-init must recurse without crossing filesystems")
+require("manifest.jsonl" in init_command and "commit.lock" in init_command, "research-raw-init mutable-file contract is missing")
+require("chown 10001:10001" in init_command and all(mode in init_command for mode in ("chmod 0750", "chmod 0640", "chmod 0440")), "research-raw-init ownership/mode contract is missing")
+require(not re.search(r"(^|\s)-L(\s|$)", init_command) and "-type l" not in init_command, "research-raw-init must never follow or mutate symlinks")
 
 schema = services["research-schema-check"]
 postgres = "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a"
@@ -224,6 +231,7 @@ done
 grep -Eq '^scripts/qa/\*\.sh[[:space:]]+text[[:space:]]+eol=lf[[:space:]]*$' "$gitattributes" || fail 'scripts/qa shell scripts must be forced to LF by .gitattributes'
 schema_text="$(<"$schema_sql")"
 for token in _sqlx_migrations 'version BETWEEN 22 AND 25' 'max(version)' convalidated \
+  pg_get_constraintdef format_type attnotnull attidentity pg_get_expr storage_path EXCEPT \
   data_batches_source_file_uq trading_calendar_versions_source_lookup_idx \
   indisunique indisvalid indisready indislive relrowsecurity research_writer \
   rolcanlogin rolsuper rolbypassrls rolcreatedb rolcreaterole pg_auth_members \
@@ -283,6 +291,39 @@ cleanup() {
 }
 trap cleanup EXIT
 
+raw_init_ownership_probe() (
+  alpine='alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d'
+  probe_id="${project}-raw-init"
+  raw_volume="${probe_id}-raw"
+  outside_volume="${probe_id}-outside"
+  trap 'dkr volume rm -f "$raw_volume" "$outside_volume" >/dev/null 2>&1 || true' EXIT
+  dkr volume create "$raw_volume" >/dev/null || fail 'Raw init probe volume creation failed'
+  dkr volume create "$outside_volume" >/dev/null || fail 'Raw init outside volume creation failed'
+  dkr run --rm --network none --user 0:0 -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
+    mkdir -p /data/raw/manifests/provider=KRX/market=KR /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture
+    printf "{}\n" > /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
+    : > /data/raw/manifests/provider=KRX/market=KR/commit.lock
+    printf evidence > /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+    chmod 0644 /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl /data/raw/manifests/provider=KRX/market=KR/commit.lock /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+    chown -R 12345:12345 /data/raw
+    printf outside > /outside/sentinel
+    chown 12345:12345 /outside/sentinel
+    chmod 0600 /outside/sentinel
+    ln -s /outside /data/raw/outside-link
+  ' >/dev/null || fail 'Raw init ownership fixture setup failed'
+  init_command="$(rc config --format json | python3 -c 'import json,sys; value=json.load(sys.stdin)["services"]["research-raw-init"]["command"]; print("\n".join(value) if isinstance(value,list) else value)')" || fail 'Raw init command extraction failed'
+  dkr run --rm --network none --user 0:0 -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec "$init_command" || fail 'recursive Raw init probe failed'
+  dkr run --rm --network none --user 10001:10001 -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
+    test -r /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+    printf recovered >> /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
+    printf lock >> /data/raw/manifests/provider=KRX/market=KR/commit.lock
+  ' || fail 'UID 10001 cannot use existing Raw files'
+  dkr run --rm --network none --user 0:0 -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
+    test "$(cat /outside/sentinel)" = outside
+    test "$(stat -c "%u:%g:%a" /outside/sentinel)" = 12345:12345:600
+  ' || fail 'Raw init changed the outside symlink target'
+)
+
 install -d -m 0700 "$raw_root/raw"
 [ -d "$raw_root/raw" ] && [ -w "$raw_root/raw" ] || fail 'disposable Raw directory is not writable'
 umask 077
@@ -305,6 +346,7 @@ export RESEARCH_MAX_PUBLICATION_AGE_SECS=315576000
 export RESEARCH_RUN_AT_KST="$(TZ=Asia/Seoul date -d '+12 hours' +%H:%M 2>/dev/null || TZ=Asia/Seoul date +%H:%M)"
 
 created=1
+raw_init_ownership_probe
 audit_root="$temp_root/context-audit"
 audit_dockerfile="$temp_root/context-audit.Dockerfile"
 install -d "$audit_root/target" "$audit_root/credentials" "$audit_root/secrets" "$audit_root/data/raw" \
@@ -392,6 +434,14 @@ psql_admin() {
 }
 
 schema_gate_must_pass 'the migrated database'
+psql_admin 'ALTER TABLE data_batches DROP CONSTRAINT data_batches_fetch_mode_check; ALTER TABLE data_batches ADD CONSTRAINT data_batches_fetch_mode_check CHECK (true)' 'weaken publication CHECK'
+schema_gate_must_fail 'a same-name weakened publication CHECK'
+psql_admin "ALTER TABLE data_batches DROP CONSTRAINT data_batches_fetch_mode_check; ALTER TABLE data_batches ADD CONSTRAINT data_batches_fetch_mode_check CHECK (fetch_mode IS NULL OR fetch_mode IN ('synthetic', 'credentialed'))" 'restore publication CHECK'
+schema_gate_must_pass 'the restored publication CHECK'
+psql_admin 'ALTER TABLE data_batches DROP COLUMN storage_path' 'drop publication storage_path'
+schema_gate_must_fail 'a dropped publication storage_path column'
+psql_admin 'ALTER TABLE data_batches ADD COLUMN storage_path text NOT NULL' 'restore publication storage_path'
+schema_gate_must_pass 'the restored publication storage_path column'
 psql_admin 'DROP INDEX CONCURRENTLY data_batches_source_file_uq' 'drop source index'
 psql_admin 'CREATE INDEX data_batches_source_file_uq ON data_batches (provider)' 'create drifted source index'
 schema_gate_must_fail 'a drifted same-name index'

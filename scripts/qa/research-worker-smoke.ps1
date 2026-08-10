@@ -79,6 +79,14 @@ function Invoke-ValidatorSelfTests {
         if ($LASTEXITCODE -eq 0) { throw 'validator accepted a read-only Raw mount' }
         [IO.File]::WriteAllText($testCompose, $baselineCompose)
 
+        [IO.File]::WriteAllText(
+            $testCompose,
+            $baselineCompose.Replace('find /data/raw -xdev -type d', 'find -L /data/raw -type l')
+        )
+        & pwsh -NoProfile -File $testScript -StaticOnly *> $null
+        if ($LASTEXITCODE -eq 0) { throw 'validator accepted a symlink-following Raw init' }
+        [IO.File]::WriteAllText($testCompose, $baselineCompose)
+
         $testSchemaSql = Join-Path $testRoot 'deploy/compose/research-schema-check.sql'
         $baselineSchemaSql = Get-Content -Raw -LiteralPath $testSchemaSql
         [IO.File]::WriteAllText($testSchemaSql, $baselineSchemaSql.Replace('has_sequence_privilege', 'has_sequence_permission'))
@@ -204,7 +212,13 @@ function Invoke-StaticChecks {
         throw 'research-raw-init isolation or Raw ownership contract is incorrect'
     }
     $initCommand = @($rawInit.command) -join ' '
-    if ($initCommand -notmatch 'chown 10001:10001 /data/raw' -or $initCommand -notmatch 'chmod 0750 /data/raw') {
+    if ($initCommand -notmatch 'find /data/raw -xdev -type d' -or
+        $initCommand -notmatch 'find /data/raw -xdev -type f' -or
+        $initCommand -notmatch 'manifest.jsonl' -or $initCommand -notmatch 'commit.lock' -or
+        $initCommand -notmatch 'chown 10001:10001' -or
+        $initCommand -notmatch 'chmod 0750' -or $initCommand -notmatch 'chmod 0640' -or
+        $initCommand -notmatch 'chmod 0440' -or
+        $initCommand -match '(?:^|\s)-L(?:\s|$)' -or $initCommand -match '-type l') {
         throw 'research-raw-init command is incorrect'
     }
 
@@ -226,6 +240,8 @@ function Invoke-StaticChecks {
     $schemaSql = Get-Content -Raw -LiteralPath $schemaSqlFile
     foreach ($required in @(
         '_sqlx_migrations', 'version BETWEEN 22 AND 25', 'max(version)', 'convalidated',
+        'pg_get_constraintdef', 'format_type', 'attnotnull', 'attidentity',
+        'pg_get_expr', 'storage_path', 'EXCEPT',
         'data_batches_source_file_uq', 'trading_calendar_versions_source_lookup_idx',
         'indisunique', 'indisvalid', 'indisready', 'indislive', 'relrowsecurity',
         'research_writer', 'rolcanlogin', 'rolsuper', 'rolbypassrls', 'rolcreatedb',
@@ -339,6 +355,16 @@ function Assert-SchemaGatePasses([string]$Context) {
 }
 
 function Invoke-SchemaGateMutationTests {
+    Invoke-Psql 'ALTER TABLE data_batches DROP CONSTRAINT data_batches_fetch_mode_check; ALTER TABLE data_batches ADD CONSTRAINT data_batches_fetch_mode_check CHECK (true);' | Out-Null
+    Assert-SchemaGateFails 'a same-name weakened publication CHECK'
+    Invoke-Psql "ALTER TABLE data_batches DROP CONSTRAINT data_batches_fetch_mode_check; ALTER TABLE data_batches ADD CONSTRAINT data_batches_fetch_mode_check CHECK (fetch_mode IS NULL OR fetch_mode IN ('synthetic', 'credentialed'));" | Out-Null
+    Assert-SchemaGatePasses 'the restored publication CHECK'
+
+    Invoke-Psql 'ALTER TABLE data_batches DROP COLUMN storage_path;' | Out-Null
+    Assert-SchemaGateFails 'a dropped publication storage_path column'
+    Invoke-Psql 'ALTER TABLE data_batches ADD COLUMN storage_path text NOT NULL;' | Out-Null
+    Assert-SchemaGatePasses 'the restored publication storage_path column'
+
     Invoke-Psql 'DROP INDEX CONCURRENTLY data_batches_source_file_uq; CREATE INDEX data_batches_source_file_uq ON data_batches (provider);' | Out-Null
     Assert-SchemaGateFails 'a drifted same-name index'
     Invoke-Psql 'DROP INDEX CONCURRENTLY data_batches_source_file_uq; CREATE UNIQUE INDEX CONCURRENTLY data_batches_source_file_uq ON data_batches (provider, market, source_batch_id, source_file_name) WHERE source_batch_id IS NOT NULL;' | Out-Null
@@ -358,6 +384,52 @@ function Invoke-SchemaGateMutationTests {
     Assert-SchemaGateFails 'a forbidden order-table grant'
     Invoke-Psql 'REVOKE DELETE ON orders FROM research_writer;' | Out-Null
     Assert-SchemaGatePasses 'the restored least-privilege role'
+}
+
+function Invoke-RawInitOwnershipTest {
+    $alpineImage = 'alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d'
+    $probeId = "lagrange-raw-init-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+    $rawVolume = "$probeId-raw"
+    $outsideVolume = "$probeId-outside"
+    try {
+        & docker volume create $rawVolume *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'Raw init probe volume creation failed' }
+        & docker volume create $outsideVolume *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'Raw init outside volume creation failed' }
+        & docker run --rm --network none --user 0:0 -v "${rawVolume}:/data/raw" -v "${outsideVolume}:/outside" $alpineImage /bin/sh -ec @'
+mkdir -p /data/raw/manifests/provider=KRX/market=KR /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture
+printf '{}\n' > /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
+: > /data/raw/manifests/provider=KRX/market=KR/commit.lock
+printf evidence > /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+chmod 0644 /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl /data/raw/manifests/provider=KRX/market=KR/commit.lock /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+chown -R 12345:12345 /data/raw
+printf outside > /outside/sentinel
+chown 12345:12345 /outside/sentinel
+chmod 0600 /outside/sentinel
+ln -s /outside /data/raw/outside-link
+'@ *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'Raw init ownership fixture setup failed' }
+
+        $resolved = Invoke-ResearchCompose config --format json | ConvertFrom-Json
+        $initCommand = @($resolved.services.'research-raw-init'.command) -join "`n"
+        & docker run --rm --network none --user 0:0 -v "${rawVolume}:/data/raw" -v "${outsideVolume}:/outside" $alpineImage /bin/sh -ec $initCommand
+        if ($LASTEXITCODE -ne 0) { throw 'recursive Raw init probe failed' }
+
+        & docker run --rm --network none --user 10001:10001 -v "${rawVolume}:/data/raw" -v "${outsideVolume}:/outside" $alpineImage /bin/sh -ec @'
+test -r /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+printf recovered >> /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
+printf lock >> /data/raw/manifests/provider=KRX/market=KR/commit.lock
+'@
+        if ($LASTEXITCODE -ne 0) { throw 'UID 10001 cannot use existing Raw files' }
+        & docker run --rm --network none --user 0:0 -v "${outsideVolume}:/outside" $alpineImage /bin/sh -ec @'
+test "$(cat /outside/sentinel)" = outside
+test "$(stat -c '%u:%g:%a' /outside/sentinel)" = 12345:12345:600
+'@
+        if ($LASTEXITCODE -ne 0) { throw 'Raw init changed the outside symlink target' }
+    }
+    finally {
+        & docker volume rm -f $rawVolume $outsideVolume *> $null
+    }
 }
 
 function Get-PublicationEvidence {
@@ -448,6 +520,7 @@ try {
 
     $created = $true
     Invoke-BuildContextAudit
+    Invoke-RawInitOwnershipTest
     Invoke-ResearchCompose up -d --wait postgres | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL did not become healthy' }
 
