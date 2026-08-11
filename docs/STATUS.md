@@ -30,7 +30,7 @@
 
 ## 2. 어디까지 왔나
 
-**한 줄 요약: 기능·컴파일 검사는 통과한다. 릴리스는 외부 조달과 실제 KRX provider에 막혀 있고, 그 차단은 fail-closed 설계의 정상 상태다. 단, 저장소 전체 rustfmt gate에는 이번 문서 작업과 무관한 기존 12개 파일 drift가 남아 있다.**
+**한 줄 요약: 기능·컴파일·rustfmt 검사는 통과한다. 릴리스는 외부 조달과 실제 KRX provider에 막혀 있고, 그 차단은 fail-closed 설계의 정상 상태다.**
 
 ### 2.1 게이트 판정 (2026-08-10 재실행, `--include-failure --include-restore` 포함)
 
@@ -54,7 +54,7 @@
 | Python (nt + 골든) | **239개 통과**, 1 스킵 — phase-0 골든 불변 |
 | Web (vitest + tsc) | **48개 통과**, `openapi:check` 클린, `tsc --noEmit` 클린 |
 | clippy (workspace, all-targets, all-features) | `-D warnings` 클린 (08-11 재실행) |
-| rustfmt (workspace) | **기존 drift로 FAIL** — 12개 파일; 이번 문서 변경 파일에는 해당 없음 |
+| rustfmt (workspace) | **PASS** — 08-11 GitHub Actions 도입 시 기존 drift를 pinned rustfmt로 기계 정규화 |
 
 ### 2.3 최종 판정 아티팩트 (`.omo/evidence/`)
 
@@ -140,6 +140,13 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 | **Compose·Risk 이음매** | direct host `<data>/raw` 계약, `research_writer` 최소권한, secret 파일, no-follow recursive Raw UID init, exact constraint 정의/column/index/normalized append-only function body까지 닫는 non-root schema gate와 mutation smoke를 연결했다. Risk Gateway와 health는 적용 가능한 최신 `EOD` 및 역사 backfill을 stale로 유지하는 동일 effective instant를 사용하며 `EOD_UNAVAILABLE`은 제외한다 | `30e2679`~현재 |
 
 이 완료 판정은 저장·발행·복구·배포 **이음매**에 대한 것이다. 실제 라이선스 KRX HTTP transport, production credential/endpoint, entitlement-aware provider 동작, 외부 role/secret/data-volume provisioning은 구현·조달되지 않았다. 따라서 실제 KRX feed가 운영 중이라는 뜻이 아니다.
+
+### 3.8 GitHub Actions CI (2026-08-11)
+
+- Pull request와 `main` push는 policy, rustfmt, workspace 전체 strict Clippy, deterministic Phase 0 생성, disposable PostgreSQL, Rust workspace 전체 테스트를 각각 독립 GitHub-hosted runner에서 수행한다.
+- `main` push는 별도 runner에서 기존 research-worker Docker/Compose functional smoke를 한 번 더 수행한다. 수동 `workflow_dispatch`는 지원하지만 **`schedule`/nightly 트리거는 없다.**
+- 260-session Phase 0 데이터는 tracked generator에서 780개 bar로 runner 내부에 생성되고 테스트 종료와 함께 폐기된다. `data/phase0`, Rust `target/`, 테스트 결과는 artifact나 cache로 업로드하지 않는다.
+- 로컬 사전 검증에서 생성 데이터로 기존 clean-checkout `job-queue --test backtest_runner` 누락을 복구했고 12/12 통과했다. QA PostgreSQL을 포함한 `cargo test --workspace --locked --no-fail-fast`는 310.4초에 실패 binary 없이 종료했고, workspace all-target/all-feature Clippy `-D warnings`도 통과했다. GitHub-hosted Linux의 실제 디스크·시간 증거는 첫 push 실행에서 확정한다.
 
 ---
 
