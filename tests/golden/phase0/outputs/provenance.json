@@ -2,13 +2,13 @@
   "barrier": {
     "future_field_violations": []
   },
-  "catalog_content_hash": "sha256:f835858f928063240e21469a0cf628888571891b7f4ef381b0e56aed998e74d8",
-  "code_commit": "7a1948b0788fc8cf39e30ea930a215a18d4b9800",
-  "config_hash": "sha256:f394b996c3a5837c53bd7db6f1972718e412df192c622d32bb6c2349b38404a1",
+  "catalog_content_hash": "sha256:f0c7f0e2ca1d916474efbcc8ea8ce04160677fa3979777e661bbe94e09be9d37",
+  "code_commit": "9f319ca55679a801402da92df23a8c49291da645",
+  "config_hash": "sha256:b0c7df9779ba35650823a4912335bf2333d60c551a18e33431b8752e831a9d9c",
   "data_generator": "synth_data",
-  "data_generator_version": "1.0.0",
+  "data_generator_version": "2.0.0",
   "data_seed": 42,
-  "dataset_version": "kr-etf-daily-phase0-v1",
+  "dataset_version": "kr-etf-daily-phase0-v2",
   "engine": "nautilustrader",
   "engine_version": "1.231.0",
   "installed_engine_version": "1.231.0",

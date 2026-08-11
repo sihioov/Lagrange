@@ -1,11 +1,11 @@
 {
-  "golden_id": "kr-etf-phase0-next-open-v1",
+  "golden_id": "kr-etf-phase0-next-open-v2",
   "manifest_version": "1",
   "versions": {
-    "data": {"id": "kr-etf-daily-phase0-v1", "version": "1.0.0", "source": "synthetic"},
+    "data": {"id": "kr-etf-daily-phase0-v2", "version": "2.0.0", "source": "synthetic"},
     "strategy": {"id": "ma200-trend", "version": "1.0.0"},
     "engine": {"name": "nautilustrader", "version": "1.231.0"},
-    "config": {"id": "golden-config-phase0-v1"},
+    "config": {"id": "golden-config-phase0-v2"},
     "seed": 42,
     "timezone": "Asia/Seoul"
   },

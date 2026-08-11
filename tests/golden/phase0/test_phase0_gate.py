@@ -57,7 +57,7 @@ ARTIFACTS = [
     "provenance.json",
 ]
 
-GOLDEN_ID = "kr-etf-phase0-next-open-v1"
+GOLDEN_ID = "kr-etf-phase0-next-open-v2"
 
 
 # --------------------------------------------------------------------------- #
