@@ -448,6 +448,13 @@ async fn run_in_scratch(
         use std::os::unix::process::CommandExt;
         command.as_std_mut().process_group(0);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command
+            .as_std_mut()
+            .creation_flags(windows_child_creation_flags());
+    }
     if cfg!(windows) {
         if let Some(system_root) = std::env::var_os("SystemRoot") {
             command.env("SystemRoot", system_root);
@@ -462,7 +469,8 @@ async fn run_in_scratch(
     }
 
     let mut child = command.spawn().map_err(|_| TargetChildError::Launch)?;
-    if process_tree.attach(&child).is_err() {
+    if process_tree.attach(&child).is_err() || process_tree.start(&child).is_err() {
+        let _ = process_tree.terminate();
         let _ = settle_direct_child(&mut child, cleanup_deadline).await;
         return Err(TargetChildError::Termination);
     }
@@ -471,11 +479,11 @@ async fn run_in_scratch(
         None => {
             let tree_terminated = process_tree.terminate().is_ok();
             let direct_reaped = settle_direct_child(&mut child, cleanup_deadline).await;
-            return Err(if tree_terminated && direct_reaped {
-                TargetChildError::Launch
-            } else {
-                TargetChildError::Termination
-            });
+            if tree_terminated && direct_reaped {
+                process_tree.disarm_reuse_sensitive_identity();
+                return Err(TargetChildError::Launch);
+            }
+            return Err(TargetChildError::Termination);
         }
     };
     let mut stderr_reader = tokio::spawn(drain_bounded(stderr, MAX_STDERR_BYTES));
@@ -483,7 +491,7 @@ async fn run_in_scratch(
         Ok(Ok(exit)) => exit,
         Ok(Err(_)) => {
             terminate_and_settle(
-                &process_tree,
+                &mut process_tree,
                 &mut child,
                 &mut stderr_reader,
                 cleanup_deadline,
@@ -493,7 +501,7 @@ async fn run_in_scratch(
         }
         Err(_) => {
             terminate_and_settle(
-                &process_tree,
+                &mut process_tree,
                 &mut child,
                 &mut stderr_reader,
                 cleanup_deadline,
@@ -510,11 +518,12 @@ async fn run_in_scratch(
             if !tree_terminated || !direct_reaped {
                 return Err(TargetChildError::Termination);
             }
+            process_tree.disarm_reuse_sensitive_identity();
             return Err(TargetChildError::Exited);
         }
         Err(_) => {
             terminate_and_settle(
-                &process_tree,
+                &mut process_tree,
                 &mut child,
                 &mut stderr_reader,
                 cleanup_deadline,
@@ -523,6 +532,11 @@ async fn run_in_scratch(
             return Err(TargetChildError::Timeout);
         }
     }
+
+    // On Unix, a numeric process-group ID can eventually be reused. Once the
+    // direct child is reaped and inherited stderr has reached a clean EOF,
+    // there is no remaining descendant to target, so Drop must not signal it.
+    process_tree.disarm_reuse_sensitive_identity();
 
     if tokio::time::Instant::now() >= operation_deadline {
         return Err(TargetChildError::Timeout);
@@ -546,7 +560,7 @@ async fn run_in_scratch(
 }
 
 async fn terminate_and_settle(
-    process_tree: &ProcessTree,
+    process_tree: &mut ProcessTree,
     child: &mut tokio::process::Child,
     stderr_reader: &mut tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>,
     cleanup_deadline: tokio::time::Instant,
@@ -557,6 +571,7 @@ async fn terminate_and_settle(
         .await
         .is_ok();
     if tree_terminated && direct_reaped && reader_settled {
+        process_tree.disarm_reuse_sensitive_identity();
         Ok(())
     } else {
         Err(TargetChildError::Termination)
@@ -579,9 +594,33 @@ async fn settle_direct_child(
     )
 }
 
+struct TerminationArm {
+    armed: bool,
+}
+
+impl TerminationArm {
+    const fn new_disarmed() -> Self {
+        Self { armed: false }
+    }
+
+    fn arm(&mut self) {
+        self.armed = true;
+    }
+
+    #[cfg(unix)]
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    const fn is_armed(&self) -> bool {
+        self.armed
+    }
+}
+
 #[cfg(unix)]
 struct ProcessTree {
     process_group: Option<i32>,
+    arm: TerminationArm,
 }
 
 #[cfg(unix)]
@@ -589,16 +628,25 @@ impl ProcessTree {
     fn prepare() -> Result<Self, TargetChildError> {
         Ok(Self {
             process_group: None,
+            arm: TerminationArm::new_disarmed(),
         })
     }
 
     fn attach(&mut self, child: &tokio::process::Child) -> Result<(), TargetChildError> {
         let pid = child.id().ok_or(TargetChildError::Termination)?;
         self.process_group = Some(i32::try_from(pid).map_err(|_| TargetChildError::Termination)?);
+        self.arm.arm();
+        Ok(())
+    }
+
+    fn start(&self, _child: &tokio::process::Child) -> Result<(), TargetChildError> {
         Ok(())
     }
 
     fn terminate(&self) -> Result<(), TargetChildError> {
+        if !self.arm.is_armed() {
+            return Ok(());
+        }
         let process_group = self.process_group.ok_or(TargetChildError::Termination)?;
         // SAFETY: the spawned `uv` process is placed in its own process group
         // before spawn. A negative, checked child PID targets only that group.
@@ -609,18 +657,104 @@ impl ProcessTree {
             Err(TargetChildError::Termination)
         }
     }
+
+    fn disarm_reuse_sensitive_identity(&mut self) {
+        self.arm.disarm();
+    }
 }
 
 #[cfg(unix)]
 impl Drop for ProcessTree {
     fn drop(&mut self) {
-        let _ = self.terminate();
+        if self.arm.is_armed() {
+            let _ = self.terminate();
+        }
+    }
+}
+
+#[cfg(windows)]
+const fn windows_child_creation_flags() -> u32 {
+    windows_sys::Win32::System::Threading::CREATE_SUSPENDED
+}
+
+#[cfg(windows)]
+fn resume_suspended_child(child: &tokio::process::Child) -> Result<(), TargetChildError> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetProcessIdOfThread, OpenThread, ResumeThread, THREAD_QUERY_LIMITED_INFORMATION,
+        THREAD_SUSPEND_RESUME,
+    };
+
+    let pid = child.id().ok_or(TargetChildError::Termination)?;
+    let entry_size = u32::try_from(std::mem::size_of::<THREADENTRY32>())
+        .map_err(|_| TargetChildError::Termination)?;
+    // SAFETY: this takes a read-only system thread snapshot and returns a new
+    // owned handle, closed on every path below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(TargetChildError::Termination);
+    }
+
+    let mut entry = THREADENTRY32 {
+        dwSize: entry_size,
+        ..THREADENTRY32::default()
+    };
+    // SAFETY: `snapshot` is live and `entry` points to a correctly sized,
+    // initialized THREADENTRY32.
+    let mut has_entry = unsafe { Thread32First(snapshot, &raw mut entry) } != 0;
+    let mut resumed = false;
+    while has_entry {
+        if entry.th32OwnerProcessID == pid {
+            // The CREATE_SUSPENDED primary thread has never executed, so it
+            // cannot have created another thread for this new process yet.
+            // SAFETY: the enumerated thread ID belongs to the exact suspended
+            // child PID. The non-inheritable handle is closed below.
+            let thread = unsafe {
+                OpenThread(
+                    THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION,
+                    0,
+                    entry.th32ThreadID,
+                )
+            };
+            if !thread.is_null() {
+                // Revalidate ownership through the opened handle so a stale or
+                // mismatched enumeration entry can never be resumed.
+                // SAFETY: `thread` is a live thread handle.
+                let owner = unsafe { GetProcessIdOfThread(thread) };
+                // CREATE_SUSPENDED gives the primary thread a suspend count of
+                // exactly one; only that state is accepted as safely resumed.
+                // SAFETY: the validated handle has THREAD_SUSPEND_RESUME.
+                let previous_count = if owner == pid {
+                    unsafe { ResumeThread(thread) }
+                } else {
+                    u32::MAX
+                };
+                // SAFETY: `thread` is the owned handle opened above.
+                unsafe { CloseHandle(thread) };
+                resumed = owner == pid && previous_count == 1;
+            }
+            break;
+        }
+        // SAFETY: `snapshot` and `entry` remain valid for enumeration.
+        has_entry = unsafe { Thread32Next(snapshot, &raw mut entry) } != 0;
+    }
+    // SAFETY: `snapshot` is the owned handle created above.
+    unsafe { CloseHandle(snapshot) };
+
+    if resumed {
+        Ok(())
+    } else {
+        Err(TargetChildError::Termination)
     }
 }
 
 #[cfg(windows)]
 struct ProcessTree {
     job: isize,
+    arm: TerminationArm,
 }
 
 #[cfg(windows)]
@@ -658,7 +792,10 @@ impl ProcessTree {
             unsafe { windows_sys::Win32::Foundation::CloseHandle(job) };
             return Err(TargetChildError::Termination);
         }
-        Ok(Self { job: job as isize })
+        Ok(Self {
+            job: job as isize,
+            arm: TerminationArm::new_disarmed(),
+        })
     }
 
     fn attach(&mut self, child: &tokio::process::Child) -> Result<(), TargetChildError> {
@@ -671,11 +808,19 @@ impl ProcessTree {
         if assigned == 0 {
             Err(TargetChildError::Termination)
         } else {
+            self.arm.arm();
             Ok(())
         }
     }
 
+    fn start(&self, child: &tokio::process::Child) -> Result<(), TargetChildError> {
+        resume_suspended_child(child)
+    }
+
     fn terminate(&self) -> Result<(), TargetChildError> {
+        if !self.arm.is_armed() {
+            return Ok(());
+        }
         // SAFETY: the job handle is owned by `self` and remains live until
         // `Drop`, including after the direct child handle has been reaped.
         let terminated =
@@ -689,6 +834,11 @@ impl ProcessTree {
 
     fn handle(&self) -> windows_sys::Win32::Foundation::HANDLE {
         self.job as windows_sys::Win32::Foundation::HANDLE
+    }
+
+    fn disarm_reuse_sensitive_identity(&mut self) {
+        // A Job Object handle cannot be retargeted to unrelated future
+        // processes, so retaining KILL_ON_JOB_CLOSE remains the safer policy.
     }
 }
 
@@ -819,4 +969,65 @@ where
         return Err(serde::de::Error::custom("factor values must be finite"));
     }
     Ok(values)
+}
+
+#[cfg(test)]
+mod lifecycle_state_tests {
+    use super::*;
+
+    #[test]
+    fn termination_arm_starts_disarmed_and_can_be_armed() {
+        let mut arm = TerminationArm::new_disarmed();
+        assert!(!arm.is_armed());
+
+        arm.arm();
+        assert!(arm.is_armed());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_termination_arm_requires_an_explicit_clean_disarm() {
+        let mut arm = TerminationArm::new_disarmed();
+        arm.arm();
+
+        arm.disarm();
+        assert!(!arm.is_armed());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_clean_disarm_prevents_drop_from_signaling_the_old_process_group() {
+        use std::os::unix::process::CommandExt;
+
+        let mut sleeper = std::process::Command::new("/bin/sleep");
+        sleeper.arg("5").process_group(0);
+        let mut sleeper = sleeper.spawn().expect("spawn isolated sleeper");
+        let process_group = i32::try_from(sleeper.id()).expect("PID fits i32");
+        let mut tree = ProcessTree {
+            process_group: Some(process_group),
+            arm: TerminationArm { armed: true },
+        };
+
+        tree.disarm_reuse_sensitive_identity();
+        drop(tree);
+
+        let survived_drop = sleeper.try_wait().expect("query sleeper").is_none();
+        let _ = sleeper.kill();
+        let _ = sleeper.wait();
+        assert!(
+            survived_drop,
+            "a clean disarm must make ProcessTree::drop a no-op"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_children_are_created_suspended_before_job_assignment() {
+        use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+        assert_eq!(
+            windows_child_creation_flags() & CREATE_SUSPENDED,
+            CREATE_SUSPENDED
+        );
+    }
 }
