@@ -491,18 +491,19 @@ fn read_batches(path: &Path) -> Result<Vec<arrow::record_batch::RecordBatch>, Cu
         context: format!("open {}", path.display()),
         detail: e.to_string(),
     })?;
-    let builder =
-        ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| CurateError::StoreIo {
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
+        CurateError::MalformedParquet {
             context: format!("read header {}", path.display()),
             detail: e.to_string(),
-        })?;
-    let reader = builder.build().map_err(|e| CurateError::StoreIo {
+        }
+    })?;
+    let reader = builder.build().map_err(|e| CurateError::MalformedParquet {
         context: format!("build reader {}", path.display()),
         detail: e.to_string(),
     })?;
     reader
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| CurateError::StoreIo {
+        .map_err(|e| CurateError::MalformedParquet {
             context: format!("read rows {}", path.display()),
             detail: e.to_string(),
         })
@@ -668,6 +669,12 @@ fn str_opt_at<'a>(
 pub fn read_bars(path: &Path) -> Result<Vec<CuratedBar>, CurateError> {
     let mut rows = Vec::new();
     for batch in read_batches(path)? {
+        if batch.schema().as_ref() != &CuratedSchema::bars() {
+            return Err(CurateError::MalformedParquet {
+                context: format!("schema {}", path.display()),
+                detail: "bars schema does not match the curated contract".to_owned(),
+            });
+        }
         for i in 0..batch.num_rows() {
             let instrument_id =
                 InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(|e| {
@@ -716,6 +723,12 @@ pub fn read_bars(path: &Path) -> Result<Vec<CuratedBar>, CurateError> {
 pub fn read_adjusted_bars(path: &Path) -> Result<Vec<AdjustmentBar>, CurateError> {
     let mut rows = Vec::new();
     for batch in read_batches(path)? {
+        if batch.schema().as_ref() != &CuratedSchema::adjusted_bars() {
+            return Err(CurateError::MalformedParquet {
+                context: format!("schema {}", path.display()),
+                detail: "adjusted-bars schema does not match the curated contract".to_owned(),
+            });
+        }
         for i in 0..batch.num_rows() {
             let instrument_id =
                 InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(|e| {

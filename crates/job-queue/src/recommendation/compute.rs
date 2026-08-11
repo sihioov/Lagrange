@@ -3,13 +3,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::factor_series::{dataset_shape, factors_for};
+use crate::factor_series::{FactorSeriesError, dataset_shape_for_version, factors_for};
 use crate::recommendation::input::AttestedDataset;
 use crate::resolver::ResolvedConfig;
-use domain::TradingDate;
+use crate::types::ErrorClass;
+use domain::{DatasetId, TradingDate};
 use factor_engine::bars::Bars;
-use factor_engine::{FactorSnapshotBuilder, FrozenUniverse};
-use market_data::curate::CurateStore;
+use factor_engine::{FactorError, FactorSnapshotBuilder, FrozenUniverse};
+use market_data::curate::{CurateError, CurateStore, dataset_manifest_hash};
 use selector::baseline::baseline_packages;
 use selector::registry::{Actor, Registry};
 use selector::universe::parse_manifest;
@@ -92,12 +93,35 @@ pub enum RecommendationError {
     InvalidStrategy { detail: String },
     #[error("invalid recommendation universe: {detail}")]
     InvalidUniverse { detail: String },
-    #[error("recommendation dataset rejected: {detail}")]
-    Dataset { detail: String },
-    #[error("recommendation factor computation failed: {detail}")]
-    Compute { detail: String },
-    #[error("recommendation blocking task failed: {detail}")]
-    BlockingTask { detail: String },
+    #[error("recommendation data blocked: {detail}")]
+    DataBlocked { detail: String },
+    #[error("recommendation integrity failure: {detail}")]
+    Integrity { detail: String },
+    #[error("recommendation computation unavailable: {detail}")]
+    Unavailable { detail: String },
+}
+
+impl RecommendationError {
+    /// Retry classification consumed directly by the recommendation runner.
+    pub const fn class(&self) -> ErrorClass {
+        match self {
+            Self::InvalidStrategy { .. } => ErrorClass::Input,
+            Self::InvalidUniverse { .. } | Self::Integrity { .. } => ErrorClass::Integrity,
+            Self::DataBlocked { .. } => ErrorClass::DataBlocked,
+            Self::Unavailable { .. } => ErrorClass::Transient,
+        }
+    }
+
+    /// Stable machine code; callers never need to parse display text.
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidStrategy { .. } => "RECOMMENDATION_INPUT_INVALID",
+            Self::InvalidUniverse { .. } => "RECOMMENDATION_UNIVERSE_INTEGRITY",
+            Self::DataBlocked { .. } => "RECOMMENDATION_DATA_BLOCKED",
+            Self::Integrity { .. } => "RECOMMENDATION_COMPUTE_INTEGRITY",
+            Self::Unavailable { .. } => "RECOMMENDATION_COMPUTE_UNAVAILABLE",
+        }
+    }
 }
 
 /// Compute only the required factors and expose only finite raw values at the
@@ -110,14 +134,32 @@ pub fn compute_close(
     requirements: &StrategyRequirements,
 ) -> Result<ComputedClose, RecommendationError> {
     validate_fixed_universe(universe)?;
+    let unique_factor_ids = requirements.factor_ids.iter().collect::<BTreeSet<_>>();
+    if unique_factor_ids.len() != requirements.factor_ids.len() {
+        return Err(RecommendationError::InvalidStrategy {
+            detail: "factor requirements contain duplicate ids".to_owned(),
+        });
+    }
+    let factors = factors_for(&requirements.factor_ids).map_err(map_factor_requirement_error)?;
+
     let dataset_root = Path::new(&pin.storage_path);
-    let shape = dataset_shape(dataset_root).map_err(|error| RecommendationError::Dataset {
-        detail: error.to_string(),
-    })?;
+    if !dataset_root.is_dir() {
+        return Err(RecommendationError::Unavailable {
+            detail: format!(
+                "attested dataset root is unavailable: {}",
+                dataset_root.display()
+            ),
+        });
+    }
+    let store = CurateStore::new(dataset_root);
+    attest_dataset_manifest(pin, &store)?;
+
+    let shape =
+        dataset_shape_for_version(dataset_root, pin.curated_version).map_err(map_shape_error)?;
     let actual = shape.instruments.iter().cloned().collect::<BTreeSet<_>>();
     let expected = universe.members.iter().cloned().collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err(RecommendationError::Dataset {
+        return Err(RecommendationError::DataBlocked {
             detail: format!(
                 "dataset universe mismatch: expected {} exact members, found {}",
                 expected.len(),
@@ -126,7 +168,6 @@ pub fn compute_close(
         });
     }
 
-    let store = CurateStore::new(dataset_root);
     let member_refs = universe
         .members
         .iter()
@@ -141,30 +182,39 @@ pub fn compute_close(
         &frozen,
         as_of,
     )
-    .map_err(|error| RecommendationError::Dataset {
-        detail: error.to_string(),
-    })?;
+    .map_err(map_factor_error)?;
     for instrument in frozen.instruments() {
         let has_close = bars
             .points(instrument)
             .is_some_and(|points| points.iter().any(|point| point.date == as_of));
         if !has_close {
-            return Err(RecommendationError::Dataset {
+            return Err(RecommendationError::DataBlocked {
                 detail: format!("{} has no requested close on {as_of}", instrument),
             });
         }
     }
 
-    let unique_factor_ids = requirements.factor_ids.iter().collect::<BTreeSet<_>>();
-    if unique_factor_ids.len() != requirements.factor_ids.len() {
-        return Err(RecommendationError::InvalidStrategy {
-            detail: "factor requirements contain duplicate ids".to_owned(),
+    // The fixed universe's first member is the documented common-session
+    // basis. N lookback sessions means the requested close has N sessions
+    // before it, hence an index of at least N (N + 1 total closes).
+    let calendar_member = frozen
+        .instruments()
+        .next()
+        .expect("the attested fixed universe has eleven members");
+    let available_prior = bars
+        .points(calendar_member)
+        .and_then(|points| points.iter().position(|point| point.date == as_of))
+        .expect("the requested close was checked above");
+    let needed = usize::try_from(requirements.minimum_lookback_sessions).unwrap_or(usize::MAX);
+    if available_prior < needed {
+        return Err(RecommendationError::DataBlocked {
+            detail: format!(
+                "the strategy needs {} prior sessions at {as_of}, but the common-session basis has {available_prior}",
+                requirements.minimum_lookback_sessions
+            ),
         });
     }
-    let factors =
-        factors_for(&requirements.factor_ids).map_err(|error| RecommendationError::Compute {
-            detail: error.to_string(),
-        })?;
+
     let snapshot = FactorSnapshotBuilder::new(
         as_of,
         frozen,
@@ -175,9 +225,7 @@ pub fn compute_close(
     )
     .with_factors(factors)
     .build()
-    .map_err(|error| RecommendationError::Compute {
-        detail: error.to_string(),
-    })?;
+    .map_err(map_factor_error)?;
 
     let mut values = universe
         .members
@@ -191,7 +239,7 @@ pub fn compute_close(
         }
         let Some(raw) = row.raw else { continue };
         if !raw.is_finite() {
-            return Err(RecommendationError::Compute {
+            return Err(RecommendationError::Integrity {
                 detail: format!("non-finite raw value for {} {}", row.instrument, row.factor),
             });
         }
@@ -216,9 +264,112 @@ pub async fn compute_close_async(
 ) -> Result<ComputedClose, RecommendationError> {
     tokio::task::spawn_blocking(move || compute_close(&pin, &universe, as_of, &requirements))
         .await
-        .map_err(|error| RecommendationError::BlockingTask {
+        .map_err(|error| RecommendationError::Unavailable {
             detail: error.to_string(),
         })?
+}
+
+fn attest_dataset_manifest(
+    pin: &AttestedDataset,
+    store: &CurateStore,
+) -> Result<(), RecommendationError> {
+    let dataset_id =
+        DatasetId::parse(&pin.dataset_id).map_err(|error| RecommendationError::Integrity {
+            detail: format!("attested dataset id is invalid: {error}"),
+        })?;
+    let manifest = store
+        .read_dataset_manifest(&dataset_id, pin.curated_version)
+        .map_err(map_manifest_read_error)?
+        .ok_or_else(|| RecommendationError::DataBlocked {
+            detail: format!(
+                "dataset manifest is missing for {} version {}",
+                pin.dataset_id, pin.curated_version
+            ),
+        })?;
+    if manifest.dataset_id != dataset_id || manifest.version != pin.curated_version {
+        return Err(RecommendationError::Integrity {
+            detail: "dataset manifest identity/version does not match its attested path".to_owned(),
+        });
+    }
+    let canonical =
+        dataset_manifest_hash(&manifest).map_err(|error| RecommendationError::Integrity {
+            detail: format!("dataset manifest cannot be hashed canonically: {error}"),
+        })?;
+    if canonical != manifest.content_hash {
+        return Err(RecommendationError::Integrity {
+            detail: "dataset manifest content hash does not match its canonical fields".to_owned(),
+        });
+    }
+    let canonical_hex = canonical
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("ContentHash always carries its algorithm prefix");
+    if pin.manifest_sha256 != canonical_hex {
+        return Err(RecommendationError::Integrity {
+            detail: "attested database manifest hash does not match the on-disk manifest"
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn map_manifest_read_error(error: CurateError) -> RecommendationError {
+    match error {
+        CurateError::StoreIo { .. } | CurateError::RawIo { .. } => {
+            RecommendationError::Unavailable {
+                detail: error.to_string(),
+            }
+        }
+        CurateError::MalformedManifest { .. } => RecommendationError::Integrity {
+            detail: error.to_string(),
+        },
+        _ => RecommendationError::Integrity {
+            detail: error.to_string(),
+        },
+    }
+}
+
+fn map_shape_error(error: FactorSeriesError) -> RecommendationError {
+    match error {
+        FactorSeriesError::MissingData(_) | FactorSeriesError::InsufficientHistory { .. } => {
+            RecommendationError::DataBlocked {
+                detail: error.to_string(),
+            }
+        }
+        FactorSeriesError::Dataset(_) => RecommendationError::Unavailable {
+            detail: error.to_string(),
+        },
+        FactorSeriesError::Compute(_) => RecommendationError::Integrity {
+            detail: error.to_string(),
+        },
+        FactorSeriesError::Engine(error) => map_factor_error(error),
+    }
+}
+
+fn map_factor_requirement_error(error: FactorSeriesError) -> RecommendationError {
+    RecommendationError::InvalidStrategy {
+        detail: error.to_string(),
+    }
+}
+
+fn map_factor_error(error: FactorError) -> RecommendationError {
+    match error {
+        FactorError::InvalidDefinition { .. } => RecommendationError::InvalidStrategy {
+            detail: error.to_string(),
+        },
+        FactorError::StoreIo { .. } => RecommendationError::Unavailable {
+            detail: error.to_string(),
+        },
+        FactorError::FutureDatedRow { .. }
+        | FactorError::CorruptData { .. }
+        | FactorError::MissingField { .. }
+        | FactorError::Polars { .. }
+        | FactorError::Serialize { .. }
+        | FactorError::NonFinite { .. }
+        | FactorError::Domain(_) => RecommendationError::Integrity {
+            detail: error.to_string(),
+        },
+    }
 }
 
 fn validate_fixed_universe(universe: &AttestedUniverse) -> Result<(), RecommendationError> {

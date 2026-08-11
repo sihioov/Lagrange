@@ -17,8 +17,8 @@ use std::fs;
 
 use chrono::{Datelike, NaiveDate};
 use domain::{InstrumentId, TradingDate};
-use market_data::CurateStore;
 use market_data::curate::schema::{read_adjusted_bars, read_bars};
+use market_data::{CurateError, CurateStore};
 use polars::prelude::*;
 
 use crate::contract::{FactorError, Field};
@@ -133,18 +133,26 @@ fn load_symbol(
     for year in years {
         let bars_path = store.bars_path(market, &symbol, year, version);
         let dir = bars_path.parent().expect("bars path has a parent");
-        if !dir.join("bars.parquet").exists() {
-            continue;
+        match fs::metadata(&bars_path) {
+            Ok(metadata) if metadata.is_file() => {}
+            Ok(_) => {
+                return Err(FactorError::CorruptData {
+                    context: format!("inspect {}", bars_path.display()),
+                    detail: "bars path is not a regular file".to_owned(),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(FactorError::StoreIo {
+                    context: format!("inspect {}", bars_path.display()),
+                    detail: error.to_string(),
+                });
+            }
         }
-        let raw = read_bars(&bars_path).map_err(|e| FactorError::StoreIo {
-            context: format!("read {}", bars_path.display()),
-            detail: e.to_string(),
-        })?;
+        let raw = read_bars(&bars_path).map_err(|error| curated_read_error(&bars_path, error))?;
         let adjusted_path = dir.join("adjusted_bars.parquet");
-        let adjusted = read_adjusted_bars(&adjusted_path).map_err(|e| FactorError::StoreIo {
-            context: format!("read {}", adjusted_path.display()),
-            detail: e.to_string(),
-        })?;
+        let adjusted = read_adjusted_bars(&adjusted_path)
+            .map_err(|error| curated_read_error(&adjusted_path, error))?;
         let raw_by_date: BTreeMap<TradingDate, &market_data::curate::schema::CuratedBar> =
             raw.iter().map(|b| (b.trading_date, b)).collect();
         for a in &adjusted {
@@ -157,7 +165,7 @@ fn load_symbol(
             }
             let r = raw_by_date
                 .get(&a.trading_date)
-                .ok_or_else(|| FactorError::StoreIo {
+                .ok_or_else(|| FactorError::CorruptData {
                     context: format!("merge {} {}", symbol, a.trading_date),
                     detail: "raw and adjusted series disagree on dates".to_owned(),
                 })?;
@@ -179,6 +187,16 @@ fn load_symbol(
     }
     points.sort_by_key(|p| p.date.as_naive_date());
     Ok(points)
+}
+
+fn curated_read_error(path: &std::path::Path, error: CurateError) -> FactorError {
+    match error {
+        CurateError::StoreIo { context, detail } => FactorError::StoreIo { context, detail },
+        other => FactorError::CorruptData {
+            context: format!("read {}", path.display()),
+            detail: other.to_string(),
+        },
+    }
 }
 
 fn date_to_days(date: TradingDate) -> i32 {

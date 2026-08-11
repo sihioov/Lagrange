@@ -88,6 +88,10 @@ impl std::fmt::Display for Capability {
 pub enum CurateError {
     #[error("curated store failure ({context}): {detail}")]
     StoreIo { context: String, detail: String },
+    #[error("malformed dataset manifest ({context}): {detail}")]
+    MalformedManifest { context: String, detail: String },
+    #[error("malformed curated parquet ({context}): {detail}")]
+    MalformedParquet { context: String, detail: String },
     #[error("raw read failure ({context}): {detail}")]
     RawIo { context: String, detail: String },
     #[error("batch is missing its {kind} file")]
@@ -322,8 +326,21 @@ impl CurateStore {
         version: u32,
     ) -> Result<Option<DatasetManifest>, CurateError> {
         let path = self.dataset_dir(dataset_id, version).join("manifest.json");
-        if !path.exists() {
-            return Ok(None);
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {}
+            Ok(_) => {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("inspect {}", path.display()),
+                    detail: "manifest path is not a regular file".to_owned(),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(CurateError::StoreIo {
+                    context: format!("inspect {}", path.display()),
+                    detail: error.to_string(),
+                });
+            }
         }
         let bytes = fs::read(&path).map_err(|e| CurateError::StoreIo {
             context: format!("read {}", path.display()),
@@ -331,7 +348,7 @@ impl CurateStore {
         })?;
         serde_json::from_slice(&bytes)
             .map(Some)
-            .map_err(|e| CurateError::StoreIo {
+            .map_err(|e| CurateError::MalformedManifest {
                 context: format!("parse {}", path.display()),
                 detail: e.to_string(),
             })

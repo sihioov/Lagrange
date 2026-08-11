@@ -39,7 +39,7 @@ use factor_engine::factors::momentum::MomentumFactor;
 use factor_engine::factors::returns::ReturnFactor;
 use factor_engine::factors::trend::TrendFactor;
 use factor_engine::factors::volatility::RealizedVolFactor;
-use factor_engine::{Factor, FactorSnapshotBuilder, FrozenUniverse};
+use factor_engine::{Factor, FactorError, FactorSnapshotBuilder, FrozenUniverse};
 use market_data::curate::CurateStore;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -67,8 +67,12 @@ pub struct DatasetShape {
 pub enum FactorSeriesError {
     /// The curated zone could not be read at all.
     Dataset(String),
+    /// The requested immutable version has no complete data to compute from.
+    MissingData(String),
     /// The engine refused to compute.
     Compute(String),
+    /// A typed read/compute failure preserved for retry classification.
+    Engine(FactorError),
     /// The dataset is too short for the strategy's declared lookback.
     InsufficientHistory { needed: u64, available: usize },
 }
@@ -77,7 +81,9 @@ impl std::fmt::Display for FactorSeriesError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FactorSeriesError::Dataset(d) => write!(f, "curated dataset unreadable: {d}"),
+            FactorSeriesError::MissingData(d) => write!(f, "curated dataset incomplete: {d}"),
             FactorSeriesError::Compute(d) => write!(f, "factor computation failed: {d}"),
+            FactorSeriesError::Engine(error) => write!(f, "factor engine failed: {error}"),
             FactorSeriesError::InsufficientHistory { needed, available } => write!(
                 f,
                 "the strategy needs {needed} sessions of history and the dataset has {available}"
@@ -143,14 +149,35 @@ fn compute_err<E: std::fmt::Display>(e: E) -> FactorSeriesError {
 
 /// Reads the instruments and session dates out of the curated bars.
 pub fn dataset_shape(dataset_root: &Path) -> Result<DatasetShape, FactorSeriesError> {
+    dataset_shape_for_version(dataset_root, CURATED_VERSION)
+}
+
+/// Reads only partitions belonging to one immutable curated version.
+pub(crate) fn dataset_shape_for_version(
+    dataset_root: &Path,
+    version: u32,
+) -> Result<DatasetShape, FactorSeriesError> {
     let bars_root = dataset_root.join("curated").join("bars").join("market=kr");
-    let entries = std::fs::read_dir(&bars_root)
-        .map_err(|e| FactorSeriesError::Dataset(format!("list {}: {e}", bars_root.display())))?;
+    let entries = std::fs::read_dir(&bars_root).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            FactorSeriesError::MissingData(format!(
+                "curated bars directory is missing: {}",
+                bars_root.display()
+            ))
+        } else {
+            FactorSeriesError::Dataset(format!("list {}: {e}", bars_root.display()))
+        }
+    })?;
 
     let mut instruments = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            FactorSeriesError::Dataset(format!("read entry under {}: {e}", bars_root.display()))
+        })?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if let Some(symbol) = name.strip_prefix("symbol=") {
+        if let Some(symbol) = name.strip_prefix("symbol=")
+            && symbol_has_complete_version(&entry.path(), version)?
+        {
             instruments.push(symbol.to_string());
         }
     }
@@ -158,8 +185,8 @@ pub fn dataset_shape(dataset_root: &Path) -> Result<DatasetShape, FactorSeriesEr
     instruments.dedup();
 
     if instruments.is_empty() {
-        return Err(FactorSeriesError::Dataset(format!(
-            "no instruments under {}",
+        return Err(FactorSeriesError::MissingData(format!(
+            "no instruments for version {version} under {}",
             bars_root.display()
         )));
     }
@@ -168,30 +195,59 @@ pub fn dataset_shape(dataset_root: &Path) -> Result<DatasetShape, FactorSeriesEr
     // because the curated zone is a single market on a shared calendar. Using
     // a union across instruments would invent rebalance dates on which some
     // instrument never traded.
-    let sessions = sessions_of(dataset_root, &instruments[0])?;
+    let sessions = sessions_of(dataset_root, &instruments[0], version)?;
     Ok(DatasetShape {
         instruments,
         sessions,
     })
 }
 
+fn symbol_has_complete_version(symbol_dir: &Path, version: u32) -> Result<bool, FactorSeriesError> {
+    let entries = std::fs::read_dir(symbol_dir)
+        .map_err(|e| FactorSeriesError::Dataset(format!("list {}: {e}", symbol_dir.display())))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            FactorSeriesError::Dataset(format!("read entry under {}: {e}", symbol_dir.display()))
+        })?;
+        if !entry.file_name().to_string_lossy().starts_with("year=") {
+            continue;
+        }
+        let partition = entry.path().join(format!("version={version}"));
+        if regular_file_exists(&partition.join("bars.parquet"))?
+            && regular_file_exists(&partition.join("adjusted_bars.parquet"))?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn regular_file_exists(path: &Path) -> Result<bool, FactorSeriesError> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(FactorSeriesError::Dataset(format!(
+            "inspect {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
 /// Session dates for one symbol, read through the same engine that reads the
 /// prices, so a date here is always a date the factor engine also has.
-fn sessions_of(dataset_root: &Path, symbol: &str) -> Result<Vec<String>, FactorSeriesError> {
+fn sessions_of(
+    dataset_root: &Path,
+    symbol: &str,
+    version: u32,
+) -> Result<Vec<String>, FactorSeriesError> {
     let store = CurateStore::new(dataset_root);
     let universe = FrozenUniverse::new("session-probe", &[symbol]);
     // A far-future as_of so nothing is filtered: the point is the full span.
     let as_of = domain::TradingDate::parse("9999-12-31")
         .map_err(|e| FactorSeriesError::Dataset(e.to_string()))?;
-    let bars = factor_engine::bars::Bars::from_curated(
-        &store,
-        "kr",
-        "dataset",
-        CURATED_VERSION,
-        &universe,
-        as_of,
-    )
-    .map_err(|e| FactorSeriesError::Dataset(e.to_string()))?;
+    let bars =
+        factor_engine::bars::Bars::from_curated(&store, "kr", "dataset", version, &universe, as_of)
+            .map_err(FactorSeriesError::Engine)?;
     let id = universe
         .instruments()
         .next()

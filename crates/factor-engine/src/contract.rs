@@ -136,6 +136,8 @@ pub enum FactorError {
     InvalidDefinition { detail: String },
     #[error("curated store failure ({context}): {detail}")]
     StoreIo { context: String, detail: String },
+    #[error("corrupt curated data ({context}): {detail}")]
+    CorruptData { context: String, detail: String },
     #[error("polars computation failure: {detail}")]
     Polars { detail: String },
     #[error("canonical serialization failure: {detail}")]

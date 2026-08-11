@@ -2,12 +2,14 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use domain::TradingDate;
+use domain::{ContentHash, DatasetId, TradingDate, UtcTimestamp};
+use job_queue::ErrorClass;
 use job_queue::recommendation::compute::{
     AttestedUniverse, StrategyRequirements, compute_close, compute_close_async, requirements_for,
 };
 use job_queue::recommendation::input::{AttestedDataset, AttestedDatasetStatus};
 use job_queue::resolver::ResolvedConfig;
+use market_data::{Capability, CurateStore, DatasetManifest, dataset_manifest_hash};
 use serde_json::json;
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -109,7 +111,9 @@ fn requirements_reject_unshipped_versions_and_schema_invalid_parameters() {
         json!({"benchmark_instrument": "069500.KRX", "target_weight": 1.0}),
     );
     wrong_version.strategy_version = "1.0.1".to_owned();
-    assert!(requirements_for(&wrong_version).is_err());
+    let error = requirements_for(&wrong_version).expect_err("unshipped version is invalid input");
+    assert_eq!(error.class(), ErrorClass::Input);
+    assert_eq!(error.code(), "RECOMMENDATION_INPUT_INVALID");
 
     for invalid in [
         config(
@@ -214,6 +218,35 @@ fn qa_only_fixed_universe_dataset() -> QaDataset {
     }
     eprintln!("QA_ONLY_SYNTHETIC: cloned Phase-0 partitions for fixed-universe computation");
 
+    // QA_ONLY_SYNTHETIC: the Phase-0 script predates dataset manifests. The
+    // recommendation seam must still exercise a real, self-hashed manifest,
+    // so this temp-only fixture attests the cloned partitions explicitly.
+    let curate_store = CurateStore::new(&store);
+    let manifest = DatasetManifest {
+        dataset_id: DatasetId::parse("krx_eod_bars").expect("QA dataset id"),
+        version: 2,
+        capability: Capability::PriceReturnOnly,
+        created_at: UtcTimestamp::parse_rfc3339("2021-01-29T06:30:00Z")
+            .expect("QA manifest timestamp"),
+        source_batches: Vec::new(),
+        bar_count: 11 * 260,
+        action_count: 0,
+        content_hash: ContentHash::from_bytes(b"placeholder"),
+    };
+    let manifest = DatasetManifest {
+        content_hash: dataset_manifest_hash(&manifest).expect("QA manifest hash"),
+        ..manifest
+    };
+    curate_store
+        .write_dataset_manifest(&manifest)
+        .expect("write QA-only manifest");
+    let manifest_sha256 = manifest
+        .content_hash
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("content hash has sha256 prefix")
+        .to_owned();
+
     QaDataset {
         _temp: temp,
         pin: AttestedDataset {
@@ -222,10 +255,14 @@ fn qa_only_fixed_universe_dataset() -> QaDataset {
             version: "phase0-v2-qa-only".to_owned(),
             curated_version: 2,
             status: AttestedDatasetStatus::Ready,
-            manifest_sha256: "0".repeat(64),
+            manifest_sha256,
             storage_path: store.to_string_lossy().into_owned(),
         },
     }
+}
+
+fn manifest_path(qa: &QaDataset) -> PathBuf {
+    Path::new(&qa.pin.storage_path).join("curated/datasets/krx_eod_bars/version=2/manifest.json")
 }
 
 fn fixed_universe() -> AttestedUniverse {
@@ -340,6 +377,7 @@ fn close_rejects_an_incomplete_fixed_universe_and_future_rows() {
     )
     .expect_err("an incomplete fixed universe must fail closed");
     assert!(error.to_string().contains("universe"), "{error}");
+    assert_eq!(error.class(), ErrorClass::DataBlocked);
 
     copy_dir(
         &Path::new(&qa.pin.storage_path).join("curated/bars/market=kr/symbol=069500.KRX"),
@@ -353,6 +391,174 @@ fn close_rejects_an_incomplete_fixed_universe_and_future_rows() {
     )
     .expect_err("a store with a row after as-of must fail closed");
     assert!(error.to_string().contains("future-dated row"), "{error}");
+    assert_eq!(error.class(), ErrorClass::Integrity, "{error:?}");
+}
+
+#[test]
+fn close_attests_the_pinned_manifest_before_reading_factors() {
+    let universe = fixed_universe();
+    let as_of = TradingDate::parse("2021-01-29").unwrap();
+    let requirements = StrategyRequirements {
+        factor_ids: vec!["vol_21".to_owned()],
+        minimum_lookback_sessions: 21,
+    };
+
+    let missing = qa_only_fixed_universe_dataset();
+    std::fs::remove_file(manifest_path(&missing)).expect("remove QA manifest");
+    let error = compute_close(&missing.pin, &universe, as_of, &requirements)
+        .expect_err("a missing pinned manifest blocks computation");
+    assert_eq!(error.class(), ErrorClass::DataBlocked);
+    assert_eq!(error.code(), "RECOMMENDATION_DATA_BLOCKED");
+
+    let corrupt = qa_only_fixed_universe_dataset();
+    std::fs::write(manifest_path(&corrupt), b"{not-json").expect("corrupt QA manifest bytes");
+    let error = compute_close(&corrupt.pin, &universe, as_of, &requirements)
+        .expect_err("a corrupt manifest is an integrity failure");
+    assert_eq!(error.class(), ErrorClass::Integrity);
+
+    let wrong_self_hash = qa_only_fixed_universe_dataset();
+    let store = CurateStore::new(&wrong_self_hash.pin.storage_path);
+    let dataset_id = DatasetId::parse(&wrong_self_hash.pin.dataset_id).unwrap();
+    let mut manifest = store
+        .read_dataset_manifest(&dataset_id, wrong_self_hash.pin.curated_version)
+        .expect("read QA manifest")
+        .expect("QA manifest exists");
+    manifest.content_hash = ContentHash::from_bytes(b"wrong-self-hash");
+    store
+        .write_dataset_manifest(&manifest)
+        .expect("write self-hash mismatch");
+    let error = compute_close(&wrong_self_hash.pin, &universe, as_of, &requirements)
+        .expect_err("a manifest whose self-hash is false is rejected");
+    assert_eq!(error.class(), ErrorClass::Integrity);
+
+    let wrong_pin_hash = qa_only_fixed_universe_dataset();
+    let mut pin = wrong_pin_hash.pin.clone();
+    pin.manifest_sha256 = "f".repeat(64);
+    let error = compute_close(&pin, &universe, as_of, &requirements)
+        .expect_err("the DB pin must equal the canonical on-disk hash");
+    assert_eq!(error.class(), ErrorClass::Integrity);
+}
+
+#[test]
+fn membership_discovery_is_scoped_to_the_attested_curated_version() {
+    let qa = qa_only_fixed_universe_dataset();
+    let market = Path::new(&qa.pin.storage_path).join("curated/bars/market=kr");
+    let source = market.join("symbol=069500.KRX");
+    let unrelated = market.join("symbol=999999.KRX");
+    for year in ["year=2020", "year=2021"] {
+        copy_dir(
+            &source.join(year).join("version=2"),
+            &unrelated.join(year).join("version=999"),
+        );
+    }
+
+    let computed = compute_close(
+        &qa.pin,
+        &fixed_universe(),
+        TradingDate::parse("2021-01-29").unwrap(),
+        &StrategyRequirements {
+            factor_ids: vec!["vol_21".to_owned()],
+            minimum_lookback_sessions: 21,
+        },
+    )
+    .expect("another version's symbol is outside this attested dataset");
+    assert_eq!(computed.factors.len(), 11);
+
+    for year in ["year=2020", "year=2021"] {
+        let member_year = market.join("symbol=153130.KRX").join(year);
+        std::fs::rename(
+            member_year.join("version=2"),
+            member_year.join("version=999"),
+        )
+        .expect("move one member outside the attested version");
+    }
+    let error = compute_close(
+        &qa.pin,
+        &fixed_universe(),
+        TradingDate::parse("2021-01-29").unwrap(),
+        &StrategyRequirements {
+            factor_ids: vec!["vol_21".to_owned()],
+            minimum_lookback_sessions: 21,
+        },
+    )
+    .expect_err("another version must not satisfy attested membership");
+    assert_eq!(error.class(), ErrorClass::DataBlocked);
+}
+
+#[test]
+fn global_lookback_counts_prior_sessions_and_short_members_still_yield_null() {
+    let qa = qa_only_fixed_universe_dataset();
+    let as_of = TradingDate::parse("2021-01-29").unwrap();
+    let error = compute_close(
+        &qa.pin,
+        &fixed_universe(),
+        as_of,
+        &StrategyRequirements {
+            factor_ids: Vec::new(),
+            minimum_lookback_sessions: 260,
+        },
+    )
+    .expect_err("260 total closes provide only 259 prior sessions");
+    assert_eq!(error.class(), ErrorClass::DataBlocked);
+    assert_eq!(error.code(), "RECOMMENDATION_DATA_BLOCKED");
+
+    let short_history =
+        Path::new(&qa.pin.storage_path).join("curated/bars/market=kr/symbol=153130.KRX/year=2020");
+    std::fs::remove_dir_all(short_history).expect("shorten one QA-only member's history");
+    let computed = compute_close(
+        &qa.pin,
+        &fixed_universe(),
+        as_of,
+        &StrategyRequirements {
+            factor_ids: vec!["return_6m".to_owned()],
+            minimum_lookback_sessions: 126,
+        },
+    )
+    .expect("the common session basis is long enough despite one new member");
+    assert!(!computed.factors["153130.KRX"].contains_key("return_6m"));
+}
+
+#[test]
+fn unavailable_dataset_paths_are_transient_without_message_parsing() {
+    let qa = qa_only_fixed_universe_dataset();
+    let mut pin = qa.pin.clone();
+    pin.storage_path = qa
+        ._temp
+        .path()
+        .join("unmounted-store")
+        .display()
+        .to_string();
+    let error = compute_close(
+        &pin,
+        &fixed_universe(),
+        TradingDate::parse("2021-01-29").unwrap(),
+        &StrategyRequirements {
+            factor_ids: Vec::new(),
+            minimum_lookback_sessions: 0,
+        },
+    )
+    .expect_err("an unavailable attested root is retryable");
+    assert_eq!(error.class(), ErrorClass::Transient);
+    assert_eq!(error.code(), "RECOMMENDATION_COMPUTE_UNAVAILABLE");
+}
+
+#[test]
+fn malformed_parquet_is_integrity_not_a_retryable_store_error() {
+    let qa = qa_only_fixed_universe_dataset();
+    let adjusted = Path::new(&qa.pin.storage_path)
+        .join("curated/bars/market=kr/symbol=069500.KRX/year=2021/version=2/adjusted_bars.parquet");
+    std::fs::write(adjusted, b"not parquet").expect("corrupt QA parquet");
+    let error = compute_close(
+        &qa.pin,
+        &fixed_universe(),
+        TradingDate::parse("2021-01-29").unwrap(),
+        &StrategyRequirements {
+            factor_ids: vec!["vol_21".to_owned()],
+            minimum_lookback_sessions: 21,
+        },
+    )
+    .expect_err("malformed immutable bytes are an integrity failure");
+    assert_eq!(error.class(), ErrorClass::Integrity, "{error:?}");
 }
 
 #[tokio::test]
