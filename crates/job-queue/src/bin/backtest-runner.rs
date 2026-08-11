@@ -38,7 +38,8 @@
 //! **No audit connection.** [`JobQueue`] takes an optional second pool for
 //! `audit_logs`, and this process passes `None` — a decision rather than an
 //! omission. `request_cancel` is the only operation that writes an audit row,
-//! it is the API server's to call, and the daemon calls `claim_next`,
+//! it is the API server's to call, and the daemon calls `claim_next_for`
+//! for `backtest` jobs,
 //! `settle_*` and `sweep` exclusively. `worker` is not granted INSERT on
 //! `audit_logs` (the migration contract asserts it), so handing this process
 //! an audit pool would mean giving the role a privilege it has no use for.

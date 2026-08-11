@@ -248,6 +248,58 @@ async fn a_submitted_backtest_actually_runs_and_finishes() {
 }
 
 #[tokio::test]
+async fn runner_leaves_higher_priority_recommendations_for_their_worker() {
+    let _serial = serial_backtest_environment().await;
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
+    let owner = seed_owner(&db.pool).await;
+
+    let recommendation = queue
+        .submit(SubmitJob {
+            owner_user_id: owner,
+            job_type: "recommendation".into(),
+            payload: serde_json::json!({ "kind": "recommendation" }),
+            priority: 11,
+            idempotency_key: Some(Uuid::new_v4().to_string()),
+            max_attempts: 3,
+            available_at: None,
+        })
+        .await
+        .expect("submit recommendation");
+    let backtest_id = submit_backtest(&queue, owner)
+        .await
+        .expect("submit backtest");
+
+    let outcome = run_once(&queue, "test-runner", &paths(&scratch), &GoldenResolver)
+        .await
+        .expect("runner");
+    assert!(
+        matches!(outcome, Outcome::Succeeded { ref job_id } if job_id == &backtest_id.to_string()),
+        "the runner must process the backtest, not the higher-priority recommendation: {outcome:?}"
+    );
+
+    let recommendation_after = queue
+        .get_by_id(recommendation.id)
+        .await
+        .expect("get recommendation");
+    assert_eq!(recommendation_after.status, JobStatus::Queued);
+    assert_eq!(recommendation_after.attempt_count, 0);
+    assert_eq!(
+        queue
+            .get_by_id(backtest_id)
+            .await
+            .expect("get backtest")
+            .status,
+        JobStatus::Succeeded
+    );
+
+    db.drop_db().await;
+}
+
+#[tokio::test]
 async fn an_empty_queue_is_idle_rather_than_an_error() {
     let _serial = serial_backtest_environment().await;
     // The normal case most of the time. A runner that treated "nothing to do"

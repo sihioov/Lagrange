@@ -384,6 +384,38 @@ async fn typed_claims_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[tokio::test]
+async fn typed_claim_rejects_invalid_job_type_boundaries() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("typed claim validation", &super_url, |_s, _d, p| {
+        Box::pin(typed_claim_validation_body(p))
+    })
+    .await;
+}
+
+async fn typed_claim_validation_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let q = JobQueue::new(pool.clone(), None, fast_config());
+    let cases = vec![
+        ("empty", "".to_string(), false),
+        ("uppercase", "Backtest".to_string(), false),
+        ("invalid character", "backtest.v2".to_string(), false),
+        ("65-byte value", "a".repeat(65), false),
+        ("64-byte lowercase value", "a".repeat(64), true),
+    ];
+
+    for (name, job_type, valid) in cases {
+        match q.claim_next_for("typed-worker", &job_type).await {
+            Ok(None) if valid => {}
+            Err(job_queue::QueueError::InvalidInput(_)) if !valid => {}
+            other => panic!("{name} job type produced unexpected result: {other:?}"),
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // (a) Concurrent claim ownership: two workers drain 100 jobs; every job is
 //     claimed by exactly one worker and has exactly one attempt.
