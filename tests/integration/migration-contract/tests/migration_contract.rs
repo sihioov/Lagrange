@@ -67,6 +67,24 @@ const RESEARCH_SCHEMA_GATE_SQL: &str =
     include_str!("../../../../deploy/compose/research-schema-check.sql");
 
 #[test]
+fn recommendation_pipeline_migration_is_tracked() {
+    let up = MIGRATOR.migrations.iter().find(|migration| {
+        migration.version == 26 && migration.migration_type != MigrationType::ReversibleDown
+    });
+    let down = MIGRATOR.migrations.iter().find(|migration| {
+        migration.version == 26 && migration.migration_type == MigrationType::ReversibleDown
+    });
+    assert!(
+        up.is_some(),
+        "0026 recommendation pipeline up migration must exist"
+    );
+    assert!(
+        down.is_some(),
+        "0026 recommendation pipeline down migration must exist"
+    );
+}
+
+#[test]
 fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
     for token in [
         "version BETWEEN 22 AND 25",
@@ -1960,13 +1978,39 @@ async fn revert_and_rerun_body(
         "fresh DB must apply all {expected} migrations"
     );
 
-    // Revert 0025, 0024, then 0023 before 0022 while all earlier tables remain.
+    // Revert 0026, 0025, 0024, then 0023 before 0022 while all earlier tables remain.
     // This proves each down migration restores its own boundary rather than
     // relying on 0003.down to hide omitted objects in a full teardown.
-    MIGRATOR.undo(owner, 24).await?;
+    MIGRATOR.undo(owner, 25).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
         expected - 1,
+        "undo to 0025 must revert only 0026"
+    );
+    let scheduler_gone: Option<String> = sqlx::query_scalar(
+        "SELECT to_regprocedure( \
+         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,text)')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        scheduler_gone.is_none(),
+        "0026 down must remove its function"
+    );
+    let calendar_lookup_retained: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.trading_calendar_versions_source_lookup_idx')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        calendar_lookup_retained.as_deref(),
+        Some("trading_calendar_versions_source_lookup_idx")
+    );
+
+    MIGRATOR.undo(owner, 24).await?;
+    assert_eq!(
+        applied_count(owner).await? as usize,
+        expected - 2,
         "undo to 0024 must revert only 0025"
     );
     let calendar_lookup_gone: Option<String> = sqlx::query_scalar(
@@ -1990,7 +2034,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 23).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 2,
+        expected - 3,
         "undo to 0023 must revert only 0024"
     );
     let source_index_gone: Option<String> =
@@ -2004,7 +2048,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 22).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 3,
+        expected - 4,
         "undo to 0022 must revert only 0023"
     );
     sqlx::query(
@@ -2017,7 +2061,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 21).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 4,
+        expected - 5,
         "undo to 0021 must revert only 0022"
     );
     for object in [
@@ -2215,5 +2259,895 @@ async fn revert_and_rerun_body(
     );
 
     let _ = super_url;
+    Ok(())
+}
+
+#[tokio::test]
+async fn recommendation_pipeline_migration_contract() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = recommendation_pipeline_contract_body(&super_url, &db, &owner).await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("recommendation pipeline migration contract FAILED: {error}");
+    }
+}
+
+async fn recommendation_pipeline_contract_body(
+    super_url: &str,
+    db: &str,
+    owner: &PgPool,
+) -> Result<(), Box<dyn Error>> {
+    MIGRATOR.run_to(25, owner).await?;
+    assert_eq!(applied_count(owner).await?, 25);
+
+    let user_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', 'recommendation-owner', 'recommendation@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO strategies (id, display_name, state) \
+         VALUES ('recommendation_contract', 'Recommendation Contract', 'Paper')",
+    )
+    .execute(owner)
+    .await?;
+    let owner_actor = actor_pool(super_url, db, "migration_owner", &user_id.to_string()).await?;
+    let config_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO user_strategy_configs \
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, 'recommendation_contract', '1.0.0', '{}'::jsonb) RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let dataset_version_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO dataset_versions \
+         (dataset_id, version, status, manifest_sha256, storage_path) \
+         VALUES ('kr-etf-core', '2026-08-11', 'READY', $1, 'curated/kr-etf-core/2026-08-11') \
+         RETURNING id",
+    )
+    .bind("a".repeat(64))
+    .fetch_one(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO instruments (id, symbol, venue, currency) \
+         VALUES ('069500.KRX', '069500', 'KRX', 'KRW')",
+    )
+    .execute(owner)
+    .await?;
+    let account_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO accounts (owner_user_id, account_type, name, status) \
+         VALUES ($1, 'PAPER', 'recommendation-paper', 'ACTIVE') RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let binding_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO account_strategy_bindings \
+         (account_id, owner_user_id, strategy_config_id, strategy_id, strategy_version) \
+         VALUES ($1, $2, $3, 'recommendation_contract', '1.0.0') RETURNING id",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .bind(config_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let legacy_run_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO recommendation_runs (owner_user_id, strategy_config_id, as_of) \
+         VALUES ($1, $2, '2026-08-08') RETURNING id",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .fetch_one(&owner_actor)
+    .await?;
+
+    MIGRATOR.run_to(26, owner).await?;
+    assert_eq!(applied_count(owner).await?, 26);
+
+    let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT table_name, column_name, is_nullable, column_default \
+         FROM information_schema.columns \
+         WHERE table_schema = 'public' AND ( \
+           (table_name = 'recommendation_runs' AND column_name IN \
+             ('job_id', 'trigger_kind', 'dataset_version_id', 'dataset_manifest_sha256')) \
+           OR (table_name = 'account_strategy_bindings' \
+             AND column_name = 'auto_apply_recommendations')) \
+         ORDER BY table_name, column_name",
+    )
+    .fetch_all(owner)
+    .await?;
+    assert_eq!(
+        columns,
+        vec![
+            (
+                "account_strategy_bindings".into(),
+                "auto_apply_recommendations".into(),
+                "NO".into(),
+                Some("false".into()),
+            ),
+            (
+                "recommendation_runs".into(),
+                "dataset_manifest_sha256".into(),
+                "YES".into(),
+                None,
+            ),
+            (
+                "recommendation_runs".into(),
+                "dataset_version_id".into(),
+                "YES".into(),
+                None,
+            ),
+            (
+                "recommendation_runs".into(),
+                "job_id".into(),
+                "YES".into(),
+                None,
+            ),
+            (
+                "recommendation_runs".into(),
+                "trigger_kind".into(),
+                "NO".into(),
+                Some("'MANUAL'::text".into()),
+            ),
+        ],
+        "0026 columns must preserve old rows while making new trigger/opt-in values explicit"
+    );
+
+    let legacy_defaults: (String, Option<Uuid>, Option<Uuid>, Option<String>) = sqlx::query_as(
+        "SELECT trigger_kind, job_id, dataset_version_id, dataset_manifest_sha256 \
+             FROM recommendation_runs WHERE id = $1",
+    )
+    .bind(legacy_run_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    assert_eq!(legacy_defaults, ("MANUAL".into(), None, None, None));
+    let binding_default: bool = sqlx::query_scalar(
+        "SELECT auto_apply_recommendations FROM account_strategy_bindings WHERE id = $1",
+    )
+    .bind(binding_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    assert!(!binding_default, "Paper automation must be opt-in");
+
+    let constraints: Vec<(String, String)> = sqlx::query_as(
+        "SELECT conname, pg_get_constraintdef(oid) \
+         FROM pg_constraint WHERE conname = ANY($1) ORDER BY conname",
+    )
+    .bind(
+        [
+            "recommendation_items_run_instrument_key",
+            "recommendation_runs_dataset_manifest_sha256_check",
+            "recommendation_runs_dataset_version_id_fkey",
+            "recommendation_runs_job_id_fkey",
+            "recommendation_runs_scheduled_lineage_check",
+            "recommendation_runs_trigger_check",
+        ]
+        .as_slice(),
+    )
+    .fetch_all(owner)
+    .await?;
+    assert_eq!(constraints.len(), 6, "all 0026 constraints must exist");
+    let constraint_definition = |name: &str| {
+        constraints
+            .iter()
+            .find(|(constraint, _)| constraint == name)
+            .map(|(_, definition)| definition.as_str())
+            .expect("expected 0026 constraint")
+    };
+    assert!(
+        constraint_definition("recommendation_runs_job_id_fkey")
+            .contains("FOREIGN KEY (job_id) REFERENCES jobs(id)")
+    );
+    assert!(
+        constraint_definition("recommendation_runs_dataset_version_id_fkey")
+            .contains("FOREIGN KEY (dataset_version_id) REFERENCES dataset_versions(id)")
+    );
+    let trigger_check = constraint_definition("recommendation_runs_trigger_check");
+    assert!(trigger_check.contains("MANUAL") && trigger_check.contains("SCHEDULED"));
+    let manifest_check = constraint_definition("recommendation_runs_dataset_manifest_sha256_check");
+    assert!(manifest_check.contains("IS NULL") && manifest_check.contains("^[0-9a-f]{64}$"));
+    let scheduled_lineage = constraint_definition("recommendation_runs_scheduled_lineage_check");
+    for required in [
+        "strategy_config_id IS NOT NULL",
+        "dataset_version_id IS NOT NULL",
+        "dataset_manifest_sha256 IS NOT NULL",
+        "job_id IS NOT NULL",
+    ] {
+        assert!(
+            scheduled_lineage.contains(required),
+            "scheduled lineage check is missing {required}: {scheduled_lineage}"
+        );
+    }
+    assert!(
+        constraint_definition("recommendation_items_run_instrument_key")
+            .contains("UNIQUE (recommendation_run_id, instrument_id)")
+    );
+
+    let indexes: Vec<(String, String)> = sqlx::query_as(
+        "SELECT indexname, indexdef FROM pg_indexes \
+         WHERE schemaname = 'public' AND indexname = ANY($1) ORDER BY indexname",
+    )
+    .bind(
+        [
+            "jobs_typed_claim_idx",
+            "recommendation_runs_job_id_uq",
+            "recommendation_runs_scheduled_identity_uq",
+            "target_portfolios_one_per_run",
+        ]
+        .as_slice(),
+    )
+    .fetch_all(owner)
+    .await?;
+    assert_eq!(indexes.len(), 4, "all 0026 indexes must exist");
+    let index_definition = |name: &str| {
+        indexes
+            .iter()
+            .find(|(index, _)| index == name)
+            .map(|(_, definition)| definition.as_str())
+            .expect("expected 0026 index")
+    };
+    let typed_claim = index_definition("jobs_typed_claim_idx");
+    assert!(
+        typed_claim.contains("(job_type, status, available_at, priority DESC, created_at)")
+            && typed_claim.contains("WHERE (status = 'QUEUED'::text)")
+    );
+    for unique_partial in [
+        "recommendation_runs_job_id_uq",
+        "recommendation_runs_scheduled_identity_uq",
+        "target_portfolios_one_per_run",
+    ] {
+        let definition = index_definition(unique_partial);
+        assert!(
+            definition.contains("CREATE UNIQUE INDEX") && definition.contains(" WHERE "),
+            "{unique_partial} must be a partial unique index: {definition}"
+        );
+    }
+
+    let function_metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
+        "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
+         FROM pg_proc WHERE oid = \
+         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,text)'::regprocedure",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        function_metadata.0,
+        "scheduler function must be SECURITY DEFINER"
+    );
+    assert_eq!(function_metadata.1, "migration_owner");
+    assert_eq!(
+        function_metadata.2,
+        Some(vec!["search_path=pg_catalog, public".into()]),
+        "scheduler function must pin a safe search_path"
+    );
+    let scheduled_guard: (String, String) = sqlx::query_as(
+        "SELECT guard_trigger.tgname, guard_fn.proname FROM pg_trigger AS guard_trigger \
+         JOIN pg_proc AS guard_fn ON guard_fn.oid = guard_trigger.tgfoid \
+         WHERE guard_trigger.tgrelid = 'public.recommendation_runs'::regclass \
+           AND NOT guard_trigger.tgisinternal \
+           AND guard_trigger.tgname = 'recommendation_runs_protect_scheduled_lineage'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        scheduled_guard,
+        (
+            "recommendation_runs_protect_scheduled_lineage".into(),
+            "recommendation_runs_reject_scheduled_lineage_mutation".into(),
+        )
+    );
+    let scheduled_job_guard: (String, String) = sqlx::query_as(
+        "SELECT guard_trigger.tgname, guard_fn.proname FROM pg_trigger AS guard_trigger \
+         JOIN pg_proc AS guard_fn ON guard_fn.oid = guard_trigger.tgfoid \
+         WHERE guard_trigger.tgrelid = 'public.jobs'::regclass \
+           AND NOT guard_trigger.tgisinternal \
+           AND guard_trigger.tgname = 'jobs_protect_scheduled_recommendation_lineage'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        scheduled_job_guard,
+        (
+            "jobs_protect_scheduled_recommendation_lineage".into(),
+            "jobs_reject_scheduled_recommendation_mutation".into(),
+        )
+    );
+    for (role, expected) in [
+        ("worker", true),
+        ("app", false),
+        ("admin", false),
+        ("audit_writer", false),
+        ("research_writer", false),
+    ] {
+        let can_execute: bool = sqlx::query_scalar(
+            "SELECT has_function_privilege($1, \
+             'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,text)', 'EXECUTE')",
+        )
+        .bind(role)
+        .fetch_one(owner)
+        .await?;
+        assert_eq!(
+            can_execute, expected,
+            "unexpected scheduler EXECUTE privilege for {role}"
+        );
+    }
+
+    for (table, expected) in [
+        ("recommendation_runs", (true, false, false, false)),
+        ("recommendation_items", (true, true, false, false)),
+        ("target_portfolios", (true, true, false, false)),
+        ("jobs", (true, false, true, false)),
+        ("user_strategy_configs", (true, false, false, false)),
+        ("account_strategy_bindings", (true, false, false, false)),
+    ] {
+        let privileges: (bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT has_table_privilege('worker', $1, 'SELECT'), \
+                    has_table_privilege('worker', $1, 'INSERT'), \
+                    has_table_privilege('worker', $1, 'UPDATE'), \
+                    has_table_privilege('worker', $1, 'DELETE')",
+        )
+        .bind(table)
+        .fetch_one(owner)
+        .await?;
+        assert_eq!(privileges, expected, "unexpected worker grants on {table}");
+    }
+    for (column, expected) in [
+        ("status", true),
+        ("summary_json", true),
+        ("owner_user_id", false),
+        ("job_id", false),
+        ("trigger_kind", false),
+        ("strategy_config_id", false),
+        ("as_of", false),
+        ("dataset_version_id", false),
+        ("dataset_manifest_sha256", false),
+    ] {
+        let can_update: bool = sqlx::query_scalar(
+            "SELECT has_column_privilege('worker', 'recommendation_runs', $1, 'UPDATE')",
+        )
+        .bind(column)
+        .fetch_one(owner)
+        .await?;
+        assert_eq!(
+            can_update, expected,
+            "unexpected worker UPDATE privilege on recommendation_runs.{column}"
+        );
+    }
+
+    let worker = role_pool(super_url, db, "worker").await?;
+    let app = role_pool(super_url, db, "app").await?;
+    let app_function_denied =
+        sqlx::query("SELECT * FROM schedule_recommendation_run($1, $2, '2026-08-11', $3, $4, 'x')")
+            .bind(user_id)
+            .bind(config_id)
+            .bind(dataset_version_id)
+            .bind("a".repeat(64))
+            .execute(&app)
+            .await
+            .unwrap_err();
+    assert_eq!(pg_code(&app_function_denied).as_deref(), Some("42501"));
+
+    let expected_key: String = sqlx::query_scalar(
+        "SELECT 'recommendation:scheduled:' || \
+         md5(concat_ws('|', $1::text, $2::text, to_char($3::date, 'YYYY-MM-DD'), $4::text))",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind("2026-08-11")
+    .bind(dataset_version_id)
+    .fetch_one(owner)
+    .await?;
+    const SCHEDULE_SQL: &str = "SELECT run_id, job_id FROM schedule_recommendation_run( \
+         $1, $2, $3::date, $4, $5, $6)";
+
+    let no_opt_in = sqlx::query(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(&expected_key)
+        .execute(&worker)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        pg_code(&no_opt_in).as_deref(),
+        Some("42501"),
+        "default-false binding must not authorize scheduling"
+    );
+
+    sqlx::query(
+        "UPDATE account_strategy_bindings SET auto_apply_recommendations = true WHERE id = $1",
+    )
+    .bind(binding_id)
+    .execute(&owner_actor)
+    .await?;
+
+    sqlx::query("UPDATE user_strategy_configs SET is_active = false WHERE id = $1")
+        .bind(config_id)
+        .execute(&owner_actor)
+        .await?;
+    let inactive_config = sqlx::query(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(&expected_key)
+        .execute(&worker)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&inactive_config).as_deref(), Some("42501"));
+    sqlx::query("UPDATE user_strategy_configs SET is_active = true WHERE id = $1")
+        .bind(config_id)
+        .execute(&owner_actor)
+        .await?;
+
+    sqlx::query("UPDATE accounts SET status = 'SUSPENDED' WHERE id = $1")
+        .bind(account_id)
+        .execute(&owner_actor)
+        .await?;
+    let inactive_account = sqlx::query(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(&expected_key)
+        .execute(&worker)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&inactive_account).as_deref(), Some("42501"));
+    sqlx::query("UPDATE accounts SET status = 'ACTIVE' WHERE id = $1")
+        .bind(account_id)
+        .execute(&owner_actor)
+        .await?;
+
+    sqlx::query("UPDATE dataset_versions SET status = 'BLOCKED' WHERE id = $1")
+        .bind(dataset_version_id)
+        .execute(owner)
+        .await?;
+    let blocked_dataset = sqlx::query(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(&expected_key)
+        .execute(&worker)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&blocked_dataset).as_deref(), Some("22023"));
+    sqlx::query("UPDATE dataset_versions SET status = 'WARNING' WHERE id = $1")
+        .bind(dataset_version_id)
+        .execute(owner)
+        .await?;
+
+    let foreign_owner = Uuid::parse_str("00000000-0000-0000-0000-000000000026").unwrap();
+    let foreign_owner_key: String = sqlx::query_scalar(
+        "SELECT 'recommendation:scheduled:' || \
+         md5(concat_ws('|', $1::text, $2::text, to_char($3::date, 'YYYY-MM-DD'), $4::text))",
+    )
+    .bind(foreign_owner)
+    .bind(config_id)
+    .bind("2026-08-11")
+    .bind(dataset_version_id)
+    .fetch_one(owner)
+    .await?;
+    let foreign_owner_denied = sqlx::query(SCHEDULE_SQL)
+        .bind(foreign_owner)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(foreign_owner_key)
+        .execute(&worker)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&foreign_owner_denied).as_deref(), Some("42501"));
+
+    let bad_key = sqlx::query(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind("caller-controlled-key")
+        .execute(&worker)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&bad_key).as_deref(), Some("22023"));
+    let wrong_manifest = sqlx::query(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("b".repeat(64))
+        .bind(&expected_key)
+        .execute(&worker)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&wrong_manifest).as_deref(), Some("22023"));
+
+    let call_one = sqlx::query_as::<_, (Uuid, Uuid)>(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(expected_key.clone())
+        .fetch_one(&worker);
+    let call_two = sqlx::query_as::<_, (Uuid, Uuid)>(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(expected_key.clone())
+        .fetch_one(&worker);
+    let (first, second) = tokio::join!(call_one, call_two);
+    let first = first?;
+    let second = second?;
+    assert_eq!(
+        first, second,
+        "concurrent scheduling must return one identity"
+    );
+    let mut dmy_worker = worker.acquire().await?;
+    sqlx::query("SET DateStyle TO 'SQL, DMY'")
+        .execute(&mut *dmy_worker)
+        .await?;
+    let dmy_retry: (Uuid, Uuid) = sqlx::query_as(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(expected_key.clone())
+        .fetch_one(&mut *dmy_worker)
+        .await?;
+    assert_eq!(
+        dmy_retry, first,
+        "DateStyle must not alter scheduler identity"
+    );
+    drop(dmy_worker);
+
+    let scheduled_counts: (i64, i64) = sqlx::query_as(
+        "SELECT \
+           (SELECT count(*) FROM recommendation_runs WHERE trigger_kind = 'SCHEDULED'), \
+           (SELECT count(*) FROM jobs WHERE job_type = 'recommendation')",
+    )
+    .fetch_one(&worker)
+    .await?;
+    assert_eq!(scheduled_counts, (1, 1));
+    let lineage: (Uuid, String, Uuid, String, Uuid) = sqlx::query_as(
+        "SELECT job_id, trigger_kind, dataset_version_id, dataset_manifest_sha256, \
+                strategy_config_id \
+         FROM recommendation_runs WHERE id = $1",
+    )
+    .bind(first.0)
+    .fetch_one(&worker)
+    .await?;
+    assert_eq!(lineage.0, first.1);
+    assert_eq!(lineage.1, "SCHEDULED");
+    assert_eq!(lineage.2, dataset_version_id);
+    assert_eq!(lineage.3, "a".repeat(64));
+    assert_eq!(lineage.4, config_id);
+    let job: (Uuid, String, String, String, String, String, String, String) = sqlx::query_as(
+        "SELECT owner_user_id, job_type, idempotency_key, payload_json->>'run_id', \
+                payload_json->>'config_id', payload_json->>'as_of', \
+                payload_json->>'dataset_version_id', \
+                payload_json->>'dataset_manifest_sha256' \
+         FROM jobs WHERE id = $1",
+    )
+    .bind(first.1)
+    .fetch_one(&worker)
+    .await?;
+    assert_eq!(job.0, user_id);
+    assert_eq!(job.1, "recommendation");
+    assert_eq!(job.2, expected_key);
+    assert_eq!(job.3, first.0.to_string());
+    assert_eq!(job.4, config_id.to_string());
+    assert_eq!(job.5, "2026-08-11");
+    assert_eq!(job.6, dataset_version_id.to_string());
+    assert_eq!(job.7, "a".repeat(64));
+
+    let app_actor = actor_pool(super_url, db, "app", &user_id.to_string()).await?;
+    let forged_scheduled = sqlx::query(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id, strategy_config_id, as_of, trigger_kind, dataset_version_id, \
+          dataset_manifest_sha256, job_id) \
+         VALUES ($1, $2, '2026-08-12', 'SCHEDULED', $3, $4, $5)",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(dataset_version_id)
+    .bind("a".repeat(64))
+    .bind(first.1)
+    .execute(&app_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&forged_scheduled).as_deref(), Some("42501"));
+    let rewritten_scheduled =
+        sqlx::query("UPDATE recommendation_runs SET as_of = '2026-08-12' WHERE id = $1")
+            .bind(first.0)
+            .execute(&app_actor)
+            .await
+            .unwrap_err();
+    assert_eq!(pg_code(&rewritten_scheduled).as_deref(), Some("42501"));
+    let deleted_scheduled = sqlx::query("DELETE FROM recommendation_runs WHERE id = $1")
+        .bind(first.0)
+        .execute(&app_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&deleted_scheduled).as_deref(), Some("42501"));
+    let app_rewrites_job = sqlx::query("UPDATE jobs SET job_type = 'backtest' WHERE id = $1")
+        .bind(first.1)
+        .execute(&app_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&app_rewrites_job).as_deref(), Some("42501"));
+    let worker_rewrites_job =
+        sqlx::query("UPDATE jobs SET payload_json = '{}'::jsonb WHERE id = $1")
+            .bind(first.1)
+            .execute(&worker)
+            .await
+            .unwrap_err();
+    assert_eq!(pg_code(&worker_rewrites_job).as_deref(), Some("42501"));
+    let app_reserves_scheduled_key = sqlx::query(
+        "INSERT INTO jobs (owner_user_id, job_type, idempotency_key) \
+         VALUES ($1, 'backtest', $2)",
+    )
+    .bind(user_id)
+    .bind(&expected_key)
+    .execute(&app_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&app_reserves_scheduled_key).as_deref(),
+        Some("42501")
+    );
+    let ordinary_job: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id, job_type, idempotency_key) \
+         VALUES ($1, 'backtest', 'ordinary-backtest') RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&app_actor)
+    .await?;
+    let worker_enters_scheduled_namespace =
+        sqlx::query("UPDATE jobs SET idempotency_key = $1 WHERE id = $2")
+            .bind(&expected_key)
+            .bind(ordinary_job)
+            .execute(&worker)
+            .await
+            .unwrap_err();
+    assert_eq!(
+        pg_code(&worker_enters_scheduled_namespace).as_deref(),
+        Some("42501")
+    );
+
+    sqlx::query("UPDATE recommendation_runs SET summary_json = '{\"worker\":true}' WHERE id = $1")
+        .bind(first.0)
+        .execute(&worker)
+        .await?;
+    sqlx::query(
+        "INSERT INTO recommendation_items \
+         (recommendation_run_id, owner_user_id, instrument_id, rank) \
+         VALUES ($1, $2, '069500.KRX', 1)",
+    )
+    .bind(first.0)
+    .bind(user_id)
+    .execute(&worker)
+    .await?;
+    let duplicate_item = sqlx::query(
+        "INSERT INTO recommendation_items \
+         (recommendation_run_id, owner_user_id, instrument_id, rank) \
+         VALUES ($1, $2, '069500.KRX', 2)",
+    )
+    .bind(first.0)
+    .bind(user_id)
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&duplicate_item).as_deref(), Some("23505"));
+    sqlx::query(
+        "INSERT INTO target_portfolios \
+         (owner_user_id, recommendation_run_id, as_of) VALUES ($1, $2, '2026-08-11')",
+    )
+    .bind(user_id)
+    .bind(first.0)
+    .execute(&worker)
+    .await?;
+    let duplicate_target = sqlx::query(
+        "INSERT INTO target_portfolios \
+         (owner_user_id, recommendation_run_id, as_of) VALUES ($1, $2, '2026-08-11')",
+    )
+    .bind(user_id)
+    .bind(first.0)
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&duplicate_target).as_deref(), Some("23505"));
+
+    for (statement, message) in [
+        (
+            "INSERT INTO recommendation_runs (owner_user_id, strategy_config_id, as_of) \
+             VALUES ('00000000-0000-0000-0000-000000000001', NULL, '2026-08-11')",
+            "worker must not insert arbitrary recommendation runs",
+        ),
+        (
+            "INSERT INTO jobs (owner_user_id, job_type) \
+             VALUES ('00000000-0000-0000-0000-000000000001', 'recommendation')",
+            "worker must not insert arbitrary jobs",
+        ),
+        (
+            "UPDATE user_strategy_configs SET is_active = false",
+            "worker must not modify strategy configs",
+        ),
+        (
+            "UPDATE recommendation_runs SET dataset_version_id = NULL",
+            "worker must not rewrite recommendation lineage",
+        ),
+        (
+            "UPDATE account_strategy_bindings SET auto_apply_recommendations = false",
+            "worker must not manufacture or revoke automation consent",
+        ),
+        (
+            "DELETE FROM recommendation_runs",
+            "worker must not delete recommendation runs",
+        ),
+    ] {
+        let denied = sqlx::query(statement).execute(&worker).await.unwrap_err();
+        assert_eq!(pg_code(&denied).as_deref(), Some("42501"), "{message}");
+    }
+    let binding_insert_denied = sqlx::query(
+        "INSERT INTO account_strategy_bindings \
+         (account_id, owner_user_id, strategy_config_id, strategy_id, strategy_version) \
+         VALUES ($1, $2, $3, 'recommendation_contract', '1.0.0')",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .bind(config_id)
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&binding_insert_denied).as_deref(), Some("42501"));
+    let binding_visible: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM account_strategy_bindings WHERE id = $1")
+            .bind(binding_id)
+            .fetch_one(&worker)
+            .await?;
+    assert_eq!(binding_visible, 1, "worker still needs binding SELECT");
+
+    let invalid_trigger = sqlx::query(
+        "INSERT INTO recommendation_runs (owner_user_id, strategy_config_id, as_of, trigger_kind) \
+         VALUES ($1, $2, '2026-08-12', 'OTHER')",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .execute(&owner_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&invalid_trigger).as_deref(), Some("23514"));
+    let invalid_manifest = sqlx::query(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id, strategy_config_id, as_of, dataset_manifest_sha256) \
+         VALUES ($1, $2, '2026-08-12', $3)",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind("A".repeat(64))
+    .execute(&owner_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&invalid_manifest).as_deref(), Some("23514"));
+    let duplicate_job_link = sqlx::query(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id, strategy_config_id, as_of, job_id) \
+         VALUES ($1, $2, '2026-08-12', $3)",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(first.1)
+    .execute(&owner_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&duplicate_job_link).as_deref(), Some("23505"));
+    let incomplete_scheduled = sqlx::query(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id, strategy_config_id, as_of, trigger_kind, dataset_version_id, \
+          dataset_manifest_sha256) \
+         VALUES ($1, $2, '2026-08-12', 'SCHEDULED', $3, $4)",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(dataset_version_id)
+    .bind("a".repeat(64))
+    .execute(&owner_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&incomplete_scheduled).as_deref(), Some("23514"));
+
+    MIGRATOR.undo(owner, 25).await?;
+    assert_eq!(applied_count(owner).await?, 25, "0026 down must run alone");
+    let columns_after_down: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.columns \
+         WHERE table_schema = 'public' AND ( \
+           (table_name = 'recommendation_runs' AND column_name IN \
+             ('job_id', 'trigger_kind', 'dataset_version_id', 'dataset_manifest_sha256')) \
+           OR (table_name = 'account_strategy_bindings' \
+             AND column_name = 'auto_apply_recommendations'))",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(columns_after_down, 0);
+    let function_after_down: Option<String> = sqlx::query_scalar(
+        "SELECT to_regprocedure( \
+         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,text)')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(function_after_down.is_none());
+    let guard_after_down: Option<String> = sqlx::query_scalar(
+        "SELECT to_regprocedure( \
+         'public.recommendation_runs_reject_scheduled_lineage_mutation()')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(guard_after_down.is_none());
+    let job_guard_after_down: Option<String> = sqlx::query_scalar(
+        "SELECT to_regprocedure( \
+         'public.jobs_reject_scheduled_recommendation_mutation()')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(job_guard_after_down.is_none());
+    for index in [
+        "public.jobs_typed_claim_idx",
+        "public.recommendation_runs_job_id_uq",
+        "public.recommendation_runs_scheduled_identity_uq",
+        "public.target_portfolios_one_per_run",
+    ] {
+        let remaining: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
+            .bind(index)
+            .fetch_one(owner)
+            .await?;
+        assert!(remaining.is_none(), "0026 down must drop {index}");
+    }
+    let remaining_item_constraint: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_constraint \
+         WHERE conname = 'recommendation_items_run_instrument_key'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(remaining_item_constraint, 0);
+    for (table, expected) in [
+        ("recommendation_runs", (false, false, false, false)),
+        ("recommendation_items", (false, false, false, false)),
+        ("target_portfolios", (false, false, false, false)),
+        ("account_strategy_bindings", (true, true, true, false)),
+    ] {
+        let privileges: (bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT has_table_privilege('worker', $1, 'SELECT'), \
+                    has_table_privilege('worker', $1, 'INSERT'), \
+                    has_table_privilege('worker', $1, 'UPDATE'), \
+                    has_table_privilege('worker', $1, 'DELETE')",
+        )
+        .bind(table)
+        .fetch_one(owner)
+        .await?;
+        assert_eq!(privileges, expected, "0026 down grant drift on {table}");
+    }
+
+    MIGRATOR.run(owner).await?;
+    assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
     Ok(())
 }
