@@ -95,10 +95,12 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tower",
  "url",
+ "zeroize",
 ]
 
 [[package]]

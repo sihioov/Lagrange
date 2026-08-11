@@ -16,6 +16,8 @@
 //! OIDC HTTP transport (token exchange + JWKS fetch) ships here as
 //! [`HttpOidcTransport`].
 
+pub mod config;
+
 use auth::audit::{AuthAudit, AuthAuditEvent, AuthAuditKind};
 use auth::entitlement::Role;
 use auth::invites::InviteError;
