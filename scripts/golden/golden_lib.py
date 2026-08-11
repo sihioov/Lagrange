@@ -267,20 +267,23 @@ def field_diff(old: Any, new: Any, path: str = "") -> list[Diff]:
 # GoldenManifest construction / serialization
 # --------------------------------------------------------------------------- #
 
-def resolve_code(base_dir: Path) -> dict[str, str]:
-    """Resolve (commit, tree) from the enclosing git worktree."""
+def resolve_code(base_dir: Path, revision: str = "HEAD") -> dict[str, str]:
+    """Resolve a validated commit and its actual tree from a Git worktree."""
     try:
         commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=base_dir, capture_output=True, text=True, check=True
+            ["git", "rev-parse", "--verify", f"{revision}^{{commit}}"],
+            cwd=base_dir,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         tree = subprocess.run(
-            ["git", "rev-parse", "--verify", "HEAD^{tree}"],
+            ["git", "rev-parse", "--verify", f"{commit}^{{tree}}"],
             cwd=base_dir, capture_output=True, text=True, check=True,
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError) as exc:
         raise GoldenManifestError(
-            f"cannot resolve git code version from {base_dir}; "
-            "run inside the repository or pass --code-override"
+            f"cannot resolve git code version {revision!r} from {base_dir}"
         ) from exc
     return {"commit": commit, "tree": tree}
 

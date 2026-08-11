@@ -1,6 +1,6 @@
 """Todo 14 RED gate tests: Phase 0 NautilusTrader next-open golden gate.
 
-The five gates below are the acceptance contract for the Phase 0 proof
+The seven gates below are the acceptance contract for the Phase 0 proof
 (plan Todo 14, docs requirements AT-02/AT-03, design ADR-004/005/007):
 
 1. `test_two_fresh_process_runs_produce_identical_hashes` - the SAME config
@@ -19,7 +19,9 @@ The five gates below are the acceptance contract for the Phase 0 proof
 5. `test_version_drift_fails_the_golden_gate` - an altered engine/strategy
    version produces a provenance hash mismatch and the manifest verify fails
    with a field-level diff (stale-state gate).
-6. `test_committed_phase0_manifest_verifies` - the committed golden manifest
+6. `test_phase0_evidence_rejects_*` - golden config, manifest, provenance,
+   and pinned Git objects cross-validate and reject stale evidence.
+7. `test_committed_phase0_manifest_verifies` - the committed golden manifest
    + committed outputs verify with exit 0 (Todo 6 pattern; evidence gate).
 """
 from __future__ import annotations
@@ -46,6 +48,8 @@ FIXTURE_BARS = REPO_ROOT / "tests" / "fixtures" / "kr-etf" / "2020-01-31" / "bar
 
 if str(SCRIPTS_GOLDEN) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_GOLDEN))
+
+import golden_lib as gl  # noqa: E402
 
 ARTIFACTS = [
     "recommendation.json",
@@ -118,6 +122,62 @@ def materialize_golden_tree(tmp: Path) -> Path:
     return tree
 
 
+def _load_committed_evidence() -> tuple[dict, dict, dict]:
+    golden = json.loads(GOLDEN_JSON.read_text(encoding="utf-8"))
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    provenance = load_artifact(OUTPUTS_DIR, "provenance.json")
+    return golden, manifest, provenance
+
+
+def _assert_phase0_evidence_consistent(
+    golden: dict, manifest: dict, provenance: dict, repo_root: Path = REPO_ROOT
+) -> None:
+    """Cross-check independently committed Phase 0 evidence."""
+    assert golden["golden_id"] == manifest["golden_id"], "golden identity mismatch"
+    assert manifest["golden_id"] == GOLDEN_ID, "golden identity is not the approved v2 ID"
+    assert golden["versions"]["data"] == manifest["versions"]["data"], "data identity mismatch"
+    assert (
+        golden["versions"]["config"]["id"] == manifest["versions"]["config"]["id"]
+    ), "config identity mismatch"
+
+    expected_config_hash = gl.hash_bytes(gl.canonical_json_bytes(golden))
+    assert (
+        manifest["versions"]["config"]["hash"] == expected_config_hash
+    ), "config hash does not match canonical golden config"
+
+    data_version = manifest["versions"]["data"]
+    code_version = manifest["versions"]["code"]
+    assert provenance["dataset_version"] == data_version["id"], "dataset_version mismatch"
+    assert (
+        provenance["data_generator_version"] == data_version["version"]
+    ), "data_generator_version mismatch"
+    assert provenance["code_commit"] == code_version["commit"], "code_commit mismatch"
+
+    commit = code_version["commit"]
+    resolved_commit = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{commit}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    assert resolved_commit.returncode == 0, f"manifest code commit does not exist: {commit}"
+    assert resolved_commit.stdout.strip() == commit, "manifest code commit is not canonical"
+
+    resolved_tree = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{commit}^{{tree}}"],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    assert resolved_tree.returncode == 0, f"cannot resolve code tree for commit: {commit}"
+    assert (
+        resolved_tree.stdout.strip() == code_version["tree"]
+    ), "manifest code tree does not match the commit"
+
+    assert manifest["versions"]["engine"]["version"] == "1.231.0"
+    assert manifest["versions"]["timezone"] == "Asia/Seoul"
+
+
 def _load_synth() -> object:
     spec = importlib.util.spec_from_file_location("phase0_synth", PHASE0_DIR / "synth_data.py")
     synth = importlib.util.module_from_spec(spec)
@@ -167,11 +227,12 @@ def test_two_fresh_process_runs_produce_identical_hashes(tmp_path: Path) -> None
     assert summary_a["artifact_hashes"] == hashes_a
     assert summary_b["artifact_hashes"] == hashes_b
 
-    # The committed golden outputs are regenerated from run_a (deterministic)
-    # and the committed manifest must verify (Todo 6 golden gate).
+    # Verify run_a against a temporary copy of the approved golden tree. Tests
+    # must never write into the tracked OUTPUTS_DIR.
+    tree = materialize_golden_tree(tmp_path / "verification")
     for name in ARTIFACTS:
-        shutil.copy2(out_a / name, OUTPUTS_DIR / name)
-    verify = verify_manifest(MANIFEST)
+        shutil.copy2(out_a / name, tree / "outputs" / name)
+    verify = verify_manifest(tree / "manifest.json")
     assert verify.returncode == 0, verify.stdout + verify.stderr
     assert "VERDICT: PASS" in verify.stdout
 
@@ -275,7 +336,58 @@ def test_engine_version_drift_fails_golden_gate(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# gate 6: committed golden manifest verifies (evidence gate)
+# gate 6: committed evidence identities and Git objects cross-validate
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("identity", ["golden", "data", "config"])
+def test_phase0_evidence_rejects_stale_identity(identity: str) -> None:
+    golden, manifest, provenance = _load_committed_evidence()
+    if identity == "golden":
+        golden["golden_id"] += "-stale"
+    elif identity == "data":
+        manifest["versions"]["data"]["id"] += "-stale"
+    else:
+        manifest["versions"]["config"]["id"] += "-stale"
+    with pytest.raises(AssertionError, match=identity):
+        _assert_phase0_evidence_consistent(golden, manifest, provenance)
+
+
+def test_phase0_evidence_rejects_mutated_config_hash() -> None:
+    golden, manifest, provenance = _load_committed_evidence()
+    manifest["versions"]["config"]["hash"] = "sha256:" + "0" * 64
+    with pytest.raises(AssertionError, match="config hash"):
+        _assert_phase0_evidence_consistent(golden, manifest, provenance)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["dataset_version", "data_generator_version", "code_commit"],
+)
+def test_phase0_evidence_rejects_stale_provenance(field: str) -> None:
+    golden, manifest, provenance = _load_committed_evidence()
+    provenance[field] += "-stale"
+    with pytest.raises(AssertionError, match=field):
+        _assert_phase0_evidence_consistent(golden, manifest, provenance)
+
+
+def test_phase0_evidence_rejects_nonexistent_commit() -> None:
+    golden, manifest, provenance = _load_committed_evidence()
+    nonexistent = "0" * 40
+    manifest["versions"]["code"]["commit"] = nonexistent
+    provenance["code_commit"] = nonexistent
+    with pytest.raises(AssertionError, match="does not exist"):
+        _assert_phase0_evidence_consistent(golden, manifest, provenance)
+
+
+def test_phase0_evidence_rejects_incorrect_commit_tree() -> None:
+    golden, manifest, provenance = _load_committed_evidence()
+    manifest["versions"]["code"]["tree"] = "0" * 40
+    with pytest.raises(AssertionError, match="code tree"):
+        _assert_phase0_evidence_consistent(golden, manifest, provenance)
+
+
+# --------------------------------------------------------------------------- #
+# gate 7: committed golden manifest verifies (evidence gate)
 # --------------------------------------------------------------------------- #
 
 def test_committed_phase0_manifest_verifies() -> None:
@@ -284,7 +396,5 @@ def test_committed_phase0_manifest_verifies() -> None:
     verify = verify_manifest(MANIFEST)
     assert verify.returncode == 0, verify.stdout + verify.stderr
     assert "VERDICT: PASS" in verify.stdout
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    assert manifest["golden_id"] == GOLDEN_ID
-    assert manifest["versions"]["engine"]["version"] == "1.231.0"
-    assert manifest["versions"]["timezone"] == "Asia/Seoul"
+    golden, manifest, provenance = _load_committed_evidence()
+    _assert_phase0_evidence_consistent(golden, manifest, provenance)

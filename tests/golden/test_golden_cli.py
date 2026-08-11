@@ -16,15 +16,33 @@ from golden_paths import GOLDEN_PY
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _git_rev_parse(revision: str) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "--verify", revision],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=REPO_ROOT,
+    ).stdout.strip()
+
+
+CODE_COMMIT = _git_rev_parse("HEAD^{commit}")
+CODE_TREE = _git_rev_parse(f"{CODE_COMMIT}^{{tree}}")
+
+
 def _run_cli(golden_tree: Path, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
     cmd = [sys.executable, str(GOLDEN_PY), *args]
     return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd or golden_tree)
 
 
-def _generate(tmp_manifest: Path, golden_tree: Path) -> subprocess.CompletedProcess:
+def _generate(
+    tmp_manifest: Path,
+    golden_tree: Path,
+    code_override: str = CODE_COMMIT,
+) -> subprocess.CompletedProcess:
     config = golden_tree / "golden" / "golden.json"
     return _run_cli(golden_tree, "generate", str(config), "-o", str(tmp_manifest),
-                    "--code-override", "0" * 40)
+                    "--code-override", code_override)
 
 
 # --------------------------------------------------------------------------- #
@@ -64,6 +82,29 @@ def test_cli_generate_deterministic_across_two_runs(golden_tree: Path, tmp_path:
     manifest = json.loads(m1.read_text(encoding="utf-8"))
     assert manifest["golden_id"] == "kr-etf-2020-01-31-test"
     assert set(manifest["versions"]) == {"data", "strategy", "engine", "code", "config", "seed", "timezone"}
+
+
+def test_cli_generate_code_override_records_actual_commit_tree(
+    golden_tree: Path, tmp_path: Path
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    proc = _generate(manifest_path, golden_tree)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["versions"]["code"] == {
+        "commit": CODE_COMMIT,
+        "tree": CODE_TREE,
+    }
+
+
+def test_cli_generate_rejects_nonexistent_code_override(
+    golden_tree: Path, tmp_path: Path
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    proc = _generate(manifest_path, golden_tree, code_override="0" * 40)
+    assert proc.returncode != 0
+    assert "cannot resolve git code version" in proc.stderr
+    assert not manifest_path.exists()
 
 
 # --------------------------------------------------------------------------- #

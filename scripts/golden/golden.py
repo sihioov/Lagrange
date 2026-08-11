@@ -23,6 +23,8 @@ from pathlib import Path
 
 import golden_lib as gl
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def _die(message: str, code: int = 2) -> None:
     print(f"golden: error: {message}", file=sys.stderr)
@@ -45,7 +47,7 @@ def cmd_generate(args: argparse.Namespace) -> None:
     if not isinstance(config, dict) or "golden_id" not in config:
         _die(f"{config_path} is not a golden generation config")
     if args.code_override:
-        code = {"commit": args.code_override, "tree": args.code_override}
+        code = gl.resolve_code(REPO_ROOT, args.code_override)
     else:
         code = gl.resolve_code(base_dir)
     out_path = Path(args.output) if args.output else base_dir / "manifest.json"
