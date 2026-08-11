@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use job_queue::recommendation::child::{
     TargetChildError, TargetChildPaths, TargetChildRequest, TargetProvenance, run_target_child,
@@ -155,6 +155,32 @@ async fn timeout_kills_and_reaps_the_child_then_cleans_files() {
 }
 
 #[tokio::test]
+async fn descendant_holding_inherited_stderr_cannot_outlive_operation_deadline() {
+    let script = r#"
+import subprocess, sys
+subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2)'], stderr=sys.stderr)
+"#;
+    let (root, uv) = fake_project(script);
+    let scratch = tempfile::tempdir().unwrap();
+    let started = Instant::now();
+    let error = run_target_child(
+        &paths_for(&root, uv, &scratch),
+        Uuid::new_v4(),
+        &request("buy_and_hold"),
+        Duration::from_millis(750),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code(), "TARGET_CHILD_TIMEOUT");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "stderr descendant held the call for {:?}",
+        started.elapsed()
+    );
+    assert!(scratch.path().read_dir().unwrap().next().is_none());
+}
+
+#[tokio::test]
 async fn oversized_result_status_and_stderr_are_bounded_and_classified() {
     let cases = [
         (
@@ -243,7 +269,7 @@ async fn relative_or_symlinked_execution_paths_are_rejected_before_launch() {
 }
 
 #[tokio::test]
-async fn same_job_collision_is_rejected_while_different_jobs_can_run_concurrently() {
+async fn different_jobs_can_run_concurrently() {
     let Some(uv) = uv_bin() else { return };
     let scratch = tempfile::tempdir().unwrap();
     let paths = TargetChildPaths {
@@ -271,23 +297,65 @@ async fn same_job_collision_is_rejected_while_different_jobs_can_run_concurrentl
 }
 
 #[tokio::test]
-async fn same_job_id_cannot_share_a_scratch_directory() {
-    let (root, uv) = fake_project("import time\ntime.sleep(2)\n");
+async fn concurrent_invocations_of_the_same_job_are_isolated() {
+    let Some(uv) = uv_bin() else { return };
     let scratch = tempfile::tempdir().unwrap();
-    let paths = paths_for(&root, uv, &scratch);
+    let paths = TargetChildPaths {
+        uv_bin: uv,
+        repo_root: repo_root(),
+        temp_root: scratch.path().to_path_buf(),
+    };
     let job_id = Uuid::new_v4();
     let first_request = request("buy_and_hold");
     let second_request = request("buy_and_hold");
-    let first = run_target_child(&paths, job_id, &first_request, Duration::from_millis(400));
-    let second = run_target_child(&paths, job_id, &second_request, Duration::from_millis(400));
+    let first = run_target_child(&paths, job_id, &first_request, Duration::from_secs(30));
+    let second = run_target_child(&paths, job_id, &second_request, Duration::from_secs(30));
     let (first, second) = tokio::join!(first, second);
-    let errors = [first.err(), second.err()];
-    assert!(
-        errors
-            .iter()
-            .flatten()
-            .any(|error| { error.code() == "TARGET_CHILD_SCRATCH_COLLISION" })
+    assert!(first.is_ok(), "{first:?}");
+    assert!(second.is_ok(), "{second:?}");
+    assert!(scratch.path().read_dir().unwrap().next().is_none());
+}
+
+#[tokio::test]
+async fn stale_job_directory_does_not_block_retry_and_is_not_deleted() {
+    let Some(uv) = uv_bin() else { return };
+    let scratch = tempfile::tempdir().unwrap();
+    let job_id = Uuid::new_v4();
+    let legacy_stale = scratch
+        .path()
+        .join(format!("recommendation-{}", job_id.simple()));
+    fs::create_dir(&legacy_stale).unwrap();
+    fs::write(legacy_stale.join("request.json"), b"legacy stale secret").unwrap();
+    let stale_invocation = scratch.path().join(format!(
+        "recommendation-{}-invocation-{}",
+        job_id.simple(),
+        Uuid::new_v4().simple()
+    ));
+    fs::create_dir(&stale_invocation).unwrap();
+    fs::write(stale_invocation.join("request.json"), b"stale secret").unwrap();
+    let paths = TargetChildPaths {
+        uv_bin: uv,
+        repo_root: repo_root(),
+        temp_root: scratch.path().to_path_buf(),
+    };
+    let result = run_target_child(
+        &paths,
+        job_id,
+        &request("buy_and_hold"),
+        Duration::from_secs(30),
+    )
+    .await
+    .expect("retry uses a fresh invocation directory");
+    assert_eq!(result.strategy_version, "buy_and_hold@1.0.0");
+    assert_eq!(
+        fs::read(legacy_stale.join("request.json")).unwrap(),
+        b"legacy stale secret"
     );
+    assert_eq!(
+        fs::read(stale_invocation.join("request.json")).unwrap(),
+        b"stale secret"
+    );
+    assert_eq!(scratch.path().read_dir().unwrap().count(), 2);
 }
 
 #[tokio::test]
@@ -367,6 +435,11 @@ json.dump(result,open(a.result,'w'))
 fn error_type_is_send_sync_and_has_stable_classification() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<TargetChildError>();
+    assert_eq!(
+        TargetChildError::ScratchCollision.class(),
+        ErrorClass::Transient
+    );
+    assert_eq!(TargetChildError::Termination.class(), ErrorClass::Transient);
     assert_eq!(
         TargetChildError::ChildStatus {
             code: "RESULT_TOO_LARGE".to_owned(),

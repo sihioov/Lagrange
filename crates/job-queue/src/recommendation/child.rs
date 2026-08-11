@@ -18,6 +18,8 @@ const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_RESULT_BYTES: u64 = 1024 * 1024;
 const MAX_STATUS_BYTES: u64 = 16 * 1024;
 const MAX_STDERR_BYTES: usize = 16 * 1024;
+const CLEANUP_GRACE: Duration = Duration::from_secs(2);
+const CREATE_ATTEMPTS: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct TargetChildPaths {
@@ -133,6 +135,8 @@ pub enum TargetChildError {
     Launch,
     #[error("target child timed out")]
     Timeout,
+    #[error("target child could not be terminated cleanly")]
+    Termination,
     #[error("target child status exceeds its size limit")]
     StatusTooLarge,
     #[error("target child status is malformed")]
@@ -161,6 +165,7 @@ impl TargetChildError {
             Self::RequestWrite => "TARGET_CHILD_REQUEST_UNAVAILABLE",
             Self::Launch => "TARGET_CHILD_LAUNCH_FAILED",
             Self::Timeout => "TARGET_CHILD_TIMEOUT",
+            Self::Termination => "TARGET_CHILD_TERMINATION_FAILED",
             Self::StatusTooLarge => "TARGET_CHILD_STATUS_TOO_LARGE",
             Self::InvalidStatus => "TARGET_CHILD_INVALID_STATUS",
             Self::ChildStatus { code } => code,
@@ -190,14 +195,15 @@ impl TargetChildError {
             }
             Self::ChildStatus { .. } => ErrorClass::Input,
             Self::UnsafePath
-            | Self::ScratchCollision
             | Self::StatusTooLarge
             | Self::InvalidStatus
             | Self::ResultTooLarge
             | Self::InvalidResult => ErrorClass::Integrity,
-            Self::RequestWrite
+            Self::ScratchCollision
+            | Self::RequestWrite
             | Self::Launch
             | Self::Timeout
+            | Self::Termination
             | Self::Exited
             | Self::NoResult
             | Self::Cleanup => ErrorClass::Transient,
@@ -221,25 +227,6 @@ struct ChildStatus {
     summary: String,
 }
 
-struct ScratchGuard {
-    path: PathBuf,
-    armed: bool,
-}
-
-impl ScratchGuard {
-    fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for ScratchGuard {
-    fn drop(&mut self) {
-        if self.armed {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
-}
-
 /// Run one shipped target generator in a bounded, job-scoped child process.
 pub async fn run_target_child(
     paths: &TargetChildPaths,
@@ -247,32 +234,71 @@ pub async fn run_target_child(
     request: &TargetChildRequest,
     deadline: Duration,
 ) -> Result<TargetChildOutput, TargetChildError> {
+    let operation_deadline = tokio::time::Instant::now()
+        .checked_add(deadline)
+        .ok_or(TargetChildError::Timeout)?;
+    let cleanup_deadline = operation_deadline
+        .checked_add(CLEANUP_GRACE)
+        .ok_or(TargetChildError::Timeout)?;
     let validated = ValidatedPaths::new(paths)?;
     validate_request_numbers(request)?;
     if deadline.is_zero() {
         return Err(TargetChildError::Timeout);
     }
-    let job_dir = validated
-        .temp_root
-        .join(format!("recommendation-{}", job_id.simple()));
-    match fs::create_dir(&job_dir) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            return Err(TargetChildError::ScratchCollision);
-        }
-        Err(_) => return Err(TargetChildError::RequestWrite),
-    }
-    let mut guard = ScratchGuard {
-        path: job_dir.clone(),
-        armed: true,
-    };
-    let result = run_in_scratch(&validated, &job_dir, request, deadline).await;
-    match fs::remove_dir_all(&job_dir) {
-        Ok(()) => guard.disarm(),
-        Err(_) if result.is_ok() => return Err(TargetChildError::Cleanup),
-        Err(_) => {}
+    let invocation_dir = create_invocation_directory(&validated.temp_root, job_id)?;
+    let result = run_in_scratch(
+        &validated,
+        &invocation_dir,
+        request,
+        operation_deadline,
+        cleanup_deadline,
+    )
+    .await;
+    let cleanup = cleanup_scratch(invocation_dir, cleanup_deadline).await;
+    if cleanup.is_err() && result.is_ok() {
+        return Err(TargetChildError::Cleanup);
     }
     result
+}
+
+fn create_invocation_directory(
+    temp_root: &Path,
+    job_id: Uuid,
+) -> Result<PathBuf, TargetChildError> {
+    for _ in 0..CREATE_ATTEMPTS {
+        let invocation_id = Uuid::new_v4();
+        let path = temp_root.join(format!(
+            "recommendation-{}-invocation-{}",
+            job_id.simple(),
+            invocation_id.simple()
+        ));
+        #[cfg(unix)]
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(not(unix))]
+        let builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        match builder.create(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err(TargetChildError::RequestWrite),
+        }
+    }
+    Err(TargetChildError::ScratchCollision)
+}
+
+async fn cleanup_scratch(
+    path: PathBuf,
+    cleanup_deadline: tokio::time::Instant,
+) -> Result<(), TargetChildError> {
+    let task = tokio::task::spawn_blocking(move || fs::remove_dir_all(path));
+    match tokio::time::timeout_at(cleanup_deadline, task).await {
+        Ok(Ok(Ok(()))) => Ok(()),
+        _ => Err(TargetChildError::Cleanup),
+    }
 }
 
 fn validate_request_numbers(request: &TargetChildRequest) -> Result<(), TargetChildError> {
@@ -343,14 +369,18 @@ fn canonical_directory(path: &Path, reject_symlink: bool) -> Result<PathBuf, Tar
 
 async fn run_in_scratch(
     paths: &ValidatedPaths,
-    job_dir: &Path,
+    invocation_dir: &Path,
     request: &TargetChildRequest,
-    deadline: Duration,
+    operation_deadline: tokio::time::Instant,
+    cleanup_deadline: tokio::time::Instant,
 ) -> Result<TargetChildOutput, TargetChildError> {
-    let request_path = job_dir.join("request.json");
-    let result_path = job_dir.join("result.json");
-    let status_path = job_dir.join("status.json");
+    let request_path = invocation_dir.join("request.json");
+    let result_path = invocation_dir.join("result.json");
+    let status_path = invocation_dir.join("status.json");
     stage_request(&request_path, request)?;
+    if tokio::time::Instant::now() >= operation_deadline {
+        return Err(TargetChildError::Timeout);
+    }
 
     let mut command = Command::new(&paths.uv_bin);
     command
@@ -370,8 +400,8 @@ async fn run_in_scratch(
         .current_dir(&paths.repo_root)
         .env_clear()
         // This is the entire child environment. The platform variable on
-        // Windows is needed by native process loading; every other entry is a
-        // fixed value or a freshly-created job directory.
+        // Windows is needed by native process loading. The Windows temp path
+        // is the canonical OS runtime directory; all other values are fixed.
         .env("PYTHONPATH", paths.repo_root.join("nt"))
         .env("PYTHONNOUSERSITE", "1")
         .env("PYTHONDONTWRITEBYTECODE", "1")
@@ -385,24 +415,41 @@ async fn run_in_scratch(
         if let Some(system_root) = std::env::var_os("SystemRoot") {
             command.env("SystemRoot", system_root);
         }
-        command.env("TEMP", job_dir).env("TMP", job_dir);
-    } else {
-        command.env("TMPDIR", job_dir);
+        let runtime_temp = std::env::temp_dir()
+            .canonicalize()
+            .map_err(|_| TargetChildError::UnsafePath)?;
+        if !runtime_temp.is_dir() {
+            return Err(TargetChildError::UnsafePath);
+        }
+        command.env("TEMP", &runtime_temp).env("TMP", runtime_temp);
     }
 
     let mut child = command.spawn().map_err(|_| TargetChildError::Launch)?;
     let stderr = child.stderr.take().ok_or(TargetChildError::Launch)?;
-    let stderr_reader = tokio::spawn(drain_bounded(stderr, MAX_STDERR_BYTES));
-    let exit = match tokio::time::timeout(deadline, child.wait()).await {
-        Ok(waited) => waited.map_err(|_| TargetChildError::Exited)?,
+    let mut stderr_reader = tokio::spawn(drain_bounded(stderr, MAX_STDERR_BYTES));
+    let exit = match tokio::time::timeout_at(operation_deadline, child.wait()).await {
+        Ok(Ok(exit)) => exit,
+        Ok(Err(_)) => {
+            abort_reader_bounded(&mut stderr_reader, cleanup_deadline).await?;
+            return Err(TargetChildError::Exited);
+        }
         Err(_) => {
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-            let _ = stderr_reader.await;
+            terminate_and_settle(&mut child, &mut stderr_reader, cleanup_deadline).await?;
             return Err(TargetChildError::Timeout);
         }
     };
-    let _stderr = stderr_reader.await.map_err(|_| TargetChildError::Exited)?;
+    match tokio::time::timeout_at(operation_deadline, &mut stderr_reader).await {
+        Ok(Ok(Ok(_stderr))) => {}
+        Ok(Ok(Err(_))) | Ok(Err(_)) => return Err(TargetChildError::Exited),
+        Err(_) => {
+            abort_reader_bounded(&mut stderr_reader, cleanup_deadline).await?;
+            return Err(TargetChildError::Timeout);
+        }
+    }
+
+    if tokio::time::Instant::now() >= operation_deadline {
+        return Err(TargetChildError::Timeout);
+    }
 
     if status_path.exists() {
         let status = read_status(&status_path)?;
@@ -421,15 +468,49 @@ async fn run_in_scratch(
     read_result(&result_path)
 }
 
+async fn terminate_and_settle(
+    child: &mut tokio::process::Child,
+    stderr_reader: &mut tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>,
+    cleanup_deadline: tokio::time::Instant,
+) -> Result<(), TargetChildError> {
+    if child.start_kill().is_err() {
+        stderr_reader.abort();
+        let _ = tokio::time::timeout_at(cleanup_deadline, stderr_reader).await;
+        return Err(TargetChildError::Termination);
+    }
+    let reaped = tokio::time::timeout_at(cleanup_deadline, child.wait()).await;
+    abort_reader_bounded(stderr_reader, cleanup_deadline).await?;
+    match reaped {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(_)) | Err(_) => Err(TargetChildError::Termination),
+    }
+}
+
+async fn abort_reader_bounded(
+    stderr_reader: &mut tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>,
+    cleanup_deadline: tokio::time::Instant,
+) -> Result<(), TargetChildError> {
+    stderr_reader.abort();
+    match tokio::time::timeout_at(cleanup_deadline, stderr_reader).await {
+        Ok(_) => Ok(()),
+        Err(_) => Err(TargetChildError::Termination),
+    }
+}
+
 fn stage_request(path: &Path, request: &TargetChildRequest) -> Result<(), TargetChildError> {
     let bytes = serde_json::to_vec(request).map_err(|_| TargetChildError::RequestWrite)?;
     if bytes.len() > MAX_REQUEST_BYTES {
         return Err(TargetChildError::RequestTooLarge);
     }
     let temporary = path.with_extension("json.tmp");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
         .open(&temporary)
         .map_err(|_| TargetChildError::RequestWrite)?;
     file.write_all(&bytes)
