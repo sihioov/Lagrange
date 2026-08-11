@@ -38,13 +38,13 @@
 use crate::error::{TenancyError, TenancyResult};
 use crate::repos::order_intents::{Claim, NewOrderIntent, OrderIntentRepo};
 use crate::repos::risk::RiskRepo;
+use crate::risk_snapshot::{parse_side, side_str};
+use domain::{Price, Quantity};
 use kis_client::mapping::{OrderRequest, OrderSide, OrderType};
 use kis_client::order_state::Event;
 use kis_client::rest::RestClient;
 use kis_client::retry::Sleeper;
 use kis_client::transport::Transport;
-use crate::risk_snapshot::{parse_side, side_str};
-use domain::{Price, Quantity};
 use risk_gateway::snapshot::Side;
 use risk_gateway::{Decision, RiskLimits, RiskSnapshot};
 
@@ -367,7 +367,11 @@ pub async fn submit_through_connection(
         &session.actor(),
         &state.reconciliation(&session.actor(), owner),
         Some(connection.id),
-        state.live(&session.actor()).kill_switch_engaged().await.ok(),
+        state
+            .live(&session.actor())
+            .kill_switch_engaged()
+            .await
+            .ok(),
         &crate::risk_snapshot::GateOrder {
             intent_ref: intent_ref.clone(),
             account_id: input.account_id,

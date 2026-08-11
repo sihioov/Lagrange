@@ -867,13 +867,21 @@ pub async fn submit_order(
             return api_error(
                 StatusCode::BAD_REQUEST,
                 "INVALID_PARAMETER",
-                format!("quantity {:?} must be a whole number of shares: {e}", body.quantity),
+                format!(
+                    "quantity {:?} must be a whole number of shares: {e}",
+                    body.quantity
+                ),
                 &rid,
                 None,
             );
         }
     };
-    let price = match body.price.as_deref().map(str::trim).map(domain::Price::parse) {
+    let price = match body
+        .price
+        .as_deref()
+        .map(str::trim)
+        .map(domain::Price::parse)
+    {
         None => None,
         Some(Ok(p)) => Some(p),
         Some(Err(e)) => {

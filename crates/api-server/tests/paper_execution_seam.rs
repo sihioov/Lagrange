@@ -83,8 +83,24 @@ impl Dataset {
 type FixtureBar = (&'static str, i64, i64, i64, i64, i64, i64);
 
 const BARS_069500: &[FixtureBar] = &[
-    ("2020-01-20", 10150, 10280, 10100, 10250, 1_200_000, 12_300_000_000),
-    ("2020-01-21", 10240, 10320, 10190, 10290, 1_150_000, 11_833_500_000),
+    (
+        "2020-01-20",
+        10150,
+        10280,
+        10100,
+        10250,
+        1_200_000,
+        12_300_000_000,
+    ),
+    (
+        "2020-01-21",
+        10240,
+        10320,
+        10190,
+        10290,
+        1_150_000,
+        11_833_500_000,
+    ),
 ];
 const BARS_229200: &[FixtureBar] = &[
     ("2020-01-20", 8480, 8560, 8450, 8530, 900_000, 7_677_000_000),
@@ -306,13 +322,17 @@ async fn ledger_view(h: &Harness, u: &UserCtx, account: Uuid) -> LedgerView {
 }
 
 fn krw(s: &str) -> f64 {
-    s.parse().unwrap_or_else(|e| panic!("unreadable KRW {s:?}: {e}"))
+    s.parse()
+        .unwrap_or_else(|e| panic!("unreadable KRW {s:?}: {e}"))
 }
 
 /// The self-check `risk_snapshot::account_state` refuses an account for
 /// failing: the running balance and the replayed events must agree.
 fn assert_cash_ledger_agrees_with_itself(cash: &[(i64, String, String, String)]) {
-    assert!(!cash.is_empty(), "an account always has its opening deposit");
+    assert!(
+        !cash.is_empty(),
+        "an account always has its opening deposit"
+    );
     let replayed: f64 = cash.iter().map(|(_, _, amount, _)| krw(amount)).sum();
     let running = krw(&cash.last().expect("at least one row").3);
     assert!(
@@ -436,10 +456,7 @@ async fn a_queued_target_executes_into_the_ledger_and_settles_executed() {
     );
     for (_, event_type, amount, _) in view.cash.iter().skip(1) {
         assert_eq!(event_type, "BUY");
-        assert!(
-            krw(amount) < 0.0,
-            "a buy is a cash DEBIT, signed: {amount}"
-        );
+        assert!(krw(amount) < 0.0, "a buy is a cash DEBIT, signed: {amount}");
     }
 
     h.teardown().await;
@@ -748,7 +765,9 @@ async fn a_target_queued_against_a_live_account_executes_nothing() {
     let worker = h.worker_pool().await;
     let outcome = run_and_settle(&h.state(), &worker, data.root(), &m.actor(), target)
         .await
-        .expect("a session against the wrong account type still settles rather than hanging PENDING");
+        .expect(
+            "a session against the wrong account type still settles rather than hanging PENDING",
+        );
 
     assert_eq!(
         outcome.target.status, "SKIPPED",

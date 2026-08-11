@@ -118,8 +118,9 @@ impl CostProfile {
     /// adding a profile cannot leave a route behind.
     pub fn resolve(id: &str) -> Result<Self, CostProfileLookupError> {
         match id {
-            "KRX_ETF_DEFAULT" => Self::krx_etf_default()
-                .map_err(|e| CostProfileLookupError::Invalid(e.to_string())),
+            "KRX_ETF_DEFAULT" => {
+                Self::krx_etf_default().map_err(|e| CostProfileLookupError::Invalid(e.to_string()))
+            }
             "CUSTOM" => Err(CostProfileLookupError::CustomNotConfigurable),
             _ => Err(CostProfileLookupError::Unknown),
         }

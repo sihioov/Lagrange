@@ -172,22 +172,21 @@ pub enum ExecutionError {
 /// decimal STRINGS, never floats: `Weight` is scale-6 fixed point and a float
 /// round-trip is exactly the precision loss this codebase's money types exist
 /// to prevent.
-pub fn targets_from_json(value: &serde_json::Value) -> Result<Vec<TargetAllocation>, ExecutionError> {
-    let rows = value
-        .as_array()
-        .ok_or_else(|| ExecutionError::Targets("expected a JSON array of allocations".to_owned()))?;
+pub fn targets_from_json(
+    value: &serde_json::Value,
+) -> Result<Vec<TargetAllocation>, ExecutionError> {
+    let rows = value.as_array().ok_or_else(|| {
+        ExecutionError::Targets("expected a JSON array of allocations".to_owned())
+    })?;
     let mut targets = Vec::with_capacity(rows.len());
     for row in rows {
         let instrument = row
             .get("instrument_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ExecutionError::Targets(format!("missing instrument_id in {row}")))?;
-        let weight = row
-            .get("weight")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ExecutionError::Targets(format!("weight must be a decimal string in {row}"))
-            })?;
+        let weight = row.get("weight").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutionError::Targets(format!("weight must be a decimal string in {row}"))
+        })?;
         targets.push(TargetAllocation {
             instrument_id: InstrumentId::parse(instrument)
                 .map_err(|e| ExecutionError::Targets(format!("{instrument:?}: {e}")))?,
@@ -331,9 +330,8 @@ async fn account_profile(
             detail: "no ACTIVE Paper account with this owner".to_owned(),
         })?;
 
-    let profile = CostProfile::resolve(&profile_id).map_err(|e| {
-        ExecutionError::CostProfile(format!("account {}: {e}", input.account_id))
-    })?;
+    let profile = CostProfile::resolve(&profile_id)
+        .map_err(|e| ExecutionError::CostProfile(format!("account {}: {e}", input.account_id)))?;
     if i64::from(version) != i64::from(profile.version) {
         return Err(ExecutionError::CostProfile(format!(
             "account {} was opened under {profile_id} version {version}, but this build ships \
@@ -374,7 +372,8 @@ async fn account_cash(
     .fetch_optional(&mut **tx)
     .await?;
 
-    let (running, replayed) = row.ok_or_else(|| unavailable("no cash_ledger history".to_owned()))?;
+    let (running, replayed) =
+        row.ok_or_else(|| unavailable("no cash_ledger history".to_owned()))?;
     let running = running.ok_or_else(|| unavailable("no cash_ledger history".to_owned()))?;
 
     let parse = |s: &str| -> Result<Money, ExecutionError> {
@@ -448,7 +447,11 @@ fn session_opens(
     // The worker is given the dataset root and the curated zone sits one level
     // in, exactly as `runner.rs` reaches it for the factor series.
     let store = CurateStore::new(dataset_root.join("curated"));
-    let year = target.effective_date.as_naive_date().format("%Y").to_string();
+    let year = target
+        .effective_date
+        .as_naive_date()
+        .format("%Y")
+        .to_string();
     let year: i32 = year
         .parse()
         .map_err(|e| ExecutionError::Prices(format!("session year {year:?}: {e}")))?;

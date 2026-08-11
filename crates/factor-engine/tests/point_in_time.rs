@@ -161,8 +161,7 @@ fn a_snapshot_cannot_see_past_its_own_as_of() {
 
     assert_eq!(f.value_on(&id(), METRIC, d("2020-09-30")), Some(120.0));
     assert_eq!(
-        f.point_on(&id(), METRIC, d("2020-12-31"))
-            .map(|p| p.value),
+        f.point_on(&id(), METRIC, d("2020-12-31")).map(|p| p.value),
         Some(120.0),
         "the September restatement is not in this snapshot at all"
     );

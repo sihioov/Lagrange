@@ -40,9 +40,8 @@ impl TestCtx {
         let store = CurateStore::new(dir);
         let bars = Bars::from_curated(&store, MARKET, DATASET_ID, VERSION, &universe, as_of)
             .expect("bars load");
-        let fundamentals =
-            Fundamentals::from_curated(&store, MARKET, VERSION, &universe, as_of)
-                .expect("fundamentals load");
+        let fundamentals = Fundamentals::from_curated(&store, MARKET, VERSION, &universe, as_of)
+            .expect("fundamentals load");
         Self {
             universe,
             bars,

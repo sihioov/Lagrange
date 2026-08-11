@@ -6,7 +6,7 @@ use chrono::{FixedOffset, TimeZone, Utc};
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use serde::Deserialize;
 
-use crate::contract::{FetchMode, ResponseKind, StoredFile, MARKET_KR, PROVIDER_KRX};
+use crate::contract::{FetchMode, MARKET_KR, PROVIDER_KRX, ResponseKind, StoredFile};
 use crate::storage::{FileEntry, ManifestEntry, RawStore, StoreError};
 
 /// Stable batch kind stored by downstream publication sinks.
@@ -104,12 +104,16 @@ pub enum PublicationError {
     UnexpectedContentHash { file_name: String, value: String },
     #[error("non-UTF8 storage path for {file_name}")]
     NonUtf8StoragePath { file_name: String },
-    #[error("verified Raw file count differs from manifest: manifest={manifest_count}, read={read_count}")]
+    #[error(
+        "verified Raw file count differs from manifest: manifest={manifest_count}, read={read_count}"
+    )]
     ReadbackFileCountMismatch {
         manifest_count: usize,
         read_count: usize,
     },
-    #[error("verified Raw file name differs from manifest: manifest={manifest_file_name}, read={read_file_name}")]
+    #[error(
+        "verified Raw file name differs from manifest: manifest={manifest_file_name}, read={read_file_name}"
+    )]
     ReadbackFileNameMismatch {
         manifest_file_name: String,
         read_file_name: String,

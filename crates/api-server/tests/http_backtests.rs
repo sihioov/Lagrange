@@ -511,7 +511,10 @@ async fn http_backtests_unknown_cost_profile_is_refused_with_no_side_effects() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(runs_before, runs_after, "a refused submission wrote a run row");
+    assert_eq!(
+        runs_before, runs_after,
+        "a refused submission wrote a run row"
+    );
     assert_eq!(jobs_before, jobs_after, "a refused submission queued a job");
     h.teardown().await;
 }

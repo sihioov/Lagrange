@@ -913,10 +913,12 @@ pub fn read_fundamentals(path: &Path) -> Result<Vec<CuratedFundamental>, CurateE
     let mut rows = Vec::new();
     for batch in read_batches(path)? {
         for i in 0..batch.num_rows() {
-            let instrument_id = InstrumentId::parse(str_at(&batch, "instrument_id", i))
-                .map_err(|e| CurateError::StoreIo {
-                    context: "instrument_id parse".to_owned(),
-                    detail: e.to_string(),
+            let instrument_id =
+                InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(|e| {
+                    CurateError::StoreIo {
+                        context: "instrument_id parse".to_owned(),
+                        detail: e.to_string(),
+                    }
                 })?;
             rows.push(CuratedFundamental {
                 instrument_id,

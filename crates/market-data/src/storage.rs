@@ -29,7 +29,7 @@ use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
-use crate::contract::{date_partition, FetchMode, RawEnvelope, ResponseKind, StoredFile};
+use crate::contract::{FetchMode, RawEnvelope, ResponseKind, StoredFile, date_partition};
 
 /// Per-file record inside a manifest row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1189,7 +1189,7 @@ fn publish_batch_metadata_platform(
     final_path: &Path,
 ) -> Result<File, StoreError> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
 
     let file = temporary
         .reopen()
@@ -1482,7 +1482,7 @@ fn io_err(context: &str, e: std::io::Error) -> StoreError {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, Arc, Barrier, Mutex};
+    use std::sync::{Arc, Barrier, Mutex, mpsc};
     use std::time::Duration;
 
     use super::*;
@@ -1802,12 +1802,16 @@ mod tests {
         );
 
         let synced_files = operations.synced_files.lock().unwrap();
-        assert!(synced_files
-            .iter()
-            .any(|path| path.ends_with(entry.batch_json_file_name())));
-        assert!(synced_files
-            .iter()
-            .any(|path| path.ends_with("reference.json")));
+        assert!(
+            synced_files
+                .iter()
+                .any(|path| path.ends_with(entry.batch_json_file_name()))
+        );
+        assert!(
+            synced_files
+                .iter()
+                .any(|path| path.ends_with("reference.json"))
+        );
         assert!(!operations.synced_directories.lock().unwrap().is_empty());
     }
 
@@ -1853,10 +1857,12 @@ mod tests {
         );
         assert!(batch_dir.exists());
         assert!(!batch_dir.join("batch.json").exists());
-        assert!(store
-            .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR)
-            .unwrap()
-            .is_empty());
+        assert!(
+            store
+                .read_manifest(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

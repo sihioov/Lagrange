@@ -2,9 +2,9 @@ use std::fs;
 
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::contract::{
-    FetchMode, RawEnvelope, RequestMetadata, ResponseKind, MARKET_KR, PROVIDER_KRX,
+    FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind,
 };
-use market_data::ingest::{ingest_bundle, IngestRequest};
+use market_data::ingest::{IngestRequest, ingest_bundle};
 use market_data::provider::{KrxProvider, RecordedBundle};
 use market_data::publication::{
     CalendarSessionType, DataBatchKind, PublicationBundle, PublicationError,
@@ -130,10 +130,12 @@ fn from_raw_maps_contract_bars_for_target_date_to_eod() {
         ]
     );
     assert_eq!(publication.files[0].content_sha256.len(), 64);
-    assert!(publication.files[0]
-        .content_sha256
-        .bytes()
-        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit()));
+    assert!(
+        publication.files[0]
+            .content_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    );
     assert!(!publication.files[0].content_sha256.contains("sha256:"));
     assert_eq!(
         publication.files[0].storage_path,
@@ -223,10 +225,12 @@ fn from_raw_publishes_explicit_calendar_holidays_as_closed_without_inferring_mis
         fact.session_date.to_iso() == "2020-01-24"
             && fact.session_type == CalendarSessionType::Closed
     }));
-    assert!(!publication
-        .calendar_facts
-        .iter()
-        .any(|fact| fact.session_date.to_iso() == "2020-01-25"));
+    assert!(
+        !publication
+            .calendar_facts
+            .iter()
+            .any(|fact| fact.session_date.to_iso() == "2020-01-25")
+    );
 }
 
 #[test]

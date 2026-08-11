@@ -711,7 +711,11 @@ mod tests {
 
     fn rejection(start: Option<&str>, end: Option<&str>) -> String {
         match window_for(&payload(start, end)) {
-            Err(ExecError::Permanent { class, code, reason }) => {
+            Err(ExecError::Permanent {
+                class,
+                code,
+                reason,
+            }) => {
                 // The class drives the retry decision. A payload row is
                 // written once at submit time, so a window the runner cannot
                 // read is the submitter's to fix and retrying only burns the
@@ -778,7 +782,10 @@ mod tests {
     fn text_that_is_not_a_date_is_rejected() {
         for bad in ["01/01/2020", "2020-01-01T00:00:00Z", "yesterday", ""] {
             let reason = rejection(Some(bad), Some("2020-12-31"));
-            assert!(reason.contains(bad), "reason should quote {bad:?}: {reason}");
+            assert!(
+                reason.contains(bad),
+                "reason should quote {bad:?}: {reason}"
+            );
         }
     }
 
