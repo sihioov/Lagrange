@@ -211,3 +211,33 @@ fn client_secret_file_rejects_missing_empty_and_non_file_inputs_without_values()
         );
     }
 }
+
+#[test]
+fn client_secret_file_rejects_multiple_lines_without_values() {
+    const FIRST_LINE: &str = "first-line";
+    const SECOND_LINE: &str = "second-line";
+
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let secret_path = temp_dir.path().join("multiline-secret");
+    fs::write(&secret_path, format!("{FIRST_LINE}\n{SECOND_LINE}\n"))
+        .expect("write multiline client secret file");
+
+    let error = match ClientSecret::from_file(&secret_path) {
+        Ok(_) => panic!("multiline client secret file must fail"),
+        Err(error) => error,
+    };
+    let rendered = error.to_string();
+
+    assert!(
+        rendered.contains(AUTH0_CLIENT_SECRET_FILE),
+        "rendered error must name the public configuration key: {rendered}"
+    );
+    assert!(
+        !rendered.contains(FIRST_LINE),
+        "rendered error must not contain the first line: {rendered}"
+    );
+    assert!(
+        !rendered.contains(SECOND_LINE),
+        "rendered error must not contain the second line: {rendered}"
+    );
+}

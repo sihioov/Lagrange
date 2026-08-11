@@ -49,6 +49,35 @@ current operator-selected tenant is in the Auth0 Japan region. PAR, JAR,
 refresh tokens, and additional credentials are outside this deployment
 contract.
 
+After creating the file on Windows, disable inheritance and restrict its ACL
+to the current operator, SYSTEM, and BUILTIN Administrators. This workflow uses
+SIDs so localized account names do not change the result, and never passes the
+credential itself as an argument:
+
+```powershell
+$secretPath = (Resolve-Path -LiteralPath 'deploy/secrets/auth0_client_secret').Path
+$operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$allowedSids = @($operatorSid, 'S-1-5-18', 'S-1-5-32-544')
+
+& icacls.exe $secretPath /inheritance:r
+foreach ($rule in (Get-Acl -LiteralPath $secretPath).Access) {
+    $sid = $rule.IdentityReference.Translate(
+        [Security.Principal.SecurityIdentifier]
+    ).Value
+    if ($sid -notin $allowedSids) {
+        & icacls.exe $secretPath /remove:g "*$sid"
+        & icacls.exe $secretPath /remove:d "*$sid"
+    }
+}
+& icacls.exe $secretPath /grant:r "*${operatorSid}:(F)" '*S-1-5-18:(F)' '*S-1-5-32-544:(F)'
+```
+
+On Unix hosts, restrict the file to its operator account:
+
+```sh
+chmod 600 deploy/secrets/auth0_client_secret
+```
+
 ## Research worker database credential
 
 Provision `db_research_password` outside Git by copying

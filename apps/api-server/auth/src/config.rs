@@ -28,6 +28,10 @@ impl ClientSecret {
             value.pop();
         }
 
+        if value.contains('\r') || value.contains('\n') {
+            return Err(ClientSecretError::MultipleLines { path });
+        }
+
         if value.trim().is_empty() {
             return Err(ClientSecretError::Empty { path });
         }
@@ -54,4 +58,6 @@ pub enum ClientSecretError {
     },
     #[error("{AUTH0_CLIENT_SECRET_FILE} contains an empty secret at {path}")]
     Empty { path: PathBuf },
+    #[error("{AUTH0_CLIENT_SECRET_FILE} must contain exactly one line at {path}")]
+    MultipleLines { path: PathBuf },
 }
