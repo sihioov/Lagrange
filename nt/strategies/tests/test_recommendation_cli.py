@@ -222,6 +222,19 @@ def test_request_symlink_is_rejected_without_following_external_bytes(tmp_path):
     assert status["code"] == "REQUEST_UNAVAILABLE"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows secure-handle path")
+def test_windows_request_loader_does_not_fall_back_to_posix_os_open(tmp_path, monkeypatch):
+    request_path = tmp_path / "request.json"
+    request_path.write_text(json.dumps(request_for("buy_and_hold")), encoding="utf-8")
+
+    def forbidden_os_open(*_args, **_kwargs):
+        raise AssertionError("Windows request loading must use CreateFileW")
+
+    monkeypatch.setattr(os, "open", forbidden_os_open)
+    loaded = recommendation_cli._load_request(request_path)
+    assert loaded["strategy_id"] == "buy_and_hold"
+
+
 @pytest.mark.parametrize(
     ("error_factory", "expected_code"),
     [

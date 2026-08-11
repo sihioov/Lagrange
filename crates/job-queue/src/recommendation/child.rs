@@ -1,4 +1,11 @@
 //! Bounded process boundary for the shipped Python target generators.
+//!
+//! Generator code is trusted repository code selected from a literal allow-list;
+//! request data cannot choose an import, executable, or process command, and the
+//! shipped generators do not launch subprocesses. This boundary contains ordinary
+//! descendants, but it is not an OS-hard sandbox against compromised trusted code
+//! deliberately escaping its process group (for example with `setsid`). Deployment
+//! isolation such as cgroups or namespaces is separate defense in depth.
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -481,8 +488,11 @@ async fn run_in_scratch(
         None => {
             let tree_terminated = process_tree.terminate().is_ok();
             let direct_reaped = settle_direct_child(&mut child, cleanup_deadline).await;
+            if direct_reaped {
+                process_tree.disarm_reuse_sensitive_identity();
+            }
             let tree_confirmed = tree_terminated
-                && confirm_process_tree_empty(&process_tree, cleanup_deadline).await;
+                && confirm_process_tree_after_reap(&process_tree, cleanup_deadline).await;
             if tree_confirmed && direct_reaped {
                 process_tree.disarm_reuse_sensitive_identity();
                 return Err(TargetChildError::Launch);
@@ -491,64 +501,14 @@ async fn run_in_scratch(
         }
     };
     let mut stderr_reader = tokio::spawn(drain_bounded(stderr, MAX_STDERR_BYTES));
-    let exit = match tokio::time::timeout_at(operation_deadline, child.wait()).await {
-        Ok(Ok(exit)) => exit,
-        Ok(Err(_)) => {
-            terminate_and_settle(
-                &mut process_tree,
-                &mut child,
-                &mut stderr_reader,
-                cleanup_deadline,
-            )
-            .await?;
-            return Err(TargetChildError::Exited);
-        }
-        Err(_) => {
-            terminate_and_settle(
-                &mut process_tree,
-                &mut child,
-                &mut stderr_reader,
-                cleanup_deadline,
-            )
-            .await?;
-            return Err(TargetChildError::Timeout);
-        }
-    };
-    match tokio::time::timeout_at(operation_deadline, &mut stderr_reader).await {
-        Ok(Ok(Ok(_stderr))) => {}
-        Ok(Ok(Err(_))) | Ok(Err(_)) => {
-            let tree_terminated = process_tree.terminate().is_ok();
-            let direct_reaped = settle_direct_child(&mut child, cleanup_deadline).await;
-            if !tree_terminated || !direct_reaped {
-                return Err(TargetChildError::Termination);
-            }
-            if !confirm_process_tree_empty(&process_tree, cleanup_deadline).await {
-                return Err(TargetChildError::Termination);
-            }
-            process_tree.disarm_reuse_sensitive_identity();
-            return Err(TargetChildError::Exited);
-        }
-        Err(_) => {
-            terminate_and_settle(
-                &mut process_tree,
-                &mut child,
-                &mut stderr_reader,
-                cleanup_deadline,
-            )
-            .await?;
-            return Err(TargetChildError::Timeout);
-        }
-    }
-
-    // EOF only proves no descendant inherited this pipe. A descendant may
-    // have closed or redirected stderr, so explicitly empty the retained tree
-    // before trusting child output or releasing a reusable Unix PGID.
-    if process_tree.terminate().is_err()
-        || !confirm_process_tree_empty(&process_tree, operation_deadline).await
-    {
-        return Err(TargetChildError::Termination);
-    }
-    process_tree.disarm_reuse_sensitive_identity();
+    let exit = wait_for_child_boundary(
+        &mut process_tree,
+        &mut child,
+        &mut stderr_reader,
+        operation_deadline,
+        cleanup_deadline,
+    )
+    .await?;
 
     if tokio::time::Instant::now() >= operation_deadline {
         return Err(TargetChildError::Timeout);
@@ -565,6 +525,112 @@ async fn run_in_scratch(
         .ok_or(TargetChildError::NoResult)
 }
 
+#[cfg(windows)]
+async fn wait_for_child_boundary(
+    process_tree: &mut ProcessTree,
+    child: &mut tokio::process::Child,
+    stderr_reader: &mut tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>,
+    operation_deadline: tokio::time::Instant,
+    cleanup_deadline: tokio::time::Instant,
+) -> Result<std::process::ExitStatus, TargetChildError> {
+    let exit = match tokio::time::timeout_at(operation_deadline, child.wait()).await {
+        Ok(Ok(exit)) => exit,
+        Ok(Err(_)) => {
+            terminate_and_settle(process_tree, child, stderr_reader, cleanup_deadline).await?;
+            return Err(TargetChildError::Exited);
+        }
+        Err(_) => {
+            terminate_and_settle(process_tree, child, stderr_reader, cleanup_deadline).await?;
+            return Err(TargetChildError::Timeout);
+        }
+    };
+    match tokio::time::timeout_at(operation_deadline, &mut *stderr_reader).await {
+        Ok(Ok(Ok(_stderr))) => {}
+        Ok(Ok(Err(_))) | Ok(Err(_)) => {
+            let tree_terminated = process_tree.terminate().is_ok();
+            let direct_reaped = settle_direct_child(child, cleanup_deadline).await;
+            if !tree_terminated || !direct_reaped {
+                return Err(TargetChildError::Termination);
+            }
+            if !confirm_process_tree_empty(process_tree, cleanup_deadline).await {
+                return Err(TargetChildError::Termination);
+            }
+            process_tree.disarm_reuse_sensitive_identity();
+            return Err(TargetChildError::Exited);
+        }
+        Err(_) => {
+            terminate_and_settle(process_tree, child, stderr_reader, cleanup_deadline).await?;
+            return Err(TargetChildError::Timeout);
+        }
+    }
+
+    // EOF only proves no descendant inherited this pipe. A descendant may
+    // have closed or redirected stderr, so explicitly empty the retained Job.
+    if process_tree.terminate().is_err()
+        || !confirm_process_tree_empty(process_tree, operation_deadline).await
+    {
+        return Err(TargetChildError::Termination);
+    }
+    process_tree.disarm_reuse_sensitive_identity();
+    Ok(exit)
+}
+
+#[cfg(unix)]
+async fn wait_for_child_boundary(
+    process_tree: &mut ProcessTree,
+    child: &mut tokio::process::Child,
+    stderr_reader: &mut tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>,
+    operation_deadline: tokio::time::Instant,
+    cleanup_deadline: tokio::time::Instant,
+) -> Result<std::process::ExitStatus, TargetChildError> {
+    let pid = child.id().ok_or(TargetChildError::Termination)?;
+    match observe_unix_child_exit(pid, operation_deadline).await {
+        Ok(()) => {}
+        Err(TargetChildError::Timeout) => {
+            terminate_and_settle(process_tree, child, stderr_reader, cleanup_deadline).await?;
+            return Err(TargetChildError::Timeout);
+        }
+        Err(_) => {
+            terminate_and_settle(process_tree, child, stderr_reader, cleanup_deadline).await?;
+            return Err(TargetChildError::Exited);
+        }
+    }
+
+    // The exited group leader is intentionally still waitable here, so its
+    // PID/PGID cannot be reused while this signal targets ordinary descendants.
+    let tree_terminated = process_tree.terminate().is_ok();
+    let exit = match tokio::time::timeout_at(cleanup_deadline, child.wait()).await {
+        Ok(Ok(exit)) => {
+            process_tree.disarm_reuse_sensitive_identity();
+            exit
+        }
+        Ok(Err(_)) => {
+            // The wait operation may have consumed OS state before reporting
+            // an error. Never signal this numeric PGID again.
+            process_tree.disarm_reuse_sensitive_identity();
+            abort_reader_bounded(stderr_reader, cleanup_deadline).await?;
+            return Err(TargetChildError::Termination);
+        }
+        Err(_) => {
+            abort_reader_bounded(stderr_reader, cleanup_deadline).await?;
+            return Err(TargetChildError::Termination);
+        }
+    };
+    if !tree_terminated {
+        abort_reader_bounded(stderr_reader, cleanup_deadline).await?;
+        return Err(TargetChildError::Termination);
+    }
+
+    match tokio::time::timeout_at(operation_deadline, &mut *stderr_reader).await {
+        Ok(Ok(Ok(_stderr))) => Ok(exit),
+        Ok(Ok(Err(_))) | Ok(Err(_)) => Err(TargetChildError::Exited),
+        Err(_) => {
+            abort_reader_bounded(stderr_reader, cleanup_deadline).await?;
+            Err(TargetChildError::Timeout)
+        }
+    }
+}
+
 async fn terminate_and_settle(
     process_tree: &mut ProcessTree,
     child: &mut tokio::process::Child,
@@ -573,11 +639,14 @@ async fn terminate_and_settle(
 ) -> Result<(), TargetChildError> {
     let tree_terminated = process_tree.terminate().is_ok();
     let direct_reaped = settle_direct_child(child, cleanup_deadline).await;
+    if direct_reaped {
+        process_tree.disarm_reuse_sensitive_identity();
+    }
     let reader_settled = abort_reader_bounded(stderr_reader, cleanup_deadline)
         .await
         .is_ok();
     let tree_confirmed =
-        tree_terminated && confirm_process_tree_empty(process_tree, cleanup_deadline).await;
+        tree_terminated && confirm_process_tree_after_reap(process_tree, cleanup_deadline).await;
     if tree_confirmed && direct_reaped && reader_settled {
         process_tree.disarm_reuse_sensitive_identity();
         Ok(())
@@ -586,6 +655,7 @@ async fn terminate_and_settle(
     }
 }
 
+#[cfg(windows)]
 async fn confirm_process_tree_empty(
     process_tree: &ProcessTree,
     deadline: tokio::time::Instant,
@@ -596,6 +666,61 @@ async fn confirm_process_tree_empty(
         }
         if tokio::time::Instant::now() >= deadline {
             return false;
+        }
+        tokio::time::sleep_until(
+            deadline.min(tokio::time::Instant::now() + Duration::from_millis(10)),
+        )
+        .await;
+    }
+}
+
+#[cfg(windows)]
+async fn confirm_process_tree_after_reap(
+    process_tree: &ProcessTree,
+    deadline: tokio::time::Instant,
+) -> bool {
+    confirm_process_tree_empty(process_tree, deadline).await
+}
+
+#[cfg(unix)]
+async fn confirm_process_tree_after_reap(
+    _process_tree: &ProcessTree,
+    _deadline: tokio::time::Instant,
+) -> bool {
+    // The PGID was signaled while its leader was still unreaped. Any probe
+    // after reap could target a recycled numeric identity, so none is made.
+    true
+}
+
+#[cfg(unix)]
+async fn observe_unix_child_exit(
+    pid: u32,
+    deadline: tokio::time::Instant,
+) -> Result<(), TargetChildError> {
+    let pid = libc::pid_t::try_from(pid).map_err(|_| TargetChildError::Termination)?;
+    loop {
+        // SAFETY: waitid writes a siginfo_t and WNOWAIT explicitly preserves
+        // the child as waitable; WNOHANG keeps each observation non-blocking.
+        let mut information = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
+        let waited = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &raw mut information,
+                libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+            )
+        };
+        if waited == 0 {
+            // SAFETY: waitid initialized `information`; si_pid is zero for the
+            // WNOHANG no-state-change case and exact for P_PID otherwise.
+            if unsafe { information.si_pid() } == pid {
+                return Ok(());
+            }
+        } else if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+            return Err(TargetChildError::Termination);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(TargetChildError::Timeout);
         }
         tokio::time::sleep_until(
             deadline.min(tokio::time::Instant::now() + Duration::from_millis(10)),
@@ -677,24 +802,11 @@ impl ProcessTree {
         // SAFETY: the spawned `uv` process is placed in its own process group
         // before spawn. A negative, checked child PID targets only that group.
         let result = unsafe { libc::kill(-process_group, libc::SIGKILL) };
-        if result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        if result == 0 {
             Ok(())
         } else {
             Err(TargetChildError::Termination)
         }
-    }
-
-    fn is_empty(&self) -> bool {
-        if !self.arm.is_armed() {
-            return true;
-        }
-        let Some(process_group) = self.process_group else {
-            return false;
-        };
-        // SAFETY: signal zero probes the retained process group without
-        // changing process state.
-        let result = unsafe { libc::kill(-process_group, 0) };
-        result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
     }
 
     fn disarm_reuse_sensitive_identity(&mut self) {
@@ -1235,6 +1347,34 @@ mod lifecycle_state_tests {
             survived_drop,
             "a clean disarm must make ProcessTree::drop a no-op"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unix_exit_is_observed_and_group_terminated_before_leader_reap() {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = Command::new("/bin/true");
+        command.as_std_mut().process_group(0);
+        let mut child = command.spawn().expect("spawn group leader");
+        let pid = child.id().expect("leader pid");
+        let mut tree = ProcessTree {
+            process_group: Some(i32::try_from(pid).expect("PID fits i32")),
+            arm: TerminationArm { armed: true },
+        };
+
+        observe_unix_child_exit(pid, tokio::time::Instant::now() + Duration::from_secs(2))
+            .await
+            .expect("observe without reaping");
+        tree.terminate()
+            .expect("group identity remains valid before reap");
+        let exit = tokio::time::timeout(Duration::from_secs(2), child.wait())
+            .await
+            .expect("bounded reap")
+            .expect("reap leader");
+        tree.disarm_reuse_sensitive_identity();
+
+        assert!(exit.success());
     }
 
     #[cfg(windows)]

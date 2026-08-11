@@ -171,14 +171,104 @@ def _validate_request(value: Any) -> dict[str, Any]:
     return request
 
 
+def _open_request_descriptor(path: Path) -> int:
+    if os.name == "nt":
+        return _open_windows_request_descriptor(path)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    return os.open(path, flags)
+
+
+def _open_windows_request_descriptor(path: Path) -> int:
+    import ctypes
+    import ctypes.wintypes
+    import msvcrt
+
+    class ByHandleFileInformation(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", ctypes.wintypes.DWORD),
+            ("ftCreationTime", ctypes.wintypes.FILETIME),
+            ("ftLastAccessTime", ctypes.wintypes.FILETIME),
+            ("ftLastWriteTime", ctypes.wintypes.FILETIME),
+            ("dwVolumeSerialNumber", ctypes.wintypes.DWORD),
+            ("nFileSizeHigh", ctypes.wintypes.DWORD),
+            ("nFileSizeLow", ctypes.wintypes.DWORD),
+            ("nNumberOfLinks", ctypes.wintypes.DWORD),
+            ("nFileIndexHigh", ctypes.wintypes.DWORD),
+            ("nFileIndexLow", ctypes.wintypes.DWORD),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [
+        ctypes.wintypes.LPCWSTR,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.LPVOID,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = ctypes.wintypes.HANDLE
+    kernel32.GetFileInformationByHandle.argtypes = [
+        ctypes.wintypes.HANDLE,
+        ctypes.POINTER(ByHandleFileInformation),
+    ]
+    kernel32.GetFileInformationByHandle.restype = ctypes.wintypes.BOOL
+    kernel32.GetFileType.argtypes = [ctypes.wintypes.HANDLE]
+    kernel32.GetFileType.restype = ctypes.wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+    kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+
+    generic_read = 0x8000_0000
+    share_read_write_delete = 0x0000_0001 | 0x0000_0002 | 0x0000_0004
+    open_existing = 3
+    file_flag_open_reparse_point = 0x0020_0000
+    invalid_handle = ctypes.c_void_p(-1).value
+    handle = kernel32.CreateFileW(
+        str(path),
+        generic_read,
+        share_read_write_delete,
+        None,
+        open_existing,
+        file_flag_open_reparse_point,
+        None,
+    )
+    if handle in (None, invalid_handle):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    try:
+        information = ByHandleFileInformation()
+        if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        file_attribute_directory = 0x0000_0010
+        file_attribute_device = 0x0000_0040
+        file_attribute_reparse_point = 0x0000_0400
+        forbidden_attributes = (
+            file_attribute_directory
+            | file_attribute_device
+            | file_attribute_reparse_point
+        )
+        file_type_disk = 0x0001
+        if (
+            information.dwFileAttributes & forbidden_attributes
+            or kernel32.GetFileType(handle) != file_type_disk
+        ):
+            raise OSError("request handle is not a regular non-reparse disk file")
+        descriptor = msvcrt.open_osfhandle(
+            int(handle),
+            os.O_RDONLY | getattr(os, "O_BINARY", 0),
+        )
+    except BaseException:
+        kernel32.CloseHandle(handle)
+        raise
+    return descriptor
+
+
 def _load_request(path: Path) -> dict[str, Any]:
     descriptor: int | None = None
     try:
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
-        flags |= getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
-        flags |= getattr(os, "O_NONBLOCK", 0)
-        descriptor = os.open(path, flags)
+        descriptor = _open_request_descriptor(path)
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
             raise CliError("REQUEST_UNAVAILABLE", "request file is unavailable")

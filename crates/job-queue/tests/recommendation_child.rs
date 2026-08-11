@@ -174,7 +174,12 @@ subprocess.Popen([sys.executable, '-c', code, str(sentinel)], stderr=sys.stderr)
     )
     .await
     .unwrap_err();
+    #[cfg(windows)]
     assert_eq!(error.code(), "TARGET_CHILD_TIMEOUT");
+    // Unix deliberately terminates the retained PGID before reaping its
+    // exited leader, so EOF arrives early and the missing result is reported.
+    #[cfg(unix)]
+    assert_eq!(error.code(), "TARGET_CHILD_NO_RESULT");
     assert!(
         started.elapsed() < Duration::from_secs(3),
         "stderr descendant held the call for {:?}",
@@ -451,15 +456,26 @@ async fn stale_job_directory_does_not_block_retry_and_is_not_deleted() {
 
 #[tokio::test]
 async fn aborting_caller_does_not_cancel_termination_or_owned_scratch_cleanup() {
-    tokio::time::timeout(Duration::from_secs(8), async {
+    tokio::time::timeout(Duration::from_secs(15), async {
         let script = r#"
 import pathlib, time
 root = pathlib.Path(__file__).resolve().parents[2]
 (root / 'child-started').write_text('started')
-time.sleep(2)
+time.sleep(5)
 (root / 'late-sentinel').write_text('escaped')
 "#;
         let (root, uv) = fake_project(script);
+        let prewarm = Command::new(&uv)
+            .arg("run")
+            .arg("--project")
+            .arg(root.path().join("nt"))
+            .arg("--no-sync")
+            .arg("python")
+            .arg("-c")
+            .arg("pass")
+            .status()
+            .expect("prewarm fake project");
+        assert!(prewarm.success(), "fake project prewarm succeeds");
         let scratch = tempfile::tempdir().unwrap();
         let stale = scratch.path().join("unrelated-stale");
         fs::create_dir(&stale).unwrap();
@@ -471,11 +487,13 @@ time.sleep(2)
                 &paths,
                 Uuid::new_v4(),
                 &child_request,
-                Duration::from_secs(1),
+                Duration::from_secs(3),
             )
             .await
         });
 
+        // Wait for an explicit child-side start signal. A cold `uv` startup can
+        // legitimately take several seconds on Windows CI.
         wait_until(Duration::from_secs(4), || {
             root.path().join("child-started").exists()
         })
@@ -491,8 +509,10 @@ time.sleep(2)
 
         caller.abort();
         assert!(caller.await.unwrap_err().is_cancelled());
-        wait_until(Duration::from_secs(3), || !invocation.exists()).await;
-        tokio::time::sleep(Duration::from_millis(1_500)).await;
+        wait_until(Duration::from_secs(5), || !invocation.exists()).await;
+        // If cancellation had killed the owner task, the child would survive
+        // long enough to write this five-second sentinel.
+        tokio::time::sleep(Duration::from_millis(5_250)).await;
 
         assert!(!root.path().join("late-sentinel").exists());
         assert_eq!(fs::read(stale.join("keep")).unwrap(), b"unrelated");
