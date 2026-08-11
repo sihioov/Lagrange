@@ -17,13 +17,16 @@ impl ClientSecret {
 
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ClientSecretError> {
         let path = path.as_ref().to_path_buf();
-        let mut value = fs::read_to_string(&path).map_err(|source| ClientSecretError::Read {
-            path: path.clone(),
-            source,
-        })?;
+        let mut value = Zeroizing::new(fs::read_to_string(&path).map_err(|source| {
+            ClientSecretError::Read {
+                path: path.clone(),
+                source,
+            }
+        })?);
 
         if value.ends_with("\r\n") {
-            value.truncate(value.len() - 2);
+            let trimmed_len = value.len() - 2;
+            value.truncate(trimmed_len);
         } else if value.ends_with('\n') {
             value.pop();
         }
@@ -36,9 +39,7 @@ impl ClientSecret {
             return Err(ClientSecretError::Empty { path });
         }
 
-        Ok(Self {
-            value: Zeroizing::new(value),
-        })
+        Ok(Self { value })
     }
 
     pub(crate) fn expose(&self) -> &str {

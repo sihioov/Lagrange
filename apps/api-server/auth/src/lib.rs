@@ -489,13 +489,13 @@ impl auth::oidc::OidcTransport for HttpOidcTransport {
             .await
             .map_err(|e| TransportError(format!("jwks fetch: {e}")))?;
         let status = body.status();
+        if !status.is_success() {
+            return Err(TransportError(format!("jwks http {status}")));
+        }
         let text = body
             .text()
             .await
             .map_err(|e| TransportError(format!("jwks body: {e}")))?;
-        if !status.is_success() {
-            return Err(TransportError(format!("jwks http {status}: {text}")));
-        }
         auth::oidc::jwks::Jwks::parse(&text).map_err(|e| TransportError(e.to_string()))
     }
 }

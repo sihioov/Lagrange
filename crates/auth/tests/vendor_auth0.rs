@@ -21,16 +21,19 @@ const DOMAIN_ENV: &str = "LAGRANGE_AUTH0_DOMAIN";
 const CLIENT_ID_ENV: &str = "LAGRANGE_AUTH0_CLIENT_ID";
 const CLIENT_SECRET_ENV: &str = "LAGRANGE_AUTH0_CLIENT_SECRET";
 
+pub const EXPECTED_AUTH0_DOMAIN: &str = "lagrange-station.jp.auth0.com";
+pub const EXPECTED_AUTH0_CLIENT_ID: &str = "YZ4T7g575IohtS1HsltlFAiU7AlyUUuI";
+
 struct TenantConfig {
     domain: String,
     client_id: String,
 }
 
 fn tenant_config() -> TenantConfig {
-    TenantConfig {
-        domain: required_env(DOMAIN_ENV),
-        client_id: required_env(CLIENT_ID_ENV),
-    }
+    let domain = required_env(DOMAIN_ENV);
+    let client_id = required_env(CLIENT_ID_ENV);
+    validate_tenant_identity(&domain, &client_id).unwrap_or_else(|message| panic!("{message}"));
+    TenantConfig { domain, client_id }
 }
 
 fn client_secret() -> Zeroizing<String> {
@@ -41,6 +44,33 @@ fn required_env(key: &'static str) -> String {
     match std::env::var(key) {
         Ok(value) if !value.is_empty() => value,
         _ => panic!("BLOCKED_EXTERNAL: vendor Auth0 suite requires env {key}"),
+    }
+}
+
+fn validate_tenant_identity(domain: &str, client_id: &str) -> Result<(), &'static str> {
+    if domain == EXPECTED_AUTH0_DOMAIN && client_id == EXPECTED_AUTH0_CLIENT_ID {
+        Ok(())
+    } else {
+        Err("vendor Auth0 tenant identity does not match selected app")
+    }
+}
+
+#[test]
+fn tenant_identity_is_pinned_without_echoing_rejected_values() {
+    const HOSTILE_MARKER: &str = "attacker-controlled-tenant-marker";
+    const FIXED_DIAGNOSTIC: &str = "vendor Auth0 tenant identity does not match selected app";
+
+    assert!(validate_tenant_identity(EXPECTED_AUTH0_DOMAIN, EXPECTED_AUTH0_CLIENT_ID).is_ok());
+
+    for (domain, client_id) in [
+        (HOSTILE_MARKER, EXPECTED_AUTH0_CLIENT_ID),
+        (EXPECTED_AUTH0_DOMAIN, HOSTILE_MARKER),
+        (HOSTILE_MARKER, HOSTILE_MARKER),
+    ] {
+        let diagnostic = validate_tenant_identity(domain, client_id)
+            .expect_err("unselected tenant identity must fail");
+        assert_eq!(diagnostic, FIXED_DIAGNOSTIC);
+        assert!(!diagnostic.contains(HOSTILE_MARKER));
     }
 }
 

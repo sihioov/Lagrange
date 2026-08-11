@@ -6,7 +6,7 @@ use auth::oidc::{OidcTransport, TokenRequest};
 use axum::{
     Form, Router,
     http::{StatusCode, header},
-    routing::post,
+    routing::{get, post},
 };
 use std::{
     collections::HashMap,
@@ -69,6 +69,24 @@ async fn redirecting_token_server(location: String) -> String {
     });
 
     format!("http://{address}/oauth/token")
+}
+
+async fn jwks_server(status: StatusCode, response_body: &'static str) -> String {
+    let app = Router::new().route(
+        "/.well-known/jwks.json",
+        get(move || async move { (status, response_body) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind JWKS server");
+    let address = listener.local_addr().expect("read JWKS server address");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve JWKS endpoint");
+    });
+
+    format!("http://{address}/.well-known/jwks.json")
 }
 
 fn token_request() -> TokenRequest {
@@ -179,6 +197,34 @@ async fn token_exchange_error_never_renders_reflected_client_secret() {
     assert!(
         !rendered.contains(SECRET_MARKER),
         "rendered error must not contain the reflected client secret: {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn jwks_error_never_renders_hostile_response_body() {
+    const HOSTILE_MARKER: &str = "reflected-jwks-secret-marker";
+
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let secret_path = temp_dir.path().join("auth0-client-secret");
+    fs::write(&secret_path, "test-client-secret").expect("write client secret file");
+    let secret = ClientSecret::from_file(&secret_path).expect("load client secret");
+    let jwks_url = jwks_server(StatusCode::BAD_GATEWAY, HOSTILE_MARKER).await;
+    let transport = HttpOidcTransport::new("https://unused.invalid/token", jwks_url, secret)
+        .expect("construct OIDC transport");
+
+    let error = match transport.fetch_jwks().await {
+        Ok(_) => panic!("unsuccessful JWKS response must fail"),
+        Err(error) => error,
+    };
+    let rendered = error.to_string();
+
+    assert!(
+        rendered.contains("502"),
+        "rendered error must contain the HTTP status: {rendered}"
+    );
+    assert!(
+        !rendered.contains(HOSTILE_MARKER),
+        "rendered error must not contain the hostile response body: {rendered}"
     );
 }
 
