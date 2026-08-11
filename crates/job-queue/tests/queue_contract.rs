@@ -347,6 +347,43 @@ async fn claim_and_settle_loop(queue: &JobQueue, worker_id: &str) -> Result<usiz
     Ok(claimed)
 }
 
+#[tokio::test]
+async fn typed_workers_claim_only_their_job_type() {
+    let super_url = match require_db_url() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    run_test("typed claims", &super_url, |_s, _d, p| {
+        Box::pin(typed_claims_body(p))
+    })
+    .await;
+}
+
+async fn typed_claims_body(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let owner = insert_test_user(pool, "sub-typed-claims").await?;
+    let q = JobQueue::new(pool.clone(), None, fast_config());
+
+    let backtest = q.submit(submit(owner, None, 3, 1)).await?;
+    let mut recommendation_request = submit(owner, None, 3, 2);
+    recommendation_request.job_type = "recommendation".to_string();
+    let recommendation = q.submit(recommendation_request).await?;
+
+    let recommendation_claim = q
+        .claim_next_for("rec-worker", "recommendation")
+        .await?
+        .expect("recommendation job must be claimable");
+    assert_eq!(recommendation_claim.job.id, recommendation.id);
+    assert_eq!(recommendation_claim.job.job_type, "recommendation");
+
+    let backtest_claim = q
+        .claim_next_for("bt-worker", "backtest")
+        .await?
+        .expect("backtest job must be claimable");
+    assert_eq!(backtest_claim.job.id, backtest.id);
+    assert_eq!(backtest_claim.job.job_type, "backtest");
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // (a) Concurrent claim ownership: two workers drain 100 jobs; every job is
 //     claimed by exactly one worker and has exactly one attempt.

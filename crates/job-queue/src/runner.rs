@@ -199,7 +199,7 @@ pub async fn run_once<R: StrategyResolver>(
     paths: &RunnerPaths,
     resolver: &R,
 ) -> Result<Outcome, QueueError> {
-    let Some(claim) = queue.claim_next(worker_id).await? else {
+    let Some(claim) = queue.claim_next_for(worker_id, "backtest").await? else {
         return Ok(Outcome::Idle);
     };
     let job_id = claim.job.id.to_string();

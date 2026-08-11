@@ -178,21 +178,56 @@ impl JobQueue {
     /// `None` if the queue is empty. The claim transaction is SHORT: it
     /// commits before returning, so no transaction is held during work.
     pub async fn claim_next(&self, worker_id: &str) -> Result<Option<ClaimedJob>, QueueError> {
+        self.claim_next_inner(worker_id, None).await
+    }
+
+    /// Claim the highest-priority eligible job of `job_type`, or return `None`
+    /// when no eligible job of that type is queued.
+    pub async fn claim_next_for(
+        &self,
+        worker_id: &str,
+        job_type: &str,
+    ) -> Result<Option<ClaimedJob>, QueueError> {
+        validate_job_type(job_type)?;
+        self.claim_next_inner(worker_id, Some(job_type)).await
+    }
+
+    async fn claim_next_inner(
+        &self,
+        worker_id: &str,
+        job_type: Option<&str>,
+    ) -> Result<Option<ClaimedJob>, QueueError> {
         if worker_id.trim().is_empty() {
             return Err(QueueError::InvalidInput(
                 "worker_id must not be empty".into(),
             ));
         }
         let mut tx = self.pool.begin().await?;
-        let candidate: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM jobs
-             WHERE status = 'QUEUED' AND available_at <= now()
-             ORDER BY priority DESC, created_at
-             FOR UPDATE SKIP LOCKED
-             LIMIT 1",
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
+        let candidate: Option<(Uuid,)> = match job_type {
+            Some(job_type) => {
+                sqlx::query_as(
+                    "SELECT id FROM jobs
+                     WHERE status = 'QUEUED' AND available_at <= now() AND job_type = $1
+                     ORDER BY priority DESC, created_at
+                     FOR UPDATE SKIP LOCKED
+                     LIMIT 1",
+                )
+                .bind(job_type)
+                .fetch_optional(&mut *tx)
+                .await?
+            }
+            None => {
+                sqlx::query_as(
+                    "SELECT id FROM jobs
+                     WHERE status = 'QUEUED' AND available_at <= now()
+                     ORDER BY priority DESC, created_at
+                     FOR UPDATE SKIP LOCKED
+                     LIMIT 1",
+                )
+                .fetch_optional(&mut *tx)
+                .await?
+            }
+        };
         let Some((job_id,)) = candidate else {
             tx.rollback().await?;
             return Ok(None);
@@ -316,17 +351,7 @@ impl JobQueue {
 }
 
 fn validate_submit(job: &SubmitJob) -> Result<(), QueueError> {
-    if job.job_type.is_empty()
-        || job.job_type.len() > 64
-        || !job
-            .job_type
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
-    {
-        return Err(QueueError::InvalidInput(
-            "job_type must match [a-z0-9_-]{1,64}".into(),
-        ));
-    }
+    validate_job_type(&job.job_type)?;
     if job.max_attempts < 1 {
         return Err(QueueError::InvalidInput("max_attempts must be >= 1".into()));
     }
@@ -340,6 +365,20 @@ fn validate_submit(job: &SubmitJob) -> Result<(), QueueError> {
     {
         return Err(QueueError::InvalidInput(
             "idempotency_key must be 1..=128 chars".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_job_type(job_type: &str) -> Result<(), QueueError> {
+    if job_type.is_empty()
+        || job_type.len() > 64
+        || !job_type
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+    {
+        return Err(QueueError::InvalidInput(
+            "job_type must match [a-z0-9_-]{1,64}".into(),
         ));
     }
     Ok(())
