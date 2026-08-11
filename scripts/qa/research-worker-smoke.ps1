@@ -259,7 +259,7 @@ function Invoke-StaticChecks {
     if (-not (Test-Path -LiteralPath $schemaSqlFile)) { throw "missing tracked schema gate: $schemaSqlFile" }
     $schemaSql = Get-Content -Raw -LiteralPath $schemaSqlFile
     foreach ($required in @(
-        '_sqlx_migrations', 'version BETWEEN 22 AND 25', 'max(version)', 'convalidated',
+        '_sqlx_migrations', 'version IN (22, 23, 24, 25, 33)', 'convalidated',
         'pg_get_constraintdef', 'format_type', 'attnotnull', 'attidentity',
         'pg_get_expr', 'storage_path', 'EXCEPT',
         'data_batches_source_file_uq', 'trading_calendar_versions_source_lookup_idx',
