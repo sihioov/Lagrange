@@ -92,6 +92,8 @@ pub enum CurateError {
     MalformedManifest { context: String, detail: String },
     #[error("malformed curated parquet ({context}): {detail}")]
     MalformedParquet { context: String, detail: String },
+    #[error("missing curated component: {path}")]
+    MissingCuratedComponent { path: String },
     #[error("raw read failure ({context}): {detail}")]
     RawIo { context: String, detail: String },
     #[error("batch is missing its {kind} file")]

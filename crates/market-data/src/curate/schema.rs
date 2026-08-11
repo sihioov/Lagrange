@@ -174,10 +174,17 @@ fn date_to_days(date: TradingDate) -> i32 {
 
 fn days_to_date_checked(days: i32, col: &str) -> Result<TradingDate, CurateError> {
     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch");
-    let naive = epoch + Duration::days(i64::from(days));
-    TradingDate::new(naive.year(), naive.month(), naive.day()).map_err(|e| CurateError::StoreIo {
-        context: format!("{col} parse"),
-        detail: e.to_string(),
+    let naive = epoch
+        .checked_add_signed(Duration::days(i64::from(days)))
+        .ok_or_else(|| CurateError::MalformedParquet {
+            context: format!("{col} parse"),
+            detail: format!("Date32 day offset {days} is out of range"),
+        })?;
+    TradingDate::new(naive.year(), naive.month(), naive.day()).map_err(|e| {
+        CurateError::MalformedParquet {
+            context: format!("{col} parse"),
+            detail: e.to_string(),
+        }
     })
 }
 
@@ -197,11 +204,12 @@ fn ts_at_checked(
         .downcast_ref::<TimestampMicrosecondArray>()
         .expect("timestamp(us) column");
     let micros = array.value(i);
-    let dt =
-        chrono::DateTime::from_timestamp_micros(micros).ok_or_else(|| CurateError::StoreIo {
+    let dt = chrono::DateTime::from_timestamp_micros(micros).ok_or_else(|| {
+        CurateError::MalformedParquet {
             context: format!("{col} parse"),
             detail: format!("timestamp {micros} is out of range"),
-        })?;
+        }
+    })?;
     Ok(UtcTimestamp::from_datetime(dt))
 }
 
@@ -487,9 +495,17 @@ fn write_record_batch(
 fn read_batches(path: &Path) -> Result<Vec<arrow::record_batch::RecordBatch>, CurateError> {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
-    let file = File::open(path).map_err(|e| CurateError::StoreIo {
-        context: format!("open {}", path.display()),
-        detail: e.to_string(),
+    let file = File::open(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            CurateError::MissingCuratedComponent {
+                path: path.display().to_string(),
+            }
+        } else {
+            CurateError::StoreIo {
+                context: format!("open {}", path.display()),
+                detail: e.to_string(),
+            }
+        }
     })?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
         CurateError::MalformedParquet {
@@ -603,7 +619,7 @@ fn currency_at_checked(
     i: usize,
 ) -> Result<Currency, CurateError> {
     let code = str_at(batch, col, i);
-    Currency::from_code(code).map_err(|e| CurateError::StoreIo {
+    Currency::from_code(code).map_err(|e| CurateError::MalformedParquet {
         context: format!("{col} parse"),
         detail: format!("unknown currency {code:?}: {e}"),
     })
@@ -678,7 +694,7 @@ pub fn read_bars(path: &Path) -> Result<Vec<CuratedBar>, CurateError> {
         for i in 0..batch.num_rows() {
             let instrument_id =
                 InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(|e| {
-                    CurateError::StoreIo {
+                    CurateError::MalformedParquet {
                         context: "instrument_id parse".to_owned(),
                         detail: e.to_string(),
                     }
@@ -702,12 +718,12 @@ pub fn read_bars(path: &Path) -> Result<Vec<CuratedBar>, CurateError> {
                 ingested_at: ts_at_checked(&batch, "ingested_at", i)?,
                 batch_id: str_at(&batch, "batch_id", i)
                     .parse::<BatchId>()
-                    .map_err(|e| CurateError::StoreIo {
+                    .map_err(|e| CurateError::MalformedParquet {
                         context: "batch_id parse".to_owned(),
                         detail: e.to_string(),
                     })?,
                 raw_hash: ContentHash::parse(str_at(&batch, "raw_hash", i)).map_err(|e| {
-                    CurateError::StoreIo {
+                    CurateError::MalformedParquet {
                         context: "raw_hash parse".to_owned(),
                         detail: e.to_string(),
                     }
@@ -732,7 +748,7 @@ pub fn read_adjusted_bars(path: &Path) -> Result<Vec<AdjustmentBar>, CurateError
         for i in 0..batch.num_rows() {
             let instrument_id =
                 InstrumentId::parse(str_at(&batch, "instrument_id", i)).map_err(|e| {
-                    CurateError::StoreIo {
+                    CurateError::MalformedParquet {
                         context: "instrument_id parse".to_owned(),
                         detail: e.to_string(),
                     }
@@ -741,7 +757,7 @@ pub fn read_adjusted_bars(path: &Path) -> Result<Vec<AdjustmentBar>, CurateError
             let instrument = instrument_id.to_string();
             let date = trading_date.to_iso();
             let adjustment_kind = AdjustmentKind::parse(str_at(&batch, "adjustment_kind", i))
-                .ok_or_else(|| CurateError::StoreIo {
+                .ok_or_else(|| CurateError::MalformedParquet {
                     context: "adjustment_kind parse".to_owned(),
                     detail: format!(
                         "unknown adjustment kind {:?}",
@@ -767,12 +783,12 @@ pub fn read_adjusted_bars(path: &Path) -> Result<Vec<AdjustmentBar>, CurateError
                 ingested_at: ts_at_checked(&batch, "ingested_at", i)?,
                 batch_id: str_at(&batch, "batch_id", i)
                     .parse::<BatchId>()
-                    .map_err(|e| CurateError::StoreIo {
+                    .map_err(|e| CurateError::MalformedParquet {
                         context: "batch_id parse".to_owned(),
                         detail: e.to_string(),
                     })?,
                 raw_hash: ContentHash::parse(str_at(&batch, "raw_hash", i)).map_err(|e| {
-                    CurateError::StoreIo {
+                    CurateError::MalformedParquet {
                         context: "raw_hash parse".to_owned(),
                         detail: e.to_string(),
                     }
@@ -952,4 +968,16 @@ fn f64_at(batch: &arrow::record_batch::RecordBatch, name: &str, i: usize) -> f64
         .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
         .map(|a| a.value(i))
         .unwrap_or(f64::NAN)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn out_of_range_parquet_date_is_typed_corruption() {
+        let error = days_to_date_checked(i32::MAX, "trading_date")
+            .expect_err("an impossible Date32 value must not panic or look like I/O");
+        assert!(matches!(error, CurateError::MalformedParquet { .. }));
+    }
 }

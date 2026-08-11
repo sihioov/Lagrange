@@ -141,7 +141,26 @@ fn load_symbol(
                     detail: "bars path is not a regular file".to_owned(),
                 });
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => match fs::metadata(dir) {
+                Ok(metadata) if metadata.is_dir() => {
+                    return Err(FactorError::MissingData {
+                        detail: format!("required bars component {}", bars_path.display()),
+                    });
+                }
+                Ok(_) => {
+                    return Err(FactorError::CorruptData {
+                        context: format!("inspect {}", dir.display()),
+                        detail: "version partition is not a directory".to_owned(),
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(FactorError::StoreIo {
+                        context: format!("inspect {}", dir.display()),
+                        detail: error.to_string(),
+                    });
+                }
+            },
             Err(error) => {
                 return Err(FactorError::StoreIo {
                     context: format!("inspect {}", bars_path.display()),
@@ -153,6 +172,7 @@ fn load_symbol(
         let adjusted_path = dir.join("adjusted_bars.parquet");
         let adjusted = read_adjusted_bars(&adjusted_path)
             .map_err(|error| curated_read_error(&adjusted_path, error))?;
+        require_partition_identity(id, &raw, &adjusted)?;
         let raw_by_date: BTreeMap<TradingDate, &market_data::curate::schema::CuratedBar> =
             raw.iter().map(|b| (b.trading_date, b)).collect();
         for a in &adjusted {
@@ -189,8 +209,47 @@ fn load_symbol(
     Ok(points)
 }
 
+fn require_partition_identity(
+    expected_symbol: &InstrumentId,
+    raw: &[market_data::curate::schema::CuratedBar],
+    adjusted: &[market_data::curate::adjust::AdjustmentBar],
+) -> Result<(), FactorError> {
+    if let Some(row) = raw.iter().find(|row| &row.instrument_id != expected_symbol) {
+        return Err(FactorError::CorruptData {
+            context: format!("raw partition symbol={expected_symbol}"),
+            detail: format!("row declares instrument {}", row.instrument_id),
+        });
+    }
+    if let Some(row) = adjusted
+        .iter()
+        .find(|row| &row.instrument_id != expected_symbol)
+    {
+        return Err(FactorError::CorruptData {
+            context: format!("adjusted partition symbol={expected_symbol}"),
+            detail: format!("row declares instrument {}", row.instrument_id),
+        });
+    }
+    let mut raw_dates = raw.iter().map(|row| row.trading_date).collect::<Vec<_>>();
+    let mut adjusted_dates = adjusted
+        .iter()
+        .map(|row| row.trading_date)
+        .collect::<Vec<_>>();
+    raw_dates.sort_unstable();
+    adjusted_dates.sort_unstable();
+    if raw_dates != adjusted_dates {
+        return Err(FactorError::CorruptData {
+            context: format!("raw/adjusted alignment symbol={expected_symbol}"),
+            detail: "raw and adjusted series do not contain identical dates".to_owned(),
+        });
+    }
+    Ok(())
+}
+
 fn curated_read_error(path: &std::path::Path, error: CurateError) -> FactorError {
     match error {
+        CurateError::MissingCuratedComponent { .. } => FactorError::MissingData {
+            detail: error.to_string(),
+        },
         CurateError::StoreIo { context, detail } => FactorError::StoreIo { context, detail },
         other => FactorError::CorruptData {
             context: format!("read {}", path.display()),

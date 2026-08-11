@@ -138,6 +138,8 @@ pub enum FactorError {
     StoreIo { context: String, detail: String },
     #[error("corrupt curated data ({context}): {detail}")]
     CorruptData { context: String, detail: String },
+    #[error("missing curated data: {detail}")]
+    MissingData { detail: String },
     #[error("polars computation failure: {detail}")]
     Polars { detail: String },
     #[error("canonical serialization failure: {detail}")]

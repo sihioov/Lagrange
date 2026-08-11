@@ -360,6 +360,9 @@ fn map_factor_error(error: FactorError) -> RecommendationError {
         FactorError::StoreIo { .. } => RecommendationError::Unavailable {
             detail: error.to_string(),
         },
+        FactorError::MissingData { .. } => RecommendationError::DataBlocked {
+            detail: error.to_string(),
+        },
         FactorError::FutureDatedRow { .. }
         | FactorError::CorruptData { .. }
         | FactorError::MissingField { .. }

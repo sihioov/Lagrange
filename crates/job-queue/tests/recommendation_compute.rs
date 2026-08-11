@@ -2,13 +2,14 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use domain::{ContentHash, DatasetId, TradingDate, UtcTimestamp};
+use domain::{ContentHash, DatasetId, InstrumentId, TradingDate, UtcTimestamp};
 use job_queue::ErrorClass;
 use job_queue::recommendation::compute::{
     AttestedUniverse, StrategyRequirements, compute_close, compute_close_async, requirements_for,
 };
 use job_queue::recommendation::input::{AttestedDataset, AttestedDatasetStatus};
 use job_queue::resolver::ResolvedConfig;
+use market_data::curate::schema::{read_adjusted_bars, read_bars, write_adjusted_bars, write_bars};
 use market_data::{Capability, CurateStore, DatasetManifest, dataset_manifest_hash};
 use serde_json::json;
 use tempfile::TempDir;
@@ -183,6 +184,48 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
+fn clone_symbol_for_qa(store_root: &Path, source_symbol: &str, destination_symbol: &str) {
+    let market = store_root.join("curated/bars/market=kr");
+    let source = market.join(format!("symbol={source_symbol}"));
+    let destination = market.join(format!("symbol={destination_symbol}"));
+    copy_dir(&source, &destination);
+
+    let store = CurateStore::new(store_root);
+    let destination_id = InstrumentId::parse(destination_symbol).expect("canonical QA instrument");
+    for year_entry in std::fs::read_dir(&destination).expect("read cloned QA symbol") {
+        let year_entry = year_entry.expect("read cloned QA year");
+        let name = year_entry.file_name().to_string_lossy().into_owned();
+        let Some(year) = name
+            .strip_prefix("year=")
+            .and_then(|value| value.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        let bars_path = store.bars_path("kr", destination_symbol, year, 2);
+        if bars_path.is_file() {
+            let mut rows = read_bars(&bars_path).expect("read cloned QA raw bars");
+            for row in &mut rows {
+                row.instrument_id = destination_id.clone();
+            }
+            write_bars(&bars_path, &rows).expect("rewrite cloned QA raw identity");
+        }
+        for adjusted_path in [
+            store.adjusted_bars_path("kr", destination_symbol, year, 2),
+            store.total_return_bars_path("kr", destination_symbol, year, 2),
+        ] {
+            if adjusted_path.is_file() {
+                let mut rows =
+                    read_adjusted_bars(&adjusted_path).expect("read cloned QA adjusted bars");
+                for row in &mut rows {
+                    row.instrument_id = destination_id.clone();
+                }
+                write_adjusted_bars(&adjusted_path, &rows)
+                    .expect("rewrite cloned QA adjusted identity");
+            }
+        }
+    }
+}
+
 fn qa_only_fixed_universe_dataset() -> QaDataset {
     let repo = repo_root();
     let temp = tempfile::Builder::new()
@@ -209,11 +252,10 @@ fn qa_only_fixed_universe_dataset() -> QaDataset {
     // this temp root, so production still fails closed on incomplete data.
     let store = generated.join("curated");
     let market = store.join("curated/bars/market=kr");
-    let source = market.join("symbol=069500.KRX");
     for member in MEMBERS {
         let destination = market.join(format!("symbol={member}"));
         if !destination.exists() {
-            copy_dir(&source, &destination);
+            clone_symbol_for_qa(&store, "069500.KRX", member);
         }
     }
     eprintln!("QA_ONLY_SYNTHETIC: cloned Phase-0 partitions for fixed-universe computation");
@@ -379,10 +421,7 @@ fn close_rejects_an_incomplete_fixed_universe_and_future_rows() {
     assert!(error.to_string().contains("universe"), "{error}");
     assert_eq!(error.class(), ErrorClass::DataBlocked);
 
-    copy_dir(
-        &Path::new(&qa.pin.storage_path).join("curated/bars/market=kr/symbol=069500.KRX"),
-        &missing,
-    );
+    clone_symbol_for_qa(Path::new(&qa.pin.storage_path), "069500.KRX", "153130.KRX");
     let error = compute_close(
         &qa.pin,
         &universe,
@@ -558,6 +597,58 @@ fn malformed_parquet_is_integrity_not_a_retryable_store_error() {
         },
     )
     .expect_err("malformed immutable bytes are an integrity failure");
+    assert_eq!(error.class(), ErrorClass::Integrity, "{error:?}");
+}
+
+#[test]
+fn missing_required_adjusted_component_is_data_blocked() {
+    let qa = qa_only_fixed_universe_dataset();
+    let adjusted = Path::new(&qa.pin.storage_path)
+        .join("curated/bars/market=kr/symbol=069500.KRX/year=2021/version=2/adjusted_bars.parquet");
+    std::fs::remove_file(adjusted).expect("remove required adjusted component");
+    let error = compute_close(
+        &qa.pin,
+        &fixed_universe(),
+        TradingDate::parse("2021-01-29").unwrap(),
+        &StrategyRequirements {
+            factor_ids: vec!["vol_21".to_owned()],
+            minimum_lookback_sessions: 21,
+        },
+    )
+    .expect_err("a missing immutable component blocks this dataset version");
+    assert_eq!(error.class(), ErrorClass::DataBlocked, "{error:?}");
+}
+
+#[test]
+fn semantically_invalid_parquet_value_is_integrity() {
+    let qa = qa_only_fixed_universe_dataset();
+    let adjusted = Path::new(&qa.pin.storage_path)
+        .join("curated/bars/market=kr/symbol=069500.KRX/year=2021/version=2/adjusted_bars.parquet");
+    let python = std::env::var_os("PYTHON").unwrap_or_else(|| "python".into());
+    let output = Command::new(python)
+        .arg("-c")
+        .arg(
+            "import sys, pyarrow as pa, pyarrow.parquet as pq; p=sys.argv[1]; t=pq.ParquetFile(p).read(); i=t.schema.get_field_index('currency'); f=t.schema.field(i); t=t.set_column(i, f, pa.array(['krw'] * t.num_rows, type=f.type)); pq.write_table(t, p)",
+        )
+        .arg(&adjusted)
+        .output()
+        .expect("launch Python semantic-corruption helper");
+    assert!(
+        output.status.success(),
+        "semantic corruption helper failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let error = compute_close(
+        &qa.pin,
+        &fixed_universe(),
+        TradingDate::parse("2021-01-29").unwrap(),
+        &StrategyRequirements {
+            factor_ids: vec!["vol_21".to_owned()],
+            minimum_lookback_sessions: 21,
+        },
+    )
+    .expect_err("semantic Parquet corruption is not retryable I/O");
     assert_eq!(error.class(), ErrorClass::Integrity, "{error:?}");
 }
 
