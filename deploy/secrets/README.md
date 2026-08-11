@@ -60,16 +60,45 @@ $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $allowedSids = @($operatorSid, 'S-1-5-18', 'S-1-5-32-544')
 
 & icacls.exe $secretPath /inheritance:r
+if ($LASTEXITCODE -ne 0) {
+    throw 'icacls failed while disabling secret ACL inheritance'
+}
 foreach ($rule in (Get-Acl -LiteralPath $secretPath).Access) {
     $sid = $rule.IdentityReference.Translate(
         [Security.Principal.SecurityIdentifier]
     ).Value
     if ($sid -notin $allowedSids) {
         & icacls.exe $secretPath /remove:g "*$sid"
+        if ($LASTEXITCODE -ne 0) {
+            throw 'icacls failed while removing an allow ACL entry'
+        }
         & icacls.exe $secretPath /remove:d "*$sid"
+        if ($LASTEXITCODE -ne 0) {
+            throw 'icacls failed while removing a deny ACL entry'
+        }
     }
 }
 & icacls.exe $secretPath /grant:r "*${operatorSid}:(F)" '*S-1-5-18:(F)' '*S-1-5-32-544:(F)'
+if ($LASTEXITCODE -ne 0) {
+    throw 'icacls failed while granting the required secret ACL entries'
+}
+
+$acl = Get-Acl -LiteralPath $secretPath
+$rules = @($acl.Access)
+$actualSids = @($rules | ForEach-Object {
+    $_.IdentityReference.Translate(
+        [Security.Principal.SecurityIdentifier]
+    ).Value
+} | Sort-Object -Unique)
+$sidDifference = @(Compare-Object ($allowedSids | Sort-Object) $actualSids)
+$rulesAreExact = $rules.Count -eq 3 -and -not ($rules | Where-Object {
+    $_.IsInherited -or
+    $_.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+    $_.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl
+})
+if (-not $acl.AreAccessRulesProtected -or $sidDifference.Count -ne 0 -or -not $rulesAreExact) {
+    throw 'secret ACL does not match the required protected three-principal policy'
+}
 ```
 
 On Unix hosts, restrict the file to its operator account:

@@ -9,6 +9,7 @@ use reqwest::{Client, StatusCode, redirect::Policy};
 use serde::Deserialize;
 use std::time::Duration;
 use url::Url;
+use zeroize::Zeroizing;
 
 const CALLBACK_URI: &str = "https://app.lagrange.local/auth/callback";
 const INVALID_AUTHORIZATION_CODE: &str = "deliberately-invalid-authorization-code";
@@ -16,34 +17,30 @@ const INVALID_CLIENT_SECRET: &str = "deliberately-invalid-vendor-test-secret";
 const PKCE_CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 const PKCE_VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
-const TENANT_ENV: [&str; 3] = [
-    "LAGRANGE_AUTH0_DOMAIN",
-    "LAGRANGE_AUTH0_CLIENT_ID",
-    "LAGRANGE_AUTH0_CLIENT_SECRET",
-];
+const DOMAIN_ENV: &str = "LAGRANGE_AUTH0_DOMAIN";
+const CLIENT_ID_ENV: &str = "LAGRANGE_AUTH0_CLIENT_ID";
+const CLIENT_SECRET_ENV: &str = "LAGRANGE_AUTH0_CLIENT_SECRET";
 
 struct TenantConfig {
     domain: String,
     client_id: String,
-    client_secret: String,
 }
 
 fn tenant_config() -> TenantConfig {
-    let values: Vec<String> = TENANT_ENV
-        .iter()
-        .map(|k| std::env::var(k).unwrap_or_default())
-        .collect();
-    if values.iter().any(|v| v.is_empty()) {
-        panic!(
-            "BLOCKED_EXTERNAL: vendor Auth0 suite requires env {}; no tenant/credentials exist on this host. \
-             The simulator suite (tests/auth0_simulator.rs) proves the contract until a tenant is provisioned.",
-            TENANT_ENV.join(", ")
-        );
-    }
     TenantConfig {
-        domain: values[0].clone(),
-        client_id: values[1].clone(),
-        client_secret: values[2].clone(),
+        domain: required_env(DOMAIN_ENV),
+        client_id: required_env(CLIENT_ID_ENV),
+    }
+}
+
+fn client_secret() -> Zeroizing<String> {
+    Zeroizing::new(required_env(CLIENT_SECRET_ENV))
+}
+
+fn required_env(key: &'static str) -> String {
+    match std::env::var(key) {
+        Ok(value) if !value.is_empty() => value,
+        _ => panic!("BLOCKED_EXTERNAL: vendor Auth0 suite requires env {key}"),
     }
 }
 
@@ -61,8 +58,51 @@ fn issuer(domain: &str) -> Url {
 }
 
 #[derive(Deserialize)]
-struct TokenError {
-    error: String,
+struct TokenErrorResponse {
+    error: TokenErrorCode,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+enum TokenErrorCode {
+    #[serde(rename = "invalid_grant")]
+    InvalidGrant,
+    #[serde(rename = "access_denied")]
+    AccessDenied,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Copy)]
+enum ExpectedTokenError {
+    InvalidGrant,
+    AccessDenied,
+}
+
+fn parse_token_error(body: &[u8]) -> Result<TokenErrorCode, &'static str> {
+    serde_json::from_slice::<TokenErrorResponse>(body)
+        .map(|response| response.error)
+        .map_err(|_| "vendor token endpoint returned invalid OAuth error JSON")
+}
+
+fn validate_token_error(
+    actual: TokenErrorCode,
+    expected: ExpectedTokenError,
+) -> Result<(), &'static str> {
+    let matches = matches!(
+        (actual, expected),
+        (
+            TokenErrorCode::InvalidGrant,
+            ExpectedTokenError::InvalidGrant
+        ) | (
+            TokenErrorCode::AccessDenied,
+            ExpectedTokenError::AccessDenied
+        )
+    );
+    if matches {
+        Ok(())
+    } else {
+        Err("vendor token endpoint returned an unexpected OAuth error")
+    }
 }
 
 async fn token_probe(
@@ -70,7 +110,7 @@ async fn token_probe(
     issuer: &Url,
     client_id: &str,
     client_secret: &str,
-) -> (StatusCode, String) {
+) -> (StatusCode, TokenErrorCode) {
     let token_url = issuer
         .join("oauth/token")
         .unwrap_or_else(|_| panic!("vendor token endpoint URL construction failed"));
@@ -88,10 +128,12 @@ async fn token_probe(
         .await
         .unwrap_or_else(|_| panic!("vendor token endpoint request failed"));
     let status = response.status();
-    let error = response.json::<TokenError>().await.unwrap_or_else(|_| {
-        panic!("vendor token endpoint returned non-JSON error status {status}")
-    });
-    (status, error.error)
+    let body = response
+        .bytes()
+        .await
+        .unwrap_or_else(|_| panic!("vendor token endpoint response read failed"));
+    let error = parse_token_error(&body).unwrap_or_else(|message| panic!("{message}"));
+    (status, error)
 }
 
 #[tokio::test]
@@ -180,18 +222,18 @@ async fn vendor_confidential_client_credential_is_accepted() {
     let config = tenant_config();
     let issuer = issuer(&config.domain);
     let client = http_client();
+    let secret = client_secret();
 
     let (valid_status, valid_error) =
-        token_probe(&client, &issuer, &config.client_id, &config.client_secret).await;
+        token_probe(&client, &issuer, &config.client_id, secret.as_str()).await;
+    drop(secret);
     assert_eq!(
         valid_status,
         StatusCode::FORBIDDEN,
         "configured credential must authenticate before the deliberately invalid grant is rejected"
     );
-    assert_eq!(
-        valid_error, "invalid_grant",
-        "configured credential must reach Auth0 grant validation"
-    );
+    validate_token_error(valid_error, ExpectedTokenError::InvalidGrant)
+        .unwrap_or_else(|message| panic!("{message}"));
 
     let (invalid_status, invalid_error) =
         token_probe(&client, &issuer, &config.client_id, INVALID_CLIENT_SECRET).await;
@@ -200,8 +242,28 @@ async fn vendor_confidential_client_credential_is_accepted() {
         StatusCode::UNAUTHORIZED,
         "negative-control credential must fail client authentication"
     );
+    validate_token_error(invalid_error, ExpectedTokenError::AccessDenied)
+        .unwrap_or_else(|message| panic!("{message}"));
+}
+
+#[test]
+fn hostile_token_error_is_classified_without_retaining_payload() {
+    const HOSTILE_MARKER: &str = "reflected-vendor-secret-marker";
+    let body = format!(r#"{{"error":"{HOSTILE_MARKER}"}}"#);
+
+    let error = match parse_token_error(body.as_bytes()) {
+        Ok(error) => error,
+        Err(message) => panic!("{message}"),
+    };
+    assert!(matches!(error, TokenErrorCode::Unknown));
+
+    let diagnostic = match validate_token_error(error, ExpectedTokenError::InvalidGrant) {
+        Ok(()) => panic!("unknown OAuth error must fail validation"),
+        Err(message) => message,
+    };
     assert_eq!(
-        invalid_error, "access_denied",
-        "negative-control credential must be denied by Auth0"
+        diagnostic,
+        "vendor token endpoint returned an unexpected OAuth error"
     );
+    assert!(!diagnostic.contains(HOSTILE_MARKER));
 }
