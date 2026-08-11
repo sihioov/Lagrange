@@ -40,3 +40,22 @@ ALTER FUNCTION public.assert_no_scheduled_recommendation_lineage()
     OWNER TO migration_owner;
 REVOKE ALL ON FUNCTION public.assert_no_scheduled_recommendation_lineage()
     FROM PUBLIC;
+
+-- The complete 0026..0032 support family now exists. Activate and grant in
+-- this transaction so worker can never observe one without the other.
+DO $activation$
+BEGIN
+    PERFORM pg_catalog.pg_advisory_xact_lock(1815099521, 33);
+    UPDATE public.recommendation_scheduler_control
+    SET active = true
+    WHERE control_key = 'scheduler';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'recommendation scheduler control row is missing'
+            USING ERRCODE = '55000';
+    END IF;
+END
+$activation$;
+
+GRANT EXECUTE ON FUNCTION
+    public.schedule_recommendation_run(uuid, uuid, date, uuid, text, integer, text)
+    TO worker;

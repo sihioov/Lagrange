@@ -7,10 +7,9 @@ DECLARE
   actual_definition text;
 BEGIN
   IF to_regclass('public._sqlx_migrations') IS NULL
-     OR (SELECT max(version) FROM _sqlx_migrations) <> 25
      OR (SELECT count(*) FROM _sqlx_migrations
-         WHERE version BETWEEN 22 AND 25 AND success) <> 4 THEN
-    RAISE EXCEPTION 'successful SQLx migrations 22-25 are required and 25 must be latest';
+         WHERE version IN (22, 23, 24, 25, 33) AND success) <> 5 THEN
+    RAISE EXCEPTION 'successful SQLx migrations 22-25 and 33 are required';
   END IF;
 
   IF to_regclass('public.data_batches') IS NULL

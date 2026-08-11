@@ -34,11 +34,9 @@ BEGIN
 END
 $rollback_guard$;
 
-REVOKE EXECUTE ON FUNCTION
-    public.schedule_recommendation_run(uuid, uuid, date, uuid, text, integer, text)
-    FROM worker;
 DROP FUNCTION IF EXISTS
     public.schedule_recommendation_run(uuid, uuid, date, uuid, text, integer, text);
+DROP TABLE IF EXISTS public.recommendation_scheduler_control;
 
 DROP TRIGGER IF EXISTS jobs_protect_scheduled_recommendation_lineage
     ON jobs;

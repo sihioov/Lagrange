@@ -32,6 +32,19 @@ ALTER TABLE recommendation_runs
 ALTER TABLE account_strategy_bindings
     ADD COLUMN auto_apply_recommendations boolean NOT NULL DEFAULT false;
 
+-- The function exists from 0026 onward, but scheduling stays inactive until
+-- 0033 atomically activates this singleton after all supporting indexes exist.
+CREATE TABLE recommendation_scheduler_control (
+    control_key text PRIMARY KEY CHECK (control_key = 'scheduler'),
+    active boolean NOT NULL
+);
+
+ALTER TABLE recommendation_scheduler_control OWNER TO migration_owner;
+REVOKE ALL ON TABLE recommendation_scheduler_control
+    FROM PUBLIC, app, worker, admin, audit_writer, research_writer;
+INSERT INTO recommendation_scheduler_control (control_key, active)
+    VALUES ('scheduler', false);
+
 -- The worker must be able to observe an opt-in, never manufacture or revoke
 -- one. This tightens 0013's pre-automation grant; the down migration restores
 -- that exact legacy privilege set.
@@ -202,6 +215,19 @@ DECLARE
     v_inserted_run_id uuid;
     v_payload jsonb;
 BEGIN
+    -- Hold a shared transaction fence for the entire scheduling operation.
+    -- 0033.down takes the matching exclusive fence before deactivation, so a
+    -- call authorized before REVOKE must re-read inactive state after waiting.
+    PERFORM pg_catalog.pg_advisory_xact_lock_shared(1815099521, 33);
+    PERFORM 1
+    FROM public.recommendation_scheduler_control AS control
+    WHERE control.control_key = 'scheduler'
+      AND control.active;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'recommendation scheduler is unavailable'
+            USING ERRCODE = '55000';
+    END IF;
+
     IF p_owner_user_id IS NULL
         OR p_strategy_config_id IS NULL
         OR p_as_of IS NULL
@@ -403,6 +429,3 @@ ALTER FUNCTION public.schedule_recommendation_run(uuid, uuid, date, uuid, text, 
 REVOKE ALL ON FUNCTION
     public.schedule_recommendation_run(uuid, uuid, date, uuid, text, integer, text)
     FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION
-    public.schedule_recommendation_run(uuid, uuid, date, uuid, text, integer, text)
-    TO worker;

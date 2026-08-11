@@ -48,7 +48,7 @@ use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Migrations embedded at compile time from the workspace `migrations/` dir.
 static MIGRATOR: Migrator = sqlx::migrate!("../../../migrations");
@@ -65,6 +65,14 @@ const RECOMMENDATION_PIPELINE_UP_SQL: &str =
     include_str!("../../../../migrations/0026_recommendation_pipeline.up.sql");
 const RECOMMENDATION_PIPELINE_DOWN_SQL: &str =
     include_str!("../../../../migrations/0026_recommendation_pipeline.down.sql");
+const RECOMMENDATION_ITEM_CONSTRAINT_UP_SQL: &str =
+    include_str!("../../../../migrations/0030_recommendation_item_unique_constraint.up.sql");
+const RECOMMENDATION_ITEM_CONSTRAINT_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0030_recommendation_item_unique_constraint.down.sql");
+const RECOMMENDATION_ROLLBACK_GUARD_UP_SQL: &str =
+    include_str!("../../../../migrations/0033_recommendation_rollback_guard.up.sql");
+const RECOMMENDATION_ROLLBACK_GUARD_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0033_recommendation_rollback_guard.down.sql");
 const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
 const RESEARCH_SCHEMA_GATE_SQL: &str =
@@ -108,13 +116,29 @@ fn recommendation_pipeline_migration_is_tracked() {
             }
         }
     }
+    for migration in [
+        RECOMMENDATION_ITEM_CONSTRAINT_UP_SQL,
+        RECOMMENDATION_ITEM_CONSTRAINT_DOWN_SQL,
+    ] {
+        assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
+        assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
+    }
+    assert!(RECOMMENDATION_PIPELINE_UP_SQL.contains("recommendation_scheduler_control"));
+    assert!(
+        !RECOMMENDATION_PIPELINE_UP_SQL
+            .contains("GRANT EXECUTE ON FUNCTION\n    public.schedule_recommendation_run")
+    );
+    assert!(RECOMMENDATION_ROLLBACK_GUARD_UP_SQL.contains("active = true"));
+    assert!(RECOMMENDATION_ROLLBACK_GUARD_UP_SQL.contains("GRANT EXECUTE ON FUNCTION"));
+    assert!(RECOMMENDATION_ROLLBACK_GUARD_DOWN_SQL.contains("pg_advisory_xact_lock"));
+    assert!(RECOMMENDATION_ROLLBACK_GUARD_DOWN_SQL.contains("active = false"));
+    assert!(RECOMMENDATION_ROLLBACK_GUARD_DOWN_SQL.contains("REVOKE EXECUTE ON FUNCTION"));
 }
 
 #[test]
 fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
     for token in [
-        "version BETWEEN 22 AND 25",
-        "max(version)",
+        "version IN (22, 23, 24, 25, 33)",
         "convalidated",
         "pg_get_constraintdef",
         "format_type",
@@ -159,6 +183,58 @@ fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
     }
 }
 
+#[tokio::test]
+async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = async {
+        MIGRATOR.run(&owner).await?;
+        sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&owner)
+            .await?;
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations \
+             (version, description, installed_on, success, checksum, execution_time) \
+             VALUES (34, 'future migration', now(), true, decode(repeat('00', 32), 'hex'), 0)",
+        )
+        .execute(&owner)
+        .await?;
+        sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&owner)
+            .await?;
+        sqlx::query("UPDATE _sqlx_migrations SET success = false WHERE version = 33")
+            .execute(&owner)
+            .await?;
+        let missing_required = sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&owner)
+            .await
+            .unwrap_err();
+        assert!(
+            missing_required
+                .to_string()
+                .contains("successful SQLx migrations 22-25 and 33 are required")
+        );
+        sqlx::query("UPDATE _sqlx_migrations SET success = true WHERE version = 33")
+            .execute(&owner)
+            .await?;
+        sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&owner)
+            .await?;
+        Ok::<(), Box<dyn Error>>(())
+    }
+    .await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("research schema gate ledger contract FAILED: {error}");
+    }
+}
+
 fn executable_sql(sql: &str) -> String {
     sql.lines()
         .map(str::trim)
@@ -198,6 +274,8 @@ const TENANT_TABLES: &[&str] = &[
 ];
 
 const PUBLIC_JOB_STATUSES: [&str; 5] = ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"];
+const RECOMMENDATION_FENCE_LOCK_CLASS: i32 = 1_815_099_521;
+const RECOMMENDATION_FENCE_LOCK_OBJECT: i32 = 33;
 
 fn pg_code(err: &sqlx::Error) -> Option<String> {
     match err {
@@ -214,6 +292,43 @@ fn migrate_pg_code(err: &sqlx::migrate::MigrateError) -> Option<String> {
         | sqlx::migrate::MigrateError::ExecuteMigration(error, _) => pg_code(error),
         _ => None,
     }
+}
+
+async fn wait_for_advisory_wait(
+    observer: &PgPool,
+    backend_pid: i32,
+    label: &str,
+) -> Result<(), Box<dyn Error>> {
+    for _ in 0..200 {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS ( \
+               SELECT 1 FROM pg_stat_activity \
+               WHERE pid = $1 AND wait_event_type = 'Lock' AND wait_event = 'advisory')",
+        )
+        .bind(backend_pid)
+        .fetch_one(observer)
+        .await?;
+        if waiting {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let activity: Option<(
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT state, wait_event_type, wait_event, query \
+         FROM pg_stat_activity WHERE pid = $1",
+    )
+    .bind(backend_pid)
+    .fetch_optional(observer)
+    .await?;
+    Err(
+        format!("{label} backend {backend_pid} did not wait on the advisory fence: {activity:?}")
+            .into(),
+    )
 }
 
 /// Audit point for dynamic DDL. `CREATE/DROP DATABASE` and
@@ -2385,8 +2500,64 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(&owner_actor)
     .await?;
 
-    MIGRATOR.run(owner).await?;
+    MIGRATOR.run_to(32, owner).await?;
+    assert_eq!(applied_count(owner).await?, 32);
+    let worker = role_pool(super_url, db, "worker").await?;
+    let partial_control_active: bool = sqlx::query_scalar(
+        "SELECT active FROM recommendation_scheduler_control \
+         WHERE control_key = 'scheduler'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(!partial_control_active);
+    let worker_execute_before_activation: bool = sqlx::query_scalar(
+        "SELECT has_function_privilege( \
+         'worker', \
+         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)', \
+         'EXECUTE')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(!worker_execute_before_activation);
+    let partial_worker_call = sqlx::query(
+        "SELECT * FROM schedule_recommendation_run( \
+         $1, $2, '2026-08-11', $3, $4, 7, 'not-yet-active')",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(dataset_version_id)
+    .bind("a".repeat(64))
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&partial_worker_call).as_deref(), Some("42501"));
+    let partial_owner_call = sqlx::query(
+        "SELECT * FROM schedule_recommendation_run( \
+         $1, $2, '2026-08-11', $3, $4, 7, 'not-yet-active')",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(dataset_version_id)
+    .bind("a".repeat(64))
+    .execute(&owner_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&partial_owner_call).as_deref(), Some("55000"));
+    assert!(
+        partial_owner_call
+            .to_string()
+            .contains("recommendation scheduler is unavailable")
+    );
+
+    MIGRATOR.run_to(33, owner).await?;
     assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
+    let active_control: bool = sqlx::query_scalar(
+        "SELECT active FROM recommendation_scheduler_control \
+         WHERE control_key = 'scheduler'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(active_control);
 
     let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
         "SELECT table_name, column_name, is_nullable, column_default \
@@ -2623,6 +2794,10 @@ async fn recommendation_pipeline_contract_body(
         ("jobs", (true, false, true, false)),
         ("user_strategy_configs", (true, false, false, false)),
         ("account_strategy_bindings", (true, false, false, false)),
+        (
+            "recommendation_scheduler_control",
+            (false, false, false, false),
+        ),
     ] {
         let privileges: (bool, bool, bool, bool) = sqlx::query_as(
             "SELECT has_table_privilege('worker', $1, 'SELECT'), \
@@ -2658,7 +2833,6 @@ async fn recommendation_pipeline_contract_body(
         );
     }
 
-    let worker = role_pool(super_url, db, "worker").await?;
     let app = role_pool(super_url, db, "app").await?;
     let app_function_denied = sqlx::query(
         "SELECT * FROM schedule_recommendation_run($1, $2, '2026-08-11', $3, $4, 7, 'x')",
@@ -3218,6 +3392,16 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     assert_eq!(grants_after_failed_down, (true, true, true, true));
+    let active_after_failed_down: bool = sqlx::query_scalar(
+        "SELECT active FROM recommendation_scheduler_control \
+         WHERE control_key = 'scheduler'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        active_after_failed_down,
+        "failed rollback must restore scheduler activation"
+    );
     let lineage_after_failed_down: (i64, i64) = sqlx::query_as(
         "SELECT \
            (SELECT count(*) FROM recommendation_runs WHERE id = $1), \
@@ -3270,6 +3454,11 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     assert_eq!(columns_after_down, 0);
+    let control_after_down: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.recommendation_scheduler_control')::text")
+            .fetch_one(owner)
+            .await?;
+    assert!(control_after_down.is_none());
     let function_after_down: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
          'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)')::text",
@@ -3358,6 +3547,165 @@ async fn recommendation_pipeline_contract_body(
 }
 
 #[tokio::test]
+async fn recommendation_scheduler_deactivation_fences_pre_authorized_call() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = recommendation_scheduler_deactivation_fence_body(&super_url, &db, &owner).await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("recommendation scheduler fence contract FAILED: {error}");
+    }
+}
+
+async fn recommendation_scheduler_deactivation_fence_body(
+    super_url: &str,
+    db: &str,
+    owner: &PgPool,
+) -> Result<(), Box<dyn Error>> {
+    MIGRATOR.run(owner).await?;
+    let user_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', 'fence-owner', 'fence@example.test') RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO strategies (id, display_name, state) \
+         VALUES ('recommendation_fence', 'Recommendation Fence', 'Paper')",
+    )
+    .execute(owner)
+    .await?;
+    let owner_actor = actor_pool(super_url, db, "migration_owner", &user_id.to_string()).await?;
+    let config_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO user_strategy_configs \
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, 'recommendation_fence', '1.0.0', '{}'::jsonb) RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let dataset_version_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO dataset_versions \
+         (dataset_id, version, status, manifest_sha256, storage_path) \
+         VALUES ('fence-dataset', '2026-08-12', 'READY', $1, 'curated/fence') RETURNING id",
+    )
+    .bind("d".repeat(64))
+    .fetch_one(owner)
+    .await?;
+    let account_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO accounts (owner_user_id, account_type, name, status) \
+         VALUES ($1, 'PAPER', 'fence-paper', 'ACTIVE') RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    sqlx::query(
+        "INSERT INTO account_strategy_bindings \
+         (account_id, owner_user_id, strategy_config_id, strategy_id, strategy_version, \
+          auto_apply_recommendations) \
+         VALUES ($1, $2, $3, 'recommendation_fence', '1.0.0', true)",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .bind(config_id)
+    .execute(&owner_actor)
+    .await?;
+    let expected_key: String = sqlx::query_scalar(
+        "SELECT 'recommendation:scheduled:' || \
+         md5(concat_ws('|', $1::text, $2::text, to_char($3::date, 'YYYY-MM-DD'), $4::text))",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind("2026-08-12")
+    .bind(dataset_version_id)
+    .fetch_one(owner)
+    .await?;
+    let worker = role_pool(super_url, db, "worker").await?;
+    let observer = admin_pool(&supervisor_db_url(super_url, db)).await?;
+
+    let mut blocker = owner.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock_shared($1, $2)")
+        .bind(RECOMMENDATION_FENCE_LOCK_CLASS)
+        .bind(RECOMMENDATION_FENCE_LOCK_OBJECT)
+        .execute(&mut *blocker)
+        .await?;
+
+    let undo_pool = effective_role_pool(super_url, db, "migration_owner", None, 1).await?;
+    let undo_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&undo_pool)
+        .await?;
+    let undo_task_pool = undo_pool.clone();
+    let undo_task = tokio::spawn(async move { MIGRATOR.undo(&undo_task_pool, 32).await });
+    wait_for_advisory_wait(&observer, undo_pid, "0033 down").await?;
+
+    let mut worker_connection = worker.acquire().await?;
+    let worker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *worker_connection)
+        .await?;
+    let call_task = tokio::spawn(async move {
+        sqlx::query_as::<_, (Uuid, Uuid)>(
+            "SELECT run_id, job_id FROM schedule_recommendation_run( \
+             $1, $2, $3::date, $4, $5, $6, $7)",
+        )
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-12")
+        .bind(dataset_version_id)
+        .bind("d".repeat(64))
+        .bind(9_i32)
+        .bind(expected_key)
+        .fetch_one(&mut *worker_connection)
+        .await
+    });
+    wait_for_advisory_wait(&observer, worker_pid, "pre-authorized worker call").await?;
+
+    blocker.commit().await?;
+    tokio::time::timeout(Duration::from_secs(10), undo_task).await???;
+    let worker_call = tokio::time::timeout(Duration::from_secs(10), call_task).await??;
+    let worker_error = worker_call.unwrap_err();
+    assert_eq!(pg_code(&worker_error).as_deref(), Some("55000"));
+    assert!(
+        worker_error
+            .to_string()
+            .contains("recommendation scheduler is unavailable")
+    );
+    assert_eq!(applied_count(owner).await?, 32);
+    let deactivated: bool = sqlx::query_scalar(
+        "SELECT NOT active FROM recommendation_scheduler_control \
+         WHERE control_key = 'scheduler'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(deactivated);
+    let worker_execute: bool = sqlx::query_scalar(
+        "SELECT has_function_privilege( \
+         'worker', \
+         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)', \
+         'EXECUTE')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(!worker_execute);
+    let scheduled_rows: (i64, i64) = sqlx::query_as(
+        "SELECT \
+           (SELECT count(*) FROM recommendation_runs WHERE trigger_kind = 'SCHEDULED'), \
+           (SELECT count(*) FROM jobs WHERE idempotency_key LIKE 'recommendation:scheduled:%')",
+    )
+    .fetch_one(&owner_actor)
+    .await?;
+    assert_eq!(scheduled_rows, (0, 0));
+
+    MIGRATOR.run_to(33, owner).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn recommendation_pipeline_index_preflights_reject_duplicates() {
     let super_url = match require_db_url() {
         Ok(url) => url,
@@ -3374,12 +3722,12 @@ async fn recommendation_pipeline_index_preflights_reject_duplicates() {
     }
 }
 
-fn assert_index_preflight_failure(error: &impl std::fmt::Display, index: &str) {
-    let message = error.to_string();
-    assert!(
-        message.contains("could not create unique index") && message.contains(index),
-        "duplicate preflight for {index} must fail clearly: {message}"
-    );
+fn assert_index_preflight_failure(error: &sqlx::Error, index: &str) {
+    assert_eq!(pg_code(error).as_deref(), Some("23505"));
+    let database_error = error
+        .as_database_error()
+        .expect("duplicate preflight must be a structured database error");
+    assert_eq!(database_error.constraint(), Some(index));
 }
 
 async fn execute_up_migration_sql(owner: &PgPool, version: i64) -> Result<(), sqlx::Error> {
