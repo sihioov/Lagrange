@@ -133,6 +133,9 @@ class WorkflowContractTests(unittest.TestCase):
             secret_setup,
         )
 
+        self.assertIn("ledger_state=", script)
+        self.assertIn('if [ "$ledger_state" != "25|4" ]', script)
+
 
 if __name__ == "__main__":
     unittest.main()

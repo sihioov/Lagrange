@@ -458,6 +458,15 @@ while IFS= read -r migration; do
     -c "INSERT INTO _sqlx_migrations(version, description, success, checksum, execution_time) VALUES ($version, '$description', true, decode(repeat('00', 32), 'hex'), 0)" >/dev/null || fail "migration ledger insert failed: $migration_name"
 done < <(find "$root/migrations" -maxdepth 1 -type f -name '*.up.sql' | sort)
 
+ledger_state="$(
+  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
+    psql -X -qAt -v ON_ERROR_STOP=1 -U lagrange -d lagrange \
+    -c "SELECT concat(COALESCE(max(version), -1), '|', count(*) FILTER (WHERE version BETWEEN 22 AND 25 AND success)) FROM public._sqlx_migrations"
+)" || fail 'migration ledger verification query failed'
+if [ "$ledger_state" != "25|4" ]; then
+  fail "migration ledger mismatch after applying migrations: $ledger_state"
+fi
+
 schema_gate_must_pass() {
   local schema_output
   if ! schema_output="$(rc run --rm --no-deps research-schema-check 2>&1)"; then
