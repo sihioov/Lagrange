@@ -40,6 +40,8 @@ def _fmt_ts(date_str: str, suffix: str) -> str:
 def _read_curated_rows(curated_root: Path) -> list[dict[str, Any]]:
     import pyarrow.parquet as pq
 
+    catalog_builder = importlib.import_module("custom-data.catalog_builder")
+
     # Phase-0 layout: build_catalog treats its argument as the DATA root and
     # reads <data_root>/curated/bars/... (materialized that way by the phase-0
     # runner); mirror it exactly so both readers agree.
@@ -52,8 +54,8 @@ def _read_curated_rows(curated_root: Path) -> list[dict[str, Any]]:
         instrument_ids = table.column("instrument_id").to_pylist()
         trading_dates = table.column("trading_date").cast("string").to_pylist()
         opens_ts = [int(v) for v in table.column("market_open_ts").cast("int64").to_pylist()]
-        opens = [int(v) for v in table.column("open").cast("int64").to_pylist()]
-        closes = [int(v) for v in table.column("close").cast("int64").to_pylist()]
+        opens = catalog_builder.fixed_to_int(table, "open", _SCALE)
+        closes = catalog_builder.fixed_to_int(table, "close", _SCALE)
         for i in range(len(instrument_ids)):
             rows.append({
                 "instrument_id": instrument_ids[i],

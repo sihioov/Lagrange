@@ -49,6 +49,7 @@ __all__ = [
     "EQUITY_LOT_SIZE",
     "EQUITY_PRICE_PRECISION",
     "CatalogBuilderError",
+    "fixed_to_int",
     "build_events_from_curated",
     "PENDING_TARGET_WINDOW_PROOF",
     "build_catalog",
@@ -101,7 +102,7 @@ def _require_columns(table: pa.Table, columns: Iterable[str], path: Path) -> Non
             )
 
 
-def _fixed_to_int(table: pa.Table, column: str, scale: int) -> list[int]:
+def fixed_to_int(table: pa.Table, column: str, scale: int) -> list[int]:
     """Logical Decimal column -> exact fixed-point raw integer values."""
     expected_type = pa.decimal128(18, scale)
     actual_type = table.schema.field(column).type
@@ -199,15 +200,15 @@ def _read_curated_rows(curated_root: Path) -> list[dict[str, Any]]:
         if adj_path.exists():
             adj = pq.read_table(adj_path)
             _require_columns(adj, CURATED_ADJUSTED_COLUMNS, adj_path)
-            factors = _fixed_to_int(adj, "adjustment_factor", 8)
+            factors = fixed_to_int(adj, "adjustment_factor", 8)
         instrument_ids = table.column("instrument_id").to_pylist()
         trading_dates = table.column("trading_date").cast(pa.string()).to_pylist()
         opens_ts = [int(v) for v in table.column("market_open_ts").cast(pa.int64()).to_pylist()]
         closes_ts = [int(v) for v in table.column("market_close_ts").cast(pa.int64()).to_pylist()]
-        opens = _fixed_to_int(table, "open", 4)
-        highs = _fixed_to_int(table, "high", 4)
-        lows = _fixed_to_int(table, "low", 4)
-        closes = _fixed_to_int(table, "close", 4)
+        opens = fixed_to_int(table, "open", 4)
+        highs = fixed_to_int(table, "high", 4)
+        lows = fixed_to_int(table, "low", 4)
+        closes = fixed_to_int(table, "close", 4)
         volumes = [int(v) for v in table.column("volume").to_pylist()]
         currencies = table.column("currency").to_pylist()
         for i, _ in enumerate(instrument_ids):

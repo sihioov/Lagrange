@@ -100,6 +100,22 @@ def make_request(dataset: Path, run_id: str | None = None) -> dict:
     }
 
 
+def test_v2_decimal_prices_reach_quote_materialization_as_raw_scale4(tmp_path):
+    from backtest_worker.simulate import _read_curated_rows
+
+    dataset = build_dataset(tmp_path / "dataset")
+    rows = _read_curated_rows(dataset / "curated")
+    first = next(
+        row
+        for row in rows
+        if row["instrument_id"] == "069500.KRX"
+        and row["trading_date"] == "2020-01-20"
+    )
+
+    assert first["open"] == 101_500_000
+    assert first["close"] == 102_500_000
+
+
 def test_end_to_end_isolated_run_normalizes_results(tmp_path):
     dataset = build_dataset(tmp_path / "dataset")
     before = hash_tree(dataset)

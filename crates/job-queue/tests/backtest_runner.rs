@@ -546,6 +546,8 @@ async fn a_fill_is_charged_the_profile_the_runner_resolved() {
     // A rate that drifts, a min_commission that stops applying, or a profile
     // that silently resolves to something else all fail here.
     let result = normalized_result(scratch.path()).expect("result.json");
+    assert_eq!(result["fills"][0]["quantity"], "9700");
+    assert_eq!(result["fills"][0]["price"], "10250.2400");
     let commission = result["fees"][0]["commission"]["amount"]
         .as_str()
         .expect("a fee entry with an amount");

@@ -92,7 +92,7 @@ def test_builder_rejects_mixed_curated_versions(builder, curated_root, tmp_path)
 def test_fixed_to_int_rejects_wrong_arrow_type(builder, arrow_type, value):
     table = pa.table({"value": pa.array([value], type=arrow_type)})
     with pytest.raises(builder.CatalogBuilderError) as excinfo:
-        builder._fixed_to_int(table, "value", 4)
+        builder.fixed_to_int(table, "value", 4)
     assert str(excinfo.value) == (
         "curated column 'value' must have type decimal128(18, 4), "
         f"got {arrow_type}"
@@ -103,14 +103,14 @@ def test_fixed_to_int_preserves_fractional_scale4(builder):
     table = pa.table({
         "value": pa.array([Decimal("10150.1234")], type=pa.decimal128(18, 4)),
     })
-    assert builder._fixed_to_int(table, "value", 4) == [101_501_234]
+    assert builder.fixed_to_int(table, "value", 4) == [101_501_234]
 
 
 def test_fixed_to_int_preserves_fractional_scale8(builder):
     table = pa.table({
         "value": pa.array([Decimal("1.23456789")], type=pa.decimal128(18, 8)),
     })
-    assert builder._fixed_to_int(table, "value", 8) == [123_456_789]
+    assert builder.fixed_to_int(table, "value", 8) == [123_456_789]
 
 
 def test_builder_accepts_only_documented_schema(builder, tmp_path):
