@@ -152,6 +152,11 @@ class WorkflowContractTests(unittest.TestCase):
             )
             self.assertNotIn("provider=KRX/market=KR", smoke_text)
             self.assertIn("provider=krx/market=kr", smoke_text)
+            self.assertNotIn("bool_and(c.source_batch_id = source.id)", smoke_text)
+            self.assertIn("c.source_batch_id IS NOT NULL", smoke_text)
+            self.assertIn("batch.source_batch_id = c.source_batch_id", smoke_text)
+            self.assertIn("history.content_sha256 = c.content_sha256", smoke_text)
+            self.assertIn("find /data/raw -mindepth 1 -delete", smoke_text)
 
 
 if __name__ == "__main__":

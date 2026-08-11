@@ -523,7 +523,25 @@ SELECT concat_ws('|',
   (SELECT string_agg(to_char(session_date, 'YYYY-MM-DD') || ':' || session_type, ',' ORDER BY session_date) FROM trading_calendar_versions WHERE exchange = 'KRX'),
   (SELECT string_agg(to_char(session_date, 'YYYY-MM-DD') || ':' || session_type, ',' ORDER BY session_date) FROM trading_calendars WHERE exchange = 'KRX'),
   (SELECT bool_and(v.source_batch_id = source.id) FROM trading_calendar_versions v CROSS JOIN source WHERE v.exchange = 'KRX'),
-  (SELECT bool_and(c.source_batch_id = source.id) FROM trading_calendars c CROSS JOIN source WHERE c.exchange = 'KRX')
+  (SELECT bool_and(
+      c.source_batch_id IS NOT NULL
+      AND c.content_sha256 IS NOT NULL
+      AND c.retrieved_at IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM data_batches batch
+        WHERE batch.source_batch_id = c.source_batch_id
+      )
+      AND EXISTS (
+        SELECT 1 FROM trading_calendar_versions history
+        WHERE history.exchange = c.exchange
+          AND history.session_date = c.session_date
+          AND history.session_type = c.session_type
+          AND history.timezone = c.timezone
+          AND history.source = c.source
+          AND history.source_version = c.source_version
+          AND history.content_sha256 = c.content_sha256
+      )
+    ) FROM trading_calendars c WHERE c.exchange = 'KRX')
 ) FROM source;
 '@
     $value = $sql | & docker compose -p $project -f $composeFile exec -T postgres psql -X -qAt -v ON_ERROR_STOP=1 -U lagrange -d lagrange
@@ -694,6 +712,7 @@ test "$(grep -Fc "$EXPECTED_BATCH_ID" "$manifest")" -eq 1
 }
 finally {
     if ($created) {
+        & docker compose -p $project -f $composeFile run --rm --no-deps --entrypoint /bin/sh --user 0:0 research-raw-init -ec 'find /data/raw -mindepth 1 -delete' *> $null
         & docker compose -p $project -f $composeFile down -v --remove-orphans --rmi local *> $null
     }
     & docker image rm -f $contextAuditTag *> $null
