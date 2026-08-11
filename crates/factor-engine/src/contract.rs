@@ -10,7 +10,7 @@ use crate::bars::Bars;
 use crate::snapshot::FrozenUniverse;
 
 /// The stable identifier of a factor (e.g. `return_1m`).
-pub type FactorId = &'static str;
+pub type FactorId = String;
 
 /// One required input field of a factor. The engine validates availability
 /// before any computation (typed [`FactorError::MissingField`], never a
@@ -107,7 +107,7 @@ pub struct FactorFrame {
 /// versioned, documented transformation.
 pub trait Factor {
     /// The stable factor id (e.g. `return_1m`).
-    fn id(&self) -> FactorId;
+    fn id(&self) -> &str;
     /// The immutable factor version (semver).
     fn version(&self) -> FactorVersion;
     /// The fields this factor requires from the input.

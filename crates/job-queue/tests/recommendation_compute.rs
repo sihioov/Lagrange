@@ -266,6 +266,40 @@ fn fixed_universe_close_is_exact_finite_and_deterministic() {
 }
 
 #[test]
+fn bounded_dynamic_factor_ids_compute_a_real_snapshot() {
+    let qa = qa_only_fixed_universe_dataset();
+    let universe = fixed_universe();
+    let mut requirements = requirements_for(&config(
+        "trend_following",
+        json!({
+            "benchmark_instrument": "069500.KRX",
+            "fast_ma": 37,
+            "slow_ma": 123
+        }),
+    ))
+    .expect("schema-valid dynamic trend windows resolve");
+    assert_eq!(requirements.factor_ids, vec!["trend_37", "trend_123"]);
+    assert_eq!(requirements.minimum_lookback_sessions, 123);
+    requirements.factor_ids.push("vol_21".to_owned());
+    let computed = compute_close(
+        &qa.pin,
+        &universe,
+        TradingDate::parse("2021-01-29").unwrap(),
+        &requirements,
+    )
+    .expect("bounded dynamic factors compute through the real snapshot builder");
+
+    assert_eq!(computed.factors.len(), 11);
+    for member in MEMBERS {
+        let values = &computed.factors[member];
+        assert_eq!(values.len(), 3);
+        assert!(values["trend_37"].is_finite());
+        assert!(values["trend_123"].is_finite());
+        assert!(values["vol_21"].is_finite());
+    }
+}
+
+#[test]
 fn close_omits_null_factor_values() {
     let qa = qa_only_fixed_universe_dataset();
     let universe = fixed_universe();

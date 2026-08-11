@@ -1,4 +1,4 @@
-//! Versioned trend factors (design §6.5 "50·100·200일 이동평균 대비 가격").
+//! Versioned bounded-window trend factors.
 //!
 //! `trend_N(date) = close / SMA_N(close) - 1` over the trailing N trading
 //! days. The full window is required (min_periods == N): shorter history is a
@@ -7,23 +7,27 @@
 use polars::prelude::*;
 
 use crate::contract::{
-    Factor, FactorContext, FactorError, FactorFrame, FactorId, Field, Lookback, NullPolicy,
+    Factor, FactorContext, FactorError, FactorFrame, Field, Lookback, NullPolicy,
 };
 use crate::lazy_util::{collect_factor_frame, instruments_of, map_per_instrument, rolling};
 
-/// The 50/100/200-day price-vs-moving-average factor (version 1.0.0).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A 5..=500-day price-vs-moving-average factor (version 1.0.0).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrendFactor {
     window: usize,
+    id: String,
 }
 
 impl TrendFactor {
     pub fn new(window: usize) -> Result<Self, FactorError> {
-        if matches!(window, 50 | 100 | 200) {
-            Ok(Self { window })
+        if (5..=500).contains(&window) {
+            Ok(Self {
+                window,
+                id: format!("trend_{window}"),
+            })
         } else {
             Err(FactorError::InvalidDefinition {
-                detail: format!("unsupported trend window {window} (documented: 50/100/200)"),
+                detail: format!("unsupported trend window {window} (bounded: 5..=500)"),
             })
         }
     }
@@ -35,13 +39,8 @@ impl TrendFactor {
 }
 
 impl Factor for TrendFactor {
-    fn id(&self) -> FactorId {
-        match self.window {
-            50 => "trend_50",
-            100 => "trend_100",
-            200 => "trend_200",
-            _ => unreachable!("window validated by construction"),
-        }
+    fn id(&self) -> &str {
+        &self.id
     }
 
     fn version(&self) -> domain::FactorVersion {

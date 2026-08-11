@@ -13,7 +13,7 @@
 use domain::InstrumentId;
 use polars::prelude::*;
 
-use crate::contract::{FactorError, FactorFrame, FactorId, FactorValue};
+use crate::contract::{FactorError, FactorFrame, FactorValue};
 
 /// Applies `transform` to one partition per instrument (canonical order) and
 /// concatenates the lazy results in the same order.
@@ -78,7 +78,7 @@ pub fn ref_close(lf: &LazyFrame, target: &str, out: &str) -> Result<LazyFrame, F
 
 /// Collects a `value`-shaped lazy frame into a typed [`FactorFrame`], sorted
 /// by (instrument, date). Non-finite values are typed rejections.
-pub fn collect_factor_frame(lf: LazyFrame, factor: FactorId) -> Result<FactorFrame, FactorError> {
+pub fn collect_factor_frame(lf: LazyFrame, factor: &str) -> Result<FactorFrame, FactorError> {
     let df = lf
         .select([col("instrument_id"), col("trading_date"), col("value")])
         .collect()
@@ -134,7 +134,10 @@ pub fn collect_factor_frame(lf: LazyFrame, factor: FactorId) -> Result<FactorFra
             value,
         });
     }
-    Ok(FactorFrame { factor, rows })
+    Ok(FactorFrame {
+        factor: factor.to_owned(),
+        rows,
+    })
 }
 
 /// The sorted instrument list of a context (canonical order).

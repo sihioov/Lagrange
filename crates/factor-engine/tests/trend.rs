@@ -129,7 +129,12 @@ fn trend_100_and_200_metadata_and_values() {
     assert_eq!(f100.factor, "trend_100");
     assert_eq!(f200.factor, "trend_200");
     assert_eq!(TrendFactor::new(50).expect("w").id(), "trend_50");
-    assert!(TrendFactor::new(7).is_err(), "unsupported window rejected");
+    assert_eq!(TrendFactor::new(7).expect("bounded window").id(), "trend_7");
+    assert!(TrendFactor::new(4).is_err(), "below-bound window rejected");
+    assert!(
+        TrendFactor::new(501).is_err(),
+        "above-bound window rejected"
+    );
 }
 
 #[test]

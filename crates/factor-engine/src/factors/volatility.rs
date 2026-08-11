@@ -1,5 +1,4 @@
-//! Versioned realized-volatility factors (design §6.5 "20·60·120일 실현
-//! 변동성").
+//! Versioned bounded-window realized-volatility factors.
 //!
 //! `vol_N = sqrt(252) * sample_std(log returns, trailing N)` (ddof = 1,
 //! matching the polars rolling kernel). The first N bars of a series yield
@@ -8,23 +7,27 @@
 use polars::prelude::*;
 
 use crate::contract::{
-    Factor, FactorContext, FactorError, FactorFrame, FactorId, Field, Lookback, NullPolicy,
+    Factor, FactorContext, FactorError, FactorFrame, Field, Lookback, NullPolicy,
 };
 use crate::lazy_util::{collect_factor_frame, instruments_of, map_per_instrument, rolling};
 
-/// The 20/60/120-day annualized realized-volatility factor (version 1.0.0).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A 2..=252-day annualized realized-volatility factor (version 1.0.0).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RealizedVolFactor {
     window: usize,
+    id: String,
 }
 
 impl RealizedVolFactor {
     pub fn new(window: usize) -> Result<Self, FactorError> {
-        if matches!(window, 20 | 60 | 120) {
-            Ok(Self { window })
+        if (2..=252).contains(&window) {
+            Ok(Self {
+                window,
+                id: format!("vol_{window}"),
+            })
         } else {
             Err(FactorError::InvalidDefinition {
-                detail: format!("unsupported volatility window {window} (documented: 20/60/120)"),
+                detail: format!("unsupported volatility window {window} (bounded: 2..=252)"),
             })
         }
     }
@@ -36,13 +39,8 @@ impl RealizedVolFactor {
 }
 
 impl Factor for RealizedVolFactor {
-    fn id(&self) -> FactorId {
-        match self.window {
-            20 => "vol_20",
-            60 => "vol_60",
-            120 => "vol_120",
-            _ => unreachable!("window validated by construction"),
-        }
+    fn id(&self) -> &str {
+        &self.id
     }
 
     fn version(&self) -> domain::FactorVersion {

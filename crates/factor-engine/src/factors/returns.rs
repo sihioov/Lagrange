@@ -8,7 +8,7 @@
 use polars::prelude::*;
 
 use crate::contract::{
-    Factor, FactorContext, FactorError, FactorFrame, FactorId, Field, Lookback, NullPolicy,
+    Factor, FactorContext, FactorError, FactorFrame, Field, Lookback, NullPolicy,
 };
 use crate::lazy_util::{collect_factor_frame, ref_close};
 
@@ -54,7 +54,7 @@ impl ReturnFactor {
 }
 
 impl Factor for ReturnFactor {
-    fn id(&self) -> FactorId {
+    fn id(&self) -> &str {
         match self.months {
             1 => "return_1m",
             3 => "return_3m",

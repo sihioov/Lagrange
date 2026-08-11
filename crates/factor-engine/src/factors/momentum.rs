@@ -7,7 +7,7 @@
 use polars::prelude::*;
 
 use crate::contract::{
-    Factor, FactorContext, FactorError, FactorFrame, FactorId, Field, Lookback, NullPolicy,
+    Factor, FactorContext, FactorError, FactorFrame, Field, Lookback, NullPolicy,
 };
 use crate::lazy_util::{collect_factor_frame, ref_close};
 
@@ -16,7 +16,7 @@ use crate::lazy_util::{collect_factor_frame, ref_close};
 pub struct MomentumFactor;
 
 impl Factor for MomentumFactor {
-    fn id(&self) -> FactorId {
+    fn id(&self) -> &str {
         "momentum_12_1"
     }
 

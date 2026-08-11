@@ -253,12 +253,13 @@ impl<'a> FactorSnapshotBuilder<'a> {
             for row in frame.rows {
                 raw.entry((row.date.to_iso(), row.instrument.to_string()))
                     .or_default()
-                    .insert(frame.factor, row.value);
+                    .insert(frame.factor.clone(), row.value);
             }
         }
 
         // Normalize per date over that date's frozen cross-section.
-        let mut factor_ids: Vec<FactorId> = self.factors.iter().map(|f| f.id()).collect();
+        let mut factor_ids: Vec<FactorId> =
+            self.factors.iter().map(|f| f.id().to_owned()).collect();
         factor_ids.sort_unstable();
         let mut by_date: BTreeMap<String, BTreeMap<String, BTreeMap<FactorId, Option<f64>>>> =
             BTreeMap::new();
@@ -272,17 +273,17 @@ impl<'a> FactorSnapshotBuilder<'a> {
             for f in &factor_ids {
                 let xs: Vec<Option<f64>> = members
                     .iter()
-                    .map(|inst| instruments[*inst].get(*f).copied().flatten())
+                    .map(|inst| instruments[*inst].get(f).copied().flatten())
                     .collect();
-                normalized.insert(*f, self.normalization.apply(&xs));
+                normalized.insert(f.clone(), self.normalization.apply(&xs));
             }
             for (idx, instrument) in members.iter().enumerate() {
                 for f in &factor_ids {
                     rows.push(FactorRow {
                         date: date.clone(),
                         instrument: (*instrument).clone(),
-                        factor: (*f).to_owned(),
-                        raw: instruments[*instrument].get(*f).copied().flatten(),
+                        factor: f.clone(),
+                        raw: instruments[*instrument].get(f).copied().flatten(),
                         normalized: normalized[f][idx],
                     });
                 }

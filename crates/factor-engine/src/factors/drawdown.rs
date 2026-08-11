@@ -7,7 +7,7 @@
 use polars::prelude::*;
 
 use crate::contract::{
-    Factor, FactorContext, FactorError, FactorFrame, FactorId, Field, Lookback, NullPolicy,
+    Factor, FactorContext, FactorError, FactorFrame, Field, Lookback, NullPolicy,
 };
 use crate::lazy_util::{collect_factor_frame, instruments_of, map_per_instrument};
 
@@ -16,7 +16,7 @@ use crate::lazy_util::{collect_factor_frame, instruments_of, map_per_instrument}
 pub struct DrawdownFactor;
 
 impl Factor for DrawdownFactor {
-    fn id(&self) -> FactorId {
+    fn id(&self) -> &str {
         "drawdown"
     }
 

@@ -349,7 +349,14 @@ mod tests {
 
     #[test]
     fn parameterized_factor_ids_are_canonical_and_bounded() {
-        for id in ["trend_0", "trend_050", "trend_501", "vol_1", "vol_999999"] {
+        for id in [
+            "trend_0",
+            "trend_050",
+            "trend_501",
+            "vol_1",
+            "vol_021",
+            "vol_999999",
+        ] {
             assert!(
                 factors_for(&[id.to_owned()]).is_err(),
                 "invalid or unbounded factor id {id:?} must be refused"
@@ -357,9 +364,12 @@ mod tests {
         }
         for id in [
             "trend_50",
+            "trend_37",
             "trend_100",
+            "trend_123",
             "trend_200",
             "vol_20",
+            "vol_21",
             "vol_60",
             "vol_120",
         ] {

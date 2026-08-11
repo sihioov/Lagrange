@@ -39,8 +39,11 @@ pub fn all_mvp_factors() -> Vec<Box<dyn Factor>> {
 }
 
 /// The documented factor ids in canonical order (used by tests and QA).
-pub fn mvp_factor_ids() -> Vec<&'static str> {
-    all_mvp_factors().iter().map(|f| f.id()).collect()
+pub fn mvp_factor_ids() -> Vec<String> {
+    all_mvp_factors()
+        .iter()
+        .map(|f| f.id().to_owned())
+        .collect()
 }
 
 /// Builds a registry with the given factors, validating ids are unique.

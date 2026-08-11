@@ -8,7 +8,7 @@ use factor_engine::factors;
 #[test]
 fn mvp_registry_has_all_documented_factors() {
     let registry = factors::all_mvp_factors();
-    let ids: Vec<&'static str> = registry.iter().map(|f| f.id()).collect();
+    let ids: Vec<&str> = registry.iter().map(|f| f.id()).collect();
     assert_eq!(
         ids,
         vec![

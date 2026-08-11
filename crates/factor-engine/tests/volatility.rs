@@ -135,9 +135,17 @@ fn vol_60_and_120_metadata() {
         .expect("compute");
     assert_eq!(f120.factor, "vol_120");
     assert!(nth_value(&f120, 119).is_none(), "bar 119 NULL");
+    assert_eq!(
+        RealizedVolFactor::new(21).expect("bounded window").id(),
+        "vol_21"
+    );
     assert!(
-        RealizedVolFactor::new(10).is_err(),
-        "unsupported window rejected"
+        RealizedVolFactor::new(1).is_err(),
+        "below-bound window rejected"
+    );
+    assert!(
+        RealizedVolFactor::new(253).is_err(),
+        "above-bound window rejected"
     );
     assert_eq!(RealizedVolFactor::new(20).expect("w").id(), "vol_20");
 }
