@@ -391,28 +391,63 @@ async fn step_up_check(State(state): State<RouterState>, headers: HeaderMap) -> 
 /// PKCE S256 protects the authorization code; the client secret authenticates
 /// the confidential server-side application.
 pub struct HttpOidcTransport {
-    pub token_url: String,
-    pub jwks_url: String,
+    token_url: url::Url,
+    jwks_url: url::Url,
     client_secret: config::ClientSecret,
     client: reqwest::Client,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum HttpOidcTransportConfigError {
+    #[error("invalid OIDC {endpoint} URL: {source}")]
+    InvalidUrl {
+        endpoint: &'static str,
+        #[source]
+        source: url::ParseError,
+    },
+    #[error("OIDC {endpoint} URL must use HTTPS unless its host is explicit loopback")]
+    InsecureUrl { endpoint: &'static str },
+    #[error("cannot build OIDC HTTP client: {0}")]
+    Client(#[source] reqwest::Error),
+}
+
 impl HttpOidcTransport {
     pub fn new(
-        token_url: impl Into<String>,
-        jwks_url: impl Into<String>,
+        token_url: impl AsRef<str>,
+        jwks_url: impl AsRef<str>,
         client_secret: config::ClientSecret,
-    ) -> Self {
-        Self {
-            token_url: token_url.into(),
-            jwks_url: jwks_url.into(),
+    ) -> Result<Self, HttpOidcTransportConfigError> {
+        let token_url = secure_endpoint_url(token_url.as_ref(), "token endpoint")?;
+        let jwks_url = secure_endpoint_url(jwks_url.as_ref(), "JWKS endpoint")?;
+        Ok(Self {
+            token_url,
+            jwks_url,
             client_secret,
             client: reqwest::Client::builder()
                 .user_agent("lagrange-station-api-server")
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
-                .expect("reqwest client builds"),
-        }
+                .map_err(HttpOidcTransportConfigError::Client)?,
+        })
     }
+}
+
+fn secure_endpoint_url(
+    value: &str,
+    endpoint: &'static str,
+) -> Result<url::Url, HttpOidcTransportConfigError> {
+    let url = url::Url::parse(value)
+        .map_err(|source| HttpOidcTransportConfigError::InvalidUrl { endpoint, source })?;
+    let explicit_loopback = match url.host() {
+        Some(url::Host::Ipv4(address)) => address == std::net::Ipv4Addr::LOCALHOST,
+        Some(url::Host::Ipv6(address)) => address == std::net::Ipv6Addr::LOCALHOST,
+        Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
+        None => false,
+    };
+    if url.scheme() != "https" && !(url.scheme() == "http" && explicit_loopback) {
+        return Err(HttpOidcTransportConfigError::InsecureUrl { endpoint });
+    }
+    Ok(url)
 }
 
 #[async_trait::async_trait]
@@ -423,7 +458,7 @@ impl auth::oidc::OidcTransport for HttpOidcTransport {
     ) -> Result<auth::oidc::TokenResponse, TransportError> {
         let body = self
             .client
-            .post(&self.token_url)
+            .post(self.token_url.clone())
             .form(&[
                 ("grant_type", "authorization_code"),
                 ("code", &request.code),
@@ -451,7 +486,7 @@ impl auth::oidc::OidcTransport for HttpOidcTransport {
     async fn fetch_jwks(&self) -> Result<auth::oidc::jwks::Jwks, TransportError> {
         let body = self
             .client
-            .get(&self.jwks_url)
+            .get(self.jwks_url.clone())
             .send()
             .await
             .map_err(|e| TransportError(format!("jwks fetch: {e}")))?;

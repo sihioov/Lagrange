@@ -3,7 +3,11 @@ use api_server_auth::{
     config::{AUTH0_CLIENT_SECRET_FILE, ClientSecret},
 };
 use auth::oidc::{OidcTransport, TokenRequest};
-use axum::{Form, Router, http::StatusCode, routing::post};
+use axum::{
+    Form, Router,
+    http::{StatusCode, header},
+    routing::post,
+};
 use std::{
     collections::HashMap,
     fs,
@@ -39,6 +43,34 @@ async fn token_server(
     (format!("http://{address}/oauth/token"), captured)
 }
 
+async fn redirecting_token_server(location: String) -> String {
+    let app = Router::new().route(
+        "/oauth/token",
+        post(move || {
+            let location = location.clone();
+            async move {
+                (
+                    StatusCode::TEMPORARY_REDIRECT,
+                    [(header::LOCATION, location)],
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind redirecting token server");
+    let address = listener
+        .local_addr()
+        .expect("read redirecting token server address");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve redirecting token endpoint");
+    });
+
+    format!("http://{address}/oauth/token")
+}
+
 fn token_request() -> TokenRequest {
     TokenRequest {
         code: "authorization-code".to_string(),
@@ -56,7 +88,8 @@ async fn token_exchange_posts_client_secret_and_pkce_verifier() {
     let secret = ClientSecret::from_file(&secret_path).expect("load client secret");
     let (token_url, captured) =
         token_server(StatusCode::OK, r#"{"id_token":"header.payload.signature"}"#).await;
-    let transport = HttpOidcTransport::new(token_url, "https://unused.invalid/jwks", secret);
+    let transport = HttpOidcTransport::new(token_url, "https://unused.invalid/jwks", secret)
+        .expect("construct OIDC transport");
 
     transport
         .exchange_code(&token_request())
@@ -91,6 +124,33 @@ async fn token_exchange_posts_client_secret_and_pkce_verifier() {
     assert_eq!(
         captured.get("code").map(String::as_str),
         Some("authorization-code")
+    );
+}
+
+#[tokio::test]
+async fn token_exchange_does_not_follow_redirects() {
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let secret_path = temp_dir.path().join("auth0-client-secret");
+    fs::write(&secret_path, "redirect-secret\n").expect("write client secret file");
+    let secret = ClientSecret::from_file(&secret_path).expect("load client secret");
+    let (redirect_target, target_capture) =
+        token_server(StatusCode::OK, r#"{"id_token":"header.payload.signature"}"#).await;
+    let token_url = redirecting_token_server(redirect_target).await;
+    let transport = HttpOidcTransport::new(token_url, "https://unused.invalid/jwks", secret)
+        .expect("construct OIDC transport");
+
+    let result = transport.exchange_code(&token_request()).await;
+
+    assert!(
+        result.is_err(),
+        "redirect response must fail token exchange"
+    );
+    assert!(
+        target_capture
+            .lock()
+            .expect("read redirect target capture")
+            .is_none(),
+        "redirect target must not receive the credential-bearing form"
     );
 }
 
