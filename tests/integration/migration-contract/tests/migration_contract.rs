@@ -61,6 +61,10 @@ const CALENDAR_VERSION_INDEX_UP_SQL: &str =
     include_str!("../../../../migrations/0025_research_calendar_version_lookup.up.sql");
 const CALENDAR_VERSION_INDEX_DOWN_SQL: &str =
     include_str!("../../../../migrations/0025_research_calendar_version_lookup.down.sql");
+const RECOMMENDATION_PIPELINE_UP_SQL: &str =
+    include_str!("../../../../migrations/0026_recommendation_pipeline.up.sql");
+const RECOMMENDATION_PIPELINE_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0026_recommendation_pipeline.down.sql");
 const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
 const RESEARCH_SCHEMA_GATE_SQL: &str =
@@ -68,20 +72,42 @@ const RESEARCH_SCHEMA_GATE_SQL: &str =
 
 #[test]
 fn recommendation_pipeline_migration_is_tracked() {
-    let up = MIGRATOR.migrations.iter().find(|migration| {
-        migration.version == 26 && migration.migration_type != MigrationType::ReversibleDown
-    });
-    let down = MIGRATOR.migrations.iter().find(|migration| {
-        migration.version == 26 && migration.migration_type == MigrationType::ReversibleDown
-    });
-    assert!(
-        up.is_some(),
-        "0026 recommendation pipeline up migration must exist"
-    );
-    assert!(
-        down.is_some(),
-        "0026 recommendation pipeline down migration must exist"
-    );
+    for migration in [
+        RECOMMENDATION_PIPELINE_UP_SQL,
+        RECOMMENDATION_PIPELINE_DOWN_SQL,
+    ] {
+        assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
+        assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
+    }
+    for version in 26..=32 {
+        let up = MIGRATOR.migrations.iter().find(|migration| {
+            migration.version == version
+                && migration.migration_type != MigrationType::ReversibleDown
+        });
+        let down = MIGRATOR.migrations.iter().find(|migration| {
+            migration.version == version
+                && migration.migration_type == MigrationType::ReversibleDown
+        });
+        assert!(up.is_some(), "migration {version:04} up must exist");
+        assert!(down.is_some(), "migration {version:04} down must exist");
+
+        let expected_no_tx = matches!(version, 27 | 28 | 29 | 31 | 32);
+        for migration in [up.unwrap(), down.unwrap()] {
+            assert_eq!(
+                migration.no_tx, expected_no_tx,
+                "migration {version:04} transaction mode is wrong"
+            );
+            if expected_no_tx {
+                assert_eq!(
+                    executable_sql(migration.sql.as_str())
+                        .matches("CONCURRENTLY")
+                        .count(),
+                    1,
+                    "each no-transaction migration must contain exactly one concurrent statement"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -1978,18 +2004,19 @@ async fn revert_and_rerun_body(
         "fresh DB must apply all {expected} migrations"
     );
 
-    // Revert 0026, 0025, 0024, then 0023 before 0022 while all earlier tables remain.
+    // Revert the 0032..0026 recommendation family, then 0025, 0024, and 0023
+    // before 0022 while all earlier tables remain.
     // This proves each down migration restores its own boundary rather than
     // relying on 0003.down to hide omitted objects in a full teardown.
     MIGRATOR.undo(owner, 25).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 1,
-        "undo to 0025 must revert only 0026"
+        expected - 7,
+        "undo to 0025 must revert the complete 0032..0026 family"
     );
     let scheduler_gone: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
-         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,text)')::text",
+         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)')::text",
     )
     .fetch_one(owner)
     .await?;
@@ -2010,7 +2037,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 24).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 2,
+        expected - 8,
         "undo to 0024 must revert only 0025"
     );
     let calendar_lookup_gone: Option<String> = sqlx::query_scalar(
@@ -2034,7 +2061,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 23).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 3,
+        expected - 9,
         "undo to 0023 must revert only 0024"
     );
     let source_index_gone: Option<String> =
@@ -2048,7 +2075,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 22).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 4,
+        expected - 10,
         "undo to 0022 must revert only 0023"
     );
     sqlx::query(
@@ -2061,7 +2088,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 21).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 5,
+        expected - 11,
         "undo to 0021 must revert only 0022"
     );
     for object in [
@@ -2350,8 +2377,8 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(&owner_actor)
     .await?;
 
-    MIGRATOR.run_to(26, owner).await?;
-    assert_eq!(applied_count(owner).await?, 26);
+    MIGRATOR.run(owner).await?;
+    assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
 
     let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
         "SELECT table_name, column_name, is_nullable, column_default \
@@ -2497,7 +2524,7 @@ async fn recommendation_pipeline_contract_body(
     };
     let typed_claim = index_definition("jobs_typed_claim_idx");
     assert!(
-        typed_claim.contains("(job_type, status, available_at, priority DESC, created_at)")
+        typed_claim.contains("(job_type, priority DESC, created_at) INCLUDE (available_at)")
             && typed_claim.contains("WHERE (status = 'QUEUED'::text)")
     );
     for unique_partial in [
@@ -2515,7 +2542,7 @@ async fn recommendation_pipeline_contract_body(
     let function_metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
         "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
          FROM pg_proc WHERE oid = \
-         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,text)'::regprocedure",
+         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)'::regprocedure",
     )
     .fetch_one(owner)
     .await?;
@@ -2570,7 +2597,7 @@ async fn recommendation_pipeline_contract_body(
     ] {
         let can_execute: bool = sqlx::query_scalar(
             "SELECT has_function_privilege($1, \
-             'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,text)', 'EXECUTE')",
+             'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)', 'EXECUTE')",
         )
         .bind(role)
         .fetch_one(owner)
@@ -2625,15 +2652,16 @@ async fn recommendation_pipeline_contract_body(
 
     let worker = role_pool(super_url, db, "worker").await?;
     let app = role_pool(super_url, db, "app").await?;
-    let app_function_denied =
-        sqlx::query("SELECT * FROM schedule_recommendation_run($1, $2, '2026-08-11', $3, $4, 'x')")
-            .bind(user_id)
-            .bind(config_id)
-            .bind(dataset_version_id)
-            .bind("a".repeat(64))
-            .execute(&app)
-            .await
-            .unwrap_err();
+    let app_function_denied = sqlx::query(
+        "SELECT * FROM schedule_recommendation_run($1, $2, '2026-08-11', $3, $4, 7, 'x')",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(dataset_version_id)
+    .bind("a".repeat(64))
+    .execute(&app)
+    .await
+    .unwrap_err();
     assert_eq!(pg_code(&app_function_denied).as_deref(), Some("42501"));
 
     let expected_key: String = sqlx::query_scalar(
@@ -2647,7 +2675,7 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     const SCHEDULE_SQL: &str = "SELECT run_id, job_id FROM schedule_recommendation_run( \
-         $1, $2, $3::date, $4, $5, $6)";
+         $1, $2, $3::date, $4, $5, $6, $7)";
 
     let no_opt_in = sqlx::query(SCHEDULE_SQL)
         .bind(user_id)
@@ -2655,6 +2683,7 @@ async fn recommendation_pipeline_contract_body(
         .bind("2026-08-11")
         .bind(dataset_version_id)
         .bind("a".repeat(64))
+        .bind(7_i32)
         .bind(&expected_key)
         .execute(&worker)
         .await
@@ -2672,6 +2701,19 @@ async fn recommendation_pipeline_contract_body(
     .execute(&owner_actor)
     .await?;
 
+    let invalid_curated_version = sqlx::query(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(0_i32)
+        .bind(&expected_key)
+        .execute(&worker)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&invalid_curated_version).as_deref(), Some("22023"));
+
     sqlx::query("UPDATE user_strategy_configs SET is_active = false WHERE id = $1")
         .bind(config_id)
         .execute(&owner_actor)
@@ -2682,6 +2724,7 @@ async fn recommendation_pipeline_contract_body(
         .bind("2026-08-11")
         .bind(dataset_version_id)
         .bind("a".repeat(64))
+        .bind(7_i32)
         .bind(&expected_key)
         .execute(&worker)
         .await
@@ -2702,6 +2745,7 @@ async fn recommendation_pipeline_contract_body(
         .bind("2026-08-11")
         .bind(dataset_version_id)
         .bind("a".repeat(64))
+        .bind(7_i32)
         .bind(&expected_key)
         .execute(&worker)
         .await
@@ -2722,6 +2766,7 @@ async fn recommendation_pipeline_contract_body(
         .bind("2026-08-11")
         .bind(dataset_version_id)
         .bind("a".repeat(64))
+        .bind(7_i32)
         .bind(&expected_key)
         .execute(&worker)
         .await
@@ -2749,6 +2794,7 @@ async fn recommendation_pipeline_contract_body(
         .bind("2026-08-11")
         .bind(dataset_version_id)
         .bind("a".repeat(64))
+        .bind(7_i32)
         .bind(foreign_owner_key)
         .execute(&worker)
         .await
@@ -2761,6 +2807,7 @@ async fn recommendation_pipeline_contract_body(
         .bind("2026-08-11")
         .bind(dataset_version_id)
         .bind("a".repeat(64))
+        .bind(7_i32)
         .bind("caller-controlled-key")
         .execute(&worker)
         .await
@@ -2772,6 +2819,7 @@ async fn recommendation_pipeline_contract_body(
         .bind("2026-08-11")
         .bind(dataset_version_id)
         .bind("b".repeat(64))
+        .bind(7_i32)
         .bind(&expected_key)
         .execute(&worker)
         .await
@@ -2784,6 +2832,7 @@ async fn recommendation_pipeline_contract_body(
         .bind("2026-08-11")
         .bind(dataset_version_id)
         .bind("a".repeat(64))
+        .bind(7_i32)
         .bind(expected_key.clone())
         .fetch_one(&worker);
     let call_two = sqlx::query_as::<_, (Uuid, Uuid)>(SCHEDULE_SQL)
@@ -2792,6 +2841,7 @@ async fn recommendation_pipeline_contract_body(
         .bind("2026-08-11")
         .bind(dataset_version_id)
         .bind("a".repeat(64))
+        .bind(7_i32)
         .bind(expected_key.clone())
         .fetch_one(&worker);
     let (first, second) = tokio::join!(call_one, call_two);
@@ -2811,6 +2861,7 @@ async fn recommendation_pipeline_contract_body(
         .bind("2026-08-11")
         .bind(dataset_version_id)
         .bind("a".repeat(64))
+        .bind(7_i32)
         .bind(expected_key.clone())
         .fetch_one(&mut *dmy_worker)
         .await?;
@@ -2841,24 +2892,33 @@ async fn recommendation_pipeline_contract_body(
     assert_eq!(lineage.2, dataset_version_id);
     assert_eq!(lineage.3, "a".repeat(64));
     assert_eq!(lineage.4, config_id);
-    let job: (Uuid, String, String, String, String, String, String, String) = sqlx::query_as(
-        "SELECT owner_user_id, job_type, idempotency_key, payload_json->>'run_id', \
-                payload_json->>'config_id', payload_json->>'as_of', \
-                payload_json->>'dataset_version_id', \
-                payload_json->>'dataset_manifest_sha256' \
+    let job: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT owner_user_id, job_type, idempotency_key, \
+                payload_json = jsonb_build_object( \
+                    'run_id', $2::uuid, \
+                    'strategy_config_id', $3::uuid, \
+                    'as_of', '2026-08-11', \
+                    'dataset', jsonb_build_object( \
+                        'id', $4::uuid, \
+                        'dataset_id', 'kr-etf-core', \
+                        'version', '2026-08-11', \
+                        'curated_version', 7, \
+                        'manifest_sha256', $5::text \
+                    ) \
+                ) \
          FROM jobs WHERE id = $1",
     )
     .bind(first.1)
+    .bind(first.0)
+    .bind(config_id)
+    .bind(dataset_version_id)
+    .bind("a".repeat(64))
     .fetch_one(&worker)
     .await?;
     assert_eq!(job.0, user_id);
     assert_eq!(job.1, "recommendation");
     assert_eq!(job.2, expected_key);
-    assert_eq!(job.3, first.0.to_string());
-    assert_eq!(job.4, config_id.to_string());
-    assert_eq!(job.5, "2026-08-11");
-    assert_eq!(job.6, dataset_version_id.to_string());
-    assert_eq!(job.7, "a".repeat(64));
+    assert!(job.3, "scheduled job payload must match Task 3 exactly");
 
     let app_actor = actor_pool(super_url, db, "app", &user_id.to_string()).await?;
     let forged_scheduled = sqlx::query(
@@ -3076,8 +3136,54 @@ async fn recommendation_pipeline_contract_body(
     .unwrap_err();
     assert_eq!(pg_code(&incomplete_scheduled).as_deref(), Some("23514"));
 
+    let guarded_down = sqlx::raw_sql(RECOMMENDATION_PIPELINE_DOWN_SQL)
+        .execute(owner)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&guarded_down).as_deref(), Some("55000"));
+    assert!(
+        guarded_down
+            .to_string()
+            .contains("0026 rollback blocked by scheduled recommendation lineage"),
+        "rollback guard must return a stable operator-facing error: {guarded_down}"
+    );
+    let function_after_failed_down: Option<String> = sqlx::query_scalar(
+        "SELECT to_regprocedure( \
+         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(function_after_failed_down.is_some());
+    let lineage_after_failed_down: (i64, i64) = sqlx::query_as(
+        "SELECT \
+           (SELECT count(*) FROM recommendation_runs WHERE id = $1), \
+           (SELECT count(*) FROM jobs WHERE id = $2)",
+    )
+    .bind(first.0)
+    .bind(first.1)
+    .fetch_one(&worker)
+    .await?;
+    assert_eq!(lineage_after_failed_down, (1, 1));
+
+    sqlx::query("DELETE FROM target_portfolios WHERE recommendation_run_id = $1")
+        .bind(first.0)
+        .execute(&owner_actor)
+        .await?;
+    sqlx::query("DELETE FROM recommendation_runs WHERE id = $1")
+        .bind(first.0)
+        .execute(&owner_actor)
+        .await?;
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(first.1)
+        .execute(&owner_actor)
+        .await?;
+
     MIGRATOR.undo(owner, 25).await?;
-    assert_eq!(applied_count(owner).await?, 25, "0026 down must run alone");
+    assert_eq!(
+        applied_count(owner).await?,
+        25,
+        "0032 through 0026 must reverse in dependency order"
+    );
     let columns_after_down: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
          WHERE table_schema = 'public' AND ( \
@@ -3091,7 +3197,7 @@ async fn recommendation_pipeline_contract_body(
     assert_eq!(columns_after_down, 0);
     let function_after_down: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
-         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,text)')::text",
+         'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)')::text",
     )
     .fetch_one(owner)
     .await?;
@@ -3149,5 +3255,259 @@ async fn recommendation_pipeline_contract_body(
 
     MIGRATOR.run(owner).await?;
     assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
+    sqlx::query(
+        "UPDATE account_strategy_bindings SET auto_apply_recommendations = true WHERE id = $1",
+    )
+    .bind(binding_id)
+    .execute(&owner_actor)
+    .await?;
+    let rescheduled: (Uuid, Uuid) = sqlx::query_as(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(7_i32)
+        .bind(expected_key)
+        .fetch_one(&worker)
+        .await?;
+    assert_ne!(rescheduled, first);
+    Ok(())
+}
+
+#[tokio::test]
+async fn recommendation_pipeline_index_preflights_reject_duplicates() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = recommendation_pipeline_index_preflight_body(&super_url, &db, &owner).await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("recommendation index preflight contract FAILED: {error}");
+    }
+}
+
+fn assert_index_preflight_failure(error: &impl std::fmt::Display, index: &str) {
+    let message = error.to_string();
+    assert!(
+        message.contains("could not create unique index") && message.contains(index),
+        "duplicate preflight for {index} must fail clearly: {message}"
+    );
+}
+
+async fn execute_up_migration_sql(owner: &PgPool, version: i64) -> Result<(), sqlx::Error> {
+    let migration = MIGRATOR
+        .migrations
+        .iter()
+        .find(|migration| {
+            migration.version == version
+                && migration.migration_type != MigrationType::ReversibleDown
+        })
+        .expect("tracked up migration");
+    sqlx::raw_sql(migration.sql.clone()).execute(owner).await?;
+    Ok(())
+}
+
+async fn recommendation_pipeline_index_preflight_body(
+    super_url: &str,
+    db: &str,
+    owner: &PgPool,
+) -> Result<(), Box<dyn Error>> {
+    MIGRATOR.run_to(26, owner).await?;
+    let user_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', 'index-preflight', 'index-preflight@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO strategies (id, display_name, state) \
+         VALUES ('index_preflight', 'Index Preflight', 'Paper')",
+    )
+    .execute(owner)
+    .await?;
+    let owner_actor = actor_pool(super_url, db, "migration_owner", &user_id.to_string()).await?;
+    let config_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO user_strategy_configs \
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, 'index_preflight', '1.0.0', '{}'::jsonb) RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let dataset_version_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO dataset_versions \
+         (dataset_id, version, status, manifest_sha256, storage_path) \
+         VALUES ('index-preflight', '1', 'READY', $1, 'curated/index-preflight') \
+         RETURNING id",
+    )
+    .bind("c".repeat(64))
+    .fetch_one(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO instruments (id, symbol, venue, currency) \
+         VALUES ('index-preflight.KRX', 'index-preflight', 'KRX', 'KRW')",
+    )
+    .execute(owner)
+    .await?;
+
+    let shared_job_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id, job_type, idempotency_key) \
+         VALUES ($1, 'recommendation', 'index-preflight-shared') RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let _first_manual_run: Uuid = sqlx::query_scalar(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id, strategy_config_id, as_of, job_id) \
+         VALUES ($1, $2, '2026-08-01', $3) RETURNING id",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(shared_job_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let duplicate_manual_run: Uuid = sqlx::query_scalar(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id, strategy_config_id, as_of, job_id) \
+         VALUES ($1, $2, '2026-08-02', $3) RETURNING id",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(shared_job_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let job_index_error = execute_up_migration_sql(owner, 27).await.unwrap_err();
+    assert_index_preflight_failure(&job_index_error, "recommendation_runs_job_id_uq");
+    sqlx::query("DROP INDEX CONCURRENTLY IF EXISTS recommendation_runs_job_id_uq")
+        .execute(owner)
+        .await?;
+    sqlx::query("DELETE FROM recommendation_runs WHERE id = $1")
+        .bind(duplicate_manual_run)
+        .execute(&owner_actor)
+        .await?;
+    execute_up_migration_sql(owner, 27).await?;
+
+    let scheduled_job_one: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id, job_type, idempotency_key) \
+         VALUES ($1, 'recommendation', 'index-preflight-scheduled-1') RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let scheduled_job_two: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id, job_type, idempotency_key) \
+         VALUES ($1, 'recommendation', 'index-preflight-scheduled-2') RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let scheduled_run_one: Uuid = sqlx::query_scalar(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id, strategy_config_id, as_of, status, job_id, trigger_kind, \
+          dataset_version_id, dataset_manifest_sha256) \
+         VALUES ($1, $2, '2026-08-03', 'PENDING', $3, 'SCHEDULED', $4, $5) RETURNING id",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(scheduled_job_one)
+    .bind(dataset_version_id)
+    .bind("c".repeat(64))
+    .fetch_one(&owner_actor)
+    .await?;
+    let scheduled_run_two: Uuid = sqlx::query_scalar(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id, strategy_config_id, as_of, status, job_id, trigger_kind, \
+          dataset_version_id, dataset_manifest_sha256) \
+         VALUES ($1, $2, '2026-08-03', 'PENDING', $3, 'SCHEDULED', $4, $5) RETURNING id",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(scheduled_job_two)
+    .bind(dataset_version_id)
+    .bind("c".repeat(64))
+    .fetch_one(&owner_actor)
+    .await?;
+    let identity_index_error = execute_up_migration_sql(owner, 28).await.unwrap_err();
+    assert_index_preflight_failure(
+        &identity_index_error,
+        "recommendation_runs_scheduled_identity_uq",
+    );
+    sqlx::query("DROP INDEX CONCURRENTLY IF EXISTS recommendation_runs_scheduled_identity_uq")
+        .execute(owner)
+        .await?;
+    sqlx::query("DELETE FROM recommendation_runs WHERE id = $1")
+        .bind(scheduled_run_two)
+        .execute(&owner_actor)
+        .await?;
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(scheduled_job_two)
+        .execute(&owner_actor)
+        .await?;
+    execute_up_migration_sql(owner, 28).await?;
+
+    sqlx::query(
+        "INSERT INTO recommendation_items \
+         (recommendation_run_id, owner_user_id, instrument_id, rank) \
+         VALUES ($1, $2, 'index-preflight.KRX', 1), \
+                ($1, $2, 'index-preflight.KRX', 2)",
+    )
+    .bind(scheduled_run_one)
+    .bind(user_id)
+    .execute(&owner_actor)
+    .await?;
+    let item_index_error = execute_up_migration_sql(owner, 29).await.unwrap_err();
+    assert_index_preflight_failure(&item_index_error, "recommendation_items_run_instrument_key");
+    sqlx::query("DROP INDEX CONCURRENTLY IF EXISTS recommendation_items_run_instrument_key")
+        .execute(owner)
+        .await?;
+    sqlx::query("DELETE FROM recommendation_items WHERE rank = 2")
+        .execute(&owner_actor)
+        .await?;
+    execute_up_migration_sql(owner, 29).await?;
+    execute_up_migration_sql(owner, 30).await?;
+
+    sqlx::query(
+        "INSERT INTO target_portfolios (owner_user_id, recommendation_run_id, as_of) \
+         VALUES ($1, $2, '2026-08-03'), ($1, $2, '2026-08-03')",
+    )
+    .bind(user_id)
+    .bind(scheduled_run_one)
+    .execute(&owner_actor)
+    .await?;
+    let target_index_error = execute_up_migration_sql(owner, 31).await.unwrap_err();
+    assert_index_preflight_failure(&target_index_error, "target_portfolios_one_per_run");
+    sqlx::query("DROP INDEX CONCURRENTLY IF EXISTS target_portfolios_one_per_run")
+        .execute(owner)
+        .await?;
+    sqlx::query(
+        "DELETE FROM target_portfolios WHERE id = ( \
+         SELECT id FROM target_portfolios WHERE recommendation_run_id = $1 LIMIT 1)",
+    )
+    .bind(scheduled_run_one)
+    .execute(&owner_actor)
+    .await?;
+    execute_up_migration_sql(owner, 31).await?;
+    execute_up_migration_sql(owner, 32).await?;
+    for index in [
+        "public.recommendation_runs_job_id_uq",
+        "public.recommendation_runs_scheduled_identity_uq",
+        "public.recommendation_items_run_instrument_key",
+        "public.target_portfolios_one_per_run",
+        "public.jobs_typed_claim_idx",
+    ] {
+        let present: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
+            .bind(index)
+            .fetch_one(owner)
+            .await?;
+        assert!(present.is_some(), "preflight cleanup must allow {index}");
+    }
     Ok(())
 }

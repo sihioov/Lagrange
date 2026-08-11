@@ -1,6 +1,9 @@
 -- 0026: recommendation execution lineage, deterministic scheduled submission,
 -- and the minimum worker privileges needed to publish normalized results.
 
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
+
 ALTER TABLE recommendation_runs
     ADD COLUMN job_id uuid REFERENCES jobs (id),
     ADD COLUMN trigger_kind text NOT NULL DEFAULT 'MANUAL',
@@ -26,30 +29,6 @@ ALTER TABLE recommendation_runs
             )
         );
 
--- A queue job may drive only one recommendation run. Existing runs remain
--- valid because their new job_id is NULL.
-CREATE UNIQUE INDEX recommendation_runs_job_id_uq
-    ON recommendation_runs (job_id) WHERE job_id IS NOT NULL;
-
--- The scheduler's durable identity. The advisory lock in the function below
--- avoids needless conflicts; this index is the final concurrency backstop.
-CREATE UNIQUE INDEX recommendation_runs_scheduled_identity_uq
-    ON recommendation_runs (
-        owner_user_id,
-        strategy_config_id,
-        as_of,
-        dataset_version_id
-    )
-    WHERE trigger_kind = 'SCHEDULED';
-
-ALTER TABLE recommendation_items
-    ADD CONSTRAINT recommendation_items_run_instrument_key
-        UNIQUE (recommendation_run_id, instrument_id);
-
-CREATE UNIQUE INDEX target_portfolios_one_per_run
-    ON target_portfolios (recommendation_run_id)
-    WHERE recommendation_run_id IS NOT NULL;
-
 ALTER TABLE account_strategy_bindings
     ADD COLUMN auto_apply_recommendations boolean NOT NULL DEFAULT false;
 
@@ -58,12 +37,6 @@ ALTER TABLE account_strategy_bindings
 -- that exact legacy privilege set.
 REVOKE INSERT, UPDATE, DELETE ON TABLE account_strategy_bindings FROM worker;
 GRANT SELECT ON TABLE account_strategy_bindings TO worker;
-
--- Typed workers claim only their own queue class. The predicate removes
--- terminal/running rows from this hot index.
-CREATE INDEX jobs_typed_claim_idx
-    ON jobs (job_type, status, available_at, priority DESC, created_at)
-    WHERE status = 'QUEUED';
 
 GRANT SELECT ON TABLE recommendation_runs TO worker;
 GRANT UPDATE (status, summary_json) ON TABLE recommendation_runs TO worker;
@@ -210,6 +183,7 @@ CREATE FUNCTION public.schedule_recommendation_run(
     p_as_of date,
     p_dataset_version_id uuid,
     p_manifest_hash text,
+    p_curated_version integer,
     p_idempotency_key text
 )
 RETURNS TABLE (run_id uuid, job_id uuid)
@@ -224,7 +198,6 @@ DECLARE
     v_job_id uuid;
     v_dataset_id text;
     v_dataset_version text;
-    v_dataset_storage_path text;
     v_existing_manifest text;
     v_inserted_run_id uuid;
     v_payload jsonb;
@@ -234,6 +207,7 @@ BEGIN
         OR p_as_of IS NULL
         OR p_dataset_version_id IS NULL
         OR p_manifest_hash IS NULL
+        OR p_curated_version IS NULL
     THEN
         RAISE EXCEPTION 'scheduled recommendation identity must be complete'
             USING ERRCODE = '22023';
@@ -241,6 +215,11 @@ BEGIN
 
     IF p_manifest_hash !~ '^[0-9a-f]{64}$' THEN
         RAISE EXCEPTION 'dataset manifest hash is invalid'
+            USING ERRCODE = '22023';
+    END IF;
+
+    IF p_curated_version <= 0 THEN
+        RAISE EXCEPTION 'curated dataset version must be positive'
             USING ERRCODE = '22023';
     END IF;
 
@@ -290,8 +269,8 @@ BEGIN
             USING ERRCODE = '42501';
     END IF;
 
-    SELECT dataset.dataset_id, dataset.version, dataset.storage_path
-    INTO v_dataset_id, v_dataset_version, v_dataset_storage_path
+    SELECT dataset.dataset_id, dataset.version
+    INTO v_dataset_id, v_dataset_version
     FROM public.dataset_versions AS dataset
     WHERE dataset.id = p_dataset_version_id
       AND dataset.status IN ('READY', 'WARNING')
@@ -330,13 +309,15 @@ BEGIN
 
     v_payload := pg_catalog.jsonb_build_object(
         'run_id', v_run_id,
-        'config_id', p_strategy_config_id,
+        'strategy_config_id', p_strategy_config_id,
         'as_of', pg_catalog.to_char(p_as_of, 'YYYY-MM-DD'),
-        'dataset_version_id', p_dataset_version_id,
-        'dataset_id', v_dataset_id,
-        'dataset_version', v_dataset_version,
-        'dataset_manifest_sha256', p_manifest_hash,
-        'dataset_storage_path', v_dataset_storage_path
+        'dataset', pg_catalog.jsonb_build_object(
+            'id', p_dataset_version_id,
+            'dataset_id', v_dataset_id,
+            'version', v_dataset_version,
+            'curated_version', p_curated_version,
+            'manifest_sha256', p_manifest_hash
+        )
     );
 
     IF v_job_id IS NOT NULL THEN
@@ -417,11 +398,11 @@ BEGIN
 END
 $function$;
 
-ALTER FUNCTION public.schedule_recommendation_run(uuid, uuid, date, uuid, text, text)
+ALTER FUNCTION public.schedule_recommendation_run(uuid, uuid, date, uuid, text, integer, text)
     OWNER TO migration_owner;
 REVOKE ALL ON FUNCTION
-    public.schedule_recommendation_run(uuid, uuid, date, uuid, text, text)
+    public.schedule_recommendation_run(uuid, uuid, date, uuid, text, integer, text)
     FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION
-    public.schedule_recommendation_run(uuid, uuid, date, uuid, text, text)
+    public.schedule_recommendation_run(uuid, uuid, date, uuid, text, integer, text)
     TO worker;
