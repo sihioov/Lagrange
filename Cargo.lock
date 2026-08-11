@@ -1887,6 +1887,7 @@ dependencies = [
  "chrono",
  "domain",
  "factor-engine",
+ "libc",
  "market-data",
  "portfolio-model",
  "selector",

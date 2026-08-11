@@ -359,6 +359,69 @@ async fn stale_job_directory_does_not_block_retry_and_is_not_deleted() {
 }
 
 #[tokio::test]
+async fn aborting_caller_does_not_cancel_termination_or_owned_scratch_cleanup() {
+    tokio::time::timeout(Duration::from_secs(8), async {
+        let script = r#"
+import pathlib, time
+root = pathlib.Path(__file__).resolve().parents[2]
+(root / 'child-started').write_text('started')
+time.sleep(2)
+(root / 'late-sentinel').write_text('escaped')
+"#;
+        let (root, uv) = fake_project(script);
+        let scratch = tempfile::tempdir().unwrap();
+        let stale = scratch.path().join("unrelated-stale");
+        fs::create_dir(&stale).unwrap();
+        fs::write(stale.join("keep"), b"unrelated").unwrap();
+        let paths = paths_for(&root, uv, &scratch);
+        let child_request = request("buy_and_hold");
+        let caller = tokio::spawn(async move {
+            run_target_child(
+                &paths,
+                Uuid::new_v4(),
+                &child_request,
+                Duration::from_secs(1),
+            )
+            .await
+        });
+
+        wait_until(Duration::from_secs(4), || {
+            root.path().join("child-started").exists()
+        })
+        .await;
+        let invocation = scratch
+            .path()
+            .read_dir()
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path != &stale)
+            .expect("owned invocation directory exists");
+
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        wait_until(Duration::from_secs(3), || !invocation.exists()).await;
+        tokio::time::sleep(Duration::from_millis(1_500)).await;
+
+        assert!(!root.path().join("late-sentinel").exists());
+        assert_eq!(fs::read(stale.join("keep")).unwrap(), b"unrelated");
+        assert_eq!(scratch.path().read_dir().unwrap().count(), 1);
+    })
+    .await
+    .expect("cancellation cleanup exceeded strict test timeout");
+}
+
+async fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {
+    tokio::time::timeout(timeout, async {
+        while !condition() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("condition was not reached before timeout");
+}
+
+#[tokio::test]
 async fn request_size_is_bounded_before_launch() {
     let Some(uv) = uv_bin() else { return };
     let scratch = tempfile::tempdir().unwrap();
@@ -440,6 +503,7 @@ fn error_type_is_send_sync_and_has_stable_classification() {
         ErrorClass::Transient
     );
     assert_eq!(TargetChildError::Termination.class(), ErrorClass::Transient);
+    assert_eq!(TargetChildError::OwnerTask.class(), ErrorClass::Transient);
     assert_eq!(
         TargetChildError::ChildStatus {
             code: "RESULT_TOO_LARGE".to_owned(),

@@ -137,6 +137,8 @@ pub enum TargetChildError {
     Timeout,
     #[error("target child could not be terminated cleanly")]
     Termination,
+    #[error("target child owner task failed")]
+    OwnerTask,
     #[error("target child status exceeds its size limit")]
     StatusTooLarge,
     #[error("target child status is malformed")]
@@ -166,6 +168,7 @@ impl TargetChildError {
             Self::Launch => "TARGET_CHILD_LAUNCH_FAILED",
             Self::Timeout => "TARGET_CHILD_TIMEOUT",
             Self::Termination => "TARGET_CHILD_TERMINATION_FAILED",
+            Self::OwnerTask => "TARGET_CHILD_OWNER_TASK_FAILED",
             Self::StatusTooLarge => "TARGET_CHILD_STATUS_TOO_LARGE",
             Self::InvalidStatus => "TARGET_CHILD_INVALID_STATUS",
             Self::ChildStatus { code } => code,
@@ -204,6 +207,7 @@ impl TargetChildError {
             | Self::Launch
             | Self::Timeout
             | Self::Termination
+            | Self::OwnerTask
             | Self::Exited
             | Self::NoResult
             | Self::Cleanup => ErrorClass::Transient,
@@ -245,15 +249,40 @@ pub async fn run_target_child(
     if deadline.is_zero() {
         return Err(TargetChildError::Timeout);
     }
+    let owned_request = request.clone();
     let invocation_dir = create_invocation_directory(&validated.temp_root, job_id)?;
-    let result = run_in_scratch(
-        &validated,
-        &invocation_dir,
-        request,
+    // There must be no cancellation point between acquiring this directory
+    // and handing it to its owner. Dropping the caller detaches this task;
+    // it does not cancel child termination/reaping or scratch cleanup.
+    let owner = tokio::spawn(own_invocation(
+        validated,
+        invocation_dir,
+        owned_request,
         operation_deadline,
         cleanup_deadline,
-    )
-    .await;
+    ));
+    owner.await.map_err(|_| TargetChildError::OwnerTask)?
+}
+
+async fn own_invocation(
+    paths: ValidatedPaths,
+    invocation_dir: PathBuf,
+    request: TargetChildRequest,
+    operation_deadline: tokio::time::Instant,
+    cleanup_deadline: tokio::time::Instant,
+) -> Result<TargetChildOutput, TargetChildError> {
+    let lifecycle_dir = invocation_dir.clone();
+    let lifecycle = tokio::spawn(async move {
+        run_in_scratch(
+            &paths,
+            &lifecycle_dir,
+            &request,
+            operation_deadline,
+            cleanup_deadline,
+        )
+        .await
+    });
+    let result = lifecycle.await.unwrap_or(Err(TargetChildError::OwnerTask));
     let cleanup = cleanup_scratch(invocation_dir, cleanup_deadline).await;
     if cleanup.is_err() && result.is_ok() {
         return Err(TargetChildError::Cleanup);
@@ -314,6 +343,7 @@ fn validate_request_numbers(request: &TargetChildRequest) -> Result<(), TargetCh
     Ok(())
 }
 
+#[derive(Clone)]
 struct ValidatedPaths {
     uv_bin: PathBuf,
     repo_root: PathBuf,
@@ -411,6 +441,11 @@ async fn run_in_scratch(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().process_group(0);
+    }
     if cfg!(windows) {
         if let Some(system_root) = std::env::var_os("SystemRoot") {
             command.env("SystemRoot", system_root);
@@ -430,7 +465,7 @@ async fn run_in_scratch(
     let exit = match tokio::time::timeout_at(operation_deadline, child.wait()).await {
         Ok(Ok(exit)) => exit,
         Ok(Err(_)) => {
-            abort_reader_bounded(&mut stderr_reader, cleanup_deadline).await?;
+            terminate_and_settle(&mut child, &mut stderr_reader, cleanup_deadline).await?;
             return Err(TargetChildError::Exited);
         }
         Err(_) => {
@@ -473,7 +508,10 @@ async fn terminate_and_settle(
     stderr_reader: &mut tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>,
     cleanup_deadline: tokio::time::Instant,
 ) -> Result<(), TargetChildError> {
-    if child.start_kill().is_err() {
+    if terminate_process_tree(child, cleanup_deadline)
+        .await
+        .is_err()
+    {
         stderr_reader.abort();
         let _ = tokio::time::timeout_at(cleanup_deadline, stderr_reader).await;
         return Err(TargetChildError::Termination);
@@ -483,6 +521,67 @@ async fn terminate_and_settle(
     match reaped {
         Ok(Ok(_)) => Ok(()),
         Ok(Err(_)) | Err(_) => Err(TargetChildError::Termination),
+    }
+}
+
+#[cfg(windows)]
+async fn terminate_process_tree(
+    child: &mut tokio::process::Child,
+    cleanup_deadline: tokio::time::Instant,
+) -> Result<(), TargetChildError> {
+    let pid = child.id().ok_or(TargetChildError::Termination)?;
+    let system_root = std::env::var_os("SystemRoot").ok_or(TargetChildError::Termination)?;
+    let taskkill = PathBuf::from(&system_root)
+        .join("System32/taskkill.exe")
+        .canonicalize()
+        .map_err(|_| TargetChildError::Termination)?;
+    if !taskkill.is_file() {
+        return Err(TargetChildError::Termination);
+    }
+    let mut killer = Command::new(taskkill);
+    killer
+        .arg("/PID")
+        .arg(pid.to_string())
+        .arg("/T")
+        .arg("/F")
+        .env_clear()
+        .env("SystemRoot", system_root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut killer = killer.spawn().map_err(|_| TargetChildError::Termination)?;
+    let now = tokio::time::Instant::now();
+    let helper_deadline = now
+        .checked_add(cleanup_deadline.saturating_duration_since(now) * 3 / 4)
+        .ok_or(TargetChildError::Termination)?;
+    match tokio::time::timeout_at(helper_deadline, killer.wait()).await {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(_)) | Ok(Err(_)) => Err(TargetChildError::Termination),
+        Err(_) => {
+            if killer.start_kill().is_err() {
+                return Err(TargetChildError::Termination);
+            }
+            let _ = tokio::time::timeout_at(cleanup_deadline, killer.wait()).await;
+            Err(TargetChildError::Termination)
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn terminate_process_tree(
+    child: &mut tokio::process::Child,
+    _cleanup_deadline: tokio::time::Instant,
+) -> Result<(), TargetChildError> {
+    let pid = child.id().ok_or(TargetChildError::Termination)?;
+    let process_group = i32::try_from(pid).map_err(|_| TargetChildError::Termination)?;
+    // SAFETY: the spawned `uv` process is placed in its own process group
+    // before spawn. A negative, checked child PID targets only that group.
+    let result = unsafe { libc::kill(-process_group, libc::SIGKILL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(TargetChildError::Termination)
     }
 }
 
