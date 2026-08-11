@@ -366,6 +366,7 @@ else
   head -c 32 /dev/urandom | base64 >"$research_secret"
 fi
 printf '%s' 'unused-in-synthetic-smoke' >"$krx_secret"
+chmod 0444 "$postgres_secret" "$research_secret" "$krx_secret"
 
 export LAGRANGE_POSTGRES_PASSWORD_SECRET_SOURCE="$(hostpath "$postgres_secret")"
 export LAGRANGE_DB_RESEARCH_PASSWORD_SECRET_SOURCE="$(hostpath "$research_secret")"
