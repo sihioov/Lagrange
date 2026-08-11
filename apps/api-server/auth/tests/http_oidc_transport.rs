@@ -154,6 +154,34 @@ async fn token_exchange_does_not_follow_redirects() {
     );
 }
 
+#[tokio::test]
+async fn token_exchange_error_never_renders_reflected_client_secret() {
+    const SECRET_MARKER: &str = "reflected-secret-value";
+
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let secret_path = temp_dir.path().join("auth0-client-secret");
+    fs::write(&secret_path, SECRET_MARKER).expect("write client secret file");
+    let secret = ClientSecret::from_file(&secret_path).expect("load client secret");
+    let (token_url, _) = token_server(StatusCode::UNAUTHORIZED, SECRET_MARKER).await;
+    let transport = HttpOidcTransport::new(token_url, "https://unused.invalid/jwks", secret)
+        .expect("construct OIDC transport");
+
+    let error = match transport.exchange_code(&token_request()).await {
+        Ok(_) => panic!("unauthorized token exchange must fail"),
+        Err(error) => error,
+    };
+    let rendered = error.to_string();
+
+    assert!(
+        rendered.contains("401"),
+        "rendered error must contain the HTTP status: {rendered}"
+    );
+    assert!(
+        !rendered.contains(SECRET_MARKER),
+        "rendered error must not contain the reflected client secret: {rendered}"
+    );
+}
+
 #[test]
 fn client_secret_file_rejects_missing_empty_and_non_file_inputs_without_values() {
     const SECRET_MARKER: &str = "auth0-secret-must-never-render";

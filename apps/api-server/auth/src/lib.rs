@@ -471,15 +471,13 @@ impl auth::oidc::OidcTransport for HttpOidcTransport {
             .await
             .map_err(|e| TransportError(format!("token exchange: {e}")))?;
         let status = body.status();
+        if !status.is_success() {
+            return Err(TransportError(format!("token exchange http {status}")));
+        }
         let text = body
             .text()
             .await
             .map_err(|e| TransportError(format!("token exchange body: {e}")))?;
-        if !status.is_success() {
-            return Err(TransportError(format!(
-                "token exchange http {status}: {text}"
-            )));
-        }
         auth::oidc::TokenResponse::from_json(&text).map_err(|e| TransportError(e.to_string()))
     }
 
