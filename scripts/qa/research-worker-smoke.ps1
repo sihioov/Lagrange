@@ -459,13 +459,13 @@ function Invoke-RawInitOwnershipTest {
         & docker volume create $binaryVolume *> $null
         if ($LASTEXITCODE -ne 0) { throw 'Raw init fsync-probe volume creation failed' }
         & docker run --rm --network none --user 0:0 -v "${rawVolume}:/data/raw" -v "${outsideVolume}:/outside" $alpineImage /bin/sh -ec @'
-mkdir -p /data/raw/manifests/provider=KRX/market=KR /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture
-printf '{}\n' > /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
-: > /data/raw/manifests/provider=KRX/market=KR/commit.lock
-printf evidence > /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+mkdir -p /data/raw/manifests/provider=krx/market=kr /data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture
+printf '{}\n' > /data/raw/manifests/provider=krx/market=kr/manifest.jsonl
+: > /data/raw/manifests/provider=krx/market=kr/commit.lock
+printf evidence > /data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture/eod.json
 chown -R 12345:12345 /data/raw
 find /data/raw -type d -exec chmod 0700 {} +
-chmod 0600 /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl /data/raw/manifests/provider=KRX/market=KR/commit.lock /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+chmod 0600 /data/raw/manifests/provider=krx/market=kr/manifest.jsonl /data/raw/manifests/provider=krx/market=kr/commit.lock /data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture/eod.json
 printf outside > /outside/sentinel
 chown 12345:12345 /outside/sentinel
 chmod 0600 /outside/sentinel
@@ -482,15 +482,15 @@ ln -s /outside /data/raw/outside-link
         if ($LASTEXITCODE -ne 0) { throw 'read-only fsync probe compilation failed' }
 
         & docker run --rm --network none --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true -v "${rawVolume}:/data/raw" -v "${outsideVolume}:/outside" -v "${binaryVolume}:/probe:ro" $alpineImage /bin/sh -ec @'
-evidence=/data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
-manifest=/data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
-lock=/data/raw/manifests/provider=KRX/market=KR/commit.lock
+evidence=/data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture/eod.json
+manifest=/data/raw/manifests/provider=krx/market=kr/manifest.jsonl
+lock=/data/raw/manifests/provider=krx/market=kr/commit.lock
 test "$(stat -c '%u:%g:%a' "$evidence")" = 10001:10001:440
 test "$(stat -c '%u:%g:%a' "$manifest")" = 10001:10001:640
 test "$(stat -c '%u:%g:%a' "$lock")" = 10001:10001:640
 /probe/read-only-fsync "$evidence"
-printf recovered >> /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
-printf lock >> /data/raw/manifests/provider=KRX/market=KR/commit.lock
+printf recovered >> /data/raw/manifests/provider=krx/market=kr/manifest.jsonl
+printf lock >> /data/raw/manifests/provider=krx/market=kr/commit.lock
 '@
         if ($LASTEXITCODE -ne 0) { throw 'UID 10001 cannot use existing Raw files' }
         & docker run --rm --network none --user 0:0 -v "${outsideVolume}:/outside" $alpineImage /bin/sh -ec @'
@@ -650,7 +650,7 @@ CREATE TABLE _sqlx_migrations (
     $manualOutput = @(& cargo run --quiet --locked -p collectors --bin collectors -- ingest-krx --root $rawRoot --date 2020-01-31 --mode synthetic --bundle (Join-Path $root 'tests/fixtures/kr-etf/contract') --now '2020-01-31T08:00:00Z')
     if ($LASTEXITCODE -ne 0) { throw 'manual collectors --root ingest failed' }
     $manual = ($manualOutput -join "`n") | ConvertFrom-Json
-    $directManifest = Join-Path $rawRoot 'raw/manifests/provider=KRX/market=KR/manifest.jsonl'
+    $directManifest = Join-Path $rawRoot 'raw/manifests/provider=krx/market=kr/manifest.jsonl'
     if (-not (Test-Path -LiteralPath $directManifest)) { throw "direct host Raw manifest is missing: $directManifest" }
     if (Test-Path -LiteralPath (Join-Path $rawRoot 'raw/raw')) { throw 'Raw evidence was nested under <data>/raw/raw' }
     if ([IO.Path]::GetFullPath($manual.manifest) -ne [IO.Path]::GetFullPath($directManifest)) {
@@ -660,7 +660,7 @@ CREATE TABLE _sqlx_migrations (
     Invoke-ResearchCompose run --rm --no-deps research-raw-init
     if ($LASTEXITCODE -ne 0) { throw 'research-raw-init failed' }
     Invoke-ResearchCompose run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -ec @'
-manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
+manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=krx/market=kr/manifest.jsonl"
 test -s "$manifest"
 : > "$manifest"
 test ! -s "$manifest"
@@ -680,7 +680,7 @@ rm -f "$probe"
     }
     if (-not $healthy) { throw 'research-worker did not become functionally healthy' }
     Invoke-ResearchCompose exec -T -e "EXPECTED_BATCH_ID=$($manual.batch_id)" research-worker /bin/sh -ec @'
-manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
+manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=krx/market=kr/manifest.jsonl"
 test "$(grep -Fc "$EXPECTED_BATCH_ID" "$manifest")" -eq 1
 '@
     if ($LASTEXITCODE -ne 0) { throw 'startup orphan recovery did not restore the exact manifest row' }

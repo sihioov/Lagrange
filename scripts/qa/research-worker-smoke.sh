@@ -323,13 +323,13 @@ raw_init_ownership_probe() (
   dkr volume create "$outside_volume" >/dev/null || fail 'Raw init outside volume creation failed'
   dkr volume create "$binary_volume" >/dev/null || fail 'Raw init fsync-probe volume creation failed'
   dkr run --rm --network none --user 0:0 -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
-    mkdir -p /data/raw/manifests/provider=KRX/market=KR /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture
-    printf "{}\n" > /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
-    : > /data/raw/manifests/provider=KRX/market=KR/commit.lock
-    printf evidence > /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+    mkdir -p /data/raw/manifests/provider=krx/market=kr /data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture
+    printf "{}\n" > /data/raw/manifests/provider=krx/market=kr/manifest.jsonl
+    : > /data/raw/manifests/provider=krx/market=kr/commit.lock
+    printf evidence > /data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture/eod.json
     chown -R 12345:12345 /data/raw
     find /data/raw -type d -exec chmod 0700 {} +
-    chmod 0600 /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl /data/raw/manifests/provider=KRX/market=KR/commit.lock /data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
+    chmod 0600 /data/raw/manifests/provider=krx/market=kr/manifest.jsonl /data/raw/manifests/provider=krx/market=kr/commit.lock /data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture/eod.json
     printf outside > /outside/sentinel
     chown 12345:12345 /outside/sentinel
     chmod 0600 /outside/sentinel
@@ -339,15 +339,15 @@ raw_init_ownership_probe() (
   dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec "$init_command" || fail 'recursive Raw init probe failed'
   dkr run --rm --network none --user 0:0 --cap-drop ALL --security-opt no-new-privileges:true -v "$(hostpath "$root"):/source:ro" -v "${binary_volume}:/probe" "$rust_image" rustc -O -o /probe/read-only-fsync /source/scripts/qa/read-only-fsync.rs || fail 'read-only fsync probe compilation failed'
   dkr run --rm --network none --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" -v "${binary_volume}:/probe:ro" "$alpine" /bin/sh -ec '
-    evidence=/data/raw/provider=KRX/market=KR/date=2020-01-31/batch=fixture/eod.json
-    manifest=/data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
-    lock=/data/raw/manifests/provider=KRX/market=KR/commit.lock
+    evidence=/data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture/eod.json
+    manifest=/data/raw/manifests/provider=krx/market=kr/manifest.jsonl
+    lock=/data/raw/manifests/provider=krx/market=kr/commit.lock
     test "$(stat -c "%u:%g:%a" "$evidence")" = 10001:10001:440
     test "$(stat -c "%u:%g:%a" "$manifest")" = 10001:10001:640
     test "$(stat -c "%u:%g:%a" "$lock")" = 10001:10001:640
     /probe/read-only-fsync "$evidence"
-    printf recovered >> /data/raw/manifests/provider=KRX/market=KR/manifest.jsonl
-    printf lock >> /data/raw/manifests/provider=KRX/market=KR/commit.lock
+    printf recovered >> /data/raw/manifests/provider=krx/market=kr/manifest.jsonl
+    printf lock >> /data/raw/manifests/provider=krx/market=kr/commit.lock
   ' || fail 'UID 10001 cannot use existing Raw files'
   dkr run --rm --network none --user 0:0 -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
     test "$(cat /outside/sentinel)" = outside
@@ -518,14 +518,14 @@ command -v cargo >/dev/null 2>&1 || fail 'cargo is required to prove the manual 
 manual_output="$(cargo run --quiet --locked -p collectors --bin collectors -- ingest-krx \
   --root "$raw_root" --date 2020-01-31 --mode synthetic \
   --bundle "$root/tests/fixtures/kr-etf/contract" --now 2020-01-31T08:00:00Z)" || fail 'manual collectors --root ingest failed'
-direct_manifest="$raw_root/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
+direct_manifest="$raw_root/raw/manifests/provider=krx/market=kr/manifest.jsonl"
 [ -f "$direct_manifest" ] || fail "direct host Raw manifest is missing: $direct_manifest"
 [ ! -e "$raw_root/raw/raw" ] || fail 'Raw evidence was nested under <data>/raw/raw'
 manual_manifest="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"])')" || fail 'manual collectors output was not valid JSON'
 [ "$(cd "$(dirname "$manual_manifest")" && pwd)/$(basename "$manual_manifest")" = "$(cd "$(dirname "$direct_manifest")" && pwd)/$(basename "$direct_manifest")" ] || fail "manual --root manifest mismatch: $manual_manifest"
 rc run --rm --no-deps research-raw-init || fail 'research-raw-init failed'
 rc run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -ec '
-  manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
+  manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=krx/market=kr/manifest.jsonl"
   test -s "$manifest"
   : > "$manifest"
   test ! -s "$manifest"
@@ -543,7 +543,7 @@ done
 [ "$healthy" -eq 1 ] || fail 'research-worker did not become functionally healthy'
 manual_batch_id="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["batch_id"])')" || fail 'manual collectors output omitted batch_id'
 rc exec -T -e "EXPECTED_BATCH_ID=$manual_batch_id" research-worker /bin/sh -ec '
-  manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=KRX/market=KR/manifest.jsonl"
+  manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=krx/market=kr/manifest.jsonl"
   test "$(grep -Fc "$EXPECTED_BATCH_ID" "$manifest")" -eq 1
 ' || fail 'startup orphan recovery did not restore the exact manifest row'
 

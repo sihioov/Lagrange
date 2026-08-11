@@ -146,6 +146,13 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("</dev/null", ledger_insert)
 
+        for smoke_name in ("research-worker-smoke.sh", "research-worker-smoke.ps1"):
+            smoke_text = (ROOT / "scripts" / "qa" / smoke_name).read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("provider=KRX/market=KR", smoke_text)
+            self.assertIn("provider=krx/market=kr", smoke_text)
+
 
 if __name__ == "__main__":
     unittest.main()
