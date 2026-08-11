@@ -18,6 +18,12 @@ decimal value as if it were an unscaled scale-4 integer. Ratio-based strategy
 signals therefore remained plausible, while absolute-price consumers such as
 Paper execution exposed the defect.
 
+The adjusted-bars fixture repeats the same representation error for its
+scale-8 adjustment factor: the logical factor `1.00000000` is supplied as the
+pre-scaled integer `100_000_000`, so PyArrow stores `100000000.00000000`.
+Correcting OHLC without correcting this companion Decimal boundary would
+leave the adjusted-price path internally inconsistent.
+
 The curated store contract states that corrections must never replace an
 existing `version={v}` partition. The correction must therefore be published
 as Phase 0 dataset version 2 rather than silently changing version 1.
@@ -73,12 +79,19 @@ and allow new consumers to repeat the bug.
 - Curated logical value: decimal KRW, e.g. `Decimal("10150.0000")`.
 - Parquet type: `decimal128(18, 4)`.
 - Golden simulation raw value: scale-4 integer, e.g. `101_500_000`.
+- Curated adjustment factor: decimal value `Decimal("1.00000000")`.
+- Catalog adjustment-factor raw value: scale-8 integer `100_000_000`.
 
 The generator will construct explicit four-decimal `Decimal` values and will
 not pre-multiply them. A named exact conversion helper will convert curated
 decimal KRW to a scale-4 integer only where the Phase 0 and robustness runners
 need integer arithmetic. The helper will reject non-finite values and values
 that cannot be represented exactly at scale 4.
+
+The catalog builder will likewise convert Parquet decimal values to their
+exact scale-4 or scale-8 raw integers instead of casting away their fractional
+scale. This conversion is the only place where the event stream receives raw
+integer prices and factors.
 
 ### 5.2 Version identities
 
@@ -120,6 +133,8 @@ Focused regression tests will assert:
   total rows in version-2 partitions.
 - Decimal-to-raw conversion maps `10150.0000` to `101_500_000` exactly and
   rejects excess precision.
+- The adjusted-bars factor reads as `1.00000000` in Parquet and reaches the
+  event catalog as raw scale-8 `100_000_000`.
 - Phase 0 next-session-open fill assertions still compare the intended raw
   scale-4 values.
 - No active manifests or provenance records retain the version-1 dataset ID.
