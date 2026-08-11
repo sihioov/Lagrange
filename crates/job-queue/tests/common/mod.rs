@@ -103,6 +103,38 @@ async fn connect_with_retry(url: &str, attempts: u32) -> Result<PgPool, Box<dyn 
     Err(Box::new(last.expect("at least one attempt")))
 }
 
+async fn connect_as_migration_owner(
+    super_url: &str,
+    db: &str,
+    attempts: u32,
+) -> Result<PgPool, Box<dyn Error>> {
+    let options: sqlx::postgres::PgConnectOptions = conn_url(super_url, "postgres", db).parse()?;
+    let mut last: Option<sqlx::Error> = None;
+    for _ in 0..attempts {
+        match PgPoolOptions::new()
+            .max_connections(4)
+            .acquire_timeout(Duration::from_secs(10))
+            .after_connect(|connection, _metadata| {
+                Box::pin(async move {
+                    sqlx::raw_sql("SET ROLE migration_owner")
+                        .execute(&mut *connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect_with(options.clone())
+            .await
+        {
+            Ok(pool) => return Ok(pool),
+            Err(error) => {
+                last = Some(error);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    }
+    Err(Box::new(last.expect("at least one attempt")))
+}
+
 fn up_migration_count() -> usize {
     MIGRATOR
         .migrations
@@ -144,6 +176,18 @@ impl ScratchDb {
         );
 
         let admin = connect_with_retry(super_url, 3).await?;
+        // Roles are cluster-global. All disposable test databases coordinate
+        // their idempotent bootstrap through the same supervisor database,
+        // matching the migration-contract harness and avoiding CREATE ROLE
+        // races between parallel test bodies.
+        let mut role_bootstrap = admin.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('lagrange-test-role-bootstrap'))")
+            .execute(&mut *role_bootstrap)
+            .await?;
+        sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
+            .execute(&mut *role_bootstrap)
+            .await?;
+        role_bootstrap.commit().await?;
         admin
             .execute(ddl_for(&db, "DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
             .await?;
@@ -159,15 +203,49 @@ impl ScratchDb {
         .execute(&fresh)
         .await?;
 
-        MIGRATOR.run(&fresh).await?;
+        // Production migrations run as migration_owner. Running them as the
+        // supervisor makes SECURITY DEFINER functions owned by
+        // migration_owner unable to read the supervisor-owned tables, a false
+        // failure that also hides ownership bugs from worker-role tests.
+        let migration_owner = connect_as_migration_owner(super_url, &db, 6).await?;
+        let identities: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+            .fetch_one(&migration_owner)
+            .await?;
+        assert_eq!(identities.0, "migration_owner");
+        assert_ne!(identities.0, identities.1);
+        MIGRATOR.run(&migration_owner).await?;
         let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
-            .fetch_one(&fresh)
+            .fetch_one(&migration_owner)
             .await?;
         assert_eq!(
             applied as usize,
             up_migration_count(),
             "every migration must apply, or the test runs against a schema the product does not have"
         );
+        let incorrect_owners: Vec<String> = sqlx::query_scalar(
+            "SELECT c.relname::text \
+             FROM pg_class AS c \
+             WHERE c.relname IN ( \
+                 'user_strategy_configs', 'recommendation_runs', 'jobs', 'dataset_versions') \
+               AND pg_get_userbyid(c.relowner) <> 'migration_owner' \
+             ORDER BY c.relname",
+        )
+        .fetch_all(&migration_owner)
+        .await?;
+        assert!(
+            incorrect_owners.is_empty(),
+            "attestation tables must be migration_owner-owned: {incorrect_owners:?}"
+        );
+        let scheduler_owner: String = sqlx::query_scalar(
+            "SELECT pg_get_userbyid(p.proowner) \
+             FROM pg_proc AS p \
+             WHERE p.oid = 'public.schedule_recommendation_run( \
+                 uuid, uuid, date, uuid, text, integer, text)'::regprocedure",
+        )
+        .fetch_one(&migration_owner)
+        .await?;
+        assert_eq!(scheduler_owner, "migration_owner");
+        migration_owner.close().await;
 
         Ok(ScratchDb {
             pool: fresh,

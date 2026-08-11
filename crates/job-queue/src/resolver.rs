@@ -15,8 +15,57 @@
 //! run, whatever the database says.
 
 use crate::runner::{ResolveError, ResolvedStrategy, StrategyResolver};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
+
+/// An active strategy configuration resolved under an explicit owner.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedConfig {
+    pub strategy_id: String,
+    pub strategy_version: String,
+    pub config: serde_json::Value,
+}
+
+/// Resolve an active configuration without choosing an executable module.
+pub async fn resolve_config(
+    pool: &PgPool,
+    config_id: Uuid,
+    owner_user_id: Uuid,
+) -> Result<ResolvedConfig, ResolveError> {
+    let mut connection = pool
+        .acquire()
+        .await
+        .map_err(|e| ResolveError::Unavailable(format!("strategy registry unreadable: {e}")))?;
+    resolve_config_on(&mut connection, config_id, owner_user_id).await
+}
+
+pub(crate) async fn resolve_config_on(
+    connection: &mut PgConnection,
+    config_id: Uuid,
+    owner_user_id: Uuid,
+) -> Result<ResolvedConfig, ResolveError> {
+    // The owner is part of the predicate, not checked after fetching. Worker
+    // RLS intentionally exposes all tenants so the claimed identity must be
+    // the authorization boundary here.
+    let found: Option<(String, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT strategy_id, strategy_version, config_json \
+         FROM user_strategy_configs \
+         WHERE id = $1 AND owner_user_id = $2 AND is_active",
+    )
+    .bind(config_id)
+    .bind(owner_user_id)
+    .fetch_optional(connection)
+    .await
+    .map_err(|e| ResolveError::Unavailable(format!("strategy registry unreadable: {e}")))?;
+
+    let (strategy_id, strategy_version, config) = found
+        .ok_or_else(|| ResolveError::NotFound(format!("no active strategy config {config_id}")))?;
+    Ok(ResolvedConfig {
+        strategy_id,
+        strategy_version,
+        config,
+    })
+}
 
 /// The strategies this build can actually run.
 ///
@@ -85,43 +134,24 @@ impl StrategyResolver for DbStrategyResolver {
             ))
         })?;
 
-        // `owner_user_id` is bound, not merely checked afterwards. The `worker`
-        // role's RLS policy on this table is `USING (true)` -- it serves every
-        // tenant and has no `app.actor_user_id` to be filtered by -- so this
-        // predicate is the ONLY thing standing between a job and another
-        // tenant's configuration.
-        let found: Option<(String, String, serde_json::Value)> = sqlx::query_as(
-            "SELECT strategy_id, strategy_version, config_json \
-             FROM user_strategy_configs \
-             WHERE id = $1 AND owner_user_id = $2 AND is_active",
-        )
-        .bind(config_id)
-        .bind(owner_user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| ResolveError::Unavailable(format!("strategy registry unreadable: {e}")))?;
-
-        // Absent and not-yours are ONE answer on purpose. Distinguishing them
-        // would let a caller probe which config ids exist under other owners.
-        let (strategy_id, strategy_version, config) = found.ok_or_else(|| {
-            ResolveError::NotFound(format!("no active strategy config {config_id}"))
-        })?;
+        let resolved = resolve_config(&self.pool, config_id, owner_user_id).await?;
 
         let (_, strategy_path, config_path) = DEPLOYED
             .iter()
-            .find(|(id, _, _)| *id == strategy_id)
+            .find(|(id, _, _)| *id == resolved.strategy_id)
             .ok_or_else(|| {
                 ResolveError::Unknown(format!(
-                    "strategy {strategy_id:?} has no runnable implementation in this build"
+                    "strategy {:?} has no runnable implementation in this build",
+                    resolved.strategy_id
                 ))
             })?;
 
         Ok(ResolvedStrategy {
             strategy_path: (*strategy_path).to_string(),
             config_path: (*config_path).to_string(),
-            strategy_id,
-            strategy_version,
-            config,
+            strategy_id: resolved.strategy_id,
+            strategy_version: resolved.strategy_version,
+            config: resolved.config,
         })
     }
 }

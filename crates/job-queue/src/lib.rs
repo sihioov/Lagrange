@@ -15,6 +15,7 @@ pub mod paper_execution;
 pub mod paper_valuation;
 pub mod phase0;
 pub mod queue;
+pub mod recommendation;
 pub mod resolver;
 pub mod runner;
 pub mod types;
