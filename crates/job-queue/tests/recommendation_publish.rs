@@ -735,6 +735,31 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
         .expect("identical retry observes committed result");
     assert_eq!(second, PublicationOutcome::AlreadyPublished);
 
+    let (tampered_item_id, original_reasons): (Uuid, serde_json::Value) = sqlx::query_as(
+        "SELECT id, reason_codes FROM recommendation_items \
+         WHERE recommendation_run_id = $1 ORDER BY instrument_id LIMIT 1",
+    )
+    .bind(run_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE recommendation_items SET reason_codes = '[\"TAMPERED\"]'::jsonb WHERE id = $1",
+    )
+    .bind(tampered_item_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    publish_recommendation(&worker, &queue, &claim, &attested, &u, &validated)
+        .await
+        .expect_err("a committed row that no longer matches is not idempotent success");
+    sqlx::query("UPDATE recommendation_items SET reason_codes = $2 WHERE id = $1")
+        .bind(tampered_item_id)
+        .bind(original_reasons)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
     let (items, portfolios): (i64, i64) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM recommendation_items WHERE recommendation_run_id = $1), (SELECT count(*) FROM target_portfolios WHERE recommendation_run_id = $1)",
     )

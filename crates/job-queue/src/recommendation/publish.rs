@@ -69,6 +69,20 @@ struct PublishedRow {
     cash_weight: String,
     weights_json: Value,
     attempt_outcome: String,
+    portfolio_as_of: chrono::NaiveDate,
+    universe_snapshot_id: Option<String>,
+    trigger_kind: String,
+}
+
+#[derive(Debug, PartialEq, sqlx::FromRow)]
+struct PublishedItem {
+    instrument_id: String,
+    rank: Option<i32>,
+    target_weight: Option<String>,
+    reason_codes: Value,
+    factors_json: Value,
+    excluded: bool,
+    exclusion_reason: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -331,7 +345,8 @@ async fn already_published(
         "SELECT j.status AS job_status, r.status AS run_status, r.summary_json, \
                 (SELECT count(*) FROM recommendation_items i WHERE i.recommendation_run_id = r.id) AS item_count, \
                 (SELECT count(*) FROM target_portfolios existing WHERE existing.recommendation_run_id = r.id) AS portfolio_count, \
-                p.cash_weight::text AS cash_weight, p.weights_json, a.outcome AS attempt_outcome \
+                p.cash_weight::text AS cash_weight, p.weights_json, a.outcome AS attempt_outcome, \
+                p.as_of AS portfolio_as_of, p.universe_snapshot_id, r.trigger_kind \
          FROM jobs j \
          JOIN recommendation_runs r ON r.job_id = j.id AND r.owner_user_id = j.owner_user_id \
          JOIN target_portfolios p ON p.recommendation_run_id = r.id AND p.owner_user_id = r.owner_user_id \
@@ -351,16 +366,79 @@ async fn already_published(
     let Some(row) = row else {
         return Ok(false);
     };
+    let published_items: Vec<PublishedItem> = sqlx::query_as(
+        "SELECT instrument_id, rank, target_weight::text, reason_codes, factors_json, \
+                excluded, exclusion_reason \
+         FROM recommendation_items \
+         WHERE recommendation_run_id = $1 AND owner_user_id = $2 \
+         ORDER BY instrument_id",
+    )
+    .bind(input.payload.run_id)
+    .bind(claim.job.owner_user_id)
+    .fetch_all(&mut **transaction)
+    .await?;
+    let items_match = published_items.len() == portfolio.items.len()
+        && published_items
+            .iter()
+            .zip(&portfolio.items)
+            .all(|(published, expected)| {
+                published.instrument_id == expected.instrument_id
+                    && published.rank == expected.rank
+                    && published.target_weight == expected.target_weight
+                    && published.reason_codes == expected.reason_codes
+                    && published.factors_json == expected.factors_json
+                    && published.excluded == expected.excluded
+                    && published.exclusion_reason == expected.exclusion_reason
+            });
+    let expected_warnings = match input.dataset.status {
+        AttestedDatasetStatus::Ready => json!([]),
+        AttestedDatasetStatus::Warning => json!(["DATASET_STATUS_WARNING"]),
+    };
     Ok(row.job_status == "SUCCEEDED"
         && row.run_status == "SUCCEEDED"
         && row.attempt_outcome == "SUCCEEDED"
         && row.item_count == 11
         && row.portfolio_count == 1
+        && items_match
+        && row.portfolio_as_of == input.payload.as_of
+        && row.universe_snapshot_id.as_deref() == Some(portfolio.universe_snapshot_id.as_str())
+        && row.summary_json.get("dataset_id").and_then(Value::as_str)
+            == Some(input.dataset.dataset_id.as_str())
+        && row
+            .summary_json
+            .get("dataset_version")
+            .and_then(Value::as_str)
+            == Some(input.dataset.version.as_str())
+        && row.summary_json.get("dataset_version_id") == Some(&json!(input.dataset.id))
+        && row.summary_json.get("curated_version") == Some(&json!(input.dataset.curated_version))
+        && row
+            .summary_json
+            .get("manifest_sha256")
+            .and_then(Value::as_str)
+            == Some(input.dataset.manifest_sha256.as_str())
+        && row
+            .summary_json
+            .get("universe_snapshot_id")
+            .and_then(Value::as_str)
+            == Some(portfolio.universe_snapshot_id.as_str())
+        && row
+            .summary_json
+            .get("factor_snapshot_hash")
+            .and_then(Value::as_str)
+            == Some(portfolio.factor_snapshot_hash.as_str())
         && row
             .summary_json
             .get("portfolio_snapshot_id")
             .and_then(Value::as_str)
             == Some(portfolio.portfolio_snapshot_id.as_str())
+        && row.summary_json.get("selected_count") == Some(&json!(portfolio.selected_count))
+        && row.summary_json.get("excluded_count") == Some(&json!(portfolio.excluded_count))
+        && row.summary_json.get("cash_weight").and_then(Value::as_str)
+            == Some(portfolio.cash_weight.as_str())
+        && row.summary_json.get("trigger_kind").and_then(Value::as_str)
+            == Some(row.trigger_kind.as_str())
+        && row.summary_json.get("warnings") == Some(&expected_warnings)
+        && row.summary_json.get("portfolio_reasons") == Some(&portfolio.portfolio_reasons)
         && row.cash_weight == portfolio.cash_weight
         && row.weights_json
             == serde_json::to_value(&portfolio.positive_weights)
