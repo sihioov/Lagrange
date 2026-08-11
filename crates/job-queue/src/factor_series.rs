@@ -91,7 +91,7 @@ impl std::fmt::Display for FactorSeriesError {
 /// A closed match rather than a lookup by string, so an id no build can
 /// compute is a refusal here instead of a column of NULLs the generator would
 /// read as "this instrument was excluded".
-fn factors_for(ids: &[String]) -> Result<Vec<Box<dyn Factor>>, FactorSeriesError> {
+pub(crate) fn factors_for(ids: &[String]) -> Result<Vec<Box<dyn Factor>>, FactorSeriesError> {
     let mut out: Vec<Box<dyn Factor>> = Vec::new();
     for id in ids {
         let factor: Box<dyn Factor> = match id.as_str() {
@@ -100,12 +100,14 @@ fn factors_for(ids: &[String]) -> Result<Vec<Box<dyn Factor>>, FactorSeriesError
             "return_6m" => Box::new(ReturnFactor::six_months()),
             "return_12m" => Box::new(ReturnFactor::twelve_months()),
             "momentum_12_1" => Box::new(MomentumFactor),
-            "trend_50" => Box::new(TrendFactor::new(50).map_err(compute_err)?),
-            "trend_100" => Box::new(TrendFactor::new(100).map_err(compute_err)?),
-            "trend_200" => Box::new(TrendFactor::new(200).map_err(compute_err)?),
-            "vol_20" => Box::new(RealizedVolFactor::new(20).map_err(compute_err)?),
-            "vol_60" => Box::new(RealizedVolFactor::new(60).map_err(compute_err)?),
-            "vol_120" => Box::new(RealizedVolFactor::new(120).map_err(compute_err)?),
+            other if other.starts_with("trend_") => Box::new(
+                TrendFactor::new(parse_bounded_window(other, "trend_", 5, 500)?)
+                    .map_err(compute_err)?,
+            ),
+            other if other.starts_with("vol_") => Box::new(
+                RealizedVolFactor::new(parse_bounded_window(other, "vol_", 2, 252)?)
+                    .map_err(compute_err)?,
+            ),
             other => {
                 return Err(FactorSeriesError::Compute(format!(
                     "no implementation for factor {other:?}"
@@ -115,6 +117,24 @@ fn factors_for(ids: &[String]) -> Result<Vec<Box<dyn Factor>>, FactorSeriesError
         out.push(factor);
     }
     Ok(out)
+}
+
+fn parse_bounded_window(
+    id: &str,
+    prefix: &str,
+    minimum: usize,
+    maximum: usize,
+) -> Result<usize, FactorSeriesError> {
+    let suffix = id.strip_prefix(prefix).unwrap_or_default();
+    let window = suffix
+        .parse::<usize>()
+        .map_err(|_| FactorSeriesError::Compute(format!("invalid factor window in {id:?}")))?;
+    if suffix != window.to_string() || !(minimum..=maximum).contains(&window) {
+        return Err(FactorSeriesError::Compute(format!(
+            "factor window in {id:?} must be canonical and within {minimum}..={maximum}"
+        )));
+    }
+    Ok(window)
 }
 
 fn compute_err<E: std::fmt::Display>(e: E) -> FactorSeriesError {
@@ -325,6 +345,27 @@ mod tests {
             panic!("an unknown factor id must be refused");
         };
         assert!(matches!(err, FactorSeriesError::Compute(_)), "{err:?}");
+    }
+
+    #[test]
+    fn parameterized_factor_ids_are_canonical_and_bounded() {
+        for id in ["trend_0", "trend_050", "trend_501", "vol_1", "vol_999999"] {
+            assert!(
+                factors_for(&[id.to_owned()]).is_err(),
+                "invalid or unbounded factor id {id:?} must be refused"
+            );
+        }
+        for id in [
+            "trend_50",
+            "trend_100",
+            "trend_200",
+            "vol_20",
+            "vol_60",
+            "vol_120",
+        ] {
+            factors_for(&[id.to_owned()])
+                .unwrap_or_else(|error| panic!("documented factor {id:?}: {error}"));
+        }
     }
 
     /// The phase-0 curated zone, when a developer has generated it.

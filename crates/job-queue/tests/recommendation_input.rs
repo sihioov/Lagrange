@@ -303,6 +303,7 @@ async fn scheduled_function_payload_parses_and_attests_under_worker_role() {
         attested.dataset.storage_path,
         "curated/authoritative/2026-08-11"
     );
+    assert_eq!(attested.dataset.curated_version, 7);
     let serialized_payload = serde_json::to_string(&attested.payload).expect("serialize payload");
     assert!(
         !serialized_payload.contains("storage_path"),

@@ -112,6 +112,7 @@ pub struct AttestedDataset {
     pub id: Uuid,
     pub dataset_id: String,
     pub version: String,
+    pub curated_version: u32,
     pub status: AttestedDatasetStatus,
     pub manifest_sha256: String,
     pub storage_path: String,
@@ -282,6 +283,7 @@ pub async fn attest_recommendation_input(
         .await
         .map_err(|error| unavailable("commit attestation", error))?;
 
+    let curated_version = payload.dataset.curated_version;
     Ok(AttestedRecommendationInput {
         payload,
         resolved_config,
@@ -289,6 +291,7 @@ pub async fn attest_recommendation_input(
             id: dataset.id,
             dataset_id: dataset.dataset_id,
             version: dataset.version,
+            curated_version,
             status,
             manifest_sha256: dataset.manifest_sha256,
             storage_path: dataset.storage_path,
