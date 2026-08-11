@@ -181,7 +181,11 @@ async fn a_matching_session_completes_with_an_info_notice() {
         &h,
         &m,
         &config,
-        &[("069500.KRX", "0.600000"), ("229200.KRX", "0.400000")],
+        &[
+            ("069500.KRX", "0.600000"),
+            ("229200.KRX", "0.400000"),
+            ("114260.KRX", "0.000000"),
+        ],
     )
     .await;
     let target = queue_target(&h, &m, &account, &config).await;

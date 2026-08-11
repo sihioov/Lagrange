@@ -177,7 +177,11 @@ fn to_signal_set(side: &RawSide, as_of: &str) -> SignalSet {
     let targets: BTreeMap<InstrumentId, Weight> = side
         .weights
         .iter()
-        .filter_map(|(id, w)| Some((InstrumentId::parse(id).ok()?, Weight::parse(w.trim()).ok()?)))
+        .filter_map(|(id, w)| {
+            let weight = Weight::parse(w.trim()).ok()?;
+            let instrument = InstrumentId::parse(id).ok()?;
+            (!weight.is_zero()).then_some((instrument, weight))
+        })
         .collect();
     SignalSet {
         provenance: RunProvenance {
@@ -197,5 +201,37 @@ fn to_signal_set(side: &RawSide, as_of: &str) -> SignalSet {
         },
         as_of: as_of.to_owned(),
         targets,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_weight_eligible_rows_do_not_create_false_parity_targets() {
+        let side = RawSide {
+            strategy_id: "dual_momentum".into(),
+            strategy_version: "1.0.0".into(),
+            dataset_version: "phase0-v2".into(),
+            weights: BTreeMap::from([
+                ("069500.KRX".into(), "1.000000".into()),
+                ("229200.KRX".into(), "0.000000".into()),
+            ]),
+        };
+
+        let signals = to_signal_set(&side, "2026-08-11");
+
+        assert_eq!(signals.targets.len(), 1);
+        assert!(
+            signals
+                .targets
+                .contains_key(&InstrumentId::parse("069500.KRX").unwrap())
+        );
+        assert!(
+            !signals
+                .targets
+                .contains_key(&InstrumentId::parse("229200.KRX").unwrap())
+        );
     }
 }

@@ -312,40 +312,62 @@ impl JobQueue {
     /// worker must not touch the attempt.
     pub async fn settle_success(&self, claim: &ClaimedJob) -> Result<SettleResult, QueueError> {
         let mut tx = self.pool.begin().await?;
-        let job: Option<Job> = sqlx::query_as(update_job_returning(
-            "SET status = 'SUCCEEDED', finished_at = now(), locked_by = NULL,
-                 locked_at = NULL, updated_at = now()
-             WHERE id = $1 AND status = 'RUNNING' AND locked_by = $2",
-        ))
-        .bind(claim.job.id)
-        .bind(&claim.worker_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        match job {
-            Some(job) => {
-                finalize_attempt(&mut tx, claim, AttemptOutcome::Succeeded, None, None).await?;
-                tx.commit().await?;
+        let result = self.settle_success_in(&mut tx, claim).await;
+        finish_settlement_transaction(tx, result).await
+    }
+
+    /// Settle success inside a caller-owned transaction. This is the only
+    /// success implementation; atomic publishers use it so result rows and
+    /// queue state share one commit boundary.
+    pub async fn settle_success_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        claim: &ClaimedJob,
+    ) -> Result<SettleResult, QueueError> {
+        match self.lock_claim_in(tx, claim).await {
+            Ok(_) => {
+                let job: Job = sqlx::query_as(update_job_returning(
+                    "SET status = 'SUCCEEDED', finished_at = now(), locked_by = NULL,
+                         locked_at = NULL, updated_at = now()
+                     WHERE id = $1",
+                ))
+                .bind(claim.job.id)
+                .fetch_one(&mut **tx)
+                .await?;
+                finalize_attempt(tx, claim, AttemptOutcome::Succeeded, None, None).await?;
                 Ok(SettleResult::Committed(job))
             }
-            None => {
-                let result = settle_canceled_race(&mut tx, claim, "job canceled by request").await;
-                match result {
-                    Ok(SettleResult::Canceled(job)) => {
-                        tx.commit().await?;
-                        Ok(SettleResult::Canceled(job))
-                    }
-                    Ok(other) => {
-                        tx.rollback().await?;
-                        Err(QueueError::Internal(format!(
-                            "unexpected settle outcome {other:?}"
-                        )))
-                    }
-                    Err(e) => {
-                        tx.rollback().await?;
-                        Err(e)
-                    }
-                }
+            Err(QueueError::StaleClaim(_)) => {
+                settle_canceled_race(tx, claim, self.config.lease, "job canceled by request").await
             }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Lock and validate the exact active attempt represented by `claim`.
+    /// The lease is checked against the database clock, not the stale
+    /// `lease_expires_at` value carried by the worker.
+    pub async fn lock_claim_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        claim: &ClaimedJob,
+    ) -> Result<Job, QueueError> {
+        lock_claim_state_in(tx, claim, self.config.lease, "RUNNING").await
+    }
+}
+
+async fn finish_settlement_transaction(
+    tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    result: Result<SettleResult, QueueError>,
+) -> Result<SettleResult, QueueError> {
+    match result {
+        Ok(result) => {
+            tx.commit().await?;
+            Ok(result)
+        }
+        Err(error) => {
+            tx.rollback().await?;
+            Err(error)
         }
     }
 }
@@ -419,14 +441,11 @@ async fn finalize_attempt(
 async fn settle_canceled_race(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     claim: &ClaimedJob,
+    lease: Duration,
     reason: &str,
 ) -> Result<SettleResult, QueueError> {
-    let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
-        .bind(claim.job.id)
-        .fetch_optional(&mut **tx)
-        .await?;
-    match status {
-        Some(JobStatus::Canceled) => {
+    match lock_claim_state_in(tx, claim, lease, "CANCELED").await {
+        Ok(_) => {
             finalize_attempt(
                 tx,
                 claim,
@@ -441,8 +460,47 @@ async fn settle_canceled_race(
                 .await?;
             Ok(SettleResult::Canceled(job))
         }
-        _ => Err(QueueError::StaleClaim(claim.job.id)),
+        Err(QueueError::StaleClaim(_)) => Err(QueueError::StaleClaim(claim.job.id)),
+        Err(error) => Err(error),
     }
+}
+
+async fn lock_claim_state_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    claim: &ClaimedJob,
+    lease: Duration,
+    status: &str,
+) -> Result<Job, QueueError> {
+    let job: Option<Job> = sqlx::query_as(select_job(
+        "WHERE id = $1 AND status = $2 AND locked_by = $3 AND attempt_count = $4
+           AND locked_at > now() - make_interval(secs => $5) FOR UPDATE",
+    ))
+    .bind(claim.job.id)
+    .bind(status)
+    .bind(&claim.worker_id)
+    .bind(claim.attempt.attempt_no)
+    .bind(lease.as_secs_f64())
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(job) = job else {
+        return Err(QueueError::StaleClaim(claim.job.id));
+    };
+    let attempt_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM job_attempts
+         WHERE id = $1 AND job_id = $2 AND attempt_no = $3
+           AND outcome = 'RUNNING' AND claimed_by = $4
+         FOR UPDATE",
+    )
+    .bind(claim.attempt.id)
+    .bind(claim.job.id)
+    .bind(claim.attempt.attempt_no)
+    .bind(&claim.worker_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if attempt_id.is_none() {
+        return Err(QueueError::StaleClaim(claim.job.id));
+    }
+    Ok(job)
 }
 
 // ------------------------------------------------------------------
@@ -528,24 +586,38 @@ impl JobQueue {
         reason: &str,
     ) -> Result<Job, QueueError> {
         let mut tx = self.pool.begin().await?;
-        let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
-            .bind(claim.job.id)
-            .fetch_optional(&mut *tx)
-            .await?;
-        if status != Some(JobStatus::Canceled) {
-            tx.rollback().await?;
-            return Err(QueueError::StaleClaim(claim.job.id));
+        let result = self.settle_aborted_in(&mut tx, claim, reason).await;
+        match result {
+            Ok(job) => {
+                tx.commit().await?;
+                Ok(job)
+            }
+            Err(error) => {
+                tx.rollback().await?;
+                Err(error)
+            }
         }
+    }
+
+    /// Record a cooperatively observed cancellation inside a caller-owned
+    /// transaction, guarded by the same attempt and lease checks as every
+    /// other settlement path.
+    pub async fn settle_aborted_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        claim: &ClaimedJob,
+        reason: &str,
+    ) -> Result<Job, QueueError> {
+        let job = lock_claim_state_in(tx, claim, self.config.lease, "CANCELED").await?;
         finalize_attempt(
-            &mut tx,
+            tx,
             claim,
             AttemptOutcome::Failed,
             Some("canceled"),
             Some(reason),
         )
         .await?;
-        tx.commit().await?;
-        self.get_by_id(claim.job.id).await
+        Ok(job)
     }
 
     /// Settle a claim as FAILED under the design §6.8 retry policy:
@@ -568,6 +640,35 @@ impl JobQueue {
         message: &str,
     ) -> Result<SettleResult, QueueError> {
         let mut tx = self.pool.begin().await?;
+        let result = self
+            .settle_failure_in(&mut tx, claim, class, code, message)
+            .await;
+        finish_settlement_transaction(tx, result).await
+    }
+
+    /// Settle failure inside a caller-owned transaction. Retry/backoff and
+    /// terminal classification are shared verbatim with `settle_failure`.
+    pub async fn settle_failure_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        claim: &ClaimedJob,
+        class: ErrorClass,
+        code: &str,
+        message: &str,
+    ) -> Result<SettleResult, QueueError> {
+        match self.lock_claim_in(tx, claim).await {
+            Ok(_) => {}
+            Err(QueueError::StaleClaim(_)) => {
+                return settle_canceled_race(
+                    tx,
+                    claim,
+                    self.config.lease,
+                    "job canceled by request",
+                )
+                .await;
+            }
+            Err(error) => return Err(error),
+        }
         let requeued: Option<Job> = if class.retryable() {
             sqlx::query_as(update_job_returning(
                 "SET status = 'QUEUED', locked_by = NULL, locked_at = NULL,
@@ -582,7 +683,7 @@ impl JobQueue {
                 self.config.backoff_base,
                 claim.job.attempt_count,
             ))
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?
         } else {
             None
@@ -599,42 +700,19 @@ impl JobQueue {
                 .bind(&claim.worker_id)
                 .bind(code)
                 .bind(message)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(&mut **tx)
                 .await?
             }
         };
         match job {
             Some(job) => {
-                finalize_attempt(
-                    &mut tx,
-                    claim,
-                    AttemptOutcome::Failed,
-                    Some(code),
-                    Some(message),
-                )
-                .await?;
-                tx.commit().await?;
+                finalize_attempt(tx, claim, AttemptOutcome::Failed, Some(code), Some(message))
+                    .await?;
                 Ok(SettleResult::Committed(job))
             }
-            None => {
-                let result = settle_canceled_race(&mut tx, claim, "job canceled by request").await;
-                match result {
-                    Ok(SettleResult::Canceled(job)) => {
-                        tx.commit().await?;
-                        Ok(SettleResult::Canceled(job))
-                    }
-                    Ok(other) => {
-                        tx.rollback().await?;
-                        Err(QueueError::Internal(format!(
-                            "unexpected settle outcome {other:?}"
-                        )))
-                    }
-                    Err(e) => {
-                        tx.rollback().await?;
-                        Err(e)
-                    }
-                }
-            }
+            None => Err(QueueError::Internal(
+                "locked claim could not be updated during failure settlement".into(),
+            )),
         }
     }
 }

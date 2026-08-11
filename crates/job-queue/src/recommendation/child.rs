@@ -10,10 +10,12 @@
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -62,7 +64,7 @@ pub struct TargetChildRequest {
     pub provenance: TargetProvenance,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetChildOutput {
     pub as_of: String,
@@ -83,7 +85,7 @@ pub struct TargetChildOutput {
     pub portfolio_snapshot_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetRow {
     pub instrument_id: String,
@@ -97,23 +99,24 @@ pub struct TargetRow {
     pub reasons: Vec<Reason>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExclusionRow {
     pub instrument_id: String,
     pub reasons: Vec<Reason>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Reason {
     pub code: String,
+    #[serde(deserialize_with = "unique_string_map")]
     pub params: BTreeMap<String, String>,
     pub text_ko: String,
     pub text_en: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConstraintSummary {
     pub top_n: usize,
@@ -1260,11 +1263,54 @@ fn finite_factor_map<'de, D>(deserializer: D) -> Result<BTreeMap<String, f64>, D
 where
     D: Deserializer<'de>,
 {
-    let values = BTreeMap::<String, f64>::deserialize(deserializer)?;
+    let values: BTreeMap<String, f64> = unique_map(deserializer)?;
     if values.values().any(|value| !value.is_finite()) {
         return Err(serde::de::Error::custom("factor values must be finite"));
     }
     Ok(values)
+}
+
+fn unique_string_map<'de, D>(deserializer: D) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    unique_map(deserializer)
+}
+
+fn unique_map<'de, D, T>(deserializer: D) -> Result<BTreeMap<String, T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct UniqueMapVisitor<T>(PhantomData<T>);
+
+    impl<'de, T> Visitor<'de> for UniqueMapVisitor<T>
+    where
+        T: Deserialize<'de>,
+    {
+        type Value = BTreeMap<String, T>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("an object with unique keys")
+        }
+
+        fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut values = BTreeMap::new();
+            while let Some((key, value)) = access.next_entry::<String, T>()? {
+                if values.insert(key.clone(), value).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate object key {key:?}"
+                    )));
+                }
+            }
+            Ok(values)
+        }
+    }
+
+    deserializer.deserialize_map(UniqueMapVisitor(PhantomData))
 }
 
 #[cfg(test)]
