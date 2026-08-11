@@ -25,6 +25,7 @@ import json
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -154,6 +155,37 @@ def _assert_robustness_evidence_consistent(
     repo_root: Path = REPO_ROOT,
 ) -> None:
     """Cross-check the independently committed robustness evidence."""
+    expected_engine = {"name": "lagrange-golden-sim", "version": "1.0.0"}
+    expected_strategy = {"id": "five-baseline-strategies", "version": "1.0.0"}
+    expected_seed = 42
+    expected_timezone = "Asia/Seoul"
+    artifact_categories = {
+        "recommendation": "recommendation",
+        "orders": "order",
+        "fills": "fill",
+        "equity": "equity",
+        "fees": "fee",
+        "metrics": "metric",
+        "provenance": "provenance",
+    }
+    expected_artifacts = [
+        (
+            f"strategies/{strategy}/outputs/{artifact}.json",
+            artifact_categories[artifact],
+        )
+        for strategy in STRATEGIES
+        for artifact in ARTIFACTS
+    ]
+    expected_fixtures = [("../../fixtures/kr-etf/2020-01-31/bars.json", "data-bars")]
+    expected_golden_set_artifacts = [
+        (
+            f"{strategy}/{artifact}",
+            f"strategies/{strategy}/outputs/{artifact}.json",
+        )
+        for strategy in STRATEGIES
+        for artifact in ARTIFACTS
+    ]
+
     assert golden["golden_id"] == GOLDEN_ID, "golden identity is not the approved v2 ID"
     assert golden_set["golden_id"] == GOLDEN_ID, "golden-set identity mismatch"
     assert manifest["golden_id"] == GOLDEN_ID, "manifest golden identity mismatch"
@@ -166,6 +198,57 @@ def _assert_robustness_evidence_consistent(
     assert golden["versions"]["config"]["id"] == CONFIG_ID, "golden config identity mismatch"
     assert golden_set["versions"]["config"]["id"] == CONFIG_ID, "golden-set config identity mismatch"
     assert manifest["versions"]["config"]["id"] == CONFIG_ID, "manifest config identity mismatch"
+
+    assert golden["versions"]["engine"] == expected_engine, "golden engine header mismatch"
+    assert golden_set["versions"]["engine"] == expected_engine, "golden-set engine header mismatch"
+    assert manifest["versions"]["engine"] == expected_engine, "manifest engine header mismatch"
+    assert (
+        golden["versions"]["strategy"] == expected_strategy
+    ), "golden strategy header mismatch"
+    assert (
+        manifest["versions"]["strategy"] == expected_strategy
+    ), "manifest strategy header mismatch"
+    assert golden["versions"]["seed"] == expected_seed, "golden seed header mismatch"
+    assert golden_set["versions"]["seed"] == expected_seed, "golden-set seed header mismatch"
+    assert manifest["versions"]["seed"] == expected_seed, "manifest seed header mismatch"
+    assert golden["versions"]["timezone"] == expected_timezone, "golden timezone mismatch"
+    assert golden_set["versions"]["timezone"] == expected_timezone, "golden-set timezone mismatch"
+    assert manifest["versions"]["timezone"] == expected_timezone, "manifest timezone mismatch"
+
+    golden_artifacts = [(entry["path"], entry["category"]) for entry in golden["artifacts"]]
+    manifest_artifacts = [
+        (entry["path"], entry["category"]) for entry in manifest["artifacts"]
+    ]
+    assert len(golden_artifacts) == 35, "golden artifact count must be exactly 35"
+    assert len(manifest_artifacts) == 35, "manifest artifact count must be exactly 35"
+    assert Counter(golden_artifacts) == Counter(
+        expected_artifacts
+    ), "golden artifact path/category multiset mismatch"
+    assert Counter(manifest_artifacts) == Counter(
+        expected_artifacts
+    ), "manifest artifact path/category multiset mismatch"
+    assert golden_artifacts == expected_artifacts, "golden artifact strategy/order mismatch"
+    assert manifest_artifacts == expected_artifacts, "manifest artifact strategy/order mismatch"
+
+    golden_fixtures = [(entry["path"], entry["category"]) for entry in golden["fixtures"]]
+    manifest_fixtures = [(entry["path"], entry["category"]) for entry in manifest["fixtures"]]
+    assert len(golden_fixtures) == 1, "golden fixture count must be exactly 1"
+    assert len(manifest_fixtures) == 1, "manifest fixture count must be exactly 1"
+    assert Counter(golden_fixtures) == Counter(
+        expected_fixtures
+    ), "golden fixture path/category multiset mismatch"
+    assert Counter(manifest_fixtures) == Counter(
+        expected_fixtures
+    ), "manifest fixture path/category multiset mismatch"
+
+    golden_set_artifacts = [
+        (entry["id"], entry["path"]) for entry in golden_set["artifacts"]
+    ]
+    assert len(golden_set_artifacts) == 35, "golden-set artifact count must be exactly 35"
+    assert (
+        golden_set_artifacts == expected_golden_set_artifacts
+    ), "golden-set artifact strategy/order contract mismatch"
+
     expected_config_hash = gl.hash_bytes(gl.canonical_json_bytes(golden))
     assert (
         manifest["versions"]["config"]["hash"] == expected_config_hash
@@ -174,11 +257,23 @@ def _assert_robustness_evidence_consistent(
     code = manifest["versions"]["code"]
     assert code["commit"] == CODE_COMMIT, "manifest code commit is not the approved pin"
     assert code["tree"] == CODE_TREE, "manifest code tree is not the approved pin"
+    assert list(provenance) == STRATEGIES, "provenance strategy order mismatch"
     for strategy, artifact in provenance.items():
+        assert artifact["engine"] == expected_engine["name"], f"{strategy} engine mismatch"
+        assert (
+            artifact["engine_version"] == expected_engine["version"]
+        ), f"{strategy} engine_version mismatch"
+        assert artifact["strategy_id"] == strategy, f"{strategy} strategy_id mismatch"
+        assert (
+            artifact["strategy_version"] == expected_strategy["version"]
+        ), f"{strategy} strategy_version mismatch"
         assert artifact["dataset_version"] == DATA_ID, f"{strategy} dataset_version mismatch"
         assert (
             artifact["data_generator_version"] == GENERATOR_VERSION
         ), f"{strategy} data_generator_version mismatch"
+        assert artifact["data_seed"] == expected_seed, f"{strategy} data_seed mismatch"
+        assert artifact["random_seed"] == expected_seed, f"{strategy} random_seed mismatch"
+        assert artifact["timezone"] == expected_timezone, f"{strategy} timezone mismatch"
         assert artifact["code_commit"] == CODE_COMMIT, f"{strategy} code_commit mismatch"
 
     resolved_commit = subprocess.run(
@@ -246,6 +341,112 @@ def test_robustness_evidence_rejects_stale_golden_identity(document: str) -> Non
         "golden_id"
     ] += "-stale"
     with pytest.raises(AssertionError, match="identity"):
+        _assert_robustness_evidence_consistent(golden, golden_set, manifest, provenance)
+
+
+@pytest.mark.parametrize("collection", ["artifacts", "fixtures"])
+@pytest.mark.parametrize("mutation", ["delete", "duplicate", "path", "category"])
+def test_robustness_evidence_rejects_declared_entry_drift(
+    collection: str, mutation: str
+) -> None:
+    golden, golden_set, manifest, provenance = _load_committed_evidence()
+    entries = manifest[collection]
+    if mutation == "delete":
+        entries.pop()
+    elif mutation == "duplicate":
+        entries.append(dict(entries[0]))
+    elif mutation == "path":
+        entries[0]["path"] += ".stale"
+    else:
+        entries[0]["category"] += "-stale"
+    with pytest.raises(AssertionError, match=collection[:-1]):
+        _assert_robustness_evidence_consistent(golden, golden_set, manifest, provenance)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "manifest-engine-name",
+        "manifest-engine-version",
+        "golden-set-engine-name",
+        "golden-set-engine-version",
+        "provenance-engine-name",
+        "provenance-engine-version",
+        "manifest-seed",
+        "golden-set-seed",
+        "provenance-data-seed",
+        "provenance-random-seed",
+        "manifest-timezone",
+        "golden-set-timezone",
+        "provenance-timezone",
+    ],
+)
+def test_robustness_evidence_rejects_common_header_drift(mutation: str) -> None:
+    golden, golden_set, manifest, provenance = _load_committed_evidence()
+    first = provenance[STRATEGIES[0]]
+    if mutation == "manifest-engine-name":
+        manifest["versions"]["engine"]["name"] += "-stale"
+    elif mutation == "manifest-engine-version":
+        manifest["versions"]["engine"]["version"] += "-stale"
+    elif mutation == "golden-set-engine-name":
+        golden_set["versions"]["engine"]["name"] += "-stale"
+    elif mutation == "golden-set-engine-version":
+        golden_set["versions"]["engine"]["version"] += "-stale"
+    elif mutation == "provenance-engine-name":
+        first["engine"] += "-stale"
+    elif mutation == "provenance-engine-version":
+        first["engine_version"] += "-stale"
+    elif mutation == "manifest-seed":
+        manifest["versions"]["seed"] = 999
+    elif mutation == "golden-set-seed":
+        golden_set["versions"]["seed"] = 999
+    elif mutation == "provenance-data-seed":
+        first["data_seed"] = 999
+    elif mutation == "provenance-random-seed":
+        first["random_seed"] = 999
+    elif mutation == "manifest-timezone":
+        manifest["versions"]["timezone"] = "UTC"
+    elif mutation == "golden-set-timezone":
+        golden_set["versions"]["timezone"] = "UTC"
+    else:
+        first["timezone"] = "UTC"
+    with pytest.raises(AssertionError, match="engine|seed|timezone"):
+        _assert_robustness_evidence_consistent(golden, golden_set, manifest, provenance)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "manifest-strategy-id",
+        "manifest-strategy-version",
+        "golden-set-artifact-id",
+        "golden-set-artifact-path",
+        "golden-set-artifact-order",
+        "provenance-strategy-id",
+        "provenance-strategy-version",
+    ],
+)
+def test_robustness_evidence_rejects_strategy_contract_drift(mutation: str) -> None:
+    golden, golden_set, manifest, provenance = _load_committed_evidence()
+    first = provenance[STRATEGIES[0]]
+    if mutation == "manifest-strategy-id":
+        manifest["versions"]["strategy"]["id"] += "-stale"
+    elif mutation == "manifest-strategy-version":
+        manifest["versions"]["strategy"]["version"] += "-stale"
+    elif mutation == "golden-set-artifact-id":
+        golden_set["artifacts"][0]["id"] += "-stale"
+    elif mutation == "golden-set-artifact-path":
+        golden_set["artifacts"][0]["path"] += ".stale"
+    elif mutation == "golden-set-artifact-order":
+        golden_set["artifacts"][0], golden_set["artifacts"][1] = (
+            golden_set["artifacts"][1],
+            golden_set["artifacts"][0],
+        )
+    elif mutation == "provenance-strategy-id":
+        first["strategy_id"] += "-stale"
+    else:
+        first["strategy_version"] += "-stale"
+    with pytest.raises(AssertionError, match="strategy|artifact"):
         _assert_robustness_evidence_consistent(golden, golden_set, manifest, provenance)
 
 
