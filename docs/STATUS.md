@@ -123,7 +123,7 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 | **P6/P7 증거 복원** | 실제 백업 생성(`scripts/backup/create.sh`) → 격리 타깃 복구(`scripts/backup/restore-and-verify.sh`, `verdict: SUCCESS`) → 장애 주입 15개 시나리오 재검증. 조작 없이 실제 인프라로 재현 | (증거 재실행, 코드 변경 없음) |
 | **Paper 표시 현금 대조** | `PaperRepo::equity`가 `cash_ledger`와 as-of 대조(`LATERAL JOIN`)해 `cash_reconciled` 플래그를 반환. 불일치해도 화면은 보여주되(FR-PAPER-003) 사실대로 표시 | `e99385c` |
 
-**부수 발견 (US-006, 미수정·보고만):** `tests/golden/phase0/synth_data.py`가 원시 가격에 10,000을 곱한 뒤 pyarrow의 `decimal128(18,4)` 스케일이 한 번 더 적용되어, 커밋된 2020-01-20 069500.KRX 시가(10,150원)가 실제로는 `101,500,000.0000`으로 읽힌다. 독립적으로 두 번 확인함: ① `pa.array([101500000], type=pa.decimal128(18,4))`가 `101500000.0000`을 반환하는 최소 재현, ② 로컬 `data/phase0` 실제 데이터에서 동일 값 확인. 지금까지 안 걸린 이유는 팩터 엔진이 절대가격이 아니라 비율(수익률·이동평균)만 계산해 왔기 때문 — Paper 실행이 절대가격으로 나누는 **첫 소비자**였다. **고치지 않았다**: 승인된 `kr-etf-daily-phase0-v1` 골든 해시가 바뀌므로 재승인은 사용자의 결정(§4.2에 추가). 이음매 테스트는 이 저장소의 자체 값(`tests/fixtures/kr-etf/2020-01-31/bars.json`)으로 별도 데이터셋을 써서 우회했다.
+**US-006 해결:** Phase 0 v1은 논리 Decimal을 미리 스케일링해 10,150 KRW를 `101,500,000.0000`으로 읽었다. 승인된 v2 기준선은 `10150.0000` 논리 Decimal을 저장하고 catalog/simulation 경계에서만 raw scale-4로 변환하며, 불변 `version=2` 파티션을 사용하고 Phase 0 및 robustness provenance를 재생성했다. v1은 역사 기록으로만 남으며 활성 데이터셋으로 사용해서는 안 된다.
 
 ### 3.6 빌드 인프라
 
@@ -159,9 +159,8 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 | 1 | Paper 러너 데몬 | **코드 작업** | ✅ **완료** (`8da6548`) |
 | 2 | `daily_equity`(종가 평가) 쓰기 | **코드 작업** | ✅ **완료** (`cf8704a`) |
 | 3 | 리스크 게이트 입력 3개 배선 (장 캘린더·데이터 신선도·주문 충돌) | **코드 작업** | ✅ **완료** (`d7d75c7`, 연구 발행 이음매 `30e2679`) |
-| 4 | phase-0 골든 가격 10,000배 스케일 버그 재승인 | **사장님 결정** | ⛔ 코드 작업 아님 — 승인 없이는 착수 자체가 금지 |
-| 5 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
-| 6 | KRX 계약·실제 provider/credential/endpoint / Auth0 / KIS 실계좌 | **외부 구현·사장님 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
+| 4 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
+| 5 | KRX 계약·실제 provider/credential/endpoint / Auth0 / KIS 실계좌 | **외부 구현·사장님 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
 
 1·2는 Paper 세션에 완료했고, 3도 발행된 연구 메타데이터까지 이음매가 연결됐다. Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가는 각각 `8da6548`·`cf8704a`에 있다. 저장소 안의 synthetic Raw→PostgreSQL 경로와 리스크 소비 이음매는 완료됐지만, 실제 KRX provider 구현과 production credential/endpoint/운영자 provisioning은 외부 잔여 작업이다. 외부 조달·소유자 결정 항목도 그대로다.
 
@@ -175,18 +174,16 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 
 이 3건이 없는 동안 게이트는 `BLOCKED_EXTERNAL`이며 **그것이 합격 조건이다. 위조해서 APPROVED에 도달하는 것은 금지** — 닫히는 쪽으로 실패하는 것 자체가 게이트의 존재 이유다. 한국 데이터 권리가 끝내 안 오면 계획의 답은 Member 접근 연기다, 시장 변경이 아니라.
 
-### 4.2 소유자 결정 대기 3건
+### 4.2 소유자 결정 대기 2건
 
-1. **phase-0 골든 데이터셋의 가격 스케일 버그 재승인 여부** (§3.5 US-006, 신규) — `synth_data.py`의 10,000배 이중 스케일링 수정. 절대가격에 의존하는 첫 실제 소비자(Paper)가 나온 지금 방치하면 실제 데이터 투입 시 백테스트·Paper 결과가 왜곡된다. 고치면 `kr-etf-daily-phase0-v1` 골든 해시가 바뀌므로 명시적 재승인 필요
-2. **phase-0 골든에 수수료 필드를 넣을지** — 넣는 것은 승인된 기준값을 바꾸는 명시적 재승인 행위라 보류 중
-3. **Phase 4 우선순위** — §4.4 참조
+1. **phase-0 골든에 수수료 필드를 넣을지** — 넣는 것은 승인된 기준값을 바꾸는 명시적 재승인 행위라 보류 중
+2. **Phase 4 우선순위** — §4.4 참조
 
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
 1. **배포 서비스 활성화.** `deploy/systemd/paper-runner.service`와 운영별 `/etc/lagrange/paper-runner.env`를 설치·시작하고, 실제 role-scoped DB URL과 curated dataset 마운트를 호스트 Secret Manager에서 주입해야 한다. 저장소에는 비밀값을 넣지 않는다.
 2. **실제 KRX provider와 운영 원천 활성화.** 코드의 synthetic 수집·발행·복구 배선은 완료됐지만, 라이선스·credential·entitlement-aware HTTP transport와 실제 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning해야 한다. 그 뒤 운영 PostgreSQL에 실제 KRX 캘린더와 EOD batch 메타데이터를 공급하고 라이브 계정의 intent 상태를 정상적으로 유지해야 한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
-3. **phase-0 데이터셋 가격 스케일 버그 수정** (§4.2-1 결정 이후). `synth_data.py`에서 `* 10_000` 제거 또는 pyarrow 스케일 적용 방식 수정, 골든 해시 재승인, 영향받는 다운스트림(있다면) 재검증.
-4. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화(이번 재실행도 E7은 스킵).
+3. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화(이번 재실행도 E7은 스킵).
 
 **작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. `positions` upsert의 `ON CONFLICT ... DO UPDATE`가 갱신 절에서 소유자를 재확인하지 않는다 — 지금은 계좌-소유자가 1:1이라 안전하지만, 스키마 차원의 보강(`UNIQUE (account_id, owner_user_id, instrument_id)`)이 더 견고한 해법이다.
 
