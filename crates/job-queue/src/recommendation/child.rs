@@ -412,6 +412,8 @@ async fn run_in_scratch(
         return Err(TargetChildError::Timeout);
     }
 
+    let mut process_tree = ProcessTree::prepare()?;
+
     let mut command = Command::new(&paths.uv_bin);
     command
         .arg("run")
@@ -460,24 +462,64 @@ async fn run_in_scratch(
     }
 
     let mut child = command.spawn().map_err(|_| TargetChildError::Launch)?;
-    let stderr = child.stderr.take().ok_or(TargetChildError::Launch)?;
+    if process_tree.attach(&child).is_err() {
+        let _ = settle_direct_child(&mut child, cleanup_deadline).await;
+        return Err(TargetChildError::Termination);
+    }
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            let tree_terminated = process_tree.terminate().is_ok();
+            let direct_reaped = settle_direct_child(&mut child, cleanup_deadline).await;
+            return Err(if tree_terminated && direct_reaped {
+                TargetChildError::Launch
+            } else {
+                TargetChildError::Termination
+            });
+        }
+    };
     let mut stderr_reader = tokio::spawn(drain_bounded(stderr, MAX_STDERR_BYTES));
     let exit = match tokio::time::timeout_at(operation_deadline, child.wait()).await {
         Ok(Ok(exit)) => exit,
         Ok(Err(_)) => {
-            terminate_and_settle(&mut child, &mut stderr_reader, cleanup_deadline).await?;
+            terminate_and_settle(
+                &process_tree,
+                &mut child,
+                &mut stderr_reader,
+                cleanup_deadline,
+            )
+            .await?;
             return Err(TargetChildError::Exited);
         }
         Err(_) => {
-            terminate_and_settle(&mut child, &mut stderr_reader, cleanup_deadline).await?;
+            terminate_and_settle(
+                &process_tree,
+                &mut child,
+                &mut stderr_reader,
+                cleanup_deadline,
+            )
+            .await?;
             return Err(TargetChildError::Timeout);
         }
     };
     match tokio::time::timeout_at(operation_deadline, &mut stderr_reader).await {
         Ok(Ok(Ok(_stderr))) => {}
-        Ok(Ok(Err(_))) | Ok(Err(_)) => return Err(TargetChildError::Exited),
+        Ok(Ok(Err(_))) | Ok(Err(_)) => {
+            let tree_terminated = process_tree.terminate().is_ok();
+            let direct_reaped = settle_direct_child(&mut child, cleanup_deadline).await;
+            if !tree_terminated || !direct_reaped {
+                return Err(TargetChildError::Termination);
+            }
+            return Err(TargetChildError::Exited);
+        }
         Err(_) => {
-            abort_reader_bounded(&mut stderr_reader, cleanup_deadline).await?;
+            terminate_and_settle(
+                &process_tree,
+                &mut child,
+                &mut stderr_reader,
+                cleanup_deadline,
+            )
+            .await?;
             return Err(TargetChildError::Timeout);
         }
     }
@@ -504,84 +546,159 @@ async fn run_in_scratch(
 }
 
 async fn terminate_and_settle(
+    process_tree: &ProcessTree,
     child: &mut tokio::process::Child,
     stderr_reader: &mut tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>,
     cleanup_deadline: tokio::time::Instant,
 ) -> Result<(), TargetChildError> {
-    if terminate_process_tree(child, cleanup_deadline)
+    let tree_terminated = process_tree.terminate().is_ok();
+    let direct_reaped = settle_direct_child(child, cleanup_deadline).await;
+    let reader_settled = abort_reader_bounded(stderr_reader, cleanup_deadline)
         .await
-        .is_err()
-    {
-        stderr_reader.abort();
-        let _ = tokio::time::timeout_at(cleanup_deadline, stderr_reader).await;
-        return Err(TargetChildError::Termination);
-    }
-    let reaped = tokio::time::timeout_at(cleanup_deadline, child.wait()).await;
-    abort_reader_bounded(stderr_reader, cleanup_deadline).await?;
-    match reaped {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(_)) | Err(_) => Err(TargetChildError::Termination),
+        .is_ok();
+    if tree_terminated && direct_reaped && reader_settled {
+        Ok(())
+    } else {
+        Err(TargetChildError::Termination)
     }
 }
 
-#[cfg(windows)]
-async fn terminate_process_tree(
+async fn settle_direct_child(
     child: &mut tokio::process::Child,
     cleanup_deadline: tokio::time::Instant,
-) -> Result<(), TargetChildError> {
-    let pid = child.id().ok_or(TargetChildError::Termination)?;
-    let system_root = std::env::var_os("SystemRoot").ok_or(TargetChildError::Termination)?;
-    let taskkill = PathBuf::from(&system_root)
-        .join("System32/taskkill.exe")
-        .canonicalize()
-        .map_err(|_| TargetChildError::Termination)?;
-    if !taskkill.is_file() {
-        return Err(TargetChildError::Termination);
+) -> bool {
+    let already_exited = matches!(child.try_wait(), Ok(Some(_)));
+    if !already_exited {
+        // Even if this fails, still perform the bounded wait below. The child
+        // may have exited between `try_wait` and `start_kill`.
+        let _ = child.start_kill();
     }
-    let mut killer = Command::new(taskkill);
-    killer
-        .arg("/PID")
-        .arg(pid.to_string())
-        .arg("/T")
-        .arg("/F")
-        .env_clear()
-        .env("SystemRoot", system_root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    let mut killer = killer.spawn().map_err(|_| TargetChildError::Termination)?;
-    let now = tokio::time::Instant::now();
-    let helper_deadline = now
-        .checked_add(cleanup_deadline.saturating_duration_since(now) * 3 / 4)
-        .ok_or(TargetChildError::Termination)?;
-    match tokio::time::timeout_at(helper_deadline, killer.wait()).await {
-        Ok(Ok(status)) if status.success() => Ok(()),
-        Ok(Ok(_)) | Ok(Err(_)) => Err(TargetChildError::Termination),
-        Err(_) => {
-            if killer.start_kill().is_err() {
-                return Err(TargetChildError::Termination);
-            }
-            let _ = tokio::time::timeout_at(cleanup_deadline, killer.wait()).await;
+    matches!(
+        tokio::time::timeout_at(cleanup_deadline, child.wait()).await,
+        Ok(Ok(_))
+    )
+}
+
+#[cfg(unix)]
+struct ProcessTree {
+    process_group: Option<i32>,
+}
+
+#[cfg(unix)]
+impl ProcessTree {
+    fn prepare() -> Result<Self, TargetChildError> {
+        Ok(Self {
+            process_group: None,
+        })
+    }
+
+    fn attach(&mut self, child: &tokio::process::Child) -> Result<(), TargetChildError> {
+        let pid = child.id().ok_or(TargetChildError::Termination)?;
+        self.process_group = Some(i32::try_from(pid).map_err(|_| TargetChildError::Termination)?);
+        Ok(())
+    }
+
+    fn terminate(&self) -> Result<(), TargetChildError> {
+        let process_group = self.process_group.ok_or(TargetChildError::Termination)?;
+        // SAFETY: the spawned `uv` process is placed in its own process group
+        // before spawn. A negative, checked child PID targets only that group.
+        let result = unsafe { libc::kill(-process_group, libc::SIGKILL) };
+        if result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            Ok(())
+        } else {
             Err(TargetChildError::Termination)
         }
     }
 }
 
 #[cfg(unix)]
-async fn terminate_process_tree(
-    child: &mut tokio::process::Child,
-    _cleanup_deadline: tokio::time::Instant,
-) -> Result<(), TargetChildError> {
-    let pid = child.id().ok_or(TargetChildError::Termination)?;
-    let process_group = i32::try_from(pid).map_err(|_| TargetChildError::Termination)?;
-    // SAFETY: the spawned `uv` process is placed in its own process group
-    // before spawn. A negative, checked child PID targets only that group.
-    let result = unsafe { libc::kill(-process_group, libc::SIGKILL) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(TargetChildError::Termination)
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        let _ = self.terminate();
+    }
+}
+
+#[cfg(windows)]
+struct ProcessTree {
+    job: isize,
+}
+
+#[cfg(windows)]
+impl ProcessTree {
+    fn prepare() -> Result<Self, TargetChildError> {
+        use windows_sys::Win32::System::JobObjects::{
+            CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+
+        let limits_size =
+            u32::try_from(std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>())
+                .map_err(|_| TargetChildError::Termination)?;
+        // SAFETY: null security attributes/name request an unnamed job with
+        // default security. The returned owned handle is closed in `Drop`.
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job.is_null() {
+            return Err(TargetChildError::Termination);
+        }
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: `limits` has the exact layout and byte length required by
+        // `JobObjectExtendedLimitInformation`; `job` is live and owned here.
+        let configured = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                (&raw const limits).cast(),
+                limits_size,
+            )
+        };
+        if configured == 0 {
+            // SAFETY: `job` is a valid owned handle and has not been closed.
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(job) };
+            return Err(TargetChildError::Termination);
+        }
+        Ok(Self { job: job as isize })
+    }
+
+    fn attach(&mut self, child: &tokio::process::Child) -> Result<(), TargetChildError> {
+        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+
+        let process = child.raw_handle().ok_or(TargetChildError::Termination)?;
+        // SAFETY: both handles are live. This runs synchronously immediately
+        // after spawn, before any await can observe child completion.
+        let assigned = unsafe { AssignProcessToJobObject(self.handle(), process.cast()) };
+        if assigned == 0 {
+            Err(TargetChildError::Termination)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn terminate(&self) -> Result<(), TargetChildError> {
+        // SAFETY: the job handle is owned by `self` and remains live until
+        // `Drop`, including after the direct child handle has been reaped.
+        let terminated =
+            unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(self.handle(), 1) };
+        if terminated == 0 {
+            Err(TargetChildError::Termination)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn handle(&self) -> windows_sys::Win32::Foundation::HANDLE {
+        self.job as windows_sys::Win32::Foundation::HANDLE
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        // KILL_ON_JOB_CLOSE makes this a final best-effort tree termination
+        // even when the surrounding future unwinds unexpectedly.
+        // SAFETY: this is the one close of the handle owned by `self`.
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.handle()) };
     }
 }
 

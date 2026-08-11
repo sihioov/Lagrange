@@ -157,10 +157,13 @@ async fn timeout_kills_and_reaps_the_child_then_cleans_files() {
 #[tokio::test]
 async fn descendant_holding_inherited_stderr_cannot_outlive_operation_deadline() {
     let script = r#"
-import subprocess, sys
-subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2)'], stderr=sys.stderr)
+import pathlib, subprocess, sys
+sentinel = pathlib.Path(__file__).resolve().parents[2] / 'descendant-late-sentinel'
+code = "import pathlib, sys, time; time.sleep(2); pathlib.Path(sys.argv[1]).write_text('escaped')"
+subprocess.Popen([sys.executable, '-c', code, str(sentinel)], stderr=sys.stderr)
 "#;
     let (root, uv) = fake_project(script);
+    let sentinel = root.path().join("descendant-late-sentinel");
     let scratch = tempfile::tempdir().unwrap();
     let started = Instant::now();
     let error = run_target_child(
@@ -178,6 +181,11 @@ subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2)'], stderr=sy
         started.elapsed()
     );
     assert!(scratch.path().read_dir().unwrap().next().is_none());
+    tokio::time::sleep(Duration::from_millis(1_750)).await;
+    assert!(
+        !sentinel.exists(),
+        "descendant survived its exited parent and wrote a late sentinel"
+    );
 }
 
 #[tokio::test]
