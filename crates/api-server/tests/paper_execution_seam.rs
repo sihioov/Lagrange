@@ -36,7 +36,7 @@ use api_server::repos::pending_targets::NewPendingTarget;
 use job_queue::paper_execution::{
     ExecutionOutcome, SessionInput, execute_session, targets_from_json,
 };
-use job_queue::phase0::CURATED_VERSION;
+use job_queue::phase0::{CURATED_VERSION, DATASET_ID};
 
 /// The close that produced the target.
 const COMPUTED_ON: &str = "2020-01-20";
@@ -204,7 +204,7 @@ async fn queue_target(
                 computed_on: date(computed_on),
                 effective_date: date(effective_date),
                 targets_json: targets,
-                dataset_version: Some("kr-etf-daily-phase0-v2".to_owned()),
+                dataset_version: Some(DATASET_ID.to_owned()),
             },
         )
         .await

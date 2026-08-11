@@ -14,6 +14,7 @@ mod common;
 
 use common::ScratchDb;
 use job_queue::error::QueueError;
+use job_queue::phase0::DATASET_ID;
 use job_queue::queue::{JobQueue, QueueConfig};
 use job_queue::runner::{
     Outcome, ResolveError, ResolvedStrategy, RunnerPaths, StrategyResolver, run_once,
@@ -145,7 +146,7 @@ async fn submit_backtest_for(
                 "kind": "backtest",
                 "run_id": Uuid::new_v4(),
                 "strategy_config_id": config_id,
-                "dataset_version_id": "kr-etf-daily-phase0-v2",
+                "dataset_version_id": DATASET_ID,
                 "start_date": "2020-01-01",
                 "end_date": "2020-12-31",
                 "initial_cash": { "currency": "KRW", "amount": "100000000" },

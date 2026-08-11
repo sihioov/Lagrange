@@ -438,6 +438,10 @@ fn worker_produced_result_deserializes_and_validates() {
         .validate()
         .expect("worker-produced result must pass every integrity check");
     assert_eq!(result.provenance.strategy_id.as_str(), "ma200-trend");
+    assert_eq!(
+        result.provenance.dataset_version.as_str(),
+        "kr-etf-daily-phase0-v2"
+    );
     assert_eq!(result.summary.currency, Currency::KRW);
     assert!(
         !result.fills.is_empty(),

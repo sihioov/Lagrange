@@ -314,6 +314,12 @@ fn sample_manifest(run_id: Uuid, owner: Uuid, job_id: Uuid, seed: u64) -> Backte
 }
 
 #[test]
+fn sample_manifest_uses_phase0_v2_dataset_identity() {
+    let manifest = sample_manifest(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 42);
+    assert_eq!(manifest.run.dataset_version, "kr-etf-daily-phase0-v2");
+}
+
+#[test]
 fn worker_produced_manifest_matches_the_rust_contract() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/manifest.json");
     let json = std::fs::read_to_string(&path).unwrap();
@@ -321,6 +327,7 @@ fn worker_produced_manifest_matches_the_rust_contract() {
         .unwrap_or_else(|error| panic!("worker manifest.json must deserialize: {error}"));
     ManifestWriter::validate(&manifest).expect("worker-produced manifest must validate");
     assert_eq!(manifest.run.strategy_id, "ma200-trend");
+    assert_eq!(manifest.run.dataset_version, "kr-etf-daily-phase0-v2");
     assert_eq!(manifest.run.status, "SUCCEEDED");
     assert_eq!(
         manifest.artifacts.len(),
