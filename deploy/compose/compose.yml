@@ -137,6 +137,7 @@ services:
       SESSION_COOKIE_SECURE: "true"
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:-}
       AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID:-}
+      AUTH0_CLIENT_SECRET_FILE: /run/secrets/auth0_client_secret
     secrets:
       - db_app_password
       - db_audit_password

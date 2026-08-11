@@ -38,8 +38,11 @@ simulator (below) and later by the `vendor`-tagged suite.
 - `state` (callback CSRF) and `nonce` (ID-token binding) are 32 random bytes
   hex, unique per request, stored server-side as a single-use `PendingAuth`
   record; replay of a consumed state is denied and audited.
-- PKCE S256 replaces the client secret (Auth0 best practice); `client_secret`
-  is deliberately absent from the transport.
+- PKCE S256 protects against authorization code interception. Because the
+  Auth0 Regular Web Application is confidential, the token exchange also
+  authenticates with `client_secret` via Client Secret Post. The secret is
+  read from a mounted file and never enters browser state, URLs, logs, database
+  rows, or provider-neutral request metadata.
 
 ### D3: Identity is the immutable `(issuer, subject)` pair, never email
 

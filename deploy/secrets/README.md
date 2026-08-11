@@ -35,6 +35,20 @@
 # to its real name and fill it in, or run scripts/provision-dev-secrets.ps1
 # once it lands with Todo 35.
 
+## Auth0 confidential client
+
+Configure Auth0 as a first-party Regular Web Application using Client Secret
+Post, Authorization Code, PKCE S256, and RS256 ID tokens. The exact Auth0
+Client Secret must be the sole line of `auth0_client_secret`; never copy it
+into an environment file or command argument. Compose mounts the secret
+read-only, and the API server reads it through
+`AUTH0_CLIENT_SECRET_FILE=/run/secrets/auth0_client_secret`.
+
+Put the non-secret tenant domain and Client ID in `deploy/compose/.env`. The
+current operator-selected tenant is in the Auth0 Japan region. PAR, JAR,
+refresh tokens, and additional credentials are outside this deployment
+contract.
+
 ## Research worker database credential
 
 Provision `db_research_password` outside Git by copying
