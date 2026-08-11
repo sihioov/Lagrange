@@ -103,6 +103,12 @@ def _require_columns(table: pa.Table, columns: Iterable[str], path: Path) -> Non
 
 def _fixed_to_int(table: pa.Table, column: str, scale: int) -> list[int]:
     """Logical Decimal column -> exact fixed-point raw integer values."""
+    expected_type = pa.decimal128(18, scale)
+    actual_type = table.schema.field(column).type
+    if actual_type != expected_type:
+        raise CatalogBuilderError(
+            f"curated column {column!r} must have type {expected_type}, got {actual_type}"
+        )
     values: list[int] = []
     factor = 10 ** scale
     for value in table.column(column).to_pylist():

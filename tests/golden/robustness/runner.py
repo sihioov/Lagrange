@@ -155,8 +155,9 @@ def factor_values(closes: dict[str, list[int]], iid: str, params: dict) -> dict[
 
 def slipped_price(raw_open: int, side: str, bps: int) -> int:
     """Scale-4 execution price from the raw scale-4 open: buy = open x (1 +
-    bps/10000), sell = open x (1 - bps/10000). The synth rows carry scale-4
-    raw integers (10,150.0000 KRW = 101_500_000)."""
+    bps/10000), sell = open x (1 - bps/10000). Synthetic rows carry logical
+    Decimals which `session_schedule` converts to raw scale-4 integers
+    (10,150.0000 KRW = 101_500_000)."""
     delta = raw_open * bps // 10_000
     return raw_open + delta if side == "BUY" else raw_open - delta
 

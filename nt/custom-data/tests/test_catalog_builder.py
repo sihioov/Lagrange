@@ -8,7 +8,9 @@ simulation.
 """
 import json
 import shutil
+from decimal import Decimal
 
+import pyarrow as pa
 import pytest
 
 from curated_helpers import equity_from_dict, golden_bars_rows, session_instants, write_curated_fixture
@@ -73,14 +75,46 @@ def test_builder_rejects_mixed_curated_versions(builder, curated_root, tmp_path)
     shutil.copytree(curated_root, mixed_root)
     version1 = next((mixed_root / "curated" / "bars").rglob("version=1"))
     shutil.copytree(version1, version1.with_name("version=2"))
-    with pytest.raises(Exception, match="mixed curated versions"):
+    with pytest.raises(builder.CatalogBuilderError, match="mixed curated versions"):
         builder.build_catalog(mixed_root, tmp_path / "catalog")
+
+
+@pytest.mark.parametrize(
+    ("arrow_type", "value"),
+    [
+        (pa.int64(), 10_150),
+        (pa.decimal128(18, 3), Decimal("10150.123")),
+        (pa.decimal128(19, 4), Decimal("10150.1234")),
+        (pa.decimal256(18, 4), Decimal("10150.1234")),
+    ],
+    ids=["int64", "wrong-scale", "wrong-precision", "decimal256"],
+)
+def test_fixed_to_int_rejects_wrong_arrow_type(builder, arrow_type, value):
+    table = pa.table({"value": pa.array([value], type=arrow_type)})
+    with pytest.raises(builder.CatalogBuilderError) as excinfo:
+        builder._fixed_to_int(table, "value", 4)
+    assert str(excinfo.value) == (
+        "curated column 'value' must have type decimal128(18, 4), "
+        f"got {arrow_type}"
+    )
+
+
+def test_fixed_to_int_preserves_fractional_scale4(builder):
+    table = pa.table({
+        "value": pa.array([Decimal("10150.1234")], type=pa.decimal128(18, 4)),
+    })
+    assert builder._fixed_to_int(table, "value", 4) == [101_501_234]
+
+
+def test_fixed_to_int_preserves_fractional_scale8(builder):
+    table = pa.table({
+        "value": pa.array([Decimal("1.23456789")], type=pa.decimal128(18, 8)),
+    })
+    assert builder._fixed_to_int(table, "value", 8) == [123_456_789]
 
 
 def test_builder_accepts_only_documented_schema(builder, tmp_path):
     """A curated input with an unknown column is rejected (no silent success)."""
-    import pyarrow as pa
-
     from curated_helpers import bars_table
 
     root = tmp_path / "bad-curated"
