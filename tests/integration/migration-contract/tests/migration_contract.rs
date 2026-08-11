@@ -79,7 +79,7 @@ fn recommendation_pipeline_migration_is_tracked() {
         assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
         assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
     }
-    for version in 26..=32 {
+    for version in 26..=33 {
         let up = MIGRATOR.migrations.iter().find(|migration| {
             migration.version == version
                 && migration.migration_type != MigrationType::ReversibleDown
@@ -204,6 +204,14 @@ fn pg_code(err: &sqlx::Error) -> Option<String> {
         // sqlx 0.9's `DatabaseError::code()` returns `Option<Cow<'_, str>>`;
         // materialize an owned String so the error code outlives `err`.
         sqlx::Error::Database(e) => e.code().map(|c| c.into_owned()),
+        _ => None,
+    }
+}
+
+fn migrate_pg_code(err: &sqlx::migrate::MigrateError) -> Option<String> {
+    match err {
+        sqlx::migrate::MigrateError::Execute(error)
+        | sqlx::migrate::MigrateError::ExecuteMigration(error, _) => pg_code(error),
         _ => None,
     }
 }
@@ -2004,15 +2012,15 @@ async fn revert_and_rerun_body(
         "fresh DB must apply all {expected} migrations"
     );
 
-    // Revert the 0032..0026 recommendation family, then 0025, 0024, and 0023
+    // Revert the 0033..0026 recommendation family, then 0025, 0024, and 0023
     // before 0022 while all earlier tables remain.
     // This proves each down migration restores its own boundary rather than
     // relying on 0003.down to hide omitted objects in a full teardown.
     MIGRATOR.undo(owner, 25).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 7,
-        "undo to 0025 must revert the complete 0032..0026 family"
+        expected - 8,
+        "undo to 0025 must revert the complete 0033..0026 family"
     );
     let scheduler_gone: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
@@ -2037,7 +2045,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 24).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 8,
+        expected - 9,
         "undo to 0024 must revert only 0025"
     );
     let calendar_lookup_gone: Option<String> = sqlx::query_scalar(
@@ -2061,7 +2069,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 23).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 9,
+        expected - 10,
         "undo to 0023 must revert only 0024"
     );
     let source_index_gone: Option<String> =
@@ -2075,7 +2083,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 22).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 10,
+        expected - 11,
         "undo to 0022 must revert only 0023"
     );
     sqlx::query(
@@ -2088,7 +2096,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 21).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 11,
+        expected - 12,
         "undo to 0021 must revert only 0022"
     );
     for object in [
@@ -3136,16 +3144,29 @@ async fn recommendation_pipeline_contract_body(
     .unwrap_err();
     assert_eq!(pg_code(&incomplete_scheduled).as_deref(), Some("23514"));
 
-    let guarded_down = sqlx::raw_sql(RECOMMENDATION_PIPELINE_DOWN_SQL)
-        .execute(owner)
+    // SQLx 0.9 does not release its session advisory migration lock when an
+    // expected down migration fails. Keep that call on a known connection so
+    // the test can release the lock before exercising the successful retry.
+    let mut guarded_connection = owner.acquire().await?;
+    let guarded_down = MIGRATOR
+        .undo(&mut *guarded_connection, 25)
         .await
         .unwrap_err();
-    assert_eq!(pg_code(&guarded_down).as_deref(), Some("55000"));
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut *guarded_connection)
+        .await?;
+    drop(guarded_connection);
+    assert_eq!(migrate_pg_code(&guarded_down).as_deref(), Some("55000"));
     assert!(
         guarded_down
             .to_string()
-            .contains("0026 rollback blocked by scheduled recommendation lineage"),
+            .contains("recommendation rollback blocked by scheduled recommendation lineage"),
         "rollback guard must return a stable operator-facing error: {guarded_down}"
+    );
+    assert_eq!(
+        applied_count(owner).await?,
+        up_migration_count() as i64,
+        "rollback refusal must happen before the first recommendation-family down migration"
     );
     let function_after_failed_down: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
@@ -3154,6 +3175,49 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     assert!(function_after_failed_down.is_some());
+    let rollback_guard_after_failed_down: Option<String> = sqlx::query_scalar(
+        "SELECT to_regprocedure( \
+         'public.assert_no_scheduled_recommendation_lineage()')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(rollback_guard_after_failed_down.is_some());
+    for index in [
+        "public.jobs_typed_claim_idx",
+        "public.recommendation_runs_job_id_uq",
+        "public.recommendation_runs_scheduled_identity_uq",
+        "public.recommendation_items_run_instrument_key",
+        "public.target_portfolios_one_per_run",
+    ] {
+        let remaining: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
+            .bind(index)
+            .fetch_one(owner)
+            .await?;
+        assert!(
+            remaining.is_some(),
+            "rollback refusal must preserve {index}"
+        );
+    }
+    let constraint_after_failed_down: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_constraint \
+         WHERE conname = 'recommendation_items_run_instrument_key'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(constraint_after_failed_down, 1);
+    let grants_after_failed_down: (bool, bool, bool, bool) = sqlx::query_as(
+        "SELECT \
+           has_function_privilege( \
+             'worker', \
+             'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)', \
+             'EXECUTE'), \
+           has_table_privilege('worker', 'recommendation_runs', 'SELECT'), \
+           has_column_privilege('worker', 'recommendation_runs', 'status', 'UPDATE'), \
+           has_table_privilege('worker', 'recommendation_items', 'INSERT')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(grants_after_failed_down, (true, true, true, true));
     let lineage_after_failed_down: (i64, i64) = sqlx::query_as(
         "SELECT \
            (SELECT count(*) FROM recommendation_runs WHERE id = $1), \
@@ -3164,6 +3228,17 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(&worker)
     .await?;
     assert_eq!(lineage_after_failed_down, (1, 1));
+    let replay_after_failed_down: (Uuid, Uuid) = sqlx::query_as(SCHEDULE_SQL)
+        .bind(user_id)
+        .bind(config_id)
+        .bind("2026-08-11")
+        .bind(dataset_version_id)
+        .bind("a".repeat(64))
+        .bind(7_i32)
+        .bind(&expected_key)
+        .fetch_one(&worker)
+        .await?;
+    assert_eq!(replay_after_failed_down, first);
 
     sqlx::query("DELETE FROM target_portfolios WHERE recommendation_run_id = $1")
         .bind(first.0)
@@ -3182,7 +3257,7 @@ async fn recommendation_pipeline_contract_body(
     assert_eq!(
         applied_count(owner).await?,
         25,
-        "0032 through 0026 must reverse in dependency order"
+        "0033 through 0026 must reverse in dependency order"
     );
     let columns_after_down: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -3216,6 +3291,13 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     assert!(job_guard_after_down.is_none());
+    let rollback_guard_after_down: Option<String> = sqlx::query_scalar(
+        "SELECT to_regprocedure( \
+         'public.assert_no_scheduled_recommendation_lineage()')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(rollback_guard_after_down.is_none());
     for index in [
         "public.jobs_typed_claim_idx",
         "public.recommendation_runs_job_id_uq",
