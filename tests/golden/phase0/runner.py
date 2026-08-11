@@ -28,7 +28,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -43,9 +43,7 @@ for _path in (
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-import pyarrow as pa  # noqa: E402
-import pyarrow.parquet as pq  # noqa: E402
-
+import phase0_dataset  # noqa: E402
 import synth_data  # noqa: E402
 from golden_lib import canonical_json_bytes, hash_bytes  # noqa: E402
 
@@ -90,87 +88,6 @@ def assert_fresh_process() -> None:
             "isolation (ADR-005) requires one fresh process per run"
         )
     _guard_used = True
-
-
-# --------------------------------------------------------------------------- #
-# deterministic data materialization
-# --------------------------------------------------------------------------- #
-
-def _bars_table(rows: list[dict]) -> pa.Table:
-    schema = pa.schema([
-        pa.field("instrument_id", pa.string(), nullable=False),
-        pa.field("trading_date", pa.date32(), nullable=False),
-        pa.field("market_open_ts", pa.timestamp("us"), nullable=False),
-        pa.field("market_close_ts", pa.timestamp("us"), nullable=False),
-        pa.field("open", pa.decimal128(18, 4), nullable=False),
-        pa.field("high", pa.decimal128(18, 4), nullable=False),
-        pa.field("low", pa.decimal128(18, 4), nullable=False),
-        pa.field("close", pa.decimal128(18, 4), nullable=False),
-        pa.field("volume", pa.int64(), nullable=False),
-        pa.field("trading_value", pa.int64(), nullable=True),
-        pa.field("currency", pa.string(), nullable=False),
-        pa.field("source", pa.string(), nullable=False),
-        pa.field("ingested_at", pa.timestamp("us"), nullable=False),
-        pa.field("batch_id", pa.string(), nullable=False),
-        pa.field("raw_hash", pa.string(), nullable=False),
-    ])
-    rows = [{**r, "trading_date": date.fromisoformat(r["trading_date"])} for r in rows]
-    return pa.Table.from_pylist(rows, schema=schema)
-
-
-def _adjusted_table(rows: list[dict]) -> pa.Table:
-    schema = pa.schema([
-        pa.field("instrument_id", pa.string(), nullable=False),
-        pa.field("trading_date", pa.date32(), nullable=False),
-        pa.field("market_open_ts", pa.timestamp("us"), nullable=False),
-        pa.field("market_close_ts", pa.timestamp("us"), nullable=False),
-        pa.field("open", pa.decimal128(18, 4), nullable=False),
-        pa.field("high", pa.decimal128(18, 4), nullable=False),
-        pa.field("low", pa.decimal128(18, 4), nullable=False),
-        pa.field("close", pa.decimal128(18, 4), nullable=False),
-        pa.field("volume", pa.int64(), nullable=False),
-        pa.field("trading_value", pa.int64(), nullable=True),
-        pa.field("adjustment_kind", pa.string(), nullable=False),
-        pa.field("adjustment_factor", pa.decimal128(18, 8), nullable=False),
-        pa.field("adjustment_events", pa.string(), nullable=False),
-        pa.field("currency", pa.string(), nullable=False),
-        pa.field("source", pa.string(), nullable=False),
-        pa.field("ingested_at", pa.timestamp("us"), nullable=False),
-        pa.field("batch_id", pa.string(), nullable=False),
-        pa.field("raw_hash", pa.string(), nullable=False),
-    ])
-    rows = [{**r, "trading_date": date.fromisoformat(r["trading_date"])} for r in rows]
-    return pa.Table.from_pylist(rows, schema=schema)
-
-
-def materialize_curated_zone(rows: list[dict], curated_root: Path) -> None:
-    """Writes the deterministic curated parquet partitions (documented layout)."""
-    bars_table = _bars_table(rows)
-    # `split` with a cumulative factor of 1.0, which is exactly what this
-    # series is: split-adjusted, over synthetic data that has no corporate
-    # actions to adjust for. The earlier value here was "NONE", which is not
-    # one of the two names the documented contract defines
-    # (crates/market-data/src/curate/adjust.rs: `split` | `total_return`), so
-    # the Rust reader rejected the file the Python writer had just produced.
-    # Nothing noticed because nothing on the Rust side had ever read it.
-    adj_table = _adjusted_table(
-        [{**r, "adjustment_kind": "split", "adjustment_factor": 100_000_000,
-          "adjustment_events": "[]"} for r in rows]
-    )
-    seen: set[tuple[str, str]] = set()
-    for i, row in enumerate(rows):
-        iid = row["instrument_id"]
-        year = row["trading_date"][:4]
-        if (iid, year) in seen:
-            continue
-        seen.add((iid, year))
-        mask = pa.array(
-            [r["instrument_id"] == iid and r["trading_date"][:4] == year for r in rows]
-        )
-        part = curated_root / "curated" / "bars" / "market=kr" / f"symbol={iid}" / f"year={year}" / "version=1"
-        part.mkdir(parents=True, exist_ok=True)
-        pq.write_table(bars_table.filter(mask), part / "bars.parquet")
-        pq.write_table(adj_table.filter(mask), part / "adjusted_bars.parquet")
 
 
 def materialize_quotes(catalog: object, rows: list[dict], slippage_bps: int) -> None:
@@ -226,7 +143,7 @@ def run_golden(args: argparse.Namespace) -> tuple[object, dict, dict]:
     catalog_path = data_root / "catalog"
 
     rows = synth_data.generate_curated_rows()
-    materialize_curated_zone(rows, curated_root)
+    phase0_dataset.materialize_curated_zone(rows, curated_root)
     catalog = _catalog_builder.build_catalog(curated_root, catalog_path)
     catalog_obj = ParquetDataCatalog(path=str(catalog_path))
     materialize_quotes(catalog_obj, rows, args.slippage_bps)
