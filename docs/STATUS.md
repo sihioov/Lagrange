@@ -51,7 +51,7 @@
 |---|---|
 | Rust 워크스페이스 (08-10 기록) | **1,051개 통과** (Paper runner/valuation 이음매 테스트 11개 추가 포함) |
 | Rust 워크스페이스 (08-11 재실행) | **1,192개 통과, 4개 의도적 ignore, 실패 binary 0개** — `--no-fail-fast`, QA PostgreSQL 포함 |
-| Python (nt + 골든, 08-10 기준 실행) | **239개 통과**, 1 스킵 — 가격 보정 전 기준선의 역사적 실행 기록이며, 현재 v2 증거의 최신 전체 수치를 뜻하지 않음 |
+| Python (nt + 골든, 08-09 기준 실행) | **239개 통과**, 1 스킵 — 가격 보정 전 기준선의 역사적 실행 기록이며, 현재 v2 증거의 최신 전체 수치를 뜻하지 않음 |
 | Web (vitest + tsc) | **48개 통과**, `openapi:check` 클린, `tsc --noEmit` 클린 |
 | clippy (workspace, all-targets, all-features) | `-D warnings` 클린 (08-11 재실행) |
 | rustfmt (workspace) | **PASS** — 08-11 GitHub Actions 도입 시 기존 drift를 pinned rustfmt로 기계 정규화 |
