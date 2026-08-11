@@ -276,7 +276,7 @@ fn sample_manifest(run_id: Uuid, owner: Uuid, job_id: Uuid, seed: u64) -> Backte
             job_id: Some(job_id),
             strategy_id: "ma200-trend".to_owned(),
             strategy_version: "1.0.0".to_owned(),
-            dataset_version: "kr-etf-daily-phase0-v1".to_owned(),
+            dataset_version: "kr-etf-daily-phase0-v2".to_owned(),
             engine: "nautilustrader".to_owned(),
             engine_version: "1.231.0".to_owned(),
             config_sha256: "a".repeat(64),

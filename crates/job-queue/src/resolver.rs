@@ -32,7 +32,7 @@ use uuid::Uuid;
 /// numbers in the message, because a dataset does not grow between retries.
 ///
 /// Nothing is faked to unblock them. Extending the synthetic span would
-/// change `kr-etf-daily-phase0-v1`, which is a hashed golden identity, and
+/// create a new immutable version after `kr-etf-daily-phase0-v2`, and
 /// reimplementing their factors in Python would make a backtest disagree with
 /// the paper and live paths that use the Rust engine — the Paper promotion
 /// gate is a parity check between exactly those two.

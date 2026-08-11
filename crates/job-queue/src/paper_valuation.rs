@@ -20,8 +20,9 @@ use sqlx::{PgPool, Postgres, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::phase0::CURATED_VERSION;
+
 const MARKET: &str = "kr";
-const VERSION: u32 = 1;
 
 /// Result of writing (or discovering) one account/date valuation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -288,7 +289,7 @@ fn session_closes(
         .map_err(|e| ValuationError::Prices(format!("session year: {e}")))?;
     let mut closes = BTreeMap::new();
     for instrument in state.positions.keys() {
-        let path = store.bars_path(MARKET, &instrument.to_string(), year, VERSION);
+        let path = store.bars_path(MARKET, &instrument.to_string(), year, CURATED_VERSION);
         if !path.exists() {
             return Err(ValuationError::MissingMark {
                 instrument_id: instrument.clone(),

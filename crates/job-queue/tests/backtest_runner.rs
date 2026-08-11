@@ -145,7 +145,7 @@ async fn submit_backtest_for(
                 "kind": "backtest",
                 "run_id": Uuid::new_v4(),
                 "strategy_config_id": config_id,
-                "dataset_version_id": "kr-etf-daily-phase0-v1",
+                "dataset_version_id": "kr-etf-daily-phase0-v2",
                 "start_date": "2020-01-01",
                 "end_date": "2020-12-31",
                 "initial_cash": { "currency": "KRW", "amount": "100000000" },

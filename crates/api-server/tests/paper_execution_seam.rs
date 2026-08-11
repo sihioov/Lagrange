@@ -36,6 +36,7 @@ use api_server::repos::pending_targets::NewPendingTarget;
 use job_queue::paper_execution::{
     ExecutionOutcome, SessionInput, execute_session, targets_from_json,
 };
+use job_queue::phase0::CURATED_VERSION;
 
 /// The close that produced the target.
 const COMPUTED_ON: &str = "2020-01-20";
@@ -46,27 +47,11 @@ const UNPRICED_DATE: &str = "2020-01-22";
 
 /// A curated zone holding exactly the two sessions these tests execute.
 ///
-/// # Why this is not the committed phase-0 dataset
+/// # Why this remains tiny
 ///
-/// It should have been. `data/phase0` holds these very bars, and reusing a
-/// fixture always beats inventing one. But its prices are 10,000x too large as
-/// every Rust reader sees them: `tests/golden/phase0/synth_data.py` multiplies
-/// each price by 10,000 before handing it to pyarrow, which then applies the
-/// `decimal128(18, 4)` scale a second time — so the 10,150 KRW bar of
-/// 2020-01-20 reads back as 101,500,000.0000.
-///
-/// Nothing caught it because nothing had ever read an ABSOLUTE curated price:
-/// the factor engine computes moving averages and momentum ratios, which are
-/// invariant under a uniform scale factor. A Paper session is the first
-/// consumer that divides money by a price, and at 102,400,000 KRW a share it
-/// plans zero orders for any plausible account — a silent no-trade, not a
-/// failure.
-///
-/// That dataset is an approved golden fixture with a hashed identity
-/// (`kr-etf-daily-phase0-v1`), so it is not this story's to change. The bars
-/// below are the repository's own committed values from
-/// `tests/fixtures/kr-etf/2020-01-31/bars.json`, written at the scale the
-/// curated contract documents.
+/// The seam keeps only two sessions for speed. Its values match corrected
+/// Phase0 v2 and are written through the production schema at the active
+/// curated partition version.
 struct Dataset {
     /// Kept alive: dropping it deletes the zone.
     _dir: tempfile::TempDir,
@@ -115,7 +100,8 @@ fn curated_fixture() -> Dataset {
     let store = CurateStore::new(root.join("curated"));
     for (symbol, bars) in [("069500.KRX", BARS_069500), ("229200.KRX", BARS_229200)] {
         let rows: Vec<CuratedBar> = bars.iter().map(|b| curated_bar(symbol, b)).collect();
-        write_bars(&store.bars_path("kr", symbol, 2020, 1), &rows).expect("curated bars write");
+        write_bars(&store.bars_path("kr", symbol, 2020, CURATED_VERSION), &rows)
+            .expect("curated bars write");
     }
     Dataset { _dir: dir, root }
 }
@@ -218,7 +204,7 @@ async fn queue_target(
                 computed_on: date(computed_on),
                 effective_date: date(effective_date),
                 targets_json: targets,
-                dataset_version: Some("kr-etf-daily-phase0-v1".to_owned()),
+                dataset_version: Some("kr-etf-daily-phase0-v2".to_owned()),
             },
         )
         .await

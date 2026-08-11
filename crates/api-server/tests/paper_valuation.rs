@@ -8,6 +8,7 @@ use axum::http::StatusCode;
 use common::{Harness, UserCtx};
 use domain::{ContentHash, Currency, InstrumentId, Price, TradingDate, UtcTimestamp};
 use job_queue::paper_valuation::{ValuationError, ValuationOutcome, value_account};
+use job_queue::phase0::CURATED_VERSION;
 use market_data::CurateStore;
 use market_data::curate::schema::{CuratedBar, write_bars};
 use serde_json::json;
@@ -50,7 +51,7 @@ fn dataset(symbol: &str, date: &str, close: i64, close_at: &str) -> Dataset {
         raw_hash: ContentHash::from_bytes(b"paper-valuation"),
     };
     write_bars(
-        &store.bars_path("kr", symbol, 2020, 1),
+        &store.bars_path("kr", symbol, 2020, CURATED_VERSION),
         std::slice::from_ref(&bar),
     )
     .expect("write fixture bar");

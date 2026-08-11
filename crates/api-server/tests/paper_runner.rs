@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use api_server::paper_runner::{RunnerServices, parse_args, run_cycle};
 use api_server::repos::pending_targets::{NewPendingTarget, PendingTargetRepo};
+use job_queue::phase0::CURATED_VERSION;
 
 #[test]
 fn runner_cycle_api_exists() {
@@ -77,7 +78,7 @@ fn runner_dataset() -> Dataset {
         raw_hash: ContentHash::from_bytes(b"paper-runner"),
     };
     write_bars(
-        &store.bars_path("kr", "069500.KRX", 2020, 1),
+        &store.bars_path("kr", "069500.KRX", 2020, CURATED_VERSION),
         std::slice::from_ref(&bar),
     )
     .expect("write runner bar");

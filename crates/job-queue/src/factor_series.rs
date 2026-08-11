@@ -44,6 +44,8 @@ use market_data::curate::CurateStore;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::phase0::CURATED_VERSION;
+
 /// `date -> instrument -> factor -> raw value`.
 pub type FactorSeries = BTreeMap<String, BTreeMap<String, BTreeMap<String, f64>>>;
 
@@ -161,9 +163,15 @@ fn sessions_of(dataset_root: &Path, symbol: &str) -> Result<Vec<String>, FactorS
     // A far-future as_of so nothing is filtered: the point is the full span.
     let as_of = domain::TradingDate::parse("9999-12-31")
         .map_err(|e| FactorSeriesError::Dataset(e.to_string()))?;
-    let bars =
-        factor_engine::bars::Bars::from_curated(&store, "kr", "dataset", 1, &universe, as_of)
-            .map_err(|e| FactorSeriesError::Dataset(e.to_string()))?;
+    let bars = factor_engine::bars::Bars::from_curated(
+        &store,
+        "kr",
+        "dataset",
+        CURATED_VERSION,
+        &universe,
+        as_of,
+    )
+    .map_err(|e| FactorSeriesError::Dataset(e.to_string()))?;
     let id = universe
         .instruments()
         .next()
@@ -251,7 +259,7 @@ pub fn build(
         &store,
         "kr",
         "dataset",
-        1,
+        CURATED_VERSION,
     )
     .with_factors(factors_for(required_factors)?)
     .build()
@@ -342,7 +350,10 @@ mod tests {
         let dst = tempfile::tempdir().expect("tempdir");
         let market = src.join("curated/bars/market=kr");
         for symbol in std::fs::read_dir(&market).expect("market dir").flatten() {
-            let from = symbol.path().join(year).join("version=1");
+            let from = symbol
+                .path()
+                .join(year)
+                .join(format!("version={CURATED_VERSION}"));
             if !from.is_dir() {
                 continue;
             }
@@ -351,7 +362,7 @@ mod tests {
                 .join("curated/bars/market=kr")
                 .join(symbol.file_name())
                 .join(year)
-                .join("version=1");
+                .join(format!("version={CURATED_VERSION}"));
             std::fs::create_dir_all(&to).expect("mkdir");
             for file in std::fs::read_dir(&from).expect("partition").flatten() {
                 std::fs::copy(file.path(), to.join(file.file_name())).expect("copy");
@@ -368,7 +379,7 @@ mod tests {
             &store,
             "kr",
             "dataset",
-            1,
+            CURATED_VERSION,
         )
         .with_factors(factors_for(&["trend_50".to_string()]).expect("factor"))
         .build()

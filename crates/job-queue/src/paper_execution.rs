@@ -68,13 +68,13 @@ use sqlx::{PgPool, Postgres, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::phase0::CURATED_VERSION;
+
 /// The curated market partition this product trades.
 ///
 /// One market, one curated dataset version: the same constants
 /// `factor-engine`'s fixtures and the backtest runner use.
 const MARKET: &str = "kr";
-/// The curated dataset version (there is exactly one in this project).
-const VERSION: u32 = 1;
 
 /// The wall-clock instant a session's rows are stamped with.
 ///
@@ -467,7 +467,7 @@ fn session_opens(
 
     let mut opens = BTreeMap::new();
     for instrument in needed {
-        let path = store.bars_path(MARKET, &instrument.to_string(), year, VERSION);
+        let path = store.bars_path(MARKET, &instrument.to_string(), year, CURATED_VERSION);
         if !path.exists() {
             continue;
         }

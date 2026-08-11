@@ -91,7 +91,7 @@
   "run": {
     "code_commit": "0123456789abcdef0123456789abcdef01234567",
     "config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "dataset_version": "kr-etf-daily-phase0-v1",
+    "dataset_version": "kr-etf-daily-phase0-v2",
     "engine": "nautilustrader",
     "engine_version": "1.231.0",
     "id": "27dee8d0-0b93-42d7-95bb-30458e378503",
