@@ -189,6 +189,84 @@ subprocess.Popen([sys.executable, '-c', code, str(sentinel)], stderr=sys.stderr)
 }
 
 #[tokio::test]
+async fn descendant_with_closed_stdio_is_terminated_before_result_reading() {
+    let script = r#"
+import pathlib, subprocess, sys
+sentinel = pathlib.Path(__file__).resolve().parents[2] / 'closed-stdio-late-sentinel'
+code = "import pathlib, sys, time; time.sleep(2); pathlib.Path(sys.argv[1]).write_text('escaped')"
+subprocess.Popen(
+    [sys.executable, '-c', code, str(sentinel)],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    close_fds=True,
+)
+"#;
+    let (root, uv) = fake_project(script);
+    let sentinel = root.path().join("closed-stdio-late-sentinel");
+    let scratch = tempfile::tempdir().unwrap();
+    let error = run_target_child(
+        &paths_for(&root, uv, &scratch),
+        Uuid::new_v4(),
+        &request("buy_and_hold"),
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code(), "TARGET_CHILD_NO_RESULT");
+    tokio::time::sleep(Duration::from_millis(2_250)).await;
+    assert!(
+        !sentinel.exists(),
+        "closed-stdio descendant survived successful direct-child reap"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn child_status_symlink_is_rejected_without_following_it() {
+    let script = r#"
+import argparse, os
+p=argparse.ArgumentParser();p.add_argument('--request');p.add_argument('--result');p.add_argument('--status');a=p.parse_args()
+os.symlink('/dev/zero', a.status)
+raise SystemExit(1)
+"#;
+    let (root, uv) = fake_project(script);
+    let scratch = tempfile::tempdir().unwrap();
+    let error = run_target_child(
+        &paths_for(&root, uv, &scratch),
+        Uuid::new_v4(),
+        &request("buy_and_hold"),
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code(), "TARGET_CHILD_INVALID_STATUS");
+    assert_eq!(error.class(), ErrorClass::Integrity);
+}
+
+#[tokio::test]
+async fn scratch_cleanup_failure_overrides_the_lifecycle_error() {
+    let script = r#"
+import argparse, pathlib
+p=argparse.ArgumentParser();p.add_argument('--request');p.add_argument('--result');p.add_argument('--status');a=p.parse_args()
+owned = pathlib.Path(a.request).parent
+owned.rename(owned.with_name(owned.name + '-moved'))
+"#;
+    let (root, uv) = fake_project(script);
+    let scratch = tempfile::tempdir().unwrap();
+    let error = run_target_child(
+        &paths_for(&root, uv, &scratch),
+        Uuid::new_v4(),
+        &request("buy_and_hold"),
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code(), "TARGET_CHILD_CLEANUP_FAILED");
+    assert_eq!(error.class(), ErrorClass::Transient);
+}
+
+#[tokio::test]
 async fn oversized_result_status_and_stderr_are_bounded_and_classified() {
     let cases = [
         (
@@ -232,6 +310,11 @@ async fn nonzero_status_is_stable_and_malformed_or_missing_results_fail_closed()
             "import argparse,json\np=argparse.ArgumentParser();p.add_argument('--request');p.add_argument('--result');p.add_argument('--status');a=p.parse_args();json.dump({'code':'TARGET_GENERATION_FAILED','summary':'safe'},open(a.status,'w'));raise SystemExit(1)\n",
             "TARGET_GENERATION_FAILED",
             ErrorClass::Input,
+        ),
+        (
+            "import argparse,json\np=argparse.ArgumentParser();p.add_argument('--request');p.add_argument('--result');p.add_argument('--status');a=p.parse_args();json.dump({'code':'TARGET_GENERATOR_INTERNAL','summary':'safe'},open(a.status,'w'));raise SystemExit(1)\n",
+            "TARGET_GENERATOR_INTERNAL",
+            ErrorClass::Integrity,
         ),
         (
             "import argparse\np=argparse.ArgumentParser();p.add_argument('--request');p.add_argument('--result');p.add_argument('--status');a=p.parse_args();open(a.result,'w').write('{bad')\n",

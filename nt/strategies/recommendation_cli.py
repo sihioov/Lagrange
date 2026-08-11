@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+import stat
 import tempfile
 import uuid
 from datetime import date
@@ -171,15 +172,36 @@ def _validate_request(value: Any) -> dict[str, Any]:
 
 
 def _load_request(path: Path) -> dict[str, Any]:
+    descriptor: int | None = None
     try:
-        size = path.stat().st_size
-        if size > MAX_REQUEST_BYTES:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_NONBLOCK", 0)
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise CliError("REQUEST_UNAVAILABLE", "request file is unavailable")
+        if metadata.st_size > MAX_REQUEST_BYTES:
             raise CliError("REQUEST_TOO_LARGE", "request exceeds the size limit")
-        raw = path.read_bytes()
+        chunks: list[bytes] = []
+        remaining = MAX_REQUEST_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > MAX_REQUEST_BYTES:
+            raise CliError("REQUEST_TOO_LARGE", "request exceeds the size limit")
     except CliError:
         raise
     except OSError as error:
         raise CliError("REQUEST_UNAVAILABLE", "request file is unavailable") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     try:
         value = json.loads(
             raw,
@@ -236,8 +258,8 @@ def _atomic_write(path: Path, payload: bytes) -> None:
 def _generate(request: dict[str, Any]) -> dict[str, Any]:
     # The module path comes only from this literal mapping.  No request field
     # is ever interpreted as a module, function, or filesystem path.
-    module = importlib.import_module(GENERATORS[request["strategy_id"]])
     try:
+        module = importlib.import_module(GENERATORS[request["strategy_id"]])
         result = module.generate_target(
             request["parameters"],
             request["factors"],
@@ -247,7 +269,7 @@ def _generate(request: dict[str, Any]) -> dict[str, Any]:
     except TargetError as error:
         raise CliError("TARGET_GENERATION_FAILED", "target generation rejected its inputs") from error
     except Exception as error:
-        raise CliError("TARGET_GENERATION_FAILED", "target generation failed safely") from error
+        raise CliError("TARGET_GENERATOR_INTERNAL", "target generator failed safely") from error
     if type(result) is not dict:
         raise CliError("INVALID_TARGET", "target generator returned the wrong root type")
     provenance = request["provenance"]

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -184,7 +184,10 @@ impl TargetChildError {
         match self {
             Self::RequestTooLarge | Self::InvalidRequest => ErrorClass::Input,
             Self::ChildStatus { code }
-                if matches!(code.as_str(), "INVALID_TARGET" | "RESULT_TOO_LARGE") =>
+                if matches!(
+                    code.as_str(),
+                    "INVALID_TARGET" | "RESULT_TOO_LARGE" | "TARGET_GENERATOR_INTERNAL"
+                ) =>
             {
                 ErrorClass::Integrity
             }
@@ -284,7 +287,7 @@ async fn own_invocation(
     });
     let result = lifecycle.await.unwrap_or(Err(TargetChildError::OwnerTask));
     let cleanup = cleanup_scratch(invocation_dir, cleanup_deadline).await;
-    if cleanup.is_err() && result.is_ok() {
+    if cleanup.is_err() {
         return Err(TargetChildError::Cleanup);
     }
     result
@@ -455,10 +458,9 @@ async fn run_in_scratch(
             .as_std_mut()
             .creation_flags(windows_child_creation_flags());
     }
-    if cfg!(windows) {
-        if let Some(system_root) = std::env::var_os("SystemRoot") {
-            command.env("SystemRoot", system_root);
-        }
+    #[cfg(windows)]
+    {
+        command.env("SystemRoot", trusted_windows_root()?);
         let runtime_temp = std::env::temp_dir()
             .canonicalize()
             .map_err(|_| TargetChildError::UnsafePath)?;
@@ -479,7 +481,9 @@ async fn run_in_scratch(
         None => {
             let tree_terminated = process_tree.terminate().is_ok();
             let direct_reaped = settle_direct_child(&mut child, cleanup_deadline).await;
-            if tree_terminated && direct_reaped {
+            let tree_confirmed = tree_terminated
+                && confirm_process_tree_empty(&process_tree, cleanup_deadline).await;
+            if tree_confirmed && direct_reaped {
                 process_tree.disarm_reuse_sensitive_identity();
                 return Err(TargetChildError::Launch);
             }
@@ -518,6 +522,9 @@ async fn run_in_scratch(
             if !tree_terminated || !direct_reaped {
                 return Err(TargetChildError::Termination);
             }
+            if !confirm_process_tree_empty(&process_tree, cleanup_deadline).await {
+                return Err(TargetChildError::Termination);
+            }
             process_tree.disarm_reuse_sensitive_identity();
             return Err(TargetChildError::Exited);
         }
@@ -533,30 +540,29 @@ async fn run_in_scratch(
         }
     }
 
-    // On Unix, a numeric process-group ID can eventually be reused. Once the
-    // direct child is reaped and inherited stderr has reached a clean EOF,
-    // there is no remaining descendant to target, so Drop must not signal it.
+    // EOF only proves no descendant inherited this pipe. A descendant may
+    // have closed or redirected stderr, so explicitly empty the retained tree
+    // before trusting child output or releasing a reusable Unix PGID.
+    if process_tree.terminate().is_err()
+        || !confirm_process_tree_empty(&process_tree, operation_deadline).await
+    {
+        return Err(TargetChildError::Termination);
+    }
     process_tree.disarm_reuse_sensitive_identity();
 
     if tokio::time::Instant::now() >= operation_deadline {
         return Err(TargetChildError::Timeout);
     }
 
-    if status_path.exists() {
-        let status = read_status(&status_path)?;
+    if let Some(status) = read_status(&status_path, operation_deadline).await? {
         return Err(TargetChildError::ChildStatus { code: status.code });
-    }
-    if !result_path.exists() {
-        return Err(if exit.success() {
-            TargetChildError::NoResult
-        } else {
-            TargetChildError::Exited
-        });
     }
     if !exit.success() {
         return Err(TargetChildError::Exited);
     }
-    read_result(&result_path)
+    read_result(&result_path, operation_deadline)
+        .await?
+        .ok_or(TargetChildError::NoResult)
 }
 
 async fn terminate_and_settle(
@@ -570,11 +576,31 @@ async fn terminate_and_settle(
     let reader_settled = abort_reader_bounded(stderr_reader, cleanup_deadline)
         .await
         .is_ok();
-    if tree_terminated && direct_reaped && reader_settled {
+    let tree_confirmed =
+        tree_terminated && confirm_process_tree_empty(process_tree, cleanup_deadline).await;
+    if tree_confirmed && direct_reaped && reader_settled {
         process_tree.disarm_reuse_sensitive_identity();
         Ok(())
     } else {
         Err(TargetChildError::Termination)
+    }
+}
+
+async fn confirm_process_tree_empty(
+    process_tree: &ProcessTree,
+    deadline: tokio::time::Instant,
+) -> bool {
+    loop {
+        if process_tree.is_empty() {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep_until(
+            deadline.min(tokio::time::Instant::now() + Duration::from_millis(10)),
+        )
+        .await;
     }
 }
 
@@ -656,6 +682,19 @@ impl ProcessTree {
         } else {
             Err(TargetChildError::Termination)
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        if !self.arm.is_armed() {
+            return true;
+        }
+        let Some(process_group) = self.process_group else {
+            return false;
+        };
+        // SAFETY: signal zero probes the retained process group without
+        // changing process state.
+        let result = unsafe { libc::kill(-process_group, 0) };
+        result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
     }
 
     fn disarm_reuse_sensitive_identity(&mut self) {
@@ -752,6 +791,30 @@ fn resume_suspended_child(child: &tokio::process::Child) -> Result<(), TargetChi
 }
 
 #[cfg(windows)]
+fn trusted_windows_root() -> Result<PathBuf, TargetChildError> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW;
+
+    let mut buffer = vec![0_u16; 32_768];
+    // SAFETY: `buffer` is writable for the advertised number of u16 values.
+    let length = unsafe {
+        GetWindowsDirectoryW(
+            buffer.as_mut_ptr(),
+            u32::try_from(buffer.len()).map_err(|_| TargetChildError::UnsafePath)?,
+        )
+    };
+    let length = usize::try_from(length).map_err(|_| TargetChildError::UnsafePath)?;
+    if length == 0 || length >= buffer.len() {
+        return Err(TargetChildError::UnsafePath);
+    }
+    let root = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length]));
+    if !root.is_absolute() || !root.is_dir() {
+        return Err(TargetChildError::UnsafePath);
+    }
+    Ok(root)
+}
+
+#[cfg(windows)]
 struct ProcessTree {
     job: isize,
     arm: TerminationArm,
@@ -832,6 +895,33 @@ impl ProcessTree {
         }
     }
 
+    fn is_empty(&self) -> bool {
+        use windows_sys::Win32::System::JobObjects::{
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation,
+            QueryInformationJobObject,
+        };
+
+        if !self.arm.is_armed() {
+            return true;
+        }
+        let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        let Ok(size) = u32::try_from(std::mem::size_of_val(&accounting)) else {
+            return false;
+        };
+        // SAFETY: `accounting` is the exact query type and `self.handle()` is
+        // owned and live for the duration of this synchronous call.
+        let queried = unsafe {
+            QueryInformationJobObject(
+                self.handle(),
+                JobObjectBasicAccountingInformation,
+                (&raw mut accounting).cast(),
+                size,
+                std::ptr::null_mut(),
+            )
+        };
+        queried != 0 && accounting.ActiveProcesses == 0
+    }
+
     fn handle(&self) -> windows_sys::Win32::Foundation::HANDLE {
         self.job as windows_sys::Win32::Foundation::HANDLE
     }
@@ -904,21 +994,21 @@ async fn drain_bounded(
     Ok(kept)
 }
 
-fn read_status(path: &Path) -> Result<ChildStatus, TargetChildError> {
-    if fs::metadata(path)
-        .map_err(|_| TargetChildError::InvalidStatus)?
-        .len()
-        > MAX_STATUS_BYTES
-    {
-        return Err(TargetChildError::StatusTooLarge);
-    }
-    let bytes = fs::read(path).map_err(|_| TargetChildError::InvalidStatus)?;
+async fn read_status(
+    path: &Path,
+    deadline: tokio::time::Instant,
+) -> Result<Option<ChildStatus>, TargetChildError> {
+    let Some(bytes) =
+        read_bounded_regular(path, MAX_STATUS_BYTES, OutputFileKind::Status, deadline).await?
+    else {
+        return Ok(None);
+    };
     let status: ChildStatus =
         serde_json::from_slice(&bytes).map_err(|_| TargetChildError::InvalidStatus)?;
     if !is_stable_child_code(&status.code) || status.summary.len() > 512 {
         return Err(TargetChildError::InvalidStatus);
     }
-    Ok(status)
+    Ok(Some(status))
 }
 
 fn is_stable_child_code(code: &str) -> bool {
@@ -931,22 +1021,116 @@ fn is_stable_child_code(code: &str) -> bool {
             | "INVALID_JSON"
             | "REQUEST_UNAVAILABLE"
             | "TARGET_GENERATION_FAILED"
+            | "TARGET_GENERATOR_INTERNAL"
             | "INVALID_TARGET"
             | "RESULT_TOO_LARGE"
             | "CHILD_INTERNAL_ERROR"
     )
 }
 
-fn read_result(path: &Path) -> Result<TargetChildOutput, TargetChildError> {
-    if fs::metadata(path)
-        .map_err(|_| TargetChildError::InvalidResult)?
-        .len()
-        > MAX_RESULT_BYTES
-    {
-        return Err(TargetChildError::ResultTooLarge);
+async fn read_result(
+    path: &Path,
+    deadline: tokio::time::Instant,
+) -> Result<Option<TargetChildOutput>, TargetChildError> {
+    let Some(bytes) =
+        read_bounded_regular(path, MAX_RESULT_BYTES, OutputFileKind::Result, deadline).await?
+    else {
+        return Ok(None);
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|_| TargetChildError::InvalidResult)
+}
+
+#[derive(Clone, Copy)]
+enum OutputFileKind {
+    Status,
+    Result,
+}
+
+impl OutputFileKind {
+    const fn invalid(self) -> TargetChildError {
+        match self {
+            Self::Status => TargetChildError::InvalidStatus,
+            Self::Result => TargetChildError::InvalidResult,
+        }
     }
-    let bytes = fs::read(path).map_err(|_| TargetChildError::InvalidResult)?;
-    serde_json::from_slice(&bytes).map_err(|_| TargetChildError::InvalidResult)
+
+    const fn too_large(self) -> TargetChildError {
+        match self {
+            Self::Status => TargetChildError::StatusTooLarge,
+            Self::Result => TargetChildError::ResultTooLarge,
+        }
+    }
+}
+
+async fn read_bounded_regular(
+    path: &Path,
+    limit: u64,
+    kind: OutputFileKind,
+    deadline: tokio::time::Instant,
+) -> Result<Option<Vec<u8>>, TargetChildError> {
+    let owned_path = path.to_path_buf();
+    let task = tokio::task::spawn_blocking(move || {
+        read_bounded_regular_blocking(&owned_path, limit, kind)
+    });
+    match tokio::time::timeout_at(deadline, task).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err(kind.invalid()),
+        Err(_) => Err(TargetChildError::Timeout),
+    }
+}
+
+fn read_bounded_regular_blocking(
+    path: &Path,
+    limit: u64,
+    kind: OutputFileKind,
+) -> Result<Option<Vec<u8>>, TargetChildError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(kind.invalid()),
+    };
+    let metadata = file.metadata().map_err(|_| kind.invalid())?;
+    if !metadata.is_file() {
+        return Err(kind.invalid());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(kind.invalid());
+        }
+    }
+    if metadata.len() > limit {
+        return Err(kind.too_large());
+    }
+
+    let read_limit = limit.checked_add(1).ok_or_else(|| kind.too_large())?;
+    let initial_capacity = usize::try_from(read_limit.min(8192)).map_err(|_| kind.too_large())?;
+    let mut bytes = Vec::with_capacity(initial_capacity);
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|_| kind.invalid())?;
+    if u64::try_from(bytes.len()).map_err(|_| kind.too_large())? > limit {
+        return Err(kind.too_large());
+    }
+    Ok(Some(bytes))
 }
 
 fn finite_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
@@ -974,6 +1158,39 @@ where
 #[cfg(test)]
 mod lifecycle_state_tests {
     use super::*;
+
+    #[test]
+    fn concurrent_output_growth_never_returns_more_than_limit() {
+        use std::sync::{Arc, Barrier};
+
+        let root = tempfile::tempdir().expect("temp output root");
+        let path = root.path().join("growing-result.json");
+        fs::write(&path, b"seed").expect("seed result");
+        let barrier = Arc::new(Barrier::new(2));
+        let writer_barrier = Arc::clone(&barrier);
+        let writer_path = path.clone();
+        let writer = std::thread::spawn(move || {
+            let mut file = OpenOptions::new()
+                .append(true)
+                .open(writer_path)
+                .expect("open growing result");
+            writer_barrier.wait();
+            for _ in 0..512 {
+                file.write_all(&[b'x'; 4096]).expect("grow result");
+                std::thread::yield_now();
+            }
+        });
+        barrier.wait();
+
+        let outcome = read_bounded_regular_blocking(&path, 64 * 1024, OutputFileKind::Result);
+        writer.join().expect("writer joins");
+
+        match outcome {
+            Ok(Some(bytes)) => assert!(bytes.len() <= 64 * 1024),
+            Err(TargetChildError::ResultTooLarge) => {}
+            other => panic!("unexpected bounded read outcome: {other:?}"),
+        }
+    }
 
     #[test]
     fn termination_arm_starts_disarmed_and_can_be_armed() {
@@ -1029,5 +1246,13 @@ mod lifecycle_state_tests {
             windows_child_creation_flags() & CREATE_SUSPENDED,
             CREATE_SUSPENDED
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_root_is_derived_from_the_os_not_the_parent_environment() {
+        let root = trusted_windows_root().expect("trusted Windows root");
+        assert!(root.is_absolute());
+        assert!(root.is_dir());
     }
 }

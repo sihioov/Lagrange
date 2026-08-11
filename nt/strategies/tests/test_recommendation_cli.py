@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from strategy_helpers import NT_ROOT, STRATEGIES, load_package
+from strategies import recommendation_cli
 
 
 MEMBERS = [
@@ -60,19 +61,26 @@ def request_for(strategy_id: str) -> dict:
         "as_of": "2020-12-30",
         "universe": MEMBERS,
         "factors": factors,
-        "provenance": PROVENANCE,
+        "provenance": dict(PROVENANCE),
     }
 
 
-def run_cli(tmp_path: Path, request: object, *, raw: bytes | None = None):
-    request_path = tmp_path / "request.json"
+def run_cli(
+    tmp_path: Path,
+    request: object,
+    *,
+    raw: bytes | None = None,
+    request_path: Path | None = None,
+):
+    request_path = request_path or tmp_path / "request.json"
     result_path = tmp_path / "result.json"
     status_path = tmp_path / "status.json"
-    request_path.write_bytes(
-        raw
-        if raw is not None
-        else json.dumps(request, sort_keys=True, allow_nan=True).encode("utf-8")
-    )
+    if not request_path.exists():
+        request_path.write_bytes(
+            raw
+            if raw is not None
+            else json.dumps(request, sort_keys=True, allow_nan=True).encode("utf-8")
+        )
     env = os.environ.copy()
     env["PYTHONPATH"] = str(NT_ROOT)
     completed = subprocess.run(
@@ -196,6 +204,98 @@ def test_oversized_and_malformed_requests_have_bounded_sanitized_status(tmp_path
         encoded = json.dumps(status).encode("utf-8")
         assert len(encoded) <= 16 * 1024
         assert "xxxxx" not in status["summary"]
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="platform lacks no-follow open")
+def test_request_symlink_is_rejected_without_following_external_bytes(tmp_path):
+    request_link = tmp_path / "request.json"
+    request_link.symlink_to("/dev/zero")
+
+    completed, result, status, _ = run_cli(
+        tmp_path,
+        {},
+        request_path=request_link,
+    )
+
+    assert completed.returncode != 0
+    assert result is None
+    assert status["code"] == "REQUEST_UNAVAILABLE"
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "expected_code"),
+    [
+        (lambda: recommendation_cli.TargetError("EXPECTED", "request-secret"), "TARGET_GENERATION_FAILED"),
+        (lambda: RuntimeError("unexpected request-secret"), "TARGET_GENERATOR_INTERNAL"),
+    ],
+)
+def test_expected_and_unexpected_generator_errors_are_separated_and_sanitized(
+    tmp_path, monkeypatch, error_factory, expected_code
+):
+    request = request_for("buy_and_hold")
+
+    class BrokenGenerator:
+        @staticmethod
+        def generate_target(*_args):
+            raise error_factory()
+
+    monkeypatch.setattr(
+        recommendation_cli.importlib,
+        "import_module",
+        lambda _module: BrokenGenerator,
+    )
+    request_path = tmp_path / "request.json"
+    result_path = tmp_path / "result.json"
+    status_path = tmp_path / "status.json"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+
+    exit_code = recommendation_cli.main(
+        [
+            "--request",
+            str(request_path),
+            "--result",
+            str(result_path),
+            "--status",
+            str(status_path),
+        ]
+    )
+
+    status = json.loads(status_path.read_text("utf-8"))
+    assert exit_code != 0
+    assert not result_path.exists()
+    assert status["code"] == expected_code
+    assert "request-secret" not in status["summary"]
+    assert "069500.KRX" not in status["summary"]
+
+
+def test_unexpected_generator_import_error_is_internal_and_sanitized(tmp_path, monkeypatch):
+    request = request_for("buy_and_hold")
+
+    def fail_import(_module):
+        raise RuntimeError("unexpected import request-secret")
+
+    monkeypatch.setattr(recommendation_cli.importlib, "import_module", fail_import)
+    request_path = tmp_path / "request.json"
+    result_path = tmp_path / "result.json"
+    status_path = tmp_path / "status.json"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+
+    exit_code = recommendation_cli.main(
+        [
+            "--request",
+            str(request_path),
+            "--result",
+            str(result_path),
+            "--status",
+            str(status_path),
+        ]
+    )
+
+    status = json.loads(status_path.read_text("utf-8"))
+    assert exit_code != 0
+    assert not result_path.exists()
+    assert status["code"] == "TARGET_GENERATOR_INTERNAL"
+    assert "request-secret" not in status["summary"]
 
 
 def test_stale_result_is_removed_on_failure(tmp_path):
