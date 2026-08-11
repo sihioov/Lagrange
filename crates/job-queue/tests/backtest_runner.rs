@@ -24,6 +24,18 @@ use sqlx::PgPool;
 use std::path::PathBuf;
 use uuid::Uuid;
 
+// Every test below provisions cluster-global roles and several of them launch
+// a memory-heavy NautilusTrader child. Running this one integration binary at
+// the default test-harness parallelism races role bootstrap on a fresh
+// PostgreSQL cluster and can exhaust a small CI runner before a child writes
+// its terminal status. Product workers remain concurrent; only these
+// disposable end-to-end environments are serialized.
+static BACKTEST_RUNNER_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn serial_backtest_environment() -> tokio::sync::MutexGuard<'static, ()> {
+    BACKTEST_RUNNER_TEST.lock().await
+}
+
 /// Resolves every config id to the phase-0 golden strategy.
 ///
 /// A stand-in for the real registry lookup, and deliberately still a LOOKUP:
@@ -190,6 +202,7 @@ fn walk(root: &std::path::Path) -> Vec<String> {
 
 #[tokio::test]
 async fn a_submitted_backtest_actually_runs_and_finishes() {
+    let _serial = serial_backtest_environment().await;
     // THE test. Submit the way the route does; run the way a daemon does;
     // assert on the job's own final state and the artifacts on disk.
     let Some(db) = ScratchDb::create().await else {
@@ -236,6 +249,7 @@ async fn a_submitted_backtest_actually_runs_and_finishes() {
 
 #[tokio::test]
 async fn an_empty_queue_is_idle_rather_than_an_error() {
+    let _serial = serial_backtest_environment().await;
     // The normal case most of the time. A runner that treated "nothing to do"
     // as a failure would fill its logs and its retry counters with noise.
     //
@@ -257,6 +271,7 @@ async fn an_empty_queue_is_idle_rather_than_an_error() {
 
 #[tokio::test]
 async fn a_runner_fault_requeues_the_job_instead_of_discarding_it() {
+    let _serial = serial_backtest_environment().await;
     // A resolver outage is the RUNNER's problem, not the user's. The job must
     // come back QUEUED so a later attempt can succeed -- discarding it would
     // lose work that was never given a fair chance.
@@ -314,6 +329,7 @@ async fn seed_strategy_config(pool: &PgPool, owner: Uuid) -> Uuid {
 
 #[tokio::test]
 async fn the_daemon_drains_a_real_job_under_the_worker_role() {
+    let _serial = serial_backtest_environment().await;
     // The end of the chain, and the only test here that uses none of the
     // doubles: the real binary, the real `DbStrategyResolver`, and a
     // connection as `worker` rather than as superuser.
@@ -455,6 +471,7 @@ fn reported_rows(scratch: &std::path::Path, artifact_type: &str) -> Option<u64> 
 
 #[tokio::test]
 async fn a_baseline_backtest_produces_orders_rather_than_an_empty_success() {
+    let _serial = serial_backtest_environment().await;
     // The defect this exists for: every baseline adapter recorded its
     // decisions in `order_intents` and submitted nothing, while the worker
     // collects with `getattr(strategy, "orders", [])`. The getattr default
@@ -503,6 +520,7 @@ async fn a_baseline_backtest_produces_orders_rather_than_an_empty_success() {
 
 #[tokio::test]
 async fn a_fill_is_charged_the_profile_the_runner_resolved() {
+    let _serial = serial_backtest_environment().await;
     // Backtests used to report zero fees on every fill, so an equity curve
     // was the one a strategy would have earned paying nothing. Nothing
     // complained: the normalizer, the cash ledger, the fees artifact and the
@@ -568,6 +586,7 @@ async fn a_fill_is_charged_the_profile_the_runner_resolved() {
 
 #[tokio::test]
 async fn a_factor_driven_strategy_trades_on_the_computed_series() {
+    let _serial = serial_backtest_environment().await;
     // The end of the factor chain: the runner computes `vol_60` with the Rust
     // factor-engine, embeds the series in the worker request, the adapter
     // hands those values to the Python target generator, and the resulting
@@ -613,6 +632,7 @@ async fn a_factor_driven_strategy_trades_on_the_computed_series() {
 
 #[tokio::test]
 async fn a_strategy_that_reads_two_factors_executes_the_invested_branch() {
+    let _serial = serial_backtest_environment().await;
     // `trend_following` compares two factors rather than ranking one, so it
     // exercises a different path through the series into the generator.
     //
@@ -659,6 +679,7 @@ async fn a_strategy_that_reads_two_factors_executes_the_invested_branch() {
 
 #[tokio::test]
 async fn parameters_that_ask_for_an_undeclared_factor_fail_loudly() {
+    let _serial = serial_backtest_environment().await;
     // The silent empty success, reachable through a configuration the product
     // ALLOWS -- which is why the earlier guard was not enough on its own.
     //
@@ -711,6 +732,7 @@ async fn parameters_that_ask_for_an_undeclared_factor_fail_loudly() {
 
 #[tokio::test]
 async fn a_dataset_too_short_for_a_strategy_fails_permanently() {
+    let _serial = serial_backtest_environment().await;
     // `dual_momentum` needs 252 sessions of history and phase-0 holds 260,
     // which leaves no month-end that is not also the final session. There is
     // no honest rebalance date, so the run must fail.
@@ -753,6 +775,7 @@ async fn a_dataset_too_short_for_a_strategy_fails_permanently() {
 
 #[tokio::test]
 async fn a_config_that_does_not_exist_fails_now_rather_than_three_times() {
+    let _serial = serial_backtest_environment().await;
     // The mirror of the test above, and the reason resolution has a typed
     // error at all. A config id that does not exist produces the identical
     // answer on every attempt, so requeueing it spends the job's remaining
@@ -791,6 +814,7 @@ async fn a_config_that_does_not_exist_fails_now_rather_than_three_times() {
 
 #[tokio::test]
 async fn a_claimed_job_never_stays_running() {
+    let _serial = serial_backtest_environment().await;
     // Whatever happens, the row must not be left RUNNING. A job stuck there is
     // one the user sees as neither running nor failed, until a sweeper
     // eventually notices -- and "eventually" is what makes it a bad experience
