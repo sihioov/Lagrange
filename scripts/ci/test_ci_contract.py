@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import unittest
 from pathlib import Path
@@ -34,6 +36,19 @@ class WorkflowContractTests(unittest.TestCase):
     def test_all_shell_scripts_are_checked_out_with_lf(self) -> None:
         attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
         self.assertIn("*.sh text eol=lf", attributes)
+
+    def test_robustness_golden_files_are_portable_lf_artifacts(self) -> None:
+        attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+        self.assertIn("tests/golden/robustness/**/*.json text eol=lf", attributes)
+
+        golden_root = ROOT / "tests" / "golden" / "robustness"
+        manifest = json.loads((golden_root / "golden-set.json").read_text("utf-8"))
+        for artifact in manifest["artifacts"]:
+            payload = (golden_root / artifact["path"]).read_bytes().replace(
+                b"\r\n", b"\n"
+            )
+            actual = f"sha256:{hashlib.sha256(payload).hexdigest()}"
+            self.assertEqual(actual, artifact["sha256"], artifact["id"])
 
     def test_triggers_have_no_schedule(self) -> None:
         _, ci = load_workflow("ci.yml")
@@ -79,6 +94,18 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("cargo fmt --all -- --check", text)
         self.assertIn("CARGO_INCREMENTAL: '0'", text)
+        policy_steps = ci["jobs"]["policy"]["steps"]
+        setup_node = next(
+            step
+            for step in policy_steps
+            if step.get("uses", "").startswith("actions/setup-node@")
+        )
+        self.assertEqual(setup_node.get("with", {}).get("node-version"), "24")
+        self.assertIn(
+            "python -m pip install --disable-pip-version-check --no-cache-dir "
+            "pyarrow==25.0.0 uv==0.12.1",
+            text,
+        )
         qa_compose = (ROOT / "deploy" / "qa" / "qa-db.compose.yml").read_text(
             encoding="utf-8"
         )
@@ -90,6 +117,13 @@ class WorkflowContractTests(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
         self.assertIn("bash scripts/qa/research-worker-smoke.sh", text)
         self.assertNotIn("--static-only", text)
+
+        script = (ROOT / "scripts" / "qa" / "research-worker-smoke.sh").read_text(
+            encoding="utf-8"
+        )
+        function = script.split("schema_gate_must_pass() {", 1)[1].split("}", 1)[0]
+        self.assertIn("schema_output=", function)
+        self.assertNotIn(">/dev/null 2>&1", function)
 
 
 if __name__ == "__main__":

@@ -1,2 +1,3 @@
 *.sh text eol=lf
 scripts/qa/*.sh text eol=lf
+tests/golden/robustness/**/*.json text eol=lf

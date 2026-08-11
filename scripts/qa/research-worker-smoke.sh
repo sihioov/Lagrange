@@ -458,7 +458,11 @@ while IFS= read -r migration; do
 done < <(find "$root/migrations" -maxdepth 1 -type f -name '*.up.sql' | sort)
 
 schema_gate_must_pass() {
-  rc run --rm --no-deps research-schema-check >/dev/null 2>&1 || fail "research-schema-check rejected $1"
+  local schema_output
+  if ! schema_output="$(rc run --rm --no-deps research-schema-check 2>&1)"; then
+    printf '%s\n' "$schema_output" >&2
+    fail "research-schema-check rejected $1"
+  fi
 }
 schema_gate_must_fail() {
   if rc run --rm --no-deps research-schema-check >/dev/null 2>&1; then fail "research-schema-check accepted $1"; fi
