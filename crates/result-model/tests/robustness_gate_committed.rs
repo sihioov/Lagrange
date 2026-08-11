@@ -29,7 +29,7 @@ fn robustness_committed_five_strategy_golden_gate_approves() {
         .expect("committed golden-set.json must parse and match the committed artifacts");
 
     // The gate checks the five canonical strategies + seven artifacts.
-    assert_eq!(golden_set.golden_id, "kr-etf-five-strategies-v1");
+    assert_eq!(golden_set.golden_id, "kr-etf-five-strategies-v2");
     assert_eq!(golden_set.artifacts.len(), 35);
     assert_eq!(artifacts.len(), 35);
 

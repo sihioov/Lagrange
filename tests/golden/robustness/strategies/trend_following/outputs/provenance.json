@@ -1,10 +1,10 @@
 {
-  "code_commit": "3ee8a2ae78f1a8d4a91934ba0cb44d23dfbe1129",
+  "code_commit": "9f319ca55679a801402da92df23a8c49291da645",
   "config_hash": "sha256:b0fb93dd776ca1dbfc2374724b69ad3a99efa2e0dde3f06796eea40834057bfd",
   "data_generator": "synth_data",
-  "data_generator_version": "1.0.0",
+  "data_generator_version": "2.0.0",
   "data_seed": 42,
-  "dataset_version": "kr-etf-daily-phase0-v1",
+  "dataset_version": "kr-etf-daily-phase0-v2",
   "engine": "lagrange-golden-sim",
   "engine_version": "1.0.0",
   "note": "locks the deterministic target->next-open execution simulation; the NautilusTrader engine path is locked by the phase0 goldens.",

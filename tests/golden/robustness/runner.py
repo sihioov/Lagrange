@@ -493,6 +493,12 @@ def build_artifacts(strategy_id: str, params: dict, orders: list[dict], fills: l
 # golden-set.json (Rust core-gate GoldenSet shape)
 # --------------------------------------------------------------------------- #
 
+def write_json(path: Path, content: dict) -> None:
+    """Write deterministic UTF-8 JSON with LF line endings on every OS."""
+    payload = json.dumps(content, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
+    path.write_bytes(payload.encode("utf-8"))
+
+
 def write_golden_set() -> None:
     artifacts = []
     for strategy in STRATEGY_IDS:
@@ -504,19 +510,21 @@ def write_golden_set() -> None:
                 "sha256": f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}",
             })
     golden_set = {
-        "golden_id": "kr-etf-five-strategies-v1",
+        "golden_id": "kr-etf-five-strategies-v2",
         "versions": {
-            "data": {"id": synth_data.DATA_VERSION, "version": "1.0.0", "source": "synthetic"},
+            "data": {
+                "id": synth_data.DATA_VERSION,
+                "version": synth_data.GENERATOR_VERSION,
+                "source": "synthetic",
+            },
             "engine": {"name": SIM_ENGINE, "version": SIM_VERSION},
-            "config": {"id": "golden-config-five-strategies-v1"},
+            "config": {"id": "golden-config-five-strategies-v2"},
             "seed": synth_data.SEED,
             "timezone": TIMEZONE,
         },
         "artifacts": artifacts,
     }
-    GOLDEN_SET_OUT.write_text(
-        json.dumps(golden_set, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write_json(GOLDEN_SET_OUT, golden_set)
 
 
 # --------------------------------------------------------------------------- #
@@ -547,10 +555,7 @@ def main(argv: list[str] | None = None) -> int:
     for name in ARTIFACTS:
         key = f"{name}.json"
         path = outputs_dir / key
-        path.write_text(
-            json.dumps(artifacts[key], indent=2, sort_keys=True, ensure_ascii=True) + "\n",
-            encoding="utf-8",
-        )
+        write_json(path, artifacts[key])
     artifact_hashes = {
         name: hashlib.sha256((outputs_dir / f"{name}.json").read_bytes()).hexdigest()
         for name in ARTIFACTS
@@ -569,9 +574,7 @@ def main(argv: list[str] | None = None) -> int:
         "num_fills": len(artifacts["fills.json"]["fills"]),
         "num_signals": len(artifacts["recommendation.json"]["signals"]),
     }
-    (out_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write_json(out_dir / "summary.json", summary)
     if args.write_golden_set:
         write_golden_set()
     print(json.dumps(summary, sort_keys=True))

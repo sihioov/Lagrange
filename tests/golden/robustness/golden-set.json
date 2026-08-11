@@ -33,7 +33,7 @@
     {
       "id": "buy_and_hold/provenance",
       "path": "strategies/buy_and_hold/outputs/provenance.json",
-      "sha256": "sha256:7df7218c18f34893614de4f477f8db3f691e057ba476e1a0cdfc0f905cb43b02"
+      "sha256": "sha256:2a6693d5e62679a55846b5b600b887f06ed969b559e0d8612ecb4de05ff36e53"
     },
     {
       "id": "trend_following/recommendation",
@@ -68,7 +68,7 @@
     {
       "id": "trend_following/provenance",
       "path": "strategies/trend_following/outputs/provenance.json",
-      "sha256": "sha256:353d46954994dcc7348a9627f6feded42098395e4591b3951157abd2cbc7fe12"
+      "sha256": "sha256:901898ef147a7b4ab30f6875edb75f79b15d1284649bacf6ce57c0ffa158f938"
     },
     {
       "id": "relative_momentum/recommendation",
@@ -103,7 +103,7 @@
     {
       "id": "relative_momentum/provenance",
       "path": "strategies/relative_momentum/outputs/provenance.json",
-      "sha256": "sha256:be599a33190ffaa971b7b874c9b1fa3735d645b60b72db9afe9b6281171c9a7a"
+      "sha256": "sha256:12e3d82ea1c842c2c96b5a2781d611bc1d94f3142776b7a14ec682aa449b32ac"
     },
     {
       "id": "dual_momentum/recommendation",
@@ -138,7 +138,7 @@
     {
       "id": "dual_momentum/provenance",
       "path": "strategies/dual_momentum/outputs/provenance.json",
-      "sha256": "sha256:a5745d5ae454ec80188a4b1e3fa7f2ab09499b72851d7b15d22870a258ce1fd2"
+      "sha256": "sha256:4985c63e0d499f558ad9b2742cd1226b81cbadda228a8cf841537f59eb5b948c"
     },
     {
       "id": "inverse_volatility/recommendation",
@@ -173,18 +173,18 @@
     {
       "id": "inverse_volatility/provenance",
       "path": "strategies/inverse_volatility/outputs/provenance.json",
-      "sha256": "sha256:20c9c8e4b5d371d6fb00f230a41b57edc8e5b6732a7829616d35c0b8c62bc940"
+      "sha256": "sha256:328f205c51f5e843c8ca0326cbe748c115e6be260edbffe0ab1b2d01c81ce430"
     }
   ],
-  "golden_id": "kr-etf-five-strategies-v1",
+  "golden_id": "kr-etf-five-strategies-v2",
   "versions": {
     "config": {
-      "id": "golden-config-five-strategies-v1"
+      "id": "golden-config-five-strategies-v2"
     },
     "data": {
-      "id": "kr-etf-daily-phase0-v1",
+      "id": "kr-etf-daily-phase0-v2",
       "source": "synthetic",
-      "version": "1.0.0"
+      "version": "2.0.0"
     },
     "engine": {
       "name": "lagrange-golden-sim",

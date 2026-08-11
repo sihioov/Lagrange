@@ -62,7 +62,7 @@ fn five_strategy_golden_set() -> (GoldenSet, Vec<(String, Vec<u8>)>) {
         }
     }
     let set = GoldenSet {
-        golden_id: "kr-etf-five-strategies-v1".to_owned(),
+        golden_id: "kr-etf-five-strategies-v2".to_owned(),
         versions: serde_json::json!({
             "engine": {"name": "lagrange-golden-sim", "version": "1.0.0"},
             "timezone": "Asia/Seoul",

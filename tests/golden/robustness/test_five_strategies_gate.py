@@ -37,6 +37,8 @@ SCRIPTS_GOLDEN = REPO_ROOT / "scripts" / "golden"
 if str(SCRIPTS_GOLDEN) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_GOLDEN))
 
+import golden_lib as gl  # noqa: E402
+
 STRATEGIES = [
     "buy_and_hold",
     "trend_following",
@@ -53,7 +55,13 @@ ARTIFACTS = [
     "metrics",
     "provenance",
 ]
-GOLDEN_ID = "kr-etf-five-strategies-v1"
+GOLDEN_ID = "kr-etf-five-strategies-v2"
+DATA_ID = "kr-etf-daily-phase0-v2"
+GENERATOR_VERSION = "2.0.0"
+CONFIG_ID = "golden-config-five-strategies-v2"
+CODE_COMMIT = "9f319ca55679a801402da92df23a8c49291da645"
+CODE_TREE = "fcd39ad2aa99804bc9354eb8812171e335e4b3d1"
+GOLDEN_JSON = DIR / "golden.json"
 GOLDEN_SET = DIR / "golden-set.json"
 MANIFEST = DIR / "manifest.json"
 
@@ -123,6 +131,74 @@ def materialize_golden_tree(tmp: Path) -> Path:
     return tree
 
 
+def _load_committed_evidence() -> tuple[dict, dict, dict, dict[str, dict]]:
+    golden = json.loads(GOLDEN_JSON.read_text(encoding="utf-8"))
+    golden_set = json.loads(GOLDEN_SET.read_text(encoding="utf-8"))
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    provenance = {
+        strategy: json.loads(
+            (DIR / "strategies" / strategy / "outputs" / "provenance.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for strategy in STRATEGIES
+    }
+    return golden, golden_set, manifest, provenance
+
+
+def _assert_robustness_evidence_consistent(
+    golden: dict,
+    golden_set: dict,
+    manifest: dict,
+    provenance: dict[str, dict],
+    repo_root: Path = REPO_ROOT,
+) -> None:
+    """Cross-check the independently committed robustness evidence."""
+    assert golden["golden_id"] == GOLDEN_ID, "golden identity is not the approved v2 ID"
+    assert golden_set["golden_id"] == GOLDEN_ID, "golden-set identity mismatch"
+    assert manifest["golden_id"] == GOLDEN_ID, "manifest golden identity mismatch"
+
+    expected_data = {"id": DATA_ID, "version": GENERATOR_VERSION, "source": "synthetic"}
+    assert golden["versions"]["data"] == expected_data, "golden data identity mismatch"
+    assert golden_set["versions"]["data"] == expected_data, "golden-set data identity mismatch"
+    assert manifest["versions"]["data"] == expected_data, "manifest data identity mismatch"
+
+    assert golden["versions"]["config"]["id"] == CONFIG_ID, "golden config identity mismatch"
+    assert golden_set["versions"]["config"]["id"] == CONFIG_ID, "golden-set config identity mismatch"
+    assert manifest["versions"]["config"]["id"] == CONFIG_ID, "manifest config identity mismatch"
+    expected_config_hash = gl.hash_bytes(gl.canonical_json_bytes(golden))
+    assert (
+        manifest["versions"]["config"]["hash"] == expected_config_hash
+    ), "config hash does not match canonical golden config"
+
+    code = manifest["versions"]["code"]
+    assert code["commit"] == CODE_COMMIT, "manifest code commit is not the approved pin"
+    assert code["tree"] == CODE_TREE, "manifest code tree is not the approved pin"
+    for strategy, artifact in provenance.items():
+        assert artifact["dataset_version"] == DATA_ID, f"{strategy} dataset_version mismatch"
+        assert (
+            artifact["data_generator_version"] == GENERATOR_VERSION
+        ), f"{strategy} data_generator_version mismatch"
+        assert artifact["code_commit"] == CODE_COMMIT, f"{strategy} code_commit mismatch"
+
+    resolved_commit = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{CODE_COMMIT}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    assert resolved_commit.returncode == 0, f"manifest code commit does not exist: {CODE_COMMIT}"
+    assert resolved_commit.stdout.strip() == CODE_COMMIT, "manifest code commit is not canonical"
+    resolved_tree = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{CODE_COMMIT}^{{tree}}"],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    assert resolved_tree.returncode == 0, f"cannot resolve code tree for commit: {CODE_COMMIT}"
+    assert resolved_tree.stdout.strip() == CODE_TREE, "manifest code tree does not match the commit"
+
+
 def test_five_strategies_run_deterministically(tmp_path: Path) -> None:
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -145,6 +221,15 @@ def test_five_strategies_run_deterministically(tmp_path: Path) -> None:
         assert len(fills["fills"]) > 0, f"{strategy} produced zero fills (vacuous golden)"
 
 
+def test_runner_writes_platform_independent_lf(tmp_path: Path) -> None:
+    out_dir = tmp_path / "run"
+    proc = run_runner(STRATEGIES[0], out_dir)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    generated = list((out_dir / "outputs").glob("*.json")) + [out_dir / "summary.json"]
+    for path in generated:
+        assert b"\r\n" not in path.read_bytes(), f"{path.name} must use LF on every platform"
+
+
 def test_committed_golden_set_verifies() -> None:
     assert GOLDEN_SET.exists(), "committed golden-set.json missing"
     failures = verify_golden_set(GOLDEN_SET, DIR)
@@ -154,11 +239,52 @@ def test_committed_golden_set_verifies() -> None:
     assert manifest["versions"]["engine"]["name"] == "lagrange-golden-sim"
 
 
+@pytest.mark.parametrize("document", ["golden", "golden-set", "manifest"])
+def test_robustness_evidence_rejects_stale_golden_identity(document: str) -> None:
+    golden, golden_set, manifest, provenance = _load_committed_evidence()
+    {"golden": golden, "golden-set": golden_set, "manifest": manifest}[document][
+        "golden_id"
+    ] += "-stale"
+    with pytest.raises(AssertionError, match="identity"):
+        _assert_robustness_evidence_consistent(golden, golden_set, manifest, provenance)
+
+
+def test_robustness_evidence_rejects_mutated_config_hash() -> None:
+    golden, golden_set, manifest, provenance = _load_committed_evidence()
+    manifest["versions"]["config"]["hash"] = "sha256:" + "0" * 64
+    with pytest.raises(AssertionError, match="config hash"):
+        _assert_robustness_evidence_consistent(golden, golden_set, manifest, provenance)
+
+
+@pytest.mark.parametrize("field", ["dataset_version", "data_generator_version", "code_commit"])
+def test_robustness_evidence_rejects_stale_provenance(field: str) -> None:
+    golden, golden_set, manifest, provenance = _load_committed_evidence()
+    provenance[STRATEGIES[0]][field] += "-stale"
+    with pytest.raises(AssertionError, match=field):
+        _assert_robustness_evidence_consistent(golden, golden_set, manifest, provenance)
+
+
+def test_robustness_evidence_rejects_wrong_commit_pin() -> None:
+    golden, golden_set, manifest, provenance = _load_committed_evidence()
+    manifest["versions"]["code"]["commit"] = "0" * 40
+    with pytest.raises(AssertionError, match="code commit"):
+        _assert_robustness_evidence_consistent(golden, golden_set, manifest, provenance)
+
+
+def test_robustness_evidence_rejects_wrong_tree_pin() -> None:
+    golden, golden_set, manifest, provenance = _load_committed_evidence()
+    manifest["versions"]["code"]["tree"] = "0" * 40
+    with pytest.raises(AssertionError, match="code tree"):
+        _assert_robustness_evidence_consistent(golden, golden_set, manifest, provenance)
+
+
 def test_committed_manifest_verifies() -> None:
     assert MANIFEST.exists(), "committed manifest.json missing"
     verify = verify_todo6_manifest(MANIFEST)
     assert verify.returncode == 0, verify.stdout + verify.stderr
     assert "VERDICT: PASS" in verify.stdout
+    golden, golden_set, manifest, provenance = _load_committed_evidence()
+    _assert_robustness_evidence_consistent(golden, golden_set, manifest, provenance)
 
 
 def test_unapproved_golden_delta_fails(tmp_path: Path) -> None:

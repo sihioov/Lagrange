@@ -1,29 +1,31 @@
 {
   "artifact_hashes": {
-    "equity": "3c9736e835771097c521a51360a57ecddea07637257e899ae8d56e3bd3d02f5b",
-    "fees": "a2e5fb7570b3c70f9378eec146265f2bc45684637467bc5c5bda464bfcc04a6a",
-    "fills": "d684b61bd05b1dad176486eb9deede115287cc872d38e0491f35a108266aec4d",
-    "metrics": "8795f4b1ff95b4b77e8e3e791adddd7e056c7d0ddbe1ce0f35c92d1c4852634c",
-    "orders": "c1f1c7f9fd0c3495c5e51d4ee816d20d7e5f6b09f13b41bf360efa2e962e363a",
-    "provenance": "c174546cec1b2319d69a7370706955ad045c3554edb09d268a39567bec7156a9",
-    "recommendation": "a224c40a13896f0045b24db348200f5c97d88e22e3af5d4daae07d718e974b0a"
+    "equity": "f44529ec7d33a63dd48ca9e8a3f1471ff1623b5576ff9a9d78d93d20c3a0f8fe",
+    "fees": "58c3ca6206ea32e441a85f4e77d6b613a3ad836e5e34ed857a984c6f77afd694",
+    "fills": "e730630aab97b1a76ba4379ce9471446167ae61284426895b1ccf1ad6da1423f",
+    "metrics": "4434981a8505093a38842a9dcb8e1de7d3edaa579e39dc77d3c6bf7c83c27bdc",
+    "orders": "c6549c93ab0c9247238ac9ad3d4bab51cd72bbc064b65ea67b9793408c213a23",
+    "provenance": "328f205c51f5e843c8ca0326cbe748c115e6be260edbffe0ab1b2d01c81ce430",
+    "recommendation": "26a978e4f149dedd6a115457cb37e826869841b64c95eba1ebc67beb304e3445"
   },
   "num_fills": 3,
   "num_signals": 780,
   "process": {
     "argv": [
-      "tests\\golden\\robustness\\runner.py",
+      "tests/golden/robustness/runner.py",
       "--strategy-id",
       "inverse_volatility",
       "--out-dir",
-      "tests\\golden\\robustness\\strategies\\inverse_volatility"
+      "tests/golden/robustness/strategies/inverse_volatility",
+      "--code-commit",
+      "9f319ca55679a801402da92df23a8c49291da645"
     ],
-    "pid": 12248
+    "pid": 42352
   },
   "status": "PASS",
   "strategy_id": "inverse_volatility",
   "versions": {
-    "data": "kr-etf-daily-phase0-v1",
+    "data": "kr-etf-daily-phase0-v2",
     "engine": "lagrange-golden-sim",
     "engine_version": "1.0.0",
     "strategy": "1.0.0"
