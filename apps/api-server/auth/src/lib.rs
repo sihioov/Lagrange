@@ -388,19 +388,25 @@ async fn step_up_check(State(state): State<RouterState>, headers: HeaderMap) -> 
 }
 
 /// Production OIDC transport: token exchange + JWKS fetch over HTTPS.
-/// PKCE S256 replaces the client secret (Auth0 confidential-app best
-/// practice); `client_secret` is deliberately absent.
+/// PKCE S256 protects the authorization code; the client secret authenticates
+/// the confidential server-side application.
 pub struct HttpOidcTransport {
     pub token_url: String,
     pub jwks_url: String,
+    client_secret: config::ClientSecret,
     client: reqwest::Client,
 }
 
 impl HttpOidcTransport {
-    pub fn new(token_url: impl Into<String>, jwks_url: impl Into<String>) -> Self {
+    pub fn new(
+        token_url: impl Into<String>,
+        jwks_url: impl Into<String>,
+        client_secret: config::ClientSecret,
+    ) -> Self {
         Self {
             token_url: token_url.into(),
             jwks_url: jwks_url.into(),
+            client_secret,
             client: reqwest::Client::builder()
                 .user_agent("lagrange-station-api-server")
                 .build()
@@ -424,6 +430,7 @@ impl auth::oidc::OidcTransport for HttpOidcTransport {
                 ("redirect_uri", &request.redirect_uri),
                 ("client_id", &request.client_id),
                 ("code_verifier", &request.code_verifier),
+                ("client_secret", self.client_secret.expose()),
             ])
             .send()
             .await
