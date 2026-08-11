@@ -425,6 +425,56 @@ async fn attest_error(worker: &PgPool, fixture: &ManualFixture) -> Recommendatio
 }
 
 #[tokio::test]
+async fn dataset_row_manifest_mismatch_is_permanent_integrity_failure() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let fixture = seed_manual_fixture(&db.pool, "manifest_row_mismatch", "READY").await;
+    sqlx::query("UPDATE dataset_versions SET manifest_sha256 = repeat('c', 64) WHERE id = $1")
+        .bind(fixture.dataset_id)
+        .execute(&db.pool)
+        .await
+        .expect("diverge only the dataset row manifest");
+    let worker = PgPool::connect(&db.role_url("worker"))
+        .await
+        .expect("connect worker");
+
+    let (run_manifest, dataset_manifest): (String, String) = sqlx::query_as(
+        "SELECT run.dataset_manifest_sha256, dataset.manifest_sha256 \
+         FROM recommendation_runs AS run \
+         JOIN dataset_versions AS dataset ON dataset.id = run.dataset_version_id \
+         WHERE run.id = $1",
+    )
+    .bind(fixture.run_id)
+    .fetch_one(&worker)
+    .await
+    .expect("read divergent manifests");
+    assert_eq!(
+        run_manifest, fixture.payload.dataset.manifest_sha256,
+        "run lineage and submitted payload must still agree"
+    );
+    assert_ne!(dataset_manifest, fixture.payload.dataset.manifest_sha256);
+
+    let error = attest_error(&worker, &fixture).await;
+    assert_eq!(error.class(), ErrorClass::Integrity);
+    assert!(
+        !error.class().retryable(),
+        "integrity failures are permanent"
+    );
+    assert!(
+        matches!(
+            error,
+            RecommendationInputError::Integrity { detail }
+                if detail == "dataset manifest hash does not match payload"
+        ),
+        "the dataset-row comparison branch must reject the mismatch"
+    );
+
+    worker.close().await;
+    db.drop_db().await;
+}
+
+#[tokio::test]
 async fn attestation_rejects_foreign_stale_and_mismatched_rows_with_typed_classes() {
     let Some(db) = ScratchDb::create().await else {
         return;
