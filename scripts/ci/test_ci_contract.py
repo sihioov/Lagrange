@@ -31,6 +31,10 @@ def action_uses(workflow: dict) -> list[str]:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_all_shell_scripts_are_checked_out_with_lf(self) -> None:
+        attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+        self.assertIn("*.sh text eol=lf", attributes)
+
     def test_triggers_have_no_schedule(self) -> None:
         _, ci = load_workflow("ci.yml")
         _, smoke = load_workflow("research-smoke.yml")

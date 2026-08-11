@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.2
+      - run: bash scripts/check-pins.sh
+      - run: bash scripts/validate-foundation.sh
+      - run: python -m unittest scripts.ci.test_ci_contract -v
+
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  workspace-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: postgres://postgres:lagrange@127.0.0.1:55432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check --no-cache-dir pyarrow==25.0.0
+      - run: python scripts/ci/prepare_phase0.py --root data/phase0
+      - run: docker compose -f deploy/qa/qa-db.compose.yml up -d --wait
+      - run: cargo test --workspace --locked --no-fail-fast
+      - if: always()
+        run: docker compose -f deploy/qa/qa-db.compose.yml down -v --remove-orphans
+
+  required:
+    if: always()
+    needs: [policy, format, clippy, workspace-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all CI jobs
+        env:
+          POLICY_RESULT: ${{ needs.policy.result }}
+          FORMAT_RESULT: ${{ needs.format.result }}
+          CLIPPY_RESULT: ${{ needs.clippy.result }}
+          TEST_RESULT: ${{ needs.workspace-tests.result }}
+        run: |
+          test "$POLICY_RESULT" = success
+          test "$FORMAT_RESULT" = success
+          test "$CLIPPY_RESULT" = success
+          test "$TEST_RESULT" = success
