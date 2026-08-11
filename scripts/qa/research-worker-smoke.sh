@@ -455,7 +455,7 @@ while IFS= read -r migration; do
   version=$((10#${migration_base:0:4}))
   description="${migration_base:5}"
   dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U lagrange -d lagrange \
-    -c "INSERT INTO _sqlx_migrations(version, description, success, checksum, execution_time) VALUES ($version, '$description', true, decode(repeat('00', 32), 'hex'), 0)" >/dev/null || fail "migration ledger insert failed: $migration_name"
+    -c "INSERT INTO _sqlx_migrations(version, description, success, checksum, execution_time) VALUES ($version, '$description', true, decode(repeat('00', 32), 'hex'), 0)" </dev/null >/dev/null || fail "migration ledger insert failed: $migration_name"
 done < <(find "$root/migrations" -maxdepth 1 -type f -name '*.up.sql' | sort)
 
 ledger_state="$(

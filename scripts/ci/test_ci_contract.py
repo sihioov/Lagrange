@@ -136,6 +136,16 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("ledger_state=", script)
         self.assertIn('if [ "$ledger_state" != "25|4" ]', script)
 
+        migration_loop = script.split("while IFS= read -r migration; do", 1)[1].split(
+            "done < <(", 1
+        )[0]
+        ledger_insert = next(
+            line
+            for line in migration_loop.splitlines()
+            if '-c "INSERT INTO _sqlx_migrations' in line
+        )
+        self.assertIn("</dev/null", ledger_insert)
+
 
 if __name__ == "__main__":
     unittest.main()
