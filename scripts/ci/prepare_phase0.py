@@ -36,12 +36,14 @@ def prepare(root: Path) -> dict[str, object]:
         raise ValueError("destination must be absent or empty")
     root.mkdir(parents=True, exist_ok=True)
     rows = synth_data.generate_curated_rows()
-    phase0_dataset.materialize_curated_zone(rows, root / "curated")
+    phase0_dataset.materialize_curated_zone(
+        rows, root / "curated", version=synth_data.CURATED_VERSION
+    )
     counts: dict[str, int] = {}
     paths = sorted(
         root.glob(
             "curated/curated/bars/market=kr/"
-            "symbol=*/year=*/version=1/bars.parquet"
+            f"symbol=*/year=*/version={synth_data.CURATED_VERSION}/bars.parquet"
         )
     )
     for path in paths:
@@ -54,6 +56,8 @@ def prepare(root: Path) -> dict[str, object]:
         )
     return {
         "root": str(root.relative_to(ROOT)),
+        "dataset_version": synth_data.DATA_VERSION,
+        "curated_version": synth_data.CURATED_VERSION,
         "sessions": counts,
         "total_bars": sum(counts.values()),
     }

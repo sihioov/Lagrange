@@ -7,9 +7,9 @@ The curated zone is READ-ONLY input: the builder never writes back into it.
 Contract:
 
 - One `SessionOpenEvent` per (instrument, session) at `market_open_ts` and one
-  `DailyBarClosedEvent` at `market_close_ts`; prices are int64 fixed-point
-  scale 4 and adjustment factors scale 8, exactly as stored by the Curated
-  zone (no floats, no rounding).
+  `DailyBarClosedEvent` at `market_close_ts`; logical Curated decimals are
+  converted exactly to int64 fixed-point prices at scale 4 and adjustment
+  factors at scale 8 (no floats, no rounding).
 - Deterministic ordering is enforced by `validate_event_stream`: equal or
   out-of-order timestamps and duplicate session opens are rejected with typed
   errors (never silent).
@@ -101,9 +101,20 @@ def _require_columns(table: pa.Table, columns: Iterable[str], path: Path) -> Non
             )
 
 
-def _fixed_to_int(table: pa.Table, column: str) -> list[int]:
-    """Decimal128(18,4) column -> int64 fixed-point (unscaled) values."""
-    return [int(v) for v in table.column(column).cast(pa.int64()).to_pylist()]
+def _fixed_to_int(table: pa.Table, column: str, scale: int) -> list[int]:
+    """Logical Decimal column -> exact fixed-point raw integer values."""
+    values: list[int] = []
+    factor = 10 ** scale
+    for value in table.column(column).to_pylist():
+        if value is None or not value.is_finite():
+            raise CatalogBuilderError(f"curated column {column!r} must contain finite decimals")
+        scaled = value * factor
+        if scaled != scaled.to_integral_value():
+            raise CatalogBuilderError(
+                f"curated column {column!r} value {value} is not representable at scale {scale}"
+            )
+        values.append(int(scaled))
+    return values
 
 
 def _micros_to_nanos(table: pa.Table, column: str) -> list[int]:
@@ -168,8 +179,12 @@ def _read_curated_rows(curated_root: Path) -> list[dict[str, Any]]:
     bars_dir = curated_root / "curated" / "bars"
     if not bars_dir.is_dir():
         raise CatalogBuilderError(f"curated bars zone missing: {bars_dir}")
+    bars_paths = sorted(bars_dir.rglob("bars.parquet"))
+    versions = sorted({path.parent.name for path in bars_paths})
+    if len(versions) > 1:
+        raise CatalogBuilderError(f"mixed curated versions: {', '.join(versions)}")
     rows: list[dict[str, Any]] = []
-    for bars_path in sorted(bars_dir.rglob("bars.parquet")):
+    for bars_path in bars_paths:
         version = bars_path.parent.name.removeprefix("version=")
         table = pq.read_table(bars_path)
         _require_columns(table, CURATED_BARS_COLUMNS, bars_path)
@@ -178,15 +193,15 @@ def _read_curated_rows(curated_root: Path) -> list[dict[str, Any]]:
         if adj_path.exists():
             adj = pq.read_table(adj_path)
             _require_columns(adj, CURATED_ADJUSTED_COLUMNS, adj_path)
-            factors = [int(v) for v in adj.column("adjustment_factor").cast(pa.int64()).to_pylist()]
+            factors = _fixed_to_int(adj, "adjustment_factor", 8)
         instrument_ids = table.column("instrument_id").to_pylist()
         trading_dates = table.column("trading_date").cast(pa.string()).to_pylist()
         opens_ts = [int(v) for v in table.column("market_open_ts").cast(pa.int64()).to_pylist()]
         closes_ts = [int(v) for v in table.column("market_close_ts").cast(pa.int64()).to_pylist()]
-        opens = _fixed_to_int(table, "open")
-        highs = _fixed_to_int(table, "high")
-        lows = _fixed_to_int(table, "low")
-        closes = _fixed_to_int(table, "close")
+        opens = _fixed_to_int(table, "open", 4)
+        highs = _fixed_to_int(table, "high", 4)
+        lows = _fixed_to_int(table, "low", 4)
+        closes = _fixed_to_int(table, "close", 4)
         volumes = [int(v) for v in table.column("volume").to_pylist()]
         currencies = table.column("currency").to_pylist()
         for i, _ in enumerate(instrument_ids):

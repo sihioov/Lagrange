@@ -48,7 +48,9 @@ def _load_phase0():
 def build_dataset(data_root: Path) -> Path:
     synth, runner = _load_phase0()
     rows = synth.generate_curated_rows()
-    runner.materialize_curated_zone(rows, data_root / "curated")
+    runner.phase0_dataset.materialize_curated_zone(
+        rows, data_root / "curated", version=synth.CURATED_VERSION
+    )
     return data_root
 
 
@@ -77,7 +79,7 @@ def make_request(dataset: Path, run_id: str | None = None) -> dict:
         },
         "strategy_id": "ma200-trend",
         "strategy_version": "1.0.0",
-        "dataset_version": "kr-etf-daily-phase0-v1",
+        "dataset_version": "kr-etf-daily-phase0-v2",
         "dataset_path": str(dataset),
         "engine_version": "1.231.0",
         "code_commit": "0123456789abcdef0123456789abcdef01234567",

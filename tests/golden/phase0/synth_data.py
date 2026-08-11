@@ -32,20 +32,24 @@ import json
 import math
 import random
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_BARS = REPO_ROOT / "tests" / "fixtures" / "kr-etf" / "2020-01-31" / "bars.json"
 
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "2.0.0"
 SEED = 42
 SESSIONS = 260
-DATA_VERSION = "kr-etf-daily-phase0-v1"
+DATA_VERSION = "kr-etf-daily-phase0-v2"
+CURATED_VERSION = 2
 MA_PERIOD = 200
 PHASE_B_START = 200  # session index (0-based) where the uptrend begins
 PHASE_B_SESSIONS = 30
 PHASE_C_DRIFT = -0.025
 PRICE_SCALE = 4
+PRICE_FACTOR = 10 ** PRICE_SCALE
+PRICE_QUANTUM = Decimal("0.0001")
 
 INSTRUMENTS = ("069500.KRX", "229200.KRX", "114260.KRX")
 
@@ -232,6 +236,21 @@ def quote_raw_for_open(open_raw4: int, slippage_bps: int) -> tuple[int, int]:
     )
 
 
+def krw_decimal(value: int) -> Decimal:
+    """Logical KRW value encoded at the curated scale-4 boundary."""
+    return Decimal(value).quantize(PRICE_QUANTUM)
+
+
+def decimal_to_raw4(value: Decimal) -> int:
+    """Convert a logical KRW Decimal to its exact scale-4 raw integer."""
+    if not value.is_finite():
+        raise ValueError("KRW decimal must be finite")
+    scaled = value * PRICE_FACTOR
+    if scaled != scaled.to_integral_value():
+        raise ValueError("KRW decimal must be exactly representable at scale 4")
+    return int(scaled)
+
+
 def generate_curated_rows() -> list[dict]:
     """Curated-zone rows (documented schema) for the full 260-session series.
 
@@ -247,10 +266,10 @@ def generate_curated_rows() -> list[dict]:
             "trading_date": bar["date"],
             "market_open_ts": int(open_dt.timestamp() * 1_000_000),
             "market_close_ts": int(close_dt.timestamp() * 1_000_000),
-            "open": int(bar["open"]) * 10_000,
-            "high": int(bar["high"]) * 10_000,
-            "low": int(bar["low"]) * 10_000,
-            "close": int(bar["close"]) * 10_000,
+            "open": krw_decimal(int(bar["open"])),
+            "high": krw_decimal(int(bar["high"])),
+            "low": krw_decimal(int(bar["low"])),
+            "close": krw_decimal(int(bar["close"])),
             "volume": int(bar["volume"]),
             "trading_value": int(bar["value"]),
             "currency": "KRW",

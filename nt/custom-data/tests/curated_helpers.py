@@ -32,6 +32,7 @@ import importlib
 import json
 import sys
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import pyarrow as pa
@@ -77,8 +78,8 @@ def session_instants(iso_date: str) -> tuple[int, int]:
 def golden_bars_rows() -> list[dict]:
     """The golden 2020-01-31 fixture bars (3 seed ETFs x 9 KRX sessions).
 
-    Prices are returned as int64 fixed-point scale-4 (KRW/10^4), matching the
-    curated Decimal128(18,4) unscaled values.
+    Prices are returned as logical four-decimal KRW values, matching the
+    curated Decimal128(18,4) value contract.
     """
     with open(FIXTURE_BARS, encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -91,10 +92,10 @@ def golden_bars_rows() -> list[dict]:
                 "trading_date": bar["date"],
                 "market_open_ts": open_ts,
                 "market_close_ts": close_ts,
-                "open": int(bar["open"]) * 10_000,
-                "high": int(bar["high"]) * 10_000,
-                "low": int(bar["low"]) * 10_000,
-                "close": int(bar["close"]) * 10_000,
+                "open": Decimal(bar["open"]).quantize(Decimal("0.0001")),
+                "high": Decimal(bar["high"]).quantize(Decimal("0.0001")),
+                "low": Decimal(bar["low"]).quantize(Decimal("0.0001")),
+                "close": Decimal(bar["close"]).quantize(Decimal("0.0001")),
                 "volume": bar["volume"],
                 "trading_value": bar["value"],
                 "currency": doc["currency"],
@@ -143,7 +144,8 @@ def adjusted_rows(bars: list[dict]) -> list[dict]:
     """
     out = []
     for row in bars:
-        out.append({**row, "adjustment_kind": "split", "adjustment_factor": 100_000_000,
+        out.append({**row, "adjustment_kind": "split",
+                    "adjustment_factor": Decimal("1.00000000"),
                     "adjustment_events": "[]"})
     return out
 

@@ -7,6 +7,7 @@ session events hard-fail) and an unregistered class hard-fails before
 simulation.
 """
 import json
+import shutil
 
 import pytest
 
@@ -65,6 +66,15 @@ def test_rebuild_produces_identical_hashes(builder, curated_root, tmp_path):
     for rel in files1:
         assert (catalog1 / rel).read_bytes() == (catalog2 / rel).read_bytes(), rel
     assert (catalog1 / "manifest.json").read_bytes() == (catalog2 / "manifest.json").read_bytes()
+
+
+def test_builder_rejects_mixed_curated_versions(builder, curated_root, tmp_path):
+    mixed_root = tmp_path / "mixed-curated"
+    shutil.copytree(curated_root, mixed_root)
+    version1 = next((mixed_root / "curated" / "bars").rglob("version=1"))
+    shutil.copytree(version1, version1.with_name("version=2"))
+    with pytest.raises(Exception, match="mixed curated versions"):
+        builder.build_catalog(mixed_root, tmp_path / "catalog")
 
 
 def test_builder_accepts_only_documented_schema(builder, tmp_path):

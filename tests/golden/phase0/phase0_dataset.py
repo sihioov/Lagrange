@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pyarrow as pa
@@ -55,11 +56,11 @@ def _adjusted_table(rows: list[dict]) -> pa.Table:
     return pa.Table.from_pylist(rows, schema=schema)
 
 
-def materialize_curated_zone(rows: list[dict], curated_root: Path) -> None:
+def materialize_curated_zone(rows: list[dict], curated_root: Path, *, version: int) -> None:
     """Write deterministic curated Parquet partitions in the Phase 0 layout."""
     bars_table = _bars_table(rows)
     adj_table = _adjusted_table(
-        [{**r, "adjustment_kind": "split", "adjustment_factor": 100_000_000,
+        [{**r, "adjustment_kind": "split", "adjustment_factor": Decimal("1.00000000"),
           "adjustment_events": "[]"} for r in rows]
     )
     seen: set[tuple[str, str]] = set()
@@ -79,7 +80,7 @@ def materialize_curated_zone(rows: list[dict], curated_root: Path) -> None:
             / "market=kr"
             / f"symbol={iid}"
             / f"year={year}"
-            / "version=1"
+            / f"version={version}"
         )
         part.mkdir(parents=True, exist_ok=True)
         pq.write_table(bars_table.filter(mask), part / "bars.parquet")

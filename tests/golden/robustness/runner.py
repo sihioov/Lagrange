@@ -109,8 +109,8 @@ def session_schedule(rows: list[dict]) -> list[tuple[str, dict[str, int], dict[s
     for row in rows:
         day = by_date.setdefault(row["trading_date"], {})
         day[row["instrument_id"]] = {
-            "open": int(row["open"]),
-            "close": int(row["close"]),
+            "open": synth_data.decimal_to_raw4(row["open"]),
+            "close": synth_data.decimal_to_raw4(row["close"]),
         }
     schedule = [
         (date, {iid: bars["open"] for iid, bars in days.items()},

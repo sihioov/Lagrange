@@ -30,6 +30,7 @@ import json
 import shutil
 import subprocess
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -127,6 +128,15 @@ def _load_synth() -> object:
 def _expected_open_by_session() -> dict[tuple[str, str], int]:
     """Independent AT-02 expectation: raw opens from the synthetic generator."""
     return {(bar["instrument"], bar["date"]): bar["open"] for bar in _load_synth().generate_bars()}
+
+
+def test_decimal_krw_converts_to_exact_raw4() -> None:
+    synth = _load_synth()
+    assert synth.decimal_to_raw4(Decimal("10150.0000")) == 101_500_000
+    with pytest.raises(ValueError, match="scale 4"):
+        synth.decimal_to_raw4(Decimal("10150.00001"))
+    with pytest.raises(ValueError, match="finite"):
+        synth.decimal_to_raw4(Decimal("NaN"))
 
 
 # --------------------------------------------------------------------------- #

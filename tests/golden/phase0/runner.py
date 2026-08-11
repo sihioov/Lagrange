@@ -94,7 +94,7 @@ def materialize_quotes(catalog: object, rows: list[dict], slippage_bps: int) -> 
     """QuoteTick per session open: bid = open - slip, ask = open + slip."""
     quotes = []
     for row in rows:
-        open_raw4 = int(row["open"])
+        open_raw4 = synth_data.decimal_to_raw4(row["open"])
         open_ts = int(row["market_open_ts"]) * 1_000
         bid_raw4, ask_raw4 = synth_data.quote_raw_for_open(open_raw4, slippage_bps)
         quotes.append(QuoteTick(
@@ -143,7 +143,9 @@ def run_golden(args: argparse.Namespace) -> tuple[object, dict, dict]:
     catalog_path = data_root / "catalog"
 
     rows = synth_data.generate_curated_rows()
-    phase0_dataset.materialize_curated_zone(rows, curated_root)
+    phase0_dataset.materialize_curated_zone(
+        rows, curated_root, version=synth_data.CURATED_VERSION
+    )
     catalog = _catalog_builder.build_catalog(curated_root, catalog_path)
     catalog_obj = ParquetDataCatalog(path=str(catalog_path))
     materialize_quotes(catalog_obj, rows, args.slippage_bps)
