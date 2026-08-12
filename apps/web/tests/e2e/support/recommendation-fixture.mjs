@@ -205,11 +205,18 @@ export function recommendationResponse(request) {
     const newest = submitted
       ? recommendationRun(scenario, {
           id: SUBMITTED_RUN_ID,
-          includeItems: submittedPolls > 0,
           status: submittedPolls === 0 ? "PENDING" : "SUCCEEDED",
         })
       : success;
-    return { body: { latest_run: newest, run: success }, status: 200 };
+    const completedSubmittedRun = recommendationRun(scenario, {
+      id: SUBMITTED_RUN_ID,
+      includeItems: true,
+      status: "SUCCEEDED",
+    });
+    return {
+      body: { latest_run: newest, run: submittedPolls > 0 ? completedSubmittedRun : success },
+      status: 200,
+    };
   }
   if (method === "GET" && pathname === "/api/v1/recommendations/runs") {
     const runs = [recommendationRun(scenario)];

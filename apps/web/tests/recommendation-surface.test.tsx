@@ -19,15 +19,18 @@ const CONFIG_B = "00000000-0000-4000-8000-000000000102";
 const SUCCESS_RUN = "00000000-0000-4000-8000-000000000201";
 const PENDING_RUN = "00000000-0000-4000-8000-000000000202";
 
+type RunFixture = ReturnType<typeof run>;
+type MetadataOnlyRunFixture = Omit<RunFixture, "items"> & { readonly items?: never };
+
 type Fixture = {
   readonly blocked?: boolean;
   readonly configs?: readonly ReturnType<typeof config>[];
-  readonly history?: readonly ReturnType<typeof run>[];
+  readonly history?: readonly RunFixture[];
   readonly latest?: {
-    readonly latest_run: ReturnType<typeof run>;
-    readonly run: ReturnType<typeof run> | null;
+    readonly latest_run: RunFixture | MetadataOnlyRunFixture;
+    readonly run: RunFixture | null;
   };
-  readonly selected?: ReturnType<typeof run>;
+  readonly selected?: RunFixture;
 };
 
 function config(id: string, updatedAt = "2026-01-31T06:00:00Z") {
@@ -185,6 +188,23 @@ describe("recommendation workflow", () => {
     expect(markup).toContain(`value="${CONFIG_A}"`);
     expect(markup).toContain(`value="${CONFIG_B}"`);
     expect(markup).not.toContain("disabled");
+  });
+
+  it("renders item-bearing run data when the latest successful run is metadata-only", async () => {
+    const { items: _items, ...metadataOnlyLatest } = run(SUCCESS_RUN);
+    const itemBearingRun = run(SUCCESS_RUN);
+    vi.stubGlobal(
+      "fetch",
+      syntheticRecommendationApi({
+        configs: [config(CONFIG_A)],
+        history: [itemBearingRun],
+        latest: { latest_run: metadataOnlyLatest, run: itemBearingRun },
+      }),
+    );
+
+    const markup = renderToStaticMarkup(await RecommendationsPage());
+
+    expect(markup).toContain("069500.KRX");
   });
 
   it("keeps the last successful report visible, exposes cash and provenance, and links newest history first", async () => {
