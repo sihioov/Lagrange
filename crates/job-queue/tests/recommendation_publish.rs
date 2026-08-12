@@ -7,7 +7,10 @@ use job_queue::recommendation::input::{AttestedDataset, AttestedDatasetStatus};
 use job_queue::recommendation::input::{
     AttestedRecommendationInput, DatasetPin, RecommendationPayload,
 };
-use job_queue::recommendation::publish::{PublicationOutcome, publish_recommendation};
+use job_queue::recommendation::publish::{
+    CredentialedSourcePin, PublicationOutcome, publish_production_recommendation,
+    publish_recommendation,
+};
 use job_queue::recommendation::validate::{
     RecommendationValidationError, canonical_portfolio_snapshot_id, validate_target_output,
 };
@@ -678,6 +681,23 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
         },
         dataset: dataset(),
     };
+    let source_batch_id = Uuid::new_v4();
+    let source_hash = "a".repeat(64);
+    sqlx::query(
+        "INSERT INTO data_batches \
+         (provider, market, batch_date, kind, storage_path, content_sha256, bytes_size, retrieved_at, source_batch_id, source_file_name, fetch_mode) \
+         VALUES ('KRX', 'KR', DATE '2026-08-11', 'EOD', 'raw/bars.json', $1, 1, now(), $2, 'bars.json', 'credentialed')",
+    )
+    .bind(&source_hash)
+    .bind(source_batch_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let source_pins = vec![CredentialedSourcePin {
+        source_batch_id,
+        source_file_name: "bars.json".into(),
+        content_sha256: source_hash,
+    }];
     let mut output = all_cash_output();
     let selected = output.exclusions.remove(0).instrument_id;
     output.targets.push(TargetRow {
@@ -701,6 +721,52 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
         &provenance(),
     )
     .unwrap();
+
+    let mut source_mutation = db.pool.begin().await.unwrap();
+    sqlx::query("UPDATE data_batches SET fetch_mode = 'synthetic' WHERE source_batch_id = $1")
+        .bind(source_batch_id)
+        .execute(&mut *source_mutation)
+        .await
+        .unwrap();
+    let blocked_publish = {
+        let worker = worker.clone();
+        let queue = queue.clone();
+        let claim = claim.clone();
+        let attested = attested.clone();
+        let universe = u.clone();
+        let validated = validated.clone();
+        let source_pins = source_pins.clone();
+        tokio::spawn(async move {
+            publish_production_recommendation(
+                &worker,
+                &queue,
+                &claim,
+                &attested,
+                &universe,
+                &validated,
+                &source_pins,
+            )
+            .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    if blocked_publish.is_finished() {
+        panic!(
+            "publisher did not wait for source row lock: {:?}",
+            blocked_publish.await
+        );
+    }
+    source_mutation.commit().await.unwrap();
+    blocked_publish
+        .await
+        .unwrap()
+        .expect_err("publication must reject source provenance mutation that won the lock race");
+    assert_unpublished(&worker, run_id, job.id, claim.attempt.attempt_no).await;
+    sqlx::query("UPDATE data_batches SET fetch_mode = 'credentialed' WHERE source_batch_id = $1")
+        .bind(source_batch_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
 
     // If a configuration mutation obtains its row lock first, publication
     // waits for it and then observes the changed input instead of committing
@@ -917,8 +983,18 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
         let attested = attested.clone();
         let universe = u.clone();
         let validated = validated.clone();
+        let source_pins = source_pins.clone();
         tokio::spawn(async move {
-            publish_recommendation(&worker, &queue, &claim, &attested, &universe, &validated).await
+            publish_production_recommendation(
+                &worker,
+                &queue,
+                &claim,
+                &attested,
+                &universe,
+                &validated,
+                &source_pins,
+            )
+            .await
         })
     };
     let mut reached_barrier = false;
@@ -958,13 +1034,24 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
                 .await
         })
     };
+    let source_update = {
+        let pool = db.pool.clone();
+        tokio::spawn(async move {
+            sqlx::query("DELETE FROM data_batches WHERE source_batch_id = $1")
+                .bind(source_batch_id)
+                .execute(&pool)
+                .await
+        })
+    };
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(!config_update.is_finished());
     assert!(!dataset_update.is_finished());
+    assert!(!source_update.is_finished());
     barrier.commit().await.unwrap();
     let first = publishing.await.unwrap().expect("publication succeeds");
     config_update.await.unwrap().unwrap();
     dataset_update.await.unwrap().unwrap();
+    source_update.await.unwrap().unwrap();
     sqlx::query("UPDATE user_strategy_configs SET is_active = true WHERE id = $1")
         .bind(config_id)
         .execute(&db.pool)

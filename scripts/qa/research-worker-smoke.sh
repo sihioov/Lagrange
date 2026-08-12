@@ -257,7 +257,7 @@ for token in _sqlx_migrations 'version IN (22, 23, 24, 25, 33, 34, 35)' convalid
   pg_policy polcmd polpermissive trading_calendar_versions_append_only \
   tgenabled tgtype prosecdef pg_get_functiondef regexp_replace actual_function expected_function \
   role_table_grants has_schema_privilege \
-  has_table_privilege has_sequence_privilege MAINTAIN; do
+  has_table_privilege has_sequence_privilege lock_recommendation_source_pins MAINTAIN; do
   contains "$schema_text" "$token" 'research-schema-check SQL'
 done
 

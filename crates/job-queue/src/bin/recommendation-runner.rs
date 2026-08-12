@@ -1,6 +1,8 @@
 //! Sequential daemon for the fixed-universe recommendation queue.
 
 use std::ffi::OsString;
+#[cfg(any(unix, test))]
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -96,6 +98,14 @@ impl AppEnvironment {
     const fn is_production(self) -> bool {
         matches!(self, Self::Production)
     }
+}
+
+fn resolve_app_environment(value: Option<OsString>) -> Result<AppEnvironment, String> {
+    let value = value.ok_or_else(|| "APP_ENV is required".to_owned())?;
+    let value = value
+        .into_string()
+        .map_err(|_| "APP_ENV must be valid Unicode".to_owned())?;
+    AppEnvironment::parse(&value)
 }
 
 fn parse_args_from<I, S>(values: I) -> Result<Args, String>
@@ -306,6 +316,38 @@ fn event(kind: &str, fields: serde_json::Value) {
     eprintln!("{}", json!({ "event": kind, "fields": fields }));
 }
 
+#[cfg(any(unix, test))]
+async fn wait_for_shutdown<C, T>(ctrl_c: C, terminate: T) -> std::io::Result<()>
+where
+    C: Future<Output = std::io::Result<()>>,
+    T: Future<Output = std::io::Result<()>>,
+{
+    tokio::select! {
+        result = ctrl_c => result,
+        result = terminate => result,
+    }
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> std::io::Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    wait_for_shutdown(tokio::signal::ctrl_c(), async move {
+        terminate.recv().await.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "terminate signal stream closed",
+            )
+        })?;
+        Ok(())
+    })
+    .await
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> std::io::Result<()> {
+    tokio::signal::ctrl_c().await
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = match parse_args_from(std::env::args_os()) {
@@ -322,9 +364,7 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let app_env = match AppEnvironment::parse(
-        &std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_owned()),
-    ) {
+    let app_env = match resolve_app_environment(std::env::var_os("APP_ENV")) {
         Ok(app_env) => app_env,
         Err(message) => {
             event(
@@ -399,7 +439,7 @@ async fn main() -> ExitCode {
     if !args.once {
         let signal_tx = shutdown_tx.clone();
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
+            if shutdown_signal().await.is_ok() {
                 let _ = signal_tx.send(true);
             }
         });
@@ -563,11 +603,55 @@ mod tests {
     #[test]
     fn app_environment_is_closed_and_canonical() {
         assert_eq!(
-            AppEnvironment::parse("production").unwrap(),
+            resolve_app_environment(Some("development".into())).unwrap(),
+            AppEnvironment::Development
+        );
+        assert_eq!(
+            resolve_app_environment(Some("qa".into())).unwrap(),
+            AppEnvironment::Qa
+        );
+        assert_eq!(
+            resolve_app_environment(Some("production".into())).unwrap(),
             AppEnvironment::Production
         );
+        assert!(
+            resolve_app_environment(None)
+                .unwrap_err()
+                .contains("required")
+        );
         for invalid in ["prod", "Production", "production ", "staging", ""] {
-            assert!(AppEnvironment::parse(invalid).is_err(), "{invalid:?}");
+            assert!(
+                resolve_app_environment(Some(invalid.into())).is_err(),
+                "{invalid:?}"
+            );
         }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn app_environment_rejects_non_unicode_without_echoing_it() {
+        #[cfg(unix)]
+        let invalid = {
+            use std::os::unix::ffi::OsStringExt;
+            OsString::from_vec(vec![0xff])
+        };
+        #[cfg(windows)]
+        let invalid = {
+            use std::os::windows::ffi::OsStringExt;
+            OsString::from_wide(&[0xd800])
+        };
+
+        let error = resolve_app_environment(Some(invalid)).expect_err("APP_ENV must be Unicode");
+        assert_eq!(error, "APP_ENV must be valid Unicode");
+    }
+
+    #[tokio::test]
+    async fn shutdown_selection_observes_terminate() {
+        let result = wait_for_shutdown(
+            std::future::pending::<std::io::Result<()>>(),
+            std::future::ready(Ok(())),
+        )
+        .await;
+        assert!(result.is_ok());
     }
 }

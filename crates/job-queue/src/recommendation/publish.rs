@@ -16,6 +16,13 @@ pub enum PublicationOutcome {
     AlreadyPublished,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialedSourcePin {
+    pub source_batch_id: uuid::Uuid,
+    pub source_file_name: String,
+    pub content_sha256: String,
+}
+
 #[derive(Debug, Error)]
 pub enum PublicationError {
     #[error("recommendation publication database unavailable: {0}")]
@@ -26,6 +33,8 @@ pub enum PublicationError {
     Integrity { detail: String },
     #[error("recommendation publication entitlement is inactive")]
     EntitlementDenied,
+    #[error("recommendation publication source provenance is unavailable")]
+    SourceProvenanceDenied,
 }
 
 impl PublicationError {
@@ -34,7 +43,7 @@ impl PublicationError {
             Self::Database(error) | Self::Queue(QueueError::Database(error)) => {
                 database_error_class(error)
             }
-            Self::EntitlementDenied => ErrorClass::DataBlocked,
+            Self::EntitlementDenied | Self::SourceProvenanceDenied => ErrorClass::DataBlocked,
             Self::Queue(_) | Self::Integrity { .. } => ErrorClass::Integrity,
         }
     }
@@ -47,6 +56,7 @@ impl PublicationError {
                 _ => "RECOMMENDATION_PUBLISH_INTEGRITY",
             },
             Self::EntitlementDenied => "DATA_ENTITLEMENT_REQUIRED",
+            Self::SourceProvenanceDenied => "RECOMMENDATION_CREDENTIALLED_DATA_REQUIRED",
             Self::Queue(_) | Self::Integrity { .. } => "RECOMMENDATION_PUBLISH_INTEGRITY",
         }
     }
@@ -134,6 +144,33 @@ pub async fn publish_recommendation(
     universe: &AttestedUniverse,
     portfolio: &ValidatedPortfolio,
 ) -> Result<PublicationOutcome, PublicationError> {
+    publish_recommendation_inner(pool, queue, claim, input, universe, portfolio, &[]).await
+}
+
+pub async fn publish_production_recommendation(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &AttestedRecommendationInput,
+    universe: &AttestedUniverse,
+    portfolio: &ValidatedPortfolio,
+    source_pins: &[CredentialedSourcePin],
+) -> Result<PublicationOutcome, PublicationError> {
+    if source_pins.is_empty() {
+        return Err(PublicationError::SourceProvenanceDenied);
+    }
+    publish_recommendation_inner(pool, queue, claim, input, universe, portfolio, source_pins).await
+}
+
+async fn publish_recommendation_inner(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &AttestedRecommendationInput,
+    universe: &AttestedUniverse,
+    portfolio: &ValidatedPortfolio,
+    source_pins: &[CredentialedSourcePin],
+) -> Result<PublicationOutcome, PublicationError> {
     universe
         .validate_canonical()
         .map_err(|error| integrity(&error.to_string()))?;
@@ -177,6 +214,7 @@ pub async fn publish_recommendation(
         input,
         universe,
         portfolio,
+        source_pins,
     )
     .await?;
 
@@ -291,6 +329,7 @@ async fn reattest_current_rows(
     input: &AttestedRecommendationInput,
     universe: &AttestedUniverse,
     portfolio: &ValidatedPortfolio,
+    source_pins: &[CredentialedSourcePin],
 ) -> Result<(), PublicationError> {
     let entitled: bool =
         sqlx::query_scalar("SELECT public.lock_recommendation_entitlement($1, $2, $3)")
@@ -329,6 +368,54 @@ async fn reattest_current_rows(
         return Err(integrity(
             "recommendation publication inputs changed before publication",
         ));
+    }
+    if !source_pins.is_empty() {
+        lock_credentialed_source_pins(transaction, source_pins).await?;
+    }
+    Ok(())
+}
+
+async fn lock_credentialed_source_pins(
+    transaction: &mut Transaction<'_, Postgres>,
+    source_pins: &[CredentialedSourcePin],
+) -> Result<(), PublicationError> {
+    let unique = source_pins
+        .iter()
+        .map(|pin| (pin.source_batch_id, pin.source_file_name.as_str()))
+        .collect::<std::collections::BTreeSet<_>>();
+    if unique.len() != source_pins.len()
+        || source_pins.iter().any(|pin| {
+            pin.source_file_name.is_empty()
+                || pin.content_sha256.len() != 64
+                || !pin
+                    .content_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        })
+    {
+        return Err(PublicationError::SourceProvenanceDenied);
+    }
+    let batch_ids = source_pins
+        .iter()
+        .map(|pin| pin.source_batch_id)
+        .collect::<Vec<_>>();
+    let file_names = source_pins
+        .iter()
+        .map(|pin| pin.source_file_name.as_str())
+        .collect::<Vec<_>>();
+    let hashes = source_pins
+        .iter()
+        .map(|pin| pin.content_sha256.as_str())
+        .collect::<Vec<_>>();
+    let locked: bool =
+        sqlx::query_scalar("SELECT public.lock_recommendation_source_pins($1, $2, $3)")
+            .bind(batch_ids)
+            .bind(file_names)
+            .bind(hashes)
+            .fetch_one(&mut **transaction)
+            .await?;
+    if !locked {
+        return Err(PublicationError::SourceProvenanceDenied);
     }
     Ok(())
 }

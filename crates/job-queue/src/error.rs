@@ -39,6 +39,21 @@ pub(crate) fn database_error_class(error: &sqlx::Error) -> ErrorClass {
     }
 }
 
+/// Classify queue operation failures for callers that own retry policy.
+/// Database variants preserve the SQLSTATE-aware transport/contract split;
+/// all queue contract failures are permanent integrity errors.
+pub(crate) fn queue_error_class(error: &QueueError) -> ErrorClass {
+    match error {
+        QueueError::Database(error) => database_error_class(error),
+        QueueError::JobNotFound(_)
+        | QueueError::StaleClaim(_)
+        | QueueError::AlreadyTerminal(_, _)
+        | QueueError::InvalidInput(_)
+        | QueueError::AuditUnavailable
+        | QueueError::Internal(_) => ErrorClass::Integrity,
+    }
+}
+
 /// Errors produced by [`crate::JobQueue`] operations.
 #[derive(Debug, Error)]
 pub enum QueueError {

@@ -30,6 +30,23 @@ BEGIN
      OR has_function_privilege(
           'app', 'public.lock_recommendation_entitlement(uuid,text,date)', 'EXECUTE')
      OR NOT EXISTS (
+       SELECT 1 FROM pg_proc
+       WHERE oid = 'public.lock_recommendation_source_pins(uuid[],text[],text[])'::regprocedure
+         AND prosecdef
+         AND pg_get_userbyid(proowner) = 'migration_owner'
+         AND proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
+     )
+     OR NOT has_function_privilege(
+          'worker', 'public.lock_recommendation_source_pins(uuid[],text[],text[])', 'EXECUTE')
+     OR has_function_privilege(
+          'app', 'public.lock_recommendation_source_pins(uuid[],text[],text[])', 'EXECUTE')
+     OR has_function_privilege(
+          'admin', 'public.lock_recommendation_source_pins(uuid[],text[],text[])', 'EXECUTE')
+     OR has_function_privilege(
+          'audit_writer', 'public.lock_recommendation_source_pins(uuid[],text[],text[])', 'EXECUTE')
+     OR has_function_privilege(
+          'research_writer', 'public.lock_recommendation_source_pins(uuid[],text[],text[])', 'EXECUTE')
+     OR NOT EXISTS (
        SELECT 1 FROM pg_trigger trigger_row
        JOIN pg_proc function_row ON function_row.oid = trigger_row.tgfoid
        WHERE trigger_row.tgrelid = 'public.jobs'::regclass
@@ -40,7 +57,7 @@ BEGIN
          AND pg_get_userbyid(function_row.proowner) = 'migration_owner'
          AND function_row.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
      ) THEN
-    RAISE EXCEPTION 'recommendation entitlement and terminal-sync security contract is missing or unsafe';
+    RAISE EXCEPTION 'recommendation publication fencing and terminal-sync security contract is missing or unsafe';
   END IF;
 
   IF EXISTS (

@@ -269,7 +269,7 @@ function Invoke-StaticChecks {
         'trading_calendar_versions_append_only', 'tgenabled', 'tgtype', 'prosecdef',
         'pg_get_functiondef', 'regexp_replace', 'actual_function', 'expected_function',
         'role_table_grants', 'has_schema_privilege', 'has_table_privilege',
-        'has_sequence_privilege', 'MAINTAIN'
+        'has_sequence_privilege', 'lock_recommendation_source_pins', 'MAINTAIN'
     )) {
         Assert-Contains $schemaSql $required 'research-schema-check SQL'
     }

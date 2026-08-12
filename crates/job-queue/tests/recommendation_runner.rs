@@ -1787,6 +1787,73 @@ async fn real_worker_and_uv_publish_all_five_shipped_strategies() {
     .execute(&db.pool)
     .await
     .unwrap();
+    sqlx::query("UPDATE jobs SET available_at = now() + interval '1 hour' WHERE id = $1")
+        .bind(heartbeat_job_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "CREATE FUNCTION test_reject_recommendation_heartbeat() RETURNS trigger \
+         LANGUAGE plpgsql AS $$ BEGIN \
+           IF OLD.status = 'RUNNING' AND NEW.status = 'RUNNING' \
+              AND NEW.locked_at IS DISTINCT FROM OLD.locked_at THEN \
+             RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'injected permanent heartbeat failure'; \
+           END IF; \
+           RETURN NEW; \
+         END $$; \
+         CREATE TRIGGER test_reject_recommendation_heartbeat \
+         BEFORE UPDATE ON jobs FOR EACH ROW \
+         EXECUTE FUNCTION test_reject_recommendation_heartbeat();",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (permanent_heartbeat_run_id, permanent_heartbeat_job_id) = enqueue_run(
+        &db.pool,
+        &app_queue,
+        owner_id,
+        config_id,
+        dataset_version_id,
+        production_hash,
+        "runner-heartbeat-integrity",
+    )
+    .await;
+    assert_eq!(
+        run_once(
+            &worker,
+            &queue,
+            "recommendation-heartbeat-integrity",
+            &paths,
+            &production_config,
+        )
+        .await
+        .unwrap(),
+        RecommendationOutcome::Failed {
+            job_id: permanent_heartbeat_job_id,
+            code: "RECOMMENDATION_HEARTBEAT_INTEGRITY".into(),
+        }
+    );
+    let permanent_heartbeat_state: (String, String, i64, i64) = sqlx::query_as(
+        "SELECT r.status, j.status, \
+                (SELECT count(*) FROM recommendation_items WHERE recommendation_run_id = r.id), \
+                (SELECT count(*) FROM target_portfolios WHERE recommendation_run_id = r.id) \
+         FROM recommendation_runs r JOIN jobs j ON j.id = r.job_id WHERE r.id = $1",
+    )
+    .bind(permanent_heartbeat_run_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        permanent_heartbeat_state,
+        ("FAILED".into(), "FAILED".into(), 0, 0)
+    );
+    sqlx::raw_sql(
+        "DROP TRIGGER test_reject_recommendation_heartbeat ON jobs; \
+         DROP FUNCTION test_reject_recommendation_heartbeat();",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
     sqlx::query("UPDATE jobs SET available_at = now() WHERE id = $1")
         .bind(heartbeat_job_id)
         .execute(&db.pool)
@@ -1920,6 +1987,74 @@ async fn real_worker_and_uv_publish_all_five_shipped_strategies() {
     sqlx::raw_sql(
         "DROP TRIGGER test_fail_final_recommendation_heartbeat ON jobs; \
          DROP FUNCTION test_fail_final_recommendation_heartbeat();",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE jobs SET available_at = now() + interval '1 hour' WHERE id = $1")
+        .bind(final_heartbeat_job_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    sqlx::raw_sql(
+        "CREATE FUNCTION test_reject_final_recommendation_heartbeat() RETURNS trigger \
+         LANGUAGE plpgsql AS $$ BEGIN \
+           IF OLD.status = 'RUNNING' AND NEW.status = 'RUNNING' \
+              AND NEW.locked_at IS DISTINCT FROM OLD.locked_at THEN \
+             RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'injected permanent final heartbeat failure'; \
+           END IF; \
+           RETURN NEW; \
+         END $$; \
+         CREATE TRIGGER test_reject_final_recommendation_heartbeat \
+         BEFORE UPDATE ON jobs FOR EACH ROW \
+         EXECUTE FUNCTION test_reject_final_recommendation_heartbeat();",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (permanent_final_run_id, permanent_final_job_id) = enqueue_run(
+        &db.pool,
+        &app_queue,
+        owner_id,
+        config_id,
+        dataset_version_id,
+        production_hash,
+        "runner-final-heartbeat-integrity",
+    )
+    .await;
+    assert_eq!(
+        run_once(
+            &worker,
+            &queue,
+            "recommendation-final-heartbeat-integrity",
+            &paths,
+            &final_heartbeat_config,
+        )
+        .await
+        .unwrap(),
+        RecommendationOutcome::Failed {
+            job_id: permanent_final_job_id,
+            code: "RECOMMENDATION_HEARTBEAT_INTEGRITY".into(),
+        }
+    );
+    let permanent_final_state: (String, String, i64, i64) = sqlx::query_as(
+        "SELECT r.status, j.status, \
+                (SELECT count(*) FROM recommendation_items WHERE recommendation_run_id = r.id), \
+                (SELECT count(*) FROM target_portfolios WHERE recommendation_run_id = r.id) \
+         FROM recommendation_runs r JOIN jobs j ON j.id = r.job_id WHERE r.id = $1",
+    )
+    .bind(permanent_final_run_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        permanent_final_state,
+        ("FAILED".into(), "FAILED".into(), 0, 0)
+    );
+    sqlx::raw_sql(
+        "DROP TRIGGER test_reject_final_recommendation_heartbeat ON jobs; \
+         DROP FUNCTION test_reject_final_recommendation_heartbeat();",
     )
     .execute(&db.pool)
     .await

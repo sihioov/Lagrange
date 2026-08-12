@@ -46,6 +46,74 @@ REVOKE ALL ON FUNCTION public.lock_recommendation_entitlement(uuid, text, date)
     FROM app, admin, audit_writer, research_writer;
 GRANT EXECUTE ON FUNCTION public.lock_recommendation_entitlement(uuid, text, date) TO worker;
 
+-- Production publication re-locks every exact Raw file pinned by the
+-- immutable curated manifest. SECURITY DEFINER is required because PostgreSQL
+-- row locks require UPDATE privilege, which the worker must never receive on
+-- shared market-data metadata.
+CREATE FUNCTION public.lock_recommendation_source_pins(
+    p_source_batch_ids uuid[],
+    p_source_file_names text[],
+    p_content_sha256s text[]
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    v_expected integer;
+    v_locked integer;
+BEGIN
+    v_expected := pg_catalog.cardinality(p_source_batch_ids);
+    IF v_expected IS NULL OR v_expected = 0
+       OR pg_catalog.cardinality(p_source_file_names) <> v_expected
+       OR pg_catalog.cardinality(p_content_sha256s) <> v_expected THEN
+        RETURN false;
+    END IF;
+    IF EXISTS (
+        SELECT 1
+          FROM ROWS FROM (
+                   pg_catalog.unnest(p_source_batch_ids),
+                   pg_catalog.unnest(p_source_file_names),
+                   pg_catalog.unnest(p_content_sha256s)
+               ) AS expected(source_batch_id, source_file_name, content_sha256)
+         GROUP BY expected.source_batch_id, expected.source_file_name
+        HAVING pg_catalog.count(*) > 1
+            OR pg_catalog.bool_or(
+                expected.source_batch_id IS NULL
+                OR expected.source_file_name IS NULL
+                OR expected.source_file_name = ''
+                OR expected.content_sha256 !~ '^[0-9a-f]{64}$'
+            )
+    ) THEN
+        RETURN false;
+    END IF;
+
+    PERFORM batch.id
+      FROM ROWS FROM (
+               pg_catalog.unnest(p_source_batch_ids),
+               pg_catalog.unnest(p_source_file_names),
+               pg_catalog.unnest(p_content_sha256s)
+           ) AS expected(source_batch_id, source_file_name, content_sha256)
+      JOIN public.data_batches AS batch
+        ON batch.source_batch_id = expected.source_batch_id
+       AND batch.source_file_name = expected.source_file_name
+       AND batch.content_sha256 = expected.content_sha256
+       AND batch.provider = 'KRX'
+       AND batch.market = 'KR'
+       AND batch.fetch_mode = 'credentialed'
+     FOR SHARE OF batch;
+    GET DIAGNOSTICS v_locked = ROW_COUNT;
+    RETURN v_locked = v_expected;
+END;
+$$;
+
+ALTER FUNCTION public.lock_recommendation_source_pins(uuid[], text[], text[])
+    OWNER TO migration_owner;
+REVOKE ALL ON FUNCTION public.lock_recommendation_source_pins(uuid[], text[], text[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.lock_recommendation_source_pins(uuid[], text[], text[])
+    FROM app, admin, audit_writer, research_writer;
+GRANT EXECUTE ON FUNCTION public.lock_recommendation_source_pins(uuid[], text[], text[]) TO worker;
+
 -- A runner crash can exhaust a lease through the generic queue sweeper, which
 -- otherwise has no recommendation-specific hook. Keep the linked run from
 -- remaining PENDING forever, and synchronize an authorized queue cancel too.

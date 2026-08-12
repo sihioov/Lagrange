@@ -159,6 +159,9 @@ fn recommendation_pipeline_migration_is_tracked() {
     assert!(RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("SECURITY DEFINER"));
     assert!(RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("FOR SHARE"));
     assert!(RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("covered_uses"));
+    assert!(RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("lock_recommendation_source_pins"));
+    assert!(RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("p_source_file_names"));
+    assert!(RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("p_content_sha256s"));
     assert!(
         RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("jobs_sync_recommendation_terminal_run")
     );
@@ -201,6 +204,7 @@ fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
         "has_schema_privilege",
         "has_table_privilege",
         "has_sequence_privilege",
+        "lock_recommendation_source_pins",
     ] {
         assert!(
             RESEARCH_SCHEMA_GATE_SQL.contains(token),
@@ -2794,6 +2798,19 @@ async fn recommendation_pipeline_contract_body(
         entitlement_lock_metadata.2,
         Some(vec!["search_path=pg_catalog, pg_temp".into()])
     );
+    let source_pin_lock_metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
+        "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
+         FROM pg_proc WHERE oid = \
+         'public.lock_recommendation_source_pins(uuid[],text[],text[])'::regprocedure",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(source_pin_lock_metadata.0);
+    assert_eq!(source_pin_lock_metadata.1, "migration_owner");
+    assert_eq!(
+        source_pin_lock_metadata.2,
+        Some(vec!["search_path=pg_catalog, pg_temp".into()])
+    );
     let terminal_sync: (String, String) = sqlx::query_as(
         "SELECT terminal_trigger.tgname, terminal_fn.proname \
          FROM pg_trigger AS terminal_trigger \
@@ -2905,6 +2922,25 @@ async fn recommendation_pipeline_contract_body(
         assert_eq!(
             can_execute, expected,
             "unexpected entitlement lock EXECUTE privilege for {role}"
+        );
+    }
+    for (role, expected) in [
+        ("worker", true),
+        ("app", false),
+        ("admin", false),
+        ("audit_writer", false),
+        ("research_writer", false),
+    ] {
+        let can_execute: bool = sqlx::query_scalar(
+            "SELECT has_function_privilege($1, \
+             'public.lock_recommendation_source_pins(uuid[],text[],text[])', 'EXECUTE')",
+        )
+        .bind(role)
+        .fetch_one(owner)
+        .await?;
+        assert_eq!(
+            can_execute, expected,
+            "unexpected source pin lock EXECUTE privilege for {role}"
         );
     }
     for (role, expected) in [

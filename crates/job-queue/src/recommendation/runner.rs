@@ -12,7 +12,7 @@ use thiserror::Error;
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use crate::error::{QueueError, database_error_class};
+use crate::error::{QueueError, database_error_class, queue_error_class};
 use crate::queue::JobQueue;
 use crate::recommendation::child::{self, TargetChildRequest, TargetProvenance, run_target_child};
 use crate::recommendation::compute::{
@@ -22,7 +22,10 @@ use crate::recommendation::input::{
     AttestedDataset, AttestedRecommendationInput, RecommendationInputError, RecommendationPayload,
     attest_recommendation_input,
 };
-use crate::recommendation::publish::{PublicationError, publish_recommendation};
+use crate::recommendation::publish::{
+    CredentialedSourcePin, PublicationError, publish_production_recommendation,
+    publish_recommendation,
+};
 use crate::recommendation::validate::{
     RecommendationValidationError, ValidatedPortfolio, validate_target_output,
 };
@@ -246,15 +249,11 @@ pub async fn run_once(
                     settle_canceled_lifecycle(pool, queue, &claim).await
                 }
                 Ok(LeaseMonitorOutcome::LeaseLost) => lease_lost_outcome(pool, &claim).await,
-                Ok(LeaseMonitorOutcome::Unavailable) => settle_failure_lifecycle(
+                Ok(LeaseMonitorOutcome::Failed(class)) => settle_failure_lifecycle(
                     pool,
                     queue,
                     &claim,
-                    StageFailure::new(
-                        ErrorClass::Transient,
-                        "RECOMMENDATION_HEARTBEAT_UNAVAILABLE",
-                        "recommendation heartbeat is temporarily unavailable",
-                    ),
+                    heartbeat_failure(class),
                 ).await,
                 Ok(LeaseMonitorOutcome::Stopped) => settle_failure_lifecycle(
                     pool,
@@ -288,15 +287,11 @@ pub async fn run_once(
                 },
                 Ok(LeaseMonitorOutcome::Canceled) => settle_canceled_lifecycle(pool, queue, &claim).await,
                 Ok(LeaseMonitorOutcome::LeaseLost) => lease_lost_outcome(pool, &claim).await,
-                Ok(LeaseMonitorOutcome::Unavailable) => settle_failure_lifecycle(
+                Ok(LeaseMonitorOutcome::Failed(class)) => settle_failure_lifecycle(
                     pool,
                     queue,
                     &claim,
-                    StageFailure::new(
-                        ErrorClass::Transient,
-                        "RECOMMENDATION_HEARTBEAT_UNAVAILABLE",
-                        "recommendation heartbeat is temporarily unavailable",
-                    ),
+                    heartbeat_failure(class),
                 ).await,
                 Err(_) => settle_failure_lifecycle(
                     pool,
@@ -319,7 +314,23 @@ enum LeaseMonitorOutcome {
     Stopped,
     Canceled,
     LeaseLost,
-    Unavailable,
+    Failed(ErrorClass),
+}
+
+fn heartbeat_failure(class: ErrorClass) -> StageFailure {
+    if class == ErrorClass::Transient {
+        StageFailure::new(
+            ErrorClass::Transient,
+            "RECOMMENDATION_HEARTBEAT_UNAVAILABLE",
+            "recommendation heartbeat is temporarily unavailable",
+        )
+    } else {
+        StageFailure::new(
+            ErrorClass::Integrity,
+            "RECOMMENDATION_HEARTBEAT_INTEGRITY",
+            "recommendation heartbeat violated a database contract",
+        )
+    }
 }
 
 async fn monitor_lease(
@@ -344,7 +355,7 @@ async fn monitor_lease(
                     Ok(HeartbeatStatus::Extended) => {}
                     Ok(HeartbeatStatus::Canceled) => return LeaseMonitorOutcome::Canceled,
                     Ok(HeartbeatStatus::LeaseLost) => return LeaseMonitorOutcome::LeaseLost,
-                    Err(_) => return LeaseMonitorOutcome::Unavailable,
+                    Err(error) => return LeaseMonitorOutcome::Failed(queue_error_class(&error)),
                 }
             }
         }
@@ -391,6 +402,7 @@ struct PreparedRecommendation {
     input: AttestedRecommendationInput,
     universe: AttestedUniverse,
     portfolio: ValidatedPortfolio,
+    credentialed_source_pins: Option<Vec<CredentialedSourcePin>>,
 }
 
 async fn prepare_claim(
@@ -411,9 +423,11 @@ async fn prepare_claim(
     }
     attest_current_entitlement(pool, &input.dataset.dataset_id, input.payload.as_of).await?;
     attest_dataset_path(&paths.data_root, &input.dataset.storage_path).await?;
-    if config.production {
-        attest_credentialed_sources(pool, &input.dataset).await?;
-    }
+    let credentialed_source_pins = if config.production {
+        Some(attest_credentialed_sources(pool, &input.dataset).await?)
+    } else {
+        None
+    };
 
     let manifest_path = paths.universe_manifest.clone();
     let manifest = tokio::task::spawn_blocking(move || std::fs::read_to_string(manifest_path))
@@ -492,6 +506,7 @@ async fn prepare_claim(
         input,
         universe,
         portfolio,
+        credentialed_source_pins,
     })
 }
 
@@ -539,16 +554,12 @@ async fn finish_prepared(
     prepared: PreparedRecommendation,
 ) -> Result<RecommendationOutcome, RecommendationRunnerError> {
     match queue.heartbeat(claim).await {
-        Err(_) => {
+        Err(error) => {
             return settle_failure_lifecycle(
                 pool,
                 queue,
                 claim,
-                StageFailure::new(
-                    ErrorClass::Transient,
-                    "RECOMMENDATION_HEARTBEAT_UNAVAILABLE",
-                    "recommendation heartbeat is temporarily unavailable",
-                ),
+                heartbeat_failure(queue_error_class(&error)),
             )
             .await;
         }
@@ -558,16 +569,32 @@ async fn finish_prepared(
         Ok(HeartbeatStatus::LeaseLost) => return lease_lost_outcome(pool, claim).await,
         Ok(HeartbeatStatus::Extended) => {}
     }
-    match publish_recommendation(
-        pool,
-        queue,
-        claim,
-        &prepared.input,
-        &prepared.universe,
-        &prepared.portfolio,
-    )
-    .await
-    {
+    let publication = match prepared.credentialed_source_pins.as_deref() {
+        Some(source_pins) => {
+            publish_production_recommendation(
+                pool,
+                queue,
+                claim,
+                &prepared.input,
+                &prepared.universe,
+                &prepared.portfolio,
+                source_pins,
+            )
+            .await
+        }
+        None => {
+            publish_recommendation(
+                pool,
+                queue,
+                claim,
+                &prepared.input,
+                &prepared.universe,
+                &prepared.portfolio,
+            )
+            .await
+        }
+    };
+    match publication {
         Ok(_) => Ok(RecommendationOutcome::Succeeded {
             job_id: claim.job.id,
             run_id: prepared.run_id,
@@ -615,7 +642,7 @@ async fn attest_dataset_path(
 async fn attest_credentialed_sources(
     pool: &PgPool,
     dataset: &AttestedDataset,
-) -> Result<(), StageFailure> {
+) -> Result<Vec<CredentialedSourcePin>, StageFailure> {
     let storage_path = dataset.storage_path.clone();
     let dataset_id = dataset.dataset_id.clone();
     let curated_version = dataset.curated_version;
@@ -640,24 +667,24 @@ async fn attest_credentialed_sources(
                     .flat_map(|batch| {
                         let batch_id = batch.batch_id.as_uuid();
                         [
-                            (
-                                batch_id,
-                                batch.bars_file,
-                                batch
+                            CredentialedSourcePin {
+                                source_batch_id: batch_id,
+                                source_file_name: batch.bars_file,
+                                content_sha256: batch
                                     .bars_hash
                                     .as_str()
                                     .trim_start_matches("sha256:")
                                     .to_owned(),
-                            ),
-                            (
-                                batch_id,
-                                batch.actions_file,
-                                batch
+                            },
+                            CredentialedSourcePin {
+                                source_batch_id: batch_id,
+                                source_file_name: batch.actions_file,
+                                content_sha256: batch
                                     .actions_hash
                                     .as_str()
                                     .trim_start_matches("sha256:")
                                     .to_owned(),
-                            ),
+                            },
                         ]
                     })
                     .collect::<Vec<_>>()
@@ -699,15 +726,15 @@ async fn attest_credentialed_sources(
     }
     let batch_ids = source_files
         .iter()
-        .map(|(batch_id, _, _)| *batch_id)
+        .map(|pin| pin.source_batch_id)
         .collect::<Vec<_>>();
     let file_names = source_files
         .iter()
-        .map(|(_, file_name, _)| file_name.as_str())
+        .map(|pin| pin.source_file_name.as_str())
         .collect::<Vec<_>>();
     let content_hashes = source_files
         .iter()
-        .map(|(_, _, content_hash)| content_hash.as_str())
+        .map(|pin| pin.content_sha256.as_str())
         .collect::<Vec<_>>();
     let count: i64 = sqlx::query_scalar(
         "SELECT count(*) \
@@ -740,7 +767,7 @@ async fn attest_credentialed_sources(
             "production recommendation data provenance is not attested",
         ));
     }
-    Ok(())
+    Ok(source_files)
 }
 
 async fn attest_current_entitlement(
