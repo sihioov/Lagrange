@@ -167,7 +167,7 @@ impl RecommendationRepo {
 
         let dataset: Option<(String, String, String, String)> = sqlx::query_as(
             "SELECT dataset_id, version, status, manifest_sha256 \
-             FROM dataset_versions WHERE id = $1 FOR SHARE",
+             FROM dataset_versions WHERE id = $1",
         )
         .bind(input.dataset.id)
         .fetch_optional(&mut *tx)

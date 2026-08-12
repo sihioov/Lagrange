@@ -316,8 +316,11 @@ async fn http_recommendations_queue_failure_rolls_back_run_and_job() {
     let cfg = config_id(&h, &h.member).await;
     h.seed_shared(
         "CREATE FUNCTION fail_recommendation_queue_insert() RETURNS trigger LANGUAGE plpgsql AS $$ \
-         BEGIN RAISE EXCEPTION 'queue intentionally unavailable'; END $$; \
-         CREATE TRIGGER fail_recommendation_queue_insert BEFORE INSERT ON jobs \
+         BEGIN RAISE EXCEPTION 'queue intentionally unavailable'; END $$",
+    )
+    .await;
+    h.seed_shared(
+        "CREATE TRIGGER fail_recommendation_queue_insert BEFORE INSERT ON jobs \
          FOR EACH ROW WHEN (NEW.job_type = 'recommendation') \
          EXECUTE FUNCTION fail_recommendation_queue_insert()",
     )

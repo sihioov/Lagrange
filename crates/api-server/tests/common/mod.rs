@@ -267,13 +267,6 @@ impl Harness {
         )
         .await;
 
-        let recommendation_dataset: (Uuid, String, String, String) = sqlx::query_as(
-            "SELECT id, dataset_id, version, manifest_sha256 \
-             FROM dataset_versions WHERE status = 'READY' ORDER BY created_at LIMIT 1",
-        )
-        .fetch_one(&h.owner_pool)
-        .await
-        .expect("configured recommendation dataset exists");
         // Fixed universe subset + benchmark (canonical ids from Todo 12).
         h.seed_shared(
             "INSERT INTO instruments (id, symbol, venue, currency, name, asset_class, status) VALUES \
@@ -317,6 +310,14 @@ impl Harness {
              (gen_random_uuid(),'krx_eod_bars','2026-01-02','DATA_STALE','WARNING','{\"sessions\":2}'::jsonb)",
         )
         .await;
+
+        let recommendation_dataset: (Uuid, String, String, String) = sqlx::query_as(
+            "SELECT id, dataset_id, version, manifest_sha256 \
+             FROM dataset_versions WHERE status = 'READY' ORDER BY created_at LIMIT 1",
+        )
+        .fetch_one(&h.owner_pool)
+        .await
+        .expect("configured recommendation dataset exists");
 
         // Users + sessions.
         h.owner = h
