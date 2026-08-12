@@ -88,6 +88,15 @@ struct PublishedRow {
     dataset_manifest_sha256: Option<String>,
 }
 
+const LOCK_PUBLISHED_IDENTITY_SQL: &str = "SELECT j.id FROM jobs j \
+     JOIN recommendation_runs r ON r.job_id = j.id AND r.owner_user_id = j.owner_user_id \
+     WHERE j.id = $1 AND j.owner_user_id = $2 AND r.id = $3 \
+       AND j.job_type = 'recommendation' AND j.status = 'SUCCEEDED' \
+       AND j.payload_json = $4 AND j.attempt_count = $5 AND r.status = 'SUCCEEDED' \
+       AND r.strategy_config_id = $6 AND r.as_of = $7 AND r.job_id = $1 \
+       AND r.dataset_version_id = $8 AND r.dataset_manifest_sha256 = $9 \
+     FOR UPDATE OF j, r";
+
 const ALREADY_PUBLISHED_SQL: &str = "SELECT j.job_type, j.owner_user_id AS job_owner_user_id, j.payload_json AS job_payload_json, \
             j.attempt_count, j.status AS job_status, r.status AS run_status, r.summary_json, \
             (SELECT count(*) FROM recommendation_items i WHERE i.recommendation_run_id = r.id) AS item_count, \
@@ -108,8 +117,7 @@ const ALREADY_PUBLISHED_SQL: &str = "SELECT j.job_type, j.owner_user_id AS job_o
      JOIN recommendation_runs r ON r.job_id = j.id AND r.owner_user_id = j.owner_user_id \
      JOIN target_portfolios p ON p.recommendation_run_id = r.id AND p.owner_user_id = r.owner_user_id \
      JOIN job_attempts a ON a.job_id = j.id AND a.attempt_no = $4 \
-     WHERE j.id = $1 AND j.owner_user_id = $2 AND r.id = $3 \
-     FOR UPDATE OF j, r";
+     WHERE j.id = $1 AND j.owner_user_id = $2 AND r.id = $3";
 
 /// Publish all result rows, the run transition and queue settlement under one
 /// worker transaction. No database write is visible unless every guard and
@@ -319,6 +327,25 @@ async fn already_published(
 ) -> Result<bool, PublicationError> {
     let expected_payload = serde_json::to_value(&input.payload)
         .map_err(|_| integrity("attested payload cannot be represented as JSON"))?;
+    let locked_identity: Option<uuid::Uuid> = sqlx::query_scalar(LOCK_PUBLISHED_IDENTITY_SQL)
+        .bind(claim.job.id)
+        .bind(claim.job.owner_user_id)
+        .bind(input.payload.run_id)
+        .bind(&expected_payload)
+        .bind(claim.job.attempt_count)
+        .bind(input.payload.strategy_config_id)
+        .bind(input.payload.as_of)
+        .bind(input.dataset.id)
+        .bind(&input.dataset.manifest_sha256)
+        .fetch_optional(&mut **transaction)
+        .await?;
+    if locked_identity != Some(claim.job.id) {
+        return Ok(false);
+    }
+
+    // READ COMMITTED takes a new statement snapshot here, after the job/run
+    // locks have waited out any transaction capable of changing the run and
+    // its child publication rows.
     let row: Option<PublishedRow> = sqlx::query_as(ALREADY_PUBLISHED_SQL)
         .bind(claim.job.id)
         .bind(claim.job.owner_user_id)
@@ -423,13 +450,15 @@ fn integrity(detail: &str) -> PublicationError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ALREADY_PUBLISHED_SQL, PublicationError};
+    use super::{ALREADY_PUBLISHED_SQL, LOCK_PUBLISHED_IDENTITY_SQL, PublicationError};
     use crate::error::QueueError;
     use crate::types::ErrorClass;
 
     #[test]
-    fn replay_snapshot_statement_contains_every_compared_result_component() {
-        assert!(ALREADY_PUBLISHED_SQL.contains("FOR UPDATE OF j, r"));
+    fn replay_locks_identity_before_reading_one_coherent_aggregate_snapshot() {
+        assert!(LOCK_PUBLISHED_IDENTITY_SQL.contains("FOR UPDATE OF j, r"));
+        assert!(!LOCK_PUBLISHED_IDENTITY_SQL.contains("jsonb_agg"));
+        assert!(!ALREADY_PUBLISHED_SQL.contains("FOR UPDATE"));
         assert!(ALREADY_PUBLISHED_SQL.contains("jsonb_agg"));
         assert!(ALREADY_PUBLISHED_SQL.contains("ORDER BY i.instrument_id"));
         for relation in [

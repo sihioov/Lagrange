@@ -962,6 +962,100 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
     .await
     .unwrap();
     assert_eq!(first, PublicationOutcome::Published);
+
+    let app = PgPool::connect(&db.role_url("app")).await.unwrap();
+    let (concurrent_item_id, concurrent_original_reasons): (Uuid, serde_json::Value) =
+        sqlx::query_as(
+            "SELECT id, reason_codes FROM recommendation_items \
+             WHERE recommendation_run_id = $1 ORDER BY instrument_id LIMIT 1",
+        )
+        .bind(run_id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    let concurrent_original_weights: serde_json::Value = sqlx::query_scalar(
+        "SELECT weights_json FROM target_portfolios WHERE recommendation_run_id = $1",
+    )
+    .bind(run_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+
+    // A rolled-back app mutation may delay replay, but the fresh aggregate
+    // snapshot after the lock must still observe the committed publication.
+    let mut app_mutation = app.begin().await.unwrap();
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *app_mutation)
+        .await
+        .unwrap();
+    stage_publication_mutation(&mut app_mutation, run_id, concurrent_item_id).await;
+    let replay_after_rollback = {
+        let worker = worker.clone();
+        let queue = queue.clone();
+        let claim = claim.clone();
+        let attested = attested.clone();
+        let universe = u.clone();
+        let validated = validated.clone();
+        tokio::spawn(async move {
+            publish_recommendation(&worker, &queue, &claim, &attested, &universe, &validated).await
+        })
+    };
+    wait_for_worker_replay_lock(&db.pool).await;
+    app_mutation.rollback().await.unwrap();
+    assert_eq!(
+        replay_after_rollback.await.unwrap().unwrap(),
+        PublicationOutcome::AlreadyPublished
+    );
+
+    // If the app mutation commits while replay waits for the run lock, replay
+    // must start its aggregate read afterwards and reject the coherent changed
+    // result. It must never combine pre-commit children with the re-checked run.
+    let mut app_mutation = app.begin().await.unwrap();
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *app_mutation)
+        .await
+        .unwrap();
+    stage_publication_mutation(&mut app_mutation, run_id, concurrent_item_id).await;
+    let replay_after_commit = {
+        let worker = worker.clone();
+        let queue = queue.clone();
+        let claim = claim.clone();
+        let attested = attested.clone();
+        let universe = u.clone();
+        let validated = validated.clone();
+        tokio::spawn(async move {
+            publish_recommendation(&worker, &queue, &claim, &attested, &universe, &validated).await
+        })
+    };
+    wait_for_worker_replay_lock(&db.pool).await;
+    app_mutation.commit().await.unwrap();
+    replay_after_commit
+        .await
+        .unwrap()
+        .expect_err("replay must observe the committed app mutation coherently");
+
+    let mut restore = app.begin().await.unwrap();
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *restore)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE recommendation_items SET reason_codes = $2 WHERE id = $1")
+        .bind(concurrent_item_id)
+        .bind(concurrent_original_reasons)
+        .execute(&mut *restore)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE target_portfolios SET weights_json = $2 WHERE recommendation_run_id = $1")
+        .bind(run_id)
+        .bind(concurrent_original_weights)
+        .execute(&mut *restore)
+        .await
+        .unwrap();
+    restore.commit().await.unwrap();
+
     let second = publish_recommendation(&worker, &queue, &claim, &attested, &u, &validated)
         .await
         .expect("identical retry observes committed result");
@@ -1122,7 +1216,61 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
     );
 
     worker.close().await;
+    app.close().await;
     db.drop_db().await;
+}
+
+async fn stage_publication_mutation(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    run_id: Uuid,
+    item_id: Uuid,
+) {
+    sqlx::query(
+        "UPDATE recommendation_runs \
+         SET summary_json = summary_json || '{\"in_flight\": true}'::jsonb WHERE id = $1",
+    )
+    .bind(run_id)
+    .execute(&mut **transaction)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE recommendation_items SET reason_codes = '[\"CONCURRENT_TAMPER\"]'::jsonb WHERE id = $1")
+        .bind(item_id)
+        .execute(&mut **transaction)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE target_portfolios SET weights_json = '{\"CONCURRENT_TAMPER\": \"1.000000\"}'::jsonb \
+         WHERE recommendation_run_id = $1",
+    )
+    .bind(run_id)
+    .execute(&mut **transaction)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE recommendation_runs SET summary_json = summary_json - 'in_flight' WHERE id = $1",
+    )
+    .bind(run_id)
+    .execute(&mut **transaction)
+    .await
+    .unwrap();
+}
+
+async fn wait_for_worker_replay_lock(pool: &PgPool) {
+    for _ in 0..100 {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+             WHERE datname = current_database() AND usename = 'worker' \
+               AND wait_event_type = 'Lock' AND query LIKE 'SELECT j.id FROM jobs%')",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("worker replay did not wait on the app-held recommendation run lock");
 }
 
 async fn assert_unpublished(pool: &PgPool, run_id: Uuid, job_id: Uuid, attempt_no: i32) {
