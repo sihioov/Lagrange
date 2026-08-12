@@ -352,7 +352,7 @@ async fn http_backtests_durable_idempotency_survives_api_restart() {
             true,
             Some("test-rid-1"),
             Some(key),
-            Some(request),
+            Some(request.clone()),
         )
         .await;
     assert_eq!(mismatch.status(), StatusCode::CONFLICT);
@@ -360,6 +360,26 @@ async fn http_backtests_durable_idempotency_survives_api_restart() {
         Harness::error_code(&Harness::body_json(mismatch).await),
         "IDEMPOTENCY_KEY_MISMATCH"
     );
+
+    // A durable mismatch discovered by a fresh API process is not the
+    // authoritative result for this key.  It must not poison the process-local
+    // cache and hide the already-committed canonical request.
+    request["start_date"] = json!("2026-01-05");
+    let replay_after_mismatch = h
+        .send(
+            "POST",
+            "/api/v1/backtests",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(request),
+        )
+        .await;
+    assert_eq!(replay_after_mismatch.status(), StatusCode::CREATED);
+    let replay_after_mismatch_body = Harness::body_json(replay_after_mismatch).await;
+    assert_eq!(replay_after_mismatch_body["id"], first_body["id"]);
+    assert_eq!(replay_after_mismatch_body["job_id"], first_body["job_id"]);
 
     let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM backtest_runs")
         .fetch_one(&h.member_pool().await)

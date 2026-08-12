@@ -136,14 +136,23 @@ pub async fn idempotent(
         }
         Err(_) => serde_json::Value::Null,
     };
-    state.idempotency.insert(
-        &store_key,
-        idempotency::CachedResult {
-            body_hash: body_hash.to_string(),
-            status,
-            body: body.clone(),
-        },
-    );
+    // A durable repository may discover that this fresh process received the
+    // wrong body for a key whose canonical request already committed.  That
+    // mismatch is not the key's result: caching it under the wrong body hash
+    // would prevent the canonical body from hydrating/replaying its success.
+    let is_non_authoritative_mismatch = status == StatusCode::CONFLICT
+        && body.pointer("/error/code").and_then(|code| code.as_str())
+            == Some("IDEMPOTENCY_KEY_MISMATCH");
+    if !is_non_authoritative_mismatch {
+        state.idempotency.insert(
+            &store_key,
+            idempotency::CachedResult {
+                body_hash: body_hash.to_string(),
+                status,
+                body: body.clone(),
+            },
+        );
+    }
     (status, Json(body)).into_response()
 }
 
