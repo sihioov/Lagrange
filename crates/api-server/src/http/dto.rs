@@ -43,10 +43,20 @@ pub struct RecommendationRunDto {
     pub status: String,
     pub summary: Value,
     pub created_at: DateTime<Utc>,
+    pub trigger_kind: String,
+    pub provenance: RecommendationProvenanceDto,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub items: Option<Vec<RecommendationItemDto>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RecommendationProvenanceDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dataset_version_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dataset_manifest_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

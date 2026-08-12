@@ -76,6 +76,13 @@ async fn build_services() -> Result<RunnerServices, String> {
             // is nevertheless required by the shared ApiState contract.
             cursor_secret: [0; 32],
             max_jobs_per_owner: 10,
+            recommendation_dataset: job_queue::recommendation::input::DatasetPin {
+                id: uuid::Uuid::nil(),
+                dataset_id: "not-configured".to_owned(),
+                version: "not-configured".to_owned(),
+                curated_version: 1,
+                manifest_sha256: "0".repeat(64),
+            },
             db_url: app_url,
             step_up_max_auth_age_secs: 900,
             artifact_root: repo_root.join("artifacts"),

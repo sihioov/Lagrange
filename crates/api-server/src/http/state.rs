@@ -24,6 +24,7 @@ use crate::repos::strategies::StrategyCatalogRepo;
 use crate::repos::strategy_configs::StrategyConfigRepo;
 use auth::entitlement::{Actor, EntitlementService};
 use job_queue::JobQueue;
+use job_queue::recommendation::input::DatasetPin;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -41,6 +42,10 @@ pub struct ApiConfig {
     pub cursor_secret: [u8; 32],
     /// Per-owner cap on QUEUED+RUNNING jobs (BACKTEST_CAPACITY_EXCEEDED).
     pub max_jobs_per_owner: u32,
+    /// Immutable dataset identity selected by deployment configuration for
+    /// every manual recommendation. Submission re-attests this exact pin
+    /// against `dataset_versions`; it never selects a newer READY version.
+    pub recommendation_dataset: DatasetPin,
     /// App-role database URL; actor-GUC pools for queue calls derive from it.
     pub db_url: String,
     /// Max age of the authentication event behind Owner step-up actions.

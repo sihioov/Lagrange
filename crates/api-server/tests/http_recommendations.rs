@@ -4,7 +4,13 @@
 mod common;
 use axum::http::StatusCode;
 use common::{Harness, status};
+use job_queue::recommendation::child::TargetChildPaths;
+use job_queue::recommendation::{
+    RecommendationOutcome, RecommendationRunnerConfig, RecommendationRunnerPaths, run_once,
+};
+use job_queue::{JobQueue, QueueConfig};
 use serde_json::json;
+use std::time::Duration;
 
 /// Create a strategy config for `actor` and return its id.
 async fn config_id(h: &Harness, actor: &common::UserCtx) -> String {
@@ -52,6 +58,8 @@ async fn http_recommendations_create_queue_result_happy() {
     assert_eq!(body["strategy_config_id"], cfg);
     let run_id = body["id"].as_str().unwrap().to_string();
     let job_id = body["job_id"].as_str().unwrap().to_string();
+    assert_eq!(body["trigger_kind"], "MANUAL");
+    assert!(body["provenance"]["dataset_version_id"].is_string());
     assert!(
         !body.to_string().contains("owner_user_id"),
         "no tenant column leak"
@@ -59,35 +67,73 @@ async fn http_recommendations_create_queue_result_happy() {
 
     // The job is queued (visible through the API? recommendation job is the
     // actor's own -> assert via admin? no: assert through the queue table).
-    let job_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1::uuid")
-        .bind(&job_id)
-        .fetch_one(&h.member_pool().await)
-        .await
-        .unwrap();
+    let (job_status, payload, persisted_job_id, queue_key): (
+        String,
+        serde_json::Value,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT j.status, j.payload_json, r.job_id::text, j.idempotency_key \
+             FROM jobs j JOIN recommendation_runs r ON r.id = $2::uuid WHERE j.id = $1::uuid",
+    )
+    .bind(&job_id)
+    .bind(&run_id)
+    .fetch_one(&h.member_pool().await)
+    .await
+    .unwrap();
     assert_eq!(job_status, "QUEUED");
+    assert_eq!(persisted_job_id.as_deref(), Some(job_id.as_str()));
+    assert!(
+        queue_key.is_some_and(|key| key.starts_with("recommendation:")),
+        "job idempotency is isolated from other queue job types"
+    );
+    assert_eq!(payload["run_id"], run_id);
+    assert_eq!(payload["strategy_config_id"], cfg);
+    assert!(
+        payload["dataset"]["id"].is_string(),
+        "runner requires a pinned dataset id"
+    );
+    assert!(payload["dataset"]["dataset_id"].is_string());
+    assert!(payload["dataset"]["version"].is_string());
+    assert!(payload["dataset"]["curated_version"].is_u64());
+    assert!(payload["dataset"]["manifest_sha256"].is_string());
 
-    // Worker completes the run: seed SUCCEEDED + items (the research worker's
-    // side effect; the API reads it back).
-    h.seed_tenant(
-        &h.member,
-        &format!(
-            "UPDATE recommendation_runs SET status='SUCCEEDED', summary_json='{{\"selected\":2}}'::jsonb \
-             WHERE id='{run_id}'"
-        ),
+    // Drive the actual typed runner once. The shared HTTP harness intentionally
+    // has no deployment curated-store mount, so the real runner records a
+    // retryable path failure rather than the test mutating a result row by
+    // hand. GET observes the runner's persisted PENDING state.
+    let worker = h.worker_pool().await;
+    let queue = JobQueue::new(
+        worker.clone(),
+        None,
+        QueueConfig {
+            lease: Duration::from_secs(60),
+            backoff_base: Duration::from_millis(1),
+        },
+    );
+    let runner = RecommendationRunnerConfig::new(
+        Duration::from_secs(1),
+        Duration::from_secs(60),
+        Duration::from_secs(1),
     )
-    .await;
-    h.seed_tenant(
-        &h.member,
-        &format!(
-            "INSERT INTO recommendation_items (id, recommendation_run_id, owner_user_id, instrument_id, rank, target_weight, reason_codes, factors_json, excluded, exclusion_reason) VALUES \
-             (gen_random_uuid(), '{run_id}', '{owner}', '069500.KRX', 1, 0.600000, '[\"momentum_12_1\"]'::jsonb, '{{\"momentum_12_1\":0.8123}}'::jsonb, false, NULL), \
-             (gen_random_uuid(), '{run_id}', '{owner}', '229200.KRX', 2, 0.400000, '[\"trend_50\"]'::jsonb, '{{\"trend_50\":0.71}}'::jsonb, false, NULL)",
-            owner = h.member.user_id
-        ),
-    )
-    .await;
+    .unwrap();
+    let paths = RecommendationRunnerPaths {
+        data_root: h.artifact_root.clone(),
+        universe_manifest: h.artifact_root.join("universe.yaml"),
+        child: TargetChildPaths {
+            uv_bin: "uv".into(),
+            repo_root: h.artifact_root.clone(),
+            temp_root: h.artifact_root.join("tmp"),
+        },
+    };
+    assert!(matches!(
+        run_once(&worker, &queue, "http-recommendations", &paths, &runner)
+            .await
+            .unwrap(),
+        RecommendationOutcome::Retrying { job_id: id, .. } if id.to_string() == job_id
+    ));
 
-    // get -> SUCCEEDED with items.
+    // GET reads the runner-persisted in-flight run with no fabricated items.
     let resp = h
         .get(
             &format!("/api/v1/recommendations/runs/{run_id}"),
@@ -96,12 +142,9 @@ async fn http_recommendations_create_queue_result_happy() {
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
-    assert_eq!(body["status"], "SUCCEEDED");
+    assert_eq!(body["status"], "PENDING");
     let items = body["items"].as_array().expect("items");
-    assert_eq!(items.len(), 2);
-    assert_eq!(items[0]["instrument_id"], "069500.KRX");
-    assert_eq!(items[0]["target_weight"], "0.600000");
-    assert_eq!(items[1]["excluded"], false);
+    assert!(items.is_empty());
 
     // latest by config.
     let resp = h
@@ -112,8 +155,9 @@ async fn http_recommendations_create_queue_result_happy() {
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
-    assert_eq!(body["run"]["id"], run_id);
-    assert_eq!(body["run"]["items"].as_array().unwrap().len(), 2);
+    assert!(body["run"].is_null(), "pending run is not a usable report");
+    assert_eq!(body["latest_run"]["id"], run_id);
+    assert_eq!(body["latest_run"]["status"], "PENDING");
     h.teardown().await;
 }
 
@@ -124,6 +168,19 @@ async fn http_recommendations_entitlement_gate_fails_closed() {
         return;
     };
     let cfg = config_id(&h, &h.member).await;
+    let existing = h
+        .post(
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            json!({ "strategy_config_id": cfg, "as_of": "2026-01-30" }),
+        )
+        .await;
+    assert_eq!(status(&existing), StatusCode::CREATED);
+    let existing_id = Harness::body_json(existing).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     // Revoke the ACTIVE entitlement (expire it) -> create is denied.
     h.seed_shared("UPDATE data_entitlements SET status='REVOKED' WHERE status='ACTIVE'")
         .await;
@@ -139,6 +196,20 @@ async fn http_recommendations_entitlement_gate_fails_closed() {
     let body = Harness::body_json(resp).await;
     assert_eq!(Harness::error_code(&body), "DATA_ENTITLEMENT_REQUIRED");
 
+    // Revocation hides an already-persisted report as well as denying new
+    // work; payloads are never exposed after the fresh read gate fails.
+    let get = h
+        .get(
+            &format!("/api/v1/recommendations/runs/{existing_id}"),
+            Some(&h.member),
+        )
+        .await;
+    assert_eq!(status(&get), StatusCode::FORBIDDEN);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(get).await),
+        "DATA_ENTITLEMENT_REQUIRED"
+    );
+
     // No side effect: no recommendation_runs row, no job.
     let runs: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM recommendation_runs WHERE strategy_config_id = $1::uuid",
@@ -147,12 +218,12 @@ async fn http_recommendations_entitlement_gate_fails_closed() {
     .fetch_one(&h.member_pool().await)
     .await
     .unwrap();
-    assert_eq!(runs, 0, "denied create must not leave rows");
+    assert_eq!(runs, 1, "denied create must not leave an additional row");
     let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM jobs WHERE job_type='recommendation'")
         .fetch_one(&h.member_pool().await)
         .await
         .unwrap();
-    assert_eq!(jobs, 0, "denied create must not enqueue");
+    assert_eq!(jobs, 1, "denied create must not enqueue an additional job");
     h.teardown().await;
 }
 
@@ -233,6 +304,164 @@ async fn http_recommendations_ownership_and_idempotency() {
         .await
         .unwrap();
     assert_eq!(jobs, 2, "no double enqueue for the same key");
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn http_recommendations_queue_failure_rolls_back_run_and_job() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let cfg = config_id(&h, &h.member).await;
+    h.seed_shared(
+        "CREATE FUNCTION fail_recommendation_queue_insert() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN RAISE EXCEPTION 'queue intentionally unavailable'; END $$; \
+         CREATE TRIGGER fail_recommendation_queue_insert BEFORE INSERT ON jobs \
+         FOR EACH ROW WHEN (NEW.job_type = 'recommendation') \
+         EXECUTE FUNCTION fail_recommendation_queue_insert()",
+    )
+    .await;
+
+    let resp = h
+        .post(
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            json!({ "strategy_config_id": cfg, "as_of": "2026-01-31" }),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::INTERNAL_SERVER_ERROR);
+    let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM recommendation_runs")
+        .fetch_one(&h.member_pool().await)
+        .await
+        .unwrap();
+    let jobs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM jobs WHERE job_type = 'recommendation'")
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
+    assert_eq!(runs, 0, "queue failure may not leave a PENDING run");
+    assert_eq!(jobs, 0, "queue failure rolls back the job too");
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn http_recommendations_capacity_is_per_owner_and_typed() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let cfg = config_id(&h, &h.member).await;
+    h.seed_tenant(
+        &h.member,
+        &format!(
+            "INSERT INTO jobs (owner_user_id, job_type, idempotency_key, payload_json) \
+             SELECT '{owner}', 'other', 'occupied-' || gs::text, '{{}}'::jsonb \
+             FROM generate_series(1, 10) AS gs",
+            owner = h.member.user_id
+        ),
+    )
+    .await;
+    let resp = h
+        .post(
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            json!({ "strategy_config_id": cfg, "as_of": "2026-01-31" }),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(resp).await),
+        "RECOMMENDATION_CAPACITY_EXCEEDED"
+    );
+    let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM recommendation_runs")
+        .fetch_one(&h.member_pool().await)
+        .await
+        .unwrap();
+    assert_eq!(runs, 0);
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn http_recommendations_latest_keeps_success_visible_behind_new_pending_run() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let cfg = config_id(&h, &h.member).await;
+    let first = h
+        .send(
+            "POST",
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some("successful-rec"),
+            Some(json!({ "strategy_config_id": cfg, "as_of": "2026-01-30" })),
+        )
+        .await;
+    let successful_id = Harness::body_json(first).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    h.seed_tenant(
+        &h.member,
+        &format!(
+            "UPDATE recommendation_runs SET status = 'SUCCEEDED', summary_json = '{{\"selected\":1}}'::jsonb \
+             WHERE id = '{successful_id}'"
+        ),
+    )
+    .await;
+    let newest = h
+        .send(
+            "POST",
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some("pending-rec"),
+            Some(json!({ "strategy_config_id": cfg, "as_of": "2026-01-31" })),
+        )
+        .await;
+    let newest_id = Harness::body_json(newest).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let response = h
+        .get(
+            &format!("/api/v1/recommendations/latest?strategy_config_id={cfg}"),
+            Some(&h.member),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    let body = Harness::body_json(response).await;
+    assert_eq!(body["run"]["id"], successful_id);
+    assert_eq!(body["run"]["status"], "SUCCEEDED");
+    assert_eq!(body["latest_run"]["id"], newest_id);
+    assert_eq!(body["latest_run"]["status"], "PENDING");
+
+    let first_page = h
+        .get("/api/v1/recommendations/runs?limit=1", Some(&h.member))
+        .await;
+    let first_page = Harness::body_json(first_page).await;
+    assert_eq!(
+        first_page["items"][0]["id"], newest_id,
+        "history is newest first"
+    );
+    let cursor = first_page["next_cursor"]
+        .as_str()
+        .expect("second page cursor");
+    let second_page = h
+        .get(
+            &format!("/api/v1/recommendations/runs?limit=1&cursor={cursor}"),
+            Some(&h.member),
+        )
+        .await;
+    let second_page = Harness::body_json(second_page).await;
+    assert_eq!(second_page["items"][0]["id"], successful_id);
     h.teardown().await;
 }
 

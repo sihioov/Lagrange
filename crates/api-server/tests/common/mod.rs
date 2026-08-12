@@ -266,6 +266,14 @@ impl Harness {
              ON CONFLICT (id) DO NOTHING",
         )
         .await;
+
+        let recommendation_dataset: (Uuid, String, String, String) = sqlx::query_as(
+            "SELECT id, dataset_id, version, manifest_sha256 \
+             FROM dataset_versions WHERE status = 'READY' ORDER BY created_at LIMIT 1",
+        )
+        .fetch_one(&h.owner_pool)
+        .await
+        .expect("configured recommendation dataset exists");
         // Fixed universe subset + benchmark (canonical ids from Todo 12).
         h.seed_shared(
             "INSERT INTO instruments (id, symbol, venue, currency, name, asset_class, status) VALUES \
@@ -340,6 +348,13 @@ impl Harness {
         let cfg = ApiConfig {
             cursor_secret: *b"api24-cursor-secret-0123456789ab",
             max_jobs_per_owner: 10,
+            recommendation_dataset: job_queue::recommendation::input::DatasetPin {
+                id: recommendation_dataset.0,
+                dataset_id: recommendation_dataset.1,
+                version: recommendation_dataset.2,
+                curated_version: 2,
+                manifest_sha256: recommendation_dataset.3,
+            },
             db_url: h.app_url.clone(),
             step_up_max_auth_age_secs: 900,
             artifact_root: h.artifact_root.clone(),

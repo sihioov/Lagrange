@@ -2,7 +2,8 @@
 //! latest. The research worker settles run status + items; the API reads.
 
 use crate::http::dto::{
-    PageDto, RecommendationItemDto, RecommendationRunBody, RecommendationRunDto,
+    PageDto, RecommendationItemDto, RecommendationProvenanceDto, RecommendationRunBody,
+    RecommendationRunDto,
 };
 use crate::http::entitlement::require_use;
 use crate::http::error::{api_error, code_error, request_id};
@@ -64,41 +65,43 @@ pub async fn create_run(
     let body_hash = crate::http::idempotency::body_hash(&body_value);
     let key = crate::http::idempotency::key_from(&headers);
     idempotent(&state, &session, &headers, &body_hash, async {
-        // The strategy config must be the actor's own (ownership check).
-        if let Err(e) = state.strategy_configs().get(&actor, cfg_id).await {
-            return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
-        }
         let run = match state
             .recommendations()
-            .create_run(&actor, cfg_id, as_of)
+            .submit(
+                &actor,
+                crate::repos::recommendations::SubmitRecommendation {
+                    strategy_config_id: cfg_id,
+                    as_of,
+                    dataset: state.cfg.recommendation_dataset.clone(),
+                    idempotency_key: key,
+                    max_jobs_per_owner: state.cfg.max_jobs_per_owner,
+                },
+            )
             .await
         {
             Ok(r) => r,
-            Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
-        };
-        // Enqueue the research job (queue-level idempotency key rides along).
-        let queue = match state.queue_for(&actor).await {
-            Ok(q) => q,
-            Err(_) => return code_error("INTERNAL", "queue unavailable", &rid),
-        };
-        let job = match queue
-            .submit(job_queue::SubmitJob {
-                owner_user_id: crate::actor_tx::actor_uuid(&actor).unwrap_or_default(),
-                job_type: "recommendation".to_string(),
-                payload: serde_json::json!({
-                    "run_id": run.id,
-                    "strategy_config_id": cfg_id,
-                    "as_of": body.as_of,
-                }),
-                priority: 10,
-                idempotency_key: key,
-                max_attempts: 3,
-                available_at: None,
-            })
-            .await
-        {
-            Ok(j) => j,
-            Err(e) => return code_error("INTERNAL", format!("enqueue failed: {e}"), &rid),
+            Err(crate::repos::recommendations::SubmitRecommendationError::CapacityExceeded) => {
+                return api_error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "RECOMMENDATION_CAPACITY_EXCEEDED",
+                    format!(
+                        "per-owner queued recommendation capacity ({}) exceeded",
+                        state.cfg.max_jobs_per_owner
+                    ),
+                    &rid,
+                    None,
+                );
+            }
+            Err(crate::repos::recommendations::SubmitRecommendationError::IdempotencyMismatch) => {
+                return code_error(
+                    "IDEMPOTENCY_KEY_MISMATCH",
+                    "the same Idempotency-Key was already used with a different request body",
+                    &rid,
+                );
+            }
+            Err(crate::repos::recommendations::SubmitRecommendationError::Tenancy(e)) => {
+                return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
+            }
         };
         audit(
             &state,
@@ -111,25 +114,12 @@ pub async fn create_run(
             Some(serde_json::json!({
                 "strategy_config_id": cfg_id,
                 "as_of": body.as_of,
-                "job_id": job.id,
+                "job_id": run.job_id,
             })),
             None,
         )
         .await;
-        (
-            StatusCode::CREATED,
-            Json(RecommendationRunDto {
-                id: run.id.to_string(),
-                strategy_config_id: Some(cfg_id.to_string()),
-                as_of,
-                status: run.status,
-                summary: run.summary_json,
-                created_at: run.created_at,
-                job_id: Some(job.id.to_string()),
-                items: None,
-            }),
-        )
-            .into_response()
+        (StatusCode::CREATED, Json(run_dto(run, None))).into_response()
     })
     .await
 }
@@ -173,20 +163,7 @@ pub async fn get_run(
         Ok(i) => i.into_iter().map(item_dto).collect(),
         Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
     };
-    (
-        StatusCode::OK,
-        Json(RecommendationRunDto {
-            id: run.id.to_string(),
-            strategy_config_id: run.strategy_config_id.map(|c| c.to_string()),
-            as_of: run.as_of,
-            status: run.status,
-            summary: run.summary_json,
-            created_at: run.created_at,
-            job_id: None,
-            items: Some(items),
-        }),
-    )
-        .into_response()
+    (StatusCode::OK, Json(run_dto(run, Some(items)))).into_response()
 }
 
 pub async fn list_runs(
@@ -220,19 +197,7 @@ pub async fn list_runs(
     {
         Ok((rows, next)) => {
             let next = encode_cursor(&state, next);
-            let items = rows
-                .into_iter()
-                .map(|r| RecommendationRunDto {
-                    id: r.id.to_string(),
-                    strategy_config_id: r.strategy_config_id.map(|c| c.to_string()),
-                    as_of: r.as_of,
-                    status: r.status,
-                    summary: r.summary_json,
-                    created_at: r.created_at,
-                    job_id: None,
-                    items: None,
-                })
-                .collect();
+            let items = rows.into_iter().map(|r| run_dto(r, None)).collect();
             (StatusCode::OK, Json(PageDto::new(items, next))).into_response()
         }
         Err(e) => tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
@@ -273,28 +238,28 @@ pub async fn latest(
     {
         return r;
     }
-    let run = match state.recommendations().latest_run(&actor, cfg_id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return code_error("RESOURCE_NOT_FOUND", "no recommendation run yet", &rid),
+    let (successful, newest) = match state.recommendations().latest_runs(&actor, cfg_id).await {
+        Ok((success, Some(newest))) => (success, newest),
+        Ok((_, None)) => {
+            return code_error("RESOURCE_NOT_FOUND", "no recommendation run yet", &rid);
+        }
         Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
     };
-    let items = match state.recommendations().items(&actor, run.id).await {
-        Ok(i) => i.into_iter().map(item_dto).collect(),
-        Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+    let successful = match successful {
+        Some(run) => {
+            let items = match state.recommendations().items(&actor, run.id).await {
+                Ok(i) => i.into_iter().map(item_dto).collect(),
+                Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
+            };
+            Some(run_dto(run, Some(items)))
+        }
+        None => None,
     };
     (
         StatusCode::OK,
         Json(serde_json::json!({
-            "run": RecommendationRunDto {
-                id: run.id.to_string(),
-                strategy_config_id: run.strategy_config_id.map(|c| c.to_string()),
-                as_of: run.as_of,
-                status: run.status,
-                summary: run.summary_json,
-                created_at: run.created_at,
-                job_id: None,
-                items: Some(items),
-            }
+            "run": successful,
+            "latest_run": run_dto(newest, None),
         })),
     )
         .into_response()
@@ -320,6 +285,27 @@ fn item_dto(i: crate::repos::recommendations::RecommendationItemRow) -> Recommen
             .filter_map(|v| v.as_str().map(str::to_string))
             .collect(),
         factors: i.factors_json,
+    }
+}
+
+fn run_dto(
+    run: crate::repos::recommendations::RecommendationRunRow,
+    items: Option<Vec<RecommendationItemDto>>,
+) -> RecommendationRunDto {
+    RecommendationRunDto {
+        id: run.id.to_string(),
+        strategy_config_id: run.strategy_config_id.map(|c| c.to_string()),
+        as_of: run.as_of,
+        status: run.status,
+        summary: run.summary_json,
+        created_at: run.created_at,
+        trigger_kind: run.trigger_kind,
+        provenance: RecommendationProvenanceDto {
+            dataset_version_id: run.dataset_version_id.map(|id| id.to_string()),
+            dataset_manifest_sha256: run.dataset_manifest_sha256,
+        },
+        job_id: run.job_id.map(|id| id.to_string()),
+        items,
     }
 }
 

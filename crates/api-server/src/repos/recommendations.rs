@@ -7,8 +7,9 @@ use crate::error::{TenancyError, TenancyResult};
 use crate::http::pagination::Cursor;
 use auth::entitlement::Actor;
 use chrono::{DateTime, NaiveDate, Utc};
+use job_queue::recommendation::input::{DatasetPin, RecommendationPayload};
 use serde_json::Value;
-use sqlx::FromRow;
+use sqlx::{FromRow, Postgres, Transaction};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, FromRow)]
@@ -19,6 +20,31 @@ pub struct RecommendationRunRow {
     pub status: String,
     pub summary_json: Value,
     pub created_at: DateTime<Utc>,
+    pub job_id: Option<Uuid>,
+    pub trigger_kind: String,
+    pub dataset_version_id: Option<Uuid>,
+    pub dataset_manifest_sha256: Option<String>,
+}
+
+/// The submission boundary keeps the run and its queue row in one actor
+/// transaction. The caller cannot supply any owner or lineage fields.
+#[derive(Debug, Clone)]
+pub struct SubmitRecommendation {
+    pub strategy_config_id: Uuid,
+    pub as_of: NaiveDate,
+    pub dataset: DatasetPin,
+    pub idempotency_key: Option<String>,
+    pub max_jobs_per_owner: u32,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SubmitRecommendationError {
+    #[error(transparent)]
+    Tenancy(#[from] TenancyError),
+    #[error("per-owner recommendation capacity exceeded")]
+    CapacityExceeded,
+    #[error("idempotency key was already used with different recommendation input")]
+    IdempotencyMismatch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, FromRow)]
@@ -32,6 +58,38 @@ pub struct RecommendationItemRow {
     pub exclusion_reason: Option<String>,
 }
 
+#[derive(Debug, FromRow)]
+struct TaggedRecommendationRunRow {
+    kind: String,
+    id: Uuid,
+    strategy_config_id: Option<Uuid>,
+    as_of: NaiveDate,
+    status: String,
+    summary_json: Value,
+    created_at: DateTime<Utc>,
+    job_id: Option<Uuid>,
+    trigger_kind: String,
+    dataset_version_id: Option<Uuid>,
+    dataset_manifest_sha256: Option<String>,
+}
+
+impl From<TaggedRecommendationRunRow> for RecommendationRunRow {
+    fn from(row: TaggedRecommendationRunRow) -> Self {
+        Self {
+            id: row.id,
+            strategy_config_id: row.strategy_config_id,
+            as_of: row.as_of,
+            status: row.status,
+            summary_json: row.summary_json,
+            created_at: row.created_at,
+            job_id: row.job_id,
+            trigger_kind: row.trigger_kind,
+            dataset_version_id: row.dataset_version_id,
+            dataset_manifest_sha256: row.dataset_manifest_sha256,
+        }
+    }
+}
+
 /// Repository over the recommendation tenant tables.
 #[derive(Debug, Clone)]
 pub struct RecommendationRepo {
@@ -43,22 +101,145 @@ impl RecommendationRepo {
         Self { pool }
     }
 
-    /// Create a PENDING run for `actor` (job enqueued by the caller).
-    pub async fn create_run(
+    /// Insert the PENDING run and its QUEUED recommendation job atomically.
+    /// The owner advisory lock makes the capacity check serializable per
+    /// tenant; the namespaced queue key supplies durable duplicate protection
+    /// across API instances.
+    pub async fn submit(
         &self,
         actor: &Actor,
-        strategy_config_id: Uuid,
-        as_of: NaiveDate,
-    ) -> TenancyResult<RecommendationRunRow> {
+        input: SubmitRecommendation,
+    ) -> Result<RecommendationRunRow, SubmitRecommendationError> {
+        let owner = actor_uuid(actor)?;
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
-        let row = sqlx::query_as::<_, RecommendationRunRow>(
-            "INSERT INTO recommendation_runs (owner_user_id, strategy_config_id, as_of, status) \
-             VALUES ($1, $2, $3, 'PENDING') \
-             RETURNING id, strategy_config_id, as_of, status, summary_json, created_at",
+
+        // Serialize submissions for one owner so a concurrent capacity check
+        // cannot admit more than the configured number of active jobs.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 7919))")
+            .bind(owner)
+            .execute(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+
+        let queue_key = input
+            .idempotency_key
+            .as_deref()
+            .map(|key| format!("recommendation:{key}"));
+        if let Some(key) = queue_key.as_deref() {
+            let existing: Option<(Uuid, String, Value)> = sqlx::query_as(
+                "SELECT id, job_type, payload_json FROM jobs \
+                 WHERE owner_user_id = $1 AND idempotency_key = $2 \
+                 FOR SHARE",
+            )
+            .bind(owner)
+            .bind(key)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+            if let Some((job_id, job_type, payload)) = existing {
+                let matches = RecommendationPayload::try_from(payload)
+                    .map(|payload| {
+                        job_type == "recommendation"
+                            && payload.strategy_config_id == input.strategy_config_id
+                            && payload.as_of == input.as_of
+                            && payload.dataset == input.dataset
+                    })
+                    .unwrap_or(false);
+                if !matches {
+                    return Err(SubmitRecommendationError::IdempotencyMismatch);
+                }
+                let row = select_run_by_job(&mut tx, job_id).await?;
+                tx.commit().await.map_err(TenancyError::from_sqlx)?;
+                return Ok(row);
+            }
+        }
+
+        let config_active: Option<bool> = sqlx::query_scalar(
+            "SELECT is_active FROM user_strategy_configs WHERE id = $1 FOR SHARE",
         )
-        .bind(actor_uuid(actor)?)
-        .bind(strategy_config_id)
-        .bind(as_of)
+        .bind(input.strategy_config_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        if config_active != Some(true) {
+            return Err(TenancyError::NotFound.into());
+        }
+
+        let dataset: Option<(String, String, String, String)> = sqlx::query_as(
+            "SELECT dataset_id, version, status, manifest_sha256 \
+             FROM dataset_versions WHERE id = $1 FOR SHARE",
+        )
+        .bind(input.dataset.id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        match dataset {
+            Some((dataset_id, version, status, manifest_sha256))
+                if dataset_id == input.dataset.dataset_id
+                    && version == input.dataset.version
+                    && manifest_sha256 == input.dataset.manifest_sha256
+                    && status == "READY" => {}
+            Some(_) => {
+                return Err(TenancyError::DatasetBlocked(
+                    "configured dataset pin is not READY".into(),
+                )
+                .into());
+            }
+            None => {
+                return Err(TenancyError::DatasetBlocked(
+                    "configured dataset pin is missing".into(),
+                )
+                .into());
+            }
+        }
+
+        let active_jobs: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM jobs WHERE owner_user_id = $1 AND status IN ('QUEUED', 'RUNNING')",
+        )
+        .bind(owner)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        if active_jobs >= input.max_jobs_per_owner as i64 {
+            return Err(SubmitRecommendationError::CapacityExceeded);
+        }
+
+        let run_id = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+        let payload = serde_json::to_value(RecommendationPayload {
+            run_id,
+            strategy_config_id: input.strategy_config_id,
+            as_of: input.as_of,
+            dataset: input.dataset.clone(),
+        })
+        .expect("recommendation payload serializes");
+        sqlx::query(
+            "INSERT INTO jobs \
+             (id, owner_user_id, job_type, status, priority, idempotency_key, payload_json, max_attempts, available_at) \
+             VALUES ($1, $2, 'recommendation', 'QUEUED', 10, $3, $4, 3, now())",
+        )
+        .bind(job_id)
+        .bind(owner)
+        .bind(&queue_key)
+        .bind(payload)
+        .execute(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+
+        let row = sqlx::query_as::<_, RecommendationRunRow>(
+            "INSERT INTO recommendation_runs \
+             (id, owner_user_id, strategy_config_id, as_of, status, job_id, trigger_kind, dataset_version_id, dataset_manifest_sha256) \
+             VALUES ($1, $2, $3, $4, 'PENDING', $5, 'MANUAL', $6, $7) \
+             RETURNING id, strategy_config_id, as_of, status, summary_json, created_at, \
+                       job_id, trigger_kind, dataset_version_id, dataset_manifest_sha256",
+        )
+        .bind(run_id)
+        .bind(owner)
+        .bind(input.strategy_config_id)
+        .bind(input.as_of)
+        .bind(job_id)
+        .bind(input.dataset.id)
+        .bind(&input.dataset.manifest_sha256)
         .fetch_one(&mut *tx)
         .await
         .map_err(TenancyError::from_sqlx)?;
@@ -69,7 +250,8 @@ impl RecommendationRepo {
     pub async fn get_run(&self, actor: &Actor, id: Uuid) -> TenancyResult<RecommendationRunRow> {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let row = sqlx::query_as::<_, RecommendationRunRow>(
-            "SELECT id, strategy_config_id, as_of, status, summary_json, created_at \
+            "SELECT id, strategy_config_id, as_of, status, summary_json, created_at, \
+                    job_id, trigger_kind, dataset_version_id, dataset_manifest_sha256 \
              FROM recommendation_runs WHERE id = $1",
         )
         .bind(id)
@@ -90,13 +272,15 @@ impl RecommendationRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let sql = match after {
             Some(_) => {
-                "SELECT id, strategy_config_id, as_of, status, summary_json, created_at \
-                 FROM recommendation_runs WHERE (created_at, id) > ($1::timestamptz, $2::uuid) \
-                 ORDER BY created_at, id LIMIT $3"
+                "SELECT id, strategy_config_id, as_of, status, summary_json, created_at, \
+                         job_id, trigger_kind, dataset_version_id, dataset_manifest_sha256 \
+                 FROM recommendation_runs WHERE (created_at, id) < ($1::timestamptz, $2::uuid) \
+                 ORDER BY created_at DESC, id DESC LIMIT $3"
             }
             None => {
-                "SELECT id, strategy_config_id, as_of, status, summary_json, created_at \
-                 FROM recommendation_runs ORDER BY created_at, id LIMIT $1"
+                "SELECT id, strategy_config_id, as_of, status, summary_json, created_at, \
+                        job_id, trigger_kind, dataset_version_id, dataset_manifest_sha256 \
+                 FROM recommendation_runs ORDER BY created_at DESC, id DESC LIMIT $1"
             }
         };
         let mut q = sqlx::query_as::<_, RecommendationRunRow>(sql);
@@ -116,33 +300,47 @@ impl RecommendationRepo {
         }))
     }
 
-    /// The latest run for `actor` (optionally for one strategy config).
-    pub async fn latest_run(
+    /// The latest successful report and newest run metadata are deliberately
+    /// independent: a pending/failed submission must not hide usable advice.
+    pub async fn latest_runs(
         &self,
         actor: &Actor,
         config_id: Option<Uuid>,
-    ) -> TenancyResult<Option<RecommendationRunRow>> {
+    ) -> TenancyResult<(Option<RecommendationRunRow>, Option<RecommendationRunRow>)> {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
-        let row = match config_id {
-            Some(cfg) => sqlx::query_as::<_, RecommendationRunRow>(
-                "SELECT id, strategy_config_id, as_of, status, summary_json, created_at \
-                     FROM recommendation_runs WHERE strategy_config_id = $1 \
-                     ORDER BY created_at DESC, id DESC LIMIT 1",
-            )
-            .bind(cfg)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(TenancyError::from_sqlx)?,
-            None => sqlx::query_as::<_, RecommendationRunRow>(
-                "SELECT id, strategy_config_id, as_of, status, summary_json, created_at \
-                     FROM recommendation_runs ORDER BY created_at DESC, id DESC LIMIT 1",
-            )
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(TenancyError::from_sqlx)?,
-        };
+        // One SQL statement gives both rows the same PostgreSQL snapshot. A
+        // publisher cannot make `latest` mix a report before publication with
+        // metadata after it.
+        let rows = sqlx::query_as::<_, TaggedRecommendationRunRow>(
+            "(SELECT 'successful'::text AS kind, id, strategy_config_id, as_of, status, \
+                     summary_json, created_at, job_id, trigger_kind, dataset_version_id, \
+                     dataset_manifest_sha256 \
+              FROM recommendation_runs \
+              WHERE ($1::uuid IS NULL OR strategy_config_id = $1) AND status = 'SUCCEEDED' \
+              ORDER BY created_at DESC, id DESC LIMIT 1) \
+             UNION ALL \
+             (SELECT 'newest'::text AS kind, id, strategy_config_id, as_of, status, \
+                     summary_json, created_at, job_id, trigger_kind, dataset_version_id, \
+                     dataset_manifest_sha256 \
+              FROM recommendation_runs \
+              WHERE ($1::uuid IS NULL OR strategy_config_id = $1) \
+              ORDER BY created_at DESC, id DESC LIMIT 1)",
+        )
+        .bind(config_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        let mut successful = None;
+        let mut newest = None;
+        for row in rows {
+            match row.kind.as_str() {
+                "successful" => successful = Some(row.into()),
+                "newest" => newest = Some(row.into()),
+                _ => unreachable!("latest query only emits fixed kind values"),
+            }
+        }
         tx.commit().await.map_err(TenancyError::from_sqlx)?;
-        Ok(row)
+        Ok((successful, newest))
     }
 
     /// Items of one of the actor's runs (empty when not settled yet).
@@ -165,4 +363,20 @@ impl RecommendationRepo {
         tx.commit().await.map_err(TenancyError::from_sqlx)?;
         Ok(rows)
     }
+}
+
+async fn select_run_by_job(
+    tx: &mut Transaction<'_, Postgres>,
+    job_id: Uuid,
+) -> TenancyResult<RecommendationRunRow> {
+    let row = sqlx::query_as::<_, RecommendationRunRow>(
+        "SELECT id, strategy_config_id, as_of, status, summary_json, created_at, \
+                job_id, trigger_kind, dataset_version_id, dataset_manifest_sha256 \
+         FROM recommendation_runs WHERE job_id = $1",
+    )
+    .bind(job_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(TenancyError::from_sqlx)?;
+    crate::error::map_optional(row)
 }
