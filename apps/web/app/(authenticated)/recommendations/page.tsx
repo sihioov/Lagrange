@@ -78,7 +78,7 @@ export default async function RecommendationsPage({ searchParams }: Recommendati
         : await api.getRecommendationRun(requestedRunId);
     const latestSuccessful = latest?.run ?? null;
     const activeRun = selected ?? latest?.latest_run ?? null;
-    const reportRun = selected?.status === "SUCCEEDED" ? selected : latestSuccessful;
+    const reportRun = activeRun?.status === "SUCCEEDED" ? activeRun : latestSuccessful;
 
     return (
       <RoutePage

@@ -47,7 +47,7 @@ function config() {
   };
 }
 
-function recommendationItems(exclusions) {
+function recommendationItems(exclusions, submitted = false) {
   const selected = [
     {
       excluded: false,
@@ -65,6 +65,18 @@ function recommendationItems(exclusions) {
       reason_codes: ["RELATIVE_RANK_2"],
       target_weight: "0.400000",
     },
+    ...(submitted
+      ? [
+          {
+            excluded: false,
+            factors: { momentum_12_1: "0.097000", normalized_score: "0.511000" },
+            instrument_id: "132030.KRX",
+            rank: 3,
+            reason_codes: ["RELATIVE_RANK_3"],
+            target_weight: "0.200000",
+          },
+        ]
+      : []),
   ];
   if (exclusions === "empty") return selected;
   return [
@@ -100,7 +112,9 @@ function recommendationRun(
     as_of: "2026-01-31",
     created_at: id === SUBMITTED_RUN_ID ? "2026-01-31T07:30:00Z" : "2026-01-31T06:30:00Z",
     id: runIdFor(scenario, id),
-    items: includeItems ? recommendationItems(scenario.exclusions) : undefined,
+    items: includeItems
+      ? recommendationItems(scenario.exclusions, id === SUBMITTED_RUN_ID)
+      : undefined,
     job_id: "00000000-0000-4000-8000-000000000301",
     provenance: provenance(),
     status,
@@ -191,6 +205,7 @@ export function recommendationResponse(request) {
     const newest = submitted
       ? recommendationRun(scenario, {
           id: SUBMITTED_RUN_ID,
+          includeItems: submittedPolls > 0,
           status: submittedPolls === 0 ? "PENDING" : "SUCCEEDED",
         })
       : success;

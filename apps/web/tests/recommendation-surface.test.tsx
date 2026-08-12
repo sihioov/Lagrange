@@ -218,6 +218,35 @@ describe("recommendation workflow", () => {
     expect(markup.indexOf(PENDING_RUN)).toBeLessThan(markup.indexOf(SUCCESS_RUN));
   });
 
+  it("keeps the last successful report visible when a newer run fails without rendering failed payload", async () => {
+    const succeeded = run(SUCCESS_RUN);
+    const failed = run(PENDING_RUN, {
+      created_at: "2026-01-31T07:30:00Z",
+      items: [
+        {
+          excluded: false,
+          instrument_id: "FAILED_PAYLOAD_MUST_NOT_RENDER",
+          target_weight: "1.000000",
+        },
+      ],
+      status: "FAILED",
+    });
+    vi.stubGlobal(
+      "fetch",
+      syntheticRecommendationApi({
+        configs: [config(CONFIG_A)],
+        history: [failed, succeeded],
+        latest: { latest_run: failed, run: succeeded },
+      }),
+    );
+
+    const markup = renderToStaticMarkup(await RecommendationsPage());
+
+    expect(markup).toContain("Recommendation failed");
+    expect(markup).toContain("069500.KRX");
+    expect(markup).not.toContain("FAILED_PAYLOAD_MUST_NOT_RENDER");
+  });
+
   it("labels an all-cash proposal without inventing selected instruments", async () => {
     const allCash = run(SUCCESS_RUN, { cash_weight: "1.000000", items: [] });
     vi.stubGlobal(

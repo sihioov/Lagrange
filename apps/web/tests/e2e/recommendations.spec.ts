@@ -22,6 +22,20 @@ test.beforeEach(async ({ request }) => {
 test("member selects relative momentum, polls only its submitted run, and retains the prior report", async ({
   page,
 }) => {
+  const submittedRunPath = "/api/v1/recommendations/runs/00000000-0000-4000-8000-000000000202";
+  const pollRequests: string[] = [];
+  const pollStatuses: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "GET" && request.url().includes("/api/v1/recommendations/runs/")) {
+      pollRequests.push(new URL(request.url()).pathname);
+    }
+  });
+  page.on("response", async (response) => {
+    if (response.url().includes(submittedRunPath)) {
+      pollStatuses.push((await response.json()).status);
+    }
+  });
+
   await page.goto("/strategies");
   const configuration = page.getByRole("form", { name: "Configure Relative momentum" });
   await configuration.getByLabel("Lookback months").fill("12");
@@ -50,9 +64,14 @@ test("member selects relative momentum, polls only its submitted run, and retain
     "Recommendation is in progress",
   );
   await expect(report.getByText("069500.KRX")).toBeVisible();
-  await expect(page.getByRole("status", { name: "Recommendation is in progress" })).toContainText(
-    "Recommendation is in progress",
-  );
+  await expect(
+    report
+      .getByRole("table", { name: "Selected instruments and target weights" })
+      .getByText("132030.KRX"),
+  ).toBeVisible();
+  await expect(page.getByRole("status", { name: "Recommendation is in progress" })).toHaveCount(0);
+  expect(pollRequests).toEqual([submittedRunPath, submittedRunPath]);
+  expect(pollStatuses).toEqual(["PENDING", "SUCCEEDED"]);
   const history = page.getByRole("region", { name: "Recommendation history" });
   await expect(history).toBeVisible();
   await history.getByRole("link", { name: "00000000-0000-4000-8000-000000000201" }).click();
