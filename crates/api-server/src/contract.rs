@@ -166,6 +166,11 @@ pub const ERROR_CODES: &[ErrorCodeDef] = &[
         "per-owner queued job capacity exceeded",
     ),
     ErrorCodeDef::new(
+        "ROBUSTNESS_CAPACITY_EXCEEDED",
+        StatusCode::TOO_MANY_REQUESTS,
+        "robustness fan-out would exceed per-owner queued job capacity",
+    ),
+    ErrorCodeDef::new(
         "RECOMMENDATION_CAPACITY_EXCEEDED",
         StatusCode::TOO_MANY_REQUESTS,
         "per-owner queued recommendation capacity exceeded",

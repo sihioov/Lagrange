@@ -59,6 +59,8 @@ pub enum SubmitBacktestError {
     Tenancy(#[from] TenancyError),
     #[error("per-owner job capacity exceeded")]
     CapacityExceeded,
+    #[error("idempotency key was already used with different backtest input")]
+    IdempotencyMismatch,
 }
 
 /// Typed repository over `backtest_runs`.
@@ -117,6 +119,40 @@ impl BacktestRunRepo {
         let owner = actor_uuid(actor)?;
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         crate::repos::lock_owner_job_capacity(&mut tx, owner).await?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let existing: Option<(Uuid, String, Value)> = sqlx::query_as(
+                "SELECT id, job_type, payload_json FROM jobs \
+                 WHERE owner_user_id = $1 AND idempotency_key = $2 FOR SHARE",
+            )
+            .bind(owner)
+            .bind(key)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+            if let Some((job_id, job_type, mut payload)) = existing {
+                if let Some(object) = payload.as_object_mut() {
+                    object.remove("run_id");
+                }
+                if job_type != "backtest" || payload != input.payload {
+                    return Err(SubmitBacktestError::IdempotencyMismatch);
+                }
+                let row = sqlx::query_as::<_, BacktestRunRow>(
+                    "SELECT id, owner_user_id, job_id, strategy_id, strategy_version, \
+                            dataset_version, engine, engine_version, config_sha256, code_commit, \
+                            random_seed, timezone, status, summary_json, started_at, finished_at, created_at \
+                     FROM backtest_runs WHERE job_id = $1",
+                )
+                .bind(job_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(TenancyError::from_sqlx)?
+                .ok_or(TenancyError::NotFound)?;
+                tx.commit().await.map_err(TenancyError::from_sqlx)?;
+                return Ok(row);
+            }
+        }
+
         let active: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM jobs WHERE owner_user_id = $1 AND status IN ('QUEUED', 'RUNNING')",
         )

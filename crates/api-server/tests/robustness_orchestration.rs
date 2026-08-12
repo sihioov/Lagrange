@@ -209,6 +209,83 @@ async fn robustness_orchestration_bounded_fan_out_and_one_axis_children() {
     h.teardown().await;
 }
 
+#[tokio::test]
+async fn robustness_orchestration_rejects_batch_when_global_owner_capacity_is_insufficient() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let m = h.member.clone();
+    let run_id = succeeded_run(&h, &m).await;
+    let pool = h.member_pool().await;
+    let active: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE owner_user_id=$1::uuid AND status IN ('QUEUED','RUNNING')",
+    )
+    .bind(m.user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(active, 1, "the parent backtest contributes one active job");
+    h.seed_tenant(
+        &m,
+        &format!(
+            "INSERT INTO jobs (id, owner_user_id, job_type, status, payload_json) \
+             SELECT gen_random_uuid(), '{}', 'capacity-fixture', 'QUEUED', '{{}}'::jsonb \
+             FROM generate_series(1, 8)",
+            m.user_id
+        ),
+    )
+    .await;
+
+    let axes: Vec<Value> = (0..5)
+        .map(|i| cost_stress_axis(&format!("capacity-{i}")))
+        .collect();
+    let response = h
+        .post(
+            &format!("/api/v1/backtests/{run_id}/robustness"),
+            Some(&m),
+            true,
+            json!({ "axes": axes }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(response).await),
+        "ROBUSTNESS_CAPACITY_EXCEEDED"
+    );
+
+    let active_after: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE owner_user_id=$1::uuid AND status IN ('QUEUED','RUNNING')",
+    )
+    .bind(m.user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let robustness_jobs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM jobs WHERE job_type='robustness'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let suites: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM robustness_suites WHERE parent_run_id=$1::uuid")
+            .bind(&run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let children: i64 = sqlx::query_scalar("SELECT count(*) FROM robustness_children")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        active_after, 9,
+        "the rejected batch inserts no partial jobs"
+    );
+    assert_eq!(robustness_jobs, 0);
+    assert_eq!(suites, 0, "capacity denial must not leave an empty suite");
+    assert_eq!(children, 0);
+    h.teardown().await;
+}
+
 // ---------------------------------------------------------------------------
 // Holdout non-access
 // ---------------------------------------------------------------------------

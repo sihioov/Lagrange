@@ -300,6 +300,81 @@ async fn http_backtests_capacity_limit_is_typed_429() {
 }
 
 #[tokio::test]
+async fn http_backtests_durable_idempotency_survives_api_restart() {
+    let Some(mut h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let cfg = seed_config(&h, &h.member).await;
+    let dataset = ready_dataset(&h).await;
+    let mut request = backtest_request(&dataset);
+    request["strategy_config_id"] = json!(cfg);
+    let key = "backtest-durable-replay-001";
+
+    let first = h
+        .send(
+            "POST",
+            "/api/v1/backtests",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(request.clone()),
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::CREATED);
+    let first_body = Harness::body_json(first).await;
+
+    h.restart_api().await;
+    let replay = h
+        .send(
+            "POST",
+            "/api/v1/backtests",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(request.clone()),
+        )
+        .await;
+    assert_eq!(replay.status(), StatusCode::CREATED);
+    let replay_body = Harness::body_json(replay).await;
+    assert_eq!(replay_body["id"], first_body["id"]);
+    assert_eq!(replay_body["job_id"], first_body["job_id"]);
+
+    h.restart_api().await;
+    request["start_date"] = json!("2026-01-06");
+    let mismatch = h
+        .send(
+            "POST",
+            "/api/v1/backtests",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(request),
+        )
+        .await;
+    assert_eq!(mismatch.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(mismatch).await),
+        "IDEMPOTENCY_KEY_MISMATCH"
+    );
+
+    let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM backtest_runs")
+        .fetch_one(&h.member_pool().await)
+        .await
+        .unwrap();
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM jobs WHERE job_type='backtest'")
+        .fetch_one(&h.member_pool().await)
+        .await
+        .unwrap();
+    assert_eq!(runs, 1, "durable replay must not create another run");
+    assert_eq!(jobs, 1, "durable replay must not enqueue another job");
+    h.teardown().await;
+}
+
+#[tokio::test]
 async fn http_backtests_validation_and_fuzz() {
     let Some(h) = Harness::new().await else {
         eprintln!("SKIP: DATABASE_URL not set");

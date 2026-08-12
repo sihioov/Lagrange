@@ -231,6 +231,7 @@ pub async fn create(
             "benchmark": body.benchmark,
             "cost_profile_id": body.cost_profile_id,
             "execution_profile": body.execution_profile,
+            "robustness": body.robustness,
         });
         let run = match state
             .backtest_runs()
@@ -266,6 +267,13 @@ pub async fn create(
                     ),
                     &rid,
                     None,
+                );
+            }
+            Err(crate::repos::backtest_runs::SubmitBacktestError::IdempotencyMismatch) => {
+                return code_error(
+                    "IDEMPOTENCY_KEY_MISMATCH",
+                    "the same Idempotency-Key was already used with a different request body",
+                    &rid,
                 );
             }
             Err(crate::repos::backtest_runs::SubmitBacktestError::Tenancy(e)) => {
@@ -823,24 +831,14 @@ pub async fn robustness(
             Err(e) => return robustness_error_response(&rid, e),
         };
 
-        let suite = match state.robustness_suites().find_by_parent(&actor, id).await {
-            Ok(Some(existing)) => existing,
-            Ok(None) => match state.robustness_suites().create_suite(&actor, id).await {
-                Ok(s) => s,
-                Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
-            },
-            Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
-        };
-
-        let queue = match state.queue_for(&actor).await {
-            Ok(q) => q,
-            Err(_) => return code_error("INTERNAL", "queue unavailable", &rid),
-        };
-        let batch_items: Vec<job_queue::batch::BatchItem> = plan
+        let batch_items: Vec<crate::repos::robustness::NewRobustnessJob> = plan
             .items
             .iter()
-            .map(|item| job_queue::batch::BatchItem {
-                job_type: "robustness".to_string(),
+            .map(|item| crate::repos::robustness::NewRobustnessJob {
+                run_id: item.lineage.run_id,
+                axis_code: item.lineage.changed_axis.code().to_string(),
+                axis_json: serde_json::to_value(&item.lineage.changed_axis)
+                    .unwrap_or(serde_json::Value::Null),
                 payload: serde_json::json!({
                     "parent_run_id": id,
                     "run_id": item.lineage.run_id,
@@ -849,34 +847,40 @@ pub async fn robustness(
                 idempotency_key: item.idempotency_key.clone(),
             })
             .collect();
-        let owner = match crate::actor_tx::actor_uuid(&actor) {
-            Ok(u) => u,
-            Err(_) => return code_error("INTERNAL", "actor id invalid", &rid),
-        };
-        let jobs = match job_queue::batch::submit_batch(&queue, owner, batch_items, 5, 3).await {
-            Ok(js) => js,
-            Err(e) => return code_error("INTERNAL", format!("enqueue failed: {e}"), &rid),
-        };
-
-        let new_children: Vec<crate::repos::robustness::NewChild> = plan
-            .items
-            .iter()
-            .zip(jobs.iter())
-            .map(|(item, job)| crate::repos::robustness::NewChild {
-                run_id: item.lineage.run_id,
-                axis_code: item.lineage.changed_axis.code().to_string(),
-                axis_json: serde_json::to_value(&item.lineage.changed_axis)
-                    .unwrap_or(serde_json::Value::Null),
-                job_id: job.id,
-            })
-            .collect();
-        if let Err(e) = state
+        let submitted = match state
             .robustness_suites()
-            .insert_children(&actor, suite.id, &new_children)
+            .submit_suite(
+                &actor,
+                id,
+                &batch_items,
+                state.cfg.max_jobs_per_owner,
+            )
             .await
         {
-            return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
-        }
+            Ok(submitted) => submitted,
+            Err(crate::repos::robustness::SubmitRobustnessError::CapacityExceeded) => {
+                return api_error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "ROBUSTNESS_CAPACITY_EXCEEDED",
+                    format!(
+                        "robustness fan-out would exceed per-owner queued job capacity ({})",
+                        state.cfg.max_jobs_per_owner
+                    ),
+                    &rid,
+                    None,
+                );
+            }
+            Err(crate::repos::robustness::SubmitRobustnessError::IdempotencyMismatch) => {
+                return code_error(
+                    "INTERNAL",
+                    "robustness lineage key resolved to incompatible input",
+                    &rid,
+                );
+            }
+            Err(crate::repos::robustness::SubmitRobustnessError::Tenancy(e)) => {
+                return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
+            }
+        };
 
         audit(
             &state,
@@ -886,7 +890,7 @@ pub async fn robustness(
             "backtest_run",
             &run.id.to_string(),
             None,
-            Some(serde_json::json!({ "suite_id": suite.id, "children": new_children.len() })),
+            Some(serde_json::json!({ "suite_id": submitted.suite.id, "children": submitted.children.len() })),
             None,
         )
         .await;
@@ -894,19 +898,19 @@ pub async fn robustness(
         let dto_children: Vec<RobustnessChildDto> = plan
             .items
             .iter()
-            .zip(jobs.iter())
-            .map(|(item, job)| RobustnessChildDto {
+            .zip(submitted.children.iter())
+            .map(|(item, child)| RobustnessChildDto {
                 run_id: item.lineage.run_id.to_string(),
-                job_id: job.id.to_string(),
+                job_id: child.job_id.to_string(),
                 axis: item.lineage.changed_axis.code().to_string(),
-                status: job.status.to_string(),
+                status: child.job_status.clone(),
             })
             .collect();
         (
             StatusCode::OK,
             Json(RobustnessDto {
                 run_id: run.id.to_string(),
-                suite_id: suite.id.to_string(),
+                suite_id: submitted.suite.id.to_string(),
                 children: dto_children,
             }),
         )
