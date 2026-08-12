@@ -81,6 +81,10 @@ const RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL: &str =
     include_str!("../../../../migrations/0035_recommendation_entitlement_lock.up.sql");
 const RECOMMENDATION_ENTITLEMENT_LOCK_DOWN_SQL: &str =
     include_str!("../../../../migrations/0035_recommendation_entitlement_lock.down.sql");
+const RECOMMENDATION_SUBMISSION_DATASET_LOCK_UP_SQL: &str =
+    include_str!("../../../../migrations/0036_recommendation_submission_dataset_lock.up.sql");
+const RECOMMENDATION_SUBMISSION_DATASET_LOCK_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0036_recommendation_submission_dataset_lock.down.sql");
 const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
 const RESEARCH_SCHEMA_GATE_SQL: &str =
@@ -95,7 +99,7 @@ fn recommendation_pipeline_migration_is_tracked() {
         assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
         assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
     }
-    for version in 26..=35 {
+    for version in 26..=36 {
         let up = MIGRATOR.migrations.iter().find(|migration| {
             migration.version == version
                 && migration.migration_type != MigrationType::ReversibleDown
@@ -166,6 +170,24 @@ fn recommendation_pipeline_migration_is_tracked() {
         RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("jobs_sync_recommendation_terminal_run")
     );
     assert!(RECOMMENDATION_ENTITLEMENT_LOCK_DOWN_SQL.contains("DROP TRIGGER"));
+    for migration in [
+        RECOMMENDATION_SUBMISSION_DATASET_LOCK_UP_SQL,
+        RECOMMENDATION_SUBMISSION_DATASET_LOCK_DOWN_SQL,
+    ] {
+        assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
+        assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
+    }
+    assert!(RECOMMENDATION_SUBMISSION_DATASET_LOCK_UP_SQL.contains("SECURITY DEFINER"));
+    assert!(
+        RECOMMENDATION_SUBMISSION_DATASET_LOCK_UP_SQL
+            .contains("SET search_path = pg_catalog, pg_temp")
+    );
+    assert!(RECOMMENDATION_SUBMISSION_DATASET_LOCK_UP_SQL.contains("status = 'READY'"));
+    assert!(RECOMMENDATION_SUBMISSION_DATASET_LOCK_UP_SQL.contains("FOR SHARE OF dataset"));
+    assert!(RECOMMENDATION_SUBMISSION_DATASET_LOCK_UP_SQL.contains("FROM PUBLIC"));
+    assert!(RECOMMENDATION_SUBMISSION_DATASET_LOCK_UP_SQL.contains("TO app"));
+    assert!(RECOMMENDATION_SUBMISSION_DATASET_LOCK_DOWN_SQL.contains("FROM app"));
+    assert!(RECOMMENDATION_SUBMISSION_DATASET_LOCK_DOWN_SQL.contains("DROP FUNCTION"));
 }
 
 #[test]
@@ -235,7 +257,7 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         sqlx::query(
             "INSERT INTO _sqlx_migrations \
              (version, description, installed_on, success, checksum, execution_time) \
-             VALUES (36, 'future migration', now(), true, decode(repeat('00', 32), 'hex'), 0)",
+             VALUES (37, 'future migration', now(), true, decode(repeat('00', 32), 'hex'), 0)",
         )
         .execute(&owner)
         .await?;
@@ -2162,15 +2184,15 @@ async fn revert_and_rerun_body(
         "fresh DB must apply all {expected} migrations"
     );
 
-    // Revert the 0035..0026 recommendation family, then 0025, 0024, and 0023
+    // Revert the 0036..0026 recommendation family, then 0025, 0024, and 0023
     // before 0022 while all earlier tables remain.
     // This proves each down migration restores its own boundary rather than
     // relying on 0003.down to hide omitted objects in a full teardown.
     MIGRATOR.undo(owner, 25).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 10,
-        "undo to 0025 must revert the complete 0035..0026 family"
+        expected - 11,
+        "undo to 0025 must revert the complete 0036..0026 family"
     );
     let scheduler_gone: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
@@ -2195,7 +2217,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 24).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 11,
+        expected - 12,
         "undo to 0024 must revert only 0025"
     );
     let calendar_lookup_gone: Option<String> = sqlx::query_scalar(
@@ -2219,7 +2241,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 23).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 12,
+        expected - 13,
         "undo to 0023 must revert only 0024"
     );
     let source_index_gone: Option<String> =
@@ -2233,7 +2255,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 22).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 13,
+        expected - 14,
         "undo to 0022 must revert only 0023"
     );
     sqlx::query(
@@ -2246,7 +2268,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 21).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 14,
+        expected - 15,
         "undo to 0021 must revert only 0022"
     );
     for object in [
@@ -2593,7 +2615,7 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     assert!(active_control);
-    MIGRATOR.run_to(35, owner).await?;
+    MIGRATOR.run_to(36, owner).await?;
     assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
 
     let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(

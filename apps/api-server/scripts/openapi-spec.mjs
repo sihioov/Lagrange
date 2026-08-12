@@ -98,7 +98,8 @@ const ERROR_CODES = [
   ["PAYLOAD_TOO_LARGE", 413],
   ["DATASET_BLOCKED", 422], ["DATA_STALE", 422],
   ["INVALID_STRATEGY_PARAMETER", 422], ["UNSUPPORTED_MARKET_CURRENCY", 422],
-  ["BACKTEST_CAPACITY_EXCEEDED", 429], ["RESULT_INTEGRITY_FAILED", 422],
+  ["BACKTEST_CAPACITY_EXCEEDED", 429], ["RECOMMENDATION_CAPACITY_EXCEEDED", 429],
+  ["RESULT_INTEGRITY_FAILED", 422],
   ["LIVE_RECONCILIATION_REQUIRED", 409], ["LIVE_KILL_SWITCH_ENGAGED", 409],
   ["LIVE_CONNECTION_NOT_CONFIGURED", 409],
   ["RISK_LIMIT_EXCEEDED", 422],
@@ -156,6 +157,7 @@ function operation(route) {
     tags: [path.split("/")[2] || "root"],
     parameters: [],
     responses: {
+      ...successResponsesFor(method, path),
       ...errorResponses(),
     },
     "x-lagrange": {
@@ -199,6 +201,26 @@ function operation(route) {
   return op;
 }
 
+function successResponsesFor(method, path) {
+  const json = (description, schema) => ({
+    description,
+    content: { "application/json": { schema: { $ref: schema } } },
+  });
+  if (path === "/api/v1/recommendations/runs" && method === "post") {
+    return { "201": json("Recommendation run accepted", "#/components/schemas/RecommendationRun") };
+  }
+  if (path === "/api/v1/recommendations/runs" && method === "get") {
+    return { "200": json("Recommendation run history", "#/components/schemas/RecommendationRunPage") };
+  }
+  if (path === "/api/v1/recommendations/runs/{run_id}" && method === "get") {
+    return { "200": json("Recommendation run", "#/components/schemas/RecommendationRun") };
+  }
+  if (path === "/api/v1/recommendations/latest" && method === "get") {
+    return { "200": json("Latest recommendation snapshot", "#/components/schemas/RecommendationLatest") };
+  }
+  return {};
+}
+
 function pathParams(path) {
   const out = {};
   for (const m of path.matchAll(/\{(\w+)\}/g)) {
@@ -229,6 +251,9 @@ function errorCodesFor(route) {
   if (flags.phase === PHASE3) codes.push("NOT_IMPLEMENTED", "FORBIDDEN");
   if (path.includes("/backtests")) {
     codes.push("DATASET_BLOCKED", "DATA_STALE", "BACKTEST_CAPACITY_EXCEEDED", "RESULT_INTEGRITY_FAILED", "UNSUPPORTED_MARKET_CURRENCY", "INVALID_DECIMAL", "DUPLICATE_RESOURCE");
+  }
+  if (path === "/api/v1/recommendations/runs" && route[0] === "POST") {
+    codes.push("RECOMMENDATION_CAPACITY_EXCEEDED");
   }
   if (path.includes("/paper/accounts")) {
     codes.push("UNSUPPORTED_MARKET_CURRENCY", "DUPLICATE_RESOURCE");
@@ -320,7 +345,7 @@ const SCHEMAS = {
   },
   RecommendationRun: {
     type: "object",
-    required: ["id", "as_of", "status"],
+    required: ["id", "strategy_config_id", "as_of", "status", "summary", "created_at", "trigger_kind", "provenance"],
     properties: {
       id: uuid,
       strategy_config_id: { type: ["string", "null"], format: "uuid" },
@@ -328,8 +353,34 @@ const SCHEMAS = {
       status: { type: "string", enum: ["PENDING", "SUCCEEDED", "FAILED", "BLOCKED"] },
       summary: { type: "object", additionalProperties: true },
       created_at: ts,
+      trigger_kind: { type: "string", enum: ["MANUAL", "SCHEDULED"] },
+      provenance: { $ref: "#/components/schemas/RecommendationProvenance" },
       job_id: { type: ["string", "null"], format: "uuid" },
       items: { type: "array", items: { $ref: "#/components/schemas/RecommendationItem" } },
+    },
+  },
+  RecommendationProvenance: {
+    type: "object",
+    properties: {
+      dataset_version_id: { type: "string", format: "uuid" },
+      dataset_manifest_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    },
+  },
+  RecommendationRunPage: {
+    type: "object",
+    required: ["items", "next_cursor", "has_more"],
+    properties: {
+      items: { type: "array", items: { $ref: "#/components/schemas/RecommendationRun" } },
+      next_cursor: { type: ["string", "null"] },
+      has_more: { type: "boolean" },
+    },
+  },
+  RecommendationLatest: {
+    type: "object",
+    required: ["run", "latest_run"],
+    properties: {
+      run: { oneOf: [{ $ref: "#/components/schemas/RecommendationRun" }, { type: "null" }] },
+      latest_run: { $ref: "#/components/schemas/RecommendationRun" },
     },
   },
   RecommendationRunBody: {

@@ -115,16 +115,12 @@ impl RecommendationRepo {
 
         // Serialize submissions for one owner so a concurrent capacity check
         // cannot admit more than the configured number of active jobs.
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 7919))")
-            .bind(owner)
-            .execute(&mut *tx)
-            .await
-            .map_err(TenancyError::from_sqlx)?;
+        crate::repos::lock_owner_job_capacity(&mut tx, owner).await?;
 
         let queue_key = input
             .idempotency_key
             .as_deref()
-            .map(|key| format!("recommendation:{key}"));
+            .map(|key| format!("recommendation:manual:{key}"));
         if let Some(key) = queue_key.as_deref() {
             let existing: Option<(Uuid, String, Value)> = sqlx::query_as(
                 "SELECT id, job_type, payload_json FROM jobs \
@@ -142,7 +138,6 @@ impl RecommendationRepo {
                         job_type == "recommendation"
                             && payload.strategy_config_id == input.strategy_config_id
                             && payload.as_of == input.as_of
-                            && payload.dataset == input.dataset
                     })
                     .unwrap_or(false);
                 if !matches {
@@ -165,32 +160,21 @@ impl RecommendationRepo {
             return Err(TenancyError::NotFound.into());
         }
 
-        let dataset: Option<(String, String, String, String)> = sqlx::query_as(
-            "SELECT dataset_id, version, status, manifest_sha256 \
-             FROM dataset_versions WHERE id = $1",
+        let dataset_ready: bool = sqlx::query_scalar(
+            "SELECT public.lock_recommendation_submission_dataset($1, $2, $3, $4)",
         )
         .bind(input.dataset.id)
-        .fetch_optional(&mut *tx)
+        .bind(&input.dataset.dataset_id)
+        .bind(&input.dataset.version)
+        .bind(&input.dataset.manifest_sha256)
+        .fetch_one(&mut *tx)
         .await
         .map_err(TenancyError::from_sqlx)?;
-        match dataset {
-            Some((dataset_id, version, status, manifest_sha256))
-                if dataset_id == input.dataset.dataset_id
-                    && version == input.dataset.version
-                    && manifest_sha256 == input.dataset.manifest_sha256
-                    && status == "READY" => {}
-            Some(_) => {
-                return Err(TenancyError::DatasetBlocked(
-                    "configured dataset pin is not READY".into(),
-                )
-                .into());
-            }
-            None => {
-                return Err(TenancyError::DatasetBlocked(
-                    "configured dataset pin is missing".into(),
-                )
-                .into());
-            }
+        if !dataset_ready {
+            return Err(TenancyError::DatasetBlocked(
+                "configured dataset pin is missing, mismatched, or not READY".into(),
+            )
+            .into());
         }
 
         let active_jobs: i64 = sqlx::query_scalar(
@@ -302,15 +286,23 @@ impl RecommendationRepo {
 
     /// The latest successful report and newest run metadata are deliberately
     /// independent: a pending/failed submission must not hide usable advice.
-    pub async fn latest_runs(
+    pub async fn latest_snapshot(
         &self,
         actor: &Actor,
         config_id: Option<Uuid>,
-    ) -> TenancyResult<(Option<RecommendationRunRow>, Option<RecommendationRunRow>)> {
-        let mut tx = begin_actor_tx(&self.pool, actor).await?;
-        // One SQL statement gives both rows the same PostgreSQL snapshot. A
-        // publisher cannot make `latest` mix a report before publication with
-        // metadata after it.
+    ) -> TenancyResult<(
+        Option<RecommendationRunRow>,
+        Option<RecommendationRunRow>,
+        Vec<RecommendationItemRow>,
+    )> {
+        let mut tx = self.pool.begin().await.map_err(TenancyError::from_sqlx)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            .execute(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+        crate::actor_tx::set_actor_guc(&mut tx, actor).await?;
+        // Both metadata rows come from one statement, and REPEATABLE READ
+        // keeps the following item query on that exact PostgreSQL snapshot.
         let rows = sqlx::query_as::<_, TaggedRecommendationRunRow>(
             "(SELECT 'successful'::text AS kind, id, strategy_config_id, as_of, status, \
                      summary_json, created_at, job_id, trigger_kind, dataset_version_id, \
@@ -330,8 +322,8 @@ impl RecommendationRepo {
         .fetch_all(&mut *tx)
         .await
         .map_err(TenancyError::from_sqlx)?;
-        let mut successful = None;
-        let mut newest = None;
+        let mut successful: Option<RecommendationRunRow> = None;
+        let mut newest: Option<RecommendationRunRow> = None;
         for row in rows {
             match row.kind.as_str() {
                 "successful" => successful = Some(row.into()),
@@ -339,8 +331,21 @@ impl RecommendationRepo {
                 _ => unreachable!("latest query only emits fixed kind values"),
             }
         }
+        let items = match successful.as_ref() {
+            Some(run) => sqlx::query_as::<_, RecommendationItemRow>(
+                "SELECT instrument_id, rank, target_weight::text, reason_codes, factors_json, \
+                        excluded, exclusion_reason \
+                 FROM recommendation_items WHERE recommendation_run_id = $1 \
+                 ORDER BY rank NULLS LAST, instrument_id",
+            )
+            .bind(run.id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?,
+            None => Vec::new(),
+        };
         tx.commit().await.map_err(TenancyError::from_sqlx)?;
-        Ok((successful, newest))
+        Ok((successful, newest, items))
     }
 
     /// Items of one of the actor's runs (empty when not settled yet).

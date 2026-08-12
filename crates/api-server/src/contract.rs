@@ -166,6 +166,11 @@ pub const ERROR_CODES: &[ErrorCodeDef] = &[
         "per-owner queued job capacity exceeded",
     ),
     ErrorCodeDef::new(
+        "RECOMMENDATION_CAPACITY_EXCEEDED",
+        StatusCode::TOO_MANY_REQUESTS,
+        "per-owner queued recommendation capacity exceeded",
+    ),
+    ErrorCodeDef::new(
         "RESULT_INTEGRITY_FAILED",
         StatusCode::UNPROCESSABLE_ENTITY,
         "result artifacts failed integrity verification",

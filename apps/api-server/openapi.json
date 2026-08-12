@@ -785,6 +785,16 @@
         ],
         "parameters": [],
         "responses": {
+          "201": {
+            "description": "Recommendation run accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationRun"
+                }
+              }
+            }
+          },
           "400": {
             "$ref": "#/components/responses/Error400"
           },
@@ -853,7 +863,8 @@
             "IDEMPOTENCY_KEY_MISMATCH",
             "CSRF_DENIED",
             "INVALID_PARAMETER",
-            "PAYLOAD_TOO_LARGE"
+            "PAYLOAD_TOO_LARGE",
+            "RECOMMENDATION_CAPACITY_EXCEEDED"
           ],
           "phase": "current"
         },
@@ -895,6 +906,16 @@
           }
         ],
         "responses": {
+          "200": {
+            "description": "Recommendation run history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationRunPage"
+                }
+              }
+            }
+          },
           "400": {
             "$ref": "#/components/responses/Error400"
           },
@@ -980,6 +1001,16 @@
           }
         ],
         "responses": {
+          "200": {
+            "description": "Recommendation run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationRun"
+                }
+              }
+            }
+          },
           "400": {
             "$ref": "#/components/responses/Error400"
           },
@@ -1066,6 +1097,16 @@
           }
         ],
         "responses": {
+          "200": {
+            "description": "Latest recommendation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationLatest"
+                }
+              }
+            }
+          },
           "400": {
             "$ref": "#/components/responses/Error400"
           },
@@ -5061,6 +5102,7 @@
           "INVALID_STRATEGY_PARAMETER",
           "UNSUPPORTED_MARKET_CURRENCY",
           "BACKTEST_CAPACITY_EXCEEDED",
+          "RECOMMENDATION_CAPACITY_EXCEEDED",
           "RESULT_INTEGRITY_FAILED",
           "LIVE_RECONCILIATION_REQUIRED",
           "LIVE_KILL_SWITCH_ENGAGED",
@@ -5243,8 +5285,13 @@
         "type": "object",
         "required": [
           "id",
+          "strategy_config_id",
           "as_of",
-          "status"
+          "status",
+          "summary",
+          "created_at",
+          "trigger_kind",
+          "provenance"
         ],
         "properties": {
           "id": {
@@ -5280,6 +5327,16 @@
             "type": "string",
             "format": "date-time"
           },
+          "trigger_kind": {
+            "type": "string",
+            "enum": [
+              "MANUAL",
+              "SCHEDULED"
+            ]
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/RecommendationProvenance"
+          },
           "job_id": {
             "type": [
               "string",
@@ -5292,6 +5349,66 @@
             "items": {
               "$ref": "#/components/schemas/RecommendationItem"
             }
+          }
+        }
+      },
+      "RecommendationProvenance": {
+        "type": "object",
+        "properties": {
+          "dataset_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dataset_manifest_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "RecommendationRunPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecommendationRun"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RecommendationLatest": {
+        "type": "object",
+        "required": [
+          "run",
+          "latest_run"
+        ],
+        "properties": {
+          "run": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RecommendationRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_run": {
+            "$ref": "#/components/schemas/RecommendationRun"
           }
         }
       },

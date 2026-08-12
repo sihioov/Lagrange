@@ -18,6 +18,7 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
+use uuid::Uuid;
 
 const FIXED_UNIVERSE_MEMBERS: [&str; 11] = [
     "069500.KRX",
@@ -579,6 +580,41 @@ async fn http_recommendations_ownership_and_idempotency() {
     assert_eq!(id1, id2);
     assert_eq!(body2["job_id"], job1);
 
+    // Deployment may advance the hidden dataset pin between public retries.
+    // The public key + body must still replay the run originally committed.
+    let replacement_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO dataset_versions \
+         (dataset_id, version, status, manifest_sha256, storage_path) \
+         VALUES ('krx_eod_bars', 'replacement-v3', 'READY', repeat('9',64), \
+                 'data/curated/krx_eod_bars/replacement-v3') RETURNING id",
+    )
+    .fetch_one(&h.owner_pool)
+    .await
+    .unwrap();
+    h.restart_api_with_recommendation_dataset(DatasetPin {
+        id: replacement_id,
+        dataset_id: "krx_eod_bars".into(),
+        version: "replacement-v3".into(),
+        curated_version: 3,
+        manifest_sha256: "9".repeat(64),
+    })
+    .await;
+    let pin_changed_replay = h
+        .send(
+            "POST",
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(pin_changed_replay.status(), StatusCode::CREATED);
+    let pin_changed_body = Harness::body_json(pin_changed_replay).await;
+    assert_eq!(pin_changed_body["id"], id1);
+    assert_eq!(pin_changed_body["job_id"], job1);
+
     h.restart_api().await;
     let mismatch = h
         .send(
@@ -608,6 +644,79 @@ async fn http_recommendations_ownership_and_idempotency() {
         .await
         .unwrap();
     assert_eq!(jobs, 2, "no double enqueue for the same key");
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn http_recommendation_manual_keys_cannot_alias_scheduled_namespace() {
+    let Some(mut h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let cfg = config_id(&h, &h.member).await;
+    let body = json!({ "strategy_config_id": cfg, "as_of": "2026-01-31" });
+    let public_key = "scheduled:user-controlled";
+    let response = h
+        .send(
+            "POST",
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(public_key),
+            Some(body.clone()),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let created = Harness::body_json(response).await;
+    let queue_key: String =
+        sqlx::query_scalar("SELECT idempotency_key FROM jobs WHERE id = $1::uuid")
+            .bind(created["job_id"].as_str().unwrap())
+            .fetch_one(&h.member_pool().await)
+            .await
+            .unwrap();
+    assert_eq!(queue_key, "recommendation:manual:scheduled:user-controlled");
+
+    // A real reserved scheduled identity remains separate from the manual
+    // public key even when the user deliberately starts with `scheduled:`.
+    let scheduled_key = format!("recommendation:scheduled:{}", "1".repeat(32));
+    assert_ne!(queue_key, scheduled_key);
+    let reserved_insert = sqlx::query(
+        "INSERT INTO jobs (owner_user_id, job_type, idempotency_key, payload_json) \
+         VALUES ($1, 'recommendation', $2, '{}'::jsonb)",
+    )
+    .bind(h.member.user_id)
+    .bind(&scheduled_key)
+    .execute(&h.member_pool().await)
+    .await;
+    assert_eq!(
+        reserved_insert
+            .as_ref()
+            .err()
+            .and_then(|e| e.as_database_error())
+            .and_then(|e| e.code())
+            .as_deref(),
+        Some("42501")
+    );
+
+    h.restart_api().await;
+    let oversized = "x".repeat(256);
+    let rejected = h
+        .send(
+            "POST",
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(&oversized),
+            Some(body),
+        )
+        .await;
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(rejected).await),
+        "INVALID_PARAMETER"
+    );
     h.teardown().await;
 }
 
@@ -654,6 +763,81 @@ async fn http_recommendations_queue_failure_rolls_back_run_and_job() {
 }
 
 #[tokio::test]
+async fn configured_ready_dataset_attestation_is_app_only_and_locks_mutation() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let pin = h.state().cfg.recommendation_dataset.clone();
+    let app_pool = h.member_pool().await;
+    let mut attestation_tx = app_pool.begin().await.unwrap();
+    let attested: bool =
+        sqlx::query_scalar("SELECT public.lock_recommendation_submission_dataset($1, $2, $3, $4)")
+            .bind(pin.id)
+            .bind(&pin.dataset_id)
+            .bind(&pin.version)
+            .bind(&pin.manifest_sha256)
+            .fetch_one(&mut *attestation_tx)
+            .await
+            .unwrap();
+    assert!(attested);
+    let mismatched: bool = sqlx::query_scalar(
+        "SELECT public.lock_recommendation_submission_dataset($1, $2, $3, repeat('0', 64))",
+    )
+    .bind(pin.id)
+    .bind(&pin.dataset_id)
+    .bind(&pin.version)
+    .fetch_one(&mut *attestation_tx)
+    .await
+    .unwrap();
+    assert!(!mismatched);
+
+    let grants: (bool, bool, bool, bool) = sqlx::query_as(
+        "SELECT has_function_privilege('app', 'public.lock_recommendation_submission_dataset(uuid,text,text,text)', 'EXECUTE'), \
+                has_function_privilege('worker', 'public.lock_recommendation_submission_dataset(uuid,text,text,text)', 'EXECUTE'), \
+                has_function_privilege('admin', 'public.lock_recommendation_submission_dataset(uuid,text,text,text)', 'EXECUTE'), \
+                EXISTS (SELECT 1 FROM pg_proc p, LATERAL aclexplode(p.proacl) acl \
+                         WHERE p.oid='public.lock_recommendation_submission_dataset(uuid,text,text,text)'::regprocedure \
+                           AND acl.grantee=0 AND acl.privilege_type='EXECUTE')",
+    )
+    .fetch_one(&h.owner_pool)
+    .await
+    .unwrap();
+    assert_eq!(grants, (true, false, false, false));
+
+    let mut mutation_tx = h.owner_pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL lock_timeout = '150ms'")
+        .execute(&mut *mutation_tx)
+        .await
+        .unwrap();
+    let blocked = sqlx::query("UPDATE dataset_versions SET status = 'BLOCKED' WHERE id = $1")
+        .bind(pin.id)
+        .execute(&mut *mutation_tx)
+        .await;
+    assert_eq!(
+        blocked
+            .as_ref()
+            .err()
+            .and_then(|e| e.as_database_error())
+            .and_then(|e| e.code())
+            .as_deref(),
+        Some("55P03"),
+        "FOR SHARE attestation must close the READY-check mutation race"
+    );
+    mutation_tx.rollback().await.unwrap();
+    attestation_tx.commit().await.unwrap();
+
+    let mut mutation_tx = h.owner_pool.begin().await.unwrap();
+    sqlx::query("UPDATE dataset_versions SET status = 'BLOCKED' WHERE id = $1")
+        .bind(pin.id)
+        .execute(&mut *mutation_tx)
+        .await
+        .unwrap();
+    mutation_tx.rollback().await.unwrap();
+    h.teardown().await;
+}
+
+#[tokio::test]
 async fn http_recommendations_capacity_is_per_owner_and_typed() {
     let Some(h) = Harness::new().await else {
         eprintln!("SKIP: DATABASE_URL not set");
@@ -688,6 +872,81 @@ async fn http_recommendations_capacity_is_per_owner_and_typed() {
         .await
         .unwrap();
     assert_eq!(runs, 0);
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn concurrent_backtest_and_recommendation_share_one_owner_capacity_slot() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let cfg = config_id(&h, &h.member).await;
+    let dataset_id = h.state().cfg.recommendation_dataset.id;
+    h.seed_tenant(
+        &h.member,
+        &format!(
+            "INSERT INTO jobs (owner_user_id, job_type, idempotency_key, payload_json) \
+             SELECT '{owner}', 'occupied', 'capacity-race-' || gs::text, '{{}}'::jsonb \
+             FROM generate_series(1, 9) AS gs",
+            owner = h.member.user_id
+        ),
+    )
+    .await;
+
+    let recommendation = h.send(
+        "POST",
+        "/api/v1/recommendations/runs",
+        Some(&h.member),
+        true,
+        Some("capacity-race-rec"),
+        Some("capacity-race-rec"),
+        Some(json!({ "strategy_config_id": cfg, "as_of": "2026-01-31" })),
+    );
+    let backtest = h.send(
+        "POST",
+        "/api/v1/backtests",
+        Some(&h.member),
+        true,
+        Some("capacity-race-backtest"),
+        Some("capacity-race-backtest"),
+        Some(json!({
+            "strategy_config_id": cfg,
+            "dataset_version_id": dataset_id,
+            "start_date": "2026-01-05",
+            "end_date": "2026-01-30",
+            "initial_cash": { "currency": "KRW", "amount": "100000000" },
+            "benchmark": "069500.KRX",
+            "cost_profile_id": "KRX_ETF_DEFAULT",
+            "execution_profile": "daily-close-next-open@1",
+            "robustness": false
+        })),
+    );
+    let (recommendation, backtest) = tokio::join!(recommendation, backtest);
+    let statuses = [recommendation.status(), backtest.status()];
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|&&s| s == StatusCode::CREATED)
+            .count(),
+        1,
+        "exactly one producer may reserve the final global owner slot"
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|&&s| s == StatusCode::TOO_MANY_REQUESTS)
+            .count(),
+        1
+    );
+    let active: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE owner_user_id = $1 AND status IN ('QUEUED', 'RUNNING')",
+    )
+    .bind(h.member.user_id)
+    .fetch_one(&h.member_pool().await)
+    .await
+    .unwrap();
+    assert_eq!(active, 10);
     h.teardown().await;
 }
 
@@ -769,6 +1028,84 @@ async fn http_recommendations_latest_keeps_success_visible_behind_new_pending_ru
         .await;
     let second_page = Harness::body_json(second_page).await;
     assert_eq!(second_page["items"][0]["id"], successful_id);
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn latest_metadata_and_items_are_read_from_one_database_snapshot() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let cfg = config_id(&h, &h.member).await;
+    let created = h
+        .send(
+            "POST",
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            Some("snapshot-seed"),
+            Some("snapshot-seed"),
+            Some(json!({ "strategy_config_id": cfg, "as_of": "2026-01-31" })),
+        )
+        .await;
+    let run_id = Harness::body_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    h.seed_tenant(
+        &h.member,
+        &format!(
+            "UPDATE recommendation_runs SET status='SUCCEEDED', summary_json='{{\"generation\":0}}'::jsonb WHERE id='{run_id}'"
+        ),
+    )
+    .await;
+    h.seed_tenant(
+        &h.member,
+        &format!(
+            "INSERT INTO recommendation_items \
+                 (recommendation_run_id, owner_user_id, instrument_id, rank, target_weight, factors_json) \
+             VALUES ('{run_id}', '{owner}', '069500.KRX', 1, 1, '{{\"generation\":0}}'::jsonb)",
+            owner = h.member.user_id
+        ),
+    )
+    .await;
+
+    let writer_pool = h.member_pool().await;
+    let writer_run = Uuid::parse_str(&run_id).unwrap();
+    let writer = tokio::spawn(async move {
+        for generation in 1..=200_i32 {
+            sqlx::query(
+                "WITH changed AS ( \
+                    UPDATE recommendation_runs SET summary_json=jsonb_build_object('generation', $2) \
+                    WHERE id=$1 RETURNING id \
+                 ) \
+                 UPDATE recommendation_items SET factors_json=jsonb_build_object('generation', $2) \
+                 WHERE recommendation_run_id=(SELECT id FROM changed)",
+            )
+            .bind(writer_run)
+            .bind(generation)
+            .execute(&writer_pool)
+            .await
+            .unwrap();
+            tokio::task::yield_now().await;
+        }
+    });
+    for _ in 0..100 {
+        let response = h
+            .get(
+                &format!("/api/v1/recommendations/latest?strategy_config_id={cfg}"),
+                Some(&h.member),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = Harness::body_json(response).await;
+        assert_eq!(
+            body["run"]["summary"]["generation"], body["run"]["items"][0]["factors"]["generation"],
+            "metadata and items must never straddle a publisher commit"
+        );
+    }
+    writer.await.unwrap();
     h.teardown().await;
 }
 

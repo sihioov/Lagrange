@@ -171,6 +171,62 @@ fn openapi_contract_error_envelope_schema() {
 }
 
 #[test]
+fn openapi_contract_documents_recommendation_success_shapes() {
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let schemas = &spec["components"]["schemas"];
+    let run = schemas["RecommendationRun"]
+        .as_object()
+        .expect("RecommendationRun schema");
+    for field in [
+        "id",
+        "strategy_config_id",
+        "as_of",
+        "status",
+        "summary",
+        "created_at",
+        "trigger_kind",
+        "provenance",
+        "job_id",
+        "items",
+    ] {
+        assert!(
+            run["properties"].get(field).is_some(),
+            "missing run field {field}"
+        );
+    }
+    assert!(schemas["RecommendationProvenance"].is_object());
+    assert!(schemas["RecommendationLatest"].is_object());
+
+    let paths = &spec["paths"];
+    assert_eq!(
+        paths["/api/v1/recommendations/runs"]["post"]["responses"]["201"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/RecommendationRun"
+    );
+    assert_eq!(
+        paths["/api/v1/recommendations/runs/{run_id}"]["get"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/RecommendationRun"
+    );
+    assert_eq!(
+        paths["/api/v1/recommendations/latest"]["get"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/RecommendationLatest"
+    );
+    assert_eq!(
+        paths["/api/v1/recommendations/runs"]["post"]["responses"]["429"]["$ref"],
+        "#/components/responses/Error429"
+    );
+    assert!(
+        schemas["ErrorCode"]["enum"]
+            .as_array()
+            .expect("ErrorCode enum")
+            .iter()
+            .any(|code| code == "RECOMMENDATION_CAPACITY_EXCEEDED")
+    );
+}
+
+#[test]
 fn openapi_contract_phase3_routes_are_owner_only() {
     let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
     for route in CONTRACT_ROUTES {

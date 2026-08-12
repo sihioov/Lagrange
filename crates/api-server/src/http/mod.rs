@@ -108,6 +108,26 @@ pub async fn idempotent(
         );
         return resp;
     }
+    // Single-flight each public actor/key pair. A concurrent retry waits for
+    // the first request to commit and populate the cache, then replays that
+    // exact result instead of executing a second side effect.
+    let gate = state.idempotency.gate(&store_key);
+    let _guard = gate.lock().await;
+    if let Some(cached) = state.idempotency.get(&store_key) {
+        if cached.body_hash != body_hash {
+            return error::code_error(
+                "IDEMPOTENCY_KEY_MISMATCH",
+                "the same Idempotency-Key was already used with a different request body",
+                &rid,
+            );
+        }
+        let mut resp = (cached.status, Json(cached.body)).into_response();
+        resp.headers_mut().insert(
+            "X-Idempotent-Replay",
+            axum::http::HeaderValue::from_static("true"),
+        );
+        return resp;
+    }
     let resp = run.await;
     let status = resp.status();
     let body = match axum::body::to_bytes(resp.into_body(), 16 * 1024 * 1024).await {

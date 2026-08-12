@@ -45,6 +45,22 @@ pub struct NewBacktestRun {
     pub summary_json: Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct NewQueuedBacktest {
+    pub run: NewBacktestRun,
+    pub payload: Value,
+    pub idempotency_key: Option<String>,
+    pub max_jobs_per_owner: u32,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SubmitBacktestError {
+    #[error(transparent)]
+    Tenancy(#[from] TenancyError),
+    #[error("per-owner job capacity exceeded")]
+    CapacityExceeded,
+}
+
 /// Typed repository over `backtest_runs`.
 #[derive(Debug, Clone)]
 pub struct BacktestRunRepo {
@@ -84,6 +100,72 @@ impl BacktestRunRepo {
         .bind(input.random_seed)
         .bind(&input.timezone)
         .bind(&input.summary_json)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        Ok(row)
+    }
+
+    /// Atomically reserve global owner capacity, create the run, and enqueue
+    /// its job under the same lock used by recommendation submissions.
+    pub async fn create_and_enqueue(
+        &self,
+        actor: &Actor,
+        input: NewQueuedBacktest,
+    ) -> Result<BacktestRunRow, SubmitBacktestError> {
+        let owner = actor_uuid(actor)?;
+        let mut tx = begin_actor_tx(&self.pool, actor).await?;
+        crate::repos::lock_owner_job_capacity(&mut tx, owner).await?;
+        let active: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM jobs WHERE owner_user_id = $1 AND status IN ('QUEUED', 'RUNNING')",
+        )
+        .bind(owner)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        if active >= input.max_jobs_per_owner as i64 {
+            return Err(SubmitBacktestError::CapacityExceeded);
+        }
+
+        let run_id = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+        let mut payload = input.payload;
+        payload["run_id"] = serde_json::json!(run_id);
+        sqlx::query(
+            "INSERT INTO jobs \
+             (id, owner_user_id, job_type, status, priority, idempotency_key, payload_json, max_attempts, available_at) \
+             VALUES ($1, $2, 'backtest', 'QUEUED', 10, $3, $4, 3, now())",
+        )
+        .bind(job_id)
+        .bind(owner)
+        .bind(&input.idempotency_key)
+        .bind(&payload)
+        .execute(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        let run = input.run;
+        let row = sqlx::query_as::<_, BacktestRunRow>(
+            "INSERT INTO backtest_runs \
+             (id, owner_user_id, job_id, strategy_id, strategy_version, dataset_version, \
+              engine, engine_version, config_sha256, code_commit, random_seed, timezone, summary_json) \
+             VALUES ($1, $2, $3, $4, $5, $6, 'nautilustrader', $7, $8, $9, $10, $11, $12) \
+             RETURNING id, owner_user_id, job_id, strategy_id, strategy_version, \
+                       dataset_version, engine, engine_version, config_sha256, code_commit, \
+                       random_seed, timezone, status, summary_json, started_at, finished_at, created_at",
+        )
+        .bind(run_id)
+        .bind(owner)
+        .bind(job_id)
+        .bind(&run.strategy_id)
+        .bind(&run.strategy_version)
+        .bind(&run.dataset_version)
+        .bind(&run.engine_version)
+        .bind(&run.config_sha256)
+        .bind(&run.code_commit)
+        .bind(run.random_seed)
+        .bind(&run.timezone)
+        .bind(&run.summary_json)
         .fetch_one(&mut *tx)
         .await
         .map_err(TenancyError::from_sqlx)?;

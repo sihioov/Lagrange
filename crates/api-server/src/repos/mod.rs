@@ -25,6 +25,20 @@ pub mod strategy_configs;
 
 use crate::http::pagination::Cursor;
 
+/// Serialize capacity checks and inserts for every API job producer using one
+/// stable per-owner advisory-lock identity.
+pub(crate) async fn lock_owner_job_capacity(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner: uuid::Uuid,
+) -> crate::error::TenancyResult<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 7919))")
+        .bind(owner)
+        .execute(&mut **tx)
+        .await
+        .map_err(crate::error::TenancyError::from_sqlx)?;
+    Ok(())
+}
+
 /// Split a `limit+1` probe into (page, next_cursor) under the stable
 /// `(created_at, id)` ordering.
 pub fn split_page<T: Clone>(

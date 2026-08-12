@@ -64,6 +64,21 @@ pub async fn create_run(
     let body_value = serde_json::to_value(&body).unwrap_or_default();
     let body_hash = crate::http::idempotency::body_hash(&body_value);
     let key = crate::http::idempotency::key_from(&headers);
+    if key
+        .as_ref()
+        .is_some_and(|key| key.len() > crate::http::idempotency::MAX_KEY_BYTES)
+    {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PARAMETER",
+            format!(
+                "Idempotency-Key must not exceed {} bytes",
+                crate::http::idempotency::MAX_KEY_BYTES
+            ),
+            &rid,
+            None,
+        );
+    }
     idempotent(&state, &session, &headers, &body_hash, async {
         let run = match state
             .recommendations()
@@ -238,23 +253,23 @@ pub async fn latest(
     {
         return r;
     }
-    let (successful, newest) = match state.recommendations().latest_runs(&actor, cfg_id).await {
-        Ok((success, Some(newest))) => (success, newest),
-        Ok((_, None)) => {
+    let (successful, newest, successful_items) = match state
+        .recommendations()
+        .latest_snapshot(&actor, cfg_id)
+        .await
+    {
+        Ok((success, Some(newest), items)) => (success, newest, items),
+        Ok((_, None, _)) => {
             return code_error("RESOURCE_NOT_FOUND", "no recommendation run yet", &rid);
         }
         Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
     };
-    let successful = match successful {
-        Some(run) => {
-            let items = match state.recommendations().items(&actor, run.id).await {
-                Ok(i) => i.into_iter().map(item_dto).collect(),
-                Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
-            };
-            Some(run_dto(run, Some(items)))
-        }
-        None => None,
-    };
+    let successful = successful.map(|run| {
+        run_dto(
+            run,
+            Some(successful_items.into_iter().map(item_dto).collect()),
+        )
+    });
     (
         StatusCode::OK,
         Json(serde_json::json!({

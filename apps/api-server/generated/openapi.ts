@@ -905,7 +905,7 @@ export interface components {
             error: components["schemas"]["Error"];
         };
         /** @enum {string} */
-        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
+        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
         Page: {
             items: Record<string, never>[];
             /** @description opaque signed cursor; null when the last page */
@@ -961,19 +961,36 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            strategy_config_id?: string | null;
+            strategy_config_id: string | null;
             /** @example 2026-01-31 */
             as_of: string;
             /** @enum {string} */
             status: "PENDING" | "SUCCEEDED" | "FAILED" | "BLOCKED";
-            summary?: {
+            summary: {
                 [key: string]: unknown;
             };
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
+            /** @enum {string} */
+            trigger_kind: "MANUAL" | "SCHEDULED";
+            provenance: components["schemas"]["RecommendationProvenance"];
             /** Format: uuid */
             job_id?: string | null;
             items?: components["schemas"]["RecommendationItem"][];
+        };
+        RecommendationProvenance: {
+            /** Format: uuid */
+            dataset_version_id?: string;
+            dataset_manifest_sha256?: string;
+        };
+        RecommendationRunPage: {
+            items: components["schemas"]["RecommendationRun"][];
+            next_cursor: string | null;
+            has_more: boolean;
+        };
+        RecommendationLatest: {
+            run: components["schemas"]["RecommendationRun"] | null;
+            latest_run: components["schemas"]["RecommendationRun"];
         };
         RecommendationRunBody: {
             /** Format: uuid */
@@ -1719,6 +1736,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Recommendation run history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationRunPage"];
+                };
+            };
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
             403: components["responses"]["Error403"];
@@ -1744,6 +1770,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Recommendation run accepted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationRun"];
+                };
+            };
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
             403: components["responses"]["Error403"];
@@ -1767,6 +1802,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Recommendation run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationRun"];
+                };
+            };
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
             403: components["responses"]["Error403"];
@@ -1790,6 +1834,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Latest recommendation snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationLatest"];
+                };
+            };
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
             403: components["responses"]["Error403"];

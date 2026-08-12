@@ -143,23 +143,6 @@ pub async fn create(
     {
         return r;
     }
-    let active_jobs = match state.ops().count_active_jobs(&actor).await {
-        Ok(n) => n,
-        Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
-    };
-    if active_jobs >= state.cfg.max_jobs_per_owner as i64 {
-        return api_error(
-            StatusCode::TOO_MANY_REQUESTS,
-            "BACKTEST_CAPACITY_EXCEEDED",
-            format!(
-                "per-owner queued job capacity ({}) exceeded",
-                state.cfg.max_jobs_per_owner
-            ),
-            &rid,
-            None,
-        );
-    }
-
     let body_value = serde_json::to_value(&body).unwrap_or_default();
     let body_hash = crate::http::idempotency::body_hash(&body_value);
     let key = crate::http::idempotency::key_from(&headers);
@@ -237,83 +220,61 @@ pub async fn create(
             Ok(c) => c,
             Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
         };
-        // Create the PENDING run (config hash is the canonical sha256 hex).
+        // Reserve global owner capacity and create the run + job atomically.
+        let job_payload = serde_json::json!({
+            "kind": "backtest",
+            "strategy_config_id": cfg_id,
+            "dataset_version_id": dataset_id,
+            "start_date": body.start_date,
+            "end_date": body.end_date,
+            "initial_cash": body.initial_cash,
+            "benchmark": body.benchmark,
+            "cost_profile_id": body.cost_profile_id,
+            "execution_profile": body.execution_profile,
+        });
         let run = match state
             .backtest_runs()
-            .create(
+            .create_and_enqueue(
                 &actor,
-                NewBacktestRun {
-                    strategy_id: config.strategy_id.clone(),
-                    strategy_version: config.strategy_version.clone(),
-                    dataset_version: format!("{}@{}", dataset.dataset_id, dataset.version),
-                    engine_version: "1.231.0".to_string(),
-                    config_sha256: sha256_hex(&config.config_json),
-                    code_commit: "PENDING".to_string(),
-                    random_seed: None,
-                    timezone: "Asia/Seoul".to_string(),
-                    summary_json: serde_json::json!({}),
+                crate::repos::backtest_runs::NewQueuedBacktest {
+                    run: NewBacktestRun {
+                        strategy_id: config.strategy_id.clone(),
+                        strategy_version: config.strategy_version.clone(),
+                        dataset_version: format!("{}@{}", dataset.dataset_id, dataset.version),
+                        engine_version: "1.231.0".to_string(),
+                        config_sha256: sha256_hex(&config.config_json),
+                        code_commit: "PENDING".to_string(),
+                        random_seed: None,
+                        timezone: "Asia/Seoul".to_string(),
+                        summary_json: serde_json::json!({}),
+                    },
+                    payload: job_payload,
+                    idempotency_key: key,
+                    max_jobs_per_owner: state.cfg.max_jobs_per_owner,
                 },
             )
             .await
         {
             Ok(r) => r,
-            Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
-        };
-        // Enqueue the backtest job (queue-level idempotency key rides along).
-        let queue = match state.queue_for(&actor).await {
-            Ok(q) => q,
-            Err(_) => return code_error("INTERNAL", "queue unavailable", &rid),
-        };
-        let job = match queue
-            .submit(job_queue::SubmitJob {
-                owner_user_id: crate::actor_tx::actor_uuid(&actor).unwrap_or_default(),
-                job_type: "backtest".to_string(),
-                payload: serde_json::json!({
-                    "kind": "backtest",
-                    "run_id": run.id,
-                    "strategy_config_id": cfg_id,
-                    "dataset_version_id": dataset_id,
-                    "start_date": body.start_date,
-                    "end_date": body.end_date,
-                    "initial_cash": body.initial_cash,
-                    "benchmark": body.benchmark,
-                    "cost_profile_id": body.cost_profile_id,
-                    "execution_profile": body.execution_profile,
-                }),
-                priority: 10,
-                idempotency_key: key,
-                max_attempts: 3,
-                available_at: None,
-            })
-            .await
-        {
-            Ok(j) => j,
-            Err(e) => return code_error("INTERNAL", format!("enqueue failed: {e}"), &rid),
-        };
-        // Persist the run -> job link (actor-scoped UPDATE).
-        let linked = match crate::actor_tx::begin_actor_tx(&state.app_pool, &actor).await {
-            Ok(mut tx) => {
-                let r = sqlx::query(
-                    "UPDATE backtest_runs SET job_id = $2 WHERE id = $1 AND job_id IS NULL",
-                )
-                .bind(run.id)
-                .bind(job.id)
-                .execute(&mut *tx)
-                .await
-                .map_err(crate::error::TenancyError::from_sqlx);
-                match r {
-                    Ok(_) => tx
-                        .commit()
-                        .await
-                        .map_err(crate::error::TenancyError::from_sqlx),
-                    Err(e) => Err(e),
-                }
+            Err(crate::repos::backtest_runs::SubmitBacktestError::CapacityExceeded) => {
+                return api_error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "BACKTEST_CAPACITY_EXCEEDED",
+                    format!(
+                        "per-owner queued job capacity ({}) exceeded",
+                        state.cfg.max_jobs_per_owner
+                    ),
+                    &rid,
+                    None,
+                );
             }
-            Err(e) => Err(e),
+            Err(crate::repos::backtest_runs::SubmitBacktestError::Tenancy(e)) => {
+                return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
+            }
         };
-        if let Err(e) = linked {
-            return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
-        }
+        let job_id = run
+            .job_id
+            .expect("atomic backtest submission links its job");
         audit(
             &state,
             &session,
@@ -325,7 +286,7 @@ pub async fn create(
             Some(serde_json::json!({
                 "strategy_config_id": cfg_id,
                 "dataset_version_id": dataset_id,
-                "job_id": job.id,
+                "job_id": job_id,
             })),
             None,
         )
@@ -340,7 +301,7 @@ pub async fn create(
                 engine: run.engine,
                 engine_version: run.engine_version,
                 status: run.status,
-                job_id: Some(job.id.to_string()),
+                job_id: Some(job_id.to_string()),
                 config_sha256: run.config_sha256,
                 benchmark: Some(body.benchmark),
                 start_date: Some(start),
