@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecommendationsPage from "@/app/(authenticated)/recommendations/page";
+import { recommendationPollDelay } from "@/components/recommendations/recommendation-run-status";
 
 vi.mock("server-only", () => ({}));
 
@@ -33,12 +34,12 @@ type Fixture = {
   readonly selected?: RunFixture;
 };
 
-function config(id: string, updatedAt = "2026-01-31T06:00:00Z") {
+function config(id: string, updatedAt = "2026-01-31T06:00:00Z", isActive = true) {
   return {
     config: { lookback_days: 126, top_n: 4 },
     created_at: updatedAt,
     id,
-    is_active: true,
+    is_active: isActive,
     strategy_id: "relative_momentum",
     strategy_version: "1.0.0",
     updated_at: updatedAt,
@@ -188,6 +189,39 @@ describe("recommendation workflow", () => {
     expect(markup).toContain(`value="${CONFIG_A}"`);
     expect(markup).toContain(`value="${CONFIG_B}"`);
     expect(markup).not.toContain("disabled");
+  });
+
+  it("withholds the run form when every governed configuration is inactive", async () => {
+    vi.stubGlobal(
+      "fetch",
+      syntheticRecommendationApi({ configs: [config(CONFIG_A, "2026-01-31T06:00:00Z", false)] }),
+    );
+
+    const markup = renderToStaticMarkup(await RecommendationsPage());
+
+    expect(markup).toContain("No strategy configuration is available");
+    expect(markup).not.toContain('aria-label="Generate recommendation"');
+  });
+
+  it("offers only active governed configurations", async () => {
+    vi.stubGlobal(
+      "fetch",
+      syntheticRecommendationApi({
+        configs: [config(CONFIG_A), config(CONFIG_B, "2026-01-31T06:01:00Z", false)],
+      }),
+    );
+
+    const markup = renderToStaticMarkup(await RecommendationsPage());
+
+    expect(markup).toContain(`value="${CONFIG_A}"`);
+    expect(markup).not.toContain(`value="${CONFIG_B}"`);
+  });
+
+  it("continues polling at the capped delay after the initial backoff budget", () => {
+    expect(recommendationPollDelay(0)).toBe(250);
+    expect(recommendationPollDelay(4)).toBe(4_000);
+    expect(recommendationPollDelay(5)).toBe(4_000);
+    expect(recommendationPollDelay(20)).toBe(4_000);
   });
 
   it("renders item-bearing run data when the latest successful run is metadata-only", async () => {

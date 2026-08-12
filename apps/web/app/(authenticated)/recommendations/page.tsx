@@ -76,6 +76,7 @@ export default async function RecommendationsPage({ searchParams }: Recommendati
       requestedRunId === undefined || requestedRunId === ""
         ? null
         : await api.getRecommendationRun(requestedRunId);
+    const activeConfigs = configs.items.filter((config) => config.is_active);
     const latestSuccessful = latest?.run ?? null;
     const activeRun = selected ?? latest?.latest_run ?? null;
     const reportRun = selected?.status === "SUCCEEDED" ? selected : latestSuccessful;
@@ -85,7 +86,7 @@ export default async function RecommendationsPage({ searchParams }: Recommendati
         description="Inspect server-produced candidates, target weights, factor evidence, and exclusions."
         title="Recommendations"
       >
-        {configs.items.length === 0 ? (
+        {activeConfigs.length === 0 ? (
           <StatePanel
             kind="empty"
             message="Save an allowed strategy configuration before creating a recommendation run."
@@ -101,7 +102,7 @@ export default async function RecommendationsPage({ searchParams }: Recommendati
               <p>The API validates the stored strategy configuration and as-of dataset.</p>
             </div>
             <RecommendationRunForm
-              configs={configs.items.map((config) => ({
+              configs={activeConfigs.map((config) => ({
                 id: config.id,
                 label: configLabel(config),
               }))}
@@ -113,7 +114,7 @@ export default async function RecommendationsPage({ searchParams }: Recommendati
           <RecommendationRunStatus run={activeRun} />
         )}
         {reportRun === null ? (
-          activeRun === null && configs.items.length > 0 ? (
+          activeRun === null && activeConfigs.length > 0 ? (
             <StatePanel
               kind="empty"
               message="Generate a recommendation to inspect its governed proposal."

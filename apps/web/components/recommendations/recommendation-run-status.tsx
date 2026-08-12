@@ -8,6 +8,10 @@ import { type RecommendationRunModel, recommendationRunSchema } from "@/lib/prod
 
 const POLL_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000] as const;
 
+export function recommendationPollDelay(attempt: number): number {
+  return POLL_DELAYS_MS[Math.min(attempt, POLL_DELAYS_MS.length - 1)] ?? 4_000;
+}
+
 export type RecommendationRunStatusProps = {
   readonly onSettled?: (run: RecommendationRunModel) => void;
   readonly poll?: boolean;
@@ -85,16 +89,16 @@ export function RecommendationRunStatus({
           );
         }
       }
-      if (!cancelled && attempt < POLL_DELAYS_MS.length) {
+      if (!cancelled) {
         timeout = setTimeout(() => {
           void pollRun(attempt + 1);
-        }, POLL_DELAYS_MS[attempt]);
+        }, recommendationPollDelay(attempt));
       }
     };
 
     timeout = setTimeout(() => {
       void pollRun(1);
-    }, POLL_DELAYS_MS[0]);
+    }, recommendationPollDelay(0));
 
     return () => {
       cancelled = true;
