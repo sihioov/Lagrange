@@ -513,7 +513,7 @@ async fn phase1_worker_kill_orphans_once_retries_once_api_alive() {
     };
     let m = h.member.clone();
     let actor_pool = common::actor_pool(&h.app_url, &m.user_id.to_string(), 4).await;
-    let worker_url = h.app_url.replace("//app:", "//worker:");
+    let worker_url = h.worker_url.clone();
     let worker_pool = common::actor_pool(&worker_url, &m.user_id.to_string(), 4).await;
     let queue = job_queue::JobQueue::new(
         actor_pool.clone(),
