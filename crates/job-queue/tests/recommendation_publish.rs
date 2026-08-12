@@ -576,6 +576,15 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
     .fetch_one(&db.pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO data_entitlements \
+         (contract_document_sha256, contract_reference, status, covered_datasets, covered_uses, effective_from, effective_until, managed_by) \
+         VALUES (repeat('e', 64), 'vault://qa/recommendation', 'ACTIVE', '[\"krx_eod_bars\"]', '[\"recommendation\"]', DATE '2020-01-01', DATE '2030-12-31', $1)",
+    )
+    .bind(owner_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
     for member in universe().members() {
         let symbol = member.trim_end_matches(".KRX");
         sqlx::query(
@@ -801,8 +810,20 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
     publish_recommendation(&worker, &queue, &claim, &attested, &u, &validated)
         .await
         .expect_err("canceled claim cannot publish");
+    let canceled_run: String =
+        sqlx::query_scalar("SELECT status FROM recommendation_runs WHERE id = $1")
+            .bind(run_id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(canceled_run, "FAILED");
     sqlx::query("UPDATE jobs SET status = 'RUNNING', locked_at = now() WHERE id = $1")
         .bind(job.id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE recommendation_runs SET status = 'PENDING' WHERE id = $1")
+        .bind(run_id)
         .execute(&db.pool)
         .await
         .unwrap();

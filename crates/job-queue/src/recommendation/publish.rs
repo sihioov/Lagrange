@@ -24,6 +24,8 @@ pub enum PublicationError {
     Queue(#[from] QueueError),
     #[error("recommendation publication integrity failure: {detail}")]
     Integrity { detail: String },
+    #[error("recommendation publication entitlement is inactive")]
+    EntitlementDenied,
 }
 
 impl PublicationError {
@@ -32,6 +34,7 @@ impl PublicationError {
             Self::Database(error) | Self::Queue(QueueError::Database(error)) => {
                 database_error_class(error)
             }
+            Self::EntitlementDenied => ErrorClass::DataBlocked,
             Self::Queue(_) | Self::Integrity { .. } => ErrorClass::Integrity,
         }
     }
@@ -43,6 +46,7 @@ impl PublicationError {
                 ErrorClass::Transient => "RECOMMENDATION_PUBLISH_UNAVAILABLE",
                 _ => "RECOMMENDATION_PUBLISH_INTEGRITY",
             },
+            Self::EntitlementDenied => "DATA_ENTITLEMENT_REQUIRED",
             Self::Queue(_) | Self::Integrity { .. } => "RECOMMENDATION_PUBLISH_INTEGRITY",
         }
     }
@@ -288,6 +292,16 @@ async fn reattest_current_rows(
     universe: &AttestedUniverse,
     portfolio: &ValidatedPortfolio,
 ) -> Result<(), PublicationError> {
+    let entitled: bool =
+        sqlx::query_scalar("SELECT public.lock_recommendation_entitlement($1, $2, $3)")
+            .bind(owner_user_id)
+            .bind(&input.dataset.dataset_id)
+            .bind(input.payload.as_of)
+            .fetch_one(&mut **transaction)
+            .await?;
+    if !entitled {
+        return Err(PublicationError::EntitlementDenied);
+    }
     let expected_status = match input.dataset.status {
         AttestedDatasetStatus::Ready => "READY",
         AttestedDatasetStatus::Warning => "WARNING",

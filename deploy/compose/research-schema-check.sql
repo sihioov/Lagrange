@@ -8,14 +8,39 @@ DECLARE
 BEGIN
   IF to_regclass('public._sqlx_migrations') IS NULL
      OR (SELECT count(*) FROM _sqlx_migrations
-         WHERE version IN (22, 23, 24, 25, 33, 34) AND success) <> 6 THEN
-    RAISE EXCEPTION 'successful SQLx migrations 22-25 and 33-34 are required';
+         WHERE version IN (22, 23, 24, 25, 33, 34, 35) AND success) <> 7 THEN
+    RAISE EXCEPTION 'successful SQLx migrations 22-25 and 33-35 are required';
   END IF;
 
   IF to_regclass('public.data_batches') IS NULL
      OR to_regclass('public.trading_calendar_versions') IS NULL
      OR to_regclass('public.trading_calendars') IS NULL THEN
     RAISE EXCEPTION 'research publication tables are missing';
+  END IF;
+
+  IF NOT EXISTS (
+       SELECT 1 FROM pg_proc
+       WHERE oid = 'public.lock_recommendation_entitlement(uuid,text,date)'::regprocedure
+         AND prosecdef
+         AND pg_get_userbyid(proowner) = 'migration_owner'
+         AND proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
+     )
+     OR NOT has_function_privilege(
+          'worker', 'public.lock_recommendation_entitlement(uuid,text,date)', 'EXECUTE')
+     OR has_function_privilege(
+          'app', 'public.lock_recommendation_entitlement(uuid,text,date)', 'EXECUTE')
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_trigger trigger_row
+       JOIN pg_proc function_row ON function_row.oid = trigger_row.tgfoid
+       WHERE trigger_row.tgrelid = 'public.jobs'::regclass
+         AND NOT trigger_row.tgisinternal
+         AND trigger_row.tgname = 'jobs_sync_recommendation_terminal_run'
+         AND function_row.proname = 'sync_recommendation_run_from_terminal_job'
+         AND function_row.prosecdef
+         AND pg_get_userbyid(function_row.proowner) = 'migration_owner'
+         AND function_row.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
+     ) THEN
+    RAISE EXCEPTION 'recommendation entitlement and terminal-sync security contract is missing or unsafe';
   END IF;
 
   IF EXISTS (

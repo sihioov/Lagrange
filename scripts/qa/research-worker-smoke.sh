@@ -249,7 +249,7 @@ done
 if grep -Eq '^!scripts(/|$)' "$dockerignore"; then fail 'QA fsync probe must remain outside the worker build context'; fi
 grep -Eq '^scripts/qa/\*\.sh[[:space:]]+text[[:space:]]+eol=lf[[:space:]]*$' "$gitattributes" || fail 'scripts/qa shell scripts must be forced to LF by .gitattributes'
 schema_text="$(<"$schema_sql")"
-for token in _sqlx_migrations 'version IN (22, 23, 24, 25, 33)' convalidated \
+for token in _sqlx_migrations 'version IN (22, 23, 24, 25, 33, 34, 35)' convalidated \
   pg_get_constraintdef format_type attnotnull attidentity pg_get_expr storage_path EXCEPT \
   data_batches_source_file_uq trading_calendar_versions_source_lookup_idx \
   indisunique indisvalid indisready indislive relrowsecurity research_writer \
@@ -465,9 +465,9 @@ done < <(find "$root/migrations" -maxdepth 1 -type f -name '*.up.sql' | sort)
 ledger_state="$(
   dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
     psql -X -qAt -v ON_ERROR_STOP=1 -U lagrange -d lagrange \
-    -c "SELECT count(*) FILTER (WHERE version IN (22, 23, 24, 25, 33) AND success) FROM public._sqlx_migrations"
+    -c "SELECT count(*) FILTER (WHERE version IN (22, 23, 24, 25, 33, 34, 35) AND success) FROM public._sqlx_migrations"
 )" || fail 'migration ledger verification query failed'
-if [ "$ledger_state" != "5" ]; then
+if [ "$ledger_state" != "7" ]; then
   fail "migration ledger mismatch after applying migrations: $ledger_state"
 fi
 

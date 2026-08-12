@@ -77,6 +77,10 @@ const RECOMMENDATION_PUBLICATION_LOCK_UP_SQL: &str =
     include_str!("../../../../migrations/0034_recommendation_publication_locks.up.sql");
 const RECOMMENDATION_PUBLICATION_LOCK_DOWN_SQL: &str =
     include_str!("../../../../migrations/0034_recommendation_publication_locks.down.sql");
+const RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL: &str =
+    include_str!("../../../../migrations/0035_recommendation_entitlement_lock.up.sql");
+const RECOMMENDATION_ENTITLEMENT_LOCK_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0035_recommendation_entitlement_lock.down.sql");
 const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
 const RESEARCH_SCHEMA_GATE_SQL: &str =
@@ -91,7 +95,7 @@ fn recommendation_pipeline_migration_is_tracked() {
         assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
         assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
     }
-    for version in 26..=34 {
+    for version in 26..=35 {
         let up = MIGRATOR.migrations.iter().find(|migration| {
             migration.version == version
                 && migration.migration_type != MigrationType::ReversibleDown
@@ -152,12 +156,19 @@ fn recommendation_pipeline_migration_is_tracked() {
     );
     assert!(RECOMMENDATION_PUBLICATION_LOCK_UP_SQL.contains("GRANT EXECUTE"));
     assert!(RECOMMENDATION_PUBLICATION_LOCK_DOWN_SQL.contains("REVOKE EXECUTE"));
+    assert!(RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("SECURITY DEFINER"));
+    assert!(RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("FOR SHARE"));
+    assert!(RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("covered_uses"));
+    assert!(
+        RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL.contains("jobs_sync_recommendation_terminal_run")
+    );
+    assert!(RECOMMENDATION_ENTITLEMENT_LOCK_DOWN_SQL.contains("DROP TRIGGER"));
 }
 
 #[test]
 fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
     for token in [
-        "version IN (22, 23, 24, 25, 33, 34)",
+        "version IN (22, 23, 24, 25, 33, 34, 35)",
         "convalidated",
         "pg_get_constraintdef",
         "format_type",
@@ -220,7 +231,7 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         sqlx::query(
             "INSERT INTO _sqlx_migrations \
              (version, description, installed_on, success, checksum, execution_time) \
-             VALUES (35, 'future migration', now(), true, decode(repeat('00', 32), 'hex'), 0)",
+             VALUES (36, 'future migration', now(), true, decode(repeat('00', 32), 'hex'), 0)",
         )
         .execute(&owner)
         .await?;
@@ -237,7 +248,7 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         assert!(
             missing_required
                 .to_string()
-                .contains("successful SQLx migrations 22-25 and 33-34 are required")
+                .contains("successful SQLx migrations 22-25 and 33-35 are required")
         );
         sqlx::query("UPDATE _sqlx_migrations SET success = true WHERE version = 33")
             .execute(&owner)
@@ -2147,15 +2158,15 @@ async fn revert_and_rerun_body(
         "fresh DB must apply all {expected} migrations"
     );
 
-    // Revert the 0034..0026 recommendation family, then 0025, 0024, and 0023
+    // Revert the 0035..0026 recommendation family, then 0025, 0024, and 0023
     // before 0022 while all earlier tables remain.
     // This proves each down migration restores its own boundary rather than
     // relying on 0003.down to hide omitted objects in a full teardown.
     MIGRATOR.undo(owner, 25).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 9,
-        "undo to 0025 must revert the complete 0034..0026 family"
+        expected - 10,
+        "undo to 0025 must revert the complete 0035..0026 family"
     );
     let scheduler_gone: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
@@ -2180,7 +2191,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 24).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 10,
+        expected - 11,
         "undo to 0024 must revert only 0025"
     );
     let calendar_lookup_gone: Option<String> = sqlx::query_scalar(
@@ -2204,7 +2215,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 23).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 11,
+        expected - 12,
         "undo to 0023 must revert only 0024"
     );
     let source_index_gone: Option<String> =
@@ -2218,7 +2229,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 22).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 12,
+        expected - 13,
         "undo to 0022 must revert only 0023"
     );
     sqlx::query(
@@ -2231,7 +2242,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 21).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 13,
+        expected - 14,
         "undo to 0021 must revert only 0022"
     );
     for object in [
@@ -2578,7 +2589,7 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     assert!(active_control);
-    MIGRATOR.run_to(34, owner).await?;
+    MIGRATOR.run_to(35, owner).await?;
     assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
 
     let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
@@ -2770,6 +2781,49 @@ async fn recommendation_pipeline_contract_body(
         publication_lock_metadata.2,
         Some(vec!["search_path=pg_catalog, pg_temp".into()])
     );
+    let entitlement_lock_metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
+        "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
+         FROM pg_proc WHERE oid = \
+         'public.lock_recommendation_entitlement(uuid,text,date)'::regprocedure",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(entitlement_lock_metadata.0);
+    assert_eq!(entitlement_lock_metadata.1, "migration_owner");
+    assert_eq!(
+        entitlement_lock_metadata.2,
+        Some(vec!["search_path=pg_catalog, pg_temp".into()])
+    );
+    let terminal_sync: (String, String) = sqlx::query_as(
+        "SELECT terminal_trigger.tgname, terminal_fn.proname \
+         FROM pg_trigger AS terminal_trigger \
+         JOIN pg_proc AS terminal_fn ON terminal_fn.oid = terminal_trigger.tgfoid \
+         WHERE terminal_trigger.tgrelid = 'public.jobs'::regclass \
+           AND NOT terminal_trigger.tgisinternal \
+           AND terminal_trigger.tgname = 'jobs_sync_recommendation_terminal_run'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        terminal_sync,
+        (
+            "jobs_sync_recommendation_terminal_run".into(),
+            "sync_recommendation_run_from_terminal_job".into(),
+        )
+    );
+    let terminal_sync_metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
+        "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
+         FROM pg_proc WHERE oid = \
+         'public.sync_recommendation_run_from_terminal_job()'::regprocedure",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(terminal_sync_metadata.0);
+    assert_eq!(terminal_sync_metadata.1, "migration_owner");
+    assert_eq!(
+        terminal_sync_metadata.2,
+        Some(vec!["search_path=pg_catalog, pg_temp".into()])
+    );
     let scheduled_guard: (String, String) = sqlx::query_as(
         "SELECT guard_trigger.tgname, guard_fn.proname FROM pg_trigger AS guard_trigger \
          JOIN pg_proc AS guard_fn ON guard_fn.oid = guard_trigger.tgfoid \
@@ -2819,6 +2873,38 @@ async fn recommendation_pipeline_contract_body(
         assert_eq!(
             can_execute, expected,
             "unexpected scheduler EXECUTE privilege for {role}"
+        );
+    }
+    for role in ["worker", "app", "admin", "audit_writer", "research_writer"] {
+        let can_execute: bool = sqlx::query_scalar(
+            "SELECT has_function_privilege($1, \
+             'public.sync_recommendation_run_from_terminal_job()', 'EXECUTE')",
+        )
+        .bind(role)
+        .fetch_one(owner)
+        .await?;
+        assert!(
+            !can_execute,
+            "terminal synchronization is trigger-only for {role}"
+        );
+    }
+    for (role, expected) in [
+        ("worker", true),
+        ("app", false),
+        ("admin", false),
+        ("audit_writer", false),
+        ("research_writer", false),
+    ] {
+        let can_execute: bool = sqlx::query_scalar(
+            "SELECT has_function_privilege($1, \
+             'public.lock_recommendation_entitlement(uuid,text,date)', 'EXECUTE')",
+        )
+        .bind(role)
+        .fetch_one(owner)
+        .await?;
+        assert_eq!(
+            can_execute, expected,
+            "unexpected entitlement lock EXECUTE privilege for {role}"
         );
     }
     for (role, expected) in [
