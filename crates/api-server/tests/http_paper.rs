@@ -73,7 +73,10 @@ async fn http_paper_accounts_happy() {
             true,
             Some("test-rid-1"),
             Some("bind-strategy-001"),
-            Some(json!({ "strategy_config_id": cfg_id })),
+            Some(json!({
+                "strategy_config_id": cfg_id,
+                "auto_apply_recommendations": true
+            })),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
@@ -82,6 +85,17 @@ async fn http_paper_accounts_happy() {
     assert_eq!(body["strategy_config_id"], cfg_id);
     assert_eq!(body["strategy_id"], "buy_and_hold");
     assert_eq!(body["strategy_version"], "1.0.0");
+    assert_eq!(body["auto_apply_recommendations"], true);
+
+    let binding_enabled: bool = sqlx::query_scalar(
+        "SELECT auto_apply_recommendations FROM account_strategy_bindings \
+         WHERE account_id = $1::uuid AND unbound_at IS NULL",
+    )
+    .bind(&account_id)
+    .fetch_one(&h.member_pool().await)
+    .await
+    .unwrap();
+    assert!(binding_enabled, "explicit opt-in must be persisted");
 
     // Ledger views (seeded as the paper engine would write them).
     h.seed_tenant(

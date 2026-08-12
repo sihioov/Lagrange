@@ -193,6 +193,7 @@ pub struct BindStrategyDto {
     pub strategy_config_id: String,
     pub strategy_id: String,
     pub strategy_version: String,
+    pub auto_apply_recommendations: bool,
     pub bound_at: DateTime<Utc>,
 }
 
@@ -232,6 +233,7 @@ pub struct BindingHistoryDto {
     pub strategy_config_id: String,
     pub strategy_id: String,
     pub strategy_version: String,
+    pub auto_apply_recommendations: bool,
     pub bound_at: DateTime<Utc>,
     pub unbound_at: Option<DateTime<Utc>>,
     pub active: bool,
@@ -246,6 +248,7 @@ pub struct TargetLineageDto {
     pub effective_date: chrono::NaiveDate,
     pub status: String,
     pub executed_at: Option<DateTime<Utc>>,
+    pub non_execution_reason: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -558,6 +561,8 @@ pub struct NewAccountBody {
 #[serde(deny_unknown_fields)]
 pub struct BindStrategyBody {
     pub strategy_config_id: String,
+    #[serde(default)]
+    pub auto_apply_recommendations: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

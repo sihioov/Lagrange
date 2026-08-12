@@ -28,7 +28,7 @@ use std::path::Path;
 
 use auth::entitlement::Actor;
 use job_queue::paper_execution::{
-    ExecutionOutcome, SessionInput, execute_session, targets_from_json,
+    ExecutionOutcome, SessionInput, execute_session, execute_session_in_tx, targets_from_json,
 };
 use result_model::paper_parity::{ParityReport, ParityStatus};
 use uuid::Uuid;
@@ -117,23 +117,119 @@ pub async fn run_and_settle(
     let owner_user_id = crate::actor_tx::actor_uuid(actor)?;
 
     let outcome = match session_input(&target, owner_user_id) {
-        Ok(input) => match execute_session(worker_pool, dataset_root, &input).await {
-            Ok(ExecutionOutcome::Executed { .. } | ExecutionOutcome::AlreadyExecuted { .. }) => {
-                SessionOutcome::Executed
+        Ok(input) => match execute_with_preflight(worker_pool, dataset_root, &target, &input).await
+        {
+            Ok(PreflightExecution::Skipped(reason)) => {
+                return announce_preflight_skip(state, actor, target_id, reason).await;
             }
-            Ok(ExecutionOutcome::NoTrade) => SessionOutcome::Blocked {
+            Ok(PreflightExecution::NotPending) => return Err(TenancyError::NotFound),
+            Ok(PreflightExecution::Outcome(
+                ExecutionOutcome::Executed { .. } | ExecutionOutcome::AlreadyExecuted { .. },
+            )) => SessionOutcome::Executed,
+            Ok(PreflightExecution::Outcome(ExecutionOutcome::NoTrade)) => SessionOutcome::Blocked {
                 reason: "no rebalance was needed: every instrument was inside the rebalance \
                          threshold or below the minimum trade size"
                     .to_owned(),
             },
-            Err(e) => SessionOutcome::Failed {
-                reason: e.to_string(),
-            },
+            Err(e) => SessionOutcome::Failed { reason: e },
         },
         Err(reason) => SessionOutcome::Failed { reason },
     };
 
     settle_and_announce(state, actor, target_id, outcome).await
+}
+
+enum PreflightExecution {
+    Outcome(ExecutionOutcome),
+    Skipped(String),
+    NotPending,
+}
+
+async fn execute_with_preflight(
+    worker_pool: &sqlx::PgPool,
+    dataset_root: &Path,
+    target: &PendingTargetRow,
+    input: &SessionInput,
+) -> Result<PreflightExecution, String> {
+    if target.dataset_version_id.is_none() || target.dataset_manifest_sha256.is_none() {
+        return execute_session(worker_pool, dataset_root, input)
+            .await
+            .map(PreflightExecution::Outcome)
+            .map_err(|error| error.to_string());
+    }
+
+    let mut tx = worker_pool
+        .begin()
+        .await
+        .map_err(|error| error.to_string())?;
+    let (authorized, reason): (bool, Option<serde_json::Value>) =
+        sqlx::query_as("SELECT authorized, reason FROM public.preflight_paper_target($1, $2)")
+            .bind(target.id)
+            .bind(input.owner_user_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+    if !authorized {
+        tx.commit().await.map_err(|error| error.to_string())?;
+        let code = reason
+            .as_ref()
+            .and_then(|value| value.get("code"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("PAPER_PREFLIGHT_DENIED");
+        if code == "PAPER_TARGET_NOT_PENDING" {
+            return Ok(PreflightExecution::NotPending);
+        }
+        let message = reason
+            .as_ref()
+            .and_then(|value| value.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Paper execution preflight denied execution");
+        return Ok(PreflightExecution::Skipped(format!("{code}: {message}")));
+    }
+
+    let execution = execute_session_in_tx(&mut tx, dataset_root, input)
+        .await
+        .map_err(|error| error.to_string());
+    match execution {
+        Ok(outcome @ ExecutionOutcome::Executed { .. }) => {
+            tx.commit().await.map_err(|error| error.to_string())?;
+            Ok(PreflightExecution::Outcome(outcome))
+        }
+        Ok(other) => {
+            tx.rollback().await.map_err(|error| error.to_string())?;
+            Ok(PreflightExecution::Outcome(other))
+        }
+        Err(error) => {
+            tx.rollback()
+                .await
+                .map_err(|rollback| rollback.to_string())?;
+            Err(error)
+        }
+    }
+}
+
+async fn announce_preflight_skip(
+    state: &ApiState,
+    actor: &Actor,
+    target_id: Uuid,
+    reason: String,
+) -> TenancyResult<SettlementOutcome> {
+    let target = state.pending_targets().get(actor, target_id).await?;
+    if target.status != "SKIPPED" {
+        return Err(TenancyError::NotFound);
+    }
+    let outcome = SessionOutcome::Blocked { reason };
+    let (severity, kind, title, body) = announcement(&target, &outcome, None);
+    let alerts = state
+        .notifier()
+        .route_alert(actor, severity, kind, &title, &body)
+        .await?;
+    Ok(SettlementOutcome {
+        target,
+        parity: None,
+        severity,
+        alerts,
+    })
 }
 
 /// Turns a queued row into the engine's input, or says why it cannot.
@@ -339,6 +435,9 @@ mod tests {
             effective_date: NaiveDate::from_ymd_opt(2026, 2, 2).expect("valid date"),
             targets_json: serde_json::json!([]),
             dataset_version: Some("krx-eod.2026-01-30".to_owned()),
+            dataset_version_id: None,
+            dataset_manifest_sha256: None,
+            non_execution_reason: None,
             status: "EXECUTED".to_owned(),
             executed_at: None,
             created_at: chrono::Utc::now(),

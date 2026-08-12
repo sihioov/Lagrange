@@ -14,6 +14,9 @@ use uuid::Uuid;
 
 use api_server::paper_runner::{RunnerServices, parse_args, run_cycle};
 use api_server::repos::pending_targets::{NewPendingTarget, PendingTargetRepo};
+use job_queue::paper_execution::{
+    ExecutionOutcome, SessionInput, execute_session_in_tx, targets_from_json,
+};
 use job_queue::phase0::CURATED_VERSION;
 
 #[test]
@@ -55,6 +58,10 @@ impl Dataset {
 }
 
 fn runner_dataset() -> Dataset {
+    runner_dataset_for("2020-01-21")
+}
+
+fn runner_dataset_for(session: &str) -> Dataset {
     let dir = tempfile::tempdir().expect("dataset tempdir");
     let root = dir.path().to_path_buf();
     let store = CurateStore::new(root.join("curated"));
@@ -62,9 +69,9 @@ fn runner_dataset() -> Dataset {
     let close = Price::parse("10300").expect("close price");
     let bar = CuratedBar {
         instrument_id: InstrumentId::parse("069500.KRX").unwrap(),
-        trading_date: TradingDate::parse("2020-01-21").unwrap(),
-        market_open_ts: UtcTimestamp::parse_rfc3339("2020-01-21T00:00:00Z").unwrap(),
-        market_close_ts: UtcTimestamp::parse_rfc3339("2020-01-21T06:30:00Z").unwrap(),
+        trading_date: TradingDate::parse(session).unwrap(),
+        market_open_ts: UtcTimestamp::parse_rfc3339(&format!("{session}T00:00:00Z")).unwrap(),
+        market_close_ts: UtcTimestamp::parse_rfc3339(&format!("{session}T06:30:00Z")).unwrap(),
         open,
         high: close,
         low: open,
@@ -78,11 +85,34 @@ fn runner_dataset() -> Dataset {
         raw_hash: ContentHash::from_bytes(b"paper-runner"),
     };
     write_bars(
-        &store.bars_path("kr", "069500.KRX", 2020, CURATED_VERSION),
+        &store.bars_path(
+            "kr",
+            "069500.KRX",
+            session[0..4].parse().expect("session year"),
+            CURATED_VERSION,
+        ),
         std::slice::from_ref(&bar),
     )
     .expect("write runner bar");
     Dataset { _dir: dir, root }
+}
+
+async fn bind_opted_in(h: &Harness, user: &UserCtx, account: Uuid, config: Uuid, key: &str) {
+    let response = h
+        .send(
+            "POST",
+            &format!("/api/v1/paper/accounts/{account}/bind-strategy"),
+            Some(user),
+            true,
+            Some("paper-runner-bind-rid"),
+            Some(key),
+            Some(json!({
+                "strategy_config_id": config,
+                "auto_apply_recommendations": true
+            })),
+        )
+        .await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
 }
 
 async fn paper_account(h: &Harness, user: &UserCtx, name: &str) -> Uuid {
@@ -253,5 +283,226 @@ async fn one_cycle_executes_a_target_and_values_the_account_once() {
         notification_count, 1,
         "settlement notification is not duplicated"
     );
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn revoked_after_queue_is_skipped_with_reason_and_no_ledger_writes() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let user = h.member.clone();
+    let account = paper_account(&h, &user, "runner-revoked-account").await;
+    let config = strategy_config(&h, &user, "runner-revoked-config").await;
+    bind_opted_in(&h, &user, account, config, "runner-revoked-bind").await;
+    let target = h
+        .state_pending_targets()
+        .queue(
+            &user.actor(),
+            NewPendingTarget {
+                account_id: account,
+                strategy_config_id: config,
+                computed_on: date("2026-01-05"),
+                effective_date: date("2026-01-06"),
+                targets_json: json!([{ "instrument_id": "069500.KRX", "weight": "1.000000" }]),
+                dataset_version: Some("2026-01-01".to_owned()),
+            },
+        )
+        .await
+        .expect("queue exact target");
+    h.seed_tenant(&user, &format!(
+        "UPDATE pending_targets SET \
+             dataset_version_id=(SELECT id FROM dataset_versions WHERE version='2026-01-01'), \
+             dataset_manifest_sha256=(SELECT manifest_sha256 FROM dataset_versions WHERE version='2026-01-01') \
+         WHERE id='{id}'",
+        id=target.id,
+    )).await;
+    let data = runner_dataset_for("2026-01-06");
+    let services = RunnerServices::new(h.state(), h.worker_pool().await, data.root().to_path_buf());
+
+    let mut revocation = h.owner_pool.begin().await.unwrap();
+    sqlx::query("UPDATE data_entitlements SET status='REVOKED' WHERE status='ACTIVE'")
+        .execute(&mut *revocation)
+        .await
+        .unwrap();
+    let cycle_services = services.clone();
+    let cycle = tokio::spawn(async move { run_cycle(&cycle_services, date("2026-01-06")).await });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !cycle.is_finished(),
+        "mutation-first preflight must wait for revocation"
+    );
+    revocation.commit().await.unwrap();
+    let report = cycle.await.unwrap().expect("cycle completes");
+    assert_eq!(report.targets_seen, 1);
+    assert_eq!(report.targets_settled, 1);
+    let row: (String, serde_json::Value) =
+        sqlx::query_as("SELECT status, non_execution_reason FROM pending_targets WHERE id=$1")
+            .bind(target.id)
+            .fetch_one(&services.worker_pool)
+            .await
+            .unwrap();
+    assert_eq!(row.0, "SKIPPED");
+    assert_eq!(row.1["code"], "PAPER_ENTITLEMENT_INACTIVE");
+    let orders: i64 = sqlx::query_scalar("SELECT count(*) FROM orders WHERE account_id=$1")
+        .bind(account)
+        .fetch_one(&services.worker_pool)
+        .await
+        .unwrap();
+    let fills: i64 = sqlx::query_scalar("SELECT count(*) FROM fills WHERE account_id=$1")
+        .bind(account)
+        .fetch_one(&services.worker_pool)
+        .await
+        .unwrap();
+    assert_eq!((orders, fills), (0, 0));
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn execution_first_holds_entitlement_lock_until_ledger_commit() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let user = h.member.clone();
+    let account = paper_account(&h, &user, "runner-execution-first").await;
+    let config = strategy_config(&h, &user, "runner-execution-first-config").await;
+    bind_opted_in(&h, &user, account, config, "runner-execution-first-bind").await;
+    let queued = h
+        .state_pending_targets()
+        .queue(
+            &user.actor(),
+            NewPendingTarget {
+                account_id: account,
+                strategy_config_id: config,
+                computed_on: date("2026-01-05"),
+                effective_date: date("2026-01-06"),
+                targets_json: json!([{ "instrument_id": "069500.KRX", "weight": "1.000000" }]),
+                dataset_version: Some("2026-01-01".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    h.seed_tenant(&user, &format!(
+        "UPDATE pending_targets SET \
+             dataset_version_id=(SELECT id FROM dataset_versions WHERE version='2026-01-01'), \
+             dataset_manifest_sha256=(SELECT manifest_sha256 FROM dataset_versions WHERE version='2026-01-01') \
+         WHERE id='{id}'",
+        id=queued.id,
+    )).await;
+    let worker = h.worker_pool().await;
+    let mut execution = worker.begin().await.unwrap();
+    let preflight: (bool, Option<serde_json::Value>) =
+        sqlx::query_as("SELECT authorized, reason FROM public.preflight_paper_target($1,$2)")
+            .bind(queued.id)
+            .bind(user.user_id)
+            .fetch_one(&mut *execution)
+            .await
+            .unwrap();
+    assert!(
+        preflight.0,
+        "active exact lineage is authorized: {:?}",
+        preflight.1
+    );
+
+    let owner_pool = h.owner_pool.clone();
+    let revocation = tokio::spawn(async move {
+        sqlx::query("UPDATE data_entitlements SET status='REVOKED' WHERE status='ACTIVE'")
+            .execute(&owner_pool)
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !revocation.is_finished(),
+        "execution-first preflight lock fences revocation"
+    );
+
+    let data = runner_dataset_for("2026-01-06");
+    let input = SessionInput {
+        account_id: account,
+        owner_user_id: user.user_id,
+        effective_date: TradingDate::parse("2026-01-06").unwrap(),
+        targets: targets_from_json(&queued.targets_json).unwrap(),
+    };
+    let outcome = execute_session_in_tx(&mut execution, data.root(), &input)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, ExecutionOutcome::Executed { .. }));
+    execution.commit().await.unwrap();
+    revocation.await.unwrap().unwrap();
+
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM orders WHERE account_id=$1), \
+                (SELECT count(*) FROM fills WHERE account_id=$1)",
+    )
+    .bind(account)
+    .fetch_one(&worker)
+    .await
+    .unwrap();
+    assert!(
+        counts.0 > 0 && counts.1 > 0,
+        "execution committed before revocation: {counts:?}"
+    );
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn dataset_blocked_after_queue_is_atomically_skipped() {
+    let Some(h) = Harness::new().await else {
+        return;
+    };
+    let user = h.member.clone();
+    let account = paper_account(&h, &user, "runner-blocked-dataset").await;
+    let config = strategy_config(&h, &user, "runner-blocked-dataset-config").await;
+    bind_opted_in(&h, &user, account, config, "runner-blocked-dataset-bind").await;
+    let queued = h
+        .state_pending_targets()
+        .queue(
+            &user.actor(),
+            NewPendingTarget {
+                account_id: account,
+                strategy_config_id: config,
+                computed_on: date("2026-01-05"),
+                effective_date: date("2026-01-06"),
+                targets_json: json!([{ "instrument_id": "069500.KRX", "weight": "1.000000" }]),
+                dataset_version: Some("2026-01-01".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    h.seed_tenant(&user, &format!(
+        "UPDATE pending_targets SET \
+             dataset_version_id=(SELECT id FROM dataset_versions WHERE version='2026-01-01'), \
+             dataset_manifest_sha256=(SELECT manifest_sha256 FROM dataset_versions WHERE version='2026-01-01') \
+         WHERE id='{}'",
+        queued.id,
+    )).await;
+    h.seed_shared("UPDATE dataset_versions SET status='BLOCKED' WHERE version='2026-01-01'")
+        .await;
+    let worker = h.worker_pool().await;
+    let mut tx = worker.begin().await.unwrap();
+    let result: (bool, serde_json::Value) =
+        sqlx::query_as("SELECT authorized, reason FROM public.preflight_paper_target($1,$2)")
+            .bind(queued.id)
+            .bind(user.user_id)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+    assert!(!result.0);
+    assert_eq!(result.1["code"], "PAPER_DATASET_BLOCKED");
+    tx.commit().await.unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM pending_targets WHERE id=$1")
+        .bind(queued.id)
+        .fetch_one(&worker)
+        .await
+        .unwrap();
+    assert_eq!(status, "SKIPPED");
+    let orders: i64 = sqlx::query_scalar("SELECT count(*) FROM orders WHERE account_id=$1")
+        .bind(account)
+        .fetch_one(&worker)
+        .await
+        .unwrap();
+    assert_eq!(orders, 0);
     h.teardown().await;
 }

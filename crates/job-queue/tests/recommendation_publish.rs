@@ -8,8 +8,8 @@ use job_queue::recommendation::input::{
     AttestedRecommendationInput, DatasetPin, RecommendationPayload,
 };
 use job_queue::recommendation::publish::{
-    CredentialedSourcePin, PublicationOutcome, publish_production_recommendation,
-    publish_recommendation,
+    CredentialedSourcePin, PaperBridgeInput, PaperBridgeOutcome, PublicationOutcome,
+    bridge_scheduled_paper_targets, publish_production_recommendation, publish_recommendation,
 };
 use job_queue::recommendation::validate::{
     RecommendationValidationError, canonical_portfolio_snapshot_id, validate_target_output,
@@ -17,6 +17,7 @@ use job_queue::recommendation::validate::{
 use job_queue::resolver::ResolvedConfig;
 use job_queue::types::{AttemptOutcome, ErrorClass};
 use job_queue::{JobQueue, QueueConfig, SubmitJob};
+use serde_json::json;
 use sqlx::PgPool;
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -1325,6 +1326,149 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
 
     worker.close().await;
     app.close().await;
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn scheduled_paper_bridge_uses_the_next_published_session_and_exact_lineage() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let owner: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) VALUES ('bridge.test', $1, $2) RETURNING id",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(format!("{}@bridge.test", Uuid::new_v4()))
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO strategies (id, display_name, state) VALUES ('bridge_strategy','Bridge','Paper')")
+        .execute(&db.pool).await.unwrap();
+    let config: Uuid = sqlx::query_scalar(
+        "INSERT INTO user_strategy_configs (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1,'bridge_strategy','1.0.0','{}') RETURNING id",
+    ).bind(owner).fetch_one(&db.pool).await.unwrap();
+    let account: Uuid = sqlx::query_scalar(
+        "INSERT INTO accounts (owner_user_id, account_type, name, currency, status) \
+         VALUES ($1,'PAPER',$2,'KRW','ACTIVE') RETURNING id",
+    )
+    .bind(owner)
+    .bind(format!("bridge-{config}"))
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO account_strategy_bindings \
+         (account_id, owner_user_id, strategy_config_id, strategy_id, strategy_version, auto_apply_recommendations) \
+         VALUES ($1,$2,$3,'bridge_strategy','1.0.0',true)",
+    ).bind(account).bind(owner).bind(config).execute(&db.pool).await.unwrap();
+    let dataset_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO dataset_versions (dataset_id, version, status, manifest_sha256, storage_path) \
+         VALUES ('krx_eod_bars','bridge-v1','READY',repeat('c',64),'curated/bridge') RETURNING id",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    for (date, kind) in [("2026-05-11", "CLOSED"), ("2026-05-12", "TRADING")] {
+        sqlx::query(
+            "INSERT INTO trading_calendars \
+             (exchange, session_date, session_type, timezone, source, source_version, source_batch_id, content_sha256, retrieved_at) \
+             VALUES ('KRX',$1::date,$2,'Asia/Seoul','KRX',$3,$4,repeat('d',64),now())",
+        ).bind(date).bind(kind).bind(format!("bridge-{date}")).bind(Uuid::new_v4())
+            .execute(&db.pool).await.unwrap();
+    }
+    let manifest = "c".repeat(64);
+    let input = PaperBridgeInput {
+        owner_user_id: owner,
+        strategy_config_id: config,
+        as_of: NaiveDate::from_ymd_opt(2026, 5, 8).unwrap(),
+        trigger_kind: "SCHEDULED",
+        dataset_version_id: dataset_id,
+        dataset_version: "bridge-v1",
+        dataset_manifest_sha256: &manifest,
+    };
+    let weights = BTreeMap::from([
+        ("069500.KRX".to_owned(), "0.600000".to_owned()),
+        ("229200.KRX".to_owned(), "0.400000".to_owned()),
+    ]);
+    let worker = PgPool::connect(&db.role_url("worker")).await.unwrap();
+    let mut tx = worker.begin().await.unwrap();
+    let outcome = bridge_scheduled_paper_targets(&mut tx, &input, &weights)
+        .await
+        .unwrap();
+    assert_eq!(outcome, PaperBridgeOutcome::Queued { targets: 1 });
+    tx.commit().await.unwrap();
+    let row: (chrono::NaiveDate, serde_json::Value, Uuid, String) = sqlx::query_as(
+        "SELECT effective_date, targets_json, dataset_version_id, dataset_manifest_sha256 \
+         FROM pending_targets WHERE account_id=$1",
+    )
+    .bind(account)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row.0.to_string(),
+        "2026-05-12",
+        "holiday is never guessed as T+1"
+    );
+    assert_eq!(
+        row.1,
+        json!([
+            {"instrument_id":"069500.KRX","weight":"0.600000"},
+            {"instrument_id":"229200.KRX","weight":"0.400000"}
+        ])
+    );
+    assert_eq!(row.2, dataset_id);
+    assert_eq!(row.3, "c".repeat(64));
+
+    let mut manual = worker.begin().await.unwrap();
+    let manual_input = PaperBridgeInput {
+        trigger_kind: "MANUAL",
+        ..input
+    };
+    assert_eq!(
+        bridge_scheduled_paper_targets(&mut manual, &manual_input, &weights)
+            .await
+            .unwrap(),
+        PaperBridgeOutcome::NotScheduled,
+    );
+    manual.rollback().await.unwrap();
+    worker.close().await;
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn scheduled_paper_bridge_warns_without_a_next_session() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let worker = PgPool::connect(&db.role_url("worker")).await.unwrap();
+    let mut tx = worker.begin().await.unwrap();
+    let manifest = "a".repeat(64);
+    let dataset_version_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO dataset_versions \
+         (dataset_id, version, status, manifest_sha256, storage_path) \
+         VALUES ('krx_eod_bars','v1','READY',$1,'curated/missing-next') RETURNING id",
+    )
+    .bind(&manifest)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    let input = PaperBridgeInput {
+        owner_user_id: Uuid::new_v4(),
+        strategy_config_id: Uuid::new_v4(),
+        as_of: NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
+        trigger_kind: "SCHEDULED",
+        dataset_version_id,
+        dataset_version: "v1",
+        dataset_manifest_sha256: &manifest,
+    };
+    let outcome = bridge_scheduled_paper_targets(&mut tx, &input, &BTreeMap::new())
+        .await
+        .unwrap();
+    assert_eq!(outcome, PaperBridgeOutcome::MissingNextSession);
+    tx.rollback().await.unwrap();
+    worker.close().await;
     db.drop_db().await;
 }
 

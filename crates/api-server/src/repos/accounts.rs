@@ -55,6 +55,7 @@ pub struct BindingRow {
     pub strategy_config_id: Uuid,
     pub strategy_id: String,
     pub strategy_version: String,
+    pub auto_apply_recommendations: bool,
     pub bound_at: DateTime<Utc>,
     pub unbound_at: Option<DateTime<Utc>>,
 }
@@ -156,7 +157,7 @@ impl AccountRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let row = sqlx::query_as::<_, BindingRow>(
             "SELECT id, account_id, strategy_config_id, strategy_id, strategy_version, \
-                    bound_at, unbound_at \
+                    auto_apply_recommendations, bound_at, unbound_at \
              FROM account_strategy_bindings WHERE account_id = $1 AND unbound_at IS NULL",
         )
         .bind(account_id)
@@ -177,7 +178,7 @@ impl AccountRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let rows = sqlx::query_as::<_, BindingRow>(
             "SELECT id, account_id, strategy_config_id, strategy_id, strategy_version, \
-                    bound_at, unbound_at \
+                    auto_apply_recommendations, bound_at, unbound_at \
              FROM account_strategy_bindings WHERE account_id = $1 ORDER BY bound_at",
         )
         .bind(account_id)
@@ -202,6 +203,7 @@ impl AccountRepo {
         strategy_config_id: Uuid,
         strategy_id: &str,
         strategy_version: &str,
+        auto_apply_recommendations: bool,
     ) -> TenancyResult<BindingRow> {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         sqlx::query(
@@ -214,16 +216,18 @@ impl AccountRepo {
         .map_err(TenancyError::from_sqlx)?;
         let row = sqlx::query_as::<_, BindingRow>(
             "INSERT INTO account_strategy_bindings \
-             (account_id, owner_user_id, strategy_config_id, strategy_id, strategy_version) \
-             VALUES ($1, $2, $3, $4, $5) \
+             (account_id, owner_user_id, strategy_config_id, strategy_id, strategy_version, \
+              auto_apply_recommendations) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
              RETURNING id, account_id, strategy_config_id, strategy_id, strategy_version, \
-                       bound_at, unbound_at",
+                       auto_apply_recommendations, bound_at, unbound_at",
         )
         .bind(account_id)
         .bind(actor_uuid(actor)?)
         .bind(strategy_config_id)
         .bind(strategy_id)
         .bind(strategy_version)
+        .bind(auto_apply_recommendations)
         .fetch_one(&mut *tx)
         .await
         .map_err(TenancyError::from_sqlx)?;

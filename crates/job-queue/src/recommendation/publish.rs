@@ -8,6 +8,7 @@ use crate::recommendation::validate::ValidatedPortfolio;
 use crate::types::{ClaimedJob, ErrorClass, SettleResult};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Postgres, Transaction};
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +22,65 @@ pub struct CredentialedSourcePin {
     pub source_batch_id: uuid::Uuid,
     pub source_file_name: String,
     pub content_sha256: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PaperBridgeInput<'a> {
+    pub owner_user_id: uuid::Uuid,
+    pub strategy_config_id: uuid::Uuid,
+    pub as_of: chrono::NaiveDate,
+    pub trigger_kind: &'a str,
+    pub dataset_version_id: uuid::Uuid,
+    pub dataset_version: &'a str,
+    pub dataset_manifest_sha256: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaperBridgeOutcome {
+    NotScheduled,
+    Queued { targets: usize },
+    MissingNextSession,
+}
+
+/// Queue the Paper side of a scheduled publication inside the caller's
+/// publication transaction. The SECURITY DEFINER function owns binding and
+/// calendar row locks; the worker receives only this narrow capability.
+pub async fn bridge_scheduled_paper_targets(
+    transaction: &mut Transaction<'_, Postgres>,
+    input: &PaperBridgeInput<'_>,
+    positive_weights: &BTreeMap<String, String>,
+) -> Result<PaperBridgeOutcome, PublicationError> {
+    if input.trigger_kind != "SCHEDULED" {
+        return Ok(PaperBridgeOutcome::NotScheduled);
+    }
+    let targets = Value::Array(
+        positive_weights
+            .iter()
+            .map(|(instrument_id, weight)| {
+                json!({ "instrument_id": instrument_id, "weight": weight })
+            })
+            .collect(),
+    );
+    let (count, missing): (i32, bool) = sqlx::query_as(
+        "SELECT targets, missing_next_session \
+           FROM public.queue_scheduled_paper_targets($1,$2,$3,$4,$5,$6,$7)",
+    )
+    .bind(input.owner_user_id)
+    .bind(input.strategy_config_id)
+    .bind(input.as_of)
+    .bind(input.dataset_version_id)
+    .bind(input.dataset_version)
+    .bind(input.dataset_manifest_sha256)
+    .bind(targets)
+    .fetch_one(&mut **transaction)
+    .await?;
+    if missing {
+        Ok(PaperBridgeOutcome::MissingNextSession)
+    } else {
+        Ok(PaperBridgeOutcome::Queued {
+            targets: usize::try_from(count).unwrap_or(0),
+        })
+    }
 }
 
 #[derive(Debug, Error)]
@@ -254,7 +314,28 @@ async fn publish_recommendation_inner(
     .execute(&mut *transaction)
     .await?;
 
-    let summary = expected_summary(input, portfolio, &run.trigger_kind);
+    let bridge = bridge_scheduled_paper_targets(
+        &mut transaction,
+        &PaperBridgeInput {
+            owner_user_id: claim.job.owner_user_id,
+            strategy_config_id: input.payload.strategy_config_id,
+            as_of: input.payload.as_of,
+            trigger_kind: &run.trigger_kind,
+            dataset_version_id: input.dataset.id,
+            dataset_version: &input.dataset.version,
+            dataset_manifest_sha256: &input.dataset.manifest_sha256,
+        },
+        &portfolio.positive_weights,
+    )
+    .await?;
+
+    let mut summary = expected_summary(input, portfolio, &run.trigger_kind);
+    if bridge == PaperBridgeOutcome::MissingNextSession {
+        summary["warnings"]
+            .as_array_mut()
+            .expect("expected summary warnings is an array")
+            .push(json!("PAPER_NEXT_SESSION_UNAVAILABLE"));
+    }
     let updated = sqlx::query(
         "UPDATE recommendation_runs SET status = 'SUCCEEDED', summary_json = $3 \
          WHERE id = $1 AND owner_user_id = $2 AND status = 'PENDING'",
@@ -474,7 +555,20 @@ async fn already_published(
             })
             .collect(),
     );
-    let expected_summary = expected_summary(input, portfolio, &row.trigger_kind);
+    let mut expected_summary = expected_summary(input, portfolio, &row.trigger_kind);
+    if row.summary_json["warnings"]
+        .as_array()
+        .is_some_and(|warnings| {
+            warnings
+                .iter()
+                .any(|warning| warning == "PAPER_NEXT_SESSION_UNAVAILABLE")
+        })
+    {
+        expected_summary["warnings"]
+            .as_array_mut()
+            .expect("expected summary warnings is an array")
+            .push(json!("PAPER_NEXT_SESSION_UNAVAILABLE"));
+    }
     Ok(row.job_status == "SUCCEEDED"
         && claim.job.job_type == "recommendation"
         && claim.job.payload_json == expected_payload

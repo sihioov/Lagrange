@@ -85,6 +85,10 @@ const RECOMMENDATION_SUBMISSION_DATASET_LOCK_UP_SQL: &str =
     include_str!("../../../../migrations/0036_recommendation_submission_dataset_lock.up.sql");
 const RECOMMENDATION_SUBMISSION_DATASET_LOCK_DOWN_SQL: &str =
     include_str!("../../../../migrations/0036_recommendation_submission_dataset_lock.down.sql");
+const PAPER_RECOMMENDATION_EXECUTION_UP_SQL: &str =
+    include_str!("../../../../migrations/0037_paper_recommendation_execution.up.sql");
+const PAPER_RECOMMENDATION_EXECUTION_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0037_paper_recommendation_execution.down.sql");
 const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
 const RESEARCH_SCHEMA_GATE_SQL: &str =
@@ -99,7 +103,7 @@ fn recommendation_pipeline_migration_is_tracked() {
         assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
         assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
     }
-    for version in 26..=36 {
+    for version in 26..=37 {
         let up = MIGRATOR.migrations.iter().find(|migration| {
             migration.version == version
                 && migration.migration_type != MigrationType::ReversibleDown
@@ -188,6 +192,62 @@ fn recommendation_pipeline_migration_is_tracked() {
     assert!(RECOMMENDATION_SUBMISSION_DATASET_LOCK_UP_SQL.contains("TO app"));
     assert!(RECOMMENDATION_SUBMISSION_DATASET_LOCK_DOWN_SQL.contains("FROM app"));
     assert!(RECOMMENDATION_SUBMISSION_DATASET_LOCK_DOWN_SQL.contains("DROP FUNCTION"));
+    for migration in [
+        PAPER_RECOMMENDATION_EXECUTION_UP_SQL,
+        PAPER_RECOMMENDATION_EXECUTION_DOWN_SQL,
+    ] {
+        assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
+        assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
+    }
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("dataset_version_id uuid"));
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("dataset_manifest_sha256 text"));
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("non_execution_reason jsonb"));
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("non_execution_reason ? 'code'"));
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("non_execution_reason ? 'message'"));
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("item ->> 'weight' IS NULL"));
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("lock_recommendation_schedule_inputs"));
+    assert!(
+        PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("lock_recommendation_calendar_coverage")
+    );
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("preflight_paper_target"));
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("queue_scheduled_paper_targets"));
+    assert_eq!(
+        PAPER_RECOMMENDATION_EXECUTION_UP_SQL
+            .matches("dataset.id = p_dataset_version_id")
+            .count(),
+        2,
+        "both scheduling and Paper queue boundaries must attest the exact dataset UUID"
+    );
+    assert_eq!(
+        PAPER_RECOMMENDATION_EXECUTION_UP_SQL
+            .matches("dataset.version = p_dataset_version")
+            .count(),
+        2,
+        "both scheduling and Paper queue boundaries must attest the exact dataset version"
+    );
+    assert_eq!(
+        PAPER_RECOMMENDATION_EXECUTION_UP_SQL
+            .matches("SECURITY DEFINER")
+            .count(),
+        4
+    );
+    assert!(
+        PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("SET search_path = pg_catalog, pg_temp")
+    );
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("FOR SHARE"));
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("FOR UPDATE"));
+    assert!(PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("TO worker"));
+    assert!(!PAPER_RECOMMENDATION_EXECUTION_UP_SQL.contains("TO app"));
+    assert!(
+        PAPER_RECOMMENDATION_EXECUTION_UP_SQL
+            .contains("REVOKE INSERT ON TABLE public.pending_targets FROM worker")
+    );
+    assert!(PAPER_RECOMMENDATION_EXECUTION_DOWN_SQL.contains("FROM worker"));
+    assert!(
+        PAPER_RECOMMENDATION_EXECUTION_DOWN_SQL
+            .contains("GRANT INSERT ON TABLE public.pending_targets TO worker")
+    );
+    assert!(PAPER_RECOMMENDATION_EXECUTION_DOWN_SQL.contains("DROP FUNCTION"));
 }
 
 #[test]
@@ -254,11 +314,13 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
             .execute(&owner)
             .await?;
+        let future_version = up_migration_count() as i64 + 1;
         sqlx::query(
             "INSERT INTO _sqlx_migrations \
              (version, description, installed_on, success, checksum, execution_time) \
-             VALUES (37, 'future migration', now(), true, decode(repeat('00', 32), 'hex'), 0)",
+             VALUES ($1, 'future migration', now(), true, decode(repeat('00', 32), 'hex'), 0)",
         )
+        .bind(future_version)
         .execute(&owner)
         .await?;
         sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
@@ -2184,15 +2246,15 @@ async fn revert_and_rerun_body(
         "fresh DB must apply all {expected} migrations"
     );
 
-    // Revert the 0036..0026 recommendation family, then 0025, 0024, and 0023
+    // Revert the 0037..0026 recommendation family, then 0025, 0024, and 0023
     // before 0022 while all earlier tables remain.
     // This proves each down migration restores its own boundary rather than
     // relying on 0003.down to hide omitted objects in a full teardown.
     MIGRATOR.undo(owner, 25).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 11,
-        "undo to 0025 must revert the complete 0036..0026 family"
+        25,
+        "undo to 0025 must revert the complete 0037..0026 family"
     );
     let scheduler_gone: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
@@ -2217,7 +2279,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 24).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 12,
+        24,
         "undo to 0024 must revert only 0025"
     );
     let calendar_lookup_gone: Option<String> = sqlx::query_scalar(
@@ -2241,7 +2303,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 23).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 13,
+        23,
         "undo to 0023 must revert only 0024"
     );
     let source_index_gone: Option<String> =
@@ -2255,7 +2317,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 22).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 14,
+        22,
         "undo to 0022 must revert only 0023"
     );
     sqlx::query(
@@ -2268,7 +2330,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 21).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 15,
+        21,
         "undo to 0021 must revert only 0022"
     );
     for object in [
@@ -2615,7 +2677,7 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     assert!(active_control);
-    MIGRATOR.run_to(36, owner).await?;
+    MIGRATOR.run_to(37, owner).await?;
     assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
 
     let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
@@ -2625,7 +2687,9 @@ async fn recommendation_pipeline_contract_body(
            (table_name = 'recommendation_runs' AND column_name IN \
              ('job_id', 'trigger_kind', 'dataset_version_id', 'dataset_manifest_sha256')) \
            OR (table_name = 'account_strategy_bindings' \
-             AND column_name = 'auto_apply_recommendations')) \
+             AND column_name = 'auto_apply_recommendations') \
+           OR (table_name = 'pending_targets' AND column_name IN \
+             ('dataset_version_id', 'dataset_manifest_sha256', 'non_execution_reason'))) \
          ORDER BY table_name, column_name",
     )
     .fetch_all(owner)
@@ -2638,6 +2702,24 @@ async fn recommendation_pipeline_contract_body(
                 "auto_apply_recommendations".into(),
                 "NO".into(),
                 Some("false".into()),
+            ),
+            (
+                "pending_targets".into(),
+                "dataset_manifest_sha256".into(),
+                "YES".into(),
+                None,
+            ),
+            (
+                "pending_targets".into(),
+                "dataset_version_id".into(),
+                "YES".into(),
+                None,
+            ),
+            (
+                "pending_targets".into(),
+                "non_execution_reason".into(),
+                "YES".into(),
+                None,
             ),
             (
                 "recommendation_runs".into(),
@@ -2664,7 +2746,7 @@ async fn recommendation_pipeline_contract_body(
                 Some("'MANUAL'::text".into()),
             ),
         ],
-        "0026 columns must preserve old rows while making new trigger/opt-in values explicit"
+        "recommendation migrations must preserve old rows while adding explicit lineage"
     );
 
     let legacy_defaults: (String, Option<Uuid>, Option<Uuid>, Option<String>) = sqlx::query_as(
@@ -2914,6 +2996,48 @@ async fn recommendation_pipeline_contract_body(
             "unexpected scheduler EXECUTE privilege for {role}"
         );
     }
+    for signature in [
+        "public.lock_recommendation_schedule_inputs(date,uuid,text,text,text)",
+        "public.lock_recommendation_calendar_coverage(date)",
+        "public.queue_scheduled_paper_targets(uuid,uuid,date,uuid,text,text,jsonb)",
+        "public.preflight_paper_target(uuid,uuid)",
+    ] {
+        let metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
+            "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
+             FROM pg_proc WHERE oid = $1::regprocedure",
+        )
+        .bind(signature)
+        .fetch_one(owner)
+        .await?;
+        assert!(metadata.0, "{signature} must be SECURITY DEFINER");
+        assert_eq!(
+            metadata.1, "migration_owner",
+            "unexpected owner for {signature}"
+        );
+        assert_eq!(
+            metadata.2,
+            Some(vec!["search_path=pg_catalog, pg_temp".into()]),
+            "unsafe search_path for {signature}"
+        );
+        for (role, expected) in [
+            ("worker", true),
+            ("app", false),
+            ("admin", false),
+            ("audit_writer", false),
+            ("research_writer", false),
+        ] {
+            let can_execute: bool =
+                sqlx::query_scalar("SELECT has_function_privilege($1, $2, 'EXECUTE')")
+                    .bind(role)
+                    .bind(signature)
+                    .fetch_one(owner)
+                    .await?;
+            assert_eq!(
+                can_execute, expected,
+                "unexpected EXECUTE privilege for {role} on {signature}"
+            );
+        }
+    }
     for role in ["worker", "app", "admin", "audit_writer", "research_writer"] {
         let can_execute: bool = sqlx::query_scalar(
             "SELECT has_function_privilege($1, \
@@ -2992,6 +3116,7 @@ async fn recommendation_pipeline_contract_body(
         ("jobs", (true, false, true, false)),
         ("user_strategy_configs", (true, false, false, false)),
         ("account_strategy_bindings", (true, false, false, false)),
+        ("pending_targets", (true, false, true, false)),
         (
             "recommendation_scheduler_control",
             (false, false, false, false),
@@ -3008,6 +3133,22 @@ async fn recommendation_pipeline_contract_body(
         .await?;
         assert_eq!(privileges, expected, "unexpected worker grants on {table}");
     }
+    let direct_target_insert = sqlx::query(
+        "INSERT INTO pending_targets \
+         (account_id, owner_user_id, strategy_config_id, computed_on, effective_date, targets_json) \
+         VALUES ($1, $2, $3, '2026-08-11', '2026-08-12', '[]'::jsonb)",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .bind(config_id)
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&direct_target_insert).as_deref(),
+        Some("42501"),
+        "worker must queue Paper targets only through the guarded function"
+    );
     for (column, expected) in [
         ("status", true),
         ("summary_json", true),
@@ -3080,6 +3221,61 @@ async fn recommendation_pipeline_contract_body(
     .bind(binding_id)
     .execute(&owner_actor)
     .await?;
+
+    let missing_weight = sqlx::query(
+        "SELECT * FROM public.queue_scheduled_paper_targets(\
+            $1, $2, '2026-08-11', $3, '2026-08-11', $4, \
+            '[{\"instrument_id\":\"069500.KRX\"}]'::jsonb)",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(dataset_version_id)
+    .bind("a".repeat(64))
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&missing_weight).as_deref(),
+        Some("22023"),
+        "the definer boundary must reject a target item with no exact weight"
+    );
+
+    let forged_target_lineage = sqlx::query(
+        "SELECT * FROM public.queue_scheduled_paper_targets(\
+            $1, $2, '2026-08-11', $3, 'forged-version', $4, \
+            '[{\"instrument_id\":\"069500.KRX\",\"weight\":\"1.000000\"}]'::jsonb)",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(dataset_version_id)
+    .bind("a".repeat(64))
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&forged_target_lineage).as_deref(),
+        Some("22023"),
+        "the definer boundary must attest the target dataset UUID/version/manifest tuple"
+    );
+
+    let incomplete_reason = sqlx::query(
+        "INSERT INTO pending_targets \
+         (account_id, owner_user_id, strategy_config_id, computed_on, effective_date, \
+          targets_json, status, executed_at, non_execution_reason) \
+         VALUES ($1, $2, $3, '2026-08-20', '2026-08-21', '[]'::jsonb, \
+                 'SKIPPED', now(), '{\"other\":\"missing required keys\"}'::jsonb)",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .bind(config_id)
+    .execute(&owner_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&incomplete_reason).as_deref(),
+        Some("23514"),
+        "structured non-execution reasons must contain code and message"
+    );
 
     let invalid_curated_version = sqlx::query(SCHEDULE_SQL)
         .bind(user_id)
@@ -3547,6 +3743,32 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     assert!(publication_lock_after_failed_down.is_none());
+    for signature in [
+        "public.lock_recommendation_schedule_inputs(date,uuid,text,text,text)",
+        "public.lock_recommendation_calendar_coverage(date)",
+        "public.queue_scheduled_paper_targets(uuid,uuid,date,uuid,text,text,jsonb)",
+        "public.preflight_paper_target(uuid,uuid)",
+    ] {
+        let function_after_failed_down: Option<String> =
+            sqlx::query_scalar("SELECT to_regprocedure($1)::text")
+                .bind(signature)
+                .fetch_one(owner)
+                .await?;
+        assert!(
+            function_after_failed_down.is_none(),
+            "0037 down must remove {signature} before an older rollback guard can fail"
+        );
+    }
+    let pending_after_failed_down: (bool, i64) = sqlx::query_as(
+        "SELECT has_table_privilege('worker', 'pending_targets', 'INSERT'), \
+                (SELECT count(*) FROM information_schema.columns \
+                  WHERE table_schema = 'public' AND table_name = 'pending_targets' \
+                    AND column_name IN \
+                      ('dataset_version_id','dataset_manifest_sha256','non_execution_reason'))",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(pending_after_failed_down, (true, 0));
     let function_after_failed_down: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
          'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)')::text",
@@ -3716,6 +3938,7 @@ async fn recommendation_pipeline_contract_body(
         ("recommendation_items", (false, false, false, false)),
         ("target_portfolios", (false, false, false, false)),
         ("account_strategy_bindings", (true, true, true, false)),
+        ("pending_targets", (true, true, true, false)),
     ] {
         let privileges: (bool, bool, bool, bool) = sqlx::query_as(
             "SELECT has_table_privilege('worker', $1, 'SELECT'), \
@@ -3731,6 +3954,14 @@ async fn recommendation_pipeline_contract_body(
 
     MIGRATOR.run(owner).await?;
     assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
+    let reinstalled_pending_grants: (bool, bool, bool) = sqlx::query_as(
+        "SELECT has_table_privilege('worker', 'pending_targets', 'SELECT'), \
+                has_table_privilege('worker', 'pending_targets', 'INSERT'), \
+                has_table_privilege('worker', 'pending_targets', 'UPDATE')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(reinstalled_pending_grants, (true, false, true));
     sqlx::query(
         "UPDATE account_strategy_bindings SET auto_apply_recommendations = true WHERE id = $1",
     )

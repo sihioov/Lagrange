@@ -6,6 +6,7 @@ pub mod compute;
 pub mod input;
 pub mod publish;
 mod runner;
+pub mod schedule;
 pub mod validate;
 
 pub use runner::{

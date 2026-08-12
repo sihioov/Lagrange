@@ -323,6 +323,7 @@ pub async fn bind_strategy(
                 cfg_id,
                 &config.strategy_id,
                 &config.strategy_version,
+                body.auto_apply_recommendations,
             )
             .await
         {
@@ -342,6 +343,7 @@ pub async fn bind_strategy(
                 "strategy_id": binding.strategy_id,
                 "strategy_version": binding.strategy_version,
                 "bound_at": binding.bound_at,
+                "auto_apply_recommendations": binding.auto_apply_recommendations,
             })),
             None,
         )
@@ -353,6 +355,7 @@ pub async fn bind_strategy(
                 strategy_config_id: cfg_id.to_string(),
                 strategy_id: binding.strategy_id,
                 strategy_version: binding.strategy_version,
+                auto_apply_recommendations: binding.auto_apply_recommendations,
                 bound_at: binding.bound_at,
             }),
         )
@@ -648,6 +651,7 @@ pub async fn lineage(
                     strategy_config_id: b.strategy_config_id.to_string(),
                     strategy_id: b.strategy_id,
                     strategy_version: b.strategy_version,
+                    auto_apply_recommendations: b.auto_apply_recommendations,
                     bound_at: b.bound_at,
                     unbound_at: b.unbound_at,
                     active: b.unbound_at.is_none(),
@@ -661,6 +665,7 @@ pub async fn lineage(
                     effective_date: t.effective_date,
                     status: t.status,
                     executed_at: t.executed_at,
+                    non_execution_reason: t.non_execution_reason,
                 })
                 .collect(),
         }),

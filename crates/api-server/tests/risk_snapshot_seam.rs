@@ -677,7 +677,14 @@ async fn a_bound_account_trading_an_allowed_instrument_is_promoted_and_allowed()
 
     h.state()
         .accounts()
-        .bind_strategy(&owner.actor(), account, config_id, "buy_and_hold", "1.0.0")
+        .bind_strategy(
+            &owner.actor(),
+            account,
+            config_id,
+            "buy_and_hold",
+            "1.0.0",
+            false,
+        )
         .await
         .expect("binding succeeds");
 

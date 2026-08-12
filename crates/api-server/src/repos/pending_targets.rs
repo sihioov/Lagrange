@@ -28,6 +28,9 @@ pub struct PendingTargetRow {
     /// parity report degrades to NOT_COMPARABLE rather than claiming
     /// comparability it cannot prove.
     pub dataset_version: Option<String>,
+    pub dataset_version_id: Option<Uuid>,
+    pub dataset_manifest_sha256: Option<String>,
+    pub non_execution_reason: Option<serde_json::Value>,
     pub status: String,
     pub executed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -49,6 +52,9 @@ pub struct WorkerPendingTargetRow {
     pub effective_date: NaiveDate,
     pub targets_json: serde_json::Value,
     pub dataset_version: Option<String>,
+    pub dataset_version_id: Option<Uuid>,
+    pub dataset_manifest_sha256: Option<String>,
+    pub non_execution_reason: Option<serde_json::Value>,
     pub status: String,
     pub executed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -88,8 +94,8 @@ impl PendingTargetRepo {
     ) -> TenancyResult<Vec<WorkerPendingTargetRow>> {
         sqlx::query_as::<_, WorkerPendingTargetRow>(
             "SELECT id, account_id, owner_user_id, strategy_config_id, computed_on, \
-                    effective_date, targets_json, dataset_version, status, \
-                    executed_at, created_at \
+                    effective_date, targets_json, dataset_version, dataset_version_id, \
+                    dataset_manifest_sha256, non_execution_reason, status, executed_at, created_at \
              FROM pending_targets \
              WHERE status = 'PENDING' AND effective_date <= $1 \
              ORDER BY effective_date, account_id, id",
@@ -117,7 +123,8 @@ impl PendingTargetRepo {
              VALUES ($1, $2, $3, $4, $5, $6, $7) \
              ON CONFLICT (account_id, effective_date) DO NOTHING \
              RETURNING id, account_id, strategy_config_id, computed_on, effective_date, \
-                       targets_json, dataset_version, status, executed_at, created_at",
+                       targets_json, dataset_version, dataset_version_id, dataset_manifest_sha256, \
+                       non_execution_reason, status, executed_at, created_at",
         )
         .bind(input.account_id)
         .bind(actor_uuid(actor)?)
@@ -133,7 +140,8 @@ impl PendingTargetRepo {
             Some(r) => r,
             None => sqlx::query_as::<_, PendingTargetRow>(
                 "SELECT id, account_id, strategy_config_id, computed_on, effective_date, \
-                        targets_json, dataset_version, status, executed_at, created_at \
+                        targets_json, dataset_version, dataset_version_id, dataset_manifest_sha256, \
+                        non_execution_reason, status, executed_at, created_at \
                  FROM pending_targets WHERE account_id = $1 AND effective_date = $2",
             )
             .bind(input.account_id)
@@ -156,7 +164,8 @@ impl PendingTargetRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let rows = sqlx::query_as::<_, PendingTargetRow>(
             "SELECT id, account_id, strategy_config_id, computed_on, effective_date, \
-                    targets_json, dataset_version, status, executed_at, created_at \
+                    targets_json, dataset_version, dataset_version_id, dataset_manifest_sha256, \
+                    non_execution_reason, status, executed_at, created_at \
              FROM pending_targets \
              WHERE status = 'PENDING' AND effective_date <= $1 \
              ORDER BY effective_date, account_id",
@@ -174,7 +183,8 @@ impl PendingTargetRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let row = sqlx::query_as::<_, PendingTargetRow>(
             "SELECT id, account_id, strategy_config_id, computed_on, effective_date, \
-                    targets_json, dataset_version, status, executed_at, created_at \
+                    targets_json, dataset_version, dataset_version_id, dataset_manifest_sha256, \
+                    non_execution_reason, status, executed_at, created_at \
              FROM pending_targets WHERE id = $1",
         )
         .bind(id)
@@ -200,7 +210,8 @@ impl PendingTargetRepo {
             "UPDATE pending_targets SET status = $2, executed_at = now() \
              WHERE id = $1 AND status = 'PENDING' \
              RETURNING id, account_id, strategy_config_id, computed_on, effective_date, \
-                       targets_json, dataset_version, status, executed_at, created_at",
+                       targets_json, dataset_version, dataset_version_id, dataset_manifest_sha256, \
+                       non_execution_reason, status, executed_at, created_at",
         )
         .bind(id)
         .bind(status)
@@ -220,7 +231,8 @@ impl PendingTargetRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let rows = sqlx::query_as::<_, PendingTargetRow>(
             "SELECT id, account_id, strategy_config_id, computed_on, effective_date, \
-                    targets_json, dataset_version, status, executed_at, created_at \
+                    targets_json, dataset_version, dataset_version_id, dataset_manifest_sha256, \
+                    non_execution_reason, status, executed_at, created_at \
              FROM pending_targets WHERE account_id = $1 ORDER BY effective_date",
         )
         .bind(account_id)

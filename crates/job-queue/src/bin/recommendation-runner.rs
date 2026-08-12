@@ -7,7 +7,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
+use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use job_queue::recommendation::child::TargetChildPaths;
+use job_queue::recommendation::compute::AttestedUniverse;
+use job_queue::recommendation::input::DatasetPin;
+use job_queue::recommendation::schedule::{
+    ScheduleError, eligible_schedule_date, run_schedule_cycle,
+};
 use job_queue::recommendation::{
     RecommendationOutcome, RecommendationRunnerConfig, RecommendationRunnerPaths, run_once,
 };
@@ -15,6 +21,7 @@ use job_queue::{JobQueue, QueueConfig};
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::watch;
+use uuid::Uuid;
 
 const HELP: &str = "recommendation-runner [OPTIONS]\n\n\
 Drains only `recommendation` jobs and publishes validated fixed-ETF targets.\n\n\
@@ -234,6 +241,11 @@ fn resolve_paths(
     validate_existing_file(&universe_manifest, "universe manifest")?;
     validate_existing_file(&uv_bin, "uv executable")?;
     validate_existing_directory(&temp_root, "temp root")?;
+    let universe_yaml = std::fs::read_to_string(&universe_manifest)
+        .map_err(|_| "universe manifest is unreadable".to_owned())?;
+    AttestedUniverse::from_manifest_yaml(&universe_yaml).map_err(|error| {
+        format!("universe manifest is not the immutable 11-member pin: {error}")
+    })?;
     Ok(ResolvedPaths {
         runner: RecommendationRunnerPaths {
             data_root,
@@ -303,6 +315,60 @@ fn read_database_url() -> Result<String, String> {
     }
 }
 
+fn schedule_pin_from_parts(
+    parts: [Option<String>; 5],
+    required: bool,
+) -> Result<Option<DatasetPin>, String> {
+    if parts.iter().all(Option::is_none) {
+        return if required {
+            Err("production requires the immutable recommendation schedule dataset pin".to_owned())
+        } else {
+            Ok(None)
+        };
+    }
+    if parts.iter().any(Option::is_none) {
+        return Err("recommendation schedule dataset pin must be configured completely".to_owned());
+    }
+    let [id, dataset_id, version, curated_version, manifest_sha256] = parts.map(Option::unwrap);
+    let id = Uuid::parse_str(&id)
+        .map_err(|_| "RECOMMENDATION_DATASET_VERSION_ID must be a UUID".to_owned())?;
+    let curated_version = curated_version
+        .parse::<u32>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "RECOMMENDATION_CURATED_VERSION must be positive".to_owned())?;
+    if dataset_id.is_empty()
+        || version.is_empty()
+        || manifest_sha256.len() != 64
+        || !manifest_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err("recommendation schedule dataset pin is invalid".to_owned());
+    }
+    Ok(Some(DatasetPin {
+        id,
+        dataset_id,
+        version,
+        curated_version,
+        manifest_sha256,
+    }))
+}
+
+fn read_schedule_pin(required: bool) -> Result<Option<DatasetPin>, String> {
+    schedule_pin_from_parts(
+        [
+            "RECOMMENDATION_DATASET_VERSION_ID",
+            "RECOMMENDATION_DATASET_ID",
+            "RECOMMENDATION_DATASET_VERSION",
+            "RECOMMENDATION_CURATED_VERSION",
+            "RECOMMENDATION_DATASET_MANIFEST_SHA256",
+        ]
+        .map(|key| std::env::var(key).ok()),
+        required,
+    )
+}
+
 fn worker_id(explicit: Option<String>) -> String {
     explicit.unwrap_or_else(|| {
         let host = std::env::var("HOSTNAME")
@@ -314,6 +380,21 @@ fn worker_id(explicit: Option<String>) -> String {
 
 fn event(kind: &str, fields: serde_json::Value) {
     eprintln!("{}", json!({ "event": kind, "fields": fields }));
+}
+
+#[derive(Debug, Default)]
+struct ScheduleCadence {
+    completed_key: Option<NaiveDate>,
+}
+
+impl ScheduleCadence {
+    fn pending_key(&self, now_kst: DateTime<FixedOffset>) -> Option<NaiveDate> {
+        eligible_schedule_date(now_kst).filter(|key| Some(*key) != self.completed_key)
+    }
+
+    fn complete(&mut self, key: NaiveDate) {
+        self.completed_key = Some(key);
+    }
 }
 
 #[cfg(any(unix, test))]
@@ -404,6 +485,16 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let schedule_pin = match read_schedule_pin(app_env.is_production()) {
+        Ok(pin) => pin,
+        Err(message) => {
+            event(
+                "startup_failed",
+                json!({ "code": "INVALID_SCHEDULE_PIN", "message": message }),
+            );
+            return ExitCode::FAILURE;
+        }
+    };
     let pool = match PgPoolOptions::new()
         .max_connections(4)
         .acquire_timeout(Duration::from_secs(10))
@@ -476,9 +567,44 @@ async fn main() -> ExitCode {
     };
 
     let mut exit = ExitCode::SUCCESS;
+    let seoul = FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
+    let mut schedule_cadence = ScheduleCadence::default();
+    let mut next_schedule_attempt = tokio::time::Instant::now();
     loop {
         if *shutdown_rx.borrow() {
             break;
+        }
+        if let Some(pin) = schedule_pin.as_ref() {
+            let now_kst = Utc::now().with_timezone(&seoul);
+            if let Some(key) = schedule_cadence.pending_key(now_kst)
+                && tokio::time::Instant::now() >= next_schedule_attempt
+            {
+                match run_schedule_cycle(pool.clone(), pin.clone(), now_kst).await {
+                    Ok(report) => {
+                        schedule_cadence.complete(key);
+                        event(
+                            "schedule_cycle",
+                            json!({
+                                "as_of": report.as_of,
+                                "scheduled": report.scheduled,
+                            }),
+                        );
+                    }
+                    Err(ScheduleError::NoConfirmedClose | ScheduleError::DatasetUnavailable) => {
+                        event(
+                            "schedule_blocked",
+                            json!({ "code": "SCHEDULE_INPUT_UNAVAILABLE" }),
+                        );
+                        next_schedule_attempt =
+                            tokio::time::Instant::now() + Duration::from_secs(60);
+                    }
+                    Err(ScheduleError::Database(_)) => {
+                        event("schedule_failed", json!({ "code": "QUEUE_UNAVAILABLE" }));
+                        next_schedule_attempt =
+                            tokio::time::Instant::now() + Duration::from_secs(60);
+                    }
+                }
+            }
         }
         match run_once(&pool, &queue, &id, &paths.runner, &runner_config).await {
             Ok(RecommendationOutcome::Idle) => {
@@ -530,6 +656,40 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn scheduler_catches_up_at_startup_and_runs_the_new_close_key_once() {
+        let seoul = FixedOffset::east_opt(9 * 60 * 60).unwrap();
+        let startup = seoul.with_ymd_and_hms(2026, 5, 11, 9, 0, 0).unwrap();
+        let before_close = seoul.with_ymd_and_hms(2026, 5, 11, 16, 29, 59).unwrap();
+        let at_close = seoul.with_ymd_and_hms(2026, 5, 11, 16, 30, 0).unwrap();
+        let mut cadence = ScheduleCadence::default();
+
+        let startup_key = cadence
+            .pending_key(startup)
+            .expect("startup catches up the latest eligible close bound");
+        assert_eq!(startup_key.to_string(), "2026-05-10");
+        cadence.complete(startup_key);
+        assert_eq!(cadence.pending_key(before_close), None);
+
+        let close_key = cadence
+            .pending_key(at_close)
+            .expect("16:30 KST opens exactly one new daily key");
+        assert_eq!(close_key.to_string(), "2026-05-11");
+        cadence.complete(close_key);
+        assert_eq!(cadence.pending_key(at_close), None);
+    }
+
+    #[test]
+    fn scheduler_failure_does_not_complete_the_key_and_can_retry() {
+        let seoul = FixedOffset::east_opt(9 * 60 * 60).unwrap();
+        let now = seoul.with_ymd_and_hms(2026, 5, 11, 16, 30, 0).unwrap();
+        let cadence = ScheduleCadence::default();
+
+        let failed_key = cadence.pending_key(now).expect("first attempt is due");
+        assert_eq!(cadence.pending_key(now), Some(failed_key));
+    }
 
     #[test]
     fn parser_rejects_zero_and_heartbeat_not_before_lease() {
@@ -625,6 +785,42 @@ mod tests {
                 "{invalid:?}"
             );
         }
+    }
+
+    #[test]
+    fn schedule_pin_is_all_or_nothing_and_required_in_production() {
+        assert!(
+            schedule_pin_from_parts([None, None, None, None, None], false)
+                .unwrap()
+                .is_none()
+        );
+        assert!(schedule_pin_from_parts([None, None, None, None, None], true).is_err());
+        assert!(
+            schedule_pin_from_parts(
+                [
+                    Some(Uuid::nil().to_string()),
+                    Some("krx_eod_bars".into()),
+                    None,
+                    Some("2".into()),
+                    Some("a".repeat(64)),
+                ],
+                false
+            )
+            .is_err()
+        );
+        let pin = schedule_pin_from_parts(
+            [
+                Some(Uuid::nil().to_string()),
+                Some("krx_eod_bars".into()),
+                Some("v2".into()),
+                Some("2".into()),
+                Some("a".repeat(64)),
+            ],
+            true,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(pin.curated_version, 2);
     }
 
     #[cfg(any(unix, windows))]

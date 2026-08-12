@@ -209,9 +209,34 @@ pub async fn execute_session(
 ) -> Result<ExecutionOutcome, ExecutionError> {
     let mut tx = pool.begin().await?;
 
-    let (profile, currency) = account_profile(&mut tx, input).await?;
-    let cash = account_cash(&mut tx, input, currency).await?;
-    let positions = account_positions(&mut tx, input).await?;
+    let outcome = execute_session_in_tx(&mut tx, dataset_root, input).await;
+    match outcome {
+        Ok(executed @ ExecutionOutcome::Executed { .. }) => {
+            tx.commit().await?;
+            Ok(executed)
+        }
+        Ok(other) => {
+            tx.rollback().await?;
+            Ok(other)
+        }
+        Err(error) => {
+            tx.rollback().await?;
+            Err(error)
+        }
+    }
+}
+
+/// Execute using an existing worker transaction. Callers that perform an
+/// authorization preflight use this seam so its row locks remain held until
+/// every order/fill/cash write commits.
+pub async fn execute_session_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    dataset_root: &Path,
+    input: &SessionInput,
+) -> Result<ExecutionOutcome, ExecutionError> {
+    let (profile, currency) = account_profile(tx, input).await?;
+    let cash = account_cash(tx, input, currency).await?;
+    let positions = account_positions(tx, input).await?;
 
     // Already in the ledger? The same predicate settlement checks, so the two
     // can never disagree about whether this session executed.
@@ -222,10 +247,9 @@ pub async fn execute_session(
     .bind(input.account_id)
     .bind(input.owner_user_id)
     .bind(input.effective_date.as_naive_date())
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     if already > 0 {
-        tx.rollback().await?;
         return Ok(ExecutionOutcome::AlreadyExecuted {
             orders: already as usize,
         });
@@ -269,7 +293,6 @@ pub async fn execute_session(
     .map_err(|e| ExecutionError::Plan(e.to_string()))?;
 
     if plan.report.orders.is_empty() {
-        tx.rollback().await?;
         return Ok(ExecutionOutcome::NoTrade);
     }
 
@@ -283,8 +306,7 @@ pub async fn execute_session(
             .map_err(|e| ExecutionError::Ledger(e.to_string()))?;
     }
 
-    persist(&mut tx, input, &plan.events, &applied, &state).await?;
-    tx.commit().await?;
+    persist(tx, input, &plan.events, &applied, &state).await?;
 
     Ok(ExecutionOutcome::Executed {
         orders: plan.report.orders.len(),
