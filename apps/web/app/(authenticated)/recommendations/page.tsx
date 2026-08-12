@@ -3,6 +3,7 @@ import { RoutePage } from "@/components/pages/route-page";
 import { RecommendationHistory } from "@/components/recommendations/recommendation-history";
 import { RecommendationReport } from "@/components/recommendations/recommendation-report";
 import { RecommendationRunForm } from "@/components/recommendations/recommendation-run-form";
+import { RecommendationRunStatus } from "@/components/recommendations/recommendation-run-status";
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
@@ -14,6 +15,10 @@ export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: "Recommendations",
+};
+
+type RecommendationsPageProps = {
+  readonly searchParams?: Promise<{ readonly run_id?: string }>;
 };
 
 function recommendationLicenseState(status: LicensingStatusModel): string {
@@ -34,7 +39,19 @@ function blockedPage(message: string) {
   );
 }
 
-export default async function RecommendationsPage() {
+function configLabel(config: {
+  readonly id: string;
+  readonly strategy_id: string;
+  readonly strategy_version: string;
+}): string {
+  return `${config.strategy_id}@${config.strategy_version} (${config.id})`;
+}
+
+function noRun(error: unknown): boolean {
+  return error instanceof ApiProblem && error.code === "RESOURCE_NOT_FOUND";
+}
+
+export default async function RecommendationsPage({ searchParams }: RecommendationsPageProps = {}) {
   try {
     const api = await getProductApi();
     const licensing = await api.getLicensingStatus();
@@ -43,46 +60,38 @@ export default async function RecommendationsPage() {
         "The recommendation entitlement is inactive. Creation is disabled and proprietary candidate data is not rendered.",
       );
     }
-    const [latest, history] = await Promise.all([
-      api.getLatestRecommendation(),
+
+    const [configs, latest, history] = await Promise.all([
+      api.getStrategyConfigs(),
+      api.getLatestRecommendation().catch((error: unknown) => {
+        if (noRun(error)) {
+          return null;
+        }
+        throw error;
+      }),
       api.getRecommendationRuns(),
     ]);
-    if (latest.status === "BLOCKED" || latest.status === "FAILED") {
-      return (
-        <RoutePage
-          description="Inspect server-produced candidates, target weights, factor evidence, and exclusions."
-          title="Recommendations"
-        >
-          <StatePanel
-            kind="error"
-            message="The latest recommendation run did not produce a report. Candidate payloads remain hidden."
-            title={`Recommendation run ${latest.status.toLowerCase()}`}
-          />
-          <RecommendationHistory runs={history.items} />
-        </RoutePage>
-      );
-    }
-    if (latest.status === "PENDING" || latest.items === undefined) {
-      return (
-        <RoutePage
-          description="Inspect server-produced candidates, target weights, factor evidence, and exclusions."
-          title="Recommendations"
-        >
-          <StatePanel
-            kind="loading"
-            message="The server is producing the recommendation. Refresh to read the completed report."
-            title="Recommendation is in progress"
-          />
-          <RecommendationHistory runs={history.items} />
-        </RoutePage>
-      );
-    }
+    const requestedRunId = (await searchParams)?.run_id;
+    const selected =
+      requestedRunId === undefined || requestedRunId === ""
+        ? null
+        : await api.getRecommendationRun(requestedRunId);
+    const latestSuccessful = latest?.run ?? null;
+    const activeRun = selected ?? latest?.latest_run ?? null;
+    const reportRun = selected?.status === "SUCCEEDED" ? selected : latestSuccessful;
+
     return (
       <RoutePage
         description="Inspect server-produced candidates, target weights, factor evidence, and exclusions."
         title="Recommendations"
       >
-        {latest.strategy_config_id === undefined || latest.strategy_config_id === null ? null : (
+        {configs.items.length === 0 ? (
+          <StatePanel
+            kind="empty"
+            message="Save an allowed strategy configuration before creating a recommendation run."
+            title="No strategy configuration is available"
+          />
+        ) : (
           <section aria-labelledby="recommendation-run-title" className="workflow-panel">
             <div className="section-heading">
               <div>
@@ -92,12 +101,31 @@ export default async function RecommendationsPage() {
               <p>The API validates the stored strategy configuration and as-of dataset.</p>
             </div>
             <RecommendationRunForm
+              configs={configs.items.map((config) => ({
+                id: config.id,
+                label: configLabel(config),
+              }))}
               defaultAsOf={licensing.as_of}
-              strategyConfigId={latest.strategy_config_id}
             />
           </section>
         )}
-        <RecommendationReport licenseState={recommendationLicenseState(licensing)} run={latest} />
+        {activeRun === null || activeRun.status === "SUCCEEDED" ? null : (
+          <RecommendationRunStatus run={activeRun} />
+        )}
+        {reportRun === null ? (
+          activeRun === null && configs.items.length > 0 ? (
+            <StatePanel
+              kind="empty"
+              message="Generate a recommendation to inspect its governed proposal."
+              title="No recommendation available"
+            />
+          ) : null
+        ) : (
+          <RecommendationReport
+            licenseState={recommendationLicenseState(licensing)}
+            run={reportRun}
+          />
+        )}
         <RecommendationHistory runs={history.items} />
       </RoutePage>
     );
@@ -108,20 +136,6 @@ export default async function RecommendationsPage() {
     ) {
       return blockedPage(
         "The recommendation entitlement or dataset is blocked. Creation is disabled and proprietary candidate data is not rendered.",
-      );
-    }
-    if (error instanceof ApiProblem && error.code === "RESOURCE_NOT_FOUND") {
-      return (
-        <RoutePage
-          description="Inspect server-produced candidates, target weights, factor evidence, and exclusions."
-          title="Recommendations"
-        >
-          <StatePanel
-            kind="empty"
-            message="No recommendation run exists yet. Save an allowed strategy configuration before creating one."
-            title="No recommendation available"
-          />
-        </RoutePage>
       );
     }
     return (

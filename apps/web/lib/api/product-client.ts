@@ -15,6 +15,7 @@ import {
   licensingStatusSchema,
   type PageResult,
   pageSchema,
+  type RecommendationLatestModel,
   type RecommendationRunModel,
   recommendationRunSchema,
   type StrategyCatalogItem,
@@ -43,7 +44,8 @@ import { createServerTransport, type ServerApiClientOptions } from "./server-cli
 export type ProductApiClient = {
   readonly getBacktestReport: (run: BacktestRunModel) => Promise<BacktestReportModel>;
   readonly getBacktestRuns: () => Promise<z.infer<typeof backtestPageSchema>>;
-  readonly getLatestRecommendation: () => Promise<RecommendationRunModel>;
+  readonly getLatestRecommendation: () => Promise<RecommendationLatestModel>;
+  readonly getRecommendationRun: (runId: string) => Promise<RecommendationRunModel>;
   readonly getLicensingStatus: () => Promise<LicensingStatusModel>;
   readonly getRecommendationRuns: () => Promise<PageResult<RecommendationRunModel>>;
   readonly getStrategies: () => Promise<PageResult<StrategyCatalogItem>>;
@@ -95,17 +97,17 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
       return { equity, metrics, provenance: backtestProvenance(run), run, trades };
     },
     getBacktestRuns: () => getParsed(client, "/api/v1/backtests", backtestPageSchema),
-    getLatestRecommendation: async () => {
-      const envelope = await getParsed(
-        client,
-        "/api/v1/recommendations/latest",
-        latestRecommendationSchema,
-      );
-      return envelope.run;
-    },
+    getLatestRecommendation: () =>
+      getParsed(client, "/api/v1/recommendations/latest", latestRecommendationSchema),
     getLicensingStatus: () => getParsed(client, "/api/v1/licensing-status", licensingStatusSchema),
     getRecommendationRuns: () =>
       getParsed(client, "/api/v1/recommendations/runs", recommendationPageSchema),
+    getRecommendationRun: (runId) =>
+      getParsed(
+        client,
+        `/api/v1/recommendations/runs/${encodeURIComponent(runId)}`,
+        recommendationRunSchema,
+      ),
     getStrategies: () => getParsed(client, "/api/v1/strategies", strategyPageSchema),
     getPaperAccounts: () => getParsed(client, "/api/v1/paper/accounts", paperAccountPageSchema),
     getNotifications: () => getParsed(client, "/api/v1/notifications", notificationPageSchema),

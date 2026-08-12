@@ -7,6 +7,9 @@ export type RecommendationHistoryProps = {
 };
 
 export function RecommendationHistory({ runs }: RecommendationHistoryProps) {
+  const newestFirst = [...runs].sort((left, right) =>
+    right.created_at.localeCompare(left.created_at),
+  );
   return (
     <section aria-labelledby="recommendation-history-title" className="product-section">
       <div className="section-heading">
@@ -15,7 +18,7 @@ export function RecommendationHistory({ runs }: RecommendationHistoryProps) {
           <h2 id="recommendation-history-title">Recommendation history</h2>
         </div>
       </div>
-      {runs.length === 0 ? (
+      {newestFirst.length === 0 ? (
         <p className="empty-copy">No historical recommendation runs are available.</p>
       ) : (
         <div className="data-table-wrap">
@@ -30,7 +33,7 @@ export function RecommendationHistory({ runs }: RecommendationHistoryProps) {
               </tr>
             </thead>
             <tbody>
-              {runs.map((run) => (
+              {newestFirst.map((run) => (
                 <tr key={run.id}>
                   <th scope="row">{formatDate(run.as_of)}</th>
                   <td>
@@ -44,7 +47,9 @@ export function RecommendationHistory({ runs }: RecommendationHistoryProps) {
                       tone={run.status === "SUCCEEDED" ? "success" : "warning"}
                     />
                   </td>
-                  <td className="data-cell">{run.id}</td>
+                  <td className="data-cell">
+                    <a href={`/recommendations?run_id=${encodeURIComponent(run.id)}`}>{run.id}</a>
+                  </td>
                 </tr>
               ))}
             </tbody>

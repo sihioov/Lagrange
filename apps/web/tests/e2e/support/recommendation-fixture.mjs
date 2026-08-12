@@ -1,91 +1,122 @@
 const CONFIG_ID = "00000000-0000-4000-8000-000000000101";
 const RUN_ID = "00000000-0000-4000-8000-000000000201";
+const SUBMITTED_RUN_ID = "00000000-0000-4000-8000-000000000202";
+const DATASET_VERSION_ID = "00000000-0000-4000-8000-000000000401";
 
-// u1 keeps the canonical ids; each invited identity gets its own run id so
-// per-user isolation is visible in the rendered history table. Identity is
-// stamped one digit above the trailing run number, matching the backtest
-// fixture so neither remapping walks into the other's id block.
-function runIdFor(scenario) {
+let submitted = false;
+let submittedPolls = 0;
+
+function runIdFor(scenario, id = RUN_ID) {
   const match = /^u(\d)$/.exec(scenario.user ?? "u1");
-  const idx = match ? Number(match[1]) : 1;
-  return idx === 1 ? RUN_ID : `${RUN_ID.slice(0, -4)}${idx}${RUN_ID.slice(-3)}`;
+  const index = match ? Number(match[1]) : 1;
+  return index === 1 ? id : `${id.slice(0, -4)}${index}${id.slice(-3)}`;
 }
 
 const strategy = Object.freeze({
-  description: "Ranks the governed universe with absolute and relative momentum.",
-  display_name: "Dual momentum",
-  id: "dual_momentum",
-  latest_version: "2.3.1",
+  description: "Ranks the governed Korean ETF universe by 12-minus-1 momentum.",
+  display_name: "Relative momentum",
+  id: "relative_momentum",
+  latest_version: "1.0.0",
   parameter_schema: {
     properties: {
       lookback_months: {
         default: 12,
-        description: "Trailing month window used by the server strategy.",
-        maximum: 24,
-        minimum: 1,
+        maximum: 12,
+        minimum: 6,
         title: "Lookback months",
         type: "integer",
       },
-      top_n: {
-        default: 4,
-        description: "Maximum selected instruments before portfolio constraints.",
-        maximum: 11,
-        minimum: 1,
-        title: "Top holdings",
-        type: "integer",
-      },
+      top_n: { default: 3, maximum: 10, minimum: 1, title: "Top holdings", type: "integer" },
     },
-    required: ["lookback_months", "top_n"],
+    required: ["top_n", "lookback_months"],
     type: "object",
   },
-  risk_description: "May hold cash when the absolute momentum gate fails.",
+  risk_description: "Momentum crash, reversal, concentration, and monthly turnover risk.",
   state: "Validated",
 });
 
-function recommendationItems(exclusions) {
-  const selected = {
-    excluded: false,
-    factors: { momentum_12m: "0.184200", normalized_score: "0.912300" },
-    instrument_id: "069500.KRX",
-    rank: 1,
-    reason_codes: ["ABSOLUTE_MOMENTUM_PASS", "RELATIVE_RANK_1"],
-    target_weight: "0.400000",
+function config() {
+  return {
+    config: { lookback_months: 12, top_n: 3 },
+    created_at: "2026-01-31T06:00:00Z",
+    id: CONFIG_ID,
+    is_active: true,
+    strategy_id: "relative_momentum",
+    strategy_version: "1.0.0",
+    updated_at: "2026-01-31T06:00:00Z",
   };
-  if (exclusions === "empty") {
-    return [selected];
-  }
+}
+
+function recommendationItems(exclusions) {
+  const selected = [
+    {
+      excluded: false,
+      factors: { momentum_12_1: "0.184200", normalized_score: "0.912300" },
+      instrument_id: "069500.KRX",
+      rank: 1,
+      reason_codes: ["RELATIVE_RANK_1"],
+      target_weight: "0.400000",
+    },
+    {
+      excluded: false,
+      factors: { momentum_12_1: "0.121000", normalized_score: "0.654000" },
+      instrument_id: "102110.KRX",
+      rank: 2,
+      reason_codes: ["RELATIVE_RANK_2"],
+      target_weight: "0.400000",
+    },
+  ];
+  if (exclusions === "empty") return selected;
   return [
-    selected,
+    ...selected,
     {
       excluded: true,
-      exclusion_reason: "Inverse products are outside the governed universe.",
+      exclusion_reason: "Ranked below the configured top-N cutoff.",
       factors: { normalized_score: "-0.112000" },
-      instrument_id: "114800.KRX",
+      instrument_id: "132030.KRX",
       rank: null,
-      reason_codes: ["UNIVERSE_POLICY_EXCLUSION"],
+      reason_codes: ["TOP_N_EXCLUSION"],
       target_weight: null,
     },
   ];
 }
 
-function recommendationRun(scenario, includeItems) {
+function provenance() {
+  return {
+    dataset_manifest_sha256: "a".repeat(64),
+    dataset_version_id: DATASET_VERSION_ID,
+  };
+}
+
+function recommendationRun(
+  scenario,
+  { id = RUN_ID, includeItems = false, status = "SUCCEEDED" } = {},
+) {
   const warning =
     scenario.recommendation === "stale"
       ? "Stale result: Data is two sessions old; review the as-of date before acting."
-      : "Portfolio constraints can leave part of the proposal in cash.";
+      : "Portfolio constraints leave 20% in cash.";
   return {
     as_of: "2026-01-31",
-    created_at: "2026-01-31T06:30:00Z",
-    id: runIdFor(scenario),
+    created_at: id === SUBMITTED_RUN_ID ? "2026-01-31T07:30:00Z" : "2026-01-31T06:30:00Z",
+    id: runIdFor(scenario, id),
     items: includeItems ? recommendationItems(scenario.exclusions) : undefined,
-    status: "SUCCEEDED",
+    job_id: "00000000-0000-4000-8000-000000000301",
+    provenance: provenance(),
+    status,
     strategy_config_id: CONFIG_ID,
     summary: {
-      data_version: "krx-eod@2026-01-31",
-      engine_version: "selector@1.4.0",
-      strategy_version: "dual_momentum@2.3.1",
+      cash_weight: "0.200000",
+      dataset_id: "kr-etf-daily",
+      dataset_version: "phase0-v2",
+      factor_snapshot_hash: `sha256:${"b".repeat(64)}`,
+      manifest_sha256: "a".repeat(64),
+      origin: "synthetic",
+      portfolio_snapshot_id: `sha256:${"c".repeat(64)}`,
+      universe_snapshot_id: `sha256:${"d".repeat(64)}`,
       warnings: [warning],
     },
+    trigger_kind: "MANUAL",
   };
 }
 
@@ -96,7 +127,7 @@ function licensing(scenario) {
     datasets: [
       {
         covered: active,
-        dataset_id: "krx-eod",
+        dataset_id: "kr-etf-daily",
         effective_from: "2026-01-01",
         effective_until: "2026-12-31",
         state: active ? "ACTIVE" : "REVOKED",
@@ -104,7 +135,7 @@ function licensing(scenario) {
       },
       {
         covered: active,
-        dataset_id: "krx-eod",
+        dataset_id: "kr-etf-daily",
         effective_from: "2026-01-01",
         effective_until: "2026-12-31",
         state: active ? "ACTIVE" : "REVOKED",
@@ -130,56 +161,78 @@ export function recommendationResponse(request) {
   if (method === "GET" && pathname === "/api/v1/auth/csrf") {
     return { body: { csrf_token: "synthetic-csrf" }, status: 200 };
   }
-  if (method === "GET" && pathname === "/api/v1/licensing-status") {
+  if (method === "GET" && pathname === "/api/v1/licensing-status")
     return { body: licensing(scenario), status: 200 };
-  }
   if (method === "GET" && pathname === "/api/v1/strategies") {
-    return {
-      body: { has_more: false, items: [strategy], next_cursor: null },
-      status: 200,
-    };
+    return { body: { has_more: false, items: [strategy], next_cursor: null }, status: 200 };
+  }
+  if (method === "GET" && pathname === "/api/v1/strategy-configs") {
+    return { body: { has_more: false, items: [config()], next_cursor: null }, status: 200 };
   }
   if (method === "POST" && /^\/api\/v1\/strategies\/[^/]+\/configs$/.test(pathname)) {
-    if (!mutationAuthorized(headers)) {
+    if (!mutationAuthorized(headers))
       return error(403, "CSRF_DENIED", "CSRF and idempotency headers are required");
-    }
     const lookback = body?.config?.lookback_months;
-    if (!Number.isInteger(lookback) || lookback < 1 || lookback > 24) {
-      return error(422, "INVALID_STRATEGY_PARAMETER", "lookback_months must be 1 through 24");
+    const topN = body?.config?.top_n;
+    if (![6, 12].includes(lookback) || !Number.isInteger(topN) || topN < 1 || topN > 10) {
+      return error(
+        422,
+        "INVALID_STRATEGY_PARAMETER",
+        "lookback_months must be 6 or 12 and top_n must be between 1 and 10",
+      );
     }
-    return {
-      body: {
-        config: body.config,
-        created_at: "2026-01-31T06:00:00Z",
-        id: CONFIG_ID,
-        is_active: true,
-        strategy_id: "dual_momentum",
-        strategy_version: "2.3.1",
-        updated_at: "2026-01-31T06:00:00Z",
-      },
-      status: 201,
-    };
+    return { body: { ...config(), config: body.config }, status: 201 };
   }
   if (scenario.entitlement === "blocked" && pathname.startsWith("/api/v1/recommendations")) {
     return error(403, "DATA_ENTITLEMENT_REQUIRED", "recommendation entitlement is inactive");
   }
   if (method === "GET" && pathname === "/api/v1/recommendations/latest") {
-    return { body: { run: recommendationRun(scenario, true) }, status: 200 };
+    const success = recommendationRun(scenario, { includeItems: true });
+    const newest = submitted
+      ? recommendationRun(scenario, {
+          id: SUBMITTED_RUN_ID,
+          status: submittedPolls === 0 ? "PENDING" : "SUCCEEDED",
+        })
+      : success;
+    return { body: { latest_run: newest, run: success }, status: 200 };
   }
   if (method === "GET" && pathname === "/api/v1/recommendations/runs") {
+    const runs = [recommendationRun(scenario)];
+    if (submitted)
+      runs.unshift(
+        recommendationRun(scenario, {
+          id: SUBMITTED_RUN_ID,
+          status: submittedPolls === 0 ? "PENDING" : "SUCCEEDED",
+        }),
+      );
+    return { body: { has_more: false, items: runs, next_cursor: null }, status: 200 };
+  }
+  if (
+    method === "GET" &&
+    pathname === `/api/v1/recommendations/runs/${runIdFor(scenario, SUBMITTED_RUN_ID)}`
+  ) {
+    submittedPolls += 1;
     return {
-      body: {
-        has_more: false,
-        items: [recommendationRun(scenario, false)],
-        next_cursor: null,
-      },
+      body: recommendationRun(scenario, {
+        id: SUBMITTED_RUN_ID,
+        includeItems: submittedPolls > 1,
+        status: submittedPolls > 1 ? "SUCCEEDED" : "PENDING",
+      }),
       status: 200,
     };
   }
+  if (method === "GET" && pathname === `/api/v1/recommendations/runs/${runIdFor(scenario)}`) {
+    return { body: recommendationRun(scenario, { includeItems: true }), status: 200 };
+  }
   if (method === "POST" && pathname === "/api/v1/recommendations/runs") {
-    return mutationAuthorized(headers)
-      ? { body: recommendationRun(scenario, false), status: 201 }
-      : error(403, "CSRF_DENIED", "CSRF and idempotency headers are required");
+    if (!mutationAuthorized(headers))
+      return error(403, "CSRF_DENIED", "CSRF and idempotency headers are required");
+    submitted = true;
+    submittedPolls = 0;
+    return {
+      body: recommendationRun(scenario, { id: SUBMITTED_RUN_ID, status: "PENDING" }),
+      status: 201,
+    };
   }
   return null;
 }

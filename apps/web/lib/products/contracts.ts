@@ -75,13 +75,23 @@ export type RecommendationItemModel = z.infer<typeof recommendationItemSchema>;
 export const recommendationRunSchema = z
   .object({
     as_of: z.iso.date(),
-    created_at: z.iso.datetime().optional(),
+    created_at: z.iso.datetime(),
     id: z.uuid(),
     items: z.array(recommendationItemSchema).optional(),
     job_id: z.uuid().nullable().optional(),
+    provenance: z
+      .object({
+        dataset_manifest_sha256: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional(),
+        dataset_version_id: z.uuid().optional(),
+      })
+      .strict(),
     status: z.enum(["PENDING", "SUCCEEDED", "FAILED", "BLOCKED"]),
     strategy_config_id: z.uuid().nullable().optional(),
     summary: z.record(z.string(), z.unknown()).optional(),
+    trigger_kind: z.enum(["MANUAL", "SCHEDULED"]),
   })
   .strict();
 
@@ -109,9 +119,23 @@ export type LicensingStatusModel = z.infer<typeof licensingStatusSchema>;
 
 export const reportProvenanceSchema = z
   .object({
-    data_version: z.string(),
-    engine_version: z.string(),
-    strategy_version: z.string(),
+    cash_weight: z
+      .string()
+      .regex(/^\d+(?:\.\d+)?$/)
+      .optional(),
+    data_version: z.string().default("Not reported"),
+    dataset_id: z.string().optional(),
+    dataset_version: z.string().optional(),
+    engine_version: z.string().default("Not reported"),
+    factor_snapshot_hash: z.string().optional(),
+    manifest_sha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .optional(),
+    origin: z.enum(["credentialed", "synthetic"]).optional(),
+    portfolio_snapshot_id: z.string().optional(),
+    strategy_version: z.string().default("Not reported"),
+    universe_snapshot_id: z.string().optional(),
     warnings: z.array(z.string()).default([]),
   })
   .passthrough();
@@ -134,7 +158,14 @@ export function pageSchema<Item>(item: z.ZodType<Item>) {
     .strict();
 }
 
-export const latestRecommendationSchema = z.object({ run: recommendationRunSchema }).strict();
+export const latestRecommendationSchema = z
+  .object({
+    latest_run: recommendationRunSchema,
+    run: recommendationRunSchema.nullable(),
+  })
+  .strict();
+
+export type RecommendationLatestModel = z.infer<typeof latestRecommendationSchema>;
 
 export function recommendationProvenance(run: RecommendationRunModel): ReportProvenance {
   const parsed = reportProvenanceSchema.safeParse(run.summary);
