@@ -8,6 +8,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $compose = Join-Path $root 'deploy/compose/compose.yml'
+$envExample = Join-Path $root 'deploy/compose/.env.example'
 $unit = Join-Path $root 'deploy/systemd/lagrange-recommendation-runner.service'
 $dockerfile = Join-Path $root 'crates/job-queue/Dockerfile'
 $dockerignore = Join-Path $root '.dockerignore'
@@ -28,12 +29,17 @@ if ($dockerignoreText -notmatch [regex]::Escape('**/.venv')) {
 $composeText = Get-Content -Raw -LiteralPath $compose
 foreach ($required in @(
     'recommendation-runner:', 'crates/job-queue/Dockerfile',
+    'APP_ENV: ${RECOMMENDATION_APP_ENV:?RECOMMENDATION_APP_ENV must be set}',
     'DB_PASSWORD_FILE: /run/secrets/db_worker_password',
     'RECOMMENDATION_HEALTH_STATE_PATH: /run/recommendation-health/health.json',
     '/data/curated:ro', '/opt/lagrange/configs/universes/kr-etf-core-v1.yaml:ro',
     '"/usr/local/bin/recommendation-runner", "healthcheck"'
 )) {
     if ($composeText -notmatch [regex]::Escape($required)) { throw "Compose missing: $required" }
+}
+$envExampleText = Get-Content -Raw -LiteralPath $envExample
+if ($envExampleText -notmatch '(?m)^RECOMMENDATION_APP_ENV=production\r?$') {
+    throw 'Compose env example must select production explicitly'
 }
 $unitText = Get-Content -Raw -LiteralPath $unit
 foreach ($required in @(
@@ -49,7 +55,7 @@ if ($unitText -match '(?m)^ExecStartPost=') {
     throw 'systemd unit must not race startup health-state creation with ExecStartPost'
 }
 
-$env:DATABASE_URL = if ($env:DATABASE_URL) { $env:DATABASE_URL } else { "postgres://postgres:lagrange@127.0.0.1:$qaPort/postgres" }
+$env:DATABASE_URL = "postgres://postgres:lagrange@127.0.0.1:$qaPort/postgres"
 function Invoke-QaCompose { & docker compose -p lagrange-recommendation-qa -f $qaCompose @args }
 try {
     Invoke-QaCompose up -d --wait qa-db | Out-Null

@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 compose="$root/deploy/compose/compose.yml"
+env_example="$root/deploy/compose/.env.example"
 unit="$root/deploy/systemd/lagrange-recommendation-runner.service"
 
 for command in cargo docker python uv; do
@@ -20,6 +21,7 @@ grep -Fq '**/.venv' "$root/.dockerignore" || {
 for required in \
   'recommendation-runner:' \
   'crates/job-queue/Dockerfile' \
+  'APP_ENV: ${RECOMMENDATION_APP_ENV:?RECOMMENDATION_APP_ENV must be set}' \
   'DB_PASSWORD_FILE: /run/secrets/db_worker_password' \
   'RECOMMENDATION_HEALTH_STATE_PATH: /run/recommendation-health/health.json' \
   '/data/curated:ro' \
@@ -28,6 +30,10 @@ for required in \
   '"/usr/local/bin/recommendation-runner", "healthcheck"'; do
   grep -Fq "$required" "$compose" || { echo "Compose missing: $required" >&2; exit 2; }
 done
+grep -Fxq 'RECOMMENDATION_APP_ENV=production' "$env_example" || {
+  echo 'Compose env example must select production explicitly' >&2
+  exit 2
+}
 for required in \
   'RuntimeDirectory=lagrange-recommendation-runner' \
   'RuntimeDirectory=lagrange-recommendation-runner/tmp' \
@@ -41,7 +47,7 @@ if grep -Eq '^ExecStartPost=' "$unit"; then
   exit 2
 fi
 
-export DATABASE_URL="${DATABASE_URL:-postgres://postgres:lagrange@127.0.0.1:${LAGRANGE_QA_DB_PORT:-55432}/postgres}"
+export DATABASE_URL="postgres://postgres:lagrange@127.0.0.1:${LAGRANGE_QA_DB_PORT:-55432}/postgres"
 qa_compose="$root/deploy/qa/qa-db.compose.yml"
 docker compose -p lagrange-recommendation-qa -f "$qa_compose" up -d --wait qa-db >/dev/null
 cleanup() { docker compose -p lagrange-recommendation-qa -f "$qa_compose" down -v --remove-orphans >/dev/null 2>&1 || true; }

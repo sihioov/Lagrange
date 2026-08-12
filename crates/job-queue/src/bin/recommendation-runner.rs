@@ -22,10 +22,11 @@ use job_queue::{JobQueue, QueueConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 const DEFAULT_HEALTH_MAX_AGE: Duration = Duration::from_secs(180);
+const HEALTH_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
 const HELP: &str = "recommendation-runner [OPTIONS]\nrecommendation-runner healthcheck\n\n\
 Drains only `recommendation` jobs and publishes validated fixed-ETF targets.\n\n\
@@ -536,6 +537,39 @@ fn write_health_state(path: &Path, state: &HealthState) -> Result<(), String> {
     result
 }
 
+async fn maintain_health_state(
+    path: PathBuf,
+    pid: u32,
+    mut schedule_rx: watch::Receiver<Option<ScheduleHealth>>,
+    interval: Duration,
+) -> Result<(), String> {
+    if interval.is_zero() {
+        return Err("health heartbeat interval must be positive".to_owned());
+    }
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ticker.tick().await;
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {}
+            changed = schedule_rx.changed() => {
+                if changed.is_err() {
+                    return Ok(());
+                }
+            }
+        }
+        let state = HealthState {
+            pid,
+            heartbeat_at: Utc::now(),
+            last_schedule: schedule_rx.borrow().clone(),
+        };
+        let write_path = path.clone();
+        tokio::task::spawn_blocking(move || write_health_state(&write_path, &state))
+            .await
+            .map_err(|_| "health state writer task failed".to_owned())??;
+    }
+}
+
 fn read_health_state(
     path: &Path,
     now: DateTime<Utc>,
@@ -778,9 +812,9 @@ async fn main() -> ExitCode {
         "runner_started",
         json!({ "worker_id": id, "once": args.once }),
     );
-    let mut health_state = HealthState::new(Utc::now(), std::process::id());
+    let initial_health_state = HealthState::new(Utc::now(), std::process::id());
     if let Some(path) = health_state_path.as_deref()
-        && let Err(message) = write_health_state(path, &health_state)
+        && let Err(message) = write_health_state(path, &initial_health_state)
     {
         event(
             "startup_failed",
@@ -789,6 +823,24 @@ async fn main() -> ExitCode {
         pool.close().await;
         return ExitCode::FAILURE;
     }
+    let (schedule_health_tx, schedule_health_rx) = watch::channel(None);
+    let (health_error_tx, mut health_error_rx) = mpsc::channel::<String>(1);
+    let health_task = health_state_path.clone().map(|path| {
+        let error_tx = health_error_tx.clone();
+        tokio::spawn(async move {
+            let result = maintain_health_state(
+                path,
+                std::process::id(),
+                schedule_health_rx,
+                HEALTH_HEARTBEAT_INTERVAL,
+            )
+            .await;
+            if let Err(message) = &result {
+                let _ = error_tx.send(message.clone()).await;
+            }
+            result
+        })
+    });
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     if !args.once {
@@ -838,6 +890,14 @@ async fn main() -> ExitCode {
         if *shutdown_rx.borrow() {
             break;
         }
+        if let Ok(message) = health_error_rx.try_recv() {
+            event(
+                "runner_error",
+                json!({ "code": "HEALTH_STATE_UNAVAILABLE", "message": message }),
+            );
+            exit = ExitCode::FAILURE;
+            break;
+        }
         if let Some(pin) = schedule_pin.as_ref() {
             let now_kst = Utc::now().with_timezone(&seoul);
             if let Some(key) = schedule_cadence.pending_key(now_kst)
@@ -846,11 +906,11 @@ async fn main() -> ExitCode {
                 match run_schedule_cycle(pool.clone(), pin.clone(), now_kst).await {
                     Ok(report) => {
                         schedule_cadence.complete(key);
-                        health_state.last_schedule = Some(ScheduleHealth {
+                        let _ = schedule_health_tx.send(Some(ScheduleHealth {
                             attempted_at: Utc::now(),
                             outcome: "succeeded".to_owned(),
                             scheduled: Some(report.scheduled as u64),
-                        });
+                        }));
                         event(
                             "schedule_cycle",
                             json!({
@@ -860,11 +920,11 @@ async fn main() -> ExitCode {
                         );
                     }
                     Err(ScheduleError::NoConfirmedClose | ScheduleError::DatasetUnavailable) => {
-                        health_state.last_schedule = Some(ScheduleHealth {
+                        let _ = schedule_health_tx.send(Some(ScheduleHealth {
                             attempted_at: Utc::now(),
                             outcome: "blocked".to_owned(),
                             scheduled: None,
-                        });
+                        }));
                         event(
                             "schedule_blocked",
                             json!({ "code": "SCHEDULE_INPUT_UNAVAILABLE" }),
@@ -873,11 +933,11 @@ async fn main() -> ExitCode {
                             tokio::time::Instant::now() + Duration::from_secs(60);
                     }
                     Err(ScheduleError::Database(_)) => {
-                        health_state.last_schedule = Some(ScheduleHealth {
+                        let _ = schedule_health_tx.send(Some(ScheduleHealth {
                             attempted_at: Utc::now(),
                             outcome: "failed".to_owned(),
                             scheduled: None,
-                        });
+                        }));
                         event("schedule_failed", json!({ "code": "QUEUE_UNAVAILABLE" }));
                         next_schedule_attempt =
                             tokio::time::Instant::now() + Duration::from_secs(60);
@@ -885,18 +945,24 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        health_state.heartbeat_at = Utc::now();
-        if let Some(path) = health_state_path.as_deref()
-            && let Err(message) = write_health_state(path, &health_state)
-        {
-            event(
-                "runner_error",
-                json!({ "code": "HEALTH_STATE_UNAVAILABLE", "message": message }),
-            );
-            exit = ExitCode::FAILURE;
+        let run_result = tokio::select! {
+            result = run_once(&pool, &queue, &id, &paths.runner, &runner_config) => Some(result),
+            message = health_error_rx.recv() => {
+                event(
+                    "runner_error",
+                    json!({
+                        "code": "HEALTH_STATE_UNAVAILABLE",
+                        "message": message.unwrap_or_else(|| "health state writer stopped".to_owned()),
+                    }),
+                );
+                exit = ExitCode::FAILURE;
+                None
+            }
+        };
+        let Some(run_result) = run_result else {
             break;
-        }
-        match run_once(&pool, &queue, &id, &paths.runner, &runner_config).await {
+        };
+        match run_result {
             Ok(RecommendationOutcome::Idle) => {
                 if args.once {
                     break;
@@ -935,6 +1001,26 @@ async fn main() -> ExitCode {
         }
     }
     let _ = shutdown_tx.send(true);
+    drop(schedule_health_tx);
+    if let Some(task) = health_task {
+        match task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(message)) => {
+                event(
+                    "runner_error",
+                    json!({ "code": "HEALTH_STATE_UNAVAILABLE", "message": message }),
+                );
+                exit = ExitCode::FAILURE;
+            }
+            Err(_) => {
+                event(
+                    "runner_error",
+                    json!({ "code": "HEALTH_STATE_UNAVAILABLE", "message": "health state writer task failed" }),
+                );
+                exit = ExitCode::FAILURE;
+            }
+        }
+    }
     if let Some(task) = sweep_task {
         let _ = task.await;
     }
@@ -1153,6 +1239,28 @@ mod tests {
             DEFAULT_HEALTH_MAX_AGE > Args::default().child_timeout,
             "a healthy runner must not go stale while one child is within its deadline"
         );
+    }
+
+    #[tokio::test]
+    async fn background_health_heartbeat_advances_during_long_work() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("recommendation-runner.json");
+        let before = HealthState::new(Utc::now(), std::process::id());
+        write_health_state(&path, &before).unwrap();
+        let (_schedule_tx, schedule_rx) = watch::channel(None);
+
+        let heartbeat = tokio::spawn(maintain_health_state(
+            path.clone(),
+            before.pid,
+            schedule_rx,
+            Duration::from_millis(10),
+        ));
+        tokio::time::sleep(Duration::from_millis(35)).await;
+
+        let after = read_health_state(&path, Utc::now(), Duration::from_secs(1)).unwrap();
+        assert!(after.heartbeat_at > before.heartbeat_at);
+        heartbeat.abort();
+        let _ = heartbeat.await;
     }
 
     #[test]
