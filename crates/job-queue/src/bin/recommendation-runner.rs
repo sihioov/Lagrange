@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 #[cfg(any(unix, test))]
 use std::future::Future;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -18,12 +19,15 @@ use job_queue::recommendation::{
     RecommendationOutcome, RecommendationRunnerConfig, RecommendationRunnerPaths, run_once,
 };
 use job_queue::{JobQueue, QueueConfig};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-const HELP: &str = "recommendation-runner [OPTIONS]\n\n\
+const DEFAULT_HEALTH_MAX_AGE: Duration = Duration::from_secs(180);
+
+const HELP: &str = "recommendation-runner [OPTIONS]\nrecommendation-runner healthcheck\n\n\
 Drains only `recommendation` jobs and publishes validated fixed-ETF targets.\n\n\
 Options:\n  \
   --once                       claim at most one job\n  \
@@ -40,12 +44,14 @@ Options:\n  \
   --backoff-ms N               first retry backoff (default 30000)\n  \
   --child-timeout-ms N         child deadline (default 120000)\n\n\
 Environment:\n  \
-  DATABASE_URL or DATABASE_URL_FILE (exactly one)\n  \
+  DATABASE_URL, DATABASE_URL_FILE, or DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD_FILE\n  \
+  RECOMMENDATION_HEALTH_STATE_PATH (required in production)\n  \
   APP_ENV (production requires every path option explicitly)";
 
 #[derive(Debug, Clone)]
 struct Args {
     once: bool,
+    healthcheck: bool,
     worker_id: Option<String>,
     repo_root: Option<PathBuf>,
     data_root: Option<PathBuf>,
@@ -64,6 +70,7 @@ impl Default for Args {
     fn default() -> Self {
         Self {
             once: false,
+            healthcheck: false,
             worker_id: None,
             repo_root: None,
             data_root: None,
@@ -123,7 +130,12 @@ where
     let mut values = values.into_iter().map(Into::into);
     let _program = values.next();
     let mut args = Args::default();
-    let mut pending = values.peekable();
+    let remaining = values.collect::<Vec<_>>();
+    if matches!(remaining.as_slice(), [value] if value == "healthcheck") {
+        args.healthcheck = true;
+        return Ok(args);
+    }
+    let mut pending = remaining.into_iter().peekable();
     while let Some(raw) = pending.next() {
         let arg = raw
             .into_string()
@@ -288,31 +300,88 @@ fn default_uv_bin() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
-fn read_database_url() -> Result<String, String> {
-    let direct = std::env::var("DATABASE_URL").ok();
-    let file = std::env::var_os("DATABASE_URL_FILE").map(PathBuf::from);
-    match (direct, file) {
-        (Some(_), Some(_)) => {
+fn read_secret_file(path: PathBuf, key: &str) -> Result<String, String> {
+    let metadata =
+        std::fs::symlink_metadata(&path).map_err(|_| format!("{key} is inaccessible"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!("{key} must be a non-symlink regular file"));
+    }
+    let value = std::fs::read_to_string(path).map_err(|_| format!("{key} is unreadable"))?;
+    let value = value.trim().to_owned();
+    if value.is_empty() {
+        Err(format!("{key} is empty"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn read_database_options_from<F>(get: F) -> Result<PgConnectOptions, String>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    let direct = get("DATABASE_URL").and_then(|value| value.into_string().ok());
+    let file = get("DATABASE_URL_FILE").map(PathBuf::from);
+    let keys = [
+        "DB_HOST",
+        "DB_PORT",
+        "DB_NAME",
+        "DB_USER",
+        "DB_PASSWORD_FILE",
+    ];
+    let components = keys.map(|key| (key, get(key)));
+    let any_component = components.iter().any(|(_, value)| value.is_some());
+    if (direct.is_some() || file.is_some()) && any_component {
+        return Err(
+            "DATABASE_URL(_FILE) and DB_* component modes are mutually exclusive".to_owned(),
+        );
+    }
+    match (direct, file, any_component) {
+        (Some(_), Some(_), _) => {
             Err("set exactly one of DATABASE_URL or DATABASE_URL_FILE".to_owned())
         }
-        (Some(url), None) if !url.trim().is_empty() => Ok(url),
-        (None, Some(path)) => {
-            let metadata = std::fs::symlink_metadata(&path)
-                .map_err(|_| "DATABASE_URL_FILE is inaccessible".to_owned())?;
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err("DATABASE_URL_FILE must be a non-symlink regular file".to_owned());
+        (Some(url), None, false) if !url.trim().is_empty() => url
+            .parse()
+            .map_err(|_| "DATABASE_URL is invalid".to_owned()),
+        (None, Some(path), false) => read_secret_file(path, "DATABASE_URL_FILE")?
+            .parse()
+            .map_err(|_| "DATABASE_URL_FILE is invalid".to_owned()),
+        (None, None, true) => {
+            let mut values = std::collections::HashMap::new();
+            for (key, value) in components {
+                let value = value
+                    .ok_or_else(|| format!("{key} is required with component database mode"))?
+                    .into_string()
+                    .map_err(|_| format!("{key} must be valid Unicode"))?;
+                if value.trim().is_empty() {
+                    return Err(format!("{key} must not be empty"));
+                }
+                values.insert(key, value);
             }
-            let value = std::fs::read_to_string(path)
-                .map_err(|_| "DATABASE_URL_FILE is unreadable".to_owned())?;
-            let value = value.trim().to_owned();
-            if value.is_empty() {
-                Err("DATABASE_URL_FILE is empty".to_owned())
-            } else {
-                Ok(value)
-            }
+            let port = values["DB_PORT"]
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port > 0)
+                .ok_or_else(|| "DB_PORT must be a valid TCP port".to_owned())?;
+            let password = read_secret_file(
+                PathBuf::from(&values["DB_PASSWORD_FILE"]),
+                "DB_PASSWORD_FILE",
+            )?;
+            Ok(PgConnectOptions::new()
+                .host(&values["DB_HOST"])
+                .port(port)
+                .database(&values["DB_NAME"])
+                .username(&values["DB_USER"])
+                .password(&password))
         }
-        _ => Err("DATABASE_URL or DATABASE_URL_FILE is required".to_owned()),
+        _ => Err(
+            "DATABASE_URL, DATABASE_URL_FILE, or complete DB_* component mode is required"
+                .to_owned(),
+        ),
     }
+}
+
+fn read_database_options() -> Result<PgConnectOptions, String> {
+    read_database_options_from(|key| std::env::var_os(key))
 }
 
 fn schedule_pin_from_parts(
@@ -380,6 +449,155 @@ fn worker_id(explicit: Option<String>) -> String {
 
 fn event(kind: &str, fields: serde_json::Value) {
     eprintln!("{}", json!({ "event": kind, "fields": fields }));
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ScheduleHealth {
+    attempted_at: DateTime<Utc>,
+    outcome: String,
+    scheduled: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HealthState {
+    pid: u32,
+    heartbeat_at: DateTime<Utc>,
+    last_schedule: Option<ScheduleHealth>,
+}
+
+impl HealthState {
+    fn new(now: DateTime<Utc>, pid: u32) -> Self {
+        Self {
+            pid,
+            heartbeat_at: now,
+            last_schedule: None,
+        }
+    }
+}
+
+fn health_state_path(required: bool) -> Result<Option<PathBuf>, String> {
+    match std::env::var_os("RECOMMENDATION_HEALTH_STATE_PATH") {
+        Some(value) if !value.is_empty() => Ok(Some(PathBuf::from(value))),
+        _ if required => {
+            Err("RECOMMENDATION_HEALTH_STATE_PATH is required in production".to_owned())
+        }
+        _ => Ok(None),
+    }
+}
+
+fn health_max_age() -> Result<Duration, String> {
+    let seconds = std::env::var("RECOMMENDATION_HEALTH_MAX_AGE_SECS")
+        .ok()
+        .map(|value| value.parse::<u64>())
+        .transpose()
+        .map_err(|_| "RECOMMENDATION_HEALTH_MAX_AGE_SECS must be a positive integer".to_owned())?
+        .unwrap_or(DEFAULT_HEALTH_MAX_AGE.as_secs());
+    if seconds == 0 {
+        return Err("RECOMMENDATION_HEALTH_MAX_AGE_SECS must be positive".to_owned());
+    }
+    Ok(Duration::from_secs(seconds))
+}
+
+fn write_health_state(path: &Path, state: &HealthState) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| "health state path must have a parent directory".to_owned())?;
+    let metadata = std::fs::symlink_metadata(parent)
+        .map_err(|_| "health state directory is inaccessible".to_owned())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("health state directory must be a non-symlink directory".to_owned());
+    }
+    let temporary = parent.join(format!(
+        ".recommendation-health-{}-{}.tmp",
+        std::process::id(),
+        Uuid::new_v4()
+    ));
+    let bytes =
+        serde_json::to_vec(state).map_err(|_| "health state serialization failed".to_owned())?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|_| "health state temporary file is inaccessible".to_owned())?;
+    let result = (|| {
+        file.write_all(&bytes)
+            .map_err(|_| "health state write failed".to_owned())?;
+        file.write_all(b"\n")
+            .map_err(|_| "health state write failed".to_owned())?;
+        file.sync_all()
+            .map_err(|_| "health state sync failed".to_owned())?;
+        drop(file);
+        std::fs::rename(&temporary, path).map_err(|_| "health state replacement failed".to_owned())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn read_health_state(
+    path: &Path,
+    now: DateTime<Utc>,
+    max_age: Duration,
+) -> Result<HealthState, String> {
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|_| "health state is absent".to_owned())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("health state must be a non-symlink regular file".to_owned());
+    }
+    let state: HealthState = serde_json::from_slice(
+        &std::fs::read(path).map_err(|_| "health state is unreadable".to_owned())?,
+    )
+    .map_err(|_| "health state is malformed".to_owned())?;
+    let age = now.signed_duration_since(state.heartbeat_at);
+    if age < chrono::Duration::zero() || age.to_std().unwrap_or(Duration::MAX) > max_age {
+        return Err("health state heartbeat is stale".to_owned());
+    }
+    if !process_alive(state.pid) {
+        return Err("health state process is not alive".to_owned());
+    }
+    Ok(state)
+}
+
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    Path::new("/proc").join(pid.to_string()).is_dir()
+}
+
+#[cfg(not(unix))]
+fn process_alive(_pid: u32) -> bool {
+    // The deployment contract is Linux/systemd. A fresh heartbeat remains the
+    // portable development-host liveness signal.
+    true
+}
+
+async fn run_healthcheck(
+    pool: &sqlx::PgPool,
+    state_path: &Path,
+    max_age: Duration,
+) -> Result<(), String> {
+    let state = read_health_state(state_path, Utc::now(), max_age)?;
+    let (queue_age_seconds, blocked_runs): (Option<i64>, i64) = sqlx::query_as(
+        "SELECT EXTRACT(EPOCH FROM now() - min(created_at))::bigint, \
+                (SELECT count(*) FROM recommendation_runs WHERE status = 'BLOCKED') \
+         FROM jobs WHERE job_type = 'recommendation' AND status IN ('QUEUED', 'RUNNING')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|_| "recommendation database is unavailable".to_owned())?;
+    println!(
+        "{}",
+        json!({
+            "status": "ok",
+            "process": { "pid": state.pid, "heartbeat_at": state.heartbeat_at },
+            "database": "reachable",
+            "last_schedule": state.last_schedule,
+            "queue_age_seconds": queue_age_seconds,
+            "blocked_recommendation_runs": blocked_runs,
+        })
+    );
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -455,28 +673,18 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let cwd = match std::env::current_dir() {
+    let health_state_path = match health_state_path(app_env.is_production()) {
         Ok(path) => path,
-        Err(_) => {
-            event(
-                "startup_failed",
-                json!({ "code": "CURRENT_DIRECTORY_UNAVAILABLE" }),
-            );
-            return ExitCode::FAILURE;
-        }
-    };
-    let paths = match resolve_paths(&args, app_env, cwd) {
-        Ok(paths) => paths,
         Err(message) => {
             event(
                 "startup_failed",
-                json!({ "code": "INVALID_PATH_CONFIG", "message": message }),
+                json!({ "code": "INVALID_HEALTH_CONFIG", "message": message }),
             );
             return ExitCode::FAILURE;
         }
     };
-    let database_url = match read_database_url() {
-        Ok(url) => url,
+    let database_options = match read_database_options() {
+        Ok(options) => options,
         Err(message) => {
             event(
                 "startup_failed",
@@ -498,7 +706,7 @@ async fn main() -> ExitCode {
     let pool = match PgPoolOptions::new()
         .max_connections(4)
         .acquire_timeout(Duration::from_secs(10))
-        .connect(&database_url)
+        .connect_with(database_options)
         .await
     {
         Ok(pool) => pool,
@@ -507,7 +715,52 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    drop(database_url);
+    if args.healthcheck {
+        let Some(state_path) = health_state_path.as_deref() else {
+            event(
+                "health_failed",
+                json!({ "code": "HEALTH_STATE_UNCONFIGURED" }),
+            );
+            pool.close().await;
+            return ExitCode::FAILURE;
+        };
+        let health_result = match health_max_age() {
+            Ok(max_age) => run_healthcheck(&pool, state_path, max_age).await,
+            Err(message) => Err(message),
+        };
+        let exit = match health_result {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                event(
+                    "health_failed",
+                    json!({ "code": "RECOMMENDATION_UNHEALTHY", "message": message }),
+                );
+                ExitCode::FAILURE
+            }
+        };
+        pool.close().await;
+        return exit;
+    }
+    let cwd = match std::env::current_dir() {
+        Ok(path) => path,
+        Err(_) => {
+            event(
+                "startup_failed",
+                json!({ "code": "CURRENT_DIRECTORY_UNAVAILABLE" }),
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let paths = match resolve_paths(&args, app_env, cwd) {
+        Ok(paths) => paths,
+        Err(message) => {
+            event(
+                "startup_failed",
+                json!({ "code": "INVALID_PATH_CONFIG", "message": message }),
+            );
+            return ExitCode::FAILURE;
+        }
+    };
     let id = worker_id(args.worker_id.clone());
     let queue = JobQueue::new(
         pool.clone(),
@@ -525,6 +778,17 @@ async fn main() -> ExitCode {
         "runner_started",
         json!({ "worker_id": id, "once": args.once }),
     );
+    let mut health_state = HealthState::new(Utc::now(), std::process::id());
+    if let Some(path) = health_state_path.as_deref()
+        && let Err(message) = write_health_state(path, &health_state)
+    {
+        event(
+            "startup_failed",
+            json!({ "code": "HEALTH_STATE_UNAVAILABLE", "message": message }),
+        );
+        pool.close().await;
+        return ExitCode::FAILURE;
+    }
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     if !args.once {
@@ -582,6 +846,11 @@ async fn main() -> ExitCode {
                 match run_schedule_cycle(pool.clone(), pin.clone(), now_kst).await {
                     Ok(report) => {
                         schedule_cadence.complete(key);
+                        health_state.last_schedule = Some(ScheduleHealth {
+                            attempted_at: Utc::now(),
+                            outcome: "succeeded".to_owned(),
+                            scheduled: Some(report.scheduled as u64),
+                        });
                         event(
                             "schedule_cycle",
                             json!({
@@ -591,6 +860,11 @@ async fn main() -> ExitCode {
                         );
                     }
                     Err(ScheduleError::NoConfirmedClose | ScheduleError::DatasetUnavailable) => {
+                        health_state.last_schedule = Some(ScheduleHealth {
+                            attempted_at: Utc::now(),
+                            outcome: "blocked".to_owned(),
+                            scheduled: None,
+                        });
                         event(
                             "schedule_blocked",
                             json!({ "code": "SCHEDULE_INPUT_UNAVAILABLE" }),
@@ -599,12 +873,28 @@ async fn main() -> ExitCode {
                             tokio::time::Instant::now() + Duration::from_secs(60);
                     }
                     Err(ScheduleError::Database(_)) => {
+                        health_state.last_schedule = Some(ScheduleHealth {
+                            attempted_at: Utc::now(),
+                            outcome: "failed".to_owned(),
+                            scheduled: None,
+                        });
                         event("schedule_failed", json!({ "code": "QUEUE_UNAVAILABLE" }));
                         next_schedule_attempt =
                             tokio::time::Instant::now() + Duration::from_secs(60);
                     }
                 }
             }
+        }
+        health_state.heartbeat_at = Utc::now();
+        if let Some(path) = health_state_path.as_deref()
+            && let Err(message) = write_health_state(path, &health_state)
+        {
+            event(
+                "runner_error",
+                json!({ "code": "HEALTH_STATE_UNAVAILABLE", "message": message }),
+            );
+            exit = ExitCode::FAILURE;
+            break;
         }
         match run_once(&pool, &queue, &id, &paths.runner, &runner_config).await {
             Ok(RecommendationOutcome::Idle) => {
@@ -821,6 +1111,80 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(pin.curated_version, 2);
+    }
+
+    #[test]
+    fn health_state_rejects_missing_stale_and_malformed_files() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("recommendation-runner.json");
+        let now = Utc::now();
+
+        assert!(read_health_state(&path, now, Duration::from_secs(60)).is_err());
+
+        std::fs::write(&path, "not json").unwrap();
+        assert!(read_health_state(&path, now, Duration::from_secs(60)).is_err());
+
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"pid":{},"heartbeat_at":"{}","last_schedule":null}}"#,
+                std::process::id(),
+                (now - chrono::Duration::seconds(61)).to_rfc3339(),
+            ),
+        )
+        .unwrap();
+        assert!(read_health_state(&path, now, Duration::from_secs(60)).is_err());
+    }
+
+    #[test]
+    fn health_state_accepts_a_fresh_runner_heartbeat() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("recommendation-runner.json");
+        let now = Utc::now();
+        write_health_state(&path, &HealthState::new(now, std::process::id())).unwrap();
+
+        let state = read_health_state(&path, now, Duration::from_secs(60)).unwrap();
+        assert_eq!(state.pid, std::process::id());
+    }
+
+    #[test]
+    fn default_health_window_outlasts_the_longest_child_run() {
+        assert!(
+            DEFAULT_HEALTH_MAX_AGE > Args::default().child_timeout,
+            "a healthy runner must not go stale while one child is within its deadline"
+        );
+    }
+
+    #[test]
+    fn component_database_mode_requires_every_field_without_constructing_a_url() {
+        let root = tempfile::tempdir().unwrap();
+        let password_file = root.path().join("password");
+        std::fs::write(&password_file, "pa:ss@word\n").unwrap();
+        let values = std::collections::HashMap::from([
+            ("DB_HOST", "db.internal".into()),
+            ("DB_PORT", "5432".into()),
+            ("DB_NAME", "lagrange".into()),
+            ("DB_USER", "worker".into()),
+            ("DB_PASSWORD_FILE", password_file.into_os_string()),
+        ]);
+        read_database_options_from(|key| values.get(key).cloned()).unwrap();
+
+        let incomplete = std::collections::HashMap::from([("DB_HOST", "db".into())]);
+        assert!(read_database_options_from(|key| incomplete.get(key).cloned()).is_err());
+    }
+
+    #[test]
+    fn database_modes_reject_mixed_url_and_component_configuration() {
+        let values = std::collections::HashMap::from([
+            (
+                "DATABASE_URL",
+                "postgres://worker:secret@db/lagrange".into(),
+            ),
+            ("DB_HOST", "db".into()),
+        ]);
+        let error = read_database_options_from(|key| values.get(key).cloned()).unwrap_err();
+        assert!(error.contains("mutually exclusive"));
+        assert!(!error.contains("secret"));
     }
 
     #[cfg(any(unix, windows))]

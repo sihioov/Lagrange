@@ -1042,6 +1042,76 @@ async fn real_worker_and_uv_publish_all_five_shipped_strategies() {
     );
     let app_queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
 
+    let health_root = tempfile::tempdir().unwrap();
+    let health_path = health_root.path().join("health.json");
+    let worker_url = db.role_url("worker");
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_recommendation-runner"))
+        .env("APP_ENV", "qa")
+        .env("DATABASE_URL", &worker_url)
+        .env("RECOMMENDATION_HEALTH_STATE_PATH", &health_path)
+        .args(["--worker-id", "recommendation-health-smoke", "--repo-root"])
+        .arg(child_repo.path())
+        .arg("--data-root")
+        .arg(&qa.root)
+        .arg("--universe-manifest")
+        .arg(repo.join("configs/universes/kr-etf-core-v1.yaml"))
+        .arg("--uv-bin")
+        .arg(&paths.child.uv_bin)
+        .arg("--temp-root")
+        .arg(child_temp.path())
+        .args([
+            "--poll-ms",
+            "60000",
+            "--sweep-ms",
+            "60000",
+            "--heartbeat-ms",
+            "100",
+            "--lease-ms",
+            "10000",
+            "--backoff-ms",
+            "1",
+            "--child-timeout-ms",
+            "30000",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !health_path.is_file() && std::time::Instant::now() < deadline {
+        assert!(
+            daemon.try_wait().unwrap().is_none(),
+            "health daemon exited early"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(health_path.is_file(), "health daemon did not publish state");
+    let health_output = Command::new(env!("CARGO_BIN_EXE_recommendation-runner"))
+        .arg("healthcheck")
+        .env("APP_ENV", "qa")
+        .env("DATABASE_URL", &worker_url)
+        .env("RECOMMENDATION_HEALTH_STATE_PATH", &health_path)
+        .output()
+        .unwrap();
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    assert!(
+        health_output.status.success(),
+        "healthcheck failed: {}",
+        String::from_utf8_lossy(&health_output.stderr)
+    );
+    let health: serde_json::Value = serde_json::from_slice(&health_output.stdout).unwrap();
+    assert_eq!(health["status"], "ok");
+    assert_eq!(health["database"], "reachable");
+    assert!(health["process"]["pid"].is_number());
+    assert!(health.get("last_schedule").is_some());
+    assert!(health.get("queue_age_seconds").is_some());
+    assert_eq!(health["blocked_recommendation_runs"], 0);
+    let health_stdout = String::from_utf8_lossy(&health_output.stdout);
+    let health_stderr = String::from_utf8_lossy(&health_output.stderr);
+    assert!(!health_stdout.contains(&worker_url));
+    assert!(!health_stderr.contains(&worker_url));
+
     for (strategy_id, parameters) in cases {
         let config_id: Uuid = sqlx::query_scalar(
             "INSERT INTO user_strategy_configs \
@@ -1095,17 +1165,62 @@ async fn real_worker_and_uv_publish_all_five_shipped_strategies() {
         .await
         .unwrap();
 
-        let outcome = run_once(&worker, &queue, "recommendation-five", &paths, &config)
-            .await
-            .unwrap();
-        assert_eq!(
-            outcome,
-            RecommendationOutcome::Succeeded {
-                job_id: job.id,
-                run_id,
-            },
-            "{strategy_id}"
-        );
+        if strategy_id == "buy_and_hold" {
+            let output = Command::new(env!("CARGO_BIN_EXE_recommendation-runner"))
+                .env("APP_ENV", "qa")
+                .env("DATABASE_URL", &worker_url)
+                .args([
+                    "--once",
+                    "--worker-id",
+                    "recommendation-smoke-cli",
+                    "--repo-root",
+                ])
+                .arg(child_repo.path())
+                .arg("--data-root")
+                .arg(&qa.root)
+                .arg("--universe-manifest")
+                .arg(repo.join("configs/universes/kr-etf-core-v1.yaml"))
+                .arg("--uv-bin")
+                .arg(&paths.child.uv_bin)
+                .arg("--temp-root")
+                .arg(child_temp.path())
+                .args([
+                    "--poll-ms",
+                    "10",
+                    "--sweep-ms",
+                    "1000",
+                    "--heartbeat-ms",
+                    "100",
+                    "--lease-ms",
+                    "10000",
+                    "--backoff-ms",
+                    "1",
+                    "--child-timeout-ms",
+                    "30000",
+                ])
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success(),
+                "recommendation-runner --once failed: stdout={stdout} stderr={stderr}"
+            );
+            assert!(!stdout.contains(&worker_url));
+            assert!(!stderr.contains(&worker_url));
+        } else {
+            let outcome = run_once(&worker, &queue, "recommendation-five", &paths, &config)
+                .await
+                .unwrap();
+            assert_eq!(
+                outcome,
+                RecommendationOutcome::Succeeded {
+                    job_id: job.id,
+                    run_id,
+                },
+                "{strategy_id}"
+            );
+        }
         let state: (String, String, i64, i64) = sqlx::query_as(
             "SELECT r.status, j.status, \
                     (SELECT count(*) FROM recommendation_items WHERE recommendation_run_id = r.id), \

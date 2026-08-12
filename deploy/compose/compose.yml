@@ -326,6 +326,79 @@ services:
         condition: service_completed_successfully
 
   # ------------------------------------------------------------------
+  # recommendation-runner — fixed 11-ETF target generation and opt-in Paper
+  # scheduling. It has no broker credentials and reads only curated data plus
+  # the immutable universe pin.
+  # ------------------------------------------------------------------
+  recommendation-runner:
+    build:
+      context: ../..
+      dockerfile: crates/job-queue/Dockerfile
+    entrypoint: ["/usr/local/bin/recommendation-runner"]
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/recommendation-health:uid=10001,gid=10001,mode=0750
+    logging: *default-logging
+    cpus: "2"
+    mem_limit: 4g
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-lagrange}
+      DB_USER: worker
+      DB_PASSWORD_FILE: /run/secrets/db_worker_password
+      RECOMMENDATION_HEALTH_STATE_PATH: /run/recommendation-health/health.json
+      RECOMMENDATION_HEALTH_MAX_AGE_SECS: "180"
+      RECOMMENDATION_DATASET_VERSION_ID: ${RECOMMENDATION_DATASET_VERSION_ID:-}
+      RECOMMENDATION_DATASET_ID: ${RECOMMENDATION_DATASET_ID:-krx_eod_bars}
+      RECOMMENDATION_DATASET_VERSION: ${RECOMMENDATION_DATASET_VERSION:-}
+      RECOMMENDATION_CURATED_VERSION: ${RECOMMENDATION_CURATED_VERSION:-}
+      RECOMMENDATION_DATASET_MANIFEST_SHA256: ${RECOMMENDATION_DATASET_MANIFEST_SHA256:-}
+    command:
+      - --repo-root
+      - /opt/lagrange
+      - --data-root
+      - /data/curated
+      - --universe-manifest
+      - /opt/lagrange/configs/universes/kr-etf-core-v1.yaml
+      - --uv-bin
+      - /usr/local/bin/uv
+      - --temp-root
+      - /tmp
+      - --poll-ms
+      - "2000"
+      - --sweep-ms
+      - "30000"
+      - --heartbeat-ms
+      - "10000"
+      - --lease-ms
+      - "60000"
+      - --backoff-ms
+      - "30000"
+      - --child-timeout-ms
+      - "120000"
+    secrets:
+      - db_worker_password
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated:ro
+      - ../../configs/universes/kr-etf-core-v1.yaml:/opt/lagrange/configs/universes/kr-etf-core-v1.yaml:ro
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/recommendation-runner", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ------------------------------------------------------------------
   # nt-backtest-worker-1 / nt-backtest-worker-2 — NautilusTrader backtests
   # (Todo 20). Design §13.3: NO internet. Attached ONLY to `backtest-iso`
   # (internal: true, no default route). Read-only dataset/catalog mounts;

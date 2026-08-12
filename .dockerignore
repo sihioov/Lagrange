@@ -6,6 +6,11 @@
 !rust-toolchain.toml
 !crates/
 !crates/**
+!nt/
+!nt/**
+!configs/
+!configs/universes/
+!configs/universes/**
 !data-pipelines/
 !data-pipelines/collectors/
 !data-pipelines/collectors/**
@@ -29,6 +34,8 @@
 **/.worktrees/**
 **/target
 **/target/**
+**/.venv
+**/.venv/**
 **/.env
 **/.env.*
 **/*.env

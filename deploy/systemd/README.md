@@ -24,3 +24,28 @@ root-owned environment file, never committed to this repository.
 
 The service deliberately requires all four role-scoped URLs and
 `LAGRANGE_DATASET_ROOT`; it will fail closed if any required setting is absent.
+
+## Recommendation runner
+
+`lagrange-recommendation-runner.service` runs the fixed 11-ETF recommendation
+queue daemon. Create `/etc/lagrange/recommendation-runner.env` (root-owned,
+mode 600) with `APP_ENV=production`, `DB_HOST`, `DB_PORT`, `DB_NAME`,
+`DB_USER=worker`, and `DB_PASSWORD_FILE` pointing to the worker password
+secret, plus the five immutable
+`RECOMMENDATION_DATASET_*` pin values, and
+`RECOMMENDATION_HEALTH_STATE_PATH=/run/lagrange-recommendation-runner/health.json`.
+Install the immutable universe manifest at
+`/etc/lagrange/universes/kr-etf-core-v1.yaml` and mount curated data at
+`/var/lib/lagrange/data/curated` read-only.
+
+The daemon attempts its schedule at 16:30 KST and performs one startup
+catch-up for the latest eligible close. Only active Paper bindings explicitly
+opted in with `auto_apply_recommendations` are scheduled; manual runs remain
+separate. `recommendation-runner healthcheck` reports process heartbeat,
+read-only DB reachability, last schedule attempt (including empty/blocked
+cycles), oldest active queue age, and current blocked-run count. The runtime
+state file is non-secret and intentionally resets on service restart.
+
+The QA smoke uses a labeled synthetic 11-ETF dataset only. Real production
+recommendations remain blocked until licensed KRX provider implementation,
+credentials, entitlement evidence, and operator provisioning are available.

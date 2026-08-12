@@ -1,0 +1,33 @@
+[Unit]
+Description=Lagrange recommendation runner
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/lagrange/bin/recommendation-runner
+
+[Service]
+Type=simple
+User=lagrange
+Group=lagrange
+WorkingDirectory=/opt/lagrange
+EnvironmentFile=/etc/lagrange/recommendation-runner.env
+Environment=RECOMMENDATION_HEALTH_STATE_PATH=/run/lagrange-recommendation-runner/health.json
+RuntimeDirectory=lagrange-recommendation-runner
+RuntimeDirectory=lagrange-recommendation-runner/tmp
+RuntimeDirectoryMode=0750
+ExecStart=/opt/lagrange/bin/recommendation-runner --repo-root /opt/lagrange --data-root /var/lib/lagrange/data/curated --universe-manifest /etc/lagrange/universes/kr-etf-core-v1.yaml --uv-bin /usr/local/bin/uv --temp-root /run/lagrange-recommendation-runner/tmp --poll-ms 2000 --sweep-ms 30000 --heartbeat-ms 10000 --lease-ms 60000 --backoff-ms 30000 --child-timeout-ms 120000
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/lagrange/data/curated /etc/lagrange/universes
+ReadWritePaths=/run/lagrange-recommendation-runner
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
