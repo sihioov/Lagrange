@@ -4,13 +4,276 @@
 mod common;
 use axum::http::StatusCode;
 use common::{Harness, status};
+use domain::{ContentHash, DatasetId, InstrumentId, UtcTimestamp};
 use job_queue::recommendation::child::TargetChildPaths;
+use job_queue::recommendation::compute::AttestedUniverse;
+use job_queue::recommendation::input::DatasetPin;
 use job_queue::recommendation::{
     RecommendationOutcome, RecommendationRunnerConfig, RecommendationRunnerPaths, run_once,
 };
 use job_queue::{JobQueue, QueueConfig};
+use market_data::curate::schema::{read_adjusted_bars, read_bars, write_adjusted_bars, write_bars};
+use market_data::{Capability, CurateStore, DatasetManifest, dataset_manifest_hash};
 use serde_json::json;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
+
+const FIXED_UNIVERSE_MEMBERS: [&str; 11] = [
+    "069500.KRX",
+    "102110.KRX",
+    "229200.KRX",
+    "143850.KRX",
+    "133690.KRX",
+    "195930.KRX",
+    "192090.KRX",
+    "148070.KRX",
+    "114260.KRX",
+    "153130.KRX",
+    "132030.KRX",
+];
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
+fn uv_bin() -> Option<PathBuf> {
+    let output = if cfg!(windows) {
+        Command::new("where.exe").arg("uv.exe").output().ok()?
+    } else {
+        Command::new("which").arg("uv").output().ok()?
+    };
+    output
+        .status
+        .success()
+        .then_some(output.stdout)
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| text.lines().next().map(str::trim).map(str::to_owned))
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+}
+
+fn copy_python_project(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("child repo creates");
+    for entry in std::fs::read_dir(from).expect("read child repo") {
+        let entry = entry.expect("child repo entry");
+        if entry.file_name() == ".venv" || entry.file_name() == "__pycache__" {
+            continue;
+        }
+        let target = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_python_project(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).expect("copy child repo file");
+        }
+    }
+}
+
+fn clone_symbol(store_root: &Path, source: &str, destination: &str) {
+    let market = store_root.join("curated/bars/market=kr");
+    let source_dir = market.join(format!("symbol={source}"));
+    let target = market.join(format!("symbol={destination}"));
+    copy_python_project(&source_dir, &target);
+    let store = CurateStore::new(store_root);
+    let destination_id = InstrumentId::parse(destination).expect("fixed instrument id");
+    for year in std::fs::read_dir(&target)
+        .expect("cloned market years")
+        .flatten()
+    {
+        let Some(year) = year
+            .file_name()
+            .to_string_lossy()
+            .strip_prefix("year=")
+            .and_then(|value| value.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        let bars_path = store.bars_path("kr", destination, year, 2);
+        if bars_path.is_file() {
+            let mut rows = read_bars(&bars_path).expect("read cloned bars");
+            rows.iter_mut()
+                .for_each(|row| row.instrument_id = destination_id.clone());
+            write_bars(&bars_path, &rows).expect("rewrite cloned bars");
+        }
+        for adjusted in [
+            store.adjusted_bars_path("kr", destination, year, 2),
+            store.total_return_bars_path("kr", destination, year, 2),
+        ] {
+            if adjusted.is_file() {
+                let mut rows = read_adjusted_bars(&adjusted).expect("read cloned adjusted bars");
+                rows.iter_mut()
+                    .for_each(|row| row.instrument_id = destination_id.clone());
+                write_adjusted_bars(&adjusted, &rows).expect("rewrite cloned adjusted bars");
+            }
+        }
+    }
+}
+
+struct QaDataset {
+    root: PathBuf,
+    hash: String,
+}
+
+fn qa_dataset(artifact_root: &Path) -> QaDataset {
+    let repo = workspace_root();
+    // The generator intentionally rejects output outside the repository.  It
+    // builds in a temporary repository child, then this test copies the
+    // resulting immutable store into its scratch artifact root.
+    let temporary = tempfile::Builder::new()
+        .prefix(".api-recommendation-phase0-")
+        .tempdir_in(&repo)
+        .expect("phase0 fixture temp dir");
+    let generated = temporary.path().join("phase0");
+    let output = Command::new(std::env::var_os("PYTHON").unwrap_or_else(|| "python".into()))
+        .current_dir(&repo)
+        .arg(repo.join("scripts/ci/prepare_phase0.py"))
+        .arg("--root")
+        .arg(&generated)
+        .output()
+        .expect("run phase0 fixture generator");
+    assert!(
+        output.status.success(),
+        "phase0 fixture generator failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let root = artifact_root.join("recommendation-phase0/curated");
+    copy_python_project(&generated.join("curated"), &root);
+    let market = root.join("curated/bars/market=kr");
+    for member in FIXED_UNIVERSE_MEMBERS {
+        if !market.join(format!("symbol={member}")).exists() {
+            clone_symbol(&root, "069500.KRX", member);
+        }
+    }
+    let store = CurateStore::new(&root);
+    let manifest = DatasetManifest {
+        dataset_id: DatasetId::parse("krx_eod_bars").expect("dataset id"),
+        version: 2,
+        capability: Capability::PriceReturnOnly,
+        created_at: UtcTimestamp::parse_rfc3339("2021-01-29T06:30:00Z").expect("timestamp"),
+        source_batches: Vec::new(),
+        bar_count: 11 * 260,
+        action_count: 0,
+        content_hash: ContentHash::from_bytes(b"placeholder"),
+    };
+    let manifest = DatasetManifest {
+        content_hash: dataset_manifest_hash(&manifest).expect("manifest hash"),
+        ..manifest
+    };
+    store
+        .write_dataset_manifest(&manifest)
+        .expect("write dataset manifest");
+    QaDataset {
+        root,
+        hash: manifest
+            .content_hash
+            .as_str()
+            .strip_prefix("sha256:")
+            .expect("sha256 manifest hash")
+            .to_owned(),
+    }
+}
+
+/// Build the smallest real fixed-ETF world the worker accepts.  It writes
+/// only source data/configuration; the runner itself is the sole writer of
+/// recommendation reports, items, and target portfolios.
+async fn prepare_real_runner_fixture(
+    h: &mut Harness,
+    strategy_config_id: &str,
+) -> RecommendationRunnerPaths {
+    let qa = qa_dataset(&h.artifact_root);
+    let universe = AttestedUniverse::from_manifest_yaml(include_str!(
+        "../../../configs/universes/kr-etf-core-v1.yaml"
+    ))
+    .expect("shipped universe parses");
+    for member in FIXED_UNIVERSE_MEMBERS {
+        sqlx::query(
+            "INSERT INTO instruments (id, symbol, venue, currency, name, asset_class, status) \
+             VALUES ($1, $2, 'KRX', 'KRW', $2, 'ETF', 'ACTIVE') ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(member)
+        .bind(member.trim_end_matches(".KRX"))
+        .execute(&h.owner_pool)
+        .await
+        .expect("seed fixed universe instrument");
+    }
+    sqlx::query(
+        "INSERT INTO universe_snapshots \
+         (snapshot_id, universe_manifest_sha256, instruments_json, published_by) \
+         VALUES ($1, repeat('d', 64), $2, $3)",
+    )
+    .bind(universe.snapshot_id())
+    .bind(json!(universe.members()))
+    .bind(h.member.user_id)
+    .execute(&h.owner_pool)
+    .await
+    .expect("seed fixed universe snapshot");
+
+    let dataset_id = h.state().cfg.recommendation_dataset.id;
+    sqlx::query(
+        "UPDATE dataset_versions SET dataset_id = 'krx_eod_bars', version = 'qa-v2', \
+         status = 'READY', manifest_sha256 = $2, storage_path = $3 WHERE id = $1",
+    )
+    .bind(dataset_id)
+    .bind(&qa.hash)
+    .bind(qa.root.to_string_lossy().as_ref())
+    .execute(&h.owner_pool)
+    .await
+    .expect("pin dataset fixture");
+    h.seed_shared(
+        "UPDATE data_entitlements SET effective_from = DATE '2020-01-01', \
+         effective_until = DATE '2030-12-31' WHERE status = 'ACTIVE'",
+    )
+    .await;
+    h.seed_tenant(
+        &h.member,
+        &format!(
+            "UPDATE user_strategy_configs SET config_json = \
+             '{{\"benchmark_instrument\":\"069500.KRX\",\"target_weight\":1.0,\"rebalance_cadence\":\"none\"}}'::jsonb \
+             WHERE id = '{strategy_config_id}'"
+        ),
+    )
+    .await;
+    h.restart_api_with_recommendation_dataset(DatasetPin {
+        id: dataset_id,
+        dataset_id: "krx_eod_bars".into(),
+        version: "qa-v2".into(),
+        curated_version: 2,
+        manifest_sha256: qa.hash,
+    })
+    .await;
+
+    let repo = workspace_root();
+    let uv = uv_bin().expect("the real runner test requires uv");
+    let child_repo = h.artifact_root.join("recommendation-runner-repo");
+    copy_python_project(&repo.join("nt"), &child_repo.join("nt"));
+    let sync = Command::new(&uv)
+        .arg("sync")
+        .arg("--project")
+        .arg(child_repo.join("nt"))
+        .arg("--locked")
+        .output()
+        .expect("sync isolated runner environment");
+    assert!(
+        sync.status.success(),
+        "isolated runner sync failed: {}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    let child_temp = h.artifact_root.join("recommendation-runner-child");
+    std::fs::create_dir_all(&child_temp).expect("runner child temp creates");
+    RecommendationRunnerPaths {
+        data_root: qa.root,
+        universe_manifest: repo.join("configs/universes/kr-etf-core-v1.yaml"),
+        child: TargetChildPaths {
+            uv_bin: uv,
+            repo_root: child_repo,
+            temp_root: child_temp,
+        },
+    }
+}
 
 /// Create a strategy config for `actor` and return its id.
 async fn config_id(h: &Harness, actor: &common::UserCtx) -> String {
@@ -35,11 +298,12 @@ async fn config_id(h: &Harness, actor: &common::UserCtx) -> String {
 
 #[tokio::test]
 async fn http_recommendations_create_queue_result_happy() {
-    let Some(h) = Harness::new().await else {
+    let Some(mut h) = Harness::new().await else {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
     let cfg = config_id(&h, &h.member).await;
+    let paths = prepare_real_runner_fixture(&mut h, &cfg).await;
 
     // create -> PENDING run + QUEUED recommendation job.
     let resp = h
@@ -47,14 +311,14 @@ async fn http_recommendations_create_queue_result_happy() {
             "/api/v1/recommendations/runs",
             Some(&h.member),
             true,
-            json!({ "strategy_config_id": cfg, "as_of": "2026-01-31" }),
+            json!({ "strategy_config_id": cfg, "as_of": "2021-01-29" }),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::CREATED);
     h.assert_rid_echo(&resp);
     let body = Harness::body_json(resp).await;
     assert_eq!(body["status"], "PENDING");
-    assert_eq!(body["as_of"], "2026-01-31");
+    assert_eq!(body["as_of"], "2021-01-29");
     assert_eq!(body["strategy_config_id"], cfg);
     let run_id = body["id"].as_str().unwrap().to_string();
     let job_id = body["job_id"].as_str().unwrap().to_string();
@@ -98,10 +362,8 @@ async fn http_recommendations_create_queue_result_happy() {
     assert!(payload["dataset"]["curated_version"].is_u64());
     assert!(payload["dataset"]["manifest_sha256"].is_string());
 
-    // Drive the actual typed runner once. The shared HTTP harness intentionally
-    // has no deployment curated-store mount, so the real runner records a
-    // retryable path failure rather than the test mutating a result row by
-    // hand. GET observes the runner's persisted PENDING state.
+    // Drive the actual typed runner once against a faithful local fixture;
+    // GET must expose the runner-persisted report, never test-written rows.
     let worker = h.worker_pool().await;
     let queue = JobQueue::new(
         worker.clone(),
@@ -112,28 +374,24 @@ async fn http_recommendations_create_queue_result_happy() {
         },
     );
     let runner = RecommendationRunnerConfig::new(
-        Duration::from_secs(1),
+        Duration::from_millis(100),
         Duration::from_secs(60),
-        Duration::from_secs(1),
+        Duration::from_secs(30),
     )
     .unwrap();
-    let paths = RecommendationRunnerPaths {
-        data_root: h.artifact_root.clone(),
-        universe_manifest: h.artifact_root.join("universe.yaml"),
-        child: TargetChildPaths {
-            uv_bin: "uv".into(),
-            repo_root: h.artifact_root.clone(),
-            temp_root: h.artifact_root.join("tmp"),
-        },
-    };
-    assert!(matches!(
-        run_once(&worker, &queue, "http-recommendations", &paths, &runner)
-            .await
-            .unwrap(),
-        RecommendationOutcome::Retrying { job_id: id, .. } if id.to_string() == job_id
-    ));
+    let outcome = run_once(&worker, &queue, "http-recommendations", &paths, &runner)
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            outcome,
+            RecommendationOutcome::Succeeded { job_id: id, run_id: completed }
+                if id.to_string() == job_id && completed.to_string() == run_id
+        ),
+        "real runner outcome: {outcome:?}"
+    );
 
-    // GET reads the runner-persisted in-flight run with no fabricated items.
+    // GET reads the runner-persisted report with no fabricated items.
     let resp = h
         .get(
             &format!("/api/v1/recommendations/runs/{run_id}"),
@@ -142,9 +400,26 @@ async fn http_recommendations_create_queue_result_happy() {
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
-    assert_eq!(body["status"], "PENDING");
+    assert_eq!(body["status"], "SUCCEEDED");
     let items = body["items"].as_array().expect("items");
-    assert!(items.is_empty());
+    assert_eq!(items.len(), 11);
+    assert!(
+        items
+            .iter()
+            .any(|item| item["instrument_id"] == "069500.KRX")
+    );
+    assert!(
+        body["summary"]["portfolio_snapshot_id"].is_string(),
+        "GET exposes the runner-persisted recommendation report"
+    );
+    let portfolios: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM target_portfolios WHERE recommendation_run_id = $1::uuid",
+    )
+    .bind(&run_id)
+    .fetch_one(&h.member_pool().await)
+    .await
+    .expect("runner-persisted target portfolio");
+    assert_eq!(portfolios, 1);
 
     // latest by config.
     let resp = h
@@ -155,9 +430,11 @@ async fn http_recommendations_create_queue_result_happy() {
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
-    assert!(body["run"].is_null(), "pending run is not a usable report");
+    assert_eq!(body["run"]["id"], run_id);
+    assert_eq!(body["run"]["status"], "SUCCEEDED");
+    assert_eq!(body["run"]["items"].as_array().unwrap().len(), 11);
     assert_eq!(body["latest_run"]["id"], run_id);
-    assert_eq!(body["latest_run"]["status"], "PENDING");
+    assert_eq!(body["latest_run"]["status"], "SUCCEEDED");
     h.teardown().await;
 }
 
@@ -229,7 +506,7 @@ async fn http_recommendations_entitlement_gate_fails_closed() {
 
 #[tokio::test]
 async fn http_recommendations_ownership_and_idempotency() {
-    let Some(h) = Harness::new().await else {
+    let Some(mut h) = Harness::new().await else {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
@@ -261,37 +538,64 @@ async fn http_recommendations_ownership_and_idempotency() {
     // (The first create above used a different auto key, so the fixed-key
     // create below is a distinct run; its OWN replay must dedup.)
     let key = "rec-run-001";
-    let make = |body: &serde_json::Value| {
-        h.send(
+    let b = json!({ "strategy_config_id": cfg, "as_of": "2026-01-31" });
+    let r1 = h
+        .send(
             "POST",
             "/api/v1/recommendations/runs",
             Some(&h.member),
             true,
             Some("test-rid-1"),
             Some(key),
-            Some(body.clone()),
+            Some(b.clone()),
         )
-    };
-    let b = json!({ "strategy_config_id": cfg, "as_of": "2026-01-31" });
-    let r1 = make(&b).await;
+        .await;
     assert_eq!(r1.status(), StatusCode::CREATED);
-    let id1 = Harness::body_json(r1).await["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let body1 = Harness::body_json(r1).await;
+    let id1 = body1["id"].as_str().unwrap().to_string();
+    let job1 = body1["job_id"].as_str().unwrap().to_string();
     assert_ne!(
         id1, run_id,
         "different idempotency keys create distinct runs"
     );
 
-    let r2 = make(&b).await;
+    // A process restart clears the HTTP layer's in-memory store.  This
+    // replay must therefore come from the durable job idempotency record.
+    h.restart_api().await;
+    let r2 = h
+        .send(
+            "POST",
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(b.clone()),
+        )
+        .await;
     assert_eq!(r2.status(), StatusCode::CREATED);
-    assert_eq!(r2.headers()["x-idempotent-replay"], "true");
-    let id2 = Harness::body_json(r2).await["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let body2 = Harness::body_json(r2).await;
+    let id2 = body2["id"].as_str().unwrap().to_string();
     assert_eq!(id1, id2);
+    assert_eq!(body2["job_id"], job1);
+
+    h.restart_api().await;
+    let mismatch = h
+        .send(
+            "POST",
+            "/api/v1/recommendations/runs",
+            Some(&h.member),
+            true,
+            Some("test-rid-1"),
+            Some(key),
+            Some(json!({ "strategy_config_id": cfg, "as_of": "2026-02-01" })),
+        )
+        .await;
+    assert_eq!(mismatch.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(mismatch).await),
+        "IDEMPOTENCY_KEY_MISMATCH"
+    );
 
     // Two DISTINCT keys created two runs; the replay did not create a third.
     let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM recommendation_runs")

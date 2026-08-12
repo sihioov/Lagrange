@@ -382,6 +382,39 @@ impl Harness {
         self.state.clone().expect("state built during Harness::new")
     }
 
+    /// Rebuild the HTTP state from the same database, as a new API process
+    /// would.  In particular, this deliberately drops the in-memory
+    /// idempotency cache so tests exercise the durable replay branch.
+    pub async fn restart_api(&mut self) {
+        let cfg = (*self.state().cfg).clone();
+        self.restart_api_with_config(cfg).await;
+    }
+
+    /// Rebuild the HTTP state with a supplied immutable recommendation pin.
+    /// A test-local curated fixture uses this to model deployment config
+    /// pointing at the attested data it just created.
+    pub async fn restart_api_with_recommendation_dataset(
+        &mut self,
+        recommendation_dataset: job_queue::recommendation::input::DatasetPin,
+    ) {
+        let mut cfg = (*self.state().cfg).clone();
+        cfg.recommendation_dataset = recommendation_dataset;
+        self.restart_api_with_config(cfg).await;
+    }
+
+    async fn restart_api_with_config(&mut self, cfg: ApiConfig) {
+        let state = ApiState::from_pools(
+            cfg,
+            self.app_pool.clone(),
+            self.admin_pool.clone(),
+            self.audit_pool.clone(),
+        )
+        .await
+        .expect("api state rebuilds from pools");
+        self.state = Some(state.clone());
+        self.app = api_router(state);
+    }
+
     /// GUC'd verification pool scoped to the member actor (tenant reads).
     pub async fn member_pool(&self) -> PgPool {
         actor_pool(&self.app_url, &self.member.user_id.to_string(), 2).await
