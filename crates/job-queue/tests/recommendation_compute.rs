@@ -318,9 +318,10 @@ fn fixed_universe() -> AttestedUniverse {
 fn fixed_universe_close_is_exact_finite_and_deterministic() {
     let qa = qa_only_fixed_universe_dataset();
     let universe = fixed_universe();
-    assert_eq!(universe.universe_id, "kr-etf-core-v1");
+    assert_eq!(universe.universe_id(), "kr-etf-core-v1");
+    universe.validate_canonical().expect("canonical universe");
     assert_eq!(
-        universe.members.iter().cloned().collect::<BTreeSet<_>>(),
+        universe.members().iter().cloned().collect::<BTreeSet<_>>(),
         MEMBERS.into_iter().map(str::to_owned).collect()
     );
 
@@ -342,6 +343,13 @@ fn fixed_universe_close_is_exact_finite_and_deterministic() {
         assert!(values["trend_100"].is_finite());
         assert!(values["trend_200"].is_finite());
     }
+}
+
+#[test]
+fn altered_fixed_universe_manifest_cannot_create_an_attestation() {
+    let malformed = include_str!("../../../configs/universes/kr-etf-core-v1.yaml")
+        .replace("069500.KRX", "SPY.XNAS");
+    assert!(AttestedUniverse::from_manifest_yaml(&malformed).is_err());
 }
 
 #[test]

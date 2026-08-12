@@ -70,6 +70,33 @@ impl ValidatedPortfolio {
     pub fn portfolio_snapshot_id(&self) -> &str {
         &self.portfolio_snapshot_id
     }
+
+    pub(super) fn is_canonical_for(&self, universe: &AttestedUniverse) -> bool {
+        let instruments = self
+            .items
+            .iter()
+            .map(|item| item.instrument_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let expected = universe
+            .members()
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        self.items.len() == 11
+            && instruments.len() == 11
+            && instruments == expected
+            && self.universe_snapshot_id == universe.snapshot_id()
+            && self.selected_count == self.items.iter().filter(|item| !item.excluded).count()
+            && self.excluded_count == self.items.iter().filter(|item| item.excluded).count()
+            && self.items.iter().all(|item| {
+                item.excluded
+                    || item
+                        .target_weight
+                        .as_deref()
+                        .and_then(|weight| weight.parse::<f64>().ok())
+                        .is_some_and(|weight| weight > 0.0)
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -116,6 +143,9 @@ pub fn validate_target_output(
     dataset: &AttestedDataset,
     expected_provenance: &TargetProvenance,
 ) -> Result<ValidatedPortfolio, RecommendationValidationError> {
+    universe
+        .validate_canonical()
+        .map_err(|error| integrity(&error.to_string()))?;
     validate_expected_provenance(universe, dataset, expected_provenance)?;
     require_integrity(
         output.strategy_version == format!("{expected_strategy_id}@{expected_strategy_version}"),
@@ -140,10 +170,10 @@ pub fn validate_target_output(
         "all-cash output must carry an explicit portfolio reason",
     )?;
 
-    let expected_members: BTreeSet<&str> = universe.members.iter().map(String::as_str).collect();
+    let expected_members: BTreeSet<&str> = universe.members().iter().map(String::as_str).collect();
     let mut observed = BTreeSet::new();
     let mut ranks = BTreeSet::new();
-    let mut items = Vec::with_capacity(universe.members.len());
+    let mut items = Vec::with_capacity(universe.members().len());
     let mut positive_weights = BTreeMap::new();
     let mut quantized_sum = 0_i64;
 
@@ -177,12 +207,14 @@ pub fn validate_target_output(
         )?;
 
         let (weight, scaled) = quantize(target.target_weight, output.constraints.tolerance)?;
+        require_integrity(
+            scaled > 0,
+            "selected target rounds to zero at six-place database scale",
+        )?;
         quantized_sum = quantized_sum
             .checked_add(scaled)
             .ok_or_else(|| integrity("quantized target sum overflowed"))?;
-        if scaled > 0 {
-            positive_weights.insert(target.instrument_id.clone(), weight.clone());
-        }
+        positive_weights.insert(target.instrument_id.clone(), weight.clone());
         let rank = i32::try_from(target.rank)
             .map_err(|_| integrity("target rank exceeds database range"))?;
         items.push(ValidatedItem {
@@ -232,7 +264,7 @@ pub fn validate_target_output(
     // (notably buy-and-hold). Publication is not: normalize each omission to
     // one explicit Rust-owned exclusion without changing the child bytes or
     // the child portfolio hash checked below.
-    for instrument_id in &universe.members {
+    for instrument_id in universe.members() {
         if !observed.contains(instrument_id.as_str()) {
             items.push(ValidatedItem {
                 instrument_id: instrument_id.clone(),
@@ -266,6 +298,16 @@ pub fn validate_target_output(
     }
 
     items.sort_by(|left, right| left.instrument_id.cmp(&right.instrument_id));
+    require_integrity(
+        items.len() == 11
+            && items
+                .iter()
+                .map(|item| item.instrument_id.as_str())
+                .collect::<BTreeSet<_>>()
+                .len()
+                == 11,
+        "normalized portfolio must contain exactly eleven distinct instruments",
+    )?;
     let portfolio_reasons = serde_json::to_value(&output.portfolio_reasons)
         .map_err(|_| integrity("portfolio reasons cannot be represented as JSON"))?;
     let selected_count = positive_weights.len();
@@ -295,7 +337,7 @@ fn validate_expected_provenance(
             && provenance.dataset_version == dataset.version
             && provenance.curated_version == dataset.curated_version
             && provenance.dataset_manifest_sha256 == dataset.manifest_sha256
-            && provenance.universe_snapshot_id == universe.snapshot_id,
+            && provenance.universe_snapshot_id == universe.snapshot_id(),
         "expected provenance is not derived from attested input",
     )?;
     require_integrity(
@@ -590,5 +632,30 @@ fn integrity(detail: &str) -> RecommendationValidationError {
 fn determinism(detail: &str) -> RecommendationValidationError {
     RecommendationValidationError::Determinism {
         detail: detail.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publisher_shape_guard_rejects_a_crate_internal_forgery() {
+        let universe = AttestedUniverse::from_manifest_yaml(include_str!(
+            "../../../../configs/universes/kr-etf-core-v1.yaml"
+        ))
+        .unwrap();
+        let forged = ValidatedPortfolio {
+            items: Vec::new(),
+            positive_weights: BTreeMap::new(),
+            cash_weight: "1.000000".into(),
+            selected_count: 0,
+            excluded_count: 0,
+            portfolio_snapshot_id: format!("sha256:{}", "a".repeat(64)),
+            portfolio_reasons: json!([]),
+            universe_snapshot_id: universe.snapshot_id().to_owned(),
+            factor_snapshot_hash: format!("sha256:{}", "b".repeat(64)),
+        };
+        assert!(!forged.is_canonical_for(&universe));
     }
 }

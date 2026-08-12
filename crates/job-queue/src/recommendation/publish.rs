@@ -61,6 +61,10 @@ struct LockedRun {
 
 #[derive(sqlx::FromRow)]
 struct PublishedRow {
+    job_type: String,
+    job_owner_user_id: uuid::Uuid,
+    job_payload_json: Value,
+    attempt_count: i32,
     job_status: String,
     run_status: String,
     summary_json: Value,
@@ -69,9 +73,17 @@ struct PublishedRow {
     cash_weight: String,
     weights_json: Value,
     attempt_outcome: String,
+    attempt_id: uuid::Uuid,
+    attempt_no: i32,
+    claimed_by: Option<String>,
     portfolio_as_of: chrono::NaiveDate,
     universe_snapshot_id: Option<String>,
     trigger_kind: String,
+    strategy_config_id: Option<uuid::Uuid>,
+    run_as_of: chrono::NaiveDate,
+    run_job_id: Option<uuid::Uuid>,
+    dataset_version_id: Option<uuid::Uuid>,
+    dataset_manifest_sha256: Option<String>,
 }
 
 #[derive(Debug, PartialEq, sqlx::FromRow)]
@@ -85,15 +97,6 @@ struct PublishedItem {
     exclusion_reason: Option<String>,
 }
 
-#[derive(sqlx::FromRow)]
-struct CurrentDataset {
-    dataset_id: String,
-    version: String,
-    status: String,
-    manifest_sha256: String,
-    storage_path: String,
-}
-
 /// Publish all result rows, the run transition and queue settlement under one
 /// worker transaction. No database write is visible unless every guard and
 /// write succeeds.
@@ -105,6 +108,14 @@ pub async fn publish_recommendation(
     universe: &AttestedUniverse,
     portfolio: &ValidatedPortfolio,
 ) -> Result<PublicationOutcome, PublicationError> {
+    universe
+        .validate_canonical()
+        .map_err(|error| integrity(&error.to_string()))?;
+    if !portfolio.is_canonical_for(universe) {
+        return Err(integrity(
+            "validated portfolio is not an exact canonical eleven-member result",
+        ));
+    }
     let mut transaction = pool.begin().await?;
 
     let locked_job = match queue.lock_claim_in(&mut transaction, claim).await {
@@ -121,7 +132,7 @@ pub async fn publish_recommendation(
         }
     };
 
-    validate_claim_identity(&locked_job, input)?;
+    validate_claim_identity(&locked_job, claim, input)?;
     let run: LockedRun = sqlx::query_as(
         "SELECT status, owner_user_id, strategy_config_id, as_of, job_id, trigger_kind, \
                 dataset_version_id, dataset_manifest_sha256 \
@@ -226,11 +237,19 @@ pub async fn publish_recommendation(
 
 fn validate_claim_identity(
     job: &crate::types::Job,
+    claim: &ClaimedJob,
     input: &AttestedRecommendationInput,
 ) -> Result<(), PublicationError> {
     let payload = serde_json::to_value(&input.payload)
         .map_err(|_| integrity("attested payload cannot be represented as JSON"))?;
-    if job.job_type != "recommendation" || job.payload_json != payload {
+    if job.id != claim.job.id
+        || job.owner_user_id != claim.job.owner_user_id
+        || job.job_type != "recommendation"
+        || job.job_type != claim.job.job_type
+        || job.payload_json != payload
+        || job.payload_json != claim.job.payload_json
+        || job.attempt_count != claim.job.attempt_count
+    {
         return Err(integrity(
             "claim identity does not match attested recommendation input",
         ));
@@ -266,68 +285,32 @@ async fn reattest_current_rows(
     universe: &AttestedUniverse,
     portfolio: &ValidatedPortfolio,
 ) -> Result<(), PublicationError> {
-    let config: Option<(String, String, Value)> = sqlx::query_as(
-        "SELECT strategy_id, strategy_version, config_json FROM user_strategy_configs \
-         WHERE id = $1 AND owner_user_id = $2 AND is_active",
-    )
-    .bind(input.payload.strategy_config_id)
-    .bind(owner_user_id)
-    .fetch_optional(&mut **transaction)
-    .await?;
-    if config
-        != Some((
-            input.resolved_config.strategy_id.clone(),
-            input.resolved_config.strategy_version.clone(),
-            input.resolved_config.config.clone(),
-        ))
-    {
-        return Err(integrity(
-            "strategy configuration changed before publication",
-        ));
-    }
-
-    let dataset: Option<CurrentDataset> = sqlx::query_as(
-        "SELECT dataset_id, version, status, manifest_sha256, storage_path \
-         FROM dataset_versions WHERE id = $1",
-    )
-    .bind(input.dataset.id)
-    .fetch_optional(&mut **transaction)
-    .await?;
     let expected_status = match input.dataset.status {
         AttestedDatasetStatus::Ready => "READY",
         AttestedDatasetStatus::Warning => "WARNING",
     };
-    if !matches!(
-        dataset,
-        Some(CurrentDataset {
-            dataset_id,
-            version,
-            status,
-            manifest_sha256,
-            storage_path,
-        }) if dataset_id == input.dataset.dataset_id
-            && version == input.dataset.version
-            && status == expected_status
-            && manifest_sha256 == input.dataset.manifest_sha256
-            && storage_path == input.dataset.storage_path
-    ) {
-        return Err(integrity("dataset lineage changed before publication"));
-    }
-
-    if portfolio.universe_snapshot_id != universe.snapshot_id {
-        return Err(integrity(
-            "validated portfolio universe changed before publication",
-        ));
-    }
-    let stored_members: Option<Value> = sqlx::query_scalar(
-        "SELECT instruments_json FROM universe_snapshots WHERE snapshot_id = $1",
+    let locked: bool = sqlx::query_scalar(
+        "SELECT public.lock_recommendation_publication_inputs(\
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
-    .bind(&universe.snapshot_id)
-    .fetch_optional(&mut **transaction)
+    .bind(owner_user_id)
+    .bind(input.payload.strategy_config_id)
+    .bind(&input.resolved_config.strategy_id)
+    .bind(&input.resolved_config.strategy_version)
+    .bind(&input.resolved_config.config)
+    .bind(input.dataset.id)
+    .bind(&input.dataset.dataset_id)
+    .bind(&input.dataset.version)
+    .bind(expected_status)
+    .bind(&input.dataset.manifest_sha256)
+    .bind(&input.dataset.storage_path)
+    .bind(universe.snapshot_id())
+    .bind(json!(universe.members()))
+    .fetch_one(&mut **transaction)
     .await?;
-    if stored_members != Some(json!(universe.members)) {
+    if !locked || portfolio.universe_snapshot_id != universe.snapshot_id() {
         return Err(integrity(
-            "universe snapshot is missing or has different membership",
+            "recommendation publication inputs changed before publication",
         ));
     }
     Ok(())
@@ -342,25 +325,26 @@ async fn already_published(
     let expected_payload = serde_json::to_value(&input.payload)
         .map_err(|_| integrity("attested payload cannot be represented as JSON"))?;
     let row: Option<PublishedRow> = sqlx::query_as(
-        "SELECT j.status AS job_status, r.status AS run_status, r.summary_json, \
+        "SELECT j.job_type, j.owner_user_id AS job_owner_user_id, j.payload_json AS job_payload_json, \
+                j.attempt_count, j.status AS job_status, r.status AS run_status, r.summary_json, \
                 (SELECT count(*) FROM recommendation_items i WHERE i.recommendation_run_id = r.id) AS item_count, \
                 (SELECT count(*) FROM target_portfolios existing WHERE existing.recommendation_run_id = r.id) AS portfolio_count, \
                 p.cash_weight::text AS cash_weight, p.weights_json, a.outcome AS attempt_outcome, \
-                p.as_of AS portfolio_as_of, p.universe_snapshot_id, r.trigger_kind \
+                a.id AS attempt_id, a.attempt_no, a.claimed_by, \
+                p.as_of AS portfolio_as_of, p.universe_snapshot_id, r.trigger_kind, \
+                r.strategy_config_id, r.as_of AS run_as_of, r.job_id AS run_job_id, \
+                r.dataset_version_id, r.dataset_manifest_sha256 \
          FROM jobs j \
          JOIN recommendation_runs r ON r.job_id = j.id AND r.owner_user_id = j.owner_user_id \
          JOIN target_portfolios p ON p.recommendation_run_id = r.id AND p.owner_user_id = r.owner_user_id \
-         JOIN job_attempts a ON a.job_id = j.id AND a.attempt_no = $5 \
+         JOIN job_attempts a ON a.job_id = j.id AND a.attempt_no = $4 \
          WHERE j.id = $1 AND j.owner_user_id = $2 AND r.id = $3 \
-           AND r.strategy_config_id = $4 AND j.payload_json = $6 \
          FOR UPDATE OF j, r",
     )
     .bind(claim.job.id)
     .bind(claim.job.owner_user_id)
     .bind(input.payload.run_id)
-    .bind(input.payload.strategy_config_id)
     .bind(claim.attempt.attempt_no)
-    .bind(expected_payload)
     .fetch_optional(&mut **transaction)
     .await?;
     let Some(row) = row else {
@@ -395,8 +379,26 @@ async fn already_published(
         AttestedDatasetStatus::Warning => json!(["DATASET_STATUS_WARNING"]),
     };
     Ok(row.job_status == "SUCCEEDED"
+        && claim.job.job_type == "recommendation"
+        && claim.job.payload_json == expected_payload
+        && claim.attempt.job_id == claim.job.id
+        && claim.attempt.attempt_no == claim.job.attempt_count
+        && claim.attempt.outcome == crate::types::AttemptOutcome::Running
+        && claim.attempt.claimed_by.as_deref() == Some(claim.worker_id.as_str())
+        && row.job_type == claim.job.job_type
+        && row.job_owner_user_id == claim.job.owner_user_id
+        && row.job_payload_json == claim.job.payload_json
+        && row.attempt_count == claim.job.attempt_count
         && row.run_status == "SUCCEEDED"
         && row.attempt_outcome == "SUCCEEDED"
+        && row.attempt_id == claim.attempt.id
+        && row.attempt_no == claim.attempt.attempt_no
+        && row.claimed_by.as_deref() == Some(claim.worker_id.as_str())
+        && row.strategy_config_id == Some(input.payload.strategy_config_id)
+        && row.run_as_of == input.payload.as_of
+        && row.run_job_id == Some(claim.job.id)
+        && row.dataset_version_id == Some(input.dataset.id)
+        && row.dataset_manifest_sha256.as_deref() == Some(input.dataset.manifest_sha256.as_str())
         && row.item_count == 11
         && row.portfolio_count == 1
         && items_match

@@ -12,7 +12,7 @@ use job_queue::recommendation::validate::{
     RecommendationValidationError, canonical_portfolio_snapshot_id, validate_target_output,
 };
 use job_queue::resolver::ResolvedConfig;
-use job_queue::types::ErrorClass;
+use job_queue::types::{AttemptOutcome, ErrorClass};
 use job_queue::{JobQueue, QueueConfig, SubmitJob};
 use sqlx::PgPool;
 use std::collections::BTreeMap;
@@ -54,7 +54,7 @@ fn all_cash_output() -> TargetChildOutput {
     let mut output = TargetChildOutput {
         as_of: "2026-08-11".into(),
         strategy_version: "dual_momentum@1.0.0".into(),
-        universe_snapshot_id: u.snapshot_id,
+        universe_snapshot_id: u.snapshot_id().to_owned(),
         factor_snapshot_hash: format!("sha256:{}", "b".repeat(64)),
         dataset_version_id: Uuid::parse_str(DATASET_VERSION_ID).unwrap(),
         dataset_id: "krx_eod_bars".into(),
@@ -63,8 +63,9 @@ fn all_cash_output() -> TargetChildOutput {
         dataset_manifest_sha256: "c".repeat(64),
         targets: vec![],
         exclusions: u
-            .members
-            .into_iter()
+            .members()
+            .iter()
+            .cloned()
             .map(|instrument_id| ExclusionRow {
                 instrument_id,
                 reasons: vec![reason("EXCLUDED_MANDATORY_FACTOR_NULL")],
@@ -93,7 +94,7 @@ fn provenance() -> TargetProvenance {
         dataset_version: "phase0-v2".into(),
         curated_version: 2,
         dataset_manifest_sha256: "c".repeat(64),
-        universe_snapshot_id: u.snapshot_id,
+        universe_snapshot_id: u.snapshot_id().to_owned(),
         factor_snapshot_hash: format!("sha256:{}", "b".repeat(64)),
     }
 }
@@ -159,6 +160,60 @@ fn all_cash_must_be_explicit_and_selected_targets_must_be_positive() {
     assert_eq!(
         validate(zero_target).unwrap_err().class(),
         ErrorClass::Integrity
+    );
+}
+
+#[test]
+fn selected_weight_must_remain_positive_at_database_scale() {
+    let mut rounds_to_zero = all_cash_output();
+    let member = rounds_to_zero.exclusions.remove(0).instrument_id;
+    rounds_to_zero.targets.push(TargetRow {
+        instrument_id: member,
+        rank: 1,
+        score: 0.5,
+        factors: BTreeMap::new(),
+        target_weight: 0.000_000_4,
+        reasons: vec![reason("SELECTED_TOP_N")],
+    });
+    rounds_to_zero.cash_weight = 0.999_999_6;
+    rounds_to_zero.constraints.tolerance = 0.000_001;
+    rehash(&mut rounds_to_zero);
+    assert_eq!(
+        validate(rounds_to_zero).unwrap_err().class(),
+        ErrorClass::Integrity
+    );
+
+    let mut remains_positive = all_cash_output();
+    let member = remains_positive.exclusions.remove(0).instrument_id;
+    remains_positive.targets.push(TargetRow {
+        instrument_id: member,
+        rank: 1,
+        score: 0.5,
+        factors: BTreeMap::new(),
+        target_weight: 0.000_000_6,
+        reasons: vec![reason("SELECTED_TOP_N")],
+    });
+    remains_positive.cash_weight = 0.999_999_4;
+    remains_positive.constraints.tolerance = 0.000_001;
+    rehash(&mut remains_positive);
+    let validated = validate_target_output(
+        remains_positive,
+        "dual_momentum",
+        "1.0.0",
+        "2026-08-11",
+        &universe(),
+        &dataset(),
+        &provenance(),
+    )
+    .expect("a selected weight that rounds to one database unit remains selected");
+    assert_eq!(validated.selected_count(), 1);
+    assert_eq!(
+        validated
+            .items()
+            .iter()
+            .filter(|item| !item.excluded())
+            .count(),
+        1
     );
 }
 
@@ -297,7 +352,7 @@ fn five_strategy_shapes_normalize_to_exactly_eleven_database_items() {
 
 #[test]
 fn validator_rejects_invalid_weights_constraints_ranks_reasons_and_factor_ids() {
-    let member = universe().members[0].clone();
+    let member = universe().members()[0].clone();
     let mut invalid_weight = all_cash_output();
     invalid_weight.exclusions.remove(0);
     invalid_weight.targets.push(TargetRow {
@@ -521,7 +576,7 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
     .fetch_one(&db.pool)
     .await
     .unwrap();
-    for member in &universe().members {
+    for member in universe().members() {
         let symbol = member.trim_end_matches(".KRX");
         sqlx::query(
             "INSERT INTO instruments (id, symbol, venue, currency) VALUES ($1, $2, 'KRX', 'KRW')",
@@ -554,8 +609,8 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
     sqlx::query(
         "INSERT INTO universe_snapshots (snapshot_id, universe_manifest_sha256, instruments_json, published_by) VALUES ($1, repeat('d', 64), $2, $3)",
     )
-    .bind(&u.snapshot_id)
-    .bind(serde_json::json!(u.members))
+    .bind(u.snapshot_id())
+    .bind(serde_json::json!(u.members()))
     .bind(owner_id)
     .execute(&db.pool)
     .await
@@ -637,6 +692,69 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
         &provenance(),
     )
     .unwrap();
+
+    // If a configuration mutation obtains its row lock first, publication
+    // waits for it and then observes the changed input instead of committing
+    // stale results.
+    let mut config_mutation = db.pool.begin().await.unwrap();
+    sqlx::query("UPDATE user_strategy_configs SET is_active = false WHERE id = $1")
+        .bind(config_id)
+        .execute(&mut *config_mutation)
+        .await
+        .unwrap();
+    let blocked_publish = {
+        let worker = worker.clone();
+        let queue = queue.clone();
+        let claim = claim.clone();
+        let attested = attested.clone();
+        let universe = u.clone();
+        let validated = validated.clone();
+        tokio::spawn(async move {
+            publish_recommendation(&worker, &queue, &claim, &attested, &universe, &validated).await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!blocked_publish.is_finished());
+    config_mutation.commit().await.unwrap();
+    blocked_publish
+        .await
+        .unwrap()
+        .expect_err("publication must reject a config mutation that won the lock race");
+    sqlx::query("UPDATE user_strategy_configs SET is_active = true WHERE id = $1")
+        .bind(config_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    let mut dataset_mutation = db.pool.begin().await.unwrap();
+    sqlx::query("UPDATE dataset_versions SET status = 'BLOCKED' WHERE id = $1")
+        .bind(dataset_id)
+        .execute(&mut *dataset_mutation)
+        .await
+        .unwrap();
+    let blocked_publish = {
+        let worker = worker.clone();
+        let queue = queue.clone();
+        let claim = claim.clone();
+        let attested = attested.clone();
+        let universe = u.clone();
+        let validated = validated.clone();
+        tokio::spawn(async move {
+            publish_recommendation(&worker, &queue, &claim, &attested, &universe, &validated).await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!blocked_publish.is_finished());
+    dataset_mutation.commit().await.unwrap();
+    blocked_publish
+        .await
+        .unwrap()
+        .expect_err("publication must reject a dataset mutation that won the lock race");
+    sqlx::query("UPDATE dataset_versions SET status = 'READY' WHERE id = $1")
+        .bind(dataset_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
 
     let mut wrong_owner = claim.clone();
     wrong_owner.job.owner_user_id = Uuid::new_v4();
@@ -726,14 +844,149 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
         sqlx::raw_sql(drop_trigger).execute(&db.pool).await.unwrap();
     }
 
-    let first = publish_recommendation(&worker, &queue, &claim, &attested, &u, &validated)
+    // Once publication has re-attested and acquired shared row locks, input
+    // mutations wait until its atomic commit. An advisory trigger provides a
+    // deterministic barrier after re-attestation and before the first write.
+    sqlx::raw_sql(
+        "CREATE FUNCTION test_pause_recommendation_publish() RETURNS trigger \
+         LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(8412, 34); RETURN NEW; END $$; \
+         CREATE TRIGGER test_pause_items BEFORE INSERT ON recommendation_items \
+         FOR EACH STATEMENT EXECUTE FUNCTION test_pause_recommendation_publish()",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let mut barrier = db.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(8412, 34)")
+        .execute(&mut *barrier)
         .await
-        .expect("publication succeeds");
+        .unwrap();
+    let publishing = {
+        let worker = worker.clone();
+        let queue = queue.clone();
+        let claim = claim.clone();
+        let attested = attested.clone();
+        let universe = u.clone();
+        let validated = validated.clone();
+        tokio::spawn(async move {
+            publish_recommendation(&worker, &queue, &claim, &attested, &universe, &validated).await
+        })
+    };
+    let mut reached_barrier = false;
+    for _ in 0..50 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event = 'advisory'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            reached_barrier = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        reached_barrier,
+        "publisher must reach the post-attestation barrier"
+    );
+    let config_update = {
+        let pool = db.pool.clone();
+        tokio::spawn(async move {
+            sqlx::query("UPDATE user_strategy_configs SET is_active = false WHERE id = $1")
+                .bind(config_id)
+                .execute(&pool)
+                .await
+        })
+    };
+    let dataset_update = {
+        let pool = db.pool.clone();
+        tokio::spawn(async move {
+            sqlx::query("UPDATE dataset_versions SET status = 'BLOCKED' WHERE id = $1")
+                .bind(dataset_id)
+                .execute(&pool)
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!config_update.is_finished());
+    assert!(!dataset_update.is_finished());
+    barrier.commit().await.unwrap();
+    let first = publishing.await.unwrap().expect("publication succeeds");
+    config_update.await.unwrap().unwrap();
+    dataset_update.await.unwrap().unwrap();
+    sqlx::query("UPDATE user_strategy_configs SET is_active = true WHERE id = $1")
+        .bind(config_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE dataset_versions SET status = 'READY' WHERE id = $1")
+        .bind(dataset_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "DROP TRIGGER test_pause_items ON recommendation_items; \
+         DROP FUNCTION test_pause_recommendation_publish()",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
     assert_eq!(first, PublicationOutcome::Published);
     let second = publish_recommendation(&worker, &queue, &claim, &attested, &u, &validated)
         .await
         .expect("identical retry observes committed result");
     assert_eq!(second, PublicationOutcome::AlreadyPublished);
+
+    let mut altered_claims = Vec::new();
+    let mut altered = claim.clone();
+    altered.job.job_type = "backtest".into();
+    altered_claims.push(altered);
+    let mut altered = claim.clone();
+    altered.job.owner_user_id = Uuid::new_v4();
+    altered_claims.push(altered);
+    let mut altered = claim.clone();
+    altered.job.payload_json = serde_json::json!({});
+    altered_claims.push(altered);
+    let mut altered = claim.clone();
+    altered.job.attempt_count += 1;
+    altered_claims.push(altered);
+    let mut altered = claim.clone();
+    altered.attempt.id = Uuid::new_v4();
+    altered_claims.push(altered);
+    let mut altered = claim.clone();
+    altered.attempt.attempt_no += 1;
+    altered_claims.push(altered);
+    let mut altered = claim.clone();
+    altered.attempt.claimed_by = Some("other-worker".into());
+    altered_claims.push(altered);
+    let mut altered = claim.clone();
+    altered.attempt.outcome = AttemptOutcome::Failed;
+    altered_claims.push(altered);
+    let mut altered = claim.clone();
+    altered.worker_id = "other-worker".into();
+    altered_claims.push(altered);
+    for altered in altered_claims {
+        publish_recommendation(&worker, &queue, &altered, &attested, &u, &validated)
+            .await
+            .expect_err("altered claim identity must not be idempotent success");
+    }
+
+    sqlx::query("UPDATE recommendation_runs SET as_of = as_of - 1 WHERE id = $1")
+        .bind(run_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    publish_recommendation(&worker, &queue, &claim, &attested, &u, &validated)
+        .await
+        .expect_err("tampered committed run lineage must not be idempotent success");
+    sqlx::query("UPDATE recommendation_runs SET as_of = $2 WHERE id = $1")
+        .bind(run_id)
+        .bind(attested.payload.as_of)
+        .execute(&db.pool)
+        .await
+        .unwrap();
 
     let (tampered_item_id, original_reasons): (Uuid, serde_json::Value) = sqlx::query_as(
         "SELECT id, reason_codes FROM recommendation_items \
@@ -790,7 +1043,7 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
     assert_eq!(summary["dataset_version"], "phase0-v2");
     assert_eq!(summary["curated_version"], 2);
     assert_eq!(summary["manifest_sha256"], "c".repeat(64));
-    assert_eq!(summary["universe_snapshot_id"], u.snapshot_id);
+    assert_eq!(summary["universe_snapshot_id"], u.snapshot_id());
     assert_eq!(
         summary["factor_snapshot_hash"],
         format!("sha256:{}", "b".repeat(64))

@@ -26,12 +26,38 @@ pub struct StrategyRequirements {
 /// The single immutable universe accepted by the first recommendation release.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttestedUniverse {
-    pub universe_id: String,
-    pub snapshot_id: String,
-    pub members: Vec<String>,
+    universe_id: String,
+    snapshot_id: String,
+    members: Vec<String>,
 }
 
 impl AttestedUniverse {
+    pub fn universe_id(&self) -> &str {
+        &self.universe_id
+    }
+
+    pub fn snapshot_id(&self) -> &str {
+        &self.snapshot_id
+    }
+
+    pub fn members(&self) -> &[String] {
+        &self.members
+    }
+
+    /// Re-check the complete value against the repository-owned canonical
+    /// manifest. Call this again at every trust boundary.
+    pub fn validate_canonical(&self) -> Result<(), RecommendationError> {
+        let shipped = Self::from_manifest_yaml(include_str!(
+            "../../../../configs/universes/kr-etf-core-v1.yaml"
+        ))?;
+        if self != &shipped {
+            return Err(RecommendationError::InvalidUniverse {
+                detail: "universe attestation does not match the shipped fixed snapshot".into(),
+            });
+        }
+        Ok(())
+    }
+
     /// Parse a manifest and require byte-independent canonical equality with
     /// the repository's shipped fixed-universe definition.
     pub fn from_manifest_yaml(yaml: &str) -> Result<Self, RecommendationError> {
@@ -157,7 +183,7 @@ pub fn compute_close(
     let shape =
         dataset_shape_for_version(dataset_root, pin.curated_version).map_err(map_shape_error)?;
     let actual = shape.instruments.iter().cloned().collect::<BTreeSet<_>>();
-    let expected = universe.members.iter().cloned().collect::<BTreeSet<_>>();
+    let expected = universe.members().iter().cloned().collect::<BTreeSet<_>>();
     if actual != expected {
         return Err(RecommendationError::DataBlocked {
             detail: format!(
@@ -169,11 +195,11 @@ pub fn compute_close(
     }
 
     let member_refs = universe
-        .members
+        .members()
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    let frozen = FrozenUniverse::new(&universe.snapshot_id, &member_refs);
+    let frozen = FrozenUniverse::new(universe.snapshot_id(), &member_refs);
     let bars = Bars::from_curated(
         &store,
         "kr",
@@ -228,7 +254,7 @@ pub fn compute_close(
     .map_err(map_factor_error)?;
 
     let mut values = universe
-        .members
+        .members()
         .iter()
         .map(|member| (member.clone(), BTreeMap::new()))
         .collect::<BTreeMap<_, _>>();
@@ -376,15 +402,7 @@ fn map_factor_error(error: FactorError) -> RecommendationError {
 }
 
 fn validate_fixed_universe(universe: &AttestedUniverse) -> Result<(), RecommendationError> {
-    let shipped = AttestedUniverse::from_manifest_yaml(include_str!(
-        "../../../../configs/universes/kr-etf-core-v1.yaml"
-    ))?;
-    if universe != &shipped {
-        return Err(RecommendationError::InvalidUniverse {
-            detail: "universe attestation does not match the shipped fixed snapshot".to_owned(),
-        });
-    }
-    Ok(())
+    universe.validate_canonical()
 }
 
 /// Validate one resolved config against its shipped immutable package and

@@ -73,6 +73,10 @@ const RECOMMENDATION_ROLLBACK_GUARD_UP_SQL: &str =
     include_str!("../../../../migrations/0033_recommendation_rollback_guard.up.sql");
 const RECOMMENDATION_ROLLBACK_GUARD_DOWN_SQL: &str =
     include_str!("../../../../migrations/0033_recommendation_rollback_guard.down.sql");
+const RECOMMENDATION_PUBLICATION_LOCK_UP_SQL: &str =
+    include_str!("../../../../migrations/0034_recommendation_publication_locks.up.sql");
+const RECOMMENDATION_PUBLICATION_LOCK_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0034_recommendation_publication_locks.down.sql");
 const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
 const RESEARCH_SCHEMA_GATE_SQL: &str =
@@ -87,7 +91,7 @@ fn recommendation_pipeline_migration_is_tracked() {
         assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
         assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
     }
-    for version in 26..=33 {
+    for version in 26..=34 {
         let up = MIGRATOR.migrations.iter().find(|migration| {
             migration.version == version
                 && migration.migration_type != MigrationType::ReversibleDown
@@ -133,12 +137,27 @@ fn recommendation_pipeline_migration_is_tracked() {
     assert!(RECOMMENDATION_ROLLBACK_GUARD_DOWN_SQL.contains("pg_advisory_xact_lock"));
     assert!(RECOMMENDATION_ROLLBACK_GUARD_DOWN_SQL.contains("active = false"));
     assert!(RECOMMENDATION_ROLLBACK_GUARD_DOWN_SQL.contains("REVOKE EXECUTE ON FUNCTION"));
+    assert!(RECOMMENDATION_PUBLICATION_LOCK_UP_SQL.contains("SECURITY DEFINER"));
+    assert!(
+        RECOMMENDATION_PUBLICATION_LOCK_UP_SQL.contains("SET search_path = pg_catalog, pg_temp")
+    );
+    assert!(RECOMMENDATION_PUBLICATION_LOCK_UP_SQL.contains("FROM public.user_strategy_configs"));
+    assert!(RECOMMENDATION_PUBLICATION_LOCK_UP_SQL.contains("FROM public.dataset_versions"));
+    assert!(RECOMMENDATION_PUBLICATION_LOCK_UP_SQL.contains("FROM public.universe_snapshots"));
+    assert_eq!(
+        RECOMMENDATION_PUBLICATION_LOCK_UP_SQL
+            .matches("FOR SHARE")
+            .count(),
+        3
+    );
+    assert!(RECOMMENDATION_PUBLICATION_LOCK_UP_SQL.contains("GRANT EXECUTE"));
+    assert!(RECOMMENDATION_PUBLICATION_LOCK_DOWN_SQL.contains("REVOKE EXECUTE"));
 }
 
 #[test]
 fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
     for token in [
-        "version IN (22, 23, 24, 25, 33)",
+        "version IN (22, 23, 24, 25, 33, 34)",
         "convalidated",
         "pg_get_constraintdef",
         "format_type",
@@ -201,7 +220,7 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         sqlx::query(
             "INSERT INTO _sqlx_migrations \
              (version, description, installed_on, success, checksum, execution_time) \
-             VALUES (34, 'future migration', now(), true, decode(repeat('00', 32), 'hex'), 0)",
+             VALUES (35, 'future migration', now(), true, decode(repeat('00', 32), 'hex'), 0)",
         )
         .execute(&owner)
         .await?;
@@ -218,7 +237,7 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         assert!(
             missing_required
                 .to_string()
-                .contains("successful SQLx migrations 22-25 and 33 are required")
+                .contains("successful SQLx migrations 22-25 and 33-34 are required")
         );
         sqlx::query("UPDATE _sqlx_migrations SET success = true WHERE version = 33")
             .execute(&owner)
@@ -313,12 +332,13 @@ async fn wait_for_advisory_wait(
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    let activity: Option<(
+    type Activity = (
         Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
-    )> = sqlx::query_as(
+    );
+    let activity: Option<Activity> = sqlx::query_as(
         "SELECT state, wait_event_type, wait_event, query \
          FROM pg_stat_activity WHERE pid = $1",
     )
@@ -2127,15 +2147,15 @@ async fn revert_and_rerun_body(
         "fresh DB must apply all {expected} migrations"
     );
 
-    // Revert the 0033..0026 recommendation family, then 0025, 0024, and 0023
+    // Revert the 0034..0026 recommendation family, then 0025, 0024, and 0023
     // before 0022 while all earlier tables remain.
     // This proves each down migration restores its own boundary rather than
     // relying on 0003.down to hide omitted objects in a full teardown.
     MIGRATOR.undo(owner, 25).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 8,
-        "undo to 0025 must revert the complete 0033..0026 family"
+        expected - 9,
+        "undo to 0025 must revert the complete 0034..0026 family"
     );
     let scheduler_gone: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
@@ -2160,7 +2180,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 24).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 9,
+        expected - 10,
         "undo to 0024 must revert only 0025"
     );
     let calendar_lookup_gone: Option<String> = sqlx::query_scalar(
@@ -2184,7 +2204,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 23).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 10,
+        expected - 11,
         "undo to 0023 must revert only 0024"
     );
     let source_index_gone: Option<String> =
@@ -2198,7 +2218,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 22).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 11,
+        expected - 12,
         "undo to 0022 must revert only 0023"
     );
     sqlx::query(
@@ -2211,7 +2231,7 @@ async fn revert_and_rerun_body(
     MIGRATOR.undo(owner, 21).await?;
     assert_eq!(
         applied_count(owner).await? as usize,
-        expected - 12,
+        expected - 13,
         "undo to 0021 must revert only 0022"
     );
     for object in [
@@ -2550,7 +2570,7 @@ async fn recommendation_pipeline_contract_body(
     );
 
     MIGRATOR.run_to(33, owner).await?;
-    assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
+    assert_eq!(applied_count(owner).await?, 33);
     let active_control: bool = sqlx::query_scalar(
         "SELECT active FROM recommendation_scheduler_control \
          WHERE control_key = 'scheduler'",
@@ -2558,6 +2578,8 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     assert!(active_control);
+    MIGRATOR.run_to(34, owner).await?;
+    assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
 
     let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
         "SELECT table_name, column_name, is_nullable, column_default \
@@ -2735,6 +2757,19 @@ async fn recommendation_pipeline_contract_body(
         Some(vec!["search_path=pg_catalog, public".into()]),
         "scheduler function must pin a safe search_path"
     );
+    let publication_lock_metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
+        "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
+         FROM pg_proc WHERE oid = \
+         'public.lock_recommendation_publication_inputs(uuid,uuid,text,text,jsonb,uuid,text,text,text,text,text,text,jsonb)'::regprocedure",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(publication_lock_metadata.0);
+    assert_eq!(publication_lock_metadata.1, "migration_owner");
+    assert_eq!(
+        publication_lock_metadata.2,
+        Some(vec!["search_path=pg_catalog, pg_temp".into()])
+    );
     let scheduled_guard: (String, String) = sqlx::query_as(
         "SELECT guard_trigger.tgname, guard_fn.proname FROM pg_trigger AS guard_trigger \
          JOIN pg_proc AS guard_fn ON guard_fn.oid = guard_trigger.tgfoid \
@@ -2784,6 +2819,25 @@ async fn recommendation_pipeline_contract_body(
         assert_eq!(
             can_execute, expected,
             "unexpected scheduler EXECUTE privilege for {role}"
+        );
+    }
+    for (role, expected) in [
+        ("worker", true),
+        ("app", false),
+        ("admin", false),
+        ("audit_writer", false),
+        ("research_writer", false),
+    ] {
+        let can_execute: bool = sqlx::query_scalar(
+            "SELECT has_function_privilege($1, \
+             'public.lock_recommendation_publication_inputs(uuid,uuid,text,text,jsonb,uuid,text,text,text,text,text,text,jsonb)', 'EXECUTE')",
+        )
+        .bind(role)
+        .fetch_one(owner)
+        .await?;
+        assert_eq!(
+            can_execute, expected,
+            "unexpected publication lock EXECUTE privilege for {role}"
         );
     }
 
@@ -3339,9 +3393,16 @@ async fn recommendation_pipeline_contract_body(
     );
     assert_eq!(
         applied_count(owner).await?,
-        up_migration_count() as i64,
-        "rollback refusal must happen before the first recommendation-family down migration"
+        33,
+        "0034 may reverse before the 0033 lineage guard refuses the remaining family"
     );
+    let publication_lock_after_failed_down: Option<String> = sqlx::query_scalar(
+        "SELECT to_regprocedure( \
+         'public.lock_recommendation_publication_inputs(uuid,uuid,text,text,jsonb,uuid,text,text,text,text,text,text,jsonb)')::text",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(publication_lock_after_failed_down.is_none());
     let function_after_failed_down: Option<String> = sqlx::query_scalar(
         "SELECT to_regprocedure( \
          'public.schedule_recommendation_run(uuid,uuid,date,uuid,text,integer,text)')::text",
@@ -3441,7 +3502,7 @@ async fn recommendation_pipeline_contract_body(
     assert_eq!(
         applied_count(owner).await?,
         25,
-        "0033 through 0026 must reverse in dependency order"
+        "0034 through 0026 must reverse in dependency order"
     );
     let columns_after_down: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \

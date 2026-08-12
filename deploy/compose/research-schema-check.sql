@@ -8,8 +8,8 @@ DECLARE
 BEGIN
   IF to_regclass('public._sqlx_migrations') IS NULL
      OR (SELECT count(*) FROM _sqlx_migrations
-         WHERE version IN (22, 23, 24, 25, 33) AND success) <> 5 THEN
-    RAISE EXCEPTION 'successful SQLx migrations 22-25 and 33 are required';
+         WHERE version IN (22, 23, 24, 25, 33, 34) AND success) <> 6 THEN
+    RAISE EXCEPTION 'successful SQLx migrations 22-25 and 33-34 are required';
   END IF;
 
   IF to_regclass('public.data_batches') IS NULL
