@@ -496,7 +496,7 @@ async fn malformed_payload_fails_job_and_matching_run_without_leaking_payload() 
 }
 
 #[tokio::test]
-async fn revoked_entitlement_blocks_linked_run_without_outputs() {
+async fn entitlement_revoked_after_enqueue_blocks_linked_run_without_outputs() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -534,13 +534,14 @@ async fn revoked_entitlement_blocks_linked_run_without_outputs() {
     .execute(&db.pool)
     .await
     .unwrap();
-    sqlx::query(
+    let entitlement_id: Uuid = sqlx::query_scalar(
         "INSERT INTO data_entitlements \
          (contract_document_sha256, contract_reference, status, covered_datasets, covered_uses, effective_from, effective_until, managed_by) \
-         VALUES (repeat('e', 64), 'vault://qa/revoked', 'REVOKED', '[\"krx_eod_bars\"]', '[\"recommendation\"]', DATE '2020-01-01', DATE '2030-12-31', $1)",
+         VALUES (repeat('e', 64), 'vault://qa/revoked', 'ACTIVE', '[\"krx_eod_bars\"]', '[\"recommendation\"]', DATE '2020-01-01', DATE '2030-12-31', $1) \
+         RETURNING id",
     )
     .bind(owner_id)
-    .execute(&db.pool)
+    .fetch_one(&db.pool)
     .await
     .unwrap();
     let run_id = Uuid::new_v4();
@@ -583,6 +584,23 @@ async fn revoked_entitlement_blocks_linked_run_without_outputs() {
     .execute(&db.pool)
     .await
     .unwrap();
+    let queued_state: (String, String) = sqlx::query_as(
+        "SELECT j.status, r.status FROM jobs j \
+         JOIN recommendation_runs r ON r.job_id = j.id WHERE j.id = $1",
+    )
+    .bind(job.id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(queued_state, ("QUEUED".into(), "PENDING".into()));
+
+    // The supervisor fixture represents the privileged contract-admin control
+    // plane; the production app and worker roles cannot mutate entitlement rows.
+    sqlx::query("UPDATE data_entitlements SET status = 'REVOKED' WHERE id = $1")
+        .bind(entitlement_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let worker = PgPool::connect(&db.role_url("worker")).await.unwrap();
     let config = RecommendationRunnerConfig::new(
         Duration::from_millis(10),
@@ -607,7 +625,6 @@ async fn revoked_entitlement_blocks_linked_run_without_outputs() {
             backoff_base: Duration::from_millis(1),
         },
     );
-
     assert_eq!(
         run_once(&worker, &queue, "recommendation-test", &paths, &config)
             .await
@@ -616,6 +633,27 @@ async fn revoked_entitlement_blocks_linked_run_without_outputs() {
             job_id: job.id,
             code: "DATA_ENTITLEMENT_REQUIRED".into(),
         }
+    );
+    let job_state: (String, Option<String>, i32, i32, String, Option<String>) = sqlx::query_as(
+        "SELECT j.status, j.error_code, j.attempt_count, j.max_attempts, \
+                a.outcome, a.error_code \
+         FROM jobs j JOIN job_attempts a ON a.job_id = j.id \
+         WHERE j.id = $1 AND a.attempt_no = 1",
+    )
+    .bind(job.id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        job_state,
+        (
+            "FAILED".into(),
+            Some("DATA_ENTITLEMENT_REQUIRED".into()),
+            1,
+            2,
+            "FAILED".into(),
+            Some("DATA_ENTITLEMENT_REQUIRED".into()),
+        )
     );
     let status: String = sqlx::query_scalar("SELECT status FROM recommendation_runs WHERE id = $1")
         .bind(run_id)
