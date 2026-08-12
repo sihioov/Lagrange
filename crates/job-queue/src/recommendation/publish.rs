@@ -1,6 +1,6 @@
 //! One-transaction publication of a validated recommendation portfolio.
 
-use crate::error::QueueError;
+use crate::error::{QueueError, database_error_class};
 use crate::queue::JobQueue;
 use crate::recommendation::compute::AttestedUniverse;
 use crate::recommendation::input::{AttestedDatasetStatus, AttestedRecommendationInput};
@@ -27,22 +27,23 @@ pub enum PublicationError {
 }
 
 impl PublicationError {
-    pub const fn class(&self) -> ErrorClass {
+    pub fn class(&self) -> ErrorClass {
         match self {
-            Self::Database(_) => ErrorClass::Transient,
-            Self::Queue(QueueError::Database(_)) => ErrorClass::Transient,
+            Self::Database(error) | Self::Queue(QueueError::Database(error)) => {
+                database_error_class(error)
+            }
             Self::Queue(_) | Self::Integrity { .. } => ErrorClass::Integrity,
         }
     }
 
-    pub const fn code(&self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
-            Self::Database(_) | Self::Queue(QueueError::Database(_)) => {
-                "RECOMMENDATION_PUBLISH_UNAVAILABLE"
-            }
             Self::Queue(QueueError::StaleClaim(_)) => "RECOMMENDATION_PUBLISH_STALE_CLAIM",
-            Self::Queue(_) => "RECOMMENDATION_PUBLISH_QUEUE_INTEGRITY",
-            Self::Integrity { .. } => "RECOMMENDATION_PUBLISH_INTEGRITY",
+            Self::Database(_) | Self::Queue(QueueError::Database(_)) => match self.class() {
+                ErrorClass::Transient => "RECOMMENDATION_PUBLISH_UNAVAILABLE",
+                _ => "RECOMMENDATION_PUBLISH_INTEGRITY",
+            },
+            Self::Queue(_) | Self::Integrity { .. } => "RECOMMENDATION_PUBLISH_INTEGRITY",
         }
     }
 }
@@ -68,6 +69,7 @@ struct PublishedRow {
     job_status: String,
     run_status: String,
     summary_json: Value,
+    items_json: Value,
     item_count: i64,
     portfolio_count: i64,
     cash_weight: String,
@@ -86,16 +88,28 @@ struct PublishedRow {
     dataset_manifest_sha256: Option<String>,
 }
 
-#[derive(Debug, PartialEq, sqlx::FromRow)]
-struct PublishedItem {
-    instrument_id: String,
-    rank: Option<i32>,
-    target_weight: Option<String>,
-    reason_codes: Value,
-    factors_json: Value,
-    excluded: bool,
-    exclusion_reason: Option<String>,
-}
+const ALREADY_PUBLISHED_SQL: &str = "SELECT j.job_type, j.owner_user_id AS job_owner_user_id, j.payload_json AS job_payload_json, \
+            j.attempt_count, j.status AS job_status, r.status AS run_status, r.summary_json, \
+            (SELECT count(*) FROM recommendation_items i WHERE i.recommendation_run_id = r.id) AS item_count, \
+            COALESCE((SELECT jsonb_agg(jsonb_build_object(\
+                'instrument_id', i.instrument_id, 'rank', i.rank, \
+                'target_weight', CASE WHEN i.target_weight IS NULL THEN NULL ELSE to_jsonb(i.target_weight::text) END, \
+                'reason_codes', i.reason_codes, 'factors_json', i.factors_json, \
+                'excluded', i.excluded, 'exclusion_reason', i.exclusion_reason\
+            ) ORDER BY i.instrument_id) FROM recommendation_items i \
+            WHERE i.recommendation_run_id = r.id AND i.owner_user_id = r.owner_user_id), '[]'::jsonb) AS items_json, \
+            (SELECT count(*) FROM target_portfolios existing WHERE existing.recommendation_run_id = r.id) AS portfolio_count, \
+            p.cash_weight::text AS cash_weight, p.weights_json, a.outcome AS attempt_outcome, \
+            a.id AS attempt_id, a.attempt_no, a.claimed_by, \
+            p.as_of AS portfolio_as_of, p.universe_snapshot_id, r.trigger_kind, \
+            r.strategy_config_id, r.as_of AS run_as_of, r.job_id AS run_job_id, \
+            r.dataset_version_id, r.dataset_manifest_sha256 \
+     FROM jobs j \
+     JOIN recommendation_runs r ON r.job_id = j.id AND r.owner_user_id = j.owner_user_id \
+     JOIN target_portfolios p ON p.recommendation_run_id = r.id AND p.owner_user_id = r.owner_user_id \
+     JOIN job_attempts a ON a.job_id = j.id AND a.attempt_no = $4 \
+     WHERE j.id = $1 AND j.owner_user_id = $2 AND r.id = $3 \
+     FOR UPDATE OF j, r";
 
 /// Publish all result rows, the run transition and queue settlement under one
 /// worker transaction. No database write is visible unless every guard and
@@ -190,26 +204,7 @@ pub async fn publish_recommendation(
     .execute(&mut *transaction)
     .await?;
 
-    let warnings: Vec<&str> = match input.dataset.status {
-        AttestedDatasetStatus::Ready => Vec::new(),
-        AttestedDatasetStatus::Warning => vec!["DATASET_STATUS_WARNING"],
-    };
-    let summary = json!({
-        "dataset_id": input.dataset.dataset_id,
-        "dataset_version": input.dataset.version,
-        "dataset_version_id": input.dataset.id,
-        "curated_version": input.dataset.curated_version,
-        "manifest_sha256": input.dataset.manifest_sha256,
-        "universe_snapshot_id": portfolio.universe_snapshot_id,
-        "factor_snapshot_hash": portfolio.factor_snapshot_hash,
-        "portfolio_snapshot_id": portfolio.portfolio_snapshot_id,
-        "selected_count": portfolio.selected_count,
-        "excluded_count": portfolio.excluded_count,
-        "cash_weight": portfolio.cash_weight,
-        "trigger_kind": run.trigger_kind,
-        "warnings": warnings,
-        "portfolio_reasons": portfolio.portfolio_reasons,
-    });
+    let summary = expected_summary(input, portfolio, &run.trigger_kind);
     let updated = sqlx::query(
         "UPDATE recommendation_runs SET status = 'SUCCEEDED', summary_json = $3 \
          WHERE id = $1 AND owner_user_id = $2 AND status = 'PENDING'",
@@ -324,60 +319,34 @@ async fn already_published(
 ) -> Result<bool, PublicationError> {
     let expected_payload = serde_json::to_value(&input.payload)
         .map_err(|_| integrity("attested payload cannot be represented as JSON"))?;
-    let row: Option<PublishedRow> = sqlx::query_as(
-        "SELECT j.job_type, j.owner_user_id AS job_owner_user_id, j.payload_json AS job_payload_json, \
-                j.attempt_count, j.status AS job_status, r.status AS run_status, r.summary_json, \
-                (SELECT count(*) FROM recommendation_items i WHERE i.recommendation_run_id = r.id) AS item_count, \
-                (SELECT count(*) FROM target_portfolios existing WHERE existing.recommendation_run_id = r.id) AS portfolio_count, \
-                p.cash_weight::text AS cash_weight, p.weights_json, a.outcome AS attempt_outcome, \
-                a.id AS attempt_id, a.attempt_no, a.claimed_by, \
-                p.as_of AS portfolio_as_of, p.universe_snapshot_id, r.trigger_kind, \
-                r.strategy_config_id, r.as_of AS run_as_of, r.job_id AS run_job_id, \
-                r.dataset_version_id, r.dataset_manifest_sha256 \
-         FROM jobs j \
-         JOIN recommendation_runs r ON r.job_id = j.id AND r.owner_user_id = j.owner_user_id \
-         JOIN target_portfolios p ON p.recommendation_run_id = r.id AND p.owner_user_id = r.owner_user_id \
-         JOIN job_attempts a ON a.job_id = j.id AND a.attempt_no = $4 \
-         WHERE j.id = $1 AND j.owner_user_id = $2 AND r.id = $3 \
-         FOR UPDATE OF j, r",
-    )
-    .bind(claim.job.id)
-    .bind(claim.job.owner_user_id)
-    .bind(input.payload.run_id)
-    .bind(claim.attempt.attempt_no)
-    .fetch_optional(&mut **transaction)
-    .await?;
+    let row: Option<PublishedRow> = sqlx::query_as(ALREADY_PUBLISHED_SQL)
+        .bind(claim.job.id)
+        .bind(claim.job.owner_user_id)
+        .bind(input.payload.run_id)
+        .bind(claim.attempt.attempt_no)
+        .fetch_optional(&mut **transaction)
+        .await?;
     let Some(row) = row else {
         return Ok(false);
     };
-    let published_items: Vec<PublishedItem> = sqlx::query_as(
-        "SELECT instrument_id, rank, target_weight::text, reason_codes, factors_json, \
-                excluded, exclusion_reason \
-         FROM recommendation_items \
-         WHERE recommendation_run_id = $1 AND owner_user_id = $2 \
-         ORDER BY instrument_id",
-    )
-    .bind(input.payload.run_id)
-    .bind(claim.job.owner_user_id)
-    .fetch_all(&mut **transaction)
-    .await?;
-    let items_match = published_items.len() == portfolio.items.len()
-        && published_items
+    let expected_items = Value::Array(
+        portfolio
+            .items
             .iter()
-            .zip(&portfolio.items)
-            .all(|(published, expected)| {
-                published.instrument_id == expected.instrument_id
-                    && published.rank == expected.rank
-                    && published.target_weight == expected.target_weight
-                    && published.reason_codes == expected.reason_codes
-                    && published.factors_json == expected.factors_json
-                    && published.excluded == expected.excluded
-                    && published.exclusion_reason == expected.exclusion_reason
-            });
-    let expected_warnings = match input.dataset.status {
-        AttestedDatasetStatus::Ready => json!([]),
-        AttestedDatasetStatus::Warning => json!(["DATASET_STATUS_WARNING"]),
-    };
+            .map(|item| {
+                json!({
+                    "instrument_id": item.instrument_id,
+                    "rank": item.rank,
+                    "target_weight": item.target_weight,
+                    "reason_codes": item.reason_codes,
+                    "factors_json": item.factors_json,
+                    "excluded": item.excluded,
+                    "exclusion_reason": item.exclusion_reason,
+                })
+            })
+            .collect(),
+    );
+    let expected_summary = expected_summary(input, portfolio, &row.trigger_kind);
     Ok(row.job_status == "SUCCEEDED"
         && claim.job.job_type == "recommendation"
         && claim.job.payload_json == expected_payload
@@ -401,50 +370,41 @@ async fn already_published(
         && row.dataset_manifest_sha256.as_deref() == Some(input.dataset.manifest_sha256.as_str())
         && row.item_count == 11
         && row.portfolio_count == 1
-        && items_match
+        && row.items_json == expected_items
         && row.portfolio_as_of == input.payload.as_of
         && row.universe_snapshot_id.as_deref() == Some(portfolio.universe_snapshot_id.as_str())
-        && row.summary_json.get("dataset_id").and_then(Value::as_str)
-            == Some(input.dataset.dataset_id.as_str())
-        && row
-            .summary_json
-            .get("dataset_version")
-            .and_then(Value::as_str)
-            == Some(input.dataset.version.as_str())
-        && row.summary_json.get("dataset_version_id") == Some(&json!(input.dataset.id))
-        && row.summary_json.get("curated_version") == Some(&json!(input.dataset.curated_version))
-        && row
-            .summary_json
-            .get("manifest_sha256")
-            .and_then(Value::as_str)
-            == Some(input.dataset.manifest_sha256.as_str())
-        && row
-            .summary_json
-            .get("universe_snapshot_id")
-            .and_then(Value::as_str)
-            == Some(portfolio.universe_snapshot_id.as_str())
-        && row
-            .summary_json
-            .get("factor_snapshot_hash")
-            .and_then(Value::as_str)
-            == Some(portfolio.factor_snapshot_hash.as_str())
-        && row
-            .summary_json
-            .get("portfolio_snapshot_id")
-            .and_then(Value::as_str)
-            == Some(portfolio.portfolio_snapshot_id.as_str())
-        && row.summary_json.get("selected_count") == Some(&json!(portfolio.selected_count))
-        && row.summary_json.get("excluded_count") == Some(&json!(portfolio.excluded_count))
-        && row.summary_json.get("cash_weight").and_then(Value::as_str)
-            == Some(portfolio.cash_weight.as_str())
-        && row.summary_json.get("trigger_kind").and_then(Value::as_str)
-            == Some(row.trigger_kind.as_str())
-        && row.summary_json.get("warnings") == Some(&expected_warnings)
-        && row.summary_json.get("portfolio_reasons") == Some(&portfolio.portfolio_reasons)
+        && row.summary_json == expected_summary
         && row.cash_weight == portfolio.cash_weight
         && row.weights_json
             == serde_json::to_value(&portfolio.positive_weights)
                 .map_err(|_| integrity("validated weights cannot be represented as JSON"))?)
+}
+
+fn expected_summary(
+    input: &AttestedRecommendationInput,
+    portfolio: &ValidatedPortfolio,
+    trigger_kind: &str,
+) -> Value {
+    let warnings: Vec<&str> = match input.dataset.status {
+        AttestedDatasetStatus::Ready => Vec::new(),
+        AttestedDatasetStatus::Warning => vec!["DATASET_STATUS_WARNING"],
+    };
+    json!({
+        "dataset_id": input.dataset.dataset_id,
+        "dataset_version": input.dataset.version,
+        "dataset_version_id": input.dataset.id,
+        "curated_version": input.dataset.curated_version,
+        "manifest_sha256": input.dataset.manifest_sha256,
+        "universe_snapshot_id": portfolio.universe_snapshot_id,
+        "factor_snapshot_hash": portfolio.factor_snapshot_hash,
+        "portfolio_snapshot_id": portfolio.portfolio_snapshot_id,
+        "selected_count": portfolio.selected_count,
+        "excluded_count": portfolio.excluded_count,
+        "cash_weight": portfolio.cash_weight,
+        "trigger_kind": trigger_kind,
+        "warnings": warnings,
+        "portfolio_reasons": portfolio.portfolio_reasons,
+    })
 }
 
 async fn rollback_integrity<T>(
@@ -458,5 +418,44 @@ async fn rollback_integrity<T>(
 fn integrity(detail: &str) -> PublicationError {
     PublicationError::Integrity {
         detail: detail.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ALREADY_PUBLISHED_SQL, PublicationError};
+    use crate::error::QueueError;
+    use crate::types::ErrorClass;
+
+    #[test]
+    fn replay_snapshot_statement_contains_every_compared_result_component() {
+        assert!(ALREADY_PUBLISHED_SQL.contains("FOR UPDATE OF j, r"));
+        assert!(ALREADY_PUBLISHED_SQL.contains("jsonb_agg"));
+        assert!(ALREADY_PUBLISHED_SQL.contains("ORDER BY i.instrument_id"));
+        for relation in [
+            "FROM jobs",
+            "JOIN recommendation_runs",
+            "JOIN target_portfolios",
+            "JOIN job_attempts",
+            "FROM recommendation_items",
+        ] {
+            assert!(
+                ALREADY_PUBLISHED_SQL.contains(relation),
+                "missing {relation}"
+            );
+        }
+    }
+
+    #[test]
+    fn direct_and_queue_wrapped_database_errors_share_the_same_mapping() {
+        let direct = PublicationError::Database(sqlx::Error::PoolTimedOut);
+        assert_eq!(direct.class(), ErrorClass::Transient);
+        assert_eq!(direct.code(), "RECOMMENDATION_PUBLISH_UNAVAILABLE");
+
+        let wrapped = PublicationError::Queue(QueueError::Database(sqlx::Error::ColumnNotFound(
+            "missing".into(),
+        )));
+        assert_eq!(wrapped.class(), ErrorClass::Integrity);
+        assert_eq!(wrapped.code(), "RECOMMENDATION_PUBLISH_INTEGRITY");
     }
 }

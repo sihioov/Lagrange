@@ -810,7 +810,7 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
 
     sqlx::raw_sql(
         "CREATE OR REPLACE FUNCTION test_fail_recommendation_publish() RETURNS trigger \
-         LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected publication failure'; END $$",
+         LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE = '23505', MESSAGE = 'injected publication failure'; END $$",
     )
     .execute(&db.pool)
     .await
@@ -832,17 +832,45 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
             "CREATE TRIGGER test_fail_job BEFORE UPDATE ON jobs FOR EACH ROW WHEN (NEW.status = 'SUCCEEDED') EXECUTE FUNCTION test_fail_recommendation_publish()",
             "DROP TRIGGER test_fail_job ON jobs",
         ),
+        (
+            "CREATE TRIGGER test_fail_attempt BEFORE UPDATE ON job_attempts FOR EACH ROW WHEN (NEW.outcome = 'SUCCEEDED') EXECUTE FUNCTION test_fail_recommendation_publish()",
+            "DROP TRIGGER test_fail_attempt ON job_attempts",
+        ),
     ] {
         sqlx::raw_sql(create_trigger)
             .execute(&db.pool)
             .await
             .unwrap();
-        publish_recommendation(&worker, &queue, &claim, &attested, &u, &validated)
+        let failure = publish_recommendation(&worker, &queue, &claim, &attested, &u, &validated)
             .await
             .expect_err("injected boundary failure rolls back");
+        assert_eq!(failure.class(), ErrorClass::Integrity);
+        assert_eq!(failure.code(), "RECOMMENDATION_PUBLISH_INTEGRITY");
         assert_unpublished(&worker, run_id, job.id, claim.attempt.attempt_no).await;
         sqlx::raw_sql(drop_trigger).execute(&db.pool).await.unwrap();
     }
+    sqlx::raw_sql(
+        "CREATE FUNCTION test_fail_recommendation_publish_transient() RETURNS trigger \
+         LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'injected serialization failure'; END $$; \
+         CREATE TRIGGER test_fail_items_transient BEFORE INSERT ON recommendation_items \
+         FOR EACH STATEMENT EXECUTE FUNCTION test_fail_recommendation_publish_transient()",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let transient = publish_recommendation(&worker, &queue, &claim, &attested, &u, &validated)
+        .await
+        .expect_err("serialization failure rolls the publication back");
+    assert_eq!(transient.class(), ErrorClass::Transient);
+    assert_eq!(transient.code(), "RECOMMENDATION_PUBLISH_UNAVAILABLE");
+    assert_unpublished(&worker, run_id, job.id, claim.attempt.attempt_no).await;
+    sqlx::raw_sql(
+        "DROP TRIGGER test_fail_items_transient ON recommendation_items; \
+         DROP FUNCTION test_fail_recommendation_publish_transient()",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
 
     // Once publication has re-attested and acquired shared row locks, input
     // mutations wait until its atomic commit. An advisory trigger provides a
@@ -938,6 +966,25 @@ async fn publishes_exactly_eleven_rows_and_settles_everything_atomically() {
         .await
         .expect("identical retry observes committed result");
     assert_eq!(second, PublicationOutcome::AlreadyPublished);
+
+    sqlx::query(
+        "UPDATE recommendation_runs \
+         SET summary_json = summary_json || '{\"unexpected\": true}'::jsonb WHERE id = $1",
+    )
+    .bind(run_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    publish_recommendation(&worker, &queue, &claim, &attested, &u, &validated)
+        .await
+        .expect_err("an extra summary field must reject idempotent replay");
+    sqlx::query(
+        "UPDATE recommendation_runs SET summary_json = summary_json - 'unexpected' WHERE id = $1",
+    )
+    .bind(run_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
 
     let mut altered_claims = Vec::new();
     let mut altered = claim.clone();
