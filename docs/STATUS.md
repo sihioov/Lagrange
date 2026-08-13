@@ -81,6 +81,8 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 
 추천 결과를 활성 Paper 계좌에 적용하기 전에 주문 후보·예상 수수료·가용 현금·잔여 현금·종목별 판단 사유를 고정소수점으로 계산하는 백엔드 경로를 추가했다. 미리보기는 추천 종가와 정확한 데이터셋/포트폴리오/계좌 상태 해시에 고정되며, 상태가 달라지면 적용을 거부한다. 명시적 적용은 주문이나 체결을 즉시 만들지 않고 `MANUAL_RECOMMENDATION` pending target만 원자적으로 생성한다. 실제 Paper 실행 시에는 다음 거래일 raw open으로 다시 계획하므로 미리보기와 체결 모델을 혼동하지 않는다. 이번 범위는 API·큐·DB·실행 경계까지이며 **UI와 Live 주문은 포함하지 않는다.**
 
+최종 무결성 감사에서는 worker가 계산 전에 on-disk manifest의 canonical hash를 DB pin과 다시 대조하고, snapshot 전·후 목표 포트폴리오 변경을 READY 발행 전에 영구 거부하도록 보강했다. `cash_ledger`/`positions`는 이제 `(account_id, owner_user_id)` 복합 FK로 실제 계정 소유자와 일치해야 하므로 교차 테넌트 행을 계정에 연결해 상태 버전을 우회할 수 없다. 적용 시에는 계산 당시 Seoul 날짜 이후의 첫 attested KRX 거래일이 여전히 같은지도 재검증한다.
+
 ## 3. 최근에 고쳐진 것 (2026-08-08 ~ 08-11)
 
 ### 3.1 관통하는 패턴 — 결함은 이음매에 산다
@@ -196,7 +198,7 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 2. **실제 KRX provider와 운영 원천 활성화.** 코드의 synthetic 수집·발행·복구 배선은 완료됐지만, 라이선스·credential·entitlement-aware HTTP transport와 실제 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning해야 한다. 그 뒤 운영 PostgreSQL에 실제 KRX 캘린더와 EOD batch 메타데이터를 공급하고 라이브 계정의 intent 상태를 정상적으로 유지해야 한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 3. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화(이번 재실행도 E7은 스킵).
 
-**작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. `positions` upsert의 `ON CONFLICT ... DO UPDATE`가 갱신 절에서 소유자를 재확인하지 않는다 — 지금은 계좌-소유자가 1:1이라 안전하지만, 스키마 차원의 보강(`UNIQUE (account_id, owner_user_id, instrument_id)`)이 더 견고한 해법이다.
+**작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다.
 
 ### 4.4 Phase 4 잔여
 

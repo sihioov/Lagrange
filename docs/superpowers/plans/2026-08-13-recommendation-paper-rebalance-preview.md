@@ -167,7 +167,7 @@ Create these narrow functions with `SECURITY DEFINER`, owner
 
 ```sql
 public.snapshot_paper_rebalance_preview(uuid, uuid, date)
-public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb)
+public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb, jsonb)
 public.fail_paper_rebalance_preview(uuid, uuid, jsonb)
 public.apply_paper_rebalance_preview(uuid, uuid, text, date)
 public.queue_scheduled_paper_targets(uuid, uuid, uuid, date, uuid, text, text, jsonb)

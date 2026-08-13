@@ -2605,6 +2605,29 @@ async fn paper_rebalance_preview_contract_body(
 ) -> Result<(), Box<dyn Error>> {
     MIGRATOR.run(owner).await?;
 
+    let owner_constraints_validated: bool = sqlx::query_scalar(
+        "SELECT count(*)=2 AND bool_and(convalidated) \
+           FROM pg_constraint \
+          WHERE conname IN ('cash_ledger_account_owner_fkey', \
+                            'positions_account_owner_fkey')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        owner_constraints_validated,
+        "Paper account-owner foreign keys must be fully validated"
+    );
+    let temporary_policy_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_policies \
+          WHERE policyname LIKE 'paper_preview_migration_validate_%'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        temporary_policy_count, 0,
+        "migration-only cross-tenant policies must not survive commit"
+    );
+
     let user_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) \
          VALUES ('https://issuer.test', $1, $2) RETURNING id",
@@ -2752,6 +2775,69 @@ async fn paper_rebalance_preview_contract_body(
             .fetch_one(&owner_actor)
     };
     assert_eq!(read_version().await?, expected_version);
+
+    let attacker_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', $1, $2) RETURNING id",
+    )
+    .bind("paper-preview-attacker")
+    .bind("paper-preview-attacker@example.test")
+    .fetch_one(owner)
+    .await?;
+    let attacker = actor_pool(super_url, db, "app", &attacker_id.to_string()).await?;
+    let forged_cash = sqlx::query(
+        "INSERT INTO cash_ledger \
+         (account_id, owner_user_id, seq, event_type, amount, balance) \
+         VALUES ($1, $2, 900, 'FORGED', 0, 0)",
+    )
+    .bind(account_id)
+    .bind(attacker_id)
+    .execute(&attacker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&forged_cash).as_deref(), Some("23503"));
+    let forged_position = sqlx::query(
+        "INSERT INTO positions (account_id, owner_user_id, instrument_id, quantity) \
+         VALUES ($1, $2, '069500.KRX', 1)",
+    )
+    .bind(account_id)
+    .bind(attacker_id)
+    .execute(&attacker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&forged_position).as_deref(), Some("23503"));
+    assert_eq!(read_version().await?, expected_version);
+
+    let cascade_account_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO accounts \
+         (owner_user_id, account_type, name, status, initial_cash) \
+         VALUES ($1, 'PAPER', 'paper-preview-cascade', 'ACTIVE', 1) RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    sqlx::query(
+        "INSERT INTO cash_ledger \
+         (account_id, owner_user_id, seq, event_type, amount, balance) \
+         VALUES ($1, $2, 1, 'DEPOSIT', 1, 1)",
+    )
+    .bind(cascade_account_id)
+    .bind(user_id)
+    .execute(&owner_actor)
+    .await?;
+    sqlx::query(
+        "INSERT INTO positions (account_id, owner_user_id, instrument_id, quantity) \
+         VALUES ($1, $2, '069500.KRX', 1)",
+    )
+    .bind(cascade_account_id)
+    .bind(user_id)
+    .execute(&owner_actor)
+    .await?;
+    sqlx::query("DELETE FROM accounts WHERE id=$1")
+        .bind(cascade_account_id)
+        .execute(&owner_actor)
+        .await?;
+
     let cash_id: Uuid = sqlx::query_scalar(
         "INSERT INTO cash_ledger \
          (account_id, owner_user_id, seq, event_type, amount, balance) \
@@ -2837,7 +2923,7 @@ async fn paper_rebalance_preview_contract_body(
     let app_publish = sqlx::query(
         "SELECT publish_paper_rebalance_preview( \
          $1, $2, $3, repeat('d',64), 'KRX_ETF_DEFAULT', 1, DATE '2026-08-13', \
-         repeat('f',64), '{}'::jsonb)",
+         repeat('f',64), '{\"069500.KRX\":\"1.000000\"}'::jsonb, '{}'::jsonb)",
     )
     .bind(preview_id)
     .bind(preview_job_id)
@@ -2888,7 +2974,8 @@ async fn paper_rebalance_preview_contract_body(
     let published: bool = sqlx::query_scalar(
         "SELECT publish_paper_rebalance_preview( \
          $1, $2, $3, repeat('d',64), 'KRX_ETF_DEFAULT', 1, DATE '2026-08-13', \
-         repeat('f',64), '{\"schema_version\":1}'::jsonb)",
+         repeat('f',64), '{\"069500.KRX\":\"1.000000\"}'::jsonb, \
+         '{\"schema_version\":1}'::jsonb)",
     )
     .bind(preview_id)
     .bind(preview_job_id)
@@ -3376,7 +3463,7 @@ async fn recommendation_pipeline_contract_body(
         "public.queue_scheduled_paper_targets(uuid,uuid,uuid,date,uuid,text,text,jsonb)",
         "public.preflight_paper_target(uuid,uuid)",
         "public.snapshot_paper_rebalance_preview(uuid,uuid,date)",
-        "public.publish_paper_rebalance_preview(uuid,uuid,bigint,text,text,integer,date,text,jsonb)",
+        "public.publish_paper_rebalance_preview(uuid,uuid,bigint,text,text,integer,date,text,jsonb,jsonb)",
         "public.fail_paper_rebalance_preview(uuid,uuid,jsonb)",
     ] {
         let metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(

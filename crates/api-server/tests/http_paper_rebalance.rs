@@ -4,11 +4,11 @@ mod common;
 
 use axum::http::StatusCode;
 use common::{Harness, actor_pool};
-use domain::{ContentHash, Currency, InstrumentId, Price, TradingDate, UtcTimestamp};
+use domain::{ContentHash, Currency, DatasetId, InstrumentId, Price, TradingDate, UtcTimestamp};
 use job_queue::paper_preview::{PreviewRunOutcome, run_preview_once};
 use job_queue::{JobQueue, QueueConfig};
-use market_data::CurateStore;
 use market_data::curate::schema::{CuratedBar, write_bars};
+use market_data::{Capability, CurateStore, DatasetManifest, dataset_manifest_hash};
 use serde_json::{Value, json};
 use std::time::Duration;
 use uuid::Uuid;
@@ -161,7 +161,12 @@ struct ReadyPreview {
     body: Value,
 }
 
-async fn finish_preview(h: &Harness, input: &PreviewInputs, key: &str) -> ReadyPreview {
+async fn finish_preview_on(
+    h: &Harness,
+    input: &PreviewInputs,
+    key: &str,
+    preview_today: chrono::NaiveDate,
+) -> ReadyPreview {
     let created = create(h, input, key, input.run_id).await;
     assert_eq!(created.status(), StatusCode::ACCEPTED);
     let created = Harness::body_json(created).await;
@@ -192,6 +197,57 @@ async fn finish_preview(h: &Harness, input: &PreviewInputs, key: &str) -> ReadyP
         }],
     )
     .unwrap();
+    let manifest = DatasetManifest {
+        dataset_id: DatasetId::parse("krx_eod_bars").unwrap(),
+        version: 2,
+        capability: Capability::PriceReturnOnly,
+        created_at: UtcTimestamp::parse_rfc3339("2026-08-12T07:00:00Z").unwrap(),
+        source_batches: Vec::new(),
+        bar_count: 1,
+        action_count: 0,
+        content_hash: ContentHash::from_bytes(b"placeholder"),
+    };
+    let manifest = DatasetManifest {
+        content_hash: dataset_manifest_hash(&manifest).unwrap(),
+        ..manifest
+    };
+    store.write_dataset_manifest(&manifest).unwrap();
+    let manifest_sha256 = manifest
+        .content_hash
+        .as_str()
+        .strip_prefix("sha256:")
+        .unwrap();
+    let dataset_id = h.state().cfg.recommendation_dataset.id;
+    sqlx::query("UPDATE dataset_versions SET manifest_sha256=$1 WHERE id=$2")
+        .bind(manifest_sha256)
+        .bind(dataset_id)
+        .execute(&h.owner_pool)
+        .await
+        .unwrap();
+    let actor = actor_pool(&h.app_url, &h.owner.user_id.to_string(), 1).await;
+    sqlx::query(
+        "UPDATE jobs SET payload_json=jsonb_set( \
+             payload_json,'{dataset,manifest_sha256}',to_jsonb($1::text)) \
+         WHERE id=(SELECT job_id FROM recommendation_runs WHERE id=$2)",
+    )
+    .bind(manifest_sha256)
+    .bind(input.run_id)
+    .execute(&actor)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE recommendation_runs SET dataset_manifest_sha256=$1 WHERE id=$2")
+        .bind(manifest_sha256)
+        .bind(input.run_id)
+        .execute(&actor)
+        .await
+        .unwrap();
+    actor.close().await;
+    sqlx::query("UPDATE paper_rebalance_previews SET dataset_manifest_sha256=$1 WHERE id=$2")
+        .bind(manifest_sha256)
+        .bind(preview_id)
+        .execute(&h.owner_pool)
+        .await
+        .unwrap();
     let worker = h.worker_pool().await;
     let queue = JobQueue::new(
         worker.clone(),
@@ -206,12 +262,15 @@ async fn finish_preview(h: &Harness, input: &PreviewInputs, key: &str) -> ReadyP
         &queue,
         data.path(),
         "http-preview-worker",
-        chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
+        preview_today,
         Duration::from_millis(100),
     )
     .await
     .unwrap();
-    assert!(matches!(outcome, PreviewRunOutcome::Published { .. }));
+    assert!(
+        matches!(outcome, PreviewRunOutcome::Published { .. }),
+        "unexpected preview outcome: {outcome:?}"
+    );
     worker.close().await;
 
     let read = h
@@ -230,6 +289,16 @@ async fn finish_preview(h: &Harness, input: &PreviewInputs, key: &str) -> ReadyP
         token: body["preview_token"].as_str().unwrap().to_owned(),
         body,
     }
+}
+
+async fn finish_preview(h: &Harness, input: &PreviewInputs, key: &str) -> ReadyPreview {
+    finish_preview_on(
+        h,
+        input,
+        key,
+        chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
+    )
+    .await
 }
 
 async fn apply_preview(
@@ -583,7 +652,7 @@ async fn apply_ready_preview_creates_one_manual_target_without_ledger_writes_and
     assert_eq!(persisted.5, h.state().cfg.recommendation_dataset.id);
     assert_eq!(
         persisted.6,
-        h.state().cfg.recommendation_dataset.manifest_sha256
+        ready.body["dataset_manifest_sha256"].as_str().unwrap()
     );
     assert_eq!((persisted.7, persisted.8), (0, 0));
     pool.close().await;
@@ -895,6 +964,53 @@ async fn apply_preview_rejects_arrived_or_conflicting_session_and_serializes_rep
     .unwrap();
     assert_eq!(target_count, 1);
     pool.close().await;
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn apply_rejects_a_preview_when_an_earlier_attested_session_appears() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let input = ready_inputs(&h).await;
+    let preview_today = chrono::NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+    let ready = finish_preview_on(&h, &input, "preview-calendar-backfill", preview_today).await;
+    assert_eq!(ready.body["proposed_effective_date"], "2026-08-14");
+    h.seed_shared(
+        "INSERT INTO trading_calendars \
+         (exchange,session_date,session_type,timezone,source,source_version, \
+          source_batch_id,content_sha256,retrieved_at) \
+         VALUES ('KRX',DATE '2026-08-13','TRADING','Asia/Seoul','KRX','preview-backfill', \
+                 gen_random_uuid(),repeat('8',64),now()) \
+         ON CONFLICT (exchange,session_date) DO UPDATE SET \
+           session_type='TRADING', timezone='Asia/Seoul', \
+           source_batch_id=EXCLUDED.source_batch_id, \
+           content_sha256=EXCLUDED.content_sha256, retrieved_at=EXCLUDED.retrieved_at",
+    )
+    .await;
+    let result = h
+        .state()
+        .rebalance_previews()
+        .apply(
+            &h.owner.actor(),
+            input.account_id,
+            ready.id,
+            &ready.token,
+            preview_today,
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(api_server::repos::rebalance_previews::ApplyRebalancePreviewError::Stale)
+    ));
+    let writes: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pending_targets WHERE account_id=$1")
+            .bind(input.account_id)
+            .fetch_one(&h.owner_pool)
+            .await
+            .unwrap();
+    assert_eq!(writes, 0);
     h.teardown().await;
 }
 

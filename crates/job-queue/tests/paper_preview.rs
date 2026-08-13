@@ -6,15 +6,16 @@ use std::time::Duration;
 use chrono::NaiveDate;
 use common::ScratchDb;
 use domain::{
-    ContentHash, Currency, InstrumentId, Money, Price, Quantity, TradingDate, UtcTimestamp, Weight,
+    ContentHash, Currency, DatasetId, InstrumentId, Money, Price, Quantity, TradingDate,
+    UtcTimestamp, Weight,
 };
 use job_queue::paper_preview::{
     PaperPreviewError, PreviewCalculationInput, PreviewLineage, PreviewRunOutcome,
     calculate_preview, load_recommendation_closes, run_preview_once,
 };
 use job_queue::{JobQueue, QueueConfig};
-use market_data::CurateStore;
 use market_data::curate::schema::{CuratedBar, write_bars};
+use market_data::{Capability, CurateStore, DatasetManifest, dataset_manifest_hash};
 use portfolio_model::CostProfile;
 use portfolio_model::sizing::TargetAllocation;
 use uuid::Uuid;
@@ -348,6 +349,28 @@ async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
             "2026-05-08T06:30:00Z",
         )],
     );
+    let store = CurateStore::new(directory.path().join("curated"));
+    let manifest = DatasetManifest {
+        dataset_id: DatasetId::parse("krx_eod_bars").unwrap(),
+        version: 7,
+        capability: Capability::PriceReturnOnly,
+        created_at: UtcTimestamp::parse_rfc3339("2026-05-08T07:00:00Z").unwrap(),
+        source_batches: Vec::new(),
+        bar_count: 1,
+        action_count: 0,
+        content_hash: ContentHash::from_bytes(b"placeholder"),
+    };
+    let manifest = DatasetManifest {
+        content_hash: dataset_manifest_hash(&manifest).unwrap(),
+        ..manifest
+    };
+    store.write_dataset_manifest(&manifest).unwrap();
+    let manifest_sha256 = manifest
+        .content_hash
+        .as_str()
+        .strip_prefix("sha256:")
+        .unwrap()
+        .to_owned();
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) \
          VALUES ('https://issuer.test', $1, $2) RETURNING id",
@@ -413,9 +436,10 @@ async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
     let dataset_version_id: Uuid = sqlx::query_scalar(
         "INSERT INTO dataset_versions \
          (dataset_id, version, status, manifest_sha256, storage_path) \
-         VALUES ('krx_eod_bars', 'preview-v1', 'READY', repeat('a',64), \
+         VALUES ('krx_eod_bars', 'preview-v1', 'READY', $1, \
                  'curated/preview-v1') RETURNING id",
     )
+    .bind(&manifest_sha256)
     .fetch_one(&db.pool)
     .await
     .unwrap();
@@ -450,12 +474,13 @@ async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
                  jsonb_build_object('dataset', jsonb_build_object( \
                    'id', $4::uuid, 'dataset_id', 'krx_eod_bars', \
                    'version', 'preview-v1', 'curated_version', 7, \
-                   'manifest_sha256', repeat('a',64))))",
+                   'manifest_sha256', $5::text)))",
     )
     .bind(recommendation_job_id)
     .bind(owner_id)
     .bind(format!("preview-source-{}", Uuid::new_v4()))
     .bind(dataset_version_id)
+    .bind(&manifest_sha256)
     .execute(&db.pool)
     .await
     .unwrap();
@@ -464,12 +489,13 @@ async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
          (owner_user_id, strategy_config_id, as_of, status, job_id, trigger_kind, \
           dataset_version_id, dataset_manifest_sha256) \
          VALUES ($1, $2, DATE '2026-05-08', 'SUCCEEDED', $3, 'MANUAL', \
-                 $4, repeat('a',64)) RETURNING id",
+                 $4, $5) RETURNING id",
     )
     .bind(owner_id)
     .bind(config_id)
     .bind(recommendation_job_id)
     .bind(dataset_version_id)
+    .bind(&manifest_sha256)
     .fetch_one(&db.pool)
     .await
     .unwrap();
@@ -484,6 +510,11 @@ async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
     .fetch_one(&db.pool)
     .await
     .unwrap();
+    let target_portfolio_sha256 = ContentHash::from_bytes(br#"{"069500.KRX":"1.000000"}"#)
+        .as_str()
+        .strip_prefix("sha256:")
+        .unwrap()
+        .to_owned();
     let preview_id = Uuid::new_v4();
     let job_id = Uuid::new_v4();
     sqlx::query(
@@ -505,7 +536,7 @@ async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
           strategy_config_id, job_id, price_date, dataset_version_id, \
           dataset_manifest_sha256, target_portfolio_sha256) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, DATE '2026-05-08', $8, \
-                 repeat('a',64), repeat('b',64))",
+                 $9, $10)",
     )
     .bind(preview_id)
     .bind(owner_id)
@@ -515,6 +546,8 @@ async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
     .bind(config_id)
     .bind(job_id)
     .bind(dataset_version_id)
+    .bind(&manifest_sha256)
+    .bind(target_portfolio_sha256)
     .execute(&db.pool)
     .await
     .unwrap();
@@ -525,6 +558,152 @@ async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
         preview_id,
         job_id,
     }
+}
+
+#[tokio::test]
+async fn target_portfolio_change_after_submission_never_publishes_mislabelled_result() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let fixture = seed_worker_fixture(&db).await;
+    sqlx::query(
+        "UPDATE target_portfolios \
+            SET weights_json='{\"069500.KRX\":\"0.500000\"}'::jsonb \
+          WHERE id=(SELECT target_portfolio_id FROM paper_rebalance_previews WHERE id=$1)",
+    )
+    .bind(fixture.preview_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let worker = sqlx::PgPool::connect(&db.role_url("worker")).await.unwrap();
+    let queue = preview_queue(worker.clone());
+    let outcome = run_preview_once(
+        &worker,
+        &queue,
+        &fixture.dataset_root,
+        "target-change-worker",
+        NaiveDate::from_ymd_opt(2026, 5, 9).unwrap(),
+        Duration::from_millis(100),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        outcome,
+        PreviewRunOutcome::Failed { ref code, .. } if code == "PAPER_PREVIEW_TARGET_CHANGED"
+    ));
+    let state: (String, String, bool) = sqlx::query_as(
+        "SELECT job.status, preview.status, preview.result_json IS NULL \
+         FROM jobs AS job JOIN paper_rebalance_previews AS preview ON preview.job_id=job.id \
+         WHERE job.id=$1",
+    )
+    .bind(fixture.job_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(state, ("FAILED".into(), "FAILED".into(), true));
+    worker.close().await;
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn target_portfolio_change_after_snapshot_never_publishes_stale_calculation() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let fixture = seed_worker_fixture(&db).await;
+    sqlx::raw_sql(
+        "CREATE FUNCTION test_preview_mutate_target() RETURNS trigger \
+         LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$ \
+         BEGIN \
+           IF OLD.status='PENDING' AND NEW.status='RUNNING' THEN \
+             UPDATE public.target_portfolios \
+                SET weights_json='{\"069500.KRX\":\"0.500000\"}'::jsonb \
+              WHERE id=NEW.target_portfolio_id; \
+           END IF; \
+           RETURN NEW; \
+         END $$; \
+         ALTER FUNCTION test_preview_mutate_target() OWNER TO migration_owner; \
+         CREATE TRIGGER test_preview_mutate_target \
+           AFTER UPDATE ON paper_rebalance_previews \
+           FOR EACH ROW EXECUTE FUNCTION test_preview_mutate_target();",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let worker = sqlx::PgPool::connect(&db.role_url("worker")).await.unwrap();
+    let queue = preview_queue(worker.clone());
+    let outcome = run_preview_once(
+        &worker,
+        &queue,
+        &fixture.dataset_root,
+        "target-race-worker",
+        NaiveDate::from_ymd_opt(2026, 5, 9).unwrap(),
+        Duration::from_millis(100),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        outcome,
+        PreviewRunOutcome::Failed { ref code, .. }
+            if code == "PAPER_PREVIEW_PUBLICATION_INTEGRITY"
+    ));
+    let state: (String, String, bool) = sqlx::query_as(
+        "SELECT job.status, preview.status, preview.result_json IS NULL \
+         FROM jobs AS job JOIN paper_rebalance_previews AS preview ON preview.job_id=job.id \
+         WHERE job.id=$1",
+    )
+    .bind(fixture.job_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(state, ("FAILED".into(), "FAILED".into(), true));
+    worker.close().await;
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn corrupted_attested_manifest_never_publishes_preview() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let fixture = seed_worker_fixture(&db).await;
+    let store = CurateStore::new(fixture.dataset_root.join("curated"));
+    let manifest_path = store
+        .dataset_dir(&DatasetId::parse("krx_eod_bars").unwrap(), 7)
+        .join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["bar_count"] = serde_json::json!(2);
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+    let worker = sqlx::PgPool::connect(&db.role_url("worker")).await.unwrap();
+    let queue = preview_queue(worker.clone());
+    let outcome = run_preview_once(
+        &worker,
+        &queue,
+        &fixture.dataset_root,
+        "manifest-corruption-worker",
+        NaiveDate::from_ymd_opt(2026, 5, 9).unwrap(),
+        Duration::from_millis(100),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        outcome,
+        PreviewRunOutcome::Failed { ref code, .. } if code == "PAPER_PREVIEW_CURATED_INTEGRITY"
+    ));
+    let state: (String, String, bool) = sqlx::query_as(
+        "SELECT job.status, preview.status, preview.result_json IS NULL \
+         FROM jobs AS job JOIN paper_rebalance_previews AS preview ON preview.job_id=job.id \
+         WHERE job.id=$1",
+    )
+    .bind(fixture.job_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(state, ("FAILED".into(), "FAILED".into(), true));
+    worker.close().await;
+    db.drop_db().await;
 }
 
 #[tokio::test]

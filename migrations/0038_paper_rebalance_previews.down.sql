@@ -166,9 +166,9 @@ REVOKE EXECUTE ON FUNCTION public.fail_paper_rebalance_preview(uuid, uuid, jsonb
     FROM worker;
 DROP FUNCTION public.fail_paper_rebalance_preview(uuid, uuid, jsonb);
 
-REVOKE EXECUTE ON FUNCTION public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb)
+REVOKE EXECUTE ON FUNCTION public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb, jsonb)
     FROM worker;
-DROP FUNCTION public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb);
+DROP FUNCTION public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb, jsonb);
 
 REVOKE EXECUTE ON FUNCTION public.snapshot_paper_rebalance_preview(uuid, uuid, date)
     FROM worker;
@@ -193,6 +193,11 @@ ALTER TABLE public.pending_targets
 DROP TRIGGER positions_bump_paper_state_version ON public.positions;
 DROP TRIGGER cash_ledger_bump_paper_state_version ON public.cash_ledger;
 DROP FUNCTION public.bump_paper_account_state_version();
+ALTER TABLE public.positions
+    DROP CONSTRAINT positions_account_owner_fkey;
+ALTER TABLE public.cash_ledger
+    DROP CONSTRAINT cash_ledger_account_owner_fkey;
 ALTER TABLE public.accounts
     DROP CONSTRAINT accounts_paper_state_version_check,
+    DROP CONSTRAINT accounts_id_owner_user_id_key,
     DROP COLUMN paper_state_version;

@@ -11,7 +11,34 @@ SET LOCAL statement_timeout = '30s';
 ALTER TABLE public.accounts
     ADD COLUMN paper_state_version bigint NOT NULL DEFAULT 0,
     ADD CONSTRAINT accounts_paper_state_version_check
-        CHECK (paper_state_version >= 0);
+        CHECK (paper_state_version >= 0),
+    ADD CONSTRAINT accounts_id_owner_user_id_key
+        UNIQUE (id, owner_user_id);
+
+-- Tenant RLS checks the ledger row owner, so the database relationship must
+-- also prove that the referenced account has that same owner. Without these
+-- composite foreign keys an actor could attach an otherwise actor-owned row
+-- to another tenant's account and bypass Paper state-version serialization.
+-- These transaction-local policy changes let the table owner validate every
+-- existing tenant row despite FORCE RLS; they are dropped before the migration
+-- commits and therefore never expose a cross-tenant serving policy.
+CREATE POLICY paper_preview_migration_validate_accounts
+    ON public.accounts FOR SELECT TO migration_owner USING (true);
+CREATE POLICY paper_preview_migration_validate_cash
+    ON public.cash_ledger FOR SELECT TO migration_owner USING (true);
+CREATE POLICY paper_preview_migration_validate_positions
+    ON public.positions FOR SELECT TO migration_owner USING (true);
+ALTER TABLE public.cash_ledger
+    ADD CONSTRAINT cash_ledger_account_owner_fkey
+        FOREIGN KEY (account_id, owner_user_id)
+        REFERENCES public.accounts (id, owner_user_id) ON DELETE CASCADE;
+ALTER TABLE public.positions
+    ADD CONSTRAINT positions_account_owner_fkey
+        FOREIGN KEY (account_id, owner_user_id)
+        REFERENCES public.accounts (id, owner_user_id) ON DELETE CASCADE;
+DROP POLICY paper_preview_migration_validate_positions ON public.positions;
+DROP POLICY paper_preview_migration_validate_cash ON public.cash_ledger;
+DROP POLICY paper_preview_migration_validate_accounts ON public.accounts;
 
 CREATE FUNCTION public.bump_paper_account_state_version()
 RETURNS trigger
@@ -146,6 +173,7 @@ CREATE TABLE public.paper_rebalance_previews (
     status text NOT NULL DEFAULT 'PENDING',
     price_basis text NOT NULL DEFAULT 'RECOMMENDATION_CLOSE',
     price_date date NOT NULL,
+    preview_seoul_date date,
     proposed_effective_date date,
     dataset_version_id uuid NOT NULL REFERENCES public.dataset_versions(id),
     dataset_manifest_sha256 text NOT NULL,
@@ -209,6 +237,7 @@ CREATE TABLE public.paper_rebalance_previews (
             AND preview_token IS NOT NULL AND pending_target_id IS NULL
             AND completed_at IS NOT NULL AND applied_at IS NULL
             AND proposed_effective_date IS NOT NULL
+            AND preview_seoul_date IS NOT NULL
             AND cost_profile_id IS NOT NULL AND cost_profile_version IS NOT NULL
             AND account_state_version IS NOT NULL AND account_state_sha256 IS NOT NULL
         ) OR (
@@ -222,6 +251,7 @@ CREATE TABLE public.paper_rebalance_previews (
             AND preview_token IS NOT NULL AND pending_target_id IS NOT NULL
             AND completed_at IS NOT NULL AND applied_at IS NOT NULL
             AND proposed_effective_date IS NOT NULL
+            AND preview_seoul_date IS NOT NULL
             AND cost_profile_id IS NOT NULL AND cost_profile_version IS NOT NULL
             AND account_state_version IS NOT NULL AND account_state_sha256 IS NOT NULL
         )
@@ -614,7 +644,7 @@ BEGIN
 
     UPDATE public.paper_rebalance_previews
        SET status = 'RUNNING', started_at = COALESCE(started_at, pg_catalog.now()),
-           updated_at = pg_catalog.now()
+           preview_seoul_date = p_seoul_today, updated_at = pg_catalog.now()
      WHERE id = p_preview_id;
 
     RETURN QUERY SELECT
@@ -646,6 +676,7 @@ CREATE FUNCTION public.publish_paper_rebalance_preview(
     p_cost_profile_version integer,
     p_proposed_effective_date date,
     p_preview_token text,
+    p_target_weights_json jsonb,
     p_result_json jsonb
 ) RETURNS boolean
 LANGUAGE plpgsql
@@ -662,6 +693,7 @@ BEGIN
        OR p_cost_profile_id IS NULL OR p_cost_profile_version IS NULL
        OR p_proposed_effective_date IS NULL
        OR p_preview_token !~ '^[0-9a-f]{64}$'
+       OR pg_catalog.jsonb_typeof(p_target_weights_json) <> 'object'
        OR pg_catalog.jsonb_typeof(p_result_json) <> 'object'
        OR pg_catalog.octet_length(p_result_json::text) > 262144 THEN
         RETURN false;
@@ -674,7 +706,8 @@ BEGIN
     IF NOT FOUND THEN RETURN false; END IF;
     PERFORM pg_catalog.set_config('app.actor_user_id', v_owner_user_id::text, true);
 
-    SELECT preview.account_id, preview.price_date
+    SELECT preview.account_id, preview.owner_user_id, preview.target_portfolio_id,
+           preview.price_date
       INTO v_preview
       FROM public.paper_rebalance_previews AS preview
       JOIN public.jobs AS job
@@ -684,6 +717,17 @@ BEGIN
      FOR UPDATE OF preview, job;
     IF NOT FOUND OR p_proposed_effective_date <= v_preview.price_date THEN
         RETURN false;
+    END IF;
+
+    PERFORM 1
+      FROM public.target_portfolios AS portfolio
+     WHERE portfolio.id = v_preview.target_portfolio_id
+       AND portfolio.owner_user_id = v_preview.owner_user_id
+       AND portfolio.weights_json IS NOT DISTINCT FROM p_target_weights_json
+     FOR SHARE OF portfolio;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Paper preview target changed before publication'
+            USING ERRCODE = '23514';
     END IF;
 
     PERFORM pg_catalog.pg_advisory_xact_lock(
@@ -712,11 +756,11 @@ BEGIN
 END;
 $$;
 
-ALTER FUNCTION public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb)
+ALTER FUNCTION public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb, jsonb)
     OWNER TO migration_owner;
-REVOKE ALL ON FUNCTION public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb)
+REVOKE ALL ON FUNCTION public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb, jsonb)
     FROM PUBLIC, app, admin, audit_writer, research_writer;
-GRANT EXECUTE ON FUNCTION public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb)
+GRANT EXECUTE ON FUNCTION public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb, jsonb)
     TO worker;
 
 CREATE FUNCTION public.fail_paper_rebalance_preview(
@@ -1091,6 +1135,7 @@ DECLARE
     v_targets jsonb;
     v_existing record;
     v_target_id uuid;
+    v_first_effective date;
 BEGIN
     IF p_owner_user_id IS NULL OR p_preview_id IS NULL OR p_seoul_today IS NULL THEN
         RETURN QUERY SELECT 'NOT_FOUND', NULL::uuid, NULL::date, NULL::text;
@@ -1126,7 +1171,8 @@ BEGIN
         RETURN QUERY SELECT 'NOT_READY', NULL::uuid, NULL::date, NULL::text;
         RETURN;
     END IF;
-    IF v_preview.proposed_effective_date IS NULL
+    IF v_preview.preview_seoul_date IS NULL
+       OR v_preview.proposed_effective_date IS NULL
        OR v_preview.proposed_effective_date <= p_seoul_today THEN
         RETURN QUERY SELECT 'STALE', NULL::uuid, NULL::date, NULL::text;
         RETURN;
@@ -1207,17 +1253,22 @@ BEGIN
         RETURN;
     END IF;
 
-    PERFORM 1
+    SELECT calendar.session_date
+      INTO v_first_effective
       FROM public.trading_calendars AS calendar
      WHERE calendar.exchange = 'KRX'
-       AND calendar.session_date = v_preview.proposed_effective_date
        AND calendar.session_type = 'TRADING'
        AND calendar.timezone = 'Asia/Seoul'
+       AND calendar.session_date > GREATEST(
+            v_preview.price_date, v_preview.preview_seoul_date
+       )
        AND calendar.source_batch_id IS NOT NULL
        AND calendar.content_sha256 IS NOT NULL
        AND calendar.retrieved_at IS NOT NULL
+     ORDER BY calendar.session_date
+     LIMIT 1
      FOR SHARE OF calendar;
-    IF NOT FOUND THEN
+    IF NOT FOUND OR v_first_effective IS DISTINCT FROM v_preview.proposed_effective_date THEN
         RETURN QUERY SELECT 'STALE', NULL::uuid, NULL::date, NULL::text;
         RETURN;
     END IF;

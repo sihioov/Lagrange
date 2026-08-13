@@ -11,12 +11,12 @@ use std::time::Duration;
 
 use chrono::{Datelike, NaiveDate};
 use domain::{
-    ContentHash, Currency, FixedPoint, InstrumentId, Money, Price, Quantity, TradingDate,
-    UtcTimestamp, WEIGHT_SCALE, Weight,
+    ContentHash, Currency, DatasetId, FixedPoint, InstrumentId, Money, Price, Quantity,
+    TradingDate, UtcTimestamp, WEIGHT_SCALE, Weight,
 };
 use market_data::CurateStore;
-use market_data::curate::CurateError;
 use market_data::curate::schema::read_bars;
+use market_data::curate::{CurateError, dataset_manifest_hash};
 use portfolio_model::sizing::{
     SizingAction, SizingInput, SkipReason, TargetAllocation, plan_rebalance,
 };
@@ -136,6 +136,8 @@ pub enum PaperPreviewError {
     PreviewUnavailable(String),
     #[error("Paper account changed while previewing")]
     AccountChanged,
+    #[error("target portfolio changed after preview submission")]
+    TargetChanged,
     #[error("missing recommendation close for {instrument_id}")]
     MissingPrice { instrument_id: String },
     #[error("malformed curated preview data: {0}")]
@@ -162,6 +164,7 @@ impl PaperPreviewError {
                 PreviewErrorClass::DataBlocked
             }
             Self::InvalidPayload(_)
+            | Self::TargetChanged
             | Self::MalformedCuratedData(_)
             | Self::Plan(_)
             | Self::Canceled
@@ -281,6 +284,7 @@ struct SnapshotRow {
     price_date: NaiveDate,
     proposed_effective_date: NaiveDate,
     dataset_version_id: Uuid,
+    dataset_id: String,
     curated_version: i32,
     dataset_manifest_sha256: String,
     target_portfolio_sha256: String,
@@ -296,6 +300,7 @@ struct PreparedPreview {
     preview_id: Uuid,
     account_state_version: i64,
     account_state_sha256: String,
+    target_weights_json: Value,
     cost_profile_id: String,
     cost_profile_version: i32,
     proposed_effective_date: NaiveDate,
@@ -460,7 +465,7 @@ async fn prepare_preview(
     let snapshot = sqlx::query_as::<_, SnapshotRow>(
         "SELECT account_id, recommendation_run_id, target_portfolio_id, \
                 strategy_config_id, price_date, proposed_effective_date, \
-                dataset_version_id, curated_version, dataset_manifest_sha256, \
+                dataset_version_id, dataset_id, curated_version, dataset_manifest_sha256, \
                 target_portfolio_sha256, cost_profile_id, cost_profile_version, \
                 account_state_version, cash_balance, positions_json, weights_json \
          FROM snapshot_paper_rebalance_preview($1, $2, $3)",
@@ -478,6 +483,17 @@ async fn prepare_preview(
     let cash = Money::parse(&snapshot.cash_balance, Currency::KRW)
         .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
     let positions = parse_positions(&snapshot.positions_json)?;
+    let current_target_sha256 = raw_sha256(&serde_json::to_vec(&snapshot.weights_json).map_err(
+        |error| {
+            PaperPreviewError::InvalidPayload(format!(
+                "target portfolio cannot be serialized: {error}"
+            ))
+        },
+    )?);
+    if current_target_sha256 != snapshot.target_portfolio_sha256 {
+        return Err(PaperPreviewError::TargetChanged);
+    }
+    let target_weights_json = snapshot.weights_json.clone();
     let targets = parse_targets(&snapshot.weights_json)?;
     let profile = CostProfile::resolve(&snapshot.cost_profile_id)
         .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
@@ -497,6 +513,8 @@ async fn prepare_preview(
     instrument_ids.sort();
     instrument_ids.dedup();
     let root = dataset_root.to_path_buf();
+    let dataset_id = snapshot.dataset_id.clone();
+    let manifest_sha256 = snapshot.dataset_manifest_sha256.clone();
     let account_state_sha256 = account_state_sha256(
         snapshot.account_state_version,
         &snapshot.cash_balance,
@@ -515,6 +533,7 @@ async fn prepare_preview(
         target_portfolio_sha256: snapshot.target_portfolio_sha256,
     };
     let calculation = tokio::task::spawn_blocking(move || {
+        attest_preview_dataset(&root, &dataset_id, curated_version, &manifest_sha256)?;
         let close_prices =
             load_recommendation_closes(&root, curated_version, price_date, &instrument_ids)?;
         calculate_preview(PreviewCalculationInput {
@@ -535,12 +554,50 @@ async fn prepare_preview(
         preview_id,
         account_state_version: snapshot.account_state_version,
         account_state_sha256,
+        target_weights_json,
         cost_profile_id: snapshot.cost_profile_id,
         cost_profile_version: snapshot.cost_profile_version,
         proposed_effective_date: snapshot.proposed_effective_date,
         token: calculation.1,
         result: calculation.0,
     })
+}
+
+fn attest_preview_dataset(
+    dataset_root: &Path,
+    dataset_id: &str,
+    curated_version: u32,
+    expected_manifest_sha256: &str,
+) -> Result<(), PaperPreviewError> {
+    let dataset_id = DatasetId::parse(dataset_id)
+        .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
+    let store = CurateStore::new(dataset_root.join("curated"));
+    let manifest = store
+        .read_dataset_manifest(&dataset_id, curated_version)
+        .map_err(classify_curate_read)?
+        .ok_or_else(|| {
+            PaperPreviewError::PreviewUnavailable(format!(
+                "attested dataset manifest is missing for version {curated_version}"
+            ))
+        })?;
+    if manifest.dataset_id != dataset_id || manifest.version != curated_version {
+        return Err(PaperPreviewError::MalformedCuratedData(
+            "dataset manifest identity does not match its attested path".into(),
+        ));
+    }
+    let canonical = dataset_manifest_hash(&manifest)
+        .map_err(|error| PaperPreviewError::MalformedCuratedData(error.to_string()))?;
+    if canonical != manifest.content_hash
+        || canonical
+            .as_str()
+            .strip_prefix("sha256:")
+            .is_none_or(|hash| hash != expected_manifest_sha256)
+    {
+        return Err(PaperPreviewError::MalformedCuratedData(
+            "dataset manifest does not match its canonical database attestation".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn parse_positions(value: &Value) -> Result<BTreeMap<InstrumentId, Quantity>, PaperPreviewError> {
@@ -642,7 +699,7 @@ async fn finish_preview(
     let publication =
         sqlx::query_scalar(
             "SELECT publish_paper_rebalance_preview( \
-         $1, $2, $3, $4, $5, $6, $7, $8, $9)",
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
         .bind(prepared.preview_id)
         .bind(claim.job.id)
@@ -652,6 +709,7 @@ async fn finish_preview(
         .bind(prepared.cost_profile_version)
         .bind(prepared.proposed_effective_date)
         .bind(&prepared.token)
+        .bind(&prepared.target_weights_json)
         .bind(serde_json::to_value(&prepared.result).map_err(|error| {
             QueueError::Internal(format!("serialize preview publication: {error}"))
         })?)
@@ -819,6 +877,7 @@ fn preview_failure(error: &PaperPreviewError) -> (ErrorClass, &'static str, &'st
         | PaperPreviewError::AccountChanged
         | PaperPreviewError::LeaseLost => ErrorClass::Transient,
         PaperPreviewError::MalformedCuratedData(_)
+        | PaperPreviewError::TargetChanged
         | PaperPreviewError::Plan(_)
         | PaperPreviewError::Canceled
         | PaperPreviewError::ResultTooLarge { .. } => ErrorClass::Integrity,
@@ -832,6 +891,7 @@ fn preview_failure(error: &PaperPreviewError) -> (ErrorClass, &'static str, &'st
             "PAPER_PREVIEW_TEMPORARILY_UNAVAILABLE"
         }
         PaperPreviewError::AccountChanged => "PAPER_PREVIEW_ACCOUNT_CHANGED",
+        PaperPreviewError::TargetChanged => "PAPER_PREVIEW_TARGET_CHANGED",
         PaperPreviewError::Plan(_) => "PAPER_PREVIEW_PLAN_FAILED",
         PaperPreviewError::LeaseLost => "PAPER_PREVIEW_LEASE_LOST",
         PaperPreviewError::Canceled => "PAPER_PREVIEW_CANCELED",

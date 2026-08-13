@@ -285,15 +285,17 @@ For one claim it:
 4. validates the account's cost-profile ID and version;
 5. resolves and stores the first attested KRX `TRADING` session strictly after
    both the run date and the current Seoul calendar date;
-6. releases the database transaction and reads every required raw close from
-   the attested curated partition;
+6. releases the database transaction, re-attests the canonical on-disk manifest
+   against the database pin, and reads every required raw close from that
+   curated partition;
 7. calls `plan_rebalance` in `spawn_blocking` with the same target, lot-size
    fallback, and cost-profile semantics as Paper execution;
 8. builds a versioned result document and hashes its canonical immutable inputs,
    including the proposed effective session;
 9. reacquires the account advisory lock and re-reads the account fingerprint;
-10. publishes `READY` and settles the queue job atomically only if the fingerprint
-   is unchanged.
+10. locks and revalidates the exact target weights captured by the snapshot;
+11. publishes `READY` and settles the queue job atomically only if both account
+    and target inputs still match.
 
 If account state changed during computation, the worker does not publish a stale
 preview. It returns a typed transient outcome so the existing bounded retry
