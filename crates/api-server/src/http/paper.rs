@@ -3,8 +3,9 @@
 //! Paper scheduler's (Todos 30-32); the API validates, audits, and reads.
 
 use crate::http::dto::{
-    AccountDto, BindStrategyBody, BindStrategyDto, EquityPointDto, NewAccountBody, OrderDto,
-    PageDto, PositionDto, RebalancePreviewBody, RebalancePreviewDto,
+    AccountDto, AppliedRebalancePreviewDto, ApplyRebalancePreviewBody, BindStrategyBody,
+    BindStrategyDto, EquityPointDto, NewAccountBody, OrderDto, PageDto, PositionDto,
+    RebalancePreviewBody, RebalancePreviewDto,
 };
 use crate::http::entitlement::require_use;
 use crate::http::error::{api_error, code_error, request_id};
@@ -287,6 +288,159 @@ pub async fn get_rebalance_preview(
         Ok(dto) => (StatusCode::OK, Json(dto)).into_response(),
         Err(error) => tenancy_response(error, &rid, "RESOURCE_NOT_FOUND"),
     }
+}
+
+pub async fn apply_rebalance_preview(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+    Path((account_id, preview_id)): Path<(String, String)>,
+    JsonBody(body): JsonBody<ApplyRebalancePreviewBody>,
+) -> Response {
+    let rid = request_id(&headers);
+    if let Err(response) = crate::http::session::require_csrf(&headers, &session.0) {
+        crate::observability::metrics::record_preview_apply("authorization_rejected");
+        return response;
+    }
+    if !is_owner(&session) {
+        crate::observability::metrics::record_preview_apply("authorization_rejected");
+        return code_error("FORBIDDEN", "Paper rebalance previews are Owner-only", &rid);
+    }
+    let account_id = match parse_uuid(&rid, "account id", &account_id) {
+        Ok(id) => id,
+        Err(response) => {
+            crate::observability::metrics::record_preview_apply("validation_rejected");
+            return response;
+        }
+    };
+    let preview_id = match parse_uuid(&rid, "preview id", &preview_id) {
+        Ok(id) => id,
+        Err(response) => {
+            crate::observability::metrics::record_preview_apply("validation_rejected");
+            return response;
+        }
+    };
+    let Some(key) = crate::http::idempotency::key_from(&headers) else {
+        crate::observability::metrics::record_preview_apply("validation_rejected");
+        return code_error(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "mutating routes require an Idempotency-Key header",
+            &rid,
+        );
+    };
+    if key.len() > MAX_PREVIEW_IDEMPOTENCY_KEY_BYTES {
+        crate::observability::metrics::record_preview_apply("validation_rejected");
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PARAMETER",
+            format!("Idempotency-Key must not exceed {MAX_PREVIEW_IDEMPOTENCY_KEY_BYTES} bytes"),
+            &rid,
+            None,
+        );
+    }
+    let token_is_canonical = body.preview_token.len() == 64
+        && body
+            .preview_token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if !token_is_canonical {
+        crate::observability::metrics::record_preview_apply("validation_rejected");
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PARAMETER",
+            "preview_token must be 64 lowercase hexadecimal characters",
+            &rid,
+            None,
+        );
+    }
+    if let Err(response) = require_use(
+        &state,
+        &session,
+        &headers,
+        auth::entitlement::KrUse::Recommendation,
+        &crate::http::entitlement::today_iso(),
+    )
+    .await
+    {
+        crate::observability::metrics::record_preview_apply("authorization_rejected");
+        return response;
+    }
+    let applied = match state
+        .rebalance_previews()
+        .apply(
+            &session.actor(),
+            account_id,
+            preview_id,
+            &body.preview_token,
+            seoul_today(),
+        )
+        .await
+    {
+        Ok(applied) => applied,
+        Err(crate::repos::rebalance_previews::ApplyRebalancePreviewError::NotReady) => {
+            crate::observability::metrics::record_preview_apply("not_ready");
+            return code_error(
+                "REBALANCE_PREVIEW_NOT_READY",
+                "the Paper rebalance preview is not ready",
+                &rid,
+            );
+        }
+        Err(crate::repos::rebalance_previews::ApplyRebalancePreviewError::Stale) => {
+            crate::observability::metrics::record_preview_apply("stale");
+            return code_error(
+                "REBALANCE_PREVIEW_STALE",
+                "the Paper account or preview inputs changed",
+                &rid,
+            );
+        }
+        Err(crate::repos::rebalance_previews::ApplyRebalancePreviewError::Conflict) => {
+            crate::observability::metrics::record_preview_apply("conflict");
+            return code_error(
+                "REBALANCE_PREVIEW_CONFLICT",
+                "another Paper target already exists for this session",
+                &rid,
+            );
+        }
+        Err(crate::repos::rebalance_previews::ApplyRebalancePreviewError::Tenancy(error)) => {
+            crate::observability::metrics::record_preview_apply("authorization_rejected");
+            return tenancy_response(error, &rid, "RESOURCE_NOT_FOUND");
+        }
+    };
+    crate::observability::metrics::record_preview_apply(if applied.replayed {
+        "replayed"
+    } else {
+        "applied"
+    });
+    if !applied.replayed {
+        audit(
+            &state,
+            &session,
+            &headers,
+            "paper.rebalance_preview.apply",
+            "paper_rebalance_preview",
+            &applied.preview_id.to_string(),
+            None,
+            Some(serde_json::json!({
+                "account_id": account_id,
+                "pending_target_id": applied.pending_target_id,
+                "effective_date": applied.effective_date,
+                "source_kind": applied.source_kind,
+            })),
+            None,
+        )
+        .await;
+    }
+    (
+        StatusCode::OK,
+        Json(AppliedRebalancePreviewDto {
+            preview_id: applied.preview_id.to_string(),
+            pending_target_id: applied.pending_target_id.to_string(),
+            effective_date: applied.effective_date,
+            source_kind: applied.source_kind,
+            status: "APPLIED".into(),
+        }),
+    )
+        .into_response()
 }
 
 /// Resolves the requested cost profile id to a real, versioned [`CostProfile`].

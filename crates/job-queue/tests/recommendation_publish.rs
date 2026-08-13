@@ -1378,7 +1378,42 @@ async fn scheduled_paper_bridge_uses_the_next_published_session_and_exact_lineag
             .execute(&db.pool).await.unwrap();
     }
     let manifest = "c".repeat(64);
+    let job_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id,job_type,status,idempotency_key,payload_json) \
+         VALUES ($1,'recommendation','RUNNING',$2,'{}') RETURNING id",
+    )
+    .bind(owner)
+    .bind(format!("bridge-run-{owner}"))
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    let migration_owner = PgPool::connect(&db.role_url("migration_owner"))
+        .await
+        .unwrap();
+    let mut migration_tx = migration_owner.begin().await.unwrap();
+    sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+        .bind(owner.to_string())
+        .execute(&mut *migration_tx)
+        .await
+        .unwrap();
+    let recommendation_run_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id,strategy_config_id,as_of,status,job_id,trigger_kind, \
+          dataset_version_id,dataset_manifest_sha256) \
+         VALUES ($1,$2,DATE '2026-05-08','PENDING',$3,'SCHEDULED',$4,$5) RETURNING id",
+    )
+    .bind(owner)
+    .bind(config)
+    .bind(job_id)
+    .bind(dataset_id)
+    .bind(&manifest)
+    .fetch_one(&mut *migration_tx)
+    .await
+    .unwrap();
+    migration_tx.commit().await.unwrap();
+    migration_owner.close().await;
     let input = PaperBridgeInput {
+        recommendation_run_id,
         owner_user_id: owner,
         strategy_config_id: config,
         as_of: NaiveDate::from_ymd_opt(2026, 5, 8).unwrap(),
@@ -1398,8 +1433,16 @@ async fn scheduled_paper_bridge_uses_the_next_published_session_and_exact_lineag
         .unwrap();
     assert_eq!(outcome, PaperBridgeOutcome::Queued { targets: 1 });
     tx.commit().await.unwrap();
-    let row: (chrono::NaiveDate, serde_json::Value, Uuid, String) = sqlx::query_as(
-        "SELECT effective_date, targets_json, dataset_version_id, dataset_manifest_sha256 \
+    let row: (
+        chrono::NaiveDate,
+        serde_json::Value,
+        Uuid,
+        String,
+        String,
+        Uuid,
+    ) = sqlx::query_as(
+        "SELECT effective_date, targets_json, dataset_version_id, dataset_manifest_sha256, \
+                source_kind,recommendation_run_id \
          FROM pending_targets WHERE account_id=$1",
     )
     .bind(account)
@@ -1420,6 +1463,8 @@ async fn scheduled_paper_bridge_uses_the_next_published_session_and_exact_lineag
     );
     assert_eq!(row.2, dataset_id);
     assert_eq!(row.3, "c".repeat(64));
+    assert_eq!(row.4, "SCHEDULED_RECOMMENDATION");
+    assert_eq!(row.5, recommendation_run_id);
 
     let mut manual = worker.begin().await.unwrap();
     let manual_input = PaperBridgeInput {
@@ -1454,9 +1499,68 @@ async fn scheduled_paper_bridge_warns_without_a_next_session() {
     .fetch_one(&db.pool)
     .await
     .unwrap();
+    let owner: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer,subject,email) VALUES ('missing-next.test',$1,$2) RETURNING id",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(format!("{}@missing-next.test", Uuid::new_v4()))
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO strategies (id,display_name,state) \
+         VALUES ('missing_next_strategy','Missing next','Paper')",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let config_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO user_strategy_configs \
+         (owner_user_id,strategy_id,strategy_version,config_json) \
+         VALUES ($1,'missing_next_strategy','1.0.0','{}') RETURNING id",
+    )
+    .bind(owner)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    let job_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id,job_type,status,idempotency_key,payload_json) \
+         VALUES ($1,'recommendation','RUNNING',$2,'{}') RETURNING id",
+    )
+    .bind(owner)
+    .bind(format!("missing-next-{owner}"))
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    let migration_owner = PgPool::connect(&db.role_url("migration_owner"))
+        .await
+        .unwrap();
+    let mut migration_tx = migration_owner.begin().await.unwrap();
+    sqlx::query("SELECT set_config('app.actor_user_id',$1,true)")
+        .bind(owner.to_string())
+        .execute(&mut *migration_tx)
+        .await
+        .unwrap();
+    let run_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id,strategy_config_id,as_of,status,job_id,trigger_kind, \
+          dataset_version_id,dataset_manifest_sha256) \
+         VALUES ($1,$2,DATE '2026-12-31','PENDING',$3,'SCHEDULED',$4,$5) RETURNING id",
+    )
+    .bind(owner)
+    .bind(config_id)
+    .bind(job_id)
+    .bind(dataset_version_id)
+    .bind(&manifest)
+    .fetch_one(&mut *migration_tx)
+    .await
+    .unwrap();
+    migration_tx.commit().await.unwrap();
+    migration_owner.close().await;
     let input = PaperBridgeInput {
-        owner_user_id: Uuid::new_v4(),
-        strategy_config_id: Uuid::new_v4(),
+        recommendation_run_id: run_id,
+        owner_user_id: owner,
+        strategy_config_id: config_id,
         as_of: NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
         trigger_kind: "SCHEDULED",
         dataset_version_id,

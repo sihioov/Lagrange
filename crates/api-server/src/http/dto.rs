@@ -607,6 +607,22 @@ pub struct RebalancePreviewBody {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ApplyRebalancePreviewBody {
+    pub preview_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppliedRebalancePreviewDto {
+    pub preview_id: String,
+    pub pending_target_id: String,
+    pub effective_date: NaiveDate,
+    pub source_kind: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SubscriptionBody {
     pub kind: String,
     pub channel: String,

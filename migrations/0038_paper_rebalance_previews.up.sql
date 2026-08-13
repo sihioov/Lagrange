@@ -1113,6 +1113,10 @@ BEGIN
         RETURN QUERY SELECT 'NOT_FOUND', NULL::uuid, NULL::date, NULL::text;
         RETURN;
     END IF;
+    IF p_preview_token IS NULL OR p_preview_token IS DISTINCT FROM v_preview.preview_token THEN
+        RETURN QUERY SELECT 'STALE', NULL::uuid, NULL::date, NULL::text;
+        RETURN;
+    END IF;
     IF v_preview.status = 'APPLIED' THEN
         RETURN QUERY SELECT 'REPLAY', v_preview.pending_target_id,
             v_preview.proposed_effective_date, 'MANUAL_RECOMMENDATION';
@@ -1120,10 +1124,6 @@ BEGIN
     END IF;
     IF v_preview.status <> 'READY' THEN
         RETURN QUERY SELECT 'NOT_READY', NULL::uuid, NULL::date, NULL::text;
-        RETURN;
-    END IF;
-    IF p_preview_token IS NULL OR p_preview_token IS DISTINCT FROM v_preview.preview_token THEN
-        RETURN QUERY SELECT 'STALE', NULL::uuid, NULL::date, NULL::text;
         RETURN;
     END IF;
     IF v_preview.proposed_effective_date IS NULL

@@ -155,6 +155,105 @@ async fn create(
     .await
 }
 
+struct ReadyPreview {
+    id: Uuid,
+    token: String,
+    body: Value,
+}
+
+async fn finish_preview(h: &Harness, input: &PreviewInputs, key: &str) -> ReadyPreview {
+    let created = create(h, input, key, input.run_id).await;
+    assert_eq!(created.status(), StatusCode::ACCEPTED);
+    let created = Harness::body_json(created).await;
+    let preview_id = Uuid::parse_str(created["id"].as_str().unwrap()).unwrap();
+
+    let data = tempfile::tempdir().unwrap();
+    let store = CurateStore::new(data.path().join("curated"));
+    let instrument = InstrumentId::parse("069500.KRX").unwrap();
+    let price = Price::parse("10000").unwrap();
+    write_bars(
+        &store.bars_path("kr", "069500.KRX", 2026, 2),
+        &[CuratedBar {
+            instrument_id: instrument,
+            trading_date: TradingDate::parse("2026-08-12").unwrap(),
+            market_open_ts: UtcTimestamp::parse_rfc3339("2026-08-12T00:00:00Z").unwrap(),
+            market_close_ts: UtcTimestamp::parse_rfc3339("2026-08-12T06:30:00Z").unwrap(),
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+            volume: 1,
+            trading_value: Some(10_000),
+            currency: Currency::KRW,
+            source: "test".into(),
+            ingested_at: UtcTimestamp::parse_rfc3339("2026-08-12T07:00:00Z").unwrap(),
+            batch_id: Uuid::new_v4().to_string().parse().unwrap(),
+            raw_hash: ContentHash::from_bytes(b"preview-http-bar"),
+        }],
+    )
+    .unwrap();
+    let worker = h.worker_pool().await;
+    let queue = JobQueue::new(
+        worker.clone(),
+        None,
+        QueueConfig {
+            lease: Duration::from_secs(10),
+            backoff_base: Duration::from_millis(1),
+        },
+    );
+    let outcome = run_preview_once(
+        &worker,
+        &queue,
+        data.path(),
+        "http-preview-worker",
+        chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
+        Duration::from_millis(100),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(outcome, PreviewRunOutcome::Published { .. }));
+    worker.close().await;
+
+    let read = h
+        .get(
+            &format!(
+                "/api/v1/paper/accounts/{}/recommendation-previews/{preview_id}",
+                input.account_id
+            ),
+            Some(&h.owner),
+        )
+        .await;
+    assert_eq!(read.status(), StatusCode::OK);
+    let body = Harness::body_json(read).await;
+    ReadyPreview {
+        id: preview_id,
+        token: body["preview_token"].as_str().unwrap().to_owned(),
+        body,
+    }
+}
+
+async fn apply_preview(
+    h: &Harness,
+    input: &PreviewInputs,
+    ready: &ReadyPreview,
+    key: &str,
+    token: &str,
+) -> axum::response::Response {
+    h.send(
+        "POST",
+        &format!(
+            "/api/v1/paper/accounts/{}/recommendation-previews/{}/apply",
+            input.account_id, ready.id
+        ),
+        Some(&h.owner),
+        true,
+        Some("preview-apply-rid"),
+        Some(key),
+        Some(json!({ "preview_token": token })),
+    )
+    .await
+}
+
 #[tokio::test]
 async fn create_preview_is_atomic_readable_and_durably_idempotent() {
     let Some(mut h) = Harness::new().await else {
@@ -413,68 +512,8 @@ async fn worker_completion_is_returned_as_a_strict_ready_preview() {
         return;
     };
     let input = ready_inputs(&h).await;
-    let created = create(&h, &input, "preview-worker-key", input.run_id).await;
-    assert_eq!(created.status(), StatusCode::ACCEPTED);
-    let created = Harness::body_json(created).await;
-    let preview_id = Uuid::parse_str(created["id"].as_str().unwrap()).unwrap();
-
-    let data = tempfile::tempdir().unwrap();
-    let store = CurateStore::new(data.path().join("curated"));
-    let instrument = InstrumentId::parse("069500.KRX").unwrap();
-    let price = Price::parse("10000").unwrap();
-    write_bars(
-        &store.bars_path("kr", "069500.KRX", 2026, 2),
-        &[CuratedBar {
-            instrument_id: instrument,
-            trading_date: TradingDate::parse("2026-08-12").unwrap(),
-            market_open_ts: UtcTimestamp::parse_rfc3339("2026-08-12T00:00:00Z").unwrap(),
-            market_close_ts: UtcTimestamp::parse_rfc3339("2026-08-12T06:30:00Z").unwrap(),
-            open: price,
-            high: price,
-            low: price,
-            close: price,
-            volume: 1,
-            trading_value: Some(10_000),
-            currency: Currency::KRW,
-            source: "test".into(),
-            ingested_at: UtcTimestamp::parse_rfc3339("2026-08-12T07:00:00Z").unwrap(),
-            batch_id: Uuid::new_v4().to_string().parse().unwrap(),
-            raw_hash: ContentHash::from_bytes(b"preview-http-bar"),
-        }],
-    )
-    .unwrap();
-    let worker = h.worker_pool().await;
-    let queue = JobQueue::new(
-        worker.clone(),
-        None,
-        QueueConfig {
-            lease: Duration::from_secs(10),
-            backoff_base: Duration::from_millis(1),
-        },
-    );
-    let outcome = run_preview_once(
-        &worker,
-        &queue,
-        data.path(),
-        "http-preview-worker",
-        chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
-        Duration::from_millis(100),
-    )
-    .await
-    .unwrap();
-    assert!(matches!(outcome, PreviewRunOutcome::Published { .. }));
-
-    let read = h
-        .get(
-            &format!(
-                "/api/v1/paper/accounts/{}/recommendation-previews/{preview_id}",
-                input.account_id
-            ),
-            Some(&h.owner),
-        )
-        .await;
-    assert_eq!(read.status(), StatusCode::OK);
-    let read = Harness::body_json(read).await;
+    let ready = finish_preview(&h, &input, "preview-worker-key").await;
+    let read = ready.body;
     assert_eq!(read["status"], "READY");
     assert_eq!(read["result"]["schema_version"], 1);
     assert_eq!(read["result"]["price_basis"], "RECOMMENDATION_CLOSE");
@@ -484,6 +523,508 @@ async fn worker_completion_is_returned_as_a_strict_ready_preview() {
     );
     assert_eq!(read["result"]["orders"].as_array().unwrap().len(), 1);
     assert!(read["preview_token"].as_str().is_some());
-    worker.close().await;
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn apply_ready_preview_creates_one_manual_target_without_ledger_writes_and_replays() {
+    let Some(mut h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let input = ready_inputs(&h).await;
+    let ready = finish_preview(&h, &input, "preview-apply-ready").await;
+    let path = format!(
+        "/api/v1/paper/accounts/{}/recommendation-previews/{}/apply",
+        input.account_id, ready.id
+    );
+    let applied = h
+        .send(
+            "POST",
+            &path,
+            Some(&h.owner),
+            true,
+            Some("preview-apply-rid"),
+            Some("preview-apply-key"),
+            Some(json!({ "preview_token": ready.token })),
+        )
+        .await;
+    let applied_status = applied.status();
+    let applied = Harness::body_json(applied).await;
+    assert_eq!(applied_status, StatusCode::OK, "{applied}");
+    assert_eq!(applied["preview_id"], ready.id.to_string());
+    assert_eq!(applied["status"], "APPLIED");
+    assert_eq!(applied["effective_date"], "2026-08-14");
+    assert_eq!(applied["source_kind"], "MANUAL_RECOMMENDATION");
+    let pending_target_id = applied["pending_target_id"].as_str().unwrap().to_owned();
+
+    let pool = actor_pool(&h.app_url, &h.owner.user_id.to_string(), 2).await;
+    let persisted: (String, String, String, Uuid, Value, Uuid, String, i64, i64) = sqlx::query_as(
+        "SELECT preview.status,target.source_kind,target.status,target.recommendation_run_id, \
+                target.targets_json,target.dataset_version_id,target.dataset_manifest_sha256, \
+                (SELECT count(*) FROM orders WHERE account_id=preview.account_id), \
+                (SELECT count(*) FROM fills WHERE account_id=preview.account_id) \
+         FROM paper_rebalance_previews AS preview \
+         JOIN pending_targets AS target ON target.id=preview.pending_target_id \
+         WHERE preview.id=$1",
+    )
+    .bind(ready.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(persisted.0, "APPLIED");
+    assert_eq!(persisted.1, "MANUAL_RECOMMENDATION");
+    assert_eq!(persisted.2, "PENDING");
+    assert_eq!(persisted.3, input.run_id);
+    assert_eq!(
+        persisted.4,
+        json!([{"instrument_id":"069500.KRX","weight":"1.000000"}])
+    );
+    assert_eq!(persisted.5, h.state().cfg.recommendation_dataset.id);
+    assert_eq!(
+        persisted.6,
+        h.state().cfg.recommendation_dataset.manifest_sha256
+    );
+    assert_eq!((persisted.7, persisted.8), (0, 0));
+    pool.close().await;
+
+    h.restart_api().await;
+    let replay = h
+        .send(
+            "POST",
+            &path,
+            Some(&h.owner),
+            true,
+            Some("preview-apply-replay-rid"),
+            Some("preview-apply-key"),
+            Some(json!({ "preview_token": ready.token })),
+        )
+        .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(
+        Harness::body_json(replay).await["pending_target_id"],
+        pending_target_id
+    );
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn apply_preview_rejects_not_ready_wrong_token_and_foreign_tenant() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let input = ready_inputs(&h).await;
+    let pending = create(&h, &input, "preview-not-ready", input.run_id).await;
+    assert_eq!(pending.status(), StatusCode::ACCEPTED);
+    let pending = Harness::body_json(pending).await;
+    let not_ready = ReadyPreview {
+        id: Uuid::parse_str(pending["id"].as_str().unwrap()).unwrap(),
+        token: "a".repeat(64),
+        body: pending,
+    };
+    let response = apply_preview(
+        &h,
+        &input,
+        &not_ready,
+        "preview-not-ready-apply",
+        &not_ready.token,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        Harness::body_json(response).await["error"]["code"],
+        "REBALANCE_PREVIEW_NOT_READY"
+    );
+    let pool = actor_pool(&h.app_url, &h.owner.user_id.to_string(), 1).await;
+    sqlx::query("UPDATE jobs SET status='CANCELED' WHERE id=$1")
+        .bind(Uuid::parse_str(not_ready.body["job_id"].as_str().unwrap()).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let ready = finish_preview(&h, &input, "preview-invalid-apply").await;
+    let wrong = apply_preview(&h, &input, &ready, "preview-wrong-token", &"b".repeat(64)).await;
+    assert_eq!(wrong.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        Harness::body_json(wrong).await["error"]["code"],
+        "REBALANCE_PREVIEW_STALE"
+    );
+
+    let other = h
+        .seed_user(
+            auth::entitlement::Role::Owner,
+            "preview-apply-other@lagrange.test",
+            "preview-apply-other-iss",
+            "preview-apply-other-sub",
+        )
+        .await;
+    let foreign = h
+        .send(
+            "POST",
+            &format!(
+                "/api/v1/paper/accounts/{}/recommendation-previews/{}/apply",
+                input.account_id, ready.id
+            ),
+            Some(&other),
+            true,
+            Some("preview-foreign-apply-rid"),
+            Some("preview-foreign-apply-key"),
+            Some(json!({ "preview_token": ready.token })),
+        )
+        .await;
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn apply_preview_fails_closed_after_account_target_or_shared_input_changes() {
+    async fn assert_stale(h: &Harness, input: &PreviewInputs, ready: &ReadyPreview, key: &str) {
+        let response = apply_preview(h, input, ready, key, &ready.token).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            Harness::body_json(response).await["error"]["code"],
+            "REBALANCE_PREVIEW_STALE"
+        );
+    }
+
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let input = ready_inputs(&h).await;
+    let pool = actor_pool(&h.app_url, &h.owner.user_id.to_string(), 2).await;
+
+    let cash = finish_preview(&h, &input, "preview-stale-cash").await;
+    sqlx::query("UPDATE cash_ledger SET ts=ts+interval '1 second' WHERE account_id=$1")
+        .bind(input.account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_stale(&h, &input, &cash, "preview-apply-stale-cash").await;
+
+    let position = finish_preview(&h, &input, "preview-stale-position").await;
+    sqlx::query(
+        "INSERT INTO positions \
+         (account_id,owner_user_id,instrument_id,quantity) VALUES ($1,$2,'069500.KRX',1)",
+    )
+    .bind(input.account_id)
+    .bind(h.owner.user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_stale(&h, &input, &position, "preview-apply-stale-position").await;
+
+    let account = finish_preview(&h, &input, "preview-stale-account").await;
+    sqlx::query("UPDATE accounts SET status='SUSPENDED' WHERE id=$1")
+        .bind(input.account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_stale(&h, &input, &account, "preview-apply-stale-account").await;
+    sqlx::query("UPDATE accounts SET status='ACTIVE' WHERE id=$1")
+        .bind(input.account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let target = finish_preview(&h, &input, "preview-stale-target").await;
+    let target_id = Uuid::parse_str(target.body["target_portfolio_id"].as_str().unwrap()).unwrap();
+    sqlx::query(
+        "UPDATE target_portfolios SET weights_json='{\"069500.KRX\":\"0.500000\"}'::jsonb \
+         WHERE id=$1",
+    )
+    .bind(target_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_stale(&h, &input, &target, "preview-apply-stale-target").await;
+    sqlx::query(
+        "UPDATE target_portfolios SET weights_json='{\"069500.KRX\":\"1.000000\"}'::jsonb \
+         WHERE id=$1",
+    )
+    .bind(target_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let binding = finish_preview(&h, &input, "preview-stale-binding").await;
+    sqlx::query(
+        "UPDATE account_strategy_bindings SET unbound_at=now() \
+         WHERE account_id=$1 AND unbound_at IS NULL",
+    )
+    .bind(input.account_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_stale(&h, &input, &binding, "preview-apply-stale-binding").await;
+    let config_id = Uuid::parse_str(binding.body["strategy_config_id"].as_str().unwrap()).unwrap();
+    sqlx::query(
+        "INSERT INTO account_strategy_bindings \
+         (account_id,owner_user_id,strategy_config_id,strategy_id,strategy_version) \
+         VALUES ($1,$2,$3,'buy_and_hold','1.0.0')",
+    )
+    .bind(input.account_id)
+    .bind(h.owner.user_id)
+    .bind(config_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let dataset = finish_preview(&h, &input, "preview-stale-dataset").await;
+    sqlx::query("UPDATE dataset_versions SET status='BLOCKED' WHERE id=$1")
+        .bind(h.state().cfg.recommendation_dataset.id)
+        .execute(&h.owner_pool)
+        .await
+        .unwrap();
+    assert_stale(&h, &input, &dataset, "preview-apply-stale-dataset").await;
+    sqlx::query("UPDATE dataset_versions SET status='READY' WHERE id=$1")
+        .bind(h.state().cfg.recommendation_dataset.id)
+        .execute(&h.owner_pool)
+        .await
+        .unwrap();
+
+    let entitlement = finish_preview(&h, &input, "preview-stale-entitlement").await;
+    sqlx::query("UPDATE data_entitlements SET status='REVOKED' WHERE status='ACTIVE'")
+        .execute(&h.owner_pool)
+        .await
+        .unwrap();
+    let response = apply_preview(
+        &h,
+        &input,
+        &entitlement,
+        "preview-apply-stale-entitlement",
+        &entitlement.token,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        Harness::body_json(response).await["error"]["code"],
+        "DATA_ENTITLEMENT_REQUIRED"
+    );
+    pool.close().await;
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn apply_preview_rejects_arrived_or_conflicting_session_and_serializes_replays() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let input = ready_inputs(&h).await;
+    let arrived = finish_preview(&h, &input, "preview-arrived").await;
+    let arrived_result = h
+        .state()
+        .rebalance_previews()
+        .apply(
+            &h.owner.actor(),
+            input.account_id,
+            arrived.id,
+            &arrived.token,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 14).unwrap(),
+        )
+        .await;
+    assert!(matches!(
+        arrived_result,
+        Err(api_server::repos::rebalance_previews::ApplyRebalancePreviewError::Stale)
+    ));
+
+    let conflict = finish_preview(&h, &input, "preview-conflict").await;
+    let pool = actor_pool(&h.app_url, &h.owner.user_id.to_string(), 2).await;
+    let config_id = Uuid::parse_str(conflict.body["strategy_config_id"].as_str().unwrap()).unwrap();
+    sqlx::query(
+        "INSERT INTO pending_targets \
+         (account_id,owner_user_id,strategy_config_id,computed_on,effective_date,targets_json) \
+         VALUES ($1,$2,$3,DATE '2026-08-12',DATE '2026-08-14','[]'::jsonb)",
+    )
+    .bind(input.account_id)
+    .bind(h.owner.user_id)
+    .bind(config_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let conflict_response = apply_preview(
+        &h,
+        &input,
+        &conflict,
+        "preview-apply-conflict",
+        &conflict.token,
+    )
+    .await;
+    assert_eq!(conflict_response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        Harness::body_json(conflict_response).await["error"]["code"],
+        "REBALANCE_PREVIEW_CONFLICT"
+    );
+    sqlx::query("DELETE FROM pending_targets WHERE account_id=$1")
+        .bind(input.account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let concurrent = finish_preview(&h, &input, "preview-concurrent-apply").await;
+    let (first, second) = tokio::join!(
+        apply_preview(
+            &h,
+            &input,
+            &concurrent,
+            "preview-concurrent-apply-a",
+            &concurrent.token,
+        ),
+        apply_preview(
+            &h,
+            &input,
+            &concurrent,
+            "preview-concurrent-apply-b",
+            &concurrent.token,
+        ),
+    );
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(second.status(), StatusCode::OK);
+    let first = Harness::body_json(first).await;
+    let second = Harness::body_json(second).await;
+    assert_eq!(first["pending_target_id"], second["pending_target_id"]);
+    let target_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pending_targets WHERE account_id=$1 AND source_kind='MANUAL_RECOMMENDATION'",
+    )
+    .bind(input.account_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(target_count, 1);
+    pool.close().await;
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn apply_and_ledger_mutation_have_a_single_account_locked_order() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let input = ready_inputs(&h).await;
+    let actor_pool = actor_pool(&h.app_url, &h.owner.user_id.to_string(), 4).await;
+
+    let mutation_first = finish_preview(&h, &input, "preview-mutation-first").await;
+    let mut mutation = actor_pool.begin().await.unwrap();
+    sqlx::query("UPDATE cash_ledger SET ts=ts+interval '1 second' WHERE account_id=$1")
+        .bind(input.account_id)
+        .execute(&mut *mutation)
+        .await
+        .unwrap();
+    let repo = h.state().rebalance_previews();
+    let actor = h.owner.actor();
+    let mutation_first_token = mutation_first.token.clone();
+    let account_id = input.account_id;
+    let preview_id = mutation_first.id;
+    let applying = tokio::spawn(async move {
+        repo.apply(
+            &actor,
+            account_id,
+            preview_id,
+            &mutation_first_token,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
+        )
+        .await
+    });
+    let mut observed_wait = false;
+    for _ in 0..200 {
+        observed_wait = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity \
+             WHERE datname=current_database() AND usename='app' \
+               AND wait_event_type='Lock' \
+               AND query LIKE '%paper_rebalance_previews AS preview%')",
+        )
+        .fetch_one(&h.owner_pool)
+        .await
+        .unwrap();
+        if observed_wait {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        observed_wait || !applying.is_finished(),
+        "apply must wait for the in-flight ledger mutation"
+    );
+    mutation.commit().await.unwrap();
+    let result = applying.await.unwrap();
+    assert!(matches!(
+        result,
+        Err(api_server::repos::rebalance_previews::ApplyRebalancePreviewError::Stale)
+    ));
+
+    let apply_first = finish_preview(&h, &input, "preview-apply-first").await;
+    h.seed_shared(
+        "CREATE FUNCTION block_manual_preview_apply() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN PERFORM pg_advisory_xact_lock(813038); RETURN NEW; END $$",
+    )
+    .await;
+    h.seed_shared(
+        "CREATE TRIGGER block_manual_preview_apply BEFORE INSERT ON pending_targets \
+         FOR EACH ROW WHEN (NEW.source_kind='MANUAL_RECOMMENDATION') \
+         EXECUTE FUNCTION block_manual_preview_apply()",
+    )
+    .await;
+    let mut latch = h.owner_pool.acquire().await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock(813038)")
+        .execute(&mut *latch)
+        .await
+        .unwrap();
+    let repo = h.state().rebalance_previews();
+    let actor = h.owner.actor();
+    let apply_first_token = apply_first.token.clone();
+    let preview_id = apply_first.id;
+    let applying = tokio::spawn(async move {
+        repo.apply(
+            &actor,
+            account_id,
+            preview_id,
+            &apply_first_token,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
+        )
+        .await
+    });
+    let mut apply_reached_insert = false;
+    for _ in 0..200 {
+        apply_reached_insert = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_locks \
+             WHERE locktype='advisory' AND NOT granted)",
+        )
+        .fetch_one(&h.owner_pool)
+        .await
+        .unwrap();
+        if apply_reached_insert {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        apply_reached_insert,
+        "apply must reach the target insertion seam"
+    );
+    let mutation_pool = actor_pool.clone();
+    let mutating = tokio::spawn(async move {
+        sqlx::query("UPDATE cash_ledger SET ts=ts+interval '1 second' WHERE account_id=$1")
+            .bind(account_id)
+            .execute(&mutation_pool)
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !mutating.is_finished(),
+        "ledger mutation must wait while apply holds account validity locks"
+    );
+    sqlx::query("SELECT pg_advisory_unlock(813038)")
+        .execute(&mut *latch)
+        .await
+        .unwrap();
+    let applied = applying.await.unwrap().unwrap();
+    assert!(!applied.replayed);
+    assert_eq!(applied.source_kind, "MANUAL_RECOMMENDATION");
+    assert_eq!(mutating.await.unwrap().unwrap().rows_affected(), 1);
+    actor_pool.close().await;
     h.teardown().await;
 }

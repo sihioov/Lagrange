@@ -497,7 +497,7 @@ async fn prepare_preview(
     instrument_ids.sort();
     instrument_ids.dedup();
     let root = dataset_root.to_path_buf();
-    let account_state_sha256 = account_state_hash(
+    let account_state_sha256 = account_state_sha256(
         snapshot.account_state_version,
         &snapshot.cash_balance,
         &snapshot.positions_json,
@@ -586,7 +586,10 @@ fn parse_targets(value: &Value) -> Result<Vec<TargetAllocation>, PaperPreviewErr
     Ok(targets)
 }
 
-fn account_state_hash(
+/// Hash the canonical Paper cash/position snapshot used by preview publication
+/// and explicit application. Callers must hold the account/input locks while
+/// deriving these values so the digest and state version share one snapshot.
+pub fn account_state_sha256(
     version: i64,
     cash: &str,
     positions: &Value,

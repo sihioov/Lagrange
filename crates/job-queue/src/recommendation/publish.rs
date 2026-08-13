@@ -26,6 +26,7 @@ pub struct CredentialedSourcePin {
 
 #[derive(Debug, Clone)]
 pub struct PaperBridgeInput<'a> {
+    pub recommendation_run_id: uuid::Uuid,
     pub owner_user_id: uuid::Uuid,
     pub strategy_config_id: uuid::Uuid,
     pub as_of: chrono::NaiveDate,
@@ -63,8 +64,9 @@ pub async fn bridge_scheduled_paper_targets(
     );
     let (count, missing): (i32, bool) = sqlx::query_as(
         "SELECT targets, missing_next_session \
-           FROM public.queue_scheduled_paper_targets($1,$2,$3,$4,$5,$6,$7)",
+           FROM public.queue_scheduled_paper_targets($1,$2,$3,$4,$5,$6,$7,$8)",
     )
+    .bind(input.recommendation_run_id)
     .bind(input.owner_user_id)
     .bind(input.strategy_config_id)
     .bind(input.as_of)
@@ -317,6 +319,7 @@ async fn publish_recommendation_inner(
     let bridge = bridge_scheduled_paper_targets(
         &mut transaction,
         &PaperBridgeInput {
+            recommendation_run_id: input.payload.run_id,
             owner_user_id: claim.job.owner_user_id,
             strategy_config_id: input.payload.strategy_config_id,
             as_of: input.payload.as_of,

@@ -144,6 +144,7 @@ fn counters() -> &'static CounterHandles {
             "not_ready",
             "stale",
             "conflict",
+            "validation_rejected",
             "authorization_rejected",
         ] {
             preview_applies.with_label_values(&[v]).inc_by(0);

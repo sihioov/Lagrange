@@ -323,6 +323,10 @@ pub fn api_router(state: ApiState) -> Router {
             "/paper/accounts/{account_id}/recommendation-previews/{preview_id}",
             get(paper::get_rebalance_preview),
         )
+        .route(
+            "/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply",
+            post(paper::apply_rebalance_preview),
+        )
         .route("/paper/accounts/{account_id}/orders", get(paper::orders))
         .route(
             "/paper/accounts/{account_id}/positions",

@@ -50,6 +50,27 @@ pub struct SubmittedRebalancePreview {
     pub replayed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedRebalancePreview {
+    pub preview_id: Uuid,
+    pub pending_target_id: Uuid,
+    pub effective_date: NaiveDate,
+    pub source_kind: String,
+    pub replayed: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ApplyRebalancePreviewError {
+    #[error(transparent)]
+    Tenancy(#[from] TenancyError),
+    #[error("the preview is not ready")]
+    NotReady,
+    #[error("the preview inputs changed")]
+    Stale,
+    #[error("the preview conflicts with an existing target")]
+    Conflict,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SubmitRebalancePreviewError {
     #[error(transparent)]
@@ -77,6 +98,35 @@ struct LockedSubmission {
     dataset_version_id: Option<Uuid>,
     dataset_manifest_sha256: Option<String>,
     weights_json: Option<Value>,
+}
+
+#[derive(Debug, FromRow)]
+struct ApplyIdentity {
+    account_id: Uuid,
+    status: String,
+    preview_token: Option<String>,
+}
+
+#[derive(Debug, FromRow)]
+struct LockedApplyInputs {
+    status: String,
+    preview_token: Option<String>,
+    account_state_version: Option<i64>,
+    account_state_sha256: Option<String>,
+    target_portfolio_sha256: String,
+    paper_state_version: i64,
+    cash_running: Option<String>,
+    cash_replayed: String,
+    positions_json: Value,
+    weights_json: Value,
+}
+
+#[derive(Debug, FromRow)]
+struct AppliedBoundaryRow {
+    outcome: String,
+    pending_target_id: Option<Uuid>,
+    effective_date: Option<NaiveDate>,
+    source_kind: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -258,12 +308,162 @@ impl RebalancePreviewRepo {
         tx.commit().await.map_err(TenancyError::from_sqlx)?;
         row.ok_or(TenancyError::NotFound)
     }
+
+    pub async fn apply(
+        &self,
+        actor: &Actor,
+        account_id: Uuid,
+        preview_id: Uuid,
+        preview_token: &str,
+        seoul_today: NaiveDate,
+    ) -> Result<AppliedRebalancePreview, ApplyRebalancePreviewError> {
+        let owner = actor_uuid(actor)?;
+        let mut tx = begin_actor_tx(&self.pool, actor).await?;
+        let identity: ApplyIdentity = sqlx::query_as(
+            "SELECT account_id,status,preview_token \
+             FROM paper_rebalance_previews WHERE id=$1 AND account_id=$2",
+        )
+        .bind(preview_id)
+        .bind(account_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?
+        .ok_or(TenancyError::NotFound)?;
+        if identity.status == "READY" {
+            if identity.account_id != account_id
+                || identity.preview_token.as_deref() != Some(preview_token)
+            {
+                return Err(ApplyRebalancePreviewError::Stale);
+            }
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text,381901))")
+                .bind(account_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(TenancyError::from_sqlx)?;
+            let locked: LockedApplyInputs = sqlx::query_as(
+                "SELECT preview.status,preview.preview_token,preview.account_state_version, \
+                        preview.account_state_sha256,preview.target_portfolio_sha256, \
+                        account.paper_state_version, \
+                        (SELECT ledger.balance::text FROM cash_ledger AS ledger \
+                          WHERE ledger.account_id=preview.account_id \
+                            AND ledger.owner_user_id=preview.owner_user_id \
+                          ORDER BY ledger.seq DESC LIMIT 1) AS cash_running, \
+                        (SELECT COALESCE(sum(replay.amount),0)::text FROM cash_ledger AS replay \
+                          WHERE replay.account_id=preview.account_id \
+                            AND replay.owner_user_id=preview.owner_user_id) AS cash_replayed, \
+                        COALESCE((SELECT jsonb_object_agg(position.instrument_id, \
+                            position.quantity::text ORDER BY position.instrument_id) \
+                          FROM positions AS position \
+                          WHERE position.account_id=preview.account_id \
+                            AND position.owner_user_id=preview.owner_user_id \
+                            AND position.quantity<>0),'{}'::jsonb) AS positions_json, \
+                        portfolio.weights_json \
+                 FROM paper_rebalance_previews AS preview \
+                 JOIN accounts AS account ON account.id=preview.account_id \
+                    AND account.owner_user_id=preview.owner_user_id \
+                 JOIN target_portfolios AS portfolio ON portfolio.id=preview.target_portfolio_id \
+                    AND portfolio.owner_user_id=preview.owner_user_id \
+                    AND portfolio.recommendation_run_id=preview.recommendation_run_id \
+                 WHERE preview.id=$1 AND preview.account_id=$2 \
+                 FOR SHARE OF account,portfolio",
+            )
+            .bind(preview_id)
+            .bind(account_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?
+            .ok_or(TenancyError::NotFound)?;
+            if locked.preview_token.as_deref() != Some(preview_token) {
+                return Err(ApplyRebalancePreviewError::Stale);
+            }
+            if locked.status == "READY" {
+                if locked.cash_running.as_deref() != Some(locked.cash_replayed.as_str())
+                    || locked.account_state_version != Some(locked.paper_state_version)
+                {
+                    return Err(ApplyRebalancePreviewError::Stale);
+                }
+                let current_account_hash = job_queue::paper_preview::account_state_sha256(
+                    locked.paper_state_version,
+                    locked.cash_running.as_deref().expect("checked present"),
+                    &locked.positions_json,
+                )
+                .map_err(|_| {
+                    TenancyError::ResultIntegrity("Paper account snapshot cannot be hashed".into())
+                })?;
+                let current_target_hash = raw_json_sha256(&locked.weights_json)?;
+                if locked.account_state_sha256.as_deref() != Some(current_account_hash.as_str())
+                    || locked.target_portfolio_sha256 != current_target_hash
+                {
+                    return Err(ApplyRebalancePreviewError::Stale);
+                }
+            } else if locked.status != "APPLIED" {
+                return Err(ApplyRebalancePreviewError::NotReady);
+            }
+        } else if identity.status == "APPLIED" {
+            if identity.preview_token.as_deref() != Some(preview_token) {
+                return Err(ApplyRebalancePreviewError::Stale);
+            }
+        } else {
+            return Err(ApplyRebalancePreviewError::NotReady);
+        }
+
+        let boundary: AppliedBoundaryRow = sqlx::query_as(
+            "SELECT outcome,pending_target_id,effective_date,source_kind \
+             FROM apply_paper_rebalance_preview($1,$2,$3,$4)",
+        )
+        .bind(owner)
+        .bind(preview_id)
+        .bind(preview_token)
+        .bind(seoul_today)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        let replayed = match boundary.outcome.as_str() {
+            "APPLIED" => false,
+            "REPLAY" => true,
+            "NOT_FOUND" => return Err(TenancyError::NotFound.into()),
+            "NOT_READY" => return Err(ApplyRebalancePreviewError::NotReady),
+            "STALE" => return Err(ApplyRebalancePreviewError::Stale),
+            "CONFLICT" => return Err(ApplyRebalancePreviewError::Conflict),
+            _ => {
+                return Err(TenancyError::ResultIntegrity(
+                    "preview apply returned an unknown outcome".into(),
+                )
+                .into());
+            }
+        };
+        let applied = AppliedRebalancePreview {
+            preview_id,
+            pending_target_id: required_apply(boundary.pending_target_id, "pending target")?,
+            effective_date: required_apply(boundary.effective_date, "effective date")?,
+            source_kind: required_apply(boundary.source_kind, "source kind")?,
+            replayed,
+        };
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        Ok(applied)
+    }
 }
 
 fn required<T>(value: Option<T>, name: &str) -> Result<T, SubmitRebalancePreviewError> {
     value.ok_or_else(|| {
         TenancyError::ResultIntegrity(format!("preview submission omitted {name}")).into()
     })
+}
+
+fn required_apply<T>(value: Option<T>, name: &str) -> Result<T, ApplyRebalancePreviewError> {
+    value.ok_or_else(|| {
+        TenancyError::ResultIntegrity(format!("preview apply omitted {name}")).into()
+    })
+}
+
+fn raw_json_sha256(value: &Value) -> Result<String, ApplyRebalancePreviewError> {
+    let bytes = serde_json::to_vec(value)
+        .map_err(|_| TenancyError::ResultIntegrity("target weights cannot be serialized".into()))?;
+    Ok(ContentHash::from_bytes(&bytes)
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("ContentHash is sha256")
+        .to_owned())
 }
 
 const PREVIEW_RETURN_COLUMNS: &str = "id,account_id,recommendation_run_id,target_portfolio_id, \
