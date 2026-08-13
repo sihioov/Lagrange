@@ -256,10 +256,185 @@ REVOKE ALL ON TABLE public.paper_rebalance_previews
     FROM PUBLIC, app, worker, admin, audit_writer, research_writer;
 GRANT SELECT ON TABLE public.paper_rebalance_previews TO app, worker, admin;
 GRANT INSERT (
-    owner_user_id, account_id, recommendation_run_id, target_portfolio_id,
+    id, owner_user_id, account_id, recommendation_run_id, target_portfolio_id,
     strategy_config_id, job_id, price_date, dataset_version_id,
     dataset_manifest_sha256, target_portfolio_sha256
 ) ON public.paper_rebalance_previews TO app;
+
+-- App-only submission attestation. The actor identity comes from the
+-- authenticated session, and this function locks every shared/tenant input
+-- whose validity makes a preview request admissible. It returns typed domain
+-- outcomes rather than exposing SQL or cross-tenant existence details.
+CREATE FUNCTION public.lock_paper_rebalance_preview_submission(
+    p_owner_user_id uuid,
+    p_account_id uuid,
+    p_recommendation_run_id uuid,
+    p_seoul_today date
+) RETURNS TABLE (
+    outcome text,
+    target_portfolio_id uuid,
+    strategy_config_id uuid,
+    price_date date,
+    dataset_version_id uuid,
+    dataset_manifest_sha256 text,
+    weights_json jsonb
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    v_run record;
+    v_dataset record;
+    v_portfolio record;
+BEGIN
+    IF p_owner_user_id IS NULL OR p_account_id IS NULL
+       OR p_recommendation_run_id IS NULL OR p_seoul_today IS NULL THEN
+        RETURN QUERY SELECT 'NOT_FOUND', NULL::uuid, NULL::uuid, NULL::date,
+            NULL::uuid, NULL::text, NULL::jsonb;
+        RETURN;
+    END IF;
+    PERFORM pg_catalog.set_config('app.actor_user_id', p_owner_user_id::text, true);
+
+    SELECT run.strategy_config_id, run.as_of, run.dataset_version_id,
+           run.dataset_manifest_sha256, run.job_id, run.status
+      INTO v_run
+      FROM public.recommendation_runs AS run
+     WHERE run.id = p_recommendation_run_id
+       AND run.owner_user_id = p_owner_user_id
+     FOR SHARE OF run;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT 'NOT_FOUND', NULL::uuid, NULL::uuid, NULL::date,
+            NULL::uuid, NULL::text, NULL::jsonb;
+        RETURN;
+    END IF;
+    IF v_run.status <> 'SUCCEEDED' OR v_run.strategy_config_id IS NULL
+       OR v_run.dataset_version_id IS NULL OR v_run.dataset_manifest_sha256 IS NULL THEN
+        RETURN QUERY SELECT 'RUN_NOT_READY', NULL::uuid, NULL::uuid, NULL::date,
+            NULL::uuid, NULL::text, NULL::jsonb;
+        RETURN;
+    END IF;
+
+    PERFORM 1
+      FROM public.accounts AS account
+     WHERE account.id = p_account_id
+       AND account.owner_user_id = p_owner_user_id
+       AND account.account_type = 'PAPER'
+       AND account.status = 'ACTIVE'
+     FOR SHARE OF account;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT 'NOT_FOUND', NULL::uuid, NULL::uuid, NULL::date,
+            NULL::uuid, NULL::text, NULL::jsonb;
+        RETURN;
+    END IF;
+
+    PERFORM 1
+      FROM public.account_strategy_bindings AS binding
+      JOIN public.user_strategy_configs AS config
+        ON config.id = binding.strategy_config_id
+       AND config.owner_user_id = binding.owner_user_id
+       AND config.is_active
+     WHERE binding.account_id = p_account_id
+       AND binding.owner_user_id = p_owner_user_id
+       AND binding.strategy_config_id = v_run.strategy_config_id
+       AND binding.unbound_at IS NULL
+     FOR SHARE OF binding, config;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT 'BINDING_REQUIRED', NULL::uuid, NULL::uuid, NULL::date,
+            NULL::uuid, NULL::text, NULL::jsonb;
+        RETURN;
+    END IF;
+
+    SELECT portfolio.id, portfolio.weights_json
+      INTO v_portfolio
+      FROM public.target_portfolios AS portfolio
+     WHERE portfolio.owner_user_id = p_owner_user_id
+       AND portfolio.recommendation_run_id = p_recommendation_run_id
+       AND portfolio.as_of = v_run.as_of
+     FOR SHARE OF portfolio;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT 'RUN_NOT_READY', NULL::uuid, NULL::uuid, NULL::date,
+            NULL::uuid, NULL::text, NULL::jsonb;
+        RETURN;
+    END IF;
+
+    SELECT dataset.dataset_id, dataset.version, dataset.manifest_sha256
+      INTO v_dataset
+      FROM public.dataset_versions AS dataset
+     WHERE dataset.id = v_run.dataset_version_id
+       AND dataset.status IN ('READY', 'WARNING')
+       AND dataset.manifest_sha256 = v_run.dataset_manifest_sha256
+     FOR SHARE OF dataset;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT 'DATA_BLOCKED', NULL::uuid, NULL::uuid, NULL::date,
+            NULL::uuid, NULL::text, NULL::jsonb;
+        RETURN;
+    END IF;
+
+    PERFORM 1
+      FROM public.jobs AS source_job
+     WHERE source_job.id = v_run.job_id
+       AND source_job.owner_user_id = p_owner_user_id
+       AND source_job.job_type = 'recommendation'
+       AND source_job.status = 'SUCCEEDED'
+       AND source_job.payload_json #>> '{dataset,id}' = v_run.dataset_version_id::text
+       AND source_job.payload_json #>> '{dataset,dataset_id}' = v_dataset.dataset_id
+       AND source_job.payload_json #>> '{dataset,version}' = v_dataset.version
+       AND source_job.payload_json #>> '{dataset,manifest_sha256}' = v_run.dataset_manifest_sha256
+       AND source_job.payload_json #>> '{dataset,curated_version}' ~ '^[1-9][0-9]{0,9}$'
+       AND (source_job.payload_json #>> '{dataset,curated_version}')::numeric <= 2147483647
+     FOR SHARE OF source_job;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT 'DATA_BLOCKED', NULL::uuid, NULL::uuid, NULL::date,
+            NULL::uuid, NULL::text, NULL::jsonb;
+        RETURN;
+    END IF;
+
+    PERFORM 1
+      FROM public.data_entitlements AS entitlement
+     WHERE entitlement.status = 'ACTIVE'
+       AND entitlement.effective_from <= v_run.as_of
+       AND entitlement.effective_until >= v_run.as_of
+       AND entitlement.covered_datasets @> pg_catalog.jsonb_build_array(v_dataset.dataset_id)
+       AND entitlement.covered_uses @> '["recommendation"]'::jsonb
+     LIMIT 1
+     FOR SHARE OF entitlement;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT 'ENTITLEMENT_REQUIRED', NULL::uuid, NULL::uuid, NULL::date,
+            NULL::uuid, NULL::text, NULL::jsonb;
+        RETURN;
+    END IF;
+
+    PERFORM 1
+      FROM public.trading_calendars AS calendar
+     WHERE calendar.exchange = 'KRX'
+       AND calendar.session_type = 'TRADING'
+       AND calendar.timezone = 'Asia/Seoul'
+       AND calendar.session_date > GREATEST(v_run.as_of, p_seoul_today)
+       AND calendar.source_batch_id IS NOT NULL
+       AND calendar.content_sha256 IS NOT NULL
+       AND calendar.retrieved_at IS NOT NULL
+     ORDER BY calendar.session_date
+     LIMIT 1
+     FOR SHARE OF calendar;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT 'DATA_BLOCKED', NULL::uuid, NULL::uuid, NULL::date,
+            NULL::uuid, NULL::text, NULL::jsonb;
+        RETURN;
+    END IF;
+
+    RETURN QUERY SELECT 'READY', v_portfolio.id, v_run.strategy_config_id,
+        v_run.as_of, v_run.dataset_version_id, v_run.dataset_manifest_sha256,
+        v_portfolio.weights_json;
+END;
+$$;
+
+ALTER FUNCTION public.lock_paper_rebalance_preview_submission(uuid, uuid, uuid, date)
+    OWNER TO migration_owner;
+REVOKE ALL ON FUNCTION public.lock_paper_rebalance_preview_submission(uuid, uuid, uuid, date)
+    FROM PUBLIC, admin, audit_writer, research_writer, worker;
+GRANT EXECUTE ON FUNCTION public.lock_paper_rebalance_preview_submission(uuid, uuid, uuid, date)
+    TO app;
 
 -- Worker snapshot. The queue payload supplies only preview/job identity; owner,
 -- account, target, and dataset identity all come from locked database rows.

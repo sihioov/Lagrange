@@ -252,6 +252,40 @@ pub struct TargetLineageDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct RebalancePreviewDto {
+    pub id: String,
+    pub account_id: String,
+    pub recommendation_run_id: String,
+    pub target_portfolio_id: String,
+    pub strategy_config_id: String,
+    pub job_id: String,
+    pub status: String,
+    pub price_basis: String,
+    pub price_date: NaiveDate,
+    pub proposed_effective_date: Option<NaiveDate>,
+    pub dataset_version_id: String,
+    pub dataset_manifest_sha256: String,
+    pub target_portfolio_sha256: String,
+    pub preview_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<job_queue::paper_preview::PreviewResultV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<RebalancePreviewErrorDto>,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub applied_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RebalancePreviewErrorDto {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct LineageDto {
     pub account_id: String,
     pub bindings: Vec<BindingHistoryDto>,
@@ -563,6 +597,12 @@ pub struct BindStrategyBody {
     pub strategy_config_id: String,
     #[serde(default)]
     pub auto_apply_recommendations: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RebalancePreviewBody {
+    pub recommendation_run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

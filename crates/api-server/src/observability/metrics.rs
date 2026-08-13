@@ -15,6 +15,8 @@ pub const METRIC_NAMES: &[&str] = &[
     "job_retries_total",
     "alerts_raised_total",
     "notification_deliveries_total",
+    "paper_rebalance_preview_requests_total",
+    "paper_rebalance_preview_applies_total",
 ];
 
 struct CounterHandles {
@@ -25,6 +27,8 @@ struct CounterHandles {
     retries: IntCounterVec,
     alerts: IntCounterVec,
     deliveries: IntCounterVec,
+    preview_requests: IntCounterVec,
+    preview_applies: IntCounterVec,
 }
 
 fn counters() -> &'static CounterHandles {
@@ -78,6 +82,22 @@ fn counters() -> &'static CounterHandles {
             &["status"],
         )
         .expect("notification_deliveries_total registers");
+        let preview_requests = IntCounterVec::new(
+            Opts::new(
+                "paper_rebalance_preview_requests_total",
+                "Paper rebalance preview request outcomes",
+            ),
+            &["outcome"],
+        )
+        .expect("paper_rebalance_preview_requests_total registers");
+        let preview_applies = IntCounterVec::new(
+            Opts::new(
+                "paper_rebalance_preview_applies_total",
+                "Paper rebalance preview apply outcomes",
+            ),
+            &["outcome"],
+        )
+        .expect("paper_rebalance_preview_applies_total registers");
         for c in [
             Box::new(requests.clone()) as Box<dyn prometheus::core::Collector>,
             Box::new(errors.clone()),
@@ -86,6 +106,8 @@ fn counters() -> &'static CounterHandles {
             Box::new(retries.clone()),
             Box::new(alerts.clone()),
             Box::new(deliveries.clone()),
+            Box::new(preview_requests.clone()),
+            Box::new(preview_applies.clone()),
         ] {
             registry.register(c).expect("collector registers once");
         }
@@ -107,6 +129,25 @@ fn counters() -> &'static CounterHandles {
         for v in ["SUCCESS", "FAILED"] {
             deliveries.with_label_values(&[v]).inc_by(0);
         }
+        for v in [
+            "accepted",
+            "replayed",
+            "capacity_rejected",
+            "validation_rejected",
+            "authorization_rejected",
+        ] {
+            preview_requests.with_label_values(&[v]).inc_by(0);
+        }
+        for v in [
+            "applied",
+            "replayed",
+            "not_ready",
+            "stale",
+            "conflict",
+            "authorization_rejected",
+        ] {
+            preview_applies.with_label_values(&[v]).inc_by(0);
+        }
         std::mem::forget(registry);
         CounterHandles {
             requests,
@@ -116,6 +157,8 @@ fn counters() -> &'static CounterHandles {
             retries,
             alerts,
             deliveries,
+            preview_requests,
+            preview_applies,
         }
     })
 }
@@ -155,6 +198,20 @@ pub fn record_delivery(status: &str) {
     counters().deliveries.with_label_values(&[status]).inc();
 }
 
+pub fn record_preview_request(outcome: &str) {
+    counters()
+        .preview_requests
+        .with_label_values(&[outcome])
+        .inc();
+}
+
+pub fn record_preview_apply(outcome: &str) {
+    counters()
+        .preview_applies
+        .with_label_values(&[outcome])
+        .inc();
+}
+
 /// Render every counter in the Prometheus text exposition format.
 pub fn render() -> String {
     let snapshot = Registry::new();
@@ -166,6 +223,8 @@ pub fn render() -> String {
         Box::new(counters().retries.clone()),
         Box::new(counters().alerts.clone()),
         Box::new(counters().deliveries.clone()),
+        Box::new(counters().preview_requests.clone()),
+        Box::new(counters().preview_applies.clone()),
     ] {
         let _ = snapshot.register(c);
     }

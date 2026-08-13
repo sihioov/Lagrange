@@ -176,6 +176,46 @@ pub const ERROR_CODES: &[ErrorCodeDef] = &[
         "per-owner queued recommendation capacity exceeded",
     ),
     ErrorCodeDef::new(
+        "REBALANCE_PREVIEW_CAPACITY_EXCEEDED",
+        StatusCode::TOO_MANY_REQUESTS,
+        "per-owner queued Paper preview capacity exceeded",
+    ),
+    ErrorCodeDef::new(
+        "REBALANCE_PREVIEW_BINDING_REQUIRED",
+        StatusCode::CONFLICT,
+        "an active matching Paper binding is required",
+    ),
+    ErrorCodeDef::new(
+        "REBALANCE_PREVIEW_NOT_READY",
+        StatusCode::CONFLICT,
+        "the recommendation or preview is not ready",
+    ),
+    ErrorCodeDef::new(
+        "REBALANCE_PREVIEW_DATA_BLOCKED",
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "the recommendation dataset or calendar is blocked",
+    ),
+    ErrorCodeDef::new(
+        "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED",
+        StatusCode::FORBIDDEN,
+        "an active recommendation entitlement is required",
+    ),
+    ErrorCodeDef::new(
+        "REBALANCE_PREVIEW_STALE",
+        StatusCode::CONFLICT,
+        "the preview no longer matches current Paper inputs",
+    ),
+    ErrorCodeDef::new(
+        "REBALANCE_PREVIEW_FAILED",
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "the preview calculation failed",
+    ),
+    ErrorCodeDef::new(
+        "REBALANCE_PREVIEW_CONFLICT",
+        StatusCode::CONFLICT,
+        "the preview conflicts with an existing Paper target",
+    ),
+    ErrorCodeDef::new(
         "RESULT_INTEGRITY_FAILED",
         StatusCode::UNPROCESSABLE_ENTITY,
         "result artifacts failed integrity verification",

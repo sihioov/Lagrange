@@ -17,6 +17,7 @@ use crate::repos::ops::OpsRepo;
 use crate::repos::paper::PaperRepo;
 use crate::repos::parity::ParityRepo;
 use crate::repos::pending_targets::PendingTargetRepo;
+use crate::repos::rebalance_previews::RebalancePreviewRepo;
 use crate::repos::recommendations::RecommendationRepo;
 use crate::repos::robustness::RobustnessRepo;
 use crate::repos::shared::SharedDataRepo;
@@ -120,6 +121,9 @@ impl ApiState {
     }
     pub fn recommendations(&self) -> RecommendationRepo {
         RecommendationRepo::new(self.app_pool.clone())
+    }
+    pub fn rebalance_previews(&self) -> RebalancePreviewRepo {
+        RebalancePreviewRepo::new(self.app_pool.clone())
     }
     /// The Live repository, bound to the calling actor.
     ///

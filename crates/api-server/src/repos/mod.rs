@@ -15,6 +15,7 @@ pub mod order_intents;
 pub mod paper;
 pub mod parity;
 pub mod pending_targets;
+pub mod rebalance_previews;
 pub mod recommendations;
 pub mod reconciliation;
 pub mod risk;

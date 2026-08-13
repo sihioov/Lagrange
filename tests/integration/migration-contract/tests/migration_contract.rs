@@ -263,6 +263,7 @@ fn recommendation_pipeline_migration_is_tracked() {
     for token in [
         "paper_rebalance_previews",
         "paper_state_version",
+        "lock_paper_rebalance_preview_submission",
         "snapshot_paper_rebalance_preview",
         "publish_paper_rebalance_preview",
         "fail_paper_rebalance_preview",
@@ -2722,6 +2723,28 @@ async fn paper_rebalance_preview_contract_body(
     .fetch_one(&owner_actor)
     .await?;
 
+    let submission: (String, Option<Uuid>) = sqlx::query_as(
+        "SELECT outcome, target_portfolio_id \
+         FROM lock_paper_rebalance_preview_submission($1, $2, $3, DATE '2026-08-12')",
+    )
+    .bind(user_id)
+    .bind(account_id)
+    .bind(recommendation_run_id)
+    .fetch_one(&app)
+    .await?;
+    assert_eq!(submission, ("READY".into(), Some(portfolio_id)));
+    let worker_submission = sqlx::query(
+        "SELECT outcome \
+         FROM lock_paper_rebalance_preview_submission($1, $2, $3, DATE '2026-08-12')",
+    )
+    .bind(user_id)
+    .bind(account_id)
+    .bind(recommendation_run_id)
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&worker_submission).as_deref(), Some("42501"));
+
     let mut expected_version = 0_i64;
     let read_version = || {
         sqlx::query_scalar::<_, i64>("SELECT paper_state_version FROM accounts WHERE id = $1")
@@ -3404,6 +3427,42 @@ async fn recommendation_pipeline_contract_body(
         assert!(
             !old_bridge,
             "legacy scheduled bridge must be inactive for {role}"
+        );
+    }
+    let submission_signature =
+        "public.lock_paper_rebalance_preview_submission(uuid,uuid,uuid,date)";
+    let submission_metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
+        "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
+         FROM pg_proc WHERE oid = $1::regprocedure",
+    )
+    .bind(submission_signature)
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        submission_metadata.0,
+        "submission lock must be SECURITY DEFINER"
+    );
+    assert_eq!(submission_metadata.1, "migration_owner");
+    assert_eq!(
+        submission_metadata.2,
+        Some(vec!["search_path=pg_catalog, pg_temp".into()])
+    );
+    for (role, expected) in [
+        ("worker", false),
+        ("app", true),
+        ("admin", false),
+        ("audit_writer", false),
+        ("research_writer", false),
+    ] {
+        let can_submit: bool =
+            sqlx::query_scalar("SELECT has_function_privilege($1, $2, 'EXECUTE')")
+                .bind(role)
+                .bind(submission_signature)
+                .fetch_one(owner)
+                .await?;
+        assert_eq!(
+            can_submit, expected,
+            "unexpected preview submission grant for {role}"
         );
     }
     for (role, expected) in [

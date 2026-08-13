@@ -174,6 +174,10 @@ REVOKE EXECUTE ON FUNCTION public.snapshot_paper_rebalance_preview(uuid, uuid, d
     FROM worker;
 DROP FUNCTION public.snapshot_paper_rebalance_preview(uuid, uuid, date);
 
+REVOKE EXECUTE ON FUNCTION public.lock_paper_rebalance_preview_submission(uuid, uuid, uuid, date)
+    FROM app;
+DROP FUNCTION public.lock_paper_rebalance_preview_submission(uuid, uuid, uuid, date);
+
 DROP TABLE public.paper_rebalance_previews;
 
 DROP TRIGGER pending_targets_protect_recommendation_origin

@@ -4,7 +4,7 @@
 
 use crate::http::dto::{
     AccountDto, BindStrategyBody, BindStrategyDto, EquityPointDto, NewAccountBody, OrderDto,
-    PageDto, PositionDto,
+    PageDto, PositionDto, RebalancePreviewBody, RebalancePreviewDto,
 };
 use crate::http::entitlement::require_use;
 use crate::http::error::{api_error, code_error, request_id};
@@ -23,6 +23,271 @@ use portfolio_model::cost::CostProfile;
 use portfolio_model::error::PortfolioError;
 use portfolio_model::paper_account::NewPaperAccount;
 use uuid::Uuid;
+
+const MAX_PREVIEW_IDEMPOTENCY_KEY_BYTES: usize = 96;
+
+fn seoul_today() -> chrono::NaiveDate {
+    let offset = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
+    chrono::Utc::now().with_timezone(&offset).date_naive()
+}
+
+fn is_owner(session: &Session) -> bool {
+    session.actor().is_owner()
+}
+
+fn preview_dto(
+    row: crate::repos::rebalance_previews::RebalancePreviewRow,
+) -> Result<RebalancePreviewDto, crate::error::TenancyError> {
+    let result = row
+        .result_json
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|_| {
+            crate::error::TenancyError::ResultIntegrity(
+                "stored Paper rebalance preview is malformed".into(),
+            )
+        })?;
+    let error = row
+        .error_json
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|_| {
+            crate::error::TenancyError::ResultIntegrity(
+                "stored Paper rebalance preview error is malformed".into(),
+            )
+        })?;
+    Ok(RebalancePreviewDto {
+        id: row.id.to_string(),
+        account_id: row.account_id.to_string(),
+        recommendation_run_id: row.recommendation_run_id.to_string(),
+        target_portfolio_id: row.target_portfolio_id.to_string(),
+        strategy_config_id: row.strategy_config_id.to_string(),
+        job_id: row.job_id.to_string(),
+        status: row.status,
+        price_basis: row.price_basis,
+        price_date: row.price_date,
+        proposed_effective_date: row.proposed_effective_date,
+        dataset_version_id: row.dataset_version_id.to_string(),
+        dataset_manifest_sha256: row.dataset_manifest_sha256,
+        target_portfolio_sha256: row.target_portfolio_sha256,
+        preview_token: row.preview_token,
+        result,
+        error,
+        created_at: row.created_at,
+        started_at: row.started_at,
+        completed_at: row.completed_at,
+        applied_at: row.applied_at,
+        updated_at: row.updated_at,
+    })
+}
+
+pub async fn create_rebalance_preview(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+    Path(account_id): Path<String>,
+    JsonBody(body): JsonBody<RebalancePreviewBody>,
+) -> Response {
+    let rid = request_id(&headers);
+    if let Err(response) = crate::http::session::require_csrf(&headers, &session.0) {
+        crate::observability::metrics::record_preview_request("authorization_rejected");
+        return response;
+    }
+    if !is_owner(&session) {
+        crate::observability::metrics::record_preview_request("authorization_rejected");
+        return code_error("FORBIDDEN", "Paper rebalance previews are Owner-only", &rid);
+    }
+    let account_id = match parse_uuid(&rid, "account id", &account_id) {
+        Ok(id) => id,
+        Err(response) => {
+            crate::observability::metrics::record_preview_request("validation_rejected");
+            return response;
+        }
+    };
+    let recommendation_run_id = match Uuid::parse_str(&body.recommendation_run_id) {
+        Ok(id) => id,
+        Err(_) => {
+            crate::observability::metrics::record_preview_request("validation_rejected");
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_PARAMETER",
+                "recommendation_run_id must be a uuid",
+                &rid,
+                None,
+            );
+        }
+    };
+    let Some(key) = crate::http::idempotency::key_from(&headers) else {
+        crate::observability::metrics::record_preview_request("validation_rejected");
+        return code_error(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "mutating routes require an Idempotency-Key header",
+            &rid,
+        );
+    };
+    if key.len() > MAX_PREVIEW_IDEMPOTENCY_KEY_BYTES {
+        crate::observability::metrics::record_preview_request("validation_rejected");
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PARAMETER",
+            format!("Idempotency-Key must not exceed {MAX_PREVIEW_IDEMPOTENCY_KEY_BYTES} bytes"),
+            &rid,
+            None,
+        );
+    }
+    if let Err(response) = require_use(
+        &state,
+        &session,
+        &headers,
+        auth::entitlement::KrUse::Recommendation,
+        &crate::http::entitlement::today_iso(),
+    )
+    .await
+    {
+        crate::observability::metrics::record_preview_request("authorization_rejected");
+        return response;
+    }
+    let submitted = match state
+        .rebalance_previews()
+        .submit(
+            &session.actor(),
+            crate::repos::rebalance_previews::SubmitRebalancePreview {
+                account_id,
+                recommendation_run_id,
+                idempotency_key: key,
+                max_jobs_per_owner: state.cfg.max_jobs_per_owner,
+                seoul_today: seoul_today(),
+            },
+        )
+        .await
+    {
+        Ok(submitted) => submitted,
+        Err(crate::repos::rebalance_previews::SubmitRebalancePreviewError::CapacityExceeded) => {
+            crate::observability::metrics::record_preview_request("capacity_rejected");
+            return api_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "REBALANCE_PREVIEW_CAPACITY_EXCEEDED",
+                "per-owner queued Paper preview capacity exceeded",
+                &rid,
+                None,
+            );
+        }
+        Err(crate::repos::rebalance_previews::SubmitRebalancePreviewError::IdempotencyMismatch) => {
+            crate::observability::metrics::record_preview_request("validation_rejected");
+            return code_error(
+                "IDEMPOTENCY_KEY_MISMATCH",
+                "the same Idempotency-Key was already used with different preview input",
+                &rid,
+            );
+        }
+        Err(crate::repos::rebalance_previews::SubmitRebalancePreviewError::BindingRequired) => {
+            crate::observability::metrics::record_preview_request("validation_rejected");
+            return code_error(
+                "REBALANCE_PREVIEW_BINDING_REQUIRED",
+                "an active Paper binding to this recommendation strategy is required",
+                &rid,
+            );
+        }
+        Err(crate::repos::rebalance_previews::SubmitRebalancePreviewError::RunNotReady) => {
+            crate::observability::metrics::record_preview_request("validation_rejected");
+            return code_error(
+                "REBALANCE_PREVIEW_NOT_READY",
+                "the recommendation run is not successfully published",
+                &rid,
+            );
+        }
+        Err(crate::repos::rebalance_previews::SubmitRebalancePreviewError::DataBlocked) => {
+            crate::observability::metrics::record_preview_request("validation_rejected");
+            return code_error(
+                "REBALANCE_PREVIEW_DATA_BLOCKED",
+                "the recommendation dataset or calendar is blocked",
+                &rid,
+            );
+        }
+        Err(crate::repos::rebalance_previews::SubmitRebalancePreviewError::EntitlementRequired) => {
+            crate::observability::metrics::record_preview_request("authorization_rejected");
+            return code_error(
+                "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED",
+                "an active recommendation entitlement is required",
+                &rid,
+            );
+        }
+        Err(crate::repos::rebalance_previews::SubmitRebalancePreviewError::Tenancy(error)) => {
+            crate::observability::metrics::record_preview_request("authorization_rejected");
+            return tenancy_response(error, &rid, "RESOURCE_NOT_FOUND");
+        }
+    };
+    let status = if submitted.replayed {
+        crate::observability::metrics::record_preview_request("replayed");
+        StatusCode::OK
+    } else {
+        crate::observability::metrics::record_preview_request("accepted");
+        audit(
+            &state,
+            &session,
+            &headers,
+            "paper.rebalance_preview.create",
+            "paper_rebalance_preview",
+            &submitted.row.id.to_string(),
+            None,
+            Some(serde_json::json!({
+                "account_id": submitted.row.account_id,
+                "recommendation_run_id": submitted.row.recommendation_run_id,
+                "job_id": submitted.row.job_id,
+            })),
+            None,
+        )
+        .await;
+        StatusCode::ACCEPTED
+    };
+    match preview_dto(submitted.row) {
+        Ok(dto) => (status, Json(dto)).into_response(),
+        Err(error) => tenancy_response(error, &rid, "RESOURCE_NOT_FOUND"),
+    }
+}
+
+pub async fn get_rebalance_preview(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+    Path((account_id, preview_id)): Path<(String, String)>,
+) -> Response {
+    let rid = request_id(&headers);
+    if !is_owner(&session) {
+        return code_error("FORBIDDEN", "Paper rebalance previews are Owner-only", &rid);
+    }
+    let account_id = match parse_uuid(&rid, "account id", &account_id) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    let preview_id = match parse_uuid(&rid, "preview id", &preview_id) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    if let Err(response) = require_use(
+        &state,
+        &session,
+        &headers,
+        auth::entitlement::KrUse::PaperView,
+        &crate::http::entitlement::today_iso(),
+    )
+    .await
+    {
+        return response;
+    }
+    let row = match state
+        .rebalance_previews()
+        .get(&session.actor(), account_id, preview_id)
+        .await
+    {
+        Ok(row) => row,
+        Err(error) => return tenancy_response(error, &rid, "RESOURCE_NOT_FOUND"),
+    };
+    match preview_dto(row) {
+        Ok(dto) => (StatusCode::OK, Json(dto)).into_response(),
+        Err(error) => tenancy_response(error, &rid, "RESOURCE_NOT_FOUND"),
+    }
+}
 
 /// Resolves the requested cost profile id to a real, versioned [`CostProfile`].
 ///
