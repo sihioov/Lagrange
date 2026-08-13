@@ -2685,11 +2685,17 @@ async fn paper_rebalance_preview_contract_body(
     .await?;
 
     let recommendation_job_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO jobs (owner_user_id, job_type, status, idempotency_key) \
-         VALUES ($1, 'recommendation', 'SUCCEEDED', $2) RETURNING id",
+        "INSERT INTO jobs \
+         (owner_user_id, job_type, status, idempotency_key, payload_json) \
+         VALUES ($1, 'recommendation', 'SUCCEEDED', $2, \
+                 jsonb_build_object('dataset', jsonb_build_object( \
+                   'id', $3::uuid, 'dataset_id', 'krx_eod_bars', \
+                   'version', 'preview-v1', 'curated_version', 7, \
+                   'manifest_sha256', repeat('a',64)))) RETURNING id",
     )
     .bind(user_id)
     .bind("preview-source-contract")
+    .bind(dataset_version_id)
     .fetch_one(&owner_actor)
     .await?;
     let recommendation_run_id: Uuid = sqlx::query_scalar(

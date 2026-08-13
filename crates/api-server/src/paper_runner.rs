@@ -5,11 +5,14 @@
 //! only performs the trusted worker-wide scans and joins those two seams.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use auth::entitlement::{Actor, Role};
 use chrono::NaiveDate;
 use domain::TradingDate;
+use job_queue::paper_preview::{PreviewRunOutcome, PreviewRunnerError, run_preview_once};
 use job_queue::paper_valuation::{ValuationOutcome, value_account};
+use job_queue::{JobQueue, QueueConfig};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -24,6 +27,9 @@ pub struct RunnerServices {
     pub state: ApiState,
     pub worker_pool: sqlx::PgPool,
     pub dataset_root: PathBuf,
+    preview_queue: JobQueue,
+    preview_worker_id: String,
+    preview_heartbeat: Duration,
 }
 
 /// Parsed command-line controls shared by the daemon and its tests.
@@ -31,6 +37,10 @@ pub struct RunnerServices {
 pub struct RunnerArgs {
     pub once: bool,
     pub date: Option<NaiveDate>,
+    pub preview_worker_id: String,
+    pub preview_heartbeat: Duration,
+    pub preview_lease: Duration,
+    pub preview_backoff: Duration,
 }
 
 /// Parses arguments after the executable name.
@@ -41,6 +51,10 @@ where
     let mut parsed = RunnerArgs {
         once: false,
         date: None,
+        preview_worker_id: format!("paper-preview-{}", std::process::id()),
+        preview_heartbeat: Duration::from_secs(10),
+        preview_lease: Duration::from_secs(60),
+        preview_backoff: Duration::from_secs(30),
     };
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
@@ -64,19 +78,79 @@ where
                     return Err("--date may be provided only once".to_owned());
                 }
             }
+            "--preview-worker-id" => {
+                parsed.preview_worker_id = iter
+                    .next()
+                    .ok_or_else(|| "--preview-worker-id requires a value".to_owned())?;
+            }
+            "--preview-heartbeat-ms" => {
+                parsed.preview_heartbeat = parse_duration(&mut iter, &arg)?;
+            }
+            "--preview-lease-ms" => {
+                parsed.preview_lease = parse_duration(&mut iter, &arg)?;
+            }
+            "--preview-backoff-ms" => {
+                parsed.preview_backoff = parse_duration(&mut iter, &arg)?;
+            }
             other => return Err(format!("unrecognised argument {other:?} (try --help)")),
         }
+    }
+    if parsed.preview_worker_id.trim().is_empty() {
+        return Err("--preview-worker-id must not be empty".to_owned());
+    }
+    if parsed.preview_heartbeat >= parsed.preview_lease {
+        return Err("preview heartbeat must be shorter than the preview lease".to_owned());
     }
     Ok(parsed)
 }
 
+fn parse_duration<I>(iter: &mut I, option: &str) -> Result<Duration, String>
+where
+    I: Iterator<Item = String>,
+{
+    let raw = iter
+        .next()
+        .ok_or_else(|| format!("{option} requires a positive millisecond value"))?;
+    let millis = raw
+        .parse::<u64>()
+        .map_err(|_| format!("{option} requires a positive millisecond value"))?;
+    if millis == 0 {
+        return Err(format!("{option} requires a positive millisecond value"));
+    }
+    Ok(Duration::from_millis(millis))
+}
+
 impl RunnerServices {
     pub fn new(state: ApiState, worker_pool: sqlx::PgPool, dataset_root: PathBuf) -> Self {
+        let preview_queue = JobQueue::new(worker_pool.clone(), None, QueueConfig::default());
         Self {
             state,
             worker_pool,
             dataset_root,
+            preview_queue,
+            preview_worker_id: format!("paper-preview-{}", std::process::id()),
+            preview_heartbeat: Duration::from_secs(10),
         }
+    }
+
+    pub fn with_preview_worker(
+        mut self,
+        worker_id: String,
+        heartbeat: Duration,
+        lease: Duration,
+        backoff: Duration,
+    ) -> Self {
+        self.preview_queue = JobQueue::new(
+            self.worker_pool.clone(),
+            None,
+            QueueConfig {
+                lease,
+                backoff_base: backoff,
+            },
+        );
+        self.preview_worker_id = worker_id;
+        self.preview_heartbeat = heartbeat;
+        self
     }
 }
 
@@ -91,6 +165,11 @@ pub struct RunnerItemError {
 /// What one worker cycle observed and completed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CycleReport {
+    pub previews_seen: usize,
+    pub previews_published: usize,
+    pub previews_failed: usize,
+    pub preview_outcome: &'static str,
+    pub preview_compute_ms: u128,
     pub targets_seen: usize,
     pub targets_settled: usize,
     pub valuations_seen: usize,
@@ -101,6 +180,9 @@ pub struct CycleReport {
 /// Errors that prevent a cycle-wide scan from being completed.
 #[derive(Debug, Error)]
 pub enum RunnerError {
+    #[error("Paper preview queue failed: {0}")]
+    Preview(#[from] PreviewRunnerError),
+
     #[error("pending target scan failed: {0}")]
     PendingScan(#[from] TenancyError),
 
@@ -117,16 +199,52 @@ pub async fn run_cycle(
     services: &RunnerServices,
     process_date: NaiveDate,
 ) -> Result<CycleReport, RunnerError> {
+    let preview_started = Instant::now();
+    let preview = run_preview_once(
+        &services.worker_pool,
+        &services.preview_queue,
+        &services.dataset_root,
+        &services.preview_worker_id,
+        process_date,
+        services.preview_heartbeat,
+    )
+    .await?;
     let targets = PendingTargetRepo::due_worker(&services.worker_pool, process_date).await?;
     let accounts = active_paper_accounts(&services.worker_pool).await?;
     let date = TradingDate::parse(&process_date.to_string())
         .map_err(|e| RunnerError::InvalidDate(format!("{process_date}: {e}")))?;
 
     let mut report = CycleReport {
+        preview_compute_ms: preview_started.elapsed().as_millis(),
         targets_seen: targets.len(),
         valuations_seen: accounts.len(),
         ..CycleReport::default()
     };
+    match preview {
+        PreviewRunOutcome::Idle => report.preview_outcome = "idle",
+        PreviewRunOutcome::Published { .. } => {
+            report.previews_seen = 1;
+            report.previews_published = 1;
+            report.preview_outcome = "published";
+        }
+        PreviewRunOutcome::Retrying { .. } => {
+            report.previews_seen = 1;
+            report.preview_outcome = "retrying";
+        }
+        PreviewRunOutcome::Failed { .. } => {
+            report.previews_seen = 1;
+            report.previews_failed = 1;
+            report.preview_outcome = "failed";
+        }
+        PreviewRunOutcome::Canceled { .. } => {
+            report.previews_seen = 1;
+            report.preview_outcome = "canceled";
+        }
+        PreviewRunOutcome::LeaseLost { .. } => {
+            report.previews_seen = 1;
+            report.preview_outcome = "lease_lost";
+        }
+    }
 
     for target in targets {
         settle_target(services, target, &mut report).await;
@@ -232,6 +350,9 @@ mod tests {
     #[test]
     fn cycle_report_starts_empty() {
         let report = CycleReport::default();
+        assert_eq!(report.previews_seen, 0);
+        assert_eq!(report.previews_published, 0);
+        assert_eq!(report.previews_failed, 0);
         assert_eq!(report.targets_seen, 0);
         assert_eq!(report.valuations_written, 0);
         assert!(report.item_errors.is_empty());

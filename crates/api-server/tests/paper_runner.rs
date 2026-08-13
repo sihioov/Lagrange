@@ -3,6 +3,7 @@
 mod common;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use chrono::NaiveDate;
 use common::{Harness, UserCtx};
@@ -30,16 +31,38 @@ fn runner_args_accept_once_and_a_padded_date() {
         "--once".to_owned(),
         "--date".to_owned(),
         "2026-01-06".to_owned(),
+        "--preview-worker-id".to_owned(),
+        "preview-a".to_owned(),
+        "--preview-heartbeat-ms".to_owned(),
+        "5000".to_owned(),
+        "--preview-lease-ms".to_owned(),
+        "30000".to_owned(),
+        "--preview-backoff-ms".to_owned(),
+        "1000".to_owned(),
     ])
     .expect("arguments parse");
     assert!(args.once);
     assert_eq!(args.date, Some(date("2026-01-06")));
+    assert_eq!(args.preview_worker_id, "preview-a");
+    assert_eq!(args.preview_heartbeat, Duration::from_secs(5));
+    assert_eq!(args.preview_lease, Duration::from_secs(30));
+    assert_eq!(args.preview_backoff, Duration::from_secs(1));
 }
 
 #[test]
 fn runner_args_refuse_unknown_or_malformed_values() {
     assert!(parse_args(vec!["--wat".to_owned()]).is_err());
     assert!(parse_args(vec!["--date".to_owned(), "2026-1-6".to_owned(),]).is_err());
+    assert!(
+        parse_args(vec![
+            "--preview-heartbeat-ms".to_owned(),
+            "30000".to_owned(),
+            "--preview-lease-ms".to_owned(),
+            "30000".to_owned(),
+        ])
+        .is_err()
+    );
+    assert!(parse_args(vec!["--preview-worker-id".to_owned(), " ".to_owned(),]).is_err());
 }
 
 fn date(value: &str) -> NaiveDate {

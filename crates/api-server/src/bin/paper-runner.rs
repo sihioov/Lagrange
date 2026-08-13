@@ -44,8 +44,13 @@ async fn connect(url: &str, label: &str, max_connections: u32) -> Result<sqlx::P
 
 fn print_help() {
     println!(
-        "paper-runner [--once] [--date YYYY-MM-DD]\n\n\
+        "paper-runner [--once] [--date YYYY-MM-DD] [PREVIEW OPTIONS]\n\n\
          Executes due Paper targets and writes verified daily equity.\n\n\
+         Preview options:\n  \
+           --preview-worker-id ID       queue lease owner\n  \
+           --preview-heartbeat-ms N     heartbeat interval (default 10000)\n  \
+           --preview-lease-ms N         queue lease (default 60000)\n  \
+           --preview-backoff-ms N       first retry backoff (default 30000)\n\n\
          Environment:\n  \
            DATABASE_URL             app-role URL (RLS-scoped settlement)\n  \
            WORKER_DATABASE_URL      worker-role URL (cross-tenant engine)\n  \
@@ -56,7 +61,7 @@ fn print_help() {
     );
 }
 
-async fn build_services() -> Result<RunnerServices, String> {
+async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
     let app_url = required_env("DATABASE_URL")?;
     let worker_url = required_env("WORKER_DATABASE_URL")?;
     let admin_url = required_env("ADMIN_DATABASE_URL")?;
@@ -93,7 +98,14 @@ async fn build_services() -> Result<RunnerServices, String> {
     )
     .await
     .map_err(|error| format!("build API state: {error}"))?;
-    Ok(RunnerServices::new(state, worker_pool, dataset_root))
+    Ok(
+        RunnerServices::new(state, worker_pool, dataset_root).with_preview_worker(
+            args.preview_worker_id.clone(),
+            args.preview_heartbeat,
+            args.preview_lease,
+            args.preview_backoff,
+        ),
+    )
 }
 
 #[tokio::main]
@@ -114,7 +126,7 @@ async fn main() -> ExitCode {
         eprintln!("paper-runner: {error}");
         return ExitCode::FAILURE;
     }
-    let services = match build_services().await {
+    let services = match build_services(&args).await {
         Ok(services) => services,
         Err(error) => {
             eprintln!("paper-runner: {error}");
@@ -136,7 +148,12 @@ async fn main() -> ExitCode {
         let cycle = run_cycle(&services, date).await;
         match cycle {
             Ok(report) => eprintln!(
-                "paper-runner: date={date} targets={}/{} valuations={}/{} errors={}",
+                "paper-runner: date={date} preview_outcome={} preview_compute_ms={} previews={}/{}/{} targets={}/{} valuations={}/{} errors={}",
+                report.preview_outcome,
+                report.preview_compute_ms,
+                report.previews_published,
+                report.previews_failed,
+                report.previews_seen,
                 report.targets_settled,
                 report.targets_seen,
                 report.valuations_written,

@@ -7,8 +7,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::time::Duration;
 
-use chrono::Datelike;
+use chrono::{Datelike, NaiveDate};
 use domain::{
     ContentHash, Currency, FixedPoint, InstrumentId, Money, Price, Quantity, TradingDate,
     UtcTimestamp, WEIGHT_SCALE, Weight,
@@ -21,7 +22,14 @@ use portfolio_model::sizing::{
 };
 use portfolio_model::{CostProfile, PortfolioError};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sqlx::PgPool;
+use tokio::sync::watch;
 use uuid::Uuid;
+
+use crate::error::{QueueError, database_error_class, queue_error_class};
+use crate::queue::JobQueue;
+use crate::types::{ClaimedJob, ErrorClass, HeartbeatStatus, JobStatus, SettleResult};
 
 /// Maximum JSON result accepted by the database boundary.
 pub const MAX_PREVIEW_RESULT_BYTES: usize = 262_144;
@@ -35,6 +43,7 @@ pub struct PreviewLineage {
     pub target_portfolio_id: Uuid,
     pub strategy_config_id: Uuid,
     pub dataset_version_id: Uuid,
+    pub curated_version: u32,
     pub dataset_manifest_sha256: String,
     pub account_state_version: i64,
     pub account_state_sha256: String,
@@ -237,6 +246,600 @@ fn classify_curate_read(error: CurateError) -> PaperPreviewError {
         }
         other => PaperPreviewError::MalformedCuratedData(other.to_string()),
     }
+}
+
+/// The queue payload is intentionally closed: all sensitive identity is read
+/// back from PostgreSQL under the claimed job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaperPreviewPayload {
+    pub preview_id: Uuid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreviewRunOutcome {
+    Idle,
+    Published { job_id: Uuid, preview_id: Uuid },
+    Retrying { job_id: Uuid, code: String },
+    Failed { job_id: Uuid, code: String },
+    Canceled { job_id: Uuid },
+    LeaseLost { job_id: Uuid },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PreviewRunnerError {
+    #[error("Paper preview queue unavailable")]
+    Queue(#[from] QueueError),
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SnapshotRow {
+    account_id: Uuid,
+    recommendation_run_id: Uuid,
+    target_portfolio_id: Uuid,
+    strategy_config_id: Uuid,
+    price_date: NaiveDate,
+    proposed_effective_date: NaiveDate,
+    dataset_version_id: Uuid,
+    curated_version: i32,
+    dataset_manifest_sha256: String,
+    target_portfolio_sha256: String,
+    cost_profile_id: String,
+    cost_profile_version: i32,
+    account_state_version: i64,
+    cash_balance: String,
+    positions_json: Value,
+    weights_json: Value,
+}
+
+struct PreparedPreview {
+    preview_id: Uuid,
+    account_state_version: i64,
+    account_state_sha256: String,
+    cost_profile_id: String,
+    cost_profile_version: i32,
+    proposed_effective_date: NaiveDate,
+    token: String,
+    result: PreviewResultV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreviewLeaseOutcome {
+    Stopped,
+    Canceled,
+    LeaseLost,
+    Failed(ErrorClass),
+}
+
+/// Claims and executes at most one preview job. The final result and queue
+/// settlement share one transaction, so cancellation/lease loss can never
+/// expose a READY preview.
+pub async fn run_preview_once(
+    pool: &PgPool,
+    queue: &JobQueue,
+    dataset_root: &Path,
+    worker_id: &str,
+    seoul_today: NaiveDate,
+    heartbeat_interval: Duration,
+) -> Result<PreviewRunOutcome, PreviewRunnerError> {
+    if heartbeat_interval.is_zero() || heartbeat_interval >= queue.config().lease {
+        return Err(PreviewRunnerError::Queue(QueueError::InvalidInput(
+            "preview heartbeat must be positive and shorter than the queue lease".into(),
+        )));
+    }
+    let Some(claim) = queue
+        .claim_next_for(worker_id, "paper_rebalance_preview")
+        .await?
+    else {
+        return Ok(PreviewRunOutcome::Idle);
+    };
+    let payload =
+        match serde_json::from_value::<PaperPreviewPayload>(claim.job.payload_json.clone()) {
+            Ok(payload) => payload,
+            Err(_) => {
+                return settle_preview_failure(
+                    pool,
+                    queue,
+                    &claim,
+                    ErrorClass::Input,
+                    "PAPER_PREVIEW_INVALID_PAYLOAD",
+                    "Paper preview payload is invalid",
+                )
+                .await;
+            }
+        };
+
+    let (stop_tx, stop_rx) = watch::channel(false);
+    let monitor_queue = queue.clone();
+    let monitor_claim = claim.clone();
+    let mut monitor = tokio::spawn(async move {
+        monitor_preview_lease(&monitor_queue, &monitor_claim, heartbeat_interval, stop_rx).await
+    });
+    let preparation = prepare_preview(pool, dataset_root, &claim, payload.preview_id, seoul_today);
+    tokio::pin!(preparation);
+
+    let outcome = tokio::select! {
+        biased;
+        monitor_result = &mut monitor => {
+            match monitor_result {
+                Ok(PreviewLeaseOutcome::Canceled) => settle_preview_canceled(pool, queue, &claim).await,
+                Ok(PreviewLeaseOutcome::LeaseLost) => Ok(PreviewRunOutcome::LeaseLost { job_id: claim.job.id }),
+                Ok(PreviewLeaseOutcome::Failed(class)) => settle_preview_failure(
+                    pool, queue, &claim, class,
+                    "PAPER_PREVIEW_HEARTBEAT_FAILED",
+                    "Paper preview heartbeat failed",
+                ).await,
+                Ok(PreviewLeaseOutcome::Stopped) | Err(_) => settle_preview_failure(
+                    pool, queue, &claim, ErrorClass::Transient,
+                    "PAPER_PREVIEW_HEARTBEAT_STOPPED",
+                    "Paper preview heartbeat stopped unexpectedly",
+                ).await,
+            }
+        }
+        prepared = &mut preparation => {
+            let _ = stop_tx.send(true);
+            match monitor.await {
+                Ok(PreviewLeaseOutcome::Stopped) => match prepared {
+                    Ok(prepared) => finish_preview(pool, queue, &claim, prepared).await,
+                    Err(error) => {
+                        let (class, code, summary) = preview_failure(&error);
+                        settle_preview_failure(pool, queue, &claim, class, code, summary).await
+                    }
+                },
+                Ok(PreviewLeaseOutcome::Canceled) => settle_preview_canceled(pool, queue, &claim).await,
+                Ok(PreviewLeaseOutcome::LeaseLost) => Ok(PreviewRunOutcome::LeaseLost { job_id: claim.job.id }),
+                Ok(PreviewLeaseOutcome::Failed(class)) => settle_preview_failure(
+                    pool, queue, &claim, class,
+                    "PAPER_PREVIEW_HEARTBEAT_FAILED",
+                    "Paper preview heartbeat failed",
+                ).await,
+                Err(_) => settle_preview_failure(
+                    pool, queue, &claim, ErrorClass::Transient,
+                    "PAPER_PREVIEW_HEARTBEAT_STOPPED",
+                    "Paper preview heartbeat stopped unexpectedly",
+                ).await,
+            }
+        }
+    };
+    match outcome {
+        Err(PreviewRunnerError::Queue(QueueError::StaleClaim(_))) => {
+            stale_preview_outcome(pool, queue, &claim).await
+        }
+        other => other,
+    }
+}
+
+async fn stale_preview_outcome(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+) -> Result<PreviewRunOutcome, PreviewRunnerError> {
+    if queue.check_canceled(claim.job.id).await? {
+        settle_preview_canceled(pool, queue, claim).await
+    } else {
+        Ok(PreviewRunOutcome::LeaseLost {
+            job_id: claim.job.id,
+        })
+    }
+}
+
+async fn monitor_preview_lease(
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    interval: Duration,
+    mut stop: watch::Receiver<bool>,
+) -> PreviewLeaseOutcome {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ticker.tick().await;
+    loop {
+        tokio::select! {
+            biased;
+            changed = stop.changed() => {
+                if changed.is_err() || *stop.borrow() {
+                    return PreviewLeaseOutcome::Stopped;
+                }
+            }
+            _ = ticker.tick() => match queue.heartbeat(claim).await {
+                Ok(HeartbeatStatus::Extended) => {}
+                Ok(HeartbeatStatus::Canceled) => return PreviewLeaseOutcome::Canceled,
+                Ok(HeartbeatStatus::LeaseLost) => return PreviewLeaseOutcome::LeaseLost,
+                Err(error) => return PreviewLeaseOutcome::Failed(queue_error_class(&error)),
+            }
+        }
+    }
+}
+
+async fn prepare_preview(
+    pool: &PgPool,
+    dataset_root: &Path,
+    claim: &ClaimedJob,
+    preview_id: Uuid,
+    seoul_today: NaiveDate,
+) -> Result<PreparedPreview, PaperPreviewError> {
+    let snapshot = sqlx::query_as::<_, SnapshotRow>(
+        "SELECT account_id, recommendation_run_id, target_portfolio_id, \
+                strategy_config_id, price_date, proposed_effective_date, \
+                dataset_version_id, curated_version, dataset_manifest_sha256, \
+                target_portfolio_sha256, cost_profile_id, cost_profile_version, \
+                account_state_version, cash_balance, positions_json, weights_json \
+         FROM snapshot_paper_rebalance_preview($1, $2, $3)",
+    )
+    .bind(preview_id)
+    .bind(claim.job.id)
+    .bind(seoul_today)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| {
+        PaperPreviewError::PreviewUnavailable(
+            "preview inputs no longer satisfy the attested contract".into(),
+        )
+    })?;
+    let cash = Money::parse(&snapshot.cash_balance, Currency::KRW)
+        .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
+    let positions = parse_positions(&snapshot.positions_json)?;
+    let targets = parse_targets(&snapshot.weights_json)?;
+    let profile = CostProfile::resolve(&snapshot.cost_profile_id)
+        .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
+    if i32::try_from(profile.version).ok() != Some(snapshot.cost_profile_version) {
+        return Err(PaperPreviewError::InvalidPayload(
+            "cost profile version is unsupported".into(),
+        ));
+    }
+    let curated_version = u32::try_from(snapshot.curated_version)
+        .map_err(|_| PaperPreviewError::InvalidPayload("curated version is invalid".into()))?;
+    let price_date = TradingDate::parse(&snapshot.price_date.to_string())
+        .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
+    let proposed_effective_date = TradingDate::parse(&snapshot.proposed_effective_date.to_string())
+        .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
+    let mut instrument_ids: Vec<_> = positions.keys().cloned().collect();
+    instrument_ids.extend(targets.iter().map(|target| target.instrument_id.clone()));
+    instrument_ids.sort();
+    instrument_ids.dedup();
+    let root = dataset_root.to_path_buf();
+    let account_state_sha256 = account_state_hash(
+        snapshot.account_state_version,
+        &snapshot.cash_balance,
+        &snapshot.positions_json,
+    )?;
+    let lineage = PreviewLineage {
+        account_id: snapshot.account_id,
+        recommendation_run_id: snapshot.recommendation_run_id,
+        target_portfolio_id: snapshot.target_portfolio_id,
+        strategy_config_id: snapshot.strategy_config_id,
+        dataset_version_id: snapshot.dataset_version_id,
+        curated_version,
+        dataset_manifest_sha256: snapshot.dataset_manifest_sha256,
+        account_state_version: snapshot.account_state_version,
+        account_state_sha256: account_state_sha256.clone(),
+        target_portfolio_sha256: snapshot.target_portfolio_sha256,
+    };
+    let calculation = tokio::task::spawn_blocking(move || {
+        let close_prices =
+            load_recommendation_closes(&root, curated_version, price_date, &instrument_ids)?;
+        calculate_preview(PreviewCalculationInput {
+            cash,
+            positions,
+            close_prices,
+            targets,
+            lot_sizes: BTreeMap::new(),
+            profile,
+            price_date,
+            proposed_effective_date,
+            lineage,
+        })
+    })
+    .await
+    .map_err(|_| PaperPreviewError::PreviewUnavailable("preview compute task stopped".into()))??;
+    Ok(PreparedPreview {
+        preview_id,
+        account_state_version: snapshot.account_state_version,
+        account_state_sha256,
+        cost_profile_id: snapshot.cost_profile_id,
+        cost_profile_version: snapshot.cost_profile_version,
+        proposed_effective_date: snapshot.proposed_effective_date,
+        token: calculation.1,
+        result: calculation.0,
+    })
+}
+
+fn parse_positions(value: &Value) -> Result<BTreeMap<InstrumentId, Quantity>, PaperPreviewError> {
+    let object = value.as_object().ok_or_else(|| {
+        PaperPreviewError::InvalidPayload("positions snapshot is not an object".into())
+    })?;
+    let mut positions = BTreeMap::new();
+    for (instrument, quantity) in object {
+        let instrument_id = InstrumentId::parse(instrument)
+            .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
+        let quantity = quantity.as_str().ok_or_else(|| {
+            PaperPreviewError::InvalidPayload("position quantity is not a string".into())
+        })?;
+        let quantity = Quantity::parse(quantity)
+            .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
+        if !quantity.is_zero() {
+            positions.insert(instrument_id, quantity);
+        }
+    }
+    Ok(positions)
+}
+
+fn parse_targets(value: &Value) -> Result<Vec<TargetAllocation>, PaperPreviewError> {
+    let object = value.as_object().ok_or_else(|| {
+        PaperPreviewError::InvalidPayload("target weights are not an object".into())
+    })?;
+    let mut targets = Vec::new();
+    for (instrument, weight) in object {
+        let instrument_id = InstrumentId::parse(instrument)
+            .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
+        let weight = weight.as_str().ok_or_else(|| {
+            PaperPreviewError::InvalidPayload("target weight is not a string".into())
+        })?;
+        let weight = Weight::parse(weight)
+            .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
+        if !weight.is_zero() {
+            targets.push(TargetAllocation {
+                instrument_id,
+                weight,
+            });
+        }
+    }
+    Ok(targets)
+}
+
+fn account_state_hash(
+    version: i64,
+    cash: &str,
+    positions: &Value,
+) -> Result<String, PaperPreviewError> {
+    let bytes = serde_json::to_vec(&json!({
+        "schema_version": 1,
+        "paper_state_version": version,
+        "cash": cash,
+        "positions": positions,
+    }))
+    .map_err(|error| PaperPreviewError::Plan(error.to_string()))?;
+    Ok(raw_sha256(&bytes))
+}
+
+fn raw_sha256(bytes: &[u8]) -> String {
+    ContentHash::from_bytes(bytes)
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("ContentHash always has sha256 prefix")
+        .to_owned()
+}
+
+async fn finish_preview(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    prepared: PreparedPreview,
+) -> Result<PreviewRunOutcome, PreviewRunnerError> {
+    match queue.heartbeat(claim).await? {
+        HeartbeatStatus::Canceled => return settle_preview_canceled(pool, queue, claim).await,
+        HeartbeatStatus::LeaseLost => {
+            return Ok(PreviewRunOutcome::LeaseLost {
+                job_id: claim.job.id,
+            });
+        }
+        HeartbeatStatus::Extended => {}
+    }
+    let mut transaction = pool.begin().await.map_err(QueueError::Database)?;
+    match queue.lock_claim_in(&mut transaction, claim).await {
+        Ok(_) => {}
+        Err(QueueError::StaleClaim(_)) => {
+            transaction.rollback().await.map_err(QueueError::Database)?;
+            return stale_preview_outcome(pool, queue, claim).await;
+        }
+        Err(error) => {
+            transaction.rollback().await.map_err(QueueError::Database)?;
+            return Err(error.into());
+        }
+    }
+    let publication =
+        sqlx::query_scalar(
+            "SELECT publish_paper_rebalance_preview( \
+         $1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(prepared.preview_id)
+        .bind(claim.job.id)
+        .bind(prepared.account_state_version)
+        .bind(&prepared.account_state_sha256)
+        .bind(&prepared.cost_profile_id)
+        .bind(prepared.cost_profile_version)
+        .bind(prepared.proposed_effective_date)
+        .bind(&prepared.token)
+        .bind(serde_json::to_value(&prepared.result).map_err(|error| {
+            QueueError::Internal(format!("serialize preview publication: {error}"))
+        })?)
+        .fetch_one(&mut *transaction)
+        .await;
+    let published: bool = match publication {
+        Ok(published) => published,
+        Err(error) => {
+            let class = database_error_class(&error);
+            let (code, summary) = match class {
+                ErrorClass::Transient => (
+                    "PAPER_PREVIEW_PUBLICATION_UNAVAILABLE",
+                    "Paper preview publication is temporarily unavailable",
+                ),
+                _ => (
+                    "PAPER_PREVIEW_PUBLICATION_INTEGRITY",
+                    "Paper preview publication failed validation",
+                ),
+            };
+            transaction.rollback().await.map_err(QueueError::Database)?;
+            return settle_preview_failure(pool, queue, claim, class, code, summary).await;
+        }
+    };
+    if !published {
+        transaction.rollback().await.map_err(QueueError::Database)?;
+        return settle_preview_failure(
+            pool,
+            queue,
+            claim,
+            ErrorClass::Transient,
+            "PAPER_PREVIEW_ACCOUNT_CHANGED",
+            "Paper account changed while previewing",
+        )
+        .await;
+    }
+    match queue.settle_success_in(&mut transaction, claim).await? {
+        SettleResult::Committed(job) if job.status == JobStatus::Succeeded => {}
+        SettleResult::Canceled(_) => {
+            transaction.rollback().await.map_err(QueueError::Database)?;
+            return Ok(PreviewRunOutcome::Canceled {
+                job_id: claim.job.id,
+            });
+        }
+        SettleResult::Committed(_) => {
+            transaction.rollback().await.map_err(QueueError::Database)?;
+            return Err(QueueError::Internal(
+                "preview success settlement returned an invalid status".into(),
+            )
+            .into());
+        }
+    }
+    transaction.commit().await.map_err(QueueError::Database)?;
+    Ok(PreviewRunOutcome::Published {
+        job_id: claim.job.id,
+        preview_id: prepared.preview_id,
+    })
+}
+
+async fn settle_preview_failure(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    class: ErrorClass,
+    code: &str,
+    summary: &str,
+) -> Result<PreviewRunOutcome, PreviewRunnerError> {
+    let mut transaction = pool.begin().await.map_err(QueueError::Database)?;
+    let settlement = queue
+        .settle_failure_in(&mut transaction, claim, class, code, summary)
+        .await?;
+    let outcome = match settlement {
+        SettleResult::Committed(job) if job.status == JobStatus::Queued => {
+            PreviewRunOutcome::Retrying {
+                job_id: claim.job.id,
+                code: code.into(),
+            }
+        }
+        SettleResult::Committed(job) if job.status == JobStatus::Failed => {
+            fail_preview_in(&mut transaction, claim, code, summary).await?;
+            PreviewRunOutcome::Failed {
+                job_id: claim.job.id,
+                code: code.into(),
+            }
+        }
+        SettleResult::Canceled(_) => {
+            fail_preview_in(
+                &mut transaction,
+                claim,
+                "PAPER_PREVIEW_CANCELED",
+                "Paper preview was canceled",
+            )
+            .await?;
+            PreviewRunOutcome::Canceled {
+                job_id: claim.job.id,
+            }
+        }
+        SettleResult::Committed(_) => {
+            transaction.rollback().await.map_err(QueueError::Database)?;
+            return Err(QueueError::Internal(
+                "preview failure settlement returned an invalid status".into(),
+            )
+            .into());
+        }
+    };
+    transaction.commit().await.map_err(QueueError::Database)?;
+    Ok(outcome)
+}
+
+async fn settle_preview_canceled(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+) -> Result<PreviewRunOutcome, PreviewRunnerError> {
+    let mut transaction = pool.begin().await.map_err(QueueError::Database)?;
+    queue
+        .settle_aborted_in(&mut transaction, claim, "Paper preview was canceled")
+        .await?;
+    fail_preview_in(
+        &mut transaction,
+        claim,
+        "PAPER_PREVIEW_CANCELED",
+        "Paper preview was canceled",
+    )
+    .await?;
+    transaction.commit().await.map_err(QueueError::Database)?;
+    Ok(PreviewRunOutcome::Canceled {
+        job_id: claim.job.id,
+    })
+}
+
+async fn fail_preview_in(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    claim: &ClaimedJob,
+    code: &str,
+    summary: &str,
+) -> Result<(), PreviewRunnerError> {
+    let preview_id = claim
+        .job
+        .payload_json
+        .get("preview_id")
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or_else(|| QueueError::Internal("claimed preview payload lost its identity".into()))?;
+    let failed: bool = sqlx::query_scalar("SELECT fail_paper_rebalance_preview($1, $2, $3)")
+        .bind(preview_id)
+        .bind(claim.job.id)
+        .bind(json!({ "code": code, "message": summary }))
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(QueueError::Database)?;
+    if !failed {
+        return Err(QueueError::Internal("preview failure row was not updated".into()).into());
+    }
+    Ok(())
+}
+
+fn preview_failure(error: &PaperPreviewError) -> (ErrorClass, &'static str, &'static str) {
+    let class = match error {
+        PaperPreviewError::Database(error) => database_error_class(error),
+        PaperPreviewError::InvalidPayload(_) => ErrorClass::Input,
+        PaperPreviewError::PreviewUnavailable(_) | PaperPreviewError::MissingPrice { .. } => {
+            ErrorClass::DataBlocked
+        }
+        PaperPreviewError::CuratedIo(_)
+        | PaperPreviewError::AccountChanged
+        | PaperPreviewError::LeaseLost => ErrorClass::Transient,
+        PaperPreviewError::MalformedCuratedData(_)
+        | PaperPreviewError::Plan(_)
+        | PaperPreviewError::Canceled
+        | PaperPreviewError::ResultTooLarge { .. } => ErrorClass::Integrity,
+    };
+    let code = match error {
+        PaperPreviewError::InvalidPayload(_) => "PAPER_PREVIEW_INVALID_INPUT",
+        PaperPreviewError::PreviewUnavailable(_) => "PAPER_PREVIEW_INPUT_UNAVAILABLE",
+        PaperPreviewError::MissingPrice { .. } => "PAPER_PREVIEW_CLOSE_MISSING",
+        PaperPreviewError::MalformedCuratedData(_) => "PAPER_PREVIEW_CURATED_INTEGRITY",
+        PaperPreviewError::CuratedIo(_) | PaperPreviewError::Database(_) => {
+            "PAPER_PREVIEW_TEMPORARILY_UNAVAILABLE"
+        }
+        PaperPreviewError::AccountChanged => "PAPER_PREVIEW_ACCOUNT_CHANGED",
+        PaperPreviewError::Plan(_) => "PAPER_PREVIEW_PLAN_FAILED",
+        PaperPreviewError::LeaseLost => "PAPER_PREVIEW_LEASE_LOST",
+        PaperPreviewError::Canceled => "PAPER_PREVIEW_CANCELED",
+        PaperPreviewError::ResultTooLarge { .. } => "PAPER_PREVIEW_RESULT_TOO_LARGE",
+    };
+    let summary = match class {
+        ErrorClass::Transient => "Paper preview is temporarily unavailable",
+        ErrorClass::DataBlocked => "Paper preview data is unavailable",
+        _ => "Paper preview failed validation",
+    };
+    (class, code, summary)
 }
 
 /// Produces one bounded result and its raw lowercase SHA-256 token.

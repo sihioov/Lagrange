@@ -278,6 +278,7 @@ CREATE FUNCTION public.snapshot_paper_rebalance_preview(
     dataset_version_id uuid,
     dataset_id text,
     dataset_version text,
+    curated_version integer,
     dataset_manifest_sha256 text,
     target_portfolio_sha256 text,
     cost_profile_id text,
@@ -318,6 +319,8 @@ BEGIN
            account.cost_profile_id, account.cost_profile_version,
            account.paper_state_version,
            dataset.dataset_id, dataset.version AS dataset_version,
+           (source_job.payload_json #>> '{dataset,curated_version}')::integer
+               AS curated_version,
            portfolio.weights_json
       INTO v_preview
       FROM public.paper_rebalance_previews AS preview
@@ -349,19 +352,30 @@ BEGIN
        AND run.as_of = preview.price_date
        AND run.dataset_version_id = preview.dataset_version_id
        AND run.dataset_manifest_sha256 = preview.dataset_manifest_sha256
+      JOIN public.dataset_versions AS dataset
+        ON dataset.id = preview.dataset_version_id
+       AND dataset.status IN ('READY', 'WARNING')
+       AND dataset.manifest_sha256 = preview.dataset_manifest_sha256
+      JOIN public.jobs AS source_job
+        ON source_job.id = run.job_id
+       AND source_job.owner_user_id = run.owner_user_id
+       AND source_job.job_type = 'recommendation'
+       AND source_job.status = 'SUCCEEDED'
+       AND source_job.payload_json #>> '{dataset,id}' = run.dataset_version_id::text
+       AND source_job.payload_json #>> '{dataset,dataset_id}' = dataset.dataset_id
+       AND source_job.payload_json #>> '{dataset,version}' = dataset.version
+       AND source_job.payload_json #>> '{dataset,manifest_sha256}' = run.dataset_manifest_sha256
+       AND source_job.payload_json #>> '{dataset,curated_version}' ~ '^[1-9][0-9]{0,9}$'
+       AND (source_job.payload_json #>> '{dataset,curated_version}')::numeric <= 2147483647
       JOIN public.target_portfolios AS portfolio
         ON portfolio.id = preview.target_portfolio_id
        AND portfolio.owner_user_id = preview.owner_user_id
        AND portfolio.recommendation_run_id = run.id
        AND portfolio.as_of = run.as_of
-      JOIN public.dataset_versions AS dataset
-        ON dataset.id = preview.dataset_version_id
-       AND dataset.status IN ('READY', 'WARNING')
-       AND dataset.manifest_sha256 = preview.dataset_manifest_sha256
      WHERE preview.id = p_preview_id
        AND preview.status IN ('PENDING', 'RUNNING')
      FOR UPDATE OF preview
-     FOR SHARE OF account, binding, config, run, portfolio, dataset;
+     FOR SHARE OF account, binding, config, run, source_job, portfolio, dataset;
     IF NOT FOUND THEN RETURN; END IF;
 
     PERFORM 1
@@ -433,7 +447,8 @@ BEGIN
         v_preview.recommendation_run_id, v_preview.target_portfolio_id,
         v_preview.strategy_config_id, v_preview.price_date, v_effective,
         v_preview.dataset_version_id, v_preview.dataset_id,
-        v_preview.dataset_version, v_preview.dataset_manifest_sha256,
+        v_preview.dataset_version, v_preview.curated_version,
+        v_preview.dataset_manifest_sha256,
         v_preview.target_portfolio_sha256, v_preview.cost_profile_id,
         v_preview.cost_profile_version, v_preview.paper_state_version,
         v_cash_running, v_positions, v_preview.weights_json;
