@@ -393,6 +393,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/paper/accounts/{account_id}/recommendation-previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/paper/accounts/{account_id}/recommendation-previews */
+        post: operations["post__api_v1_paper_accounts__account_id__recommendation_previews"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id} */
+        get: operations["get__api_v1_paper_accounts__account_id__recommendation_previews__preview_id_"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply */
+        post: operations["post__api_v1_paper_accounts__account_id__recommendation_previews__preview_id__apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/paper/accounts/{account_id}/orders": {
         parameters: {
             query?: never;
@@ -905,7 +956,7 @@ export interface components {
             error: components["schemas"]["Error"];
         };
         /** @enum {string} */
-        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
+        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
         Page: {
             items: Record<string, never>[];
             /** @description opaque signed cursor; null when the last page */
@@ -1300,6 +1351,156 @@ export interface components {
         BindStrategyBody: {
             /** Format: uuid */
             strategy_config_id: string;
+        };
+        RebalancePreviewBody: {
+            /** Format: uuid */
+            recommendation_run_id: string;
+        };
+        ApplyRebalancePreviewBody: {
+            preview_token: string;
+        };
+        RebalancePreviewLineage: {
+            /** Format: uuid */
+            account_id: string;
+            /** Format: uuid */
+            recommendation_run_id: string;
+            /** Format: uuid */
+            target_portfolio_id: string;
+            /** Format: uuid */
+            strategy_config_id: string;
+            /** Format: uuid */
+            dataset_version_id: string;
+            curated_version: number;
+            dataset_manifest_sha256: string;
+            /** Format: int64 */
+            account_state_version: number;
+            account_state_sha256: string;
+            target_portfolio_sha256: string;
+        };
+        RebalancePreviewDecision: {
+            /** @example 069500.KRX */
+            instrument_id: string;
+            /** @example 100000000 */
+            current_quantity: string;
+            /** @example 100000000 */
+            current_value: string;
+            /** @example 100000000 */
+            current_weight: string;
+            /** @example 100000000 */
+            target_value: string;
+            /** @example 100000000 */
+            target_weight: string;
+            /** @example 100000000 */
+            delta_value: string;
+            /** @enum {string} */
+            action: "BUY" | "SELL" | "SKIP";
+            /** @enum {string|null} */
+            skip_reason: "BELOW_REBALANCE_THRESHOLD" | "BELOW_MIN_TRADE" | "NO_AVAILABLE_CASH" | "NO_AFFORDABLE_LOT" | null;
+        };
+        RebalancePreviewOrder: {
+            /** @example 069500.KRX */
+            instrument_id: string;
+            /** @enum {string} */
+            side: "BUY" | "SELL";
+            /** @example 100000000 */
+            quantity: string;
+            /** @example 100000000 */
+            raw_price: string;
+            /** @example 100000000 */
+            estimated_execution_price: string;
+            /** @example 100000000 */
+            notional: string;
+            /** @example 100000000 */
+            commission: string;
+            /** @example 100000000 */
+            tax: string;
+            /** @example 100000000 */
+            informational_slippage: string;
+        };
+        RebalancePreviewResult: {
+            /** @constant */
+            schema_version: 1;
+            /** @constant */
+            price_basis: "RECOMMENDATION_CLOSE";
+            /** @example 2026-01-31 */
+            price_date: string;
+            /** @example 2026-01-31 */
+            proposed_effective_date: string;
+            /** @example 100000000 */
+            equity: string;
+            /** @example 100000000 */
+            cash_before: string;
+            /** @example 100000000 */
+            available_cash: string;
+            /** @example 100000000 */
+            leftover_cash: string;
+            /** @example 100000000 */
+            buy_notional: string;
+            /** @example 100000000 */
+            sell_notional: string;
+            /** @example 100000000 */
+            explicit_fees: string;
+            /** @example 100000000 */
+            informational_slippage: string;
+            decisions: components["schemas"]["RebalancePreviewDecision"][];
+            orders: components["schemas"]["RebalancePreviewOrder"][];
+            /** @constant */
+            warning_code: "INDICATIVE_NEXT_OPEN_REPLAN_REQUIRED";
+            lineage: components["schemas"]["RebalancePreviewLineage"];
+        };
+        RebalancePreviewError: {
+            code: string;
+            message: string;
+        };
+        RebalancePreview: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            account_id: string;
+            /** Format: uuid */
+            recommendation_run_id: string;
+            /** Format: uuid */
+            target_portfolio_id: string;
+            /** Format: uuid */
+            strategy_config_id: string;
+            /** Format: uuid */
+            job_id: string;
+            /** @enum {string} */
+            status: "PENDING" | "RUNNING" | "READY" | "FAILED" | "APPLIED";
+            /** @constant */
+            price_basis: "RECOMMENDATION_CLOSE";
+            /** @example 2026-01-31 */
+            price_date: string;
+            proposed_effective_date: string | null;
+            /** Format: uuid */
+            dataset_version_id: string;
+            dataset_manifest_sha256: string;
+            target_portfolio_sha256: string;
+            preview_token: string | null;
+            result?: components["schemas"]["RebalancePreviewResult"];
+            error?: components["schemas"]["RebalancePreviewError"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: date-time */
+            applied_at: string | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AppliedRebalancePreview: {
+            /** Format: uuid */
+            preview_id: string;
+            /** Format: uuid */
+            pending_target_id: string;
+            /** @example 2026-01-31 */
+            effective_date: string;
+            /** @constant */
+            source_kind: "MANUAL_RECOMMENDATION";
+            /** @constant */
+            status: "APPLIED";
         };
         Order: {
             /** Format: uuid */
@@ -2155,6 +2356,121 @@ export interface operations {
             };
         };
         responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    post__api_v1_paper_accounts__account_id__recommendation_previews: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RebalancePreviewBody"];
+            };
+        };
+        responses: {
+            /** @description Existing rebalance preview replayed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RebalancePreview"];
+                };
+            };
+            /** @description Rebalance preview accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RebalancePreview"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_paper_accounts__account_id__recommendation_previews__preview_id_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                preview_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paper rebalance preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RebalancePreview"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    post__api_v1_paper_accounts__account_id__recommendation_previews__preview_id__apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                preview_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyRebalancePreviewBody"];
+            };
+        };
+        responses: {
+            /** @description Rebalance preview queued for Paper execution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppliedRebalancePreview"];
+                };
+            };
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
             403: components["responses"]["Error403"];

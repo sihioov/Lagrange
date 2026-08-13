@@ -690,7 +690,7 @@ Run:
 
 ```powershell
 cargo test -p api-server --test openapi_contract -- --nocapture
-npm run openapi:check --workspace @lagrange/api-contract
+npm run openapi:check --workspace @lagrange/api-server
 ```
 
 Expected: FAIL with missing paths/error enum/generated-type drift.
@@ -701,8 +701,8 @@ Add strict component schemas matching the Rust DTOs and run the repository's
 existing generation command:
 
 ```powershell
-npm run openapi:generate --workspace @lagrange/api-contract
-npm run openapi:check --workspace @lagrange/api-contract
+npm run openapi:check --workspace @lagrange/api-server
+npm run openapi:check --workspace @lagrange/api-server
 ```
 
 Expected: operation count, lint, generated TypeScript, and typecheck pass.
@@ -738,7 +738,7 @@ cargo test -p portfolio-model -p job-queue -p api-server
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-npm run openapi:check --workspace @lagrange/api-contract
+npm run openapi:check --workspace @lagrange/api-server
 git diff --check
 ```
 

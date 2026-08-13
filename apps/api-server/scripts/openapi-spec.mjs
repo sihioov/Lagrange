@@ -44,6 +44,9 @@ const ROUTES = [
   ["POST", "/api/v1/paper/accounts", { mutating: true, idem: true, entitlement: "paper_view", audit: true }],
   ["GET", "/api/v1/paper/accounts/{account_id}", { entitlement: "paper_view" }],
   ["POST", "/api/v1/paper/accounts/{account_id}/bind-strategy", { mutating: true, idem: true, entitlement: "paper_view", audit: true }],
+  ["POST", "/api/v1/paper/accounts/{account_id}/recommendation-previews", { mutating: true, idem: true, owner: true, entitlement: "recommendation", audit: true }],
+  ["GET", "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}", { owner: true, entitlement: "paper_view" }],
+  ["POST", "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply", { mutating: true, idem: true, owner: true, entitlement: "recommendation", audit: true }],
   ["GET", "/api/v1/paper/accounts/{account_id}/orders", { entitlement: "paper_view" }],
   ["GET", "/api/v1/paper/accounts/{account_id}/positions", { entitlement: "paper_view" }],
   ["GET", "/api/v1/paper/accounts/{account_id}/equity", { entitlement: "paper_view" }],
@@ -98,7 +101,16 @@ const ERROR_CODES = [
   ["PAYLOAD_TOO_LARGE", 413],
   ["DATASET_BLOCKED", 422], ["DATA_STALE", 422],
   ["INVALID_STRATEGY_PARAMETER", 422], ["UNSUPPORTED_MARKET_CURRENCY", 422],
-  ["BACKTEST_CAPACITY_EXCEEDED", 429], ["RECOMMENDATION_CAPACITY_EXCEEDED", 429],
+  ["BACKTEST_CAPACITY_EXCEEDED", 429], ["ROBUSTNESS_CAPACITY_EXCEEDED", 429],
+  ["RECOMMENDATION_CAPACITY_EXCEEDED", 429],
+  ["REBALANCE_PREVIEW_CAPACITY_EXCEEDED", 429],
+  ["REBALANCE_PREVIEW_BINDING_REQUIRED", 409],
+  ["REBALANCE_PREVIEW_NOT_READY", 409],
+  ["REBALANCE_PREVIEW_DATA_BLOCKED", 422],
+  ["REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED", 403],
+  ["REBALANCE_PREVIEW_STALE", 409],
+  ["REBALANCE_PREVIEW_FAILED", 422],
+  ["REBALANCE_PREVIEW_CONFLICT", 409],
   ["RESULT_INTEGRITY_FAILED", 422],
   ["LIVE_RECONCILIATION_REQUIRED", 409], ["LIVE_KILL_SWITCH_ENGAGED", 409],
   ["LIVE_CONNECTION_NOT_CONFIGURED", 409],
@@ -218,6 +230,18 @@ function successResponsesFor(method, path) {
   if (path === "/api/v1/recommendations/latest" && method === "get") {
     return { "200": json("Latest recommendation snapshot", "#/components/schemas/RecommendationLatest") };
   }
+  if (path === "/api/v1/paper/accounts/{account_id}/recommendation-previews" && method === "post") {
+    return {
+      "200": json("Existing rebalance preview replayed", "#/components/schemas/RebalancePreview"),
+      "202": json("Rebalance preview accepted", "#/components/schemas/RebalancePreview"),
+    };
+  }
+  if (path === "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}" && method === "get") {
+    return { "200": json("Paper rebalance preview", "#/components/schemas/RebalancePreview") };
+  }
+  if (path === "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply" && method === "post") {
+    return { "200": json("Rebalance preview queued for Paper execution", "#/components/schemas/AppliedRebalancePreview") };
+  }
   return {};
 }
 
@@ -237,6 +261,8 @@ function bodySchemaRef(path) {
   if (path.endsWith("/robustness")) return "#/components/schemas/RobustnessSuiteBody";
   if (path === "/api/v1/paper/accounts") return "#/components/schemas/NewAccountBody";
   if (path.endsWith("/bind-strategy")) return "#/components/schemas/BindStrategyBody";
+  if (path.endsWith("/recommendation-previews")) return "#/components/schemas/RebalancePreviewBody";
+  if (path.endsWith("/recommendation-previews/{preview_id}/apply")) return "#/components/schemas/ApplyRebalancePreviewBody";
   return "#/components/schemas/EmptyBody";
 }
 
@@ -257,6 +283,21 @@ function errorCodesFor(route) {
   }
   if (path.includes("/paper/accounts")) {
     codes.push("UNSUPPORTED_MARKET_CURRENCY", "DUPLICATE_RESOURCE");
+  }
+  if (path.includes("/recommendation-previews")) {
+    codes.push(
+      "REBALANCE_PREVIEW_BINDING_REQUIRED",
+      "REBALANCE_PREVIEW_NOT_READY",
+      "REBALANCE_PREVIEW_DATA_BLOCKED",
+      "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED",
+      "REBALANCE_PREVIEW_STALE",
+      "REBALANCE_PREVIEW_FAILED",
+      "REBALANCE_PREVIEW_CONFLICT",
+      "RESULT_INTEGRITY_FAILED",
+    );
+  }
+  if (path.endsWith("/recommendation-previews")) {
+    codes.push("REBALANCE_PREVIEW_CAPACITY_EXCEEDED");
   }
   return [...new Set(codes)];
 }
@@ -700,6 +741,218 @@ const SCHEMAS = {
     required: ["strategy_config_id"],
     additionalProperties: false,
     properties: { strategy_config_id: uuid },
+  },
+  RebalancePreviewBody: {
+    type: "object",
+    required: ["recommendation_run_id"],
+    additionalProperties: false,
+    properties: { recommendation_run_id: uuid },
+  },
+  ApplyRebalancePreviewBody: {
+    type: "object",
+    required: ["preview_token"],
+    additionalProperties: false,
+    properties: {
+      preview_token: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    },
+  },
+  RebalancePreviewLineage: {
+    type: "object",
+    required: [
+      "account_id",
+      "recommendation_run_id",
+      "target_portfolio_id",
+      "strategy_config_id",
+      "dataset_version_id",
+      "curated_version",
+      "dataset_manifest_sha256",
+      "account_state_version",
+      "account_state_sha256",
+      "target_portfolio_sha256",
+    ],
+    additionalProperties: false,
+    properties: {
+      account_id: uuid,
+      recommendation_run_id: uuid,
+      target_portfolio_id: uuid,
+      strategy_config_id: uuid,
+      dataset_version_id: uuid,
+      curated_version: { type: "integer", minimum: 0 },
+      dataset_manifest_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      account_state_version: { type: "integer", format: "int64", minimum: 0 },
+      account_state_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      target_portfolio_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    },
+  },
+  RebalancePreviewDecision: {
+    type: "object",
+    required: [
+      "instrument_id",
+      "current_quantity",
+      "current_value",
+      "current_weight",
+      "target_value",
+      "target_weight",
+      "delta_value",
+      "action",
+      "skip_reason",
+    ],
+    additionalProperties: false,
+    properties: {
+      instrument_id: { type: "string", example: "069500.KRX" },
+      current_quantity: decimalStr,
+      current_value: decimalStr,
+      current_weight: decimalStr,
+      target_value: decimalStr,
+      target_weight: decimalStr,
+      delta_value: decimalStr,
+      action: { type: "string", enum: ["BUY", "SELL", "SKIP"] },
+      skip_reason: {
+        type: ["string", "null"],
+        enum: [
+          "BELOW_REBALANCE_THRESHOLD",
+          "BELOW_MIN_TRADE",
+          "NO_AVAILABLE_CASH",
+          "NO_AFFORDABLE_LOT",
+          null,
+        ],
+      },
+    },
+  },
+  RebalancePreviewOrder: {
+    type: "object",
+    required: [
+      "instrument_id",
+      "side",
+      "quantity",
+      "raw_price",
+      "estimated_execution_price",
+      "notional",
+      "commission",
+      "tax",
+      "informational_slippage",
+    ],
+    additionalProperties: false,
+    properties: {
+      instrument_id: { type: "string", example: "069500.KRX" },
+      side: { type: "string", enum: ["BUY", "SELL"] },
+      quantity: decimalStr,
+      raw_price: decimalStr,
+      estimated_execution_price: decimalStr,
+      notional: decimalStr,
+      commission: decimalStr,
+      tax: decimalStr,
+      informational_slippage: decimalStr,
+    },
+  },
+  RebalancePreviewResult: {
+    type: "object",
+    required: [
+      "schema_version",
+      "price_basis",
+      "price_date",
+      "proposed_effective_date",
+      "equity",
+      "cash_before",
+      "available_cash",
+      "leftover_cash",
+      "buy_notional",
+      "sell_notional",
+      "explicit_fees",
+      "informational_slippage",
+      "decisions",
+      "orders",
+      "warning_code",
+      "lineage",
+    ],
+    additionalProperties: false,
+    properties: {
+      schema_version: { type: "integer", const: 1 },
+      price_basis: { type: "string", const: "RECOMMENDATION_CLOSE" },
+      price_date: dateStr,
+      proposed_effective_date: dateStr,
+      equity: decimalStr,
+      cash_before: decimalStr,
+      available_cash: decimalStr,
+      leftover_cash: decimalStr,
+      buy_notional: decimalStr,
+      sell_notional: decimalStr,
+      explicit_fees: decimalStr,
+      informational_slippage: decimalStr,
+      decisions: { type: "array", items: { $ref: "#/components/schemas/RebalancePreviewDecision" } },
+      orders: { type: "array", items: { $ref: "#/components/schemas/RebalancePreviewOrder" } },
+      warning_code: { type: "string", const: "INDICATIVE_NEXT_OPEN_REPLAN_REQUIRED" },
+      lineage: { $ref: "#/components/schemas/RebalancePreviewLineage" },
+    },
+  },
+  RebalancePreviewError: {
+    type: "object",
+    required: ["code", "message"],
+    additionalProperties: false,
+    properties: {
+      code: { type: "string" },
+      message: { type: "string" },
+    },
+  },
+  RebalancePreview: {
+    type: "object",
+    required: [
+      "id",
+      "account_id",
+      "recommendation_run_id",
+      "target_portfolio_id",
+      "strategy_config_id",
+      "job_id",
+      "status",
+      "price_basis",
+      "price_date",
+      "proposed_effective_date",
+      "dataset_version_id",
+      "dataset_manifest_sha256",
+      "target_portfolio_sha256",
+      "preview_token",
+      "created_at",
+      "started_at",
+      "completed_at",
+      "applied_at",
+      "updated_at",
+    ],
+    additionalProperties: false,
+    properties: {
+      id: uuid,
+      account_id: uuid,
+      recommendation_run_id: uuid,
+      target_portfolio_id: uuid,
+      strategy_config_id: uuid,
+      job_id: uuid,
+      status: { type: "string", enum: ["PENDING", "RUNNING", "READY", "FAILED", "APPLIED"] },
+      price_basis: { type: "string", const: "RECOMMENDATION_CLOSE" },
+      price_date: dateStr,
+      proposed_effective_date: { type: ["string", "null"], pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+      dataset_version_id: uuid,
+      dataset_manifest_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      target_portfolio_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      preview_token: { type: ["string", "null"], pattern: "^[0-9a-f]{64}$" },
+      result: { $ref: "#/components/schemas/RebalancePreviewResult" },
+      error: { $ref: "#/components/schemas/RebalancePreviewError" },
+      created_at: ts,
+      started_at: { type: ["string", "null"], format: "date-time" },
+      completed_at: { type: ["string", "null"], format: "date-time" },
+      applied_at: { type: ["string", "null"], format: "date-time" },
+      updated_at: ts,
+    },
+  },
+  AppliedRebalancePreview: {
+    type: "object",
+    required: ["preview_id", "pending_target_id", "effective_date", "source_kind", "status"],
+    additionalProperties: false,
+    properties: {
+      preview_id: uuid,
+      pending_target_id: uuid,
+      effective_date: dateStr,
+      source_kind: { type: "string", const: "MANUAL_RECOMMENDATION" },
+      status: { type: "string", const: "APPLIED" },
+    },
   },
   Order: {
     type: "object",

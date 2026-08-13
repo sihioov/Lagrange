@@ -227,6 +227,121 @@ fn openapi_contract_documents_recommendation_success_shapes() {
 }
 
 #[test]
+fn openapi_contract_documents_paper_rebalance_preview_shapes() {
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let schemas = &spec["components"]["schemas"];
+    for schema in [
+        "RebalancePreviewBody",
+        "RebalancePreview",
+        "RebalancePreviewResult",
+        "RebalancePreviewDecision",
+        "RebalancePreviewOrder",
+        "RebalancePreviewLineage",
+        "RebalancePreviewError",
+        "ApplyRebalancePreviewBody",
+        "AppliedRebalancePreview",
+    ] {
+        assert!(schemas[schema].is_object(), "missing schema {schema}");
+    }
+
+    let preview = schemas["RebalancePreview"]
+        .as_object()
+        .expect("RebalancePreview schema");
+    for field in [
+        "id",
+        "account_id",
+        "recommendation_run_id",
+        "target_portfolio_id",
+        "strategy_config_id",
+        "job_id",
+        "status",
+        "price_basis",
+        "price_date",
+        "proposed_effective_date",
+        "dataset_version_id",
+        "dataset_manifest_sha256",
+        "target_portfolio_sha256",
+        "preview_token",
+        "result",
+        "error",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "applied_at",
+        "updated_at",
+    ] {
+        assert!(
+            preview["properties"].get(field).is_some(),
+            "missing preview field {field}"
+        );
+    }
+
+    let paths = &spec["paths"];
+    let create =
+        &paths["/api/v1/paper/accounts/{account_id}/recommendation-previews"]["post"]["responses"];
+    assert_eq!(
+        create["202"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/RebalancePreview"
+    );
+    assert_eq!(
+        create["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/RebalancePreview"
+    );
+    assert_eq!(
+        paths["/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}"]["get"]["responses"]
+            ["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/RebalancePreview"
+    );
+    assert_eq!(
+        paths["/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply"]["post"]
+            ["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/AppliedRebalancePreview"
+    );
+    for (path, method) in [
+        (
+            "/api/v1/paper/accounts/{account_id}/recommendation-previews",
+            "post",
+        ),
+        (
+            "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}",
+            "get",
+        ),
+        (
+            "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply",
+            "post",
+        ),
+    ] {
+        assert_eq!(
+            paths[path][method]["x-lagrange"]["ownership"]["owner_only"], true,
+            "{method} {path} must be Owner-only"
+        );
+    }
+    assert_eq!(
+        schemas["AppliedRebalancePreview"]["properties"]["status"]["const"],
+        "APPLIED"
+    );
+
+    let codes = schemas["ErrorCode"]["enum"]
+        .as_array()
+        .expect("ErrorCode enum");
+    for code in [
+        "REBALANCE_PREVIEW_CAPACITY_EXCEEDED",
+        "REBALANCE_PREVIEW_BINDING_REQUIRED",
+        "REBALANCE_PREVIEW_NOT_READY",
+        "REBALANCE_PREVIEW_DATA_BLOCKED",
+        "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED",
+        "REBALANCE_PREVIEW_STALE",
+        "REBALANCE_PREVIEW_FAILED",
+        "REBALANCE_PREVIEW_CONFLICT",
+    ] {
+        assert!(
+            codes.iter().any(|value| value == code),
+            "missing code {code}"
+        );
+    }
+}
+
+#[test]
 fn openapi_contract_phase3_routes_are_owner_only() {
     let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
     for route in CONTRACT_ROUTES {

@@ -2405,6 +2405,385 @@
         }
       }
     },
+    "/api/v1/paper/accounts/{account_id}/recommendation-previews": {
+      "post": {
+        "operationId": "post__api_v1_paper_accounts__account_id__recommendation_previews",
+        "summary": "POST /api/v1/paper/accounts/{account_id}/recommendation-previews",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Existing rebalance preview replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RebalancePreview"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Rebalance preview accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RebalancePreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": "recommendation",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE",
+            "REBALANCE_PREVIEW_BINDING_REQUIRED",
+            "REBALANCE_PREVIEW_NOT_READY",
+            "REBALANCE_PREVIEW_DATA_BLOCKED",
+            "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED",
+            "REBALANCE_PREVIEW_STALE",
+            "REBALANCE_PREVIEW_FAILED",
+            "REBALANCE_PREVIEW_CONFLICT",
+            "RESULT_INTEGRITY_FAILED",
+            "REBALANCE_PREVIEW_CAPACITY_EXCEEDED"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RebalancePreviewBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}": {
+      "get": {
+        "operationId": "get__api_v1_paper_accounts__account_id__recommendation_previews__preview_id_",
+        "summary": "GET /api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "preview_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paper rebalance preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RebalancePreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": "paper_view",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "FORBIDDEN",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE",
+            "REBALANCE_PREVIEW_BINDING_REQUIRED",
+            "REBALANCE_PREVIEW_NOT_READY",
+            "REBALANCE_PREVIEW_DATA_BLOCKED",
+            "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED",
+            "REBALANCE_PREVIEW_STALE",
+            "REBALANCE_PREVIEW_FAILED",
+            "REBALANCE_PREVIEW_CONFLICT",
+            "RESULT_INTEGRITY_FAILED"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply": {
+      "post": {
+        "operationId": "post__api_v1_paper_accounts__account_id__recommendation_previews__preview_id__apply",
+        "summary": "POST /api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "preview_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rebalance preview queued for Paper execution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppliedRebalancePreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; all admin operations are audited"
+          },
+          "entitlement": {
+            "use": "recommendation",
+            "fail_closed": true,
+            "dataset": "krx_eod_bars"
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "UNSUPPORTED_MARKET_CURRENCY",
+            "DUPLICATE_RESOURCE",
+            "REBALANCE_PREVIEW_BINDING_REQUIRED",
+            "REBALANCE_PREVIEW_NOT_READY",
+            "REBALANCE_PREVIEW_DATA_BLOCKED",
+            "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED",
+            "REBALANCE_PREVIEW_STALE",
+            "REBALANCE_PREVIEW_FAILED",
+            "REBALANCE_PREVIEW_CONFLICT",
+            "RESULT_INTEGRITY_FAILED"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyRebalancePreviewBody"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/paper/accounts/{account_id}/orders": {
       "get": {
         "operationId": "get__api_v1_paper_accounts__account_id__orders",
@@ -5104,6 +5483,14 @@
           "BACKTEST_CAPACITY_EXCEEDED",
           "ROBUSTNESS_CAPACITY_EXCEEDED",
           "RECOMMENDATION_CAPACITY_EXCEEDED",
+          "REBALANCE_PREVIEW_CAPACITY_EXCEEDED",
+          "REBALANCE_PREVIEW_BINDING_REQUIRED",
+          "REBALANCE_PREVIEW_NOT_READY",
+          "REBALANCE_PREVIEW_DATA_BLOCKED",
+          "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED",
+          "REBALANCE_PREVIEW_STALE",
+          "REBALANCE_PREVIEW_FAILED",
+          "REBALANCE_PREVIEW_CONFLICT",
           "RESULT_INTEGRITY_FAILED",
           "LIVE_RECONCILIATION_REQUIRED",
           "LIVE_KILL_SWITCH_ENGAGED",
@@ -6377,6 +6764,508 @@
           "strategy_config_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "RebalancePreviewBody": {
+        "type": "object",
+        "required": [
+          "recommendation_run_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "recommendation_run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ApplyRebalancePreviewBody": {
+        "type": "object",
+        "required": [
+          "preview_token"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "preview_token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "RebalancePreviewLineage": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "recommendation_run_id",
+          "target_portfolio_id",
+          "strategy_config_id",
+          "dataset_version_id",
+          "curated_version",
+          "dataset_manifest_sha256",
+          "account_state_version",
+          "account_state_sha256",
+          "target_portfolio_sha256"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "recommendation_run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "target_portfolio_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dataset_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "curated_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "dataset_manifest_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "account_state_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "account_state_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "target_portfolio_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "RebalancePreviewDecision": {
+        "type": "object",
+        "required": [
+          "instrument_id",
+          "current_quantity",
+          "current_value",
+          "current_weight",
+          "target_value",
+          "target_weight",
+          "delta_value",
+          "action",
+          "skip_reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "type": "string",
+            "example": "069500.KRX"
+          },
+          "current_quantity": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "current_value": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "current_weight": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "target_value": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "target_weight": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "delta_value": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "BUY",
+              "SELL",
+              "SKIP"
+            ]
+          },
+          "skip_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "BELOW_REBALANCE_THRESHOLD",
+              "BELOW_MIN_TRADE",
+              "NO_AVAILABLE_CASH",
+              "NO_AFFORDABLE_LOT",
+              null
+            ]
+          }
+        }
+      },
+      "RebalancePreviewOrder": {
+        "type": "object",
+        "required": [
+          "instrument_id",
+          "side",
+          "quantity",
+          "raw_price",
+          "estimated_execution_price",
+          "notional",
+          "commission",
+          "tax",
+          "informational_slippage"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "type": "string",
+            "example": "069500.KRX"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "BUY",
+              "SELL"
+            ]
+          },
+          "quantity": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "raw_price": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "estimated_execution_price": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "notional": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "commission": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "tax": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "informational_slippage": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          }
+        }
+      },
+      "RebalancePreviewResult": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "price_basis",
+          "price_date",
+          "proposed_effective_date",
+          "equity",
+          "cash_before",
+          "available_cash",
+          "leftover_cash",
+          "buy_notional",
+          "sell_notional",
+          "explicit_fees",
+          "informational_slippage",
+          "decisions",
+          "orders",
+          "warning_code",
+          "lineage"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1
+          },
+          "price_basis": {
+            "type": "string",
+            "const": "RECOMMENDATION_CLOSE"
+          },
+          "price_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "proposed_effective_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "equity": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "cash_before": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "available_cash": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "leftover_cash": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "buy_notional": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "sell_notional": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "explicit_fees": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "informational_slippage": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "example": "100000000"
+          },
+          "decisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RebalancePreviewDecision"
+            }
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RebalancePreviewOrder"
+            }
+          },
+          "warning_code": {
+            "type": "string",
+            "const": "INDICATIVE_NEXT_OPEN_REPLAN_REQUIRED"
+          },
+          "lineage": {
+            "$ref": "#/components/schemas/RebalancePreviewLineage"
+          }
+        }
+      },
+      "RebalancePreviewError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "RebalancePreview": {
+        "type": "object",
+        "required": [
+          "id",
+          "account_id",
+          "recommendation_run_id",
+          "target_portfolio_id",
+          "strategy_config_id",
+          "job_id",
+          "status",
+          "price_basis",
+          "price_date",
+          "proposed_effective_date",
+          "dataset_version_id",
+          "dataset_manifest_sha256",
+          "target_portfolio_sha256",
+          "preview_token",
+          "created_at",
+          "started_at",
+          "completed_at",
+          "applied_at",
+          "updated_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "recommendation_run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "target_portfolio_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "RUNNING",
+              "READY",
+              "FAILED",
+              "APPLIED"
+            ]
+          },
+          "price_basis": {
+            "type": "string",
+            "const": "RECOMMENDATION_CLOSE"
+          },
+          "price_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "proposed_effective_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "dataset_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dataset_manifest_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "target_portfolio_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "preview_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "result": {
+            "$ref": "#/components/schemas/RebalancePreviewResult"
+          },
+          "error": {
+            "$ref": "#/components/schemas/RebalancePreviewError"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "applied_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AppliedRebalancePreview": {
+        "type": "object",
+        "required": [
+          "preview_id",
+          "pending_target_id",
+          "effective_date",
+          "source_kind",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "preview_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pending_target_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "effective_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "source_kind": {
+            "type": "string",
+            "const": "MANUAL_RECOMMENDATION"
+          },
+          "status": {
+            "type": "string",
+            "const": "APPLIED"
           }
         }
       },
