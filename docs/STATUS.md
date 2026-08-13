@@ -1,6 +1,6 @@
 # Lagrange Station — 상태 종합
 
-**기준일: 2026년 8월 11일 (2026-08-11)** · 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`이고, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지다.
+**기준일: 2026년 8월 13일 (2026-08-13)** · 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지다. Auth0 confidential client 배선은 main의 `8c22f79`~`a03d8fc`(08-12), 고정 ETF 추천 파이프라인과 Paper 리밸런싱 미리보기는 **`feat/recommendation-pipeline` 브랜치 `554834c`~`dc4dd0e`(53커밋, 아직 main 미병합)**이다.
 
 ---
 
@@ -30,7 +30,7 @@
 
 ## 2. 어디까지 왔나
 
-**한 줄 요약: 기능·컴파일·rustfmt 검사는 통과한다. 릴리스는 외부 조달과 실제 KRX provider에 막혀 있고, 그 차단은 fail-closed 설계의 정상 상태다.**
+**한 줄 요약: 고정 11-ETF 추천 파이프라인이 제출→계산→발행→화면→Paper 연계까지 동작하고(§3.10), Auth0 confidential client 배선도 끝났다(§3.9). 릴리스는 여전히 외부 조달(E1 KRX 권리, X1/X2 KIS)과 실제 KRX provider에 막혀 있으며, 그 차단은 fail-closed 설계의 정상 상태다. E2(Auth0)는 테넌트 선택·배선·secret provisioning까지 진행되어 vendor 스위트 실행과 게이트 재실행만 남았다.**
 
 ### 2.1 게이트 판정 (2026-08-10 재실행, `--include-failure --include-restore` 포함)
 
@@ -44,6 +44,8 @@
 | **종합 (F3)** | — | **`BLOCKED_EXTERNAL`** | E1/E2/X1/X2 (외부 조달만 남음) |
 
 **이 08-10 게이트 범위에서 코드 때문에 막힌 항목은 하나도 없다.** P6/P7은 08-08에 이미 통과했던 것이 08-09 증거 갱신 때 누락 옵션으로 덮어써졌던 것뿐이며, 08-10에 **진짜 백업 생성 → 진짜 격리 복구 → 진짜 장애 주입 15개 시나리오**로 재검증해 복원했다(조작 없음, 외부 판정 불변). 08-11에 추가된 연구 발행 경로의 완료 범위와 실제 KRX provider 잔여 작업은 §2.4·§3.7에 별도로 기록한다.
+
+**위 판정은 전부 08-10 코드에 대한 것이다.** 08-12의 Auth0 배선(§3.9), 08-12~13의 추천 파이프라인(§3.10~3.11)과 리밸런싱 미리보기(§2.5)는 아직 어떤 게이트 재실행으로도 검증되지 않았다 — 브랜치 병합 후 E7 Playwright 포함 전체 게이트 재실행이 필요하다(§4.3).
 
 ### 2.2 테스트 (기준일 최종 실행)
 
@@ -60,7 +62,7 @@
 
 | 아티팩트 | 판정 | 발행일 | 신선도 |
 |---|---|---|---|
-| F1 계획 준수 | `REQUEST_CHANGES_RESOLVED` (42/42 완료) | 08-08 | ⚠️ 이후 커밋 ~40개 — **사람의 재검토가 필요한 문서** |
+| F1 계획 준수 | `REQUEST_CHANGES_RESOLVED` (42/42 완료) | 08-08 | ⚠️ 이후 커밋 ~100개(Auth0·추천 파이프라인 포함) — **사람의 재검토가 필요한 문서** |
 | F2 코드 품질 | `APPROVE` | 08-08 | ⚠️ 동일 |
 | F3 운영 E2E | `BLOCKED_EXTERNAL` | 08-10 | P6/P7 포함 재검증, 최신 |
 | F4 범위 충실도 | `APPROVE` (LEAN·미국·분봉·파생 부재 확인) | 08-08 | ⚠️ F1과 동일 |
@@ -70,8 +72,8 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 ### 2.4 단계별 실질 상태
 
 - **Phase 0** — 완료. 가격 스케일을 바로잡은 v2 증거 기준선을 재승인했다. Phase 0의 6개와 robustness 5전략의 30개 비-provenance 경제 아티팩트는 이전 승인본과 byte-identical하여 전략 경제 결과가 유지됐고, provenance와 identity는 v2 계약으로 갱신됐다.
-- **Phase 1** — Raw→PostgreSQL 연구 메타데이터 발행 경로 완료. 각 수집은 먼저 불변 Raw batch와 append-only manifest로 내구화되고, 검증한 **같은 batch**의 `data_batches` 4행과 캘린더를 한 트랜잭션으로 발행한다. `trading_calendar_versions`는 정정 이력을 append-only로 보존하고 `trading_calendars`는 더 최신 `retrieved_at`만 현재 projection으로 전진시킨다. 복구는 exclusive commit lock 아래 orphan evidence를 재동기화하고 실제 JSONL line으로 먼저 내구화한 뒤 append-order immutable high-water snapshot을 16건씩 재생하며, timeout 뒤 마지막 검증 cursor에서 재개한다. Linux에서는 UID 10001이 `0440` evidence/`batch.json`을 read-only handle로 `fsync`하고, `0640` manifest/lock만 변경한다. 따라서 orphan 뒤에 대기하던 정상 append도 실제 line 순서의 다음 suffix가 되고, snapshot 종료 후 high-water 불변을 재확인하므로 backdated concurrent append도 누락되지 않는다. daemon은 catch-up/매 scheduled cycle 직전에 다시 복구한다. `research-worker`는 16:30 KST 기본 일정과 지각 시작 즉시 catch-up, one-shot/daemon, 구조화 이벤트, batch-date-aware 4일 신선도 healthcheck, synthetic-production 선차단을 제공한다. Compose는 host `<data>/raw`↔container `/data/raw` 직접 Raw 경로, secret 파일, `cap_drop: ALL` 뒤 `CHOWN`/`FOWNER`/`DAC_OVERRIDE`만 복원하는 no-follow recursive UID 10001 Raw 초기화, exact constraint/column/index와 append-only function body까지 검사하는 migration/schema/role drift gate, 최소권한 `research_writer`를 연결했다. Risk Gateway와 worker health는 미래 batch를 제외하고 `min(retrieved_at, KST batch-date 종점)`을 동일하게 사용하므로 새로 발행한 역사 backfill도 stale이다. 단, 이는 synthetic fixture 기반 개발/QA 경로의 완료다. **라이선스·credential·entitlement를 실제 HTTP 요청에 적용하는 KRX provider는 아직 구현되지 않았고 실제 feed는 live가 아니다.** E1의 서면 권리와 E2뿐 아니라 실제 endpoint/credential 및 운영자 provisioning이 남아 있다.
-- **Phase 2** — **실행 엔진·러너·종가 평가 경로 구현 완료** (`ecef4b2`, `cf8704a`, `8da6548`). `job_queue::paper_execution::execute_session`이 큐잉된 target을 실제로 체결해 `orders`/`fills`/`positions`/`cash_ledger`에 기록하고, `api_server::paper_session::run_and_settle`이 정산·패리티·통지를 수행한다. 새 `api_server::paper_runner::run_cycle`은 worker 역할의 전체 due target을 소유자 Actor로 재진입시켜 실행하고, 활성 PAPER 계좌를 스캔해 `job_queue::paper_valuation::value_account`를 호출한다. 종가 평가는 원장 현금 자기대조·보유 포지션별 curated close·미래 close 차단·cost profile 검증을 거쳐 `daily_equity`를 계좌/날짜별 불변·멱등으로 기록한다. `crates/api-server/src/bin/paper-runner.rs`가 `--once`/`--date`, 환경별 풀, 2초 polling/10초 backoff, Ctrl-C 종료를 제공한다. 실제 QA DB 이음매 테스트로 두 소유자 스캔, 실행·통지 중복 방지, 정확한 equity/cash/positions_value, missing/future/conflicting close, LIVE·교차 테넌트 거부를 검증했고, Python/Web/외부 데이터 권리 차단은 그대로다. 호스트 배포 단위와 운영 credential 주입은 `deploy/systemd/paper-runner.service` 및 `paper-runner.env.example`로 등록했고, `scripts/qa/paper-runner-smoke.ps1`가 해당 유닛 정적 계약·QA DB 테스트·CLI smoke를 묶는다.
+- **Phase 1** — Raw→PostgreSQL 연구 메타데이터 발행 경로 완료. 각 수집은 먼저 불변 Raw batch와 append-only manifest로 내구화되고, 검증한 **같은 batch**의 `data_batches` 4행과 캘린더를 한 트랜잭션으로 발행한다. `trading_calendar_versions`는 정정 이력을 append-only로 보존하고 `trading_calendars`는 더 최신 `retrieved_at`만 현재 projection으로 전진시킨다. 복구는 exclusive commit lock 아래 orphan evidence를 재동기화하고 실제 JSONL line으로 먼저 내구화한 뒤 append-order immutable high-water snapshot을 16건씩 재생하며, timeout 뒤 마지막 검증 cursor에서 재개한다. Linux에서는 UID 10001이 `0440` evidence/`batch.json`을 read-only handle로 `fsync`하고, `0640` manifest/lock만 변경한다. 따라서 orphan 뒤에 대기하던 정상 append도 실제 line 순서의 다음 suffix가 되고, snapshot 종료 후 high-water 불변을 재확인하므로 backdated concurrent append도 누락되지 않는다. daemon은 catch-up/매 scheduled cycle 직전에 다시 복구한다. `research-worker`는 16:30 KST 기본 일정과 지각 시작 즉시 catch-up, one-shot/daemon, 구조화 이벤트, batch-date-aware 4일 신선도 healthcheck, synthetic-production 선차단을 제공한다. Compose는 host `<data>/raw`↔container `/data/raw` 직접 Raw 경로, secret 파일, `cap_drop: ALL` 뒤 `CHOWN`/`FOWNER`/`DAC_OVERRIDE`만 복원하는 no-follow recursive UID 10001 Raw 초기화, exact constraint/column/index와 append-only function body까지 검사하는 migration/schema/role drift gate, 최소권한 `research_writer`를 연결했다. Risk Gateway와 worker health는 미래 batch를 제외하고 `min(retrieved_at, KST batch-date 종점)`을 동일하게 사용하므로 새로 발행한 역사 backfill도 stale이다. 단, 이는 synthetic fixture 기반 개발/QA 경로의 완료다. **라이선스·credential·entitlement를 실제 HTTP 요청에 적용하는 KRX provider는 아직 구현되지 않았고 실제 feed는 live가 아니다.** E1의 서면 권리와 E2뿐 아니라 실제 endpoint/credential 및 운영자 provisioning이 남아 있다. 한편 Phase 1의 사용자 기능 축인 **추천 조회는 08-12~13에 고정 11-ETF 파이프라인으로 구현 완료**됐다(제출→계산→발행→최신/이력 화면, §3.10).
+- **Phase 2** — **실행 엔진·러너·종가 평가 경로 구현 완료** (`ecef4b2`, `cf8704a`, `8da6548`). `job_queue::paper_execution::execute_session`이 큐잉된 target을 실제로 체결해 `orders`/`fills`/`positions`/`cash_ledger`에 기록하고, `api_server::paper_session::run_and_settle`이 정산·패리티·통지를 수행한다. 새 `api_server::paper_runner::run_cycle`은 worker 역할의 전체 due target을 소유자 Actor로 재진입시켜 실행하고, 활성 PAPER 계좌를 스캔해 `job_queue::paper_valuation::value_account`를 호출한다. 종가 평가는 원장 현금 자기대조·보유 포지션별 curated close·미래 close 차단·cost profile 검증을 거쳐 `daily_equity`를 계좌/날짜별 불변·멱등으로 기록한다. `crates/api-server/src/bin/paper-runner.rs`가 `--once`/`--date`, 환경별 풀, 2초 polling/10초 backoff, Ctrl-C 종료를 제공한다. 실제 QA DB 이음매 테스트로 두 소유자 스캔, 실행·통지 중복 방지, 정확한 equity/cash/positions_value, missing/future/conflicting close, LIVE·교차 테넌트 거부를 검증했고, Python/Web/외부 데이터 권리 차단은 그대로다. 호스트 배포 단위와 운영 credential 주입은 `deploy/systemd/paper-runner.service` 및 `paper-runner.env.example`로 등록했고, `scripts/qa/paper-runner-smoke.ps1`가 해당 유닛 정적 계약·QA DB 테스트·CLI smoke를 묶는다. 08-12~13에 **추천→Paper 연계**가 추가됐다: 16:30 KST 스케줄러가 `auto_apply_recommendations=true`로 opt-in한 활성 바인딩에만 scheduled run의 target을 자동 발행하고(§3.10), 수동 run은 리밸런싱 미리보기 + 명시적 적용 경로(§2.5)로만 pending target이 된다 — 두 lineage는 섞이지 않는다.
 - **Phase 3** — 안전 불변식 검증 완료(L1~L11) + 이번 감사로 치명 결함 수정. 게이트 입력 5개 모두 코드 수준에서 실제 원천에 연결됐다(`85f1902`: `strategy_promotion`/`instrument_allowed`, `d7d75c7`: KRX 세션·EOD batch freshness·actor-scoped intent conflict). 원천 행이 없거나 읽을 수 없으면 여전히 `Unknown`으로 닫히며, 운영 캘린더·데이터 수집 메타데이터가 준비되기 전까지 **라이브 주문은 승인되지 않는다** — 의도된 fail-closed 상태.
 - **Phase 4** — PIT 재무 팩터의 **골격 완료** (`cda7182`): 이중 시간축(기간 + 공시일), 바 날짜별 as-of 해석, 정정 공시 처리. 실제 재무 데이터가 오면 채우기만 하면 된다. 나머지 항목은 미착수 (§4.4).
 
@@ -83,7 +85,7 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 
 최종 무결성 감사에서는 worker가 계산 전에 on-disk manifest의 canonical hash를 DB pin과 다시 대조하고, snapshot 전·후 목표 포트폴리오 변경을 READY 발행 전에 영구 거부하도록 보강했다. `cash_ledger`/`positions`는 이제 `(account_id, owner_user_id)` 복합 FK로 실제 계정 소유자와 일치해야 하므로 교차 테넌트 행을 계정에 연결해 상태 버전을 우회할 수 없다. 적용 시에는 계산 당시 Seoul 날짜 이후의 첫 attested KRX 거래일이 여전히 같은지도 재검증한다.
 
-## 3. 최근에 고쳐진 것 (2026-08-08 ~ 08-11)
+## 3. 최근에 고쳐진 것 (2026-08-08 ~ 08-13)
 
 ### 3.1 관통하는 패턴 — 결함은 이음매에 산다
 
@@ -154,7 +156,36 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 - 260-session Phase 0 데이터는 tracked generator에서 780개 bar로 runner 내부에 생성되고 테스트 종료와 함께 폐기된다. `data/phase0`, Rust `target/`, 테스트 결과는 artifact나 cache로 업로드하지 않는다.
 - 로컬 사전 검증에서 생성 데이터로 기존 clean-checkout `job-queue --test backtest_runner` 누락을 복구했고 12/12 통과했다. QA PostgreSQL을 포함한 `cargo test --workspace --locked --no-fail-fast`는 310.4초에 실패 binary 없이 종료했고, workspace all-target/all-feature Clippy `-D warnings`도 통과했다. GitHub-hosted Linux의 실제 디스크·시간 증거는 첫 push 실행에서 확정한다.
 
-### 3.9 Recommendation runner operations (2026-08-13)
+### 3.9 Auth0 confidential client 배선 (2026-08-12, main)
+
+| 항목 | 내용 | 커밋 |
+|---|---|---|
+| **문제** | `HttpOidcTransport`가 Auth0 Regular Web Application(confidential client)인데 token exchange에 `client_secret`을 보내지 않았다. ADR-0002의 "PKCE가 confidential client 인증을 대체한다"는 서술 자체가 오류였다 — PKCE는 authorization code를 보호할 뿐, 어느 애플리케이션이 code를 상환하는지는 client 인증이 증명한다 | (설계 `a164eb5`) |
+| **배선** | 배포 테넌트로 일본 리전 `lagrange-station.jp.auth0.com` 선택. `AUTH0_CLIENT_SECRET_FILE`로 mount된 secret 파일을 로딩(`zeroize`, 누락·빈 파일 fail-closed)하고, PKCE S256을 유지한 채 Client Secret Post로 token exchange를 인증 | `8c22f79`, `2d4aa94` |
+| **비노출 경계** | secret은 provider-neutral `TokenRequest`·browser·URL·DB·로그·Debug 출력 어디에도 들어가지 않는다. token endpoint 실패 body redaction, vendor 진단 sanitize, 잔여 secret 경로 봉쇄 | `a7c4a15`, `81c60f9`, `e39438e`, `a03d8fc` |
+| **배포 계약** | Compose가 gitignored `deploy/secrets/auth0_client_secret`을 read-only mount, 비밀 아닌 설정(`AUTH0_DOMAIN`/`AUTH0_CLIENT_ID`/`AUTH0_CLIENT_SECRET_FILE`)은 env로. secret 파일은 이 호스트에 provisioning되어 있음 | `afcbb77` |
+
+**남은 것:** 실제 테넌트를 상대로 `vendor` 스위트(`cargo test -p auth --test vendor_auth0 -- --ignored`)를 실행하고 phase1 게이트를 재실행해 E2 증거를 갱신하는 운영자 확인 단계. 자격증명을 위조해 통과시키는 것은 여전히 금지다.
+
+### 3.10 고정 ETF 추천 파이프라인 (2026-08-12 ~ 08-13, `feat/recommendation-pipeline`)
+
+큐에만 쌓이고 소비자가 없던 추천 표면(설계 문서의 "queue-only shell")을 실제 제품 흐름으로 만들었다. 범위는 의도적으로 `kr-etf-core-v1.yaml`의 **고정 11개 한국 ETF**로 한정 — 개별주식 동적 유니버스는 Phase 4 그대로다. 설계·계획은 `docs/superpowers/{specs,plans}/2026-08-12-recommendation-pipeline*`.
+
+| 항목 | 내용 | 커밋 |
+|---|---|---|
+| **타입별 큐 claim** | 러너가 자기 job type만 claim(`claim_next_for`) — backtest 러너가 recommendation job을 훔치지 못함 | `f752b24`, `f75c8f4` |
+| **DB lineage (0026)** | `recommendation_runs`에 job/dataset lineage와 manifest sha256, items/target 유니크 제약, `auto_apply_recommendations` opt-in, worker는 좁은 `schedule_recommendation_run` 함수만 실행 가능한 최소권한. 롤백 순서·스케줄러 활성화 fencing까지 hardening | `7c4fb29`, `682155f`, `942bdad`, `e09e618` |
+| **입력 attestation** | pinned immutable dataset·universe를 계산 전에 attest, curated partition identity 검증, bounded factor window, 고정 유니버스 팩터 계산은 `factor-engine` 재사용 | `46d037a`, `d5020b6`, `a74ea85`, `a67fbff`, `c2797e8` |
+| **격리 Python target generator** | 기존 버전드 전략 패키지를 allow-list된 자식 프로세스로 호출(strict JSON 계약) — 전략 의미론을 Rust에 중복 구현하지 않음. 자식 lifecycle/spawn·output 경계·플랫폼 race를 6커밋에 걸쳐 봉쇄 | `cbb47b6`, `810f448`~`51f1b02` |
+| **원자 발행** | items + target portfolio + provenance + terminal run 상태를 한 트랜잭션으로. 발행 idempotency 검증, attestation lock, lock 후 replay snapshot 갱신 | `0506d84`, `fd3255b`, `4210b3e`, `836330a`, `01c2a48` |
+| **러너** | queued run 실행, enqueue 후 revocation 처리, production lifecycle hardening, `recommendation-runner` 바이너리 | `de26f5b`, `9078f3d`, `6f4198d` |
+| **API 제출** | 원자 비동기 제출, durable idempotency replay(단, mismatch는 비권위 — 저장된 응답이 진실을 대체하지 않음), 원자적 job 용량 제한 | `b236c85`, `531f871`, `2bad7c5`, `37f994c` |
+| **scheduled→Paper** | 16:30 KST 스케줄 run만, opt-in 바인딩만 자동 발행 — 수동 run과 lineage 분리 | `fd3fc5b` |
+| **Web 워크플로** | 첫 실행 제출(latest가 404여도), polling, 최신 성공 결과 contract 렌더링, 실패 이력 보존, active config로 실행 제한 | `e08a30f`, `217b578`, `a8c4e6b`, `fcc812a` |
+
+이 위에 §2.5의 리밸런싱 미리보기(08-13, `58150dd`~`dc4dd0e`)가 얹혔다. 실제 KRX 데이터·라이선스 없이는 production 추천이 fail-closed로 차단되는 원칙은 이 경로에도 동일하게 적용된다.
+
+### 3.11 추천 러너 운영 (2026-08-13)
 
 - `recommendation-runner`는 16:30 KST 기본 스케줄과 시작 시 최신 적격 종가 catch-up을 사용한다. 활성 Paper 계좌 바인딩 중 `auto_apply_recommendations=true`인 경우만 자동 요청하며, 수동 요청과 lineage를 섞지 않는다.
 - Compose/systemd는 curated 데이터와 고정 11-ETF universe를 읽기 전용으로 마운트하고 worker DB password를 `_FILE`로만 받는다. broker credential은 이 서비스에 주입하지 않는다.
@@ -169,21 +200,27 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 
 | # | 항목 | 누가 | 지금 시작 가능? |
 |---|---|---|---|
-| 1 | Paper 러너 데몬 | **코드 작업** | ✅ **완료** (`8da6548`) |
-| 2 | `daily_equity`(종가 평가) 쓰기 | **코드 작업** | ✅ **완료** (`cf8704a`) |
-| 3 | 리스크 게이트 입력 3개 배선 (장 캘린더·데이터 신선도·주문 충돌) | **코드 작업** | ✅ **완료** (`d7d75c7`, 연구 발행 이음매 `30e2679`) |
-| 4 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
-| 5 | KRX 계약·실제 provider/credential/endpoint / Auth0 / KIS 실계좌 | **외부 구현·사장님 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
+| 1 | Paper 러너 데몬 + `daily_equity` 종가 평가 | **코드 작업** | ✅ **완료** (`8da6548`, `cf8704a`) |
+| 2 | 리스크 게이트 입력 5개 배선 | **코드 작업** | ✅ **완료** (`d7d75c7`, 연구 발행 이음매 `30e2679`) |
+| 3 | 고정 11-ETF 추천 파이프라인 (제출→계산→발행→화면) | **코드 작업** | ✅ **완료** (§3.10, 브랜치) |
+| 4 | 추천→Paper 자동화(scheduled opt-in) + 리밸런싱 미리보기 백엔드 | **코드 작업** | ✅ **완료** (`fd3fc5b`, §2.5) |
+| 5 | Auth0 confidential client 배선 | **코드 작업** | ✅ **완료** (§3.9, main) |
+| 6 | `feat/recommendation-pipeline` → main 병합 + 전체 게이트 재실행(E7 포함) | **코드/운영** | ▶️ **다음 순서** |
+| 7 | 리밸런싱 미리보기 UI (백엔드만 완료, UI 미포함) | **코드 작업** | ▶️ 착수 가능 |
+| 8 | paper-runner·recommendation-runner 배포 서비스 활성화 | **운영자** | ▶️ 착수 가능 |
+| 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ▶️ 착수 가능 (테넌트·secret 준비됨) |
+| 10 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
+| 11 | KRX 계약·실제 provider/credential/endpoint / KIS 실계좌 | **외부 구현·사장님 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
 
-1·2는 Paper 세션에 완료했고, 3도 발행된 연구 메타데이터까지 이음매가 연결됐다. Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가는 각각 `8da6548`·`cf8704a`에 있다. 저장소 안의 synthetic Raw→PostgreSQL 경로와 리스크 소비 이음매는 완료됐지만, 실제 KRX provider 구현과 production credential/endpoint/운영자 provisioning은 외부 잔여 작업이다. 외부 조달·소유자 결정 항목도 그대로다.
+Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가는 각각 `8da6548`·`cf8704a`에 있다. 저장소 안의 synthetic Raw→PostgreSQL 경로, 리스크 소비 이음매, 추천 파이프라인, Paper 연계까지 코드 이음매는 완료됐지만, 실제 KRX provider 구현과 production credential/endpoint/운영자 provisioning은 외부 잔여 작업이다. **당장의 다음 걸음은 6번**이다 — 53커밋이 브랜치에만 있는 동안 게이트 증거는 계속 낡는다.
 
-### 4.1 소유자만 할 수 있는 것 — 외부 조달 3건
+### 4.1 소유자만 할 수 있는 것 — 외부 조달
 
 | 항목 | 구체적으로 |
 |---|---|
-| **E1** KRX 서면 데이터 권리 + 실제 공급자 | 초대 사용자 5명 + 파생 분석물을 포괄하는 계약 아티팩트, 라이선스·entitlement-aware KRX HTTP transport 구현, 실제 endpoint/credential, `research_writer` role·secret·Raw volume 운영자 provisioning. 현재 저장소에는 synthetic fixture와 발행 이음매만 있고 real feed는 live가 아님 |
-| **E2** Auth0 테넌트 | 실제 테넌트 + 자격증명 (vendor 스위트 실행용) |
-| **X1/X2** KIS 실계좌 | 실거래 자격증명 + 소액 실주문 증거 |
+| **E1** KRX 서면 데이터 권리 + 실제 공급자 | 초대 사용자 5명 + 파생 분석물을 포괄하는 계약 아티팩트, 라이선스·entitlement-aware KRX HTTP transport 구현, 실제 endpoint/credential, `research_writer` role·secret·Raw volume 운영자 provisioning. 현재 저장소에는 synthetic fixture와 발행 이음매만 있고 real feed는 live가 아님. `configs/data-rights/`는 여전히 placeholder뿐 |
+| **E2** Auth0 테넌트 | **상태 변경(08-12):** 테넌트(`lagrange-station.jp.auth0.com`) 선택, confidential client 배선, secret 파일 provisioning까지 완료(§3.9). 남은 것은 실제 테넌트 대상 vendor 스위트 실행과 phase1 게이트 재실행으로 E2 증거를 갱신하는 것 — 조달 항목에서 운영 확인 항목으로 내려왔다 |
+| **X1/X2** KIS 실계좌 | 실거래 자격증명 + 소액 실주문 증거 (변동 없음) |
 
 이 3건이 없는 동안 게이트는 `BLOCKED_EXTERNAL`이며 **그것이 합격 조건이다. 위조해서 APPROVED에 도달하는 것은 금지** — 닫히는 쪽으로 실패하는 것 자체가 게이트의 존재 이유다. 한국 데이터 권리가 끝내 안 오면 계획의 답은 Member 접근 연기다, 시장 변경이 아니라.
 
@@ -194,9 +231,12 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
-1. **배포 서비스 활성화.** `deploy/systemd/paper-runner.service`와 운영별 `/etc/lagrange/paper-runner.env`를 설치·시작하고, 실제 role-scoped DB URL과 curated dataset 마운트를 호스트 Secret Manager에서 주입해야 한다. 저장소에는 비밀값을 넣지 않는다.
-2. **실제 KRX provider와 운영 원천 활성화.** 코드의 synthetic 수집·발행·복구 배선은 완료됐지만, 라이선스·credential·entitlement-aware HTTP transport와 실제 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning해야 한다. 그 뒤 운영 PostgreSQL에 실제 KRX 캘린더와 EOD batch 메타데이터를 공급하고 라이브 계정의 intent 상태를 정상적으로 유지해야 한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
-3. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화(이번 재실행도 E7은 스킵).
+1. **`feat/recommendation-pipeline` 병합.** 53커밋(추천 파이프라인 + 리밸런싱 미리보기)이 브랜치에만 있다. 병합 전 리뷰 대상이며, 병합 후에만 게이트 재실행이 의미를 가진다.
+2. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화. 08-10 이후의 Auth0 배선·추천 파이프라인·미리보기가 전부 게이트 미검증 상태이고, F1/F2/F4 판정문도 ~100커밋 뒤처져 사람 재검토가 필요하다.
+3. **리밸런싱 미리보기 UI.** §2.5의 백엔드 계약(생성/조회/적용 3개 라우트, OpenAPI 반영됨)은 완료됐지만 화면이 없다. Live 주문도 의도적으로 범위 밖.
+4. **배포 서비스 활성화.** `deploy/systemd/paper-runner.service`와 recommendation-runner의 Compose/systemd 단위(§3.11)를 설치·시작하고, 실제 role-scoped DB URL과 curated dataset 마운트를 호스트 Secret Manager에서 주입해야 한다. 저장소에는 비밀값을 넣지 않는다.
+5. **Auth0 vendor 스위트 실행(운영자).** 실제 테넌트를 상대로 `cargo test -p auth --test vendor_auth0 -- --ignored` — secret을 echo하지 않는다. 통과 시 phase1 E2가 닫힌다.
+6. **실제 KRX provider와 운영 원천 활성화.** 코드의 synthetic 수집·발행·복구 배선은 완료됐지만, 라이선스·credential·entitlement-aware HTTP transport와 실제 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning해야 한다. 그 뒤 운영 PostgreSQL에 실제 KRX 캘린더와 EOD batch 메타데이터를 공급하고 라이브 계정의 intent 상태를 정상적으로 유지해야 한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 
 **작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다.
 
