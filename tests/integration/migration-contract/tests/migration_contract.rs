@@ -89,6 +89,10 @@ const PAPER_RECOMMENDATION_EXECUTION_UP_SQL: &str =
     include_str!("../../../../migrations/0037_paper_recommendation_execution.up.sql");
 const PAPER_RECOMMENDATION_EXECUTION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0037_paper_recommendation_execution.down.sql");
+const PAPER_REBALANCE_PREVIEW_UP_SQL: &str =
+    include_str!("../../../../migrations/0038_paper_rebalance_previews.up.sql");
+const PAPER_REBALANCE_PREVIEW_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0038_paper_rebalance_previews.down.sql");
 const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
 const RESEARCH_SCHEMA_GATE_SQL: &str =
@@ -103,7 +107,7 @@ fn recommendation_pipeline_migration_is_tracked() {
         assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
         assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
     }
-    for version in 26..=37 {
+    for version in 26..=38 {
         let up = MIGRATOR.migrations.iter().find(|migration| {
             migration.version == version
                 && migration.migration_type != MigrationType::ReversibleDown
@@ -248,6 +252,33 @@ fn recommendation_pipeline_migration_is_tracked() {
             .contains("GRANT INSERT ON TABLE public.pending_targets TO worker")
     );
     assert!(PAPER_RECOMMENDATION_EXECUTION_DOWN_SQL.contains("DROP FUNCTION"));
+
+    for migration in [
+        PAPER_REBALANCE_PREVIEW_UP_SQL,
+        PAPER_REBALANCE_PREVIEW_DOWN_SQL,
+    ] {
+        assert!(migration.contains("SET LOCAL lock_timeout = '5s'"));
+        assert!(migration.contains("SET LOCAL statement_timeout = '30s'"));
+    }
+    for token in [
+        "paper_rebalance_previews",
+        "paper_state_version",
+        "snapshot_paper_rebalance_preview",
+        "publish_paper_rebalance_preview",
+        "fail_paper_rebalance_preview",
+        "apply_paper_rebalance_preview",
+        "MANUAL_RECOMMENDATION",
+        "SCHEDULED_RECOMMENDATION",
+        "SECURITY DEFINER",
+        "SET search_path = pg_catalog, pg_temp",
+    ] {
+        assert!(
+            PAPER_REBALANCE_PREVIEW_UP_SQL.contains(token),
+            "0038 up is missing {token}"
+        );
+    }
+    assert!(PAPER_REBALANCE_PREVIEW_DOWN_SQL.contains("preview rollback blocked"));
+    assert!(PAPER_REBALANCE_PREVIEW_DOWN_SQL.contains("DROP TABLE"));
 }
 
 #[test]
@@ -372,6 +403,7 @@ const TENANT_TABLES: &[&str] = &[
     "recommendation_runs",
     "recommendation_items",
     "target_portfolios",
+    "paper_rebalance_previews",
     "jobs",
     "backtest_runs",
     "backtest_metrics",
@@ -2548,6 +2580,319 @@ async fn recommendation_pipeline_migration_contract() {
     }
 }
 
+#[tokio::test]
+async fn paper_rebalance_preview_migration_contract() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = paper_rebalance_preview_contract_body(&super_url, &db, &owner).await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("Paper rebalance preview migration contract FAILED: {error}");
+    }
+}
+
+async fn paper_rebalance_preview_contract_body(
+    super_url: &str,
+    db: &str,
+    owner: &PgPool,
+) -> Result<(), Box<dyn Error>> {
+    MIGRATOR.run(owner).await?;
+
+    let user_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', $1, $2) RETURNING id",
+    )
+    .bind("paper-preview-contract")
+    .bind("paper-preview-contract@example.test")
+    .fetch_one(owner)
+    .await?;
+    let owner_actor = actor_pool(super_url, db, "migration_owner", &user_id.to_string()).await?;
+    let app = actor_pool(super_url, db, "app", &user_id.to_string()).await?;
+    let worker = role_pool(super_url, db, "worker").await?;
+
+    sqlx::query(
+        "INSERT INTO strategies (id, display_name, state) \
+         VALUES ('paper_preview_contract', 'Paper Preview Contract', 'Paper')",
+    )
+    .execute(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO instruments (id, symbol, venue, currency) \
+         VALUES ('069500.KRX', '069500', 'KRX', 'KRW')",
+    )
+    .execute(owner)
+    .await?;
+    let config_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO user_strategy_configs \
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, 'paper_preview_contract', '1.0.0', '{}'::jsonb) RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let account_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO accounts \
+         (owner_user_id, account_type, name, status, initial_cash) \
+         VALUES ($1, 'PAPER', 'paper-preview', 'ACTIVE', 1000000) RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    sqlx::query(
+        "INSERT INTO account_strategy_bindings \
+         (account_id, owner_user_id, strategy_config_id, strategy_id, strategy_version) \
+         VALUES ($1, $2, $3, 'paper_preview_contract', '1.0.0')",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .bind(config_id)
+    .execute(&owner_actor)
+    .await?;
+    let dataset_version_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO dataset_versions \
+         (dataset_id, version, status, manifest_sha256, storage_path) \
+         VALUES ('krx_eod_bars', 'preview-v1', 'READY', repeat('a', 64), \
+                 'curated/preview-v1') RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO data_entitlements \
+         (contract_document_sha256, contract_reference, status, covered_datasets, \
+          covered_uses, effective_from, effective_until, managed_by) \
+         VALUES (repeat('e', 64), 'vault://qa/paper-preview', 'ACTIVE', \
+                 '[\"krx_eod_bars\"]', '[\"recommendation\"]', \
+                 DATE '2020-01-01', DATE '2030-12-31', $1)",
+    )
+    .bind(user_id)
+    .execute(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO trading_calendars \
+         (exchange, session_date, session_type, timezone, source, source_version, \
+          source_batch_id, content_sha256, retrieved_at) \
+         VALUES ('KRX', DATE '2026-08-13', 'TRADING', 'Asia/Seoul', 'KRX', \
+                 'preview-v1', $1, repeat('c', 64), now())",
+    )
+    .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000038")?)
+    .execute(owner)
+    .await?;
+
+    let recommendation_job_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id, job_type, status, idempotency_key) \
+         VALUES ($1, 'recommendation', 'SUCCEEDED', $2) RETURNING id",
+    )
+    .bind(user_id)
+    .bind("preview-source-contract")
+    .fetch_one(&owner_actor)
+    .await?;
+    let recommendation_run_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO recommendation_runs \
+         (owner_user_id, strategy_config_id, as_of, status, job_id, trigger_kind, \
+          dataset_version_id, dataset_manifest_sha256) \
+         VALUES ($1, $2, DATE '2026-08-11', 'SUCCEEDED', $3, 'MANUAL', \
+                 $4, repeat('a', 64)) RETURNING id",
+    )
+    .bind(user_id)
+    .bind(config_id)
+    .bind(recommendation_job_id)
+    .bind(dataset_version_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let portfolio_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO target_portfolios \
+         (owner_user_id, recommendation_run_id, as_of, weights_json) \
+         VALUES ($1, $2, DATE '2026-08-11', \
+                 '{\"069500.KRX\":\"1.000000\"}'::jsonb) RETURNING id",
+    )
+    .bind(user_id)
+    .bind(recommendation_run_id)
+    .fetch_one(&owner_actor)
+    .await?;
+
+    let mut expected_version = 0_i64;
+    let read_version = || {
+        sqlx::query_scalar::<_, i64>("SELECT paper_state_version FROM accounts WHERE id = $1")
+            .bind(account_id)
+            .fetch_one(&owner_actor)
+    };
+    assert_eq!(read_version().await?, expected_version);
+    let cash_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO cash_ledger \
+         (account_id, owner_user_id, seq, event_type, amount, balance) \
+         VALUES ($1, $2, 1, 'DEPOSIT', 1000000, 1000000) RETURNING id",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    expected_version += 1;
+    assert_eq!(read_version().await?, expected_version);
+    sqlx::query("UPDATE cash_ledger SET ts = ts + interval '1 second' WHERE id = $1")
+        .bind(cash_id)
+        .execute(&owner_actor)
+        .await?;
+    expected_version += 1;
+    assert_eq!(read_version().await?, expected_version);
+    sqlx::query("DELETE FROM cash_ledger WHERE id = $1")
+        .bind(cash_id)
+        .execute(&owner_actor)
+        .await?;
+    expected_version += 1;
+    assert_eq!(read_version().await?, expected_version);
+    let position_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO positions (account_id, owner_user_id, instrument_id, quantity) \
+         VALUES ($1, $2, '069500.KRX', 1) RETURNING id",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    expected_version += 1;
+    assert_eq!(read_version().await?, expected_version);
+    sqlx::query("UPDATE positions SET quantity = 2 WHERE id = $1")
+        .bind(position_id)
+        .execute(&owner_actor)
+        .await?;
+    expected_version += 1;
+    assert_eq!(read_version().await?, expected_version);
+    sqlx::query("DELETE FROM positions WHERE id = $1")
+        .bind(position_id)
+        .execute(&owner_actor)
+        .await?;
+    expected_version += 1;
+    assert_eq!(read_version().await?, expected_version);
+    sqlx::query(
+        "INSERT INTO cash_ledger \
+         (account_id, owner_user_id, seq, event_type, amount, balance) \
+         VALUES ($1, $2, 2, 'DEPOSIT', 1000000, 1000000)",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .execute(&owner_actor)
+    .await?;
+    expected_version += 1;
+
+    let preview_job_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id, job_type, status, idempotency_key, payload_json) \
+         VALUES ($1, 'paper_rebalance_preview', 'RUNNING', $2, '{}'::jsonb) RETURNING id",
+    )
+    .bind(user_id)
+    .bind("paper-preview:contract")
+    .fetch_one(&app)
+    .await?;
+    let preview_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO paper_rebalance_previews \
+         (owner_user_id, account_id, recommendation_run_id, target_portfolio_id, \
+          strategy_config_id, job_id, price_date, dataset_version_id, \
+          dataset_manifest_sha256, target_portfolio_sha256) \
+         VALUES ($1, $2, $3, $4, $5, $6, DATE '2026-08-11', $7, \
+                 repeat('a', 64), repeat('b', 64)) RETURNING id",
+    )
+    .bind(user_id)
+    .bind(account_id)
+    .bind(recommendation_run_id)
+    .bind(portfolio_id)
+    .bind(config_id)
+    .bind(preview_job_id)
+    .bind(dataset_version_id)
+    .fetch_one(&app)
+    .await?;
+
+    let app_publish = sqlx::query(
+        "SELECT publish_paper_rebalance_preview( \
+         $1, $2, $3, repeat('d',64), 'KRX_ETF_DEFAULT', 1, DATE '2026-08-13', \
+         repeat('f',64), '{}'::jsonb)",
+    )
+    .bind(preview_id)
+    .bind(preview_job_id)
+    .bind(expected_version)
+    .execute(&app)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&app_publish).as_deref(), Some("42501"));
+    let worker_apply = sqlx::query(
+        "SELECT * FROM apply_paper_rebalance_preview($1, $2, repeat('f',64), DATE '2026-08-12')",
+    )
+    .bind(user_id)
+    .bind(preview_id)
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&worker_apply).as_deref(), Some("42501"));
+    let forged_origin = sqlx::query(
+        "INSERT INTO pending_targets \
+         (account_id, owner_user_id, strategy_config_id, computed_on, effective_date, \
+          targets_json, dataset_version, dataset_version_id, dataset_manifest_sha256, \
+          source_kind, recommendation_run_id) \
+         VALUES ($1, $2, $3, DATE '2026-08-11', DATE '2026-08-13', '[]'::jsonb, \
+                 'preview-v1', $4, repeat('a',64), 'MANUAL_RECOMMENDATION', $5)",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .bind(config_id)
+    .bind(dataset_version_id)
+    .bind(recommendation_run_id)
+    .execute(&app)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&forged_origin).as_deref(), Some("42501"));
+
+    let snapshot_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM snapshot_paper_rebalance_preview( \
+         $1, $2, DATE '2026-08-12')",
+    )
+    .bind(preview_id)
+    .bind(preview_job_id)
+    .fetch_one(&worker)
+    .await?;
+    assert_eq!(
+        snapshot_count, 1,
+        "worker must resolve one exact preview snapshot"
+    );
+    let published: bool = sqlx::query_scalar(
+        "SELECT publish_paper_rebalance_preview( \
+         $1, $2, $3, repeat('d',64), 'KRX_ETF_DEFAULT', 1, DATE '2026-08-13', \
+         repeat('f',64), '{\"schema_version\":1}'::jsonb)",
+    )
+    .bind(preview_id)
+    .bind(preview_job_id)
+    .bind(expected_version)
+    .fetch_one(&worker)
+    .await?;
+    assert!(published);
+    let applied: (String, Option<Uuid>, Option<String>) = sqlx::query_as(
+        "SELECT outcome, pending_target_id, source_kind \
+         FROM apply_paper_rebalance_preview($1, $2, repeat('f',64), DATE '2026-08-12')",
+    )
+    .bind(user_id)
+    .bind(preview_id)
+    .fetch_one(&app)
+    .await?;
+    assert_eq!(applied.0, "APPLIED");
+    assert!(applied.1.is_some());
+    assert_eq!(applied.2.as_deref(), Some("MANUAL_RECOMMENDATION"));
+    let manual_lineage: (String, Uuid) = sqlx::query_as(
+        "SELECT source_kind, recommendation_run_id \
+         FROM pending_targets WHERE id = $1",
+    )
+    .bind(applied.1.unwrap())
+    .fetch_one(&owner_actor)
+    .await?;
+    assert_eq!(
+        manual_lineage,
+        ("MANUAL_RECOMMENDATION".into(), recommendation_run_id)
+    );
+
+    Ok(())
+}
+
 async fn recommendation_pipeline_contract_body(
     super_url: &str,
     db: &str,
@@ -2677,7 +3022,7 @@ async fn recommendation_pipeline_contract_body(
     .fetch_one(owner)
     .await?;
     assert!(active_control);
-    MIGRATOR.run_to(37, owner).await?;
+    MIGRATOR.run_to(38, owner).await?;
     assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
 
     let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
@@ -2999,8 +3344,11 @@ async fn recommendation_pipeline_contract_body(
     for signature in [
         "public.lock_recommendation_schedule_inputs(date,uuid,text,text,text)",
         "public.lock_recommendation_calendar_coverage(date)",
-        "public.queue_scheduled_paper_targets(uuid,uuid,date,uuid,text,text,jsonb)",
+        "public.queue_scheduled_paper_targets(uuid,uuid,uuid,date,uuid,text,text,jsonb)",
         "public.preflight_paper_target(uuid,uuid)",
+        "public.snapshot_paper_rebalance_preview(uuid,uuid,date)",
+        "public.publish_paper_rebalance_preview(uuid,uuid,bigint,text,text,integer,date,text,jsonb)",
+        "public.fail_paper_rebalance_preview(uuid,uuid,jsonb)",
     ] {
         let metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
             "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
@@ -3037,6 +3385,39 @@ async fn recommendation_pipeline_contract_body(
                 "unexpected EXECUTE privilege for {role} on {signature}"
             );
         }
+    }
+    for role in ["worker", "app", "admin", "audit_writer", "research_writer"] {
+        let old_bridge: bool = sqlx::query_scalar(
+            "SELECT has_function_privilege($1, \
+             'public.queue_scheduled_paper_targets(uuid,uuid,date,uuid,text,text,jsonb)', \
+             'EXECUTE')",
+        )
+        .bind(role)
+        .fetch_one(owner)
+        .await?;
+        assert!(
+            !old_bridge,
+            "legacy scheduled bridge must be inactive for {role}"
+        );
+    }
+    for (role, expected) in [
+        ("worker", false),
+        ("app", true),
+        ("admin", false),
+        ("audit_writer", false),
+        ("research_writer", false),
+    ] {
+        let can_apply: bool = sqlx::query_scalar(
+            "SELECT has_function_privilege($1, \
+             'public.apply_paper_rebalance_preview(uuid,uuid,text,date)', 'EXECUTE')",
+        )
+        .bind(role)
+        .fetch_one(owner)
+        .await?;
+        assert_eq!(
+            can_apply, expected,
+            "unexpected preview apply grant for {role}"
+        );
     }
     for role in ["worker", "app", "admin", "audit_writer", "research_writer"] {
         let can_execute: bool = sqlx::query_scalar(
@@ -3224,9 +3605,10 @@ async fn recommendation_pipeline_contract_body(
 
     let missing_weight = sqlx::query(
         "SELECT * FROM public.queue_scheduled_paper_targets(\
-            $1, $2, '2026-08-11', $3, '2026-08-11', $4, \
+            $1, $2, $3, '2026-08-11', $4, '2026-08-11', $5, \
             '[{\"instrument_id\":\"069500.KRX\"}]'::jsonb)",
     )
+    .bind(legacy_run_id)
     .bind(user_id)
     .bind(config_id)
     .bind(dataset_version_id)
@@ -3242,9 +3624,10 @@ async fn recommendation_pipeline_contract_body(
 
     let forged_target_lineage = sqlx::query(
         "SELECT * FROM public.queue_scheduled_paper_targets(\
-            $1, $2, '2026-08-11', $3, 'forged-version', $4, \
+            $1, $2, $3, '2026-08-11', $4, 'forged-version', $5, \
             '[{\"instrument_id\":\"069500.KRX\",\"weight\":\"1.000000\"}]'::jsonb)",
     )
+    .bind(legacy_run_id)
     .bind(user_id)
     .bind(config_id)
     .bind(dataset_version_id)

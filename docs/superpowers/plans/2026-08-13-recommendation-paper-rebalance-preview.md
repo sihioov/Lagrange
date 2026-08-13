@@ -166,7 +166,7 @@ Create these narrow functions with `SECURITY DEFINER`, owner
 `migration_owner`, and `SET search_path = pg_catalog, pg_temp`:
 
 ```sql
-public.snapshot_paper_rebalance_preview(uuid, uuid)
+public.snapshot_paper_rebalance_preview(uuid, uuid, date)
 public.publish_paper_rebalance_preview(uuid, uuid, bigint, text, text, integer, date, text, jsonb)
 public.fail_paper_rebalance_preview(uuid, uuid, jsonb)
 public.apply_paper_rebalance_preview(uuid, uuid, text, date)
