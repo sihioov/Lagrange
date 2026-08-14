@@ -560,7 +560,12 @@ docker compose version
 
 개발·QA용 disposable DB를 사용할 때만 다음처럼 실행한다.
 
+먼저 Phase 0 데이터를 생성하고, 테스트가 부를 Python 인터프리터를 정한다. 추천 계산 경로의 test binary 3개(`http_recommendations`, `recommendation_compute`, `recommendation_runner`)는 `scripts/ci/prepare_phase0.py`를 자식 프로세스로 실행하며 인터프리터를 `PYTHON` 또는 기본값 `python`에서 찾는다. **그 인터프리터에 pyarrow가 없으면 테스트 14개가 실패하는데, 오류가 Python traceback으로 나오기 때문에 Rust 회귀로 오독하기 쉽다.**
+
 ~~~bash
+python -m pip install --disable-pip-version-check pyarrow==25.0.0
+python scripts/ci/prepare_phase0.py --root data/phase0
+
 docker compose -p lagrange-qa \
   -f deploy/qa/qa-db.compose.yml up -d --wait qa-db
 DATABASE_URL='postgres://postgres:lagrange@127.0.0.1:55432/postgres' \
@@ -569,7 +574,9 @@ docker compose -p lagrange-qa \
   -f deploy/qa/qa-db.compose.yml down -v --remove-orphans
 ~~~
 
-위 QA DB는 disposable이며 운영 DB가 아니다. 장시간 테스트를 동시에 여러 개 실행해 QA tmpfs를 가득 채우지 않는다.
+`python`을 오염시키지 않으려면 별도 venv를 만들고 `PYTHON=<그 venv의 python>`을 export한다. 어느 쪽이든 `.github/workflows/ci.yml`의 `workspace-tests`와 같은 순서다 — CI는 `setup-python`이 제공하는 `python`에 pyarrow를 설치한 뒤 생성기를 돌린다.
+
+위 QA DB는 disposable이며 운영 DB가 아니다. 장시간 테스트를 동시에 여러 개 실행해 QA tmpfs를 가득 채우지 않는다. 이 절차로 2026-08-14에 1,371개 통과·실패 0을 확인했다(`docs/STATUS.md` §2.7).
 
 ### 8.2 배포 smoke
 
