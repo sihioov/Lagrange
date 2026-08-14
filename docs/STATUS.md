@@ -1,6 +1,6 @@
 # Lagrange Station — 상태 종합
 
-**기준일: 2026년 8월 13일 (2026-08-13)** · 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지다. Auth0 confidential client 배선은 main의 `8c22f79`~`a03d8fc`(08-12), 고정 ETF 추천 파이프라인과 Paper 리밸런싱 미리보기는 **`feat/recommendation-pipeline` 브랜치 `554834c`~`dc4dd0e`(53커밋, 아직 main 미병합)**이다.
+**기준일: 2026년 8월 13일 (2026-08-13)** · **2026-08-14 갱신분은 §2.6에 별도로 기록한다 — 저장소가 Windows/WSL에서 Linux 호스트로 이관됐고, 그 결과 아래 §2.1~§2.3의 판정과 증거가 현재 호스트에 존재하지 않는다.** 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지다. Auth0 confidential client 배선은 main의 `8c22f79`~`a03d8fc`(08-12), 고정 ETF 추천 파이프라인과 Paper 리밸런싱 미리보기는 `554834c`~`dc4dd0e`(53커밋)이며, **08-13 15:02에 `feat/recommendation-pipeline`이 fast-forward로 main에 병합됐다** — 이 문서 이전 판의 "아직 main 미병합" 서술은 작성 시점(08-13 21:19)에 이미 틀린 것이었다. 병합 이후 게이트는 아직 한 번도 재실행되지 않았다.
 
 ---
 
@@ -54,7 +54,7 @@
 | Rust 워크스페이스 (08-10 기록) | **1,051개 통과** (Paper runner/valuation 이음매 테스트 11개 추가 포함) |
 | Rust 워크스페이스 (08-11 재실행) | **1,192개 통과, 4개 의도적 ignore, 실패 binary 0개** — `--no-fail-fast`, QA PostgreSQL 포함 |
 | Python (nt + 골든, 08-09 기준 실행) | **239개 통과**, 1 스킵 — 가격 보정 전 기준선의 역사적 실행 기록이며, 현재 v2 증거의 최신 전체 수치를 뜻하지 않음 |
-| Web (vitest + tsc) | **48개 통과**, `openapi:check` 클린, `tsc --noEmit` 클린 |
+| Web (vitest + tsc) | **48개 통과**, `openapi:check` 클린, `tsc --noEmit` 클린 — 08-13 Windows 호스트 기록. 08-14 Linux 호스트 재실행 결과는 §2.6 |
 | clippy (workspace, all-targets, all-features) | `-D warnings` 클린 (08-11 재실행) |
 | rustfmt (workspace) | **PASS** — 08-11 GitHub Actions 도입 시 기존 drift를 pinned rustfmt로 기계 정규화 |
 
@@ -84,6 +84,47 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 추천 결과를 활성 Paper 계좌에 적용하기 전에 주문 후보·예상 수수료·가용 현금·잔여 현금·종목별 판단 사유를 고정소수점으로 계산하는 백엔드 경로를 추가했다. 미리보기는 추천 종가와 정확한 데이터셋/포트폴리오/계좌 상태 해시에 고정되며, 상태가 달라지면 적용을 거부한다. 명시적 적용은 주문이나 체결을 즉시 만들지 않고 `MANUAL_RECOMMENDATION` pending target만 원자적으로 생성한다. 실제 Paper 실행 시에는 다음 거래일 raw open으로 다시 계획하므로 미리보기와 체결 모델을 혼동하지 않는다. 이번 범위는 API·큐·DB·실행 경계까지이며 **UI와 Live 주문은 포함하지 않는다.**
 
 최종 무결성 감사에서는 worker가 계산 전에 on-disk manifest의 canonical hash를 DB pin과 다시 대조하고, snapshot 전·후 목표 포트폴리오 변경을 READY 발행 전에 영구 거부하도록 보강했다. `cash_ledger`/`positions`는 이제 `(account_id, owner_user_id)` 복합 FK로 실제 계정 소유자와 일치해야 하므로 교차 테넌트 행을 계정에 연결해 상태 버전을 우회할 수 없다. 적용 시에는 계산 당시 Seoul 날짜 이후의 첫 attested KRX 거래일이 여전히 같은지도 재검증한다.
+
+### 2.6 Linux 호스트 이관 (2026-08-14)
+
+개발 호스트가 Windows/WSL(31.5GB, 12 logical CPU)에서 native Ubuntu(14GB, 14 logical CPU)로 이관됐다. 관련 커밋은 `a66c46a`(Linux 대응 코드 수정 — `paper.rs`, `state.rs`, `paper-runner.rs`, `nt/isolation.py`, `nt/uv.lock`, 백업 정책 테스트)와 `3cdf785`(web 픽스처 정렬)이며, 720줄짜리 절차서는 `docs/LINUX_MIGRATION_AND_OPERATIONS.md`다.
+
+**이관이 증거에 미친 영향이 이 문서에서 가장 중요한 부분이다.** `.omo/`는 gitignore 대상이라 저장소에 따라오지 않는다. 따라서 §2.1의 게이트 판정, §2.3의 F1~F4 아티팩트는 **현재 호스트에 파일로 존재하지 않는다.** 이는 판정이 낡았다는 뜻을 넘어, 이 머신에서는 아직 어떤 판정도 발행된 적이 없다는 뜻이다. 마찬가지로 `data/`(raw·curated·phase0·catalog)도 이관되지 않았다.
+
+| 항목 | 2026-08-14 Linux 호스트 실측 |
+|---|---|
+| `scripts/check-pins.sh` | **PASS** — `ALL PINS OK (rustc/python/node/NT)` |
+| `scripts/validate-foundation.sh` | **PASS** |
+| toolchain | rustc 1.97.1, Python 3.12.13, Node 24.13.1, uv 0.12.1, Docker Server 29.7.2 |
+| Web (vitest) | **55개 통과 / 14개 파일**, `tsc --noEmit` 클린, `biome check` 클린 (08-13 기록의 48개에서 증가) |
+| Web e2e 하네스 | `synthetic-api.mjs` + `next dev` 조합이 Linux에서 동작함을 확인 (7개 라우트 렌더링). **E7 Playwright는 이 호스트에서 실행 가능하다** |
+| Phase 0 데이터 | `scripts/ci/prepare_phase0.py`로 재생성 성공 — 3종목 × 260세션 = **780 bar**, `dataset_version: kr-etf-daily-phase0-v2` |
+| QA PostgreSQL | `deploy/qa/qa-db.compose.yml`로 기동 성공 (127.0.0.1:55432, healthy) |
+| Rust 워크스페이스 | **1,371개 통과, 실패 0, 의도적 ignore 5**, 151개 test binary — 아래 §2.7 |
+
+**이관이 만든 잔여 작업 3건:**
+
+1. **`scripts/qa/phase1-gate.sh`는 이 호스트에서 실행할 수 없다.** 46행이 `/root/.cargo/bin/cargo`의 존재를 요구하며 거부하는 WSL 전용 가드다. 런북 §8.2가 남긴 선택지는 두 가지다 — GitHub Actions Ubuntu runner의 결과를 증거로 삼거나, 가드를 native Linux용으로 수정·검증하는 것. 결정 전까지 이 스크립트의 환경 오류를 외부 blocker나 코드 합격으로 오해해서는 안 된다. `scripts/qa/research-worker-smoke.sh`도 동일하게 `wsl` 참조를 갖고 있다.
+2. **`.cargo/config.toml`의 `jobs`는 옛 머신 기준이었다.** `6`은 31.5GB 기준으로 산정된 값이라 14GB 호스트에서는 peak 12~18GB를 요구한다 — 그 파일의 주석이 예고한 실패 모드 그대로다. 08-14에 `3`으로 낮췄다.
+3. **git identity, `data/`, secret, systemd 유닛, Docker 컨테이너가 모두 미설정 상태다.** 런북 §12 체크리스트 기준으로 이관은 "코드와 toolchain은 준비됐고 나머지는 미복원" 단계에 있다. 런북 자체가 지시하듯 이 체크리스트가 끝나기 전에는 Windows 원본을 삭제하지 않는다.
+
+### 2.7 Linux 호스트 최초 워크스페이스 테스트 (2026-08-14)
+
+CI(`.github/workflows/ci.yml` `workspace-tests`)의 순서를 그대로 재현했다 — Phase 0 데이터 생성 → disposable QA DB 기동 → `cargo test --workspace --locked --no-fail-fast`.
+
+| 항목 | 값 |
+|---|---|
+| 커밋 | `3cdf785` (+ 미커밋 변경: `.cargo/config.toml` jobs 6→3) |
+| 호스트 | Ubuntu, 14 logical CPU, 14GB RAM, 4GB swap |
+| 실행 시각 | 2026-08-14 (KST 오후) |
+| 결과 | **1,371개 통과, 실패 0, 의도적 ignore 5** — 151개 test binary. 단일 실행 수치가 아니라 합산이다: 전체 실행에서 1,357개 통과·14개 실패, 그 14개를 `PYTHON` 지정 후 재실행해 전부 통과(아래 참조) |
+| DB | `deploy/qa/qa-db.compose.yml`, `postgres://…@127.0.0.1:55432` (disposable) |
+
+**따라서 `a66c46a`의 Linux 대응 코드 변경은 이 실행으로 처음 검증됐다.** 빌드 중 OOM이나 스래싱은 발생하지 않았다(jobs=3, peak 여유 5~6GB 유지).
+
+첫 실행에서는 14개가 실패했는데, 원인은 하나였고 코드 회귀가 아니었다. 실패는 test binary 3개에 걸쳐 있었다 — `api-server/tests/http_recommendations.rs`(1), `job-queue/tests/recommendation_compute.rs`(12), `job-queue/tests/recommendation_runner.rs`(1). 셋 다 Phase 0 픽스처를 만들기 위해 `scripts/ci/prepare_phase0.py`를 자식 프로세스로 부르며, 인터프리터를 `PYTHON` 환경변수 또는 기본값 `python`에서 찾는다. GitHub Actions에서는 `setup-python`이 `python`에 pyarrow를 함께 제공하지만, **이 호스트의 `python`(`~/.local/bin/python`)에는 pyarrow가 없어서** 생성기가 `ModuleNotFoundError`로 죽었다. pyarrow 25.0.0이 있는 인터프리터를 `PYTHON`으로 지정해 재실행하니 세 바이너리 모두 통과했다(11/11, 16/16, 10/10). 여기에는 `uv`로 5개 배포 전략을 실제 worker로 발행하는 `real_worker_and_uv_publish_all_five_shipped_strategies`도 포함된다.
+
+**Linux 작업자를 위한 운영 메모:** 워크스페이스 테스트 전에 pyarrow 25.0.0을 `python`에 설치하거나, `PYTHON=<pyarrow가 있는 인터프리터>`를 export한다. 이것을 하지 않으면 추천 계산 경로의 테스트 14개가 실패하는데, **실패 메시지가 Python 쪽에 있어 Rust 회귀로 오독하기 쉽다.**
 
 ## 3. 최근에 고쳐진 것 (2026-08-08 ~ 08-13)
 
@@ -205,7 +246,8 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 | 3 | 고정 11-ETF 추천 파이프라인 (제출→계산→발행→화면) | **코드 작업** | ✅ **완료** (§3.10, 브랜치) |
 | 4 | 추천→Paper 자동화(scheduled opt-in) + 리밸런싱 미리보기 백엔드 | **코드 작업** | ✅ **완료** (`fd3fc5b`, §2.5) |
 | 5 | Auth0 confidential client 배선 | **코드 작업** | ✅ **완료** (§3.9, main) |
-| 6 | `feat/recommendation-pipeline` → main 병합 + 전체 게이트 재실행(E7 포함) | **코드/운영** | ▶️ **다음 순서** |
+| 6 | `feat/recommendation-pipeline` → main 병합 | **코드 작업** | ✅ **완료** (08-13 fast-forward, §2.6) |
+| 6b | 전체 게이트 재실행(E7 포함) → Linux 호스트 최초 증거 발행 | **코드/운영** | ▶️ **다음 순서** — `phase1-gate.sh`의 WSL 가드 처리가 선행 조건 (§2.6) |
 | 7 | 리밸런싱 미리보기 UI (백엔드만 완료, UI 미포함) | **코드 작업** | ▶️ 착수 가능 |
 | 8 | paper-runner·recommendation-runner 배포 서비스 활성화 | **운영자** | ▶️ 착수 가능 |
 | 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ▶️ 착수 가능 (테넌트·secret 준비됨) |
@@ -255,6 +297,8 @@ Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가�
 ---
 
 ## 5. 개발 환경 주의사항 (반복 비용을 치른 것들)
+
+**이 절은 2026-08-14 Linux 이관 이전의 Windows/WSL 환경 기록이다.** 함정 자체는 그 환경에서 실제로 치른 비용이므로 남겨두지만, 현재 Linux 호스트의 절차는 `docs/LINUX_MIGRATION_AND_OPERATIONS.md`를 따른다. Windows 원본은 런북 §12 체크리스트가 끝날 때까지 읽기 전용으로 보존한다.
 
 | 함정 | 대응 |
 |---|---|
