@@ -69,5 +69,9 @@ Thumbs.db
 # MSVC debug symbols, when written outside target/
 *.pdb
 
+# Cygwin/MSYS crash dumps. One (grep.exe.stackdump) was committed to the repo
+# root during the Windows era and removed on 2026-08-14.
+*.stackdump
+
 # cargo-mutants output
 **/mutants.out*/
