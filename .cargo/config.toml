@@ -1,19 +1,21 @@
 # Build parallelism cap.
 #
-# Cargo defaults to one rustc per logical CPU (12 on this machine). On the
+# Cargo defaults to one rustc per logical CPU (14 on this machine). On the
 # polars-heavy crates -- `selector`, `factor-engine`, and every test binary
-# that links them -- a single rustc holds 2-3GB, so `-j 12` asks for 24-36GB
-# of a 31.5GB machine. The result is not an out-of-memory error, which would
-# at least name itself: physical RAM runs out, Windows pages ~34GB to disk,
-# and every process on the box slows to the speed of the pagefile. Long
-# builds then stall until something times out and is killed, which presents
-# as "the terminal keeps dying" with nothing in the event log to explain it.
+# that links them -- a single rustc holds 2-3GB, so `-j 14` asks for 28-42GB
+# of a 14GB machine. The result is not an out-of-memory error, which would
+# at least name itself: physical RAM runs out, the kernel falls back on a 4GB
+# swapfile, and every process on the box slows to the speed of the swap. Long
+# builds then stall until something times out or the OOM killer takes a rustc,
+# which presents as "the terminal keeps dying" with no explanation in it.
 #
-# 6 keeps most of the parallelism while bounding the peak to roughly half the
-# machine, leaving room for the editor, the database, and whatever else is
-# running. Raise it on a bigger box; lower it if builds still thrash.
+# 3 bounds the peak to roughly 6-9GB, leaving room for the QA database, the
+# editor, and the other agent sessions this host is shared with. This is a
+# 14GB Linux box; the 6 that lived here before was sized for the 31.5GB
+# Windows machine the project was developed on until 2026-08-14. Raise it on
+# a bigger box; lower it if builds still thrash.
 #
 # Companion to the `debug = "line-tables-only"` profile in Cargo.toml, which
 # fixed the same class of problem on disk (96GB of debuginfo -> 3.3GB).
 [build]
-jobs = 6
+jobs = 3
