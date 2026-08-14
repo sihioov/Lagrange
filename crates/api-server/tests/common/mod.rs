@@ -359,6 +359,7 @@ impl Harness {
             db_url: h.app_url.clone(),
             step_up_max_auth_age_secs: 900,
             artifact_root: h.artifact_root.clone(),
+            seoul_today: || chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
         };
         let state = ApiState::from_pools(
             cfg,

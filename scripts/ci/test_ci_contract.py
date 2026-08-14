@@ -134,7 +134,7 @@ class WorkflowContractTests(unittest.TestCase):
         )
 
         self.assertIn("ledger_state=", script)
-        self.assertIn('if [ "$ledger_state" != "25|4" ]', script)
+        self.assertIn('if [ "$ledger_state" != "7" ]', script)
 
         migration_loop = script.split("while IFS= read -r migration; do", 1)[1].split(
             "done < <(", 1

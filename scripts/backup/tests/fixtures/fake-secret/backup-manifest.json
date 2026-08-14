@@ -45,7 +45,7 @@
       "storage": { "encryption": "allowed", "reference": true, "location": "backup://lagrange/files/raw/2026-08-05T00-02-00Z" },
       "files": [
         { "path": "files/raw/2026-08-05T00-02-00Z/raw-2026-08-05T00-02-00Z.increment", "sha256": "f52b6b60b66a539ab00c92d915c84748a7423305a5072f41d6113d3fd730d9a8" },
-        { "path": "secrets/kis-app-secret.plaintext", "sha256": "2c2f8997cbd5547addafde77a911c97845aa9bec7886980a4cb01a0f4397d4f3" }
+        { "path": "secrets/kis-app-secret.plaintext", "sha256": "9be6d2603b5476b16ab45129f56b66ce5b428c201ce74b734f5ba84629bf1697" }
       ]
     },
     {

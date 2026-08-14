@@ -20,6 +20,15 @@ fixtures="$root/scripts/backup/tests/fixtures"
 tests=0
 fails=0
 
+# The repository intentionally ignores every `secrets/` directory. Build the
+# secret-bearing fixture at runtime so a clean clone can still exercise the
+# marker scanner without committing a file that looks like a real secret.
+fake_secret_fixture="$(mktemp -d)"
+trap 'rm -rf -- "$fake_secret_fixture"' EXIT
+cp -R "$fixtures/fake-secret/." "$fake_secret_fixture/"
+mkdir -p "$fake_secret_fixture/secrets"
+printf 'LAGRANGE_SECRET_MARKER=leaked\n' > "$fake_secret_fixture/secrets/kis-app-secret.plaintext"
+
 run_validator() {
   # usage: run_validator <fixture> ; sets rc / out
   local fixture="$1"
@@ -67,7 +76,7 @@ check 'tampered base-backup hash rejected and named' \
   "$fixtures/tampered-hash" 1 'POLICY REJECTED' 'sha256' 'base.tar.gz'
 
 check 'archive containing fake secret marker rejected, no restore' \
-  "$fixtures/fake-secret" 1 'POLICY REJECTED' 'LAGRANGE_SECRET_MARKER' 'kis-app-secret.plaintext'
+  "$fake_secret_fixture" 1 'POLICY REJECTED' 'LAGRANGE_SECRET_MARKER' 'kis-app-secret.plaintext'
 
 # Determinism: same input, twice, must produce byte-identical output and the same exit code.
 tests=$((tests+1))

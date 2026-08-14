@@ -54,6 +54,15 @@ pub struct ApiConfig {
     /// Read-only artifact tree (mirrors the `/data/artifacts` mount); the
     /// download route hashes files against the manifest before serving.
     pub artifact_root: std::path::PathBuf,
+    /// Seoul civil date used by date-sensitive submission/apply gates.
+    /// Production supplies [`system_seoul_today`]; tests can pin a date so
+    /// calendar fixtures do not expire as wall time advances.
+    pub seoul_today: fn() -> chrono::NaiveDate,
+}
+
+pub fn system_seoul_today() -> chrono::NaiveDate {
+    let offset = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
+    chrono::Utc::now().with_timezone(&offset).date_naive()
 }
 
 /// The assembled router state.

@@ -93,7 +93,18 @@ def _posix_limits(limits: IsolationLimits):
             resource.setrlimit(resource.RLIMIT_CPU, (int(limits.cpu_seconds), int(limits.cpu_seconds) + 1))
         if limits.memory_bytes is not None:
             soft = max(limits.memory_bytes, 64 * 1024 * 1024)
-            resource.setrlimit(resource.RLIMIT_AS, (soft, soft))
+            # RLIMIT_AS counts file-backed mappings as well as memory the
+            # worker can actually dirty.  NautilusTrader/PyArrow map close to
+            # 2 GiB of shared libraries and parquet address space while their
+            # resident set is still below 400 MiB, so a 2 GiB RLIMIT_AS can
+            # deadlock the reader before the backtest starts.  Windows Job
+            # Objects limit committed process memory, not the whole virtual
+            # address space.  RLIMIT_DATA is the closest Linux/POSIX analogue:
+            # on Linux it covers heap and anonymous mmap allocations without
+            # charging read-only file mappings.  Keep RLIMIT_AS only as the
+            # portability fallback for platforms without RLIMIT_DATA.
+            memory_resource = getattr(resource, "RLIMIT_DATA", resource.RLIMIT_AS)
+            resource.setrlimit(memory_resource, (soft, soft))
 
     return apply
 

@@ -27,11 +27,6 @@ use uuid::Uuid;
 
 const MAX_PREVIEW_IDEMPOTENCY_KEY_BYTES: usize = 96;
 
-fn seoul_today() -> chrono::NaiveDate {
-    let offset = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
-    chrono::Utc::now().with_timezone(&offset).date_naive()
-}
-
 fn is_owner(session: &Session) -> bool {
     session.actor().is_owner()
 }
@@ -157,7 +152,7 @@ pub async fn create_rebalance_preview(
                 recommendation_run_id,
                 idempotency_key: key,
                 max_jobs_per_owner: state.cfg.max_jobs_per_owner,
-                seoul_today: seoul_today(),
+                seoul_today: (state.cfg.seoul_today)(),
             },
         )
         .await
@@ -372,7 +367,7 @@ pub async fn apply_rebalance_preview(
             account_id,
             preview_id,
             &body.preview_token,
-            seoul_today(),
+            (state.cfg.seoul_today)(),
         )
         .await
     {

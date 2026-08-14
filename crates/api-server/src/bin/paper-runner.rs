@@ -91,6 +91,7 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
             db_url: app_url,
             step_up_max_auth_age_secs: 900,
             artifact_root: repo_root.join("artifacts"),
+            seoul_today: api_server::http::state::system_seoul_today,
         },
         app_pool,
         admin_pool,
