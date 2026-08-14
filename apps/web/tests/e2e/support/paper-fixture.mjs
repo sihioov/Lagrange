@@ -1,5 +1,5 @@
 const ACCOUNT_ID = "00000000-0000-4000-8000-000000000401";
-const CONFIG_ID = "00000000-0000-4000-8000-000000000101";
+const CONFIG_ID = "00000000-0000-4000-8000-000000000103";
 const PRIOR_CONFIG_ID = "00000000-0000-4000-8000-000000000102";
 const ORDER_ID = "00000000-0000-4000-8000-000000000411";
 const TARGET_ID = "00000000-0000-4000-8000-000000000421";
@@ -167,7 +167,7 @@ function notifications(scenario) {
   ];
 }
 
-function strategyConfigs(scenario) {
+export function paperStrategyConfigs(scenario) {
   return [
     {
       created_at: "2026-01-20T00:30:00Z",
@@ -205,9 +205,6 @@ function mutationAuthorized(headers) {
 
 export function paperResponse(request) {
   const { body, headers, method, pathname, scenario } = request;
-  if (method === "GET" && pathname === "/api/v1/strategy-configs") {
-    return page(strategyConfigs(scenario));
-  }
   if (method === "GET" && pathname === "/api/v1/notifications") {
     return page(notifications(scenario));
   }
@@ -231,7 +228,7 @@ export function paperResponse(request) {
     if (!mutationAuthorized(headers)) {
       return error(403, "CSRF_DENIED", "CSRF and idempotency headers are required");
     }
-    const configs = strategyConfigs(scenario);
+    const configs = paperStrategyConfigs(scenario);
     const chosen = configs.find((config) => config.id === body?.strategy_config_id);
     if (chosen === undefined) {
       return error(404, "RESOURCE_NOT_FOUND", "strategy config not found");

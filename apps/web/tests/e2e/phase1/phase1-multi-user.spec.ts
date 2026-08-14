@@ -57,7 +57,7 @@ test("five invited members independently run and retrieve their own recommendati
     // This identity independently configures and runs a recommendation.
     await page.goto("/strategies");
     await expect(page.getByRole("heading", { level: 1, name: "Strategies" })).toBeVisible();
-    const configuration = page.getByRole("form", { name: "Configure Dual momentum" });
+    const configuration = page.getByRole("form", { name: "Configure Relative momentum" });
     await configuration.getByLabel("Lookback months").fill("12");
     await configuration.getByLabel("Top holdings").fill("4");
     await configuration.getByRole("button", { name: "Save strategy configuration" }).click();

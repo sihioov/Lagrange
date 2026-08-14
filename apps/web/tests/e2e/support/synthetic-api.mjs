@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 import { backtestResponse } from "./backtest-fixture.mjs";
 import { liveResponse } from "./live-fixture.mjs";
-import { paperResponse } from "./paper-fixture.mjs";
-import { recommendationResponse } from "./recommendation-fixture.mjs";
+import { paperResponse, paperStrategyConfigs } from "./paper-fixture.mjs";
+import { recommendationConfig, recommendationResponse } from "./recommendation-fixture.mjs";
 
 const port = Number.parseInt(process.env.SYNTHETIC_API_PORT ?? "38180", 10);
 const defaultScenario = Object.freeze({
@@ -78,6 +78,18 @@ const server = createServer(async (request, response) => {
     // documented defaults for the rest, which is now what it gets.
     scenario = { ...defaultScenario, ...body };
     json(response, 200, { scenario });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/v1/strategy-configs") {
+    // This is one shared production endpoint, not a recommendation-only or
+    // Paper-only route. Keep the synthetic response equally coherent: every
+    // saved config must have a unique identity and all product surfaces must
+    // observe the same list regardless of fixture dispatch order.
+    json(response, 200, {
+      has_more: false,
+      items: [recommendationConfig(), ...paperStrategyConfigs(scenario)],
+      next_cursor: null,
+    });
     return;
   }
   const product = recommendationResponse({

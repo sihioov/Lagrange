@@ -35,7 +35,7 @@ const strategy = Object.freeze({
   state: "Validated",
 });
 
-function config() {
+export function recommendationConfig() {
   return {
     config: { lookback_months: 12, top_n: 3 },
     created_at: "2026-01-31T06:00:00Z",
@@ -180,9 +180,6 @@ export function recommendationResponse(request) {
   if (method === "GET" && pathname === "/api/v1/strategies") {
     return { body: { has_more: false, items: [strategy], next_cursor: null }, status: 200 };
   }
-  if (method === "GET" && pathname === "/api/v1/strategy-configs") {
-    return { body: { has_more: false, items: [config()], next_cursor: null }, status: 200 };
-  }
   if (method === "POST" && /^\/api\/v1\/strategies\/[^/]+\/configs$/.test(pathname)) {
     if (!mutationAuthorized(headers))
       return error(403, "CSRF_DENIED", "CSRF and idempotency headers are required");
@@ -195,7 +192,7 @@ export function recommendationResponse(request) {
         "lookback_months must be 6 or 12 and top_n must be between 1 and 10",
       );
     }
-    return { body: { ...config(), config: body.config }, status: 201 };
+    return { body: { ...recommendationConfig(), config: body.config }, status: 201 };
   }
   if (scenario.entitlement === "blocked" && pathname.startsWith("/api/v1/recommendations")) {
     return error(403, "DATA_ENTITLEMENT_REQUIRED", "recommendation entitlement is inactive");
