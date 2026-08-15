@@ -465,6 +465,8 @@ time.sleep(5)
 (root / 'late-sentinel').write_text('escaped')
 "#;
         let (root, uv) = fake_project(script);
+        fs::create_dir(root.path().join("prewarm-home")).unwrap();
+        fs::create_dir(root.path().join("prewarm-cache")).unwrap();
         let prewarm = Command::new(&uv)
             .arg("run")
             .arg("--project")
@@ -473,6 +475,8 @@ time.sleep(5)
             .arg("python")
             .arg("-c")
             .arg("pass")
+            .env("HOME", root.path().join("prewarm-home"))
+            .env("UV_CACHE_DIR", root.path().join("prewarm-cache"))
             .status()
             .expect("prewarm fake project");
         assert!(prewarm.success(), "fake project prewarm succeeds");
@@ -581,6 +585,12 @@ for forbidden in ('DATABASE_URL','AUTH0_CLIENT_SECRET','AWS_SECRET_ACCESS_KEY','
     if forbidden in os.environ:
         json.dump({'code':'CHILD_INTERNAL_ERROR','summary':'unsafe environment'},open(a.status,'w'))
         raise SystemExit(1)
+for writable in ('HOME','UV_CACHE_DIR'):
+    path = os.environ.get(writable)
+    if not path or not os.path.isdir(path):
+        json.dump({'code':'CHILD_INTERNAL_ERROR','summary':'missing private runtime directory'},open(a.status,'w'))
+        raise SystemExit(1)
+    open(os.path.join(path, 'child-write'), 'w').write('ok')
 result={
  'as_of':'2020-12-30','strategy_version':'buy_and_hold@1.0.0',
  'universe_snapshot_id':'sha256:'+'a'*64,'factor_snapshot_hash':'sha256:'+'b'*64,

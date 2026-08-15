@@ -25,6 +25,8 @@ class HealthReport:
     account_id: str
     refusal: str | None
     degraded_reasons: tuple[str, ...]
+    risk_green: bool = True
+    execution_enabled: bool = True
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -34,6 +36,8 @@ class HealthReport:
             "account_id": self.account_id,
             "refusal": self.refusal,
             "degraded_reasons": list(self.degraded_reasons),
+            "risk_green": self.risk_green,
+            "execution_enabled": self.execution_enabled,
         }
 
 
@@ -57,6 +61,8 @@ def report(status: NodeStatus) -> HealthReport:
         account_id=status.account_id,
         refusal=(r.value if (r := status.refusal()) else None),
         degraded_reasons=status.degraded_reasons,
+        risk_green=status.risk_green,
+        execution_enabled=status.execution_enabled,
     )
 
 

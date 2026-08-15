@@ -3,17 +3,43 @@ Description=Lagrange Paper runner
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=/opt/lagrange/bin/paper-runner
+ConditionPathExists=/usr/local/bin/paper-runner-bin
+ConditionFileIsExecutable=/opt/lagrange/bin/paper-runner
+ConditionFileIsExecutable=/usr/local/bin/paper-runner-bin
 
 [Service]
-Type=simple
+# The Rust daemon sends READY=1 only after its health-state writer is active,
+# then sends WATCHDOG=1 only while heartbeat/progress supervision is live.
+# Missing pings cause systemd to restart a wedged process; ExecStartPre alone
+# is startup readiness, not runtime liveness.
+# systemd may expose NOTIFY_SOCKET as either a filesystem pathname or a Linux
+# abstract address beginning with @; the daemon supports both forms.
+Type=notify
+NotifyAccess=main
+WatchdogSec=30s
 User=lagrange
 Group=lagrange
 WorkingDirectory=/opt/lagrange
 EnvironmentFile=/etc/lagrange/paper-runner.env
+# Do not inherit legacy URL variables from the systemd manager environment.
+# The component values and *_PASSWORD_FILE paths above are the only database
+# configuration accepted by this unit.
+Environment=DATABASE_URL=
+Environment=WORKER_DATABASE_URL=
+Environment=ADMIN_DATABASE_URL=
+Environment=AUDIT_DATABASE_URL=
+# /opt/lagrange/bin/paper-runner is the secret-file adapter. It constructs
+# role-scoped URLs in memory and execs the Rust binary below; the service never
+# receives plaintext DATABASE_URL values from EnvironmentFile.
+ExecStartPre=/opt/lagrange/bin/paper-runner healthcheck --startup
 ExecStart=/opt/lagrange/bin/paper-runner
 Restart=on-failure
 RestartSec=10s
 TimeoutStopSec=30s
+UMask=0077
+RuntimeDirectory=lagrange-paper-runner
+RuntimeDirectoryMode=0750
+ReadWritePaths=/run/lagrange-paper-runner
 
 # The runner only reads the curated dataset and writes through PostgreSQL.
 NoNewPrivileges=true

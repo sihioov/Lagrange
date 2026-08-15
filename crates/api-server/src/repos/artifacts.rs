@@ -107,3 +107,28 @@ pub fn media_type(artifact_type: &str) -> &'static str {
         _ => "application/octet-stream",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::derive_internal_path;
+
+    #[test]
+    fn immutable_generation_paths_remain_inside_the_internal_alias() {
+        let path = "backtest/runs/00000000-0000-0000-0000-000000000001/generations/0123456789abcdef0123456789abcdef01234567/11111111-1111-4111-8111-111111111111/artifacts/equity.parquet";
+        assert_eq!(derive_internal_path(path).unwrap(), path);
+        assert_eq!(
+            derive_internal_path(&format!("data/artifacts/{path}")).unwrap(),
+            path
+        );
+        for unsafe_path in [
+            "backtest/runs/run/generations/../../escape.parquet",
+            "backtest/runs/run/generations/commit\\escape.parquet",
+            "/data/artifacts/backtest/runs/run/artifacts/equity.parquet",
+        ] {
+            assert!(
+                derive_internal_path(unsafe_path).is_err(),
+                "accepted unsafe artifact path {unsafe_path:?}"
+            );
+        }
+    }
+}

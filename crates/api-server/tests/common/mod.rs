@@ -360,6 +360,7 @@ impl Harness {
             step_up_max_auth_age_secs: 900,
             artifact_root: h.artifact_root.clone(),
             seoul_today: || chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
+            code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         };
         let state = ApiState::from_pools(
             cfg,

@@ -21,7 +21,7 @@ grep -Fq '**/.venv' "$root/.dockerignore" || {
 for required in \
   'recommendation-runner:' \
   'crates/job-queue/Dockerfile' \
-  'APP_ENV: ${RECOMMENDATION_APP_ENV:?RECOMMENDATION_APP_ENV must be set}' \
+  'APP_ENV: ${RECOMMENDATION_APP_ENV:-production}' \
   'DB_PASSWORD_FILE: /run/secrets/db_worker_password' \
   'RECOMMENDATION_HEALTH_STATE_PATH: /run/recommendation-health/health.json' \
   '/data/curated:ro' \

@@ -195,13 +195,16 @@ impl SessionService {
             .ok_or(SessionError::UnknownSession)?;
         let now = self.clock.now_epoch_secs();
         if now >= stored.expires_at_secs {
-            self.audit.record(AuthAuditEvent {
-                at_secs: now,
-                kind: AuthAuditKind::SessionExpired,
-                user: Some(stored.user_id.0.clone()),
-                reason: Some("SESSION_EXPIRED".to_string()),
-                detail: format!("expired at {}", stored.expires_at_secs),
-            });
+            self.audit
+                .record_durable(AuthAuditEvent {
+                    at_secs: now,
+                    kind: AuthAuditKind::SessionExpired,
+                    user: Some(stored.user_id.0.clone()),
+                    reason: Some("SESSION_EXPIRED".to_string()),
+                    detail: format!("expired at {}", stored.expires_at_secs),
+                })
+                .await
+                .map_err(|error| SessionError::Audit(format!("{error:?}")))?;
             let _ = self.store.revoke(&token_hash).await;
             return Err(SessionError::Expired);
         }
@@ -219,13 +222,15 @@ impl SessionService {
         let token_hash = cookie::hash(cookie_value);
         let now = self.clock.now_epoch_secs();
         if let Ok(Some(stored)) = self.store.lookup(&token_hash).await {
-            self.audit.record(AuthAuditEvent {
-                at_secs: now,
-                kind: AuthAuditKind::SessionRevoked,
-                user: Some(stored.user_id.0.clone()),
-                reason: None,
-                detail: "logout".to_string(),
-            });
+            self.audit
+                .record(AuthAuditEvent {
+                    at_secs: now,
+                    kind: AuthAuditKind::SessionRevoked,
+                    user: Some(stored.user_id.0.clone()),
+                    reason: None,
+                    detail: "logout".to_string(),
+                })
+                .map_err(|error| SessionError::Audit(format!("{error:?}")))?;
         }
         self.store.revoke(&token_hash).await
     }
@@ -250,6 +255,8 @@ pub enum SessionError {
     Store(String),
     #[error("session revoked")]
     Revoked,
+    #[error("auth audit delivery failure: {0}")]
+    Audit(String),
 }
 
 impl SessionError {
@@ -259,6 +266,7 @@ impl SessionError {
             Self::Expired => "SESSION_EXPIRED",
             Self::Store(_) => "SESSION_STORE",
             Self::Revoked => "SESSION_REVOKED",
+            Self::Audit(_) => "SESSION_AUDIT",
         }
     }
 }

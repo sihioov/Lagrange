@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use chrono::Utc;
 use domain::{Currency, InstrumentId, Money, Price, Quantity, TradingDate};
@@ -20,6 +21,8 @@ use sqlx::{PgPool, Postgres, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::paper_execution::set_paper_transaction_timeouts;
+use crate::paper_io::{BlockingIoError, PAPER_CURATED_IO_DEADLINE, run_bounded_blocking};
 use crate::phase0::CURATED_VERSION;
 
 const MARKET: &str = "kr";
@@ -71,10 +74,18 @@ pub enum ValuationError {
 
     #[error("daily_equity already disagrees for account {account_id} on {date}")]
     DailyEquityConflict { account_id: Uuid, date: TradingDate },
+
+    #[error("Paper account {account_id} changed while preparing valuation")]
+    AccountChanged { account_id: Uuid },
 }
 
 /// Rebuilds one Paper account from the worker-authoritative ledger and writes
 /// its close valuation atomically.
+///
+/// Curated reads happen after a short snapshot transaction has committed.
+/// The final transaction locks/rechecks the account before writing, so a
+/// filesystem stall cannot retain a database transaction while still
+/// preserving the immutable daily-equity write semantics.
 pub async fn value_account(
     pool: &PgPool,
     dataset_root: &Path,
@@ -82,35 +93,18 @@ pub async fn value_account(
     owner_user_id: Uuid,
     date: TradingDate,
 ) -> Result<ValuationOutcome, ValuationError> {
-    let mut tx = pool.begin().await?;
-    let (profile, currency) = account_profile(&mut tx, account_id, owner_user_id).await?;
-    let cash = account_cash(&mut tx, account_id, owner_user_id, currency).await?;
-    let positions = account_positions(&mut tx, account_id, owner_user_id).await?;
+    let snapshot = read_account_snapshot(pool, account_id, owner_user_id).await?;
+    let closes = load_session_closes_bounded(dataset_root, &snapshot.state, date).await?;
+    let (equity, cash, positions_value) = calculate_valuation(&snapshot.state, date, &closes)?;
 
-    let state = LedgerState {
-        base_currency: currency,
-        cost_profile: profile,
-        cash,
-        positions,
-        orders: BTreeMap::new(),
-        fills: Vec::new(),
-        marks: BTreeMap::new(),
-        equity_curve: BTreeMap::new(),
-        last_seq: 0,
-    };
-    let closes = session_closes(dataset_root, &state, date)?;
-    let event = close_valuation_event(&state, date, &closes)
-        .map_err(|e| ValuationError::Ledger(e.to_string()))?;
-    let mut applied = state.clone();
-    let effect = applied
-        .apply(event)
-        .map_err(|e| ValuationError::Ledger(e.to_string()))?;
-    let equity = effect
-        .equity_after
-        .ok_or_else(|| ValuationError::Ledger("mark event produced no equity".to_owned()))?;
-    let positions_value = equity
-        .checked_sub(&cash)
-        .map_err(|e| ValuationError::Ledger(format!("positions value: {e}")))?;
+    let mut tx = pool.begin().await?;
+    set_paper_transaction_timeouts(&mut tx).await?;
+    let current = account_snapshot_in_tx(&mut tx, account_id, owner_user_id).await?;
+    if current != snapshot {
+        tx.rollback().await?;
+        return Err(ValuationError::AccountChanged { account_id });
+    }
+    let currency = current.state.base_currency;
 
     let inserted: Option<(Uuid,)> = sqlx::query_as(
         "INSERT INTO daily_equity \
@@ -164,6 +158,89 @@ pub async fn value_account(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ValuationSnapshot {
+    state: LedgerState,
+}
+
+async fn read_account_snapshot(
+    pool: &PgPool,
+    account_id: Uuid,
+    owner_user_id: Uuid,
+) -> Result<ValuationSnapshot, ValuationError> {
+    let mut tx = pool.begin().await?;
+    set_paper_transaction_timeouts(&mut tx).await?;
+    let snapshot = account_snapshot_in_tx(&mut tx, account_id, owner_user_id).await?;
+    tx.commit().await?;
+    Ok(snapshot)
+}
+
+async fn account_snapshot_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+    owner_user_id: Uuid,
+) -> Result<ValuationSnapshot, ValuationError> {
+    let (profile, currency) = account_profile(tx, account_id, owner_user_id).await?;
+    let cash = account_cash(tx, account_id, owner_user_id, currency).await?;
+    let positions = account_positions(tx, account_id, owner_user_id).await?;
+    Ok(ValuationSnapshot {
+        state: LedgerState {
+            base_currency: currency,
+            cost_profile: profile,
+            cash,
+            positions,
+            orders: BTreeMap::new(),
+            fills: Vec::new(),
+            marks: BTreeMap::new(),
+            equity_curve: BTreeMap::new(),
+            last_seq: 0,
+        },
+    })
+}
+
+fn calculate_valuation(
+    state: &LedgerState,
+    date: TradingDate,
+    closes: &BTreeMap<InstrumentId, Price>,
+) -> Result<(Money, Money, Money), ValuationError> {
+    let event = close_valuation_event(state, date, closes)
+        .map_err(|e| ValuationError::Ledger(e.to_string()))?;
+    let mut applied = state.clone();
+    let effect = applied
+        .apply(event)
+        .map_err(|e| ValuationError::Ledger(e.to_string()))?;
+    let equity = effect
+        .equity_after
+        .ok_or_else(|| ValuationError::Ledger("mark event produced no equity".to_owned()))?;
+    let positions_value = equity
+        .checked_sub(&state.cash)
+        .map_err(|e| ValuationError::Ledger(format!("positions value: {e}")))?;
+    Ok((equity, state.cash, positions_value))
+}
+
+async fn load_session_closes_bounded(
+    dataset_root: &Path,
+    state: &LedgerState,
+    date: TradingDate,
+) -> Result<BTreeMap<InstrumentId, Price>, ValuationError> {
+    let dataset_root = dataset_root.to_path_buf();
+    let state = state.clone();
+    match run_bounded_blocking(PAPER_CURATED_IO_DEADLINE, None, move |canceled| {
+        session_closes(&dataset_root, &state, date, &canceled)
+    })
+    .await
+    {
+        Ok(closes) => Ok(closes),
+        Err(BlockingIoError::Failed(error)) => Err(error),
+        Err(BlockingIoError::Canceled) => Err(ValuationError::Prices(
+            "curated close read canceled during shutdown".to_owned(),
+        )),
+        Err(BlockingIoError::TimedOut) => Err(ValuationError::Prices(format!(
+            "curated close read exceeded {PAPER_CURATED_IO_DEADLINE:?}"
+        ))),
+    }
+}
+
 async fn account_profile(
     tx: &mut Transaction<'_, Postgres>,
     account_id: Uuid,
@@ -171,7 +248,8 @@ async fn account_profile(
 ) -> Result<(CostProfile, Currency), ValuationError> {
     let row: Option<(String, i32, String)> = sqlx::query_as(
         "SELECT cost_profile_id, cost_profile_version, currency FROM accounts \
-         WHERE id = $1 AND owner_user_id = $2 AND status = 'ACTIVE' AND account_type = 'PAPER'",
+         WHERE id = $1 AND owner_user_id = $2 AND status = 'ACTIVE' AND account_type = 'PAPER' \
+         FOR UPDATE",
     )
     .bind(account_id)
     .bind(owner_user_id)
@@ -279,6 +357,7 @@ fn session_closes(
     dataset_root: &Path,
     state: &LedgerState,
     date: TradingDate,
+    canceled: &AtomicBool,
 ) -> Result<BTreeMap<InstrumentId, Price>, ValuationError> {
     let store = CurateStore::new(dataset_root.join("curated"));
     let year = date
@@ -289,6 +368,11 @@ fn session_closes(
         .map_err(|e| ValuationError::Prices(format!("session year: {e}")))?;
     let mut closes = BTreeMap::new();
     for instrument in state.positions.keys() {
+        if canceled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(ValuationError::Prices(
+                "curated close read canceled during shutdown".to_owned(),
+            ));
+        }
         let path = store.bars_path(MARKET, &instrument.to_string(), year, CURATED_VERSION);
         if !path.exists() {
             return Err(ValuationError::MissingMark {
@@ -299,6 +383,11 @@ fn session_closes(
         }
         let bars = read_bars(&path)
             .map_err(|e| ValuationError::Prices(format!("read {}: {e}", path.display())))?;
+        if canceled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(ValuationError::Prices(
+                "curated close read canceled during shutdown".to_owned(),
+            ));
+        }
         let Some(bar) = bars.iter().find(|bar| bar.trading_date == date) else {
             return Err(ValuationError::MissingMark {
                 instrument_id: instrument.clone(),

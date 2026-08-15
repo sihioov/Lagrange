@@ -45,7 +45,7 @@ Options:\n  \
   --backoff-ms N               first retry backoff (default 30000)\n  \
   --child-timeout-ms N         child deadline (default 120000)\n\n\
 Environment:\n  \
-  DATABASE_URL, DATABASE_URL_FILE, or DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD_FILE\n  \
+  DATABASE_URL(_FILE) (development/QA only), or DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD_FILE\n  \
   RECOMMENDATION_HEALTH_STATE_PATH (required in production)\n  \
   APP_ENV (production requires every path option explicitly)";
 
@@ -308,6 +308,9 @@ fn read_secret_file(path: PathBuf, key: &str) -> Result<String, String> {
         return Err(format!("{key} must be a non-symlink regular file"));
     }
     let value = std::fs::read_to_string(path).map_err(|_| format!("{key} is unreadable"))?;
+    if value.contains(['\n', '\r']) {
+        return Err(format!("{key} must contain one line"));
+    }
     let value = value.trim().to_owned();
     if value.is_empty() {
         Err(format!("{key} is empty"))
@@ -316,7 +319,7 @@ fn read_secret_file(path: PathBuf, key: &str) -> Result<String, String> {
     }
 }
 
-fn read_database_options_from<F>(get: F) -> Result<PgConnectOptions, String>
+fn read_database_options_from<F>(get: F, production: bool) -> Result<PgConnectOptions, String>
 where
     F: Fn(&str) -> Option<OsString>,
 {
@@ -331,6 +334,12 @@ where
     ];
     let components = keys.map(|key| (key, get(key)));
     let any_component = components.iter().any(|(_, value)| value.is_some());
+    if production && (direct.is_some() || file.is_some()) {
+        return Err(
+            "production requires DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD_FILE component mode"
+                .to_owned(),
+        );
+    }
     if (direct.is_some() || file.is_some()) && any_component {
         return Err(
             "DATABASE_URL(_FILE) and DB_* component modes are mutually exclusive".to_owned(),
@@ -381,8 +390,8 @@ where
     }
 }
 
-fn read_database_options() -> Result<PgConnectOptions, String> {
-    read_database_options_from(|key| std::env::var_os(key))
+fn read_database_options(production: bool) -> Result<PgConnectOptions, String> {
+    read_database_options_from(|key| std::env::var_os(key), production)
 }
 
 fn schedule_pin_from_parts(
@@ -717,7 +726,7 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let database_options = match read_database_options() {
+    let database_options = match read_database_options(app_env.is_production()) {
         Ok(options) => options,
         Err(message) => {
             event(
@@ -1267,7 +1276,7 @@ mod tests {
     fn component_database_mode_requires_every_field_without_constructing_a_url() {
         let root = tempfile::tempdir().unwrap();
         let password_file = root.path().join("password");
-        std::fs::write(&password_file, "pa:ss@word\n").unwrap();
+        std::fs::write(&password_file, "pa:ss@word").unwrap();
         let values = std::collections::HashMap::from([
             ("DB_HOST", "db.internal".into()),
             ("DB_PORT", "5432".into()),
@@ -1275,10 +1284,10 @@ mod tests {
             ("DB_USER", "worker".into()),
             ("DB_PASSWORD_FILE", password_file.into_os_string()),
         ]);
-        read_database_options_from(|key| values.get(key).cloned()).unwrap();
+        read_database_options_from(|key| values.get(key).cloned(), false).unwrap();
 
         let incomplete = std::collections::HashMap::from([("DB_HOST", "db".into())]);
-        assert!(read_database_options_from(|key| incomplete.get(key).cloned()).is_err());
+        assert!(read_database_options_from(|key| incomplete.get(key).cloned(), false).is_err());
     }
 
     #[test]
@@ -1290,9 +1299,69 @@ mod tests {
             ),
             ("DB_HOST", "db".into()),
         ]);
-        let error = read_database_options_from(|key| values.get(key).cloned()).unwrap_err();
+        let error = read_database_options_from(|key| values.get(key).cloned(), false).unwrap_err();
         assert!(error.contains("mutually exclusive"));
         assert!(!error.contains("secret"));
+    }
+
+    #[test]
+    fn production_requires_component_database_mode_and_password_file() {
+        let direct = std::collections::HashMap::from([(
+            "DATABASE_URL",
+            "postgres://worker:secret@db/lagrange".into(),
+        )]);
+        let error = read_database_options_from(|key| direct.get(key).cloned(), true).unwrap_err();
+        assert!(error.contains("component mode"));
+        assert!(!error.contains("secret"));
+
+        let root = tempfile::tempdir().unwrap();
+        let url_file = root.path().join("database-url");
+        std::fs::write(&url_file, "postgres://worker:secret@db/lagrange").unwrap();
+        let url_file_values =
+            std::collections::HashMap::from([("DATABASE_URL_FILE", url_file.into_os_string())]);
+        let error =
+            read_database_options_from(|key| url_file_values.get(key).cloned(), true).unwrap_err();
+        assert!(error.contains("component mode"));
+        assert!(!error.contains("secret"));
+
+        let password_file = root.path().join("password");
+        std::fs::write(&password_file, "secret").unwrap();
+        let components = std::collections::HashMap::from([
+            ("DB_HOST", "db".into()),
+            ("DB_PORT", "5432".into()),
+            ("DB_NAME", "lagrange".into()),
+            ("DB_USER", "worker".into()),
+            ("DB_PASSWORD_FILE", password_file.into_os_string()),
+        ]);
+        read_database_options_from(|key| components.get(key).cloned(), true).unwrap();
+    }
+
+    #[test]
+    fn development_and_qa_keep_url_database_compatibility() {
+        let direct = std::collections::HashMap::from([(
+            "DATABASE_URL",
+            "postgres://worker:secret@db/lagrange".into(),
+        )]);
+        read_database_options_from(|key| direct.get(key).cloned(), false).unwrap();
+
+        let root = tempfile::tempdir().unwrap();
+        let url_file = root.path().join("database-url");
+        std::fs::write(&url_file, "postgres://worker:secret@db/lagrange").unwrap();
+        let values =
+            std::collections::HashMap::from([("DATABASE_URL_FILE", url_file.into_os_string())]);
+        read_database_options_from(|key| values.get(key).cloned(), false).unwrap();
+    }
+
+    #[test]
+    fn secret_files_reject_any_line_break_without_echoing_contents() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("secret");
+        for value in ["secret\n", "secret\r", "secret\r\n", "sec\nret"] {
+            std::fs::write(&path, value).unwrap();
+            let error = read_secret_file(path.clone(), "DATABASE_URL_FILE").unwrap_err();
+            assert!(error.contains("must contain one line"));
+            assert!(!error.contains("secret"));
+        }
     }
 
     #[cfg(any(unix, windows))]

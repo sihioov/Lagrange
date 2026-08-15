@@ -12,6 +12,10 @@ secret_example="$root/deploy/secrets/db_research_password.example"
 read_only_fsync_probe="$root/scripts/qa/read-only-fsync.rs"
 static_only="${LAGRANGE_RESEARCH_SMOKE_STATIC_ONLY:-0}"
 self_test=0
+# Compose production requires this immutable build input. Static/self-test
+# fixtures use a deterministic placeholder only when the caller did not
+# provide one; this does not relax the production Compose contract.
+static_commit="${LAGRANGE_CODE_COMMIT:-0123456789abcdef0123456789abcdef01234567}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -120,10 +124,16 @@ command -v python3 >/dev/null 2>&1 || fail 'python3 is required for semantic Com
 
 compose_config_json() {
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    docker compose -f "$compose_file" config --format json
+    # Static and functional smoke coverage is an explicit QA fixture run;
+    # production Compose itself requires RESEARCH_APP_ENV from the operator.
+    LAGRANGE_CODE_COMMIT="$static_commit" \
+    RESEARCH_APP_ENV=qa \
+    RESEARCH_FETCH_MODE=synthetic \
+      docker compose -f "$compose_file" config --format json
   elif command -v powershell.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
     compose_windows="$(wslpath -w "$compose_file")"
-    powershell.exe -NoProfile -NonInteractive -Command "& docker compose -f '$compose_windows' config --format json"
+    LAGRANGE_CODE_COMMIT="$static_commit" RESEARCH_APP_ENV=qa RESEARCH_FETCH_MODE=synthetic \
+      powershell.exe -NoProfile -NonInteractive -Command "& docker compose -f '$compose_windows' config --format json"
   else
     fail 'Docker Compose CLI is required for semantic static validation'
   fi
@@ -162,7 +172,7 @@ require(normalized_path(build.get("context", "")) == root, "research-worker buil
 require(build.get("dockerfile") == "data-pipelines/collectors/Dockerfile", "research-worker Dockerfile is incorrect")
 require(worker.get("entrypoint") == ["/usr/local/bin/research-worker"], "research-worker entrypoint is incorrect")
 expected_env = {
-    "APP_ENV": "development", "RESEARCH_FETCH_MODE": "synthetic",
+    "APP_ENV": "qa", "RESEARCH_FETCH_MODE": "synthetic",
     "RESEARCH_RUN_AT_KST": "16:30", "RESEARCH_MAX_PUBLICATION_AGE_SECS": "345600",
     "RESEARCH_RAW_ROOT": "/data", "DB_HOST": "postgres", "DB_PORT": "5432",
     "DB_NAME": "lagrange", "DB_USER": "research_writer",
@@ -172,7 +182,7 @@ environment = worker.get("environment") or {}
 for key, value in expected_env.items():
     require(environment.get(key) == value, f"research-worker environment is incorrect: {key}")
 worker_secrets = {item.get("source") for item in worker.get("secrets", [])}
-require({"db_research_password", "krx_api_key"}.issubset(worker_secrets), "research-worker secrets are incomplete")
+require({"research_db_research_password", "research_krx_api_key"}.issubset(worker_secrets), "research-worker secrets are incomplete")
 require((worker.get("healthcheck") or {}).get("test") == ["CMD", "/usr/local/bin/research-worker", "healthcheck"], "research-worker healthcheck is incorrect")
 for dependency, condition in {
     "postgres": "service_healthy",
@@ -208,12 +218,12 @@ schema_secrets = {item.get("source") for item in schema.get("secrets", [])}
 schema_volumes = [volume for volume in schema.get("volumes", []) if volume.get("target") == "/opt/lagrange/research-schema-check.sql"]
 require(schema.get("image") == postgres and schema.get("read_only") is True and schema.get("restart") == "no", "research-schema-check runtime contract is incorrect")
 require(schema.get("user") == "999:999" and "ALL" in schema.get("cap_drop", []) and "no-new-privileges:true" in schema.get("security_opt", []), "research-schema-check user/capability contract is incorrect")
-require((schema.get("depends_on", {}).get("postgres") or {}).get("condition") == "service_healthy" and schema_secrets == {"postgres_password"}, "research-schema-check dependency/secret is incorrect")
+require((schema.get("depends_on", {}).get("postgres") or {}).get("condition") == "service_healthy" and schema_secrets == {"schema_check_postgres_password"}, "research-schema-check dependency/secret is incorrect")
 require(len(schema_volumes) == 1 and schema_volumes[0].get("read_only") is True, "research-schema-check SQL mount is incorrect")
 schema_command = "\n".join(schema.get("command", []))
 require("/opt/lagrange/research-schema-check.sql" in schema_command, "research-schema-check command does not execute tracked SQL")
 
-for identity in ("db_app_password", "db_worker_password", "db_audit_password", "db_research_password"):
+for identity in ("api_db_app_password", "recommendation_db_worker_password", "api_db_audit_password", "research_db_research_password"):
     require(identity in model.get("secrets", {}), f"Compose secret identity is missing: {identity}")
 resolved = json.dumps(model)
 require(not re.search(r"\blagrange_(app|worker)\b", resolved), "legacy Compose DB role spelling remains")

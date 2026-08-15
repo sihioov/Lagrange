@@ -29,7 +29,9 @@ for required in \
   'ReadOnlyPaths=/var/lib/lagrange/data/phase0'; do
   grep -Fq "$required" "$unit" || { echo "unit missing: $required" >&2; exit 2; }
 done
-for required in DATABASE_URL= WORKER_DATABASE_URL= ADMIN_DATABASE_URL= AUDIT_DATABASE_URL= LAGRANGE_DATASET_ROOT=; do
+for required in PAPER_APP_DB_PASSWORD_FILE= PAPER_WORKER_DB_PASSWORD_FILE= \
+  PAPER_ADMIN_DB_PASSWORD_FILE= PAPER_AUDIT_DB_PASSWORD_FILE= \
+  LAGRANGE_DATASET_ROOT= PAPER_HEALTH_STATE_PATH=; do
   grep -Fq "$required" "$env_example" || { echo "env template missing: $required" >&2; exit 2; }
 done
 

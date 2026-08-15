@@ -1093,11 +1093,10 @@ BEGIN
     END IF;
 
     IF v_reason IS NOT NULL THEN
-        UPDATE public.pending_targets
-           SET status = 'SKIPPED', executed_at = pg_catalog.now(),
-               non_execution_reason = v_reason
-         WHERE id = p_target_id AND owner_user_id = p_owner_user_id
-           AND status = 'PENDING';
+        -- This is a read-only authorization gate.  The worker must never be
+        -- able to commit a terminal target from preflight: settlement owns
+        -- the status transition and its durable notification outbox row in
+        -- one transaction.
         RETURN QUERY SELECT false, v_reason;
         RETURN;
     END IF;

@@ -12,19 +12,24 @@ pub mod batch;
 pub mod error;
 pub mod factor_series;
 pub mod paper_execution;
+pub mod paper_io;
 pub mod paper_preview;
 pub mod paper_valuation;
 pub mod phase0;
 pub mod queue;
 pub mod recommendation;
+pub mod reconciler;
 pub mod resolver;
 pub mod runner;
+pub mod safety;
 pub mod types;
 
 pub use batch::{BatchItem, MAX_BATCH_SIZE, cancel_batch, submit_batch};
 pub use error::QueueError;
 pub use queue::{JobQueue, QueueConfig};
+pub use reconciler::{ReconcileError, ReconcileReport, ReconcilerConfig, reconcile_artifacts};
 pub use resolver::DbStrategyResolver;
+pub use safety::{BackpressureConfig, CapacitySnapshot, ClaimGate};
 pub use types::{
     AttemptOutcome, AuditActor, CancelResult, ClaimedJob, ErrorClass, HeartbeatStatus, Job,
     JobAttempt, JobStatus, SettleResult, SubmitJob, SweepReport,

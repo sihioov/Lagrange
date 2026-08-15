@@ -29,12 +29,13 @@ tokio = { version = "1", # `process` spawns the backtest worker as a CHILD: a si
 # the claim.
 # `signal` lets the daemon settle the job it is holding before it exits: a
 # process aborted mid-claim leaves the row RUNNING until a sweep.
-features = ["rt-multi-thread", "macros", "time", "process", "signal", "io-util", "sync"] }
+features = ["rt-multi-thread", "macros", "time", "process", "signal", "io-util", "sync", "test-util"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 thiserror = "2.0"
+sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

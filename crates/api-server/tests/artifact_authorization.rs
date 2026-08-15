@@ -23,12 +23,11 @@ async fn seed_run_with_artifact(
     rel_path: &str,
     bytes: &[u8],
 ) -> (String, String) {
-    let sha = h.write_artifact(rel_path, bytes);
     h.seed_tenant(
         actor,
         &format!(
-            "INSERT INTO backtest_runs (id, owner_user_id, strategy_id, strategy_version, dataset_version, engine_version, config_sha256, code_commit, status, summary_json) VALUES \
-             (gen_random_uuid(), '{owner}', 'buy_and_hold', '1.0.0', 'krx_eod_bars@2026-01-01', '1.231.0', repeat('1',64), 'PENDING', 'SUCCEEDED', '{{}}'::jsonb)",
+            "INSERT INTO backtest_runs (id, owner_user_id, strategy_id, strategy_version, dataset_version, engine_version, config_sha256, code_commit, random_seed, status, summary_json) VALUES \
+             (gen_random_uuid(), '{owner}', 'buy_and_hold', '1.0.0', 'krx_eod_bars@2026-01-01', '1.231.0', repeat('1',64), '0123456789abcdef0123456789abcdef01234567', 42, 'SUCCEEDED', '{{}}'::jsonb)",
             owner = actor.user_id
         ),
     )
@@ -40,6 +39,12 @@ async fn seed_run_with_artifact(
     .fetch_one(&h.member_pool().await)
     .await
     .unwrap();
+    let rel_path = if rel_path == "__CANONICAL__" {
+        format!("backtest/runs/{run_id}/artifacts/equity.parquet")
+    } else {
+        rel_path.to_owned()
+    };
+    let sha = h.write_artifact(&rel_path, bytes);
     h.seed_tenant(
         actor,
         &format!(
@@ -72,13 +77,8 @@ async fn artifact_owner_download_issues_internal_redirect_with_matching_hash() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let (_run_id, artifact_id) = seed_run_with_artifact(
-        &h,
-        &h.member,
-        "runs/owner-ok/equity.parquet",
-        ARTIFACT_BYTES,
-    )
-    .await;
+    let (run_id, artifact_id) =
+        seed_run_with_artifact(&h, &h.member, "__CANONICAL__", ARTIFACT_BYTES).await;
     let sha = sha256_hex(ARTIFACT_BYTES);
 
     let resp = h
@@ -94,7 +94,8 @@ async fn artifact_owner_download_issues_internal_redirect_with_matching_hash() {
         .and_then(|v| v.to_str().ok())
         .expect("authorized download must carry X-Accel-Redirect");
     assert_eq!(
-        redirect, "/internal-artifacts/runs/owner-ok/equity.parquet",
+        redirect,
+        format!("/internal-artifacts/backtest/runs/{run_id}/artifacts/equity.parquet"),
         "redirect targets the internal alias path, never a filesystem path"
     );
     assert_eq!(

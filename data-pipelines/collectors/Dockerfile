@@ -23,4 +23,6 @@ COPY --from=builder /build/target/release/research-worker /usr/local/bin/researc
 COPY --from=builder /build/tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
 
 USER 10001:10001
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/usr/local/bin/research-worker", "healthcheck"]
 ENTRYPOINT ["/usr/local/bin/research-worker"]

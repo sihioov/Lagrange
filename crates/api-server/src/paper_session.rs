@@ -3,8 +3,9 @@
 //! Todo 31 built the deterministic close→pending→next-open→close core and
 //! the `pending_targets` claim/settle guard. This module is the seam where a
 //! settled session becomes something a user is TOLD about: it settles the
-//! target and routes exactly one severity-graded alert per session, recording
-//! a durable delivery outcome for every channel it attempts.
+//! target and durably enqueues exactly one severity-graded alert per session,
+//! recording a delivery outcome for every channel it attempts.  Dispatch is a
+//! separate, retryable step after the target/outbox transaction commits.
 //!
 //! Grades follow design §15.3:
 //!
@@ -19,16 +20,17 @@
 //! `GET .../parity` recomputes the report for display, but re-reading a
 //! report must not manufacture new notifications.
 //!
-//! Announcing is deliberately separate from settling. `settle` is guarded on
-//! `status = 'PENDING'`, so a second runner racing the same session gets
-//! `NotFound` and never reaches the alert — one session yields one
-//! notification even under a duplicate claim.
+//! The terminal transition and outbox enqueue are one transaction. `settle` is
+//! guarded on `status = 'PENDING'`, so a second runner racing the same session
+//! gets `NotFound` and never creates another intent; retries of a committed
+//! intent use the outbox source key and yield one notification per channel.
 
 use std::path::Path;
 
 use auth::entitlement::Actor;
 use job_queue::paper_execution::{
-    ExecutionOutcome, SessionInput, execute_session, execute_session_in_tx, targets_from_json,
+    ExecutionError, ExecutionOutcome, SessionInput, execute_session,
+    execute_session_with_preflight, targets_from_json,
 };
 use result_model::paper_parity::{ParityReport, ParityStatus};
 use uuid::Uuid;
@@ -36,7 +38,9 @@ use uuid::Uuid;
 use crate::error::{TenancyError, TenancyResult};
 use crate::http::state::ApiState;
 use crate::notify::{AlertResult, AlertSeverity};
-use crate::repos::pending_targets::PendingTargetRow;
+use crate::repos::pending_targets::{
+    PaperSettlementAnnouncement, PaperSettlementOutboxRow, PendingTargetRow,
+};
 
 /// What the runner observed for one session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,54 +161,17 @@ async fn execute_with_preflight(
             .map(PreflightExecution::Outcome)
             .map_err(|error| error.to_string());
     }
-
-    let mut tx = worker_pool
-        .begin()
-        .await
-        .map_err(|error| error.to_string())?;
-    let (authorized, reason): (bool, Option<serde_json::Value>) =
-        sqlx::query_as("SELECT authorized, reason FROM public.preflight_paper_target($1, $2)")
-            .bind(target.id)
-            .bind(input.owner_user_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|error| error.to_string())?;
-    if !authorized {
-        tx.commit().await.map_err(|error| error.to_string())?;
-        let code = reason
-            .as_ref()
-            .and_then(|value| value.get("code"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("PAPER_PREFLIGHT_DENIED");
-        if code == "PAPER_TARGET_NOT_PENDING" {
-            return Ok(PreflightExecution::NotPending);
+    match execute_session_with_preflight(worker_pool, dataset_root, target.id, input).await {
+        Ok(outcome) => Ok(PreflightExecution::Outcome(outcome)),
+        Err(ExecutionError::PreflightDenied { code, message: _ })
+            if code == "PAPER_TARGET_NOT_PENDING" =>
+        {
+            Ok(PreflightExecution::NotPending)
         }
-        let message = reason
-            .as_ref()
-            .and_then(|value| value.get("message"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("Paper execution preflight denied execution");
-        return Ok(PreflightExecution::Skipped(format!("{code}: {message}")));
-    }
-
-    let execution = execute_session_in_tx(&mut tx, dataset_root, input)
-        .await
-        .map_err(|error| error.to_string());
-    match execution {
-        Ok(outcome @ ExecutionOutcome::Executed { .. }) => {
-            tx.commit().await.map_err(|error| error.to_string())?;
-            Ok(PreflightExecution::Outcome(outcome))
+        Err(ExecutionError::PreflightDenied { code, message }) => {
+            Ok(PreflightExecution::Skipped(format!("{code}: {message}")))
         }
-        Ok(other) => {
-            tx.rollback().await.map_err(|error| error.to_string())?;
-            Ok(PreflightExecution::Outcome(other))
-        }
-        Err(error) => {
-            tx.rollback()
-                .await
-                .map_err(|rollback| rollback.to_string())?;
-            Err(error)
-        }
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -214,15 +181,93 @@ async fn announce_preflight_skip(
     target_id: Uuid,
     reason: String,
 ) -> TenancyResult<SettlementOutcome> {
-    let target = state.pending_targets().get(actor, target_id).await?;
-    if target.status != "SKIPPED" {
-        return Err(TenancyError::NotFound);
-    }
     let outcome = SessionOutcome::Blocked { reason };
+    let target = state.pending_targets().get(actor, target_id).await?;
+    if target.status == "PENDING" {
+        // A caller which observed a denial before the preflight transaction
+        // committed still owns the normal settlement path.  This keeps the
+        // terminal transition and its outbox insert in one transaction.
+        return settle_and_announce(state, actor, target_id, outcome).await;
+    }
     let (severity, kind, title, body) = announcement(&target, &outcome, None);
-    let alerts = state
+    let outbox = PaperSettlementAnnouncement {
+        severity: severity.as_str().to_owned(),
+        kind: kind.to_owned(),
+        title,
+        body,
+        parity_json: None,
+        non_execution_reason: None,
+    };
+    let (target, outbox) = state
+        .pending_targets()
+        .enqueue_terminal_announcement(actor, target_id, &outbox)
+        .await?;
+    finish_announcement(state, actor, target, outbox, severity).await
+}
+
+async fn finish_announcement(
+    state: &ApiState,
+    actor: &Actor,
+    target: PendingTargetRow,
+    outbox: PaperSettlementOutboxRow,
+    severity: AlertSeverity,
+) -> TenancyResult<SettlementOutcome> {
+    if outbox.delivered_at.is_some() {
+        // A recovery lookup may resolve an obligation that was already moved
+        // to the immutable archive.  Its notification was delivered before
+        // pruning, so replaying the external transport would violate the
+        // exactly-once DB delivery contract.
+        return Ok(SettlementOutcome {
+            target,
+            parity: None,
+            severity,
+            alerts: AlertResult::default(),
+        });
+    }
+    let alerts = match state
         .notifier()
-        .route_alert(actor, severity, kind, &title, &body)
+        .dispatch_paper_settlement(actor, &outbox)
+        .await
+    {
+        Ok(alerts) => alerts,
+        Err(error) => {
+            // The target and outbox are already committed.  Recording this
+            // best-effort retry metadata is useful operationally, but the
+            // durable pending row remains the source of truth if this update
+            // itself encounters the same outage.
+            let _ = state
+                .pending_targets()
+                .record_announcement_failure(actor, outbox.id, &error.to_string())
+                .await;
+            return Err(error);
+        }
+    };
+    if alerts
+        .deliveries
+        .iter()
+        .any(|delivery| delivery.status == "FAILED")
+    {
+        let detail = alerts
+            .deliveries
+            .iter()
+            .filter(|delivery| delivery.status == "FAILED")
+            .filter_map(|delivery| delivery.error_detail.clone())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let _ = state
+            .pending_targets()
+            .record_announcement_failure(actor, outbox.id, &detail)
+            .await;
+        crate::observability::metrics::record_paper_settlement_retry("transport_failed");
+        return Err(TenancyError::InvalidState(if detail.is_empty() {
+            "Paper notification transport failed".to_owned()
+        } else {
+            detail
+        }));
+    }
+    state
+        .pending_targets()
+        .mark_announcement_delivered(actor, outbox.id)
         .await?;
     Ok(SettlementOutcome {
         target,
@@ -294,32 +339,63 @@ pub async fn settle_and_announce(
         _ => outcome,
     };
 
-    let target = state
+    // The repository locks the target and derives parity from its exact
+    // recommendation_run_id in that same transaction.  This prevents a
+    // concurrent same-day recommendation run from changing the alert's
+    // lineage between the read and terminal commit.
+    let outcome_for_announcement = outcome.clone();
+    let (target, outbox, parity) = state
         .pending_targets()
-        .settle(actor, target_id, outcome.settled_status())
+        .settle_with_exact_parity(
+            actor,
+            target_id,
+            outcome.settled_status(),
+            move |target, parity| {
+                let (severity, kind, title, body) =
+                    announcement(target, &outcome_for_announcement, parity);
+                PaperSettlementAnnouncement {
+                    severity: severity.as_str().to_owned(),
+                    kind: kind.to_owned(),
+                    title,
+                    body,
+                    parity_json: parity.and_then(|snapshot| serde_json::to_value(snapshot).ok()),
+                    non_execution_reason: non_execution_reason(&outcome_for_announcement),
+                }
+            },
+        )
         .await?;
-
-    let parity = match outcome {
-        SessionOutcome::Executed => Some(
-            state
-                .parity_report(actor, target.account_id, &target.computed_on.to_string())
-                .await?,
-        ),
-        _ => None,
+    let severity = match &outcome {
+        SessionOutcome::Executed => match parity.as_ref().map(|report| report.status) {
+            Some(ParityStatus::Match) => AlertSeverity::Info,
+            Some(ParityStatus::Divergent) | Some(ParityStatus::NotComparable) | None => {
+                AlertSeverity::Warning
+            }
+        },
+        SessionOutcome::Blocked { .. } => AlertSeverity::Warning,
+        SessionOutcome::Failed { .. } => AlertSeverity::Critical,
     };
+    let mut settled = finish_announcement(state, actor, target, outbox, severity).await?;
+    settled.parity = parity;
+    Ok(settled)
+}
 
-    let (severity, kind, title, body) = announcement(&target, &outcome, parity.as_ref());
-    let alerts = state
-        .notifier()
-        .route_alert(actor, severity, kind, &title, &body)
-        .await?;
-
-    Ok(SettlementOutcome {
-        target,
-        parity,
-        severity,
-        alerts,
-    })
+/// Preserve the structured reason expected by the target audit contract while
+/// keeping the public session outcome ergonomic.  Preflight errors already
+/// carry a stable `PAPER_*: message` prefix; ordinary runner failures and
+/// deliberate no-trade blocks receive explicit fallback codes.
+fn non_execution_reason(outcome: &SessionOutcome) -> Option<serde_json::Value> {
+    let (reason, fallback_code) = match outcome {
+        SessionOutcome::Blocked { reason } => (reason, "PAPER_EXECUTION_BLOCKED"),
+        SessionOutcome::Failed { reason } => (reason, "PAPER_EXECUTION_FAILED"),
+        SessionOutcome::Executed => return None,
+    };
+    let (code, message) = reason
+        .split_once(": ")
+        .filter(|(code, _)| code.starts_with("PAPER_"))
+        .map_or((fallback_code, reason.as_str()), |(code, message)| {
+            (code, message)
+        });
+    Some(serde_json::json!({ "code": code, "message": message }))
 }
 
 /// Whether the ledger holds anything for this session.
@@ -429,6 +505,7 @@ mod tests {
     fn target() -> PendingTargetRow {
         PendingTargetRow {
             id: Uuid::nil(),
+            owner_user_id: Uuid::nil(),
             account_id: Uuid::nil(),
             strategy_config_id: Uuid::nil(),
             computed_on: NaiveDate::from_ymd_opt(2026, 1, 30).expect("valid date"),
@@ -438,6 +515,8 @@ mod tests {
             dataset_version_id: None,
             dataset_manifest_sha256: None,
             non_execution_reason: None,
+            source_kind: "LEGACY".to_owned(),
+            recommendation_run_id: None,
             status: "EXECUTED".to_owned(),
             executed_at: None,
             created_at: chrono::Utc::now(),

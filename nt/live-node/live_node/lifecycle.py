@@ -55,8 +55,10 @@ class Reason(str, Enum):
 
     NOT_READY = "NODE_NOT_READY"
     KILL_SWITCH = "LIVE_KILL_SWITCH_ENGAGED"
+    RISK_GATE = "LIVE_RISK_GATE_BLOCKED"
     NOT_RECONCILED = "LIVE_RECONCILIATION_REQUIRED"
     STALE_DATA = "DATA_STALE"
+    DRY_RUN = "LIVE_DRY_RUN"
     STOPPING = "NODE_STOPPING"
     DEGRADED = "NODE_DEGRADED"
 
@@ -75,6 +77,11 @@ class NodeStatus:
     data_fresh: bool
     account_id: str
     """The single account this process owns. One node, one account, ever."""
+    # These defaults preserve the original pure lifecycle contract for callers
+    # that do not model the wider runtime yet. The production simulator passes
+    # both explicitly; an absent/blocked risk gate can never grant admission.
+    risk_green: bool = True
+    execution_enabled: bool = True
     degraded_reasons: tuple[str, ...] = field(default=())
 
     def may_submit(self) -> bool:
@@ -96,10 +103,14 @@ class NodeStatus:
             return Reason.STOPPING
         if self.state is NodeState.DEGRADED:
             return Reason.DEGRADED
+        if not self.risk_green:
+            return Reason.RISK_GATE
         if not self.reconciliation_green:
             return Reason.NOT_RECONCILED
         if not self.data_fresh:
             return Reason.STALE_DATA
+        if not self.execution_enabled:
+            return Reason.DRY_RUN
         if self.state is not NodeState.READY:
             return Reason.NOT_READY
         return None
@@ -175,12 +186,16 @@ class NodeLifecycle:
         kill_switch_engaged: bool,
         reconciliation_green: bool,
         data_fresh: bool,
+        risk_green: bool = True,
+        execution_enabled: bool = True,
     ) -> NodeStatus:
         return NodeStatus(
             state=self._state,
             kill_switch_engaged=kill_switch_engaged,
             reconciliation_green=reconciliation_green,
             data_fresh=data_fresh,
+            risk_green=risk_green,
+            execution_enabled=execution_enabled,
             account_id=self._account_id,
             degraded_reasons=self._degraded_reasons,
         )

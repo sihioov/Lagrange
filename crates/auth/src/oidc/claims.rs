@@ -23,15 +23,26 @@ where
     }
 }
 
+/// `azp` is optional, but a present claim must be a JSON string. In
+/// particular, do not let `null` silently turn into an absent claim: that
+/// would allow a malformed single-audience token to bypass the `azp` check.
+fn deserialize_azp<'de, D>(de: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(de).map(Some)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdTokenClaims {
     pub iss: String,
     pub sub: String,
     #[serde(default, deserialize_with = "deserialize_aud")]
     pub aud: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_azp")]
+    pub azp: Option<String>,
     pub exp: i64,
-    #[serde(default)]
-    pub iat: Option<i64>,
+    pub iat: i64,
     #[serde(default)]
     pub nonce: Option<String>,
     #[serde(default)]
@@ -77,11 +88,27 @@ mod tests {
     #[test]
     fn aud_accepts_string_and_array() {
         let claims: IdTokenClaims =
-            serde_json::from_str(r#"{"iss":"i","sub":"s","aud":"api","exp":1}"#).unwrap();
+            serde_json::from_str(r#"{"iss":"i","sub":"s","aud":"api","exp":1,"iat":1}"#).unwrap();
         assert_eq!(claims.aud, vec!["api".to_string()]);
         let claims: IdTokenClaims =
-            serde_json::from_str(r#"{"iss":"i","sub":"s","aud":["a","b"],"exp":1}"#).unwrap();
+            serde_json::from_str(r#"{"iss":"i","sub":"s","aud":["a","b"],"exp":1,"iat":1}"#)
+                .unwrap();
         assert_eq!(claims.aud, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn iat_is_required_and_must_be_an_integer() {
+        for raw in [
+            r#"{"iss":"i","sub":"s","aud":"api","exp":1}"#,
+            r#"{"iss":"i","sub":"s","aud":"api","exp":1,"iat":null}"#,
+            r#"{"iss":"i","sub":"s","aud":"api","exp":1,"iat":"1"}"#,
+            r#"{"iss":"i","sub":"s","aud":"api","exp":1,"iat":1,"azp":null}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<IdTokenClaims>(raw).is_err(),
+                "ID-token claims without an integer iat must fail closed: {raw}"
+            );
+        }
     }
 
     #[test]
@@ -90,8 +117,9 @@ mod tests {
             iss: "i".into(),
             sub: "s".into(),
             aud: vec![],
+            azp: None,
             exp: 1,
-            iat: None,
+            iat: 0,
             nonce: None,
             email: None,
             email_verified: None,
@@ -114,8 +142,9 @@ mod tests {
             iss: "i".into(),
             sub: "s".into(),
             aud: vec![],
+            azp: None,
             exp: 1,
-            iat: None,
+            iat: 0,
             nonce: None,
             email: Some("a@b.c".into()),
             email_verified: Some(true),

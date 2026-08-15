@@ -3,7 +3,9 @@
 //! FIXED sets (status classes, outcomes, severities) — never user ids,
 //! emails, request ids, or artifact ids, so the endpoint carries no PII.
 
-use prometheus::{Encoder, Histogram, HistogramOpts, IntCounterVec, Opts, Registry, TextEncoder};
+use prometheus::{
+    Encoder, Histogram, HistogramOpts, IntCounterVec, IntGauge, Opts, Registry, TextEncoder,
+};
 use std::sync::OnceLock;
 
 /// The documented counter base names (the drift guard for tests).
@@ -17,6 +19,10 @@ pub const METRIC_NAMES: &[&str] = &[
     "notification_deliveries_total",
     "paper_rebalance_preview_requests_total",
     "paper_rebalance_preview_applies_total",
+    "paper_settlement_backlog",
+    "paper_settlement_oldest_age_seconds",
+    "paper_settlement_ready",
+    "paper_settlement_retries_total",
 ];
 
 struct CounterHandles {
@@ -29,6 +35,10 @@ struct CounterHandles {
     deliveries: IntCounterVec,
     preview_requests: IntCounterVec,
     preview_applies: IntCounterVec,
+    settlement_backlog: IntGauge,
+    settlement_oldest_age: IntGauge,
+    settlement_ready: IntGauge,
+    settlement_retries: IntCounterVec,
 }
 
 fn counters() -> &'static CounterHandles {
@@ -98,6 +108,29 @@ fn counters() -> &'static CounterHandles {
             &["outcome"],
         )
         .expect("paper_rebalance_preview_applies_total registers");
+        let settlement_backlog = IntGauge::new(
+            "paper_settlement_backlog",
+            "Undelivered Paper settlement obligations",
+        )
+        .expect("paper_settlement_backlog registers");
+        let settlement_oldest_age = IntGauge::new(
+            "paper_settlement_oldest_age_seconds",
+            "Age of the oldest undelivered Paper settlement obligation",
+        )
+        .expect("paper_settlement_oldest_age_seconds registers");
+        let settlement_ready = IntGauge::new(
+            "paper_settlement_ready",
+            "Paper settlement notification readiness (1 ready, 0 blocked)",
+        )
+        .expect("paper_settlement_ready registers");
+        let settlement_retries = IntCounterVec::new(
+            Opts::new(
+                "paper_settlement_retries_total",
+                "Paper settlement retry outcomes",
+            ),
+            &["outcome"],
+        )
+        .expect("paper_settlement_retries_total registers");
         for c in [
             Box::new(requests.clone()) as Box<dyn prometheus::core::Collector>,
             Box::new(errors.clone()),
@@ -108,6 +141,10 @@ fn counters() -> &'static CounterHandles {
             Box::new(deliveries.clone()),
             Box::new(preview_requests.clone()),
             Box::new(preview_applies.clone()),
+            Box::new(settlement_backlog.clone()),
+            Box::new(settlement_oldest_age.clone()),
+            Box::new(settlement_ready.clone()),
+            Box::new(settlement_retries.clone()),
         ] {
             registry.register(c).expect("collector registers once");
         }
@@ -149,6 +186,9 @@ fn counters() -> &'static CounterHandles {
         ] {
             preview_applies.with_label_values(&[v]).inc_by(0);
         }
+        for v in ["transport_failed", "exhausted"] {
+            settlement_retries.with_label_values(&[v]).inc_by(0);
+        }
         std::mem::forget(registry);
         CounterHandles {
             requests,
@@ -160,6 +200,10 @@ fn counters() -> &'static CounterHandles {
             deliveries,
             preview_requests,
             preview_applies,
+            settlement_backlog,
+            settlement_oldest_age,
+            settlement_ready,
+            settlement_retries,
         }
     })
 }
@@ -213,6 +257,21 @@ pub fn record_preview_apply(outcome: &str) {
         .inc();
 }
 
+/// Record the durable Paper settlement queue snapshot and readiness gate.
+pub fn record_paper_settlement_backlog(count: i64, oldest_age_secs: i64, ready: bool) {
+    counters().settlement_backlog.set(count);
+    counters().settlement_oldest_age.set(oldest_age_secs);
+    counters().settlement_ready.set(i64::from(ready));
+}
+
+/// Record one bounded retry outcome without a tenant or resource label.
+pub fn record_paper_settlement_retry(outcome: &str) {
+    counters()
+        .settlement_retries
+        .with_label_values(&[outcome])
+        .inc();
+}
+
 /// Render every counter in the Prometheus text exposition format.
 pub fn render() -> String {
     let snapshot = Registry::new();
@@ -226,6 +285,10 @@ pub fn render() -> String {
         Box::new(counters().deliveries.clone()),
         Box::new(counters().preview_requests.clone()),
         Box::new(counters().preview_applies.clone()),
+        Box::new(counters().settlement_backlog.clone()),
+        Box::new(counters().settlement_oldest_age.clone()),
+        Box::new(counters().settlement_ready.clone()),
+        Box::new(counters().settlement_retries.clone()),
     ] {
         let _ = snapshot.register(c);
     }

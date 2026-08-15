@@ -89,6 +89,35 @@ async fn jwks_server(status: StatusCode, response_body: &'static str) -> String 
     format!("http://{address}/.well-known/jwks.json")
 }
 
+async fn hanging_oidc_server() -> (String, String) {
+    let app = Router::new()
+        .route(
+            "/oauth/token",
+            post(|| async {
+                std::future::pending::<()>().await;
+            }),
+        )
+        .route(
+            "/.well-known/jwks.json",
+            get(|| async {
+                std::future::pending::<()>().await;
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind hanging OIDC server");
+    let address = listener.local_addr().expect("hanging OIDC server address");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve hanging OIDC endpoint");
+    });
+    (
+        format!("http://{address}/oauth/token"),
+        format!("http://{address}/.well-known/jwks.json"),
+    )
+}
+
 fn token_request() -> TokenRequest {
     TokenRequest {
         code: "authorization-code".to_string(),
@@ -102,7 +131,7 @@ fn token_request() -> TokenRequest {
 async fn token_exchange_posts_client_secret_and_pkce_verifier() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
     let secret_path = temp_dir.path().join("auth0-client-secret");
-    fs::write(&secret_path, "confidential-value\r\n").expect("write client secret file");
+    fs::write(&secret_path, "confidential-value").expect("write client secret file");
     let secret = ClientSecret::from_file(&secret_path).expect("load client secret");
     let (token_url, captured) =
         token_server(StatusCode::OK, r#"{"id_token":"header.payload.signature"}"#).await;
@@ -149,7 +178,7 @@ async fn token_exchange_posts_client_secret_and_pkce_verifier() {
 async fn token_exchange_does_not_follow_redirects() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
     let secret_path = temp_dir.path().join("auth0-client-secret");
-    fs::write(&secret_path, "redirect-secret\n").expect("write client secret file");
+    fs::write(&secret_path, "redirect-secret").expect("write client secret file");
     let secret = ClientSecret::from_file(&secret_path).expect("load client secret");
     let (redirect_target, target_capture) =
         token_server(StatusCode::OK, r#"{"id_token":"header.payload.signature"}"#).await;
@@ -228,6 +257,39 @@ async fn jwks_error_never_renders_hostile_response_body() {
     );
 }
 
+#[tokio::test]
+async fn token_and_jwks_requests_have_a_total_deadline() {
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let secret_path = temp_dir.path().join("auth0-client-secret");
+    fs::write(&secret_path, "timeout-secret").expect("write client secret file");
+    let secret = ClientSecret::from_file(&secret_path).expect("load client secret");
+    let (token_url, jwks_url) = hanging_oidc_server().await;
+    let transport = HttpOidcTransport::with_timeouts(
+        token_url,
+        jwks_url,
+        secret,
+        std::time::Duration::from_millis(25),
+        std::time::Duration::from_millis(75),
+    )
+    .expect("construct timeout-limited OIDC transport");
+
+    let token_result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        transport.exchange_code(&token_request()),
+    )
+    .await
+    .expect("token exchange must be bounded")
+    .expect_err("hanging token endpoint must fail by deadline");
+    assert!(token_result.to_string().contains("token exchange"));
+
+    let jwks_result =
+        tokio::time::timeout(std::time::Duration::from_secs(1), transport.fetch_jwks())
+            .await
+            .expect("JWKS fetch must be bounded")
+            .expect_err("hanging JWKS endpoint must fail by deadline");
+    assert!(jwks_result.to_string().contains("jwks fetch"));
+}
+
 #[test]
 fn client_secret_file_rejects_missing_empty_and_non_file_inputs_without_values() {
     const SECRET_MARKER: &str = "auth0-secret-must-never-render";
@@ -235,7 +297,7 @@ fn client_secret_file_rejects_missing_empty_and_non_file_inputs_without_values()
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
     let missing_path = temp_dir.path().join("missing-secret");
     let empty_path = temp_dir.path().join("empty-secret");
-    fs::write(&empty_path, "\r\n").expect("write empty CRLF secret file");
+    fs::write(&empty_path, "").expect("write empty secret file");
 
     for (result, context) in [
         (ClientSecret::from_file(&missing_path), "missing path"),
@@ -286,4 +348,25 @@ fn client_secret_file_rejects_multiple_lines_without_values() {
         !rendered.contains(SECOND_LINE),
         "rendered error must not contain the second line: {rendered}"
     );
+}
+
+#[test]
+fn client_secret_file_rejects_trailing_line_endings_before_trimming() {
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+
+    for (suffix, contents) in [
+        ("lf", "single-line-secret\n"),
+        ("cr", "single-line-secret\r"),
+        ("crlf", "single-line-secret\r\n"),
+    ] {
+        let secret_path = temp_dir.path().join(format!("trailing-{suffix}"));
+        fs::write(&secret_path, contents).expect("write trailing-line-ending secret file");
+        assert!(
+            matches!(
+                ClientSecret::from_file(&secret_path),
+                Err(api_server_auth::config::ClientSecretError::MultipleLines { .. })
+            ),
+            "secret file with {suffix} must fail before trimming"
+        );
+    }
 }

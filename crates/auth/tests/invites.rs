@@ -7,12 +7,48 @@ use auth::audit::{AuthAuditKind, InMemoryAuthAudit};
 use auth::clock::FakeClock;
 use auth::entitlement::{Role, UserId};
 use auth::invites::{
-    InMemoryInviteStore, InMemoryUserStore, InviteError, InviteService, InviteStore, UserStore,
+    InMemoryInviteStore, InMemoryUserStore, InviteError, InviteService, InviteStore, UserRecord,
+    UserStore,
 };
 use auth::oidc::claims::IdTokenClaims;
 use std::sync::Arc;
 
 const NOW: i64 = 1_800_000_000;
+
+struct CanonicalUserStore {
+    inner: InMemoryUserStore,
+    canonical_id: UserId,
+}
+
+impl CanonicalUserStore {
+    fn new(canonical_id: &str) -> Self {
+        Self {
+            inner: InMemoryUserStore::default(),
+            canonical_id: UserId::new(canonical_id),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl UserStore for CanonicalUserStore {
+    async fn find_by_binding(
+        &self,
+        issuer: &str,
+        subject: &str,
+    ) -> Result<Option<UserRecord>, InviteError> {
+        self.inner.find_by_binding(issuer, subject).await
+    }
+
+    async fn insert_user(&self, mut user: UserRecord) -> Result<UserId, InviteError> {
+        user.user_id = self.canonical_id.clone();
+        self.inner.insert_user(user).await?;
+        Ok(self.canonical_id.clone())
+    }
+
+    async fn update_profile(&self, user_id: &str, email: &str) -> Result<(), InviteError> {
+        self.inner.update_profile(user_id, email).await
+    }
+}
 
 fn claims(
     iss: &str,
@@ -25,8 +61,9 @@ fn claims(
         iss: iss.to_string(),
         sub: sub.to_string(),
         aud: vec!["https://api.lagrange.local".to_string()],
+        azp: None,
         exp: NOW + 3600,
-        iat: Some(NOW),
+        iat: NOW,
         nonce: Some("nonce-1".to_string()),
         email: Some(email.to_string()),
         email_verified: Some(email_verified),
@@ -86,6 +123,56 @@ async fn redemption_creates_user_and_consumes_invite() {
         Some(("iss-1".to_string(), "sub-1".to_string()))
     );
     assert!(audit.has(AuthAuditKind::InviteRedeemed, None));
+}
+
+#[tokio::test]
+async fn invite_created_audit_records_authenticated_actor() {
+    let (svc, _, _, audit, _) = service();
+    let owner = UserId::new("owner-canonical-id");
+    svc.create_invite_as("member@example.com", Role::Member, 3600, Some(&owner))
+        .await
+        .unwrap();
+    assert!(audit.events().iter().any(|event| {
+        event.kind == AuthAuditKind::InviteCreated
+            && event.user.as_deref() == Some("owner-canonical-id")
+    }));
+}
+
+#[tokio::test]
+async fn redemption_uses_the_store_canonical_user_id() {
+    let invites = Arc::new(InMemoryInviteStore::default());
+    let users = Arc::new(CanonicalUserStore::new(
+        "00000000-0000-0000-0000-000000000042",
+    ));
+    let audit = Arc::new(InMemoryAuthAudit::default());
+    let svc = InviteService::new(invites, users.clone(), Arc::new(FakeClock(NOW)), audit);
+    svc.create_invite("canonical@example.com", Role::Member, 3600)
+        .await
+        .unwrap();
+
+    let identity = svc
+        .resolve_identity(&claims(
+            "iss-1",
+            "sub-1",
+            "canonical@example.com",
+            true,
+            vec![],
+        ))
+        .await
+        .expect("redeemed");
+    assert_eq!(
+        identity.user_id,
+        UserId::new("00000000-0000-0000-0000-000000000042")
+    );
+    assert_eq!(
+        users
+            .find_by_binding("iss-1", "sub-1")
+            .await
+            .unwrap()
+            .expect("canonical user")
+            .user_id,
+        identity.user_id
+    );
 }
 
 #[tokio::test]

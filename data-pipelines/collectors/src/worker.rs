@@ -1963,6 +1963,9 @@ where
     F: Fn(&Path) -> io::Result<String>,
 {
     let value = reader(path).map_err(|_| WorkerError::SecretFile { key })?;
+    if value.contains(['\n', '\r']) {
+        return Err(WorkerError::SecretFile { key });
+    }
     let value = value.trim();
     if value.is_empty() {
         Err(WorkerError::SecretFile { key })

@@ -16,7 +16,7 @@ use uuid::Uuid;
 use api_server::paper_runner::{RunnerServices, parse_args, run_cycle};
 use api_server::repos::pending_targets::{NewPendingTarget, PendingTargetRepo};
 use job_queue::paper_execution::{
-    ExecutionOutcome, SessionInput, execute_session_in_tx, targets_from_json,
+    ExecutionOutcome, SessionInput, execute_session_with_preflight, targets_from_json,
 };
 use job_queue::phase0::CURATED_VERSION;
 
@@ -383,7 +383,7 @@ async fn revoked_after_queue_is_skipped_with_reason_and_no_ledger_writes() {
 }
 
 #[tokio::test]
-async fn execution_first_holds_entitlement_lock_until_ledger_commit() {
+async fn execution_first_uses_transaction_free_curated_io_path() {
     let Some(h) = Harness::new().await else {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
@@ -414,33 +414,6 @@ async fn execution_first_holds_entitlement_lock_until_ledger_commit() {
          WHERE id='{id}'",
         id=queued.id,
     )).await;
-    let worker = h.worker_pool().await;
-    let mut execution = worker.begin().await.unwrap();
-    let preflight: (bool, Option<serde_json::Value>) =
-        sqlx::query_as("SELECT authorized, reason FROM public.preflight_paper_target($1,$2)")
-            .bind(queued.id)
-            .bind(user.user_id)
-            .fetch_one(&mut *execution)
-            .await
-            .unwrap();
-    assert!(
-        preflight.0,
-        "active exact lineage is authorized: {:?}",
-        preflight.1
-    );
-
-    let owner_pool = h.owner_pool.clone();
-    let revocation = tokio::spawn(async move {
-        sqlx::query("UPDATE data_entitlements SET status='REVOKED' WHERE status='ACTIVE'")
-            .execute(&owner_pool)
-            .await
-    });
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert!(
-        !revocation.is_finished(),
-        "execution-first preflight lock fences revocation"
-    );
-
     let data = runner_dataset_for("2026-01-06");
     let input = SessionInput {
         account_id: account,
@@ -448,12 +421,14 @@ async fn execution_first_holds_entitlement_lock_until_ledger_commit() {
         effective_date: TradingDate::parse("2026-01-06").unwrap(),
         targets: targets_from_json(&queued.targets_json).unwrap(),
     };
-    let outcome = execute_session_in_tx(&mut execution, data.root(), &input)
+    let worker = h.worker_pool().await;
+    // The public preflight API owns both short database transactions. Curated
+    // reads happen between them, so a caller cannot accidentally await file
+    // I/O while retaining an entitlement or account lock.
+    let outcome = execute_session_with_preflight(&worker, data.root(), queued.id, &input)
         .await
-        .unwrap();
+        .expect("active exact lineage remains authorized");
     assert!(matches!(outcome, ExecutionOutcome::Executed { .. }));
-    execution.commit().await.unwrap();
-    revocation.await.unwrap().unwrap();
 
     let counts: (i64, i64) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM orders WHERE account_id=$1), \
@@ -465,7 +440,7 @@ async fn execution_first_holds_entitlement_lock_until_ledger_commit() {
     .unwrap();
     assert!(
         counts.0 > 0 && counts.1 > 0,
-        "execution committed before revocation: {counts:?}"
+        "execution committed atomically: {counts:?}"
     );
     h.teardown().await;
 }

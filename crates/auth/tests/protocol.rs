@@ -40,6 +40,63 @@ fn pending(state: &str, nonce: &str, verifier: &str) -> PendingAuth {
     }
 }
 
+fn pending_at(state: &str, created_at_secs: i64) -> PendingAuth {
+    PendingAuth {
+        state: state.to_string(),
+        nonce: format!("nonce-{state}"),
+        code_verifier: format!("verifier-{state}"),
+        created_at_secs,
+        ttl_secs: 300,
+    }
+}
+
+#[tokio::test]
+async fn pending_store_rejects_capacity_without_evicting_live_transactions() {
+    let store = oidc::InMemoryPendingAuthStore::with_capacity(2);
+    store
+        .insert("b".to_string(), pending_at("b", 10))
+        .await
+        .unwrap();
+    store
+        .insert("a".to_string(), pending_at("a", 10))
+        .await
+        .unwrap();
+    let error = store
+        .insert("c".to_string(), pending_at("c", 11))
+        .await
+        .expect_err("live transactions must not be evicted");
+    assert!(matches!(error, OidcError::Store(message) if message.contains("capacity")));
+
+    assert_eq!(store.len(), 2);
+    assert!(store.take("a").await.unwrap().is_some());
+    assert!(store.take("b").await.unwrap().is_some());
+    assert!(store.take("c").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn pending_store_cleans_expired_transactions_before_admission() {
+    let store = oidc::InMemoryPendingAuthStore::with_capacity(1);
+    let mut expired = pending_at("expired", 10);
+    expired.ttl_secs = 1;
+    store.insert("expired".to_string(), expired).await.unwrap();
+    store
+        .insert("fresh".to_string(), pending_at("fresh", 12))
+        .await
+        .expect("expired transaction can be cleaned");
+    assert!(store.take("expired").await.unwrap().is_none());
+    assert!(store.take("fresh").await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn zero_capacity_pending_store_fails_closed() {
+    let store = oidc::InMemoryPendingAuthStore::with_capacity(0);
+    let error = store
+        .insert("state".to_string(), pending_at("state", 1))
+        .await
+        .expect_err("zero-capacity store must reject admission");
+    assert!(matches!(error, OidcError::Store(message) if message.contains("capacity")));
+}
+
 struct RecordingTransport {
     seen: Mutex<Vec<TokenRequest>>,
 }
@@ -272,6 +329,34 @@ fn valid_id_token_validates() {
 }
 
 #[test]
+fn missing_iat_is_denied_as_unparseable_claims() {
+    let sim = Simulator::new(
+        "https://lagrange-test.auth0.com",
+        "lagrange-app",
+        "https://app.lagrange.local/auth/callback",
+    );
+    let cfg = config(&sim.issuer, &sim.redirect_uri);
+    let token = sim.sign_id_token(&json!({
+        "iss": sim.issuer,
+        "sub": "auth0|missing-iat",
+        "aud": ["https://api.lagrange.local"],
+        "exp": now() + 3600,
+        "nonce": "nonce-abc"
+    }));
+    let client = OidcClient {
+        config: cfg,
+        transport: Arc::new(sim.clone()),
+    };
+    let error = client
+        .validate_id_token(&token, &sim.jwks(), Some("nonce-abc"), now())
+        .expect_err("ID tokens without iat must be denied");
+    assert!(
+        matches!(error, OidcError::InvalidJwt(ref message) if message.contains("iat")),
+        "missing iat must fail during claim parsing: {error:?}"
+    );
+}
+
+#[test]
 fn wrong_issuer_is_denied() {
     let sim = Simulator::new(
         "https://lagrange-test.auth0.com",
@@ -284,6 +369,7 @@ fn wrong_issuer_is_denied() {
         "sub": "auth0|usr-1",
         "aud": ["https://api.lagrange.local"],
         "exp": now() + 3600,
+        "iat": now(),
         "nonce": "nonce-abc"
     }));
     let client = OidcClient {
@@ -312,6 +398,7 @@ fn wrong_audience_is_denied() {
         "sub": "auth0|usr-1",
         "aud": ["https://other-api.example.com"],
         "exp": now() + 3600,
+        "iat": now(),
         "nonce": "nonce-abc"
     }));
     let client = OidcClient {
@@ -340,6 +427,7 @@ fn expired_token_is_denied() {
         "sub": "auth0|usr-1",
         "aud": ["https://api.lagrange.local"],
         "exp": now() - 3600,
+        "iat": now(),
         "nonce": "nonce-abc"
     }));
     let client = OidcClient {
@@ -365,6 +453,7 @@ fn wrong_nonce_is_denied() {
         "sub": "auth0|usr-1",
         "aud": ["https://api.lagrange.local"],
         "exp": now() + 3600,
+        "iat": now(),
         "nonce": "attacker-nonce"
     }));
     let client = OidcClient {
@@ -389,7 +478,8 @@ fn missing_nonce_when_expected_is_denied() {
         "iss": sim.issuer,
         "sub": "auth0|usr-1",
         "aud": ["https://api.lagrange.local"],
-        "exp": now() + 3600
+        "exp": now() + 3600,
+        "iat": now()
     }));
     let client = OidcClient {
         config: cfg.clone(),
@@ -414,6 +504,7 @@ fn tampered_signature_is_denied() {
         "sub": "auth0|usr-1",
         "aud": ["https://api.lagrange.local"],
         "exp": now() + 3600,
+        "iat": now(),
         "nonce": "nonce-abc"
     }));
     let parts: Vec<&str> = token.split('.').collect();
@@ -444,6 +535,7 @@ fn wrong_algorithm_is_denied() {
             "sub": "auth0|usr-1",
             "aud": ["https://api.lagrange.local"],
             "exp": now() + 3600,
+            "iat": now(),
             "nonce": "nonce-abc"
         }),
     );
@@ -475,6 +567,7 @@ fn unknown_kid_is_denied() {
             "sub": "auth0|usr-1",
             "aud": ["https://api.lagrange.local"],
             "exp": now() + 3600,
+            "iat": now(),
             "nonce": "nonce-abc"
         }),
     );
@@ -501,6 +594,7 @@ fn audience_as_single_string_is_accepted() {
         "sub": "auth0|usr-1",
         "aud": "https://api.lagrange.local",
         "exp": now() + 3600,
+        "iat": now(),
         "nonce": "nonce-abc"
     }));
     let client = OidcClient {
@@ -511,6 +605,146 @@ fn audience_as_single_string_is_accepted() {
         .validate_id_token(&token, &sim.jwks(), Some("nonce-abc"), now())
         .expect("string audience accepted");
     assert_eq!(claims.aud, vec!["https://api.lagrange.local".to_string()]);
+}
+
+#[test]
+fn single_audience_with_correct_azp_is_accepted() {
+    let sim = Simulator::new(
+        "https://lagrange-test.auth0.com",
+        "lagrange-app",
+        "https://app.lagrange.local/auth/callback",
+    );
+    let cfg = config(&sim.issuer, &sim.redirect_uri);
+    let token = sim.sign_id_token(&json!({
+        "iss": sim.issuer,
+        "sub": "auth0|single-correct-azp",
+        "aud": ["https://api.lagrange.local"],
+        "azp": "lagrange-app",
+        "exp": now() + 3600,
+        "iat": now(),
+        "nonce": "nonce-abc"
+    }));
+    let client = OidcClient {
+        config: cfg,
+        transport: Arc::new(sim.clone()),
+    };
+    let claims = client
+        .validate_id_token(&token, &sim.jwks(), Some("nonce-abc"), now())
+        .expect("single-audience token with matching azp is valid");
+    assert_eq!(claims.azp.as_deref(), Some("lagrange-app"));
+}
+
+#[test]
+fn single_audience_with_wrong_azp_is_denied() {
+    let sim = Simulator::new(
+        "https://lagrange-test.auth0.com",
+        "lagrange-app",
+        "https://app.lagrange.local/auth/callback",
+    );
+    let cfg = config(&sim.issuer, &sim.redirect_uri);
+    let token = sim.sign_id_token(&json!({
+        "iss": sim.issuer,
+        "sub": "auth0|single-wrong-azp",
+        "aud": ["https://api.lagrange.local"],
+        "azp": "other-client",
+        "exp": now() + 3600,
+        "iat": now(),
+        "nonce": "nonce-abc"
+    }));
+    let client = OidcClient {
+        config: cfg,
+        transport: Arc::new(sim.clone()),
+    };
+    let error = client
+        .validate_id_token(&token, &sim.jwks(), Some("nonce-abc"), now())
+        .expect_err("single-audience token with another azp must be denied");
+    assert!(
+        matches!(error, OidcError::AuthorizedPartyMismatch { ref expected, ref got } if expected == "lagrange-app" && got == "other-client"),
+        "wrong single-audience azp must be denied: {error:?}"
+    );
+}
+
+#[test]
+fn multi_audience_without_azp_is_denied() {
+    let sim = Simulator::new(
+        "https://lagrange-test.auth0.com",
+        "lagrange-app",
+        "https://app.lagrange.local/auth/callback",
+    );
+    let cfg = config(&sim.issuer, &sim.redirect_uri);
+    let token = sim.sign_id_token(&json!({
+        "iss": sim.issuer,
+        "sub": "auth0|multi-missing-azp",
+        "aud": ["https://api.lagrange.local", "https://other-api.example.com"],
+        "exp": now() + 3600,
+        "iat": now(),
+        "nonce": "nonce-abc"
+    }));
+    let client = OidcClient {
+        config: cfg,
+        transport: Arc::new(sim.clone()),
+    };
+    let error = client
+        .validate_id_token(&token, &sim.jwks(), Some("nonce-abc"), now())
+        .expect_err("multi-audience token without azp must be denied");
+    assert!(matches!(error, OidcError::AuthorizedPartyMissing));
+}
+
+#[test]
+fn multi_audience_with_wrong_azp_is_denied() {
+    let sim = Simulator::new(
+        "https://lagrange-test.auth0.com",
+        "lagrange-app",
+        "https://app.lagrange.local/auth/callback",
+    );
+    let cfg = config(&sim.issuer, &sim.redirect_uri);
+    let token = sim.sign_id_token(&json!({
+        "iss": sim.issuer,
+        "sub": "auth0|multi-wrong-azp",
+        "aud": ["https://api.lagrange.local", "https://other-api.example.com"],
+        "azp": "other-client",
+        "exp": now() + 3600,
+        "iat": now(),
+        "nonce": "nonce-abc"
+    }));
+    let client = OidcClient {
+        config: cfg,
+        transport: Arc::new(sim.clone()),
+    };
+    let error = client
+        .validate_id_token(&token, &sim.jwks(), Some("nonce-abc"), now())
+        .expect_err("multi-audience token with another azp must be denied");
+    assert!(
+        matches!(error, OidcError::AuthorizedPartyMismatch { ref expected, ref got } if expected == "lagrange-app" && got == "other-client"),
+        "wrong multi-audience azp must be denied: {error:?}"
+    );
+}
+
+#[test]
+fn multi_audience_with_correct_azp_is_accepted() {
+    let sim = Simulator::new(
+        "https://lagrange-test.auth0.com",
+        "lagrange-app",
+        "https://app.lagrange.local/auth/callback",
+    );
+    let cfg = config(&sim.issuer, &sim.redirect_uri);
+    let token = sim.sign_id_token(&json!({
+        "iss": sim.issuer,
+        "sub": "auth0|multi-correct-azp",
+        "aud": ["https://api.lagrange.local", "https://other-api.example.com"],
+        "azp": "lagrange-app",
+        "exp": now() + 3600,
+        "iat": now(),
+        "nonce": "nonce-abc"
+    }));
+    let client = OidcClient {
+        config: cfg,
+        transport: Arc::new(sim.clone()),
+    };
+    let claims = client
+        .validate_id_token(&token, &sim.jwks(), Some("nonce-abc"), now())
+        .expect("multi-audience token with matching azp is valid");
+    assert_eq!(claims.azp.as_deref(), Some("lagrange-app"));
 }
 
 #[test]
@@ -526,6 +760,7 @@ fn clock_skew_permits_recently_expired_token() {
         "sub": "auth0|usr-1",
         "aud": ["https://api.lagrange.local"],
         "exp": now() - 30,
+        "iat": now(),
         "nonce": "nonce-abc"
     }));
     let client = OidcClient {
@@ -535,6 +770,92 @@ fn clock_skew_permits_recently_expired_token() {
     client
         .validate_id_token(&token, &sim.jwks(), Some("nonce-abc"), now())
         .expect("within 60s skew is allowed");
+}
+
+#[test]
+fn clock_skew_boundary_is_inclusive_and_beyond_boundary_is_denied() {
+    let sim = Simulator::new(
+        "https://lagrange-test.auth0.com",
+        "lagrange-app",
+        "https://app.lagrange.local/auth/callback",
+    );
+    let mut cfg = config(&sim.issuer, &sim.redirect_uri);
+    cfg.clock_skew_secs = oidc::MAX_CLOCK_SKEW_SECS;
+    let client = OidcClient {
+        config: cfg,
+        transport: Arc::new(sim.clone()),
+    };
+    let at = now();
+    let accepted = sim.sign_id_token(&json!({
+        "iss": sim.issuer,
+        "sub": "auth0|boundary",
+        "aud": ["https://api.lagrange.local"],
+        "exp": at - oidc::MAX_CLOCK_SKEW_SECS,
+        "iat": at,
+        "nonce": "nonce-abc"
+    }));
+    client
+        .validate_id_token(&accepted, &sim.jwks(), Some("nonce-abc"), at)
+        .expect("exactly 300 seconds of skew is accepted");
+
+    let denied = sim.sign_id_token(&json!({
+        "iss": sim.issuer,
+        "sub": "auth0|beyond",
+        "aud": ["https://api.lagrange.local"],
+        "exp": at - oidc::MAX_CLOCK_SKEW_SECS - 1,
+        "iat": at,
+        "nonce": "nonce-abc"
+    }));
+    assert!(matches!(
+        client.validate_id_token(&denied, &sim.jwks(), Some("nonce-abc"), at),
+        Err(OidcError::TokenExpired { .. })
+    ));
+}
+
+#[test]
+fn invalid_clock_skew_and_expiry_overflow_fail_closed() {
+    let sim = Simulator::new(
+        "https://lagrange-test.auth0.com",
+        "lagrange-app",
+        "https://app.lagrange.local/auth/callback",
+    );
+    let mut cfg = config(&sim.issuer, &sim.redirect_uri);
+    cfg.clock_skew_secs = oidc::MAX_CLOCK_SKEW_SECS + 1;
+    let client = OidcClient {
+        config: cfg,
+        transport: Arc::new(sim.clone()),
+    };
+    let token = sim.sign_id_token(&json!({
+        "iss": sim.issuer,
+        "sub": "auth0|invalid-skew",
+        "aud": ["https://api.lagrange.local"],
+        "exp": now() + 3600,
+        "iat": now(),
+        "nonce": "nonce-abc"
+    }));
+    assert!(matches!(
+        client.validate_id_token(&token, &sim.jwks(), Some("nonce-abc"), now()),
+        Err(OidcError::InvalidClockSkew)
+    ));
+
+    let pending = PendingAuth {
+        state: "overflow".to_string(),
+        nonce: "nonce".to_string(),
+        code_verifier: "verifier".to_string(),
+        created_at_secs: i64::MAX,
+        ttl_secs: 1,
+    };
+    let normal_cfg = config(&sim.issuer, &sim.redirect_uri);
+    let normal_client = OidcClient {
+        config: normal_cfg,
+        transport: Arc::new(sim),
+    };
+    let error = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        normal_client
+            .validate_callback("code", "overflow", &pending, i64::MAX)
+            .await
+    });
+    assert!(matches!(error, Err(OidcError::PendingExpired)));
 }
 
 #[test]

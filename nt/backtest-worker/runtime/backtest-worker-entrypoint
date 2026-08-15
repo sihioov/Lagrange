@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Entrypoint for one isolated NT backtest. It deliberately does not claim a
+# queue job: lease ownership and publication belong to the Rust runner.
+set -euo pipefail
+
+root=/opt/lagrange
+project="$root/nt"
+export PYTHONPATH="$project/backtest-worker:$project/custom-data:$project/strategies${PYTHONPATH:+:$PYTHONPATH}"
+export PATH="$project/.venv/bin:$PATH"
+
+die() {
+  echo "backtest-worker: $*" >&2
+  exit 1
+}
+
+case "${1:-}" in
+  healthcheck)
+    test -x "$project/.venv/bin/python" || die 'uv environment is missing'
+    test -d "${DATA_CURATED_DIR:-/data/curated}" || die 'DATA_CURATED_DIR is missing'
+    test -d "${ARTIFACT_RUN_DIR:-/data/artifacts/backtest/runs}" || die 'ARTIFACT_RUN_DIR is missing'
+    exec "$project/.venv/bin/python" -c 'import backtest_worker, nautilus_trader; print("ok")'
+    ;;
+  run)
+    shift
+    exec "$project/.venv/bin/python" -m backtest_worker run "$@"
+    ;;
+  --help|-h)
+    exec "$project/.venv/bin/python" -m backtest_worker --help
+    ;;
+  '')
+    die 'a command is required (healthcheck or run)'
+    ;;
+  *)
+    die "unknown command: $1"
+    ;;
+esac

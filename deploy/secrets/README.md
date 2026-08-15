@@ -7,7 +7,8 @@
 #     plaintext secret ever appears in compose files, images, or logs.
 #   * Generate values locally, e.g.:
 #       pwsh -c "[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Max 256 }))"
-#     or `openssl rand -base64 32`. Use >= 256 bits for secrets.
+#     or `openssl rand -base64 32 | tr -d '\r\n'`. Use >= 256 bits for secrets. The cursor
+#     signing key has an explicit 32-byte minimum/fixed width; see below.
 #   * TLS: place the fullchain at tls/lagrange.crt and the key at
 #     tls/lagrange.key (PEM). Self-signed is acceptable for testing only.
 #   * Secret recovery is a SEPARATE encrypted procedure; secrets must never
@@ -15,11 +16,15 @@
 #
 # Secret inventory (mapped to compose secrets in deploy/compose/compose.yml):
 #
-#   postgres_password        superuser / migration-owner password
+#   postgres_password        PostgreSQL cluster administrator/bootstrap password
+#   db_migration_owner_password
+#                            separate migration_owner role password
 #   db_app_password          non-owner application role (RLS) password
 #   db_worker_password       worker role password (backtest workers)
 #   db_research_password     research_writer role password (research-worker)
 #   db_audit_password        audit-writer role password
+#   db_admin_password        admin read-only worker/ops role password
+#   cursor_secret             API cursor-signing key (exactly 32 random bytes)
 #   session_secret           opaque session signing/hashing key (api-server)
 #   csrf_secret              CSRF synchronizer-token key (api-server)
 #   auth0_client_secret      Auth0 confidential client secret (api-server)
@@ -34,6 +39,41 @@
 # To provision a local development set (gitignored), copy each *.example
 # to its real name and fill it in, or run scripts/provision-dev-secrets.ps1
 # once it lands with Todo 35.
+
+## Database role credentials and cursor key
+
+The PostgreSQL administrator credential and the migration-owner credential are
+intentionally separate. Store the administrator password in
+`postgres_password` only for the bootstrap connection. Store the distinct
+`migration_owner` role password in `db_migration_owner_password`; Compose
+mounts it separately for role bootstrap and the migration one-shot. Never
+reuse `postgres_password` for `db_migration_owner_password`, and never put
+either value in `deploy/compose/.env` or a command argument.
+
+Provision both files outside Git by copying their `.example` files, replacing
+the placeholders with independently generated values, and restricting each
+real file to the operator account:
+
+```sh
+umask 077
+openssl rand -base64 32 | tr -d '\r\n' > deploy/secrets/postgres_password
+openssl rand -base64 32 | tr -d '\r\n' > deploy/secrets/db_migration_owner_password
+chmod 600 deploy/secrets/postgres_password deploy/secrets/db_migration_owner_password
+```
+
+The API cursor key must contain exactly 32 random bytes (the minimum and fixed
+width) on one logical line. Hex is a convenient unambiguous representation:
+
+```sh
+umask 077
+openssl rand -hex 32 | tr -d '\r\n' > deploy/secrets/cursor_secret
+chmod 600 deploy/secrets/cursor_secret
+```
+
+The API accepts a 32-byte printable value and base64 or hex encodings that
+decode to exactly 32 bytes. Secret files should use base64 or hex so they stay
+portable UTF-8 one-line files. Keep `cursor_secret` independent from database,
+session, and CSRF secrets; changing it invalidates existing API cursors.
 
 ## Auth0 confidential client
 
@@ -144,12 +184,14 @@ lock timeout supplied outside the migration file:
 PGOPTIONS='-c lock_timeout=5s' sqlx migrate run
 ```
 
-Compose runs `research-schema-check` as a fail-closed one-shot and refuses to
-launch the worker until successful migrations 22–25 (with 25 latest), exact
-normalized PK/unique/CHECK definitions, the required publication column
+Compose first runs `db-migrate` to apply every checked-in SQLx migration
+through `0040`, then runs `research-schema-check` as a fail-closed one-shot.
+The worker is not launched unless that gate finds successful migrations
+`22–25` and `33–35` (the research schema versions it checks), exact normalized
+PK/unique/CHECK definitions, the required publication column
 type/nullability/identity/default contract, exact valid/ready indexes, RLS
 policies, append-only enforcement, and the exact `research_writer` role/grant
-contract exist.
+contract.
 After applying or repairing migrations, restart with:
 
 ```sh
@@ -181,3 +223,25 @@ starting Compose. Compose binds its `raw` child at `/data/raw` and sets
 `RESEARCH_RAW_ROOT=/data`; `RawStore` appends `/raw`, so evidence appears at the
 host's `/srv/lagrange/data/raw/provider=...`, never under `raw/raw`. The
 long-running worker remains unprivileged and never needs root.
+
+## Native-Linux Compose delivery
+
+Compose uses service-specific copies because file-backed Compose secrets are
+bind mounts on native Linux; a Compose `mode` field alone does not reliably
+change the host file's ownership. After creating the operator source files,
+run the provisioning helper as root:
+
+```sh
+sudo deploy/secrets/provision-runtime-secrets.sh
+```
+
+It fails closed if a source is missing, symlinked, or (for credential files)
+contains CR/LF. It writes only `0440` copies owned by the consuming UID:
+`10001:10001` for API/workers, `999:999` for PostgreSQL/schema checks and the
+non-root bootstrap/migration one-shots, and `101:101` for the unprivileged
+Nginx image. The bootstrap/migration copies are stricter `0400` files owned by
+`999:999`, matching `USER 999:999` in `deploy/db/Dockerfile`; changing either
+one-shot to root would violate the deployment contract. Compose refuses to
+start until these copies exist under `LAGRANGE_RUNTIME_SECRET_DIR` (default
+`deploy/secrets/runtime`). The runtime directory is gitignored and must be
+re-provisioned after rotating a source secret.

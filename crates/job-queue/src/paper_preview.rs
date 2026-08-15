@@ -7,6 +7,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use chrono::{Datelike, NaiveDate};
@@ -28,11 +32,44 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use crate::error::{QueueError, database_error_class, queue_error_class};
+use crate::paper_execution::set_paper_transaction_timeouts;
 use crate::queue::JobQueue;
 use crate::types::{ClaimedJob, ErrorClass, HeartbeatStatus, JobStatus, SettleResult};
 
 /// Maximum JSON result accepted by the database boundary.
 pub const MAX_PREVIEW_RESULT_BYTES: usize = 262_144;
+
+/// The calculation is deliberately isolated to one blocking slot.  A
+/// canceled Tokio future cannot stop a closure that has already entered
+/// `spawn_blocking`; retaining the permit in that closure prevents a stuck
+/// filesystem/CPU task from multiplying on later retries.
+const PREVIEW_COMPUTE_DEADLINE: Duration = Duration::from_secs(10);
+static PREVIEW_COMPUTE_SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+
+fn preview_compute_slots() -> Arc<tokio::sync::Semaphore> {
+    PREVIEW_COMPUTE_SLOTS
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+        .clone()
+}
+
+struct ComputeCancellation(Arc<AtomicBool>);
+
+impl Drop for ComputeCancellation {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+/// Dropping `run_preview_once` (for example when the Paper daemon receives
+/// SIGTERM) must also stop its lease heartbeat task.  A bare `JoinHandle`
+/// would detach that task and let it run until the lease expired.
+struct AbortOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
 
 /// Immutable identities that make a preview reproducible and stale-checkable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -360,6 +397,7 @@ pub async fn run_preview_once(
     let mut monitor = tokio::spawn(async move {
         monitor_preview_lease(&monitor_queue, &monitor_claim, heartbeat_interval, stop_rx).await
     });
+    let _monitor_abort = AbortOnDrop(monitor.abort_handle());
     let preparation = prepare_preview(pool, dataset_root, &claim, payload.preview_id, seoul_today);
     tokio::pin!(preparation);
 
@@ -462,6 +500,8 @@ async fn prepare_preview(
     preview_id: Uuid,
     seoul_today: NaiveDate,
 ) -> Result<PreparedPreview, PaperPreviewError> {
+    let mut snapshot_tx = pool.begin().await?;
+    set_paper_transaction_timeouts(&mut snapshot_tx).await?;
     let snapshot = sqlx::query_as::<_, SnapshotRow>(
         "SELECT account_id, recommendation_run_id, target_portfolio_id, \
                 strategy_config_id, price_date, proposed_effective_date, \
@@ -473,13 +513,17 @@ async fn prepare_preview(
     .bind(preview_id)
     .bind(claim.job.id)
     .bind(seoul_today)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *snapshot_tx)
     .await?
     .ok_or_else(|| {
         PaperPreviewError::PreviewUnavailable(
             "preview inputs no longer satisfy the attested contract".into(),
         )
     })?;
+    snapshot_tx
+        .commit()
+        .await
+        .map_err(PaperPreviewError::Database)?;
     let cash = Money::parse(&snapshot.cash_balance, Currency::KRW)
         .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
     let positions = parse_positions(&snapshot.positions_json)?;
@@ -532,10 +576,30 @@ async fn prepare_preview(
         account_state_sha256: account_state_sha256.clone(),
         target_portfolio_sha256: snapshot.target_portfolio_sha256,
     };
+    let cancellation = Arc::new(AtomicBool::new(false));
+    let cancellation_guard = ComputeCancellation(cancellation.clone());
+    let permit = preview_compute_slots()
+        .acquire_owned()
+        .await
+        .map_err(|_| PaperPreviewError::PreviewUnavailable("preview compute slot closed".into()))?;
+    let calculation_cancellation = cancellation.clone();
     let calculation = tokio::task::spawn_blocking(move || {
+        // Keep the permit in the blocking closure.  Aborting the JoinHandle
+        // only detaches an already-running blocking task; holding the permit
+        // makes that bounded shutdown behavior non-amplifying.
+        let _permit = permit;
+        if calculation_cancellation.load(Ordering::Acquire) {
+            return Err(PaperPreviewError::Canceled);
+        }
         attest_preview_dataset(&root, &dataset_id, curated_version, &manifest_sha256)?;
+        if calculation_cancellation.load(Ordering::Acquire) {
+            return Err(PaperPreviewError::Canceled);
+        }
         let close_prices =
             load_recommendation_closes(&root, curated_version, price_date, &instrument_ids)?;
+        if calculation_cancellation.load(Ordering::Acquire) {
+            return Err(PaperPreviewError::Canceled);
+        }
         calculate_preview(PreviewCalculationInput {
             cash,
             positions,
@@ -547,9 +611,21 @@ async fn prepare_preview(
             proposed_effective_date,
             lineage,
         })
-    })
-    .await
-    .map_err(|_| PaperPreviewError::PreviewUnavailable("preview compute task stopped".into()))??;
+    });
+    tokio::pin!(calculation);
+    let calculation = match tokio::time::timeout(PREVIEW_COMPUTE_DEADLINE, &mut calculation).await {
+        Ok(result) => result.map_err(|_| {
+            PaperPreviewError::PreviewUnavailable("preview compute task stopped".into())
+        })??,
+        Err(_) => {
+            cancellation.store(true, Ordering::Release);
+            calculation.as_ref().abort();
+            return Err(PaperPreviewError::PreviewUnavailable(
+                "preview compute exceeded its deadline".into(),
+            ));
+        }
+    };
+    drop(cancellation_guard);
     Ok(PreparedPreview {
         preview_id,
         account_state_version: snapshot.account_state_version,
@@ -685,6 +761,9 @@ async fn finish_preview(
         HeartbeatStatus::Extended => {}
     }
     let mut transaction = pool.begin().await.map_err(QueueError::Database)?;
+    set_paper_transaction_timeouts(&mut transaction)
+        .await
+        .map_err(QueueError::Database)?;
     match queue.lock_claim_in(&mut transaction, claim).await {
         Ok(_) => {}
         Err(QueueError::StaleClaim(_)) => {
@@ -777,6 +856,9 @@ async fn settle_preview_failure(
     summary: &str,
 ) -> Result<PreviewRunOutcome, PreviewRunnerError> {
     let mut transaction = pool.begin().await.map_err(QueueError::Database)?;
+    set_paper_transaction_timeouts(&mut transaction)
+        .await
+        .map_err(QueueError::Database)?;
     let settlement = queue
         .settle_failure_in(&mut transaction, claim, class, code, summary)
         .await?;
@@ -824,6 +906,9 @@ async fn settle_preview_canceled(
     claim: &ClaimedJob,
 ) -> Result<PreviewRunOutcome, PreviewRunnerError> {
     let mut transaction = pool.begin().await.map_err(QueueError::Database)?;
+    set_paper_transaction_timeouts(&mut transaction)
+        .await
+        .map_err(QueueError::Database)?;
     queue
         .settle_aborted_in(&mut transaction, claim, "Paper preview was canceled")
         .await?;

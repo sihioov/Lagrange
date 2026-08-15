@@ -2,7 +2,7 @@ global:
   scrape_interval: 60s
   evaluation_interval: 60s
 
-# Backup/restore alerting (Todo 33). The rules fire on the textfile metrics
+# Backup/restore alerting. The rules fire on the textfile metrics
 # that scripts/backup/create.* and restore-and-verify.* write on every run.
 rule_files:
   - /etc/prometheus/alerts/*.rules.yml

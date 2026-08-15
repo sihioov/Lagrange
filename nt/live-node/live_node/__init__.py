@@ -1,8 +1,9 @@
 """Lagrange Station live node (plan Todo 41).
 
 One process, one account, under the Phase 3 Compose profile. The node never
-starts ready: it must reconcile green before it may place anything, and a
-crash brings it back in exactly that state rather than resuming.
+starts trade-ready: it must reconcile green before the simulator may report
+its local loop green, and a crash brings it back in exactly that state rather
+than resuming. Dry-run mode still refuses real trade readiness permanently.
 
 The safety decisions live in pure modules so they are testable without a
 broker and reproducible from a log after an incident:
@@ -27,15 +28,27 @@ from .lifecycle import (
     Reason,
     resume_after_crash,
 )
+from .runtime import (
+    DeterministicSimulator,
+    GateState,
+    LiveNodeRuntime,
+    RuntimeConfig,
+    SimulatorSnapshot,
+    read_gate_file,
+    read_status,
+)
 
 __all__ = [
     "AccountLock",
     "CancelPlan",
     "CancelPolicy",
+    "DeterministicSimulator",
+    "GateState",
     "HealthReport",
     "IN_FLIGHT",
     "IllegalTransition",
     "LockInfo",
+    "LiveNodeRuntime",
     "METRIC_NAMES",
     "NodeAlreadyRunning",
     "NodeLifecycle",
@@ -43,6 +56,8 @@ __all__ = [
     "NodeStatus",
     "OrderDisposition",
     "Reason",
+    "RuntimeConfig",
+    "SimulatorSnapshot",
     "StartupOutcome",
     "StartupPlan",
     "WorkingOrder",
@@ -50,6 +65,8 @@ __all__ = [
     "plan",
     "plan_startup",
     "report",
+    "read_gate_file",
+    "read_status",
     "resume_after_crash",
     "sweep_targets",
 ]

@@ -58,6 +58,8 @@ pub struct ApiConfig {
     /// Production supplies [`system_seoul_today`]; tests can pin a date so
     /// calendar fixtures do not expire as wall time advances.
     pub seoul_today: fn() -> chrono::NaiveDate,
+    /// Immutable API image revision copied to newly-created backtest runs.
+    pub code_commit: String,
 }
 
 pub fn system_seoul_today() -> chrono::NaiveDate {
@@ -105,6 +107,20 @@ impl ApiState {
             idempotency: Arc::new(InMemoryIdempotencyStore::default()),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// Check every role-scoped pool used by the HTTP process.
+    ///
+    /// Readiness is deliberately stricter than liveness: an API process is
+    /// only ready when the app, admin, and append-only audit connections can
+    /// all complete a round trip.  Keeping this check on the state rather
+    /// than reaching into individual handlers also makes it impossible for a
+    /// deployment probe to accidentally exercise an RLS-sensitive endpoint.
+    pub async fn check_readiness(&self) -> Result<(), sqlx::Error> {
+        for pool in [&self.app_pool, &self.admin_pool, &self.audit_pool] {
+            sqlx::query("SELECT 1").execute(pool).await?;
+        }
+        Ok(())
     }
 
     pub fn strategy_catalog(&self) -> StrategyCatalogRepo {

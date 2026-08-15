@@ -51,6 +51,7 @@ dependencies = [
 name = "api-server"
 version = "0.1.0"
 dependencies = [
+ "api-server-auth",
  "async-trait",
  "auth",
  "axum",
@@ -64,6 +65,7 @@ dependencies = [
  "job-queue",
  "jsonschema",
  "kis-client",
+ "libc",
  "market-data",
  "portfolio-model",
  "prometheus",
@@ -74,6 +76,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "socket2",
  "sqlx",
  "tempfile",
  "thiserror 2.0.19",
@@ -91,15 +94,22 @@ dependencies = [
  "async-trait",
  "auth",
  "axum",
+ "chrono",
+ "hex",
+ "hmac 0.12.1",
  "http-body-util",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "subtle",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tower",
  "url",
+ "uuid",
  "zeroize",
 ]
 
@@ -1893,6 +1903,7 @@ dependencies = [
  "selector",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "tempfile",
  "thiserror 2.0.19",
@@ -2189,6 +2200,9 @@ checksum = "c2a86d3146ed3995b5913c414f6664344b9617457320782e64f0bb44afd49d74"
 name = "migration-contract"
 version = "0.1.0"
 dependencies = [
+ "api-server-auth",
+ "auth",
+ "serde_json",
  "sqlx",
  "tokio",
 ]

@@ -359,6 +359,10 @@ fn validate_request_numbers(request: &TargetChildRequest) -> Result<(), TargetCh
 #[derive(Clone)]
 struct ValidatedPaths {
     uv_bin: PathBuf,
+    /// The image build creates this environment with `uv sync --locked`.
+    /// Running its interpreter directly avoids uv's cache entirely when the
+    /// runtime filesystem is read-only.
+    python_bin: Option<PathBuf>,
     repo_root: PathBuf,
     temp_root: PathBuf,
 }
@@ -378,12 +382,76 @@ impl ValidatedPaths {
         if !nt.join("pyproject.toml").is_file() || !nt.join("strategies").is_dir() {
             return Err(TargetChildError::UnsafePath);
         }
+        let python_bin = venv_python(&nt)?;
         Ok(Self {
             uv_bin,
+            python_bin,
             repo_root,
             temp_root,
         })
     }
+}
+
+fn venv_python(nt: &Path) -> Result<Option<PathBuf>, TargetChildError> {
+    #[cfg(windows)]
+    let candidates = [nt.join(".venv/Scripts/python.exe")];
+    #[cfg(not(windows))]
+    let candidates = [nt.join(".venv/bin/python")];
+
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.exists())
+        .map(|candidate| {
+            // Keep the venv path itself rather than its canonical target:
+            // Unix venvs commonly symlink `bin/python` to a shared runtime,
+            // and resolving that link would make Python lose its venv prefix.
+            let metadata =
+                fs::symlink_metadata(&candidate).map_err(|_| TargetChildError::UnsafePath)?;
+            let resolved = candidate
+                .canonicalize()
+                .map_err(|_| TargetChildError::UnsafePath)?;
+            if !resolved.is_file() || (!metadata.is_file() && !metadata.file_type().is_symlink()) {
+                return Err(TargetChildError::UnsafePath);
+            }
+            Ok(candidate)
+        })
+        .transpose()
+}
+
+fn create_private_directory(path: &Path) -> Result<(), TargetChildError> {
+    #[cfg(unix)]
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(not(unix))]
+    let builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(path)
+        .map_err(|_| TargetChildError::RequestWrite)?;
+    let metadata = fs::symlink_metadata(path).map_err(|_| TargetChildError::UnsafePath)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(TargetChildError::UnsafePath);
+    }
+    Ok(())
+}
+
+fn safe_child_path(uv_bin: &Path) -> Result<std::ffi::OsString, TargetChildError> {
+    let uv_parent = uv_bin.parent().ok_or(TargetChildError::UnsafePath)?;
+    let mut paths = vec![uv_parent.to_path_buf()];
+    #[cfg(unix)]
+    paths.extend([
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+    ]);
+    #[cfg(windows)]
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        paths.push(PathBuf::from(system_root).join("System32"));
+    }
+    std::env::join_paths(paths).map_err(|_| TargetChildError::UnsafePath)
 }
 
 fn canonical_regular_file(path: &Path) -> Result<PathBuf, TargetChildError> {
@@ -427,13 +495,30 @@ async fn run_in_scratch(
 
     let mut process_tree = ProcessTree::prepare()?;
 
-    let mut command = Command::new(&paths.uv_bin);
+    let use_uv = paths.python_bin.is_none();
+    let child_home = invocation_dir.join("home");
+    let uv_cache = invocation_dir.join("uv-cache");
+    if use_uv {
+        // uv must be allowed to materialize only inside this fresh, private
+        // invocation directory. This keeps the fallback usable when HOME is
+        // read-only without restoring any parent environment variables.
+        create_private_directory(&child_home)?;
+        create_private_directory(&uv_cache)?;
+    }
+
+    let mut command = match paths.python_bin.as_ref() {
+        Some(python_bin) => Command::new(python_bin),
+        None => Command::new(&paths.uv_bin),
+    };
+    if use_uv {
+        command
+            .arg("run")
+            .arg("--project")
+            .arg("nt")
+            .arg("--no-sync")
+            .arg("python");
+    }
     command
-        .arg("run")
-        .arg("--project")
-        .arg("nt")
-        .arg("--no-sync")
-        .arg("python")
         .arg("-m")
         .arg("strategies.recommendation_cli")
         .arg("--request")
@@ -452,10 +537,16 @@ async fn run_in_scratch(
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("UV_NO_CONFIG", "1")
         .env("UV_NO_PROGRESS", "1")
+        .env("PATH", safe_child_path(&paths.uv_bin)?)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if use_uv {
+        command
+            .env("HOME", &child_home)
+            .env("UV_CACHE_DIR", &uv_cache);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

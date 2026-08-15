@@ -13,6 +13,7 @@
 
 use crate::error::{TenancyError, TenancyResult};
 use auth::entitlement::Actor;
+use job_queue::paper_execution::set_paper_transaction_timeouts;
 use sqlx::{PgConnection, Postgres, Transaction};
 
 /// The custom GUC that carries the authenticated actor into RLS policies.
@@ -36,6 +37,9 @@ pub async fn begin_actor_tx(
 ) -> TenancyResult<Transaction<'static, Postgres>> {
     let mut tx = pool.begin().await.map_err(TenancyError::from_sqlx)?;
     set_actor_guc(&mut tx, actor).await?;
+    set_paper_transaction_timeouts(&mut tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
     Ok(tx)
 }
 
