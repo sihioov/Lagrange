@@ -54,6 +54,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use chrono::NaiveDate;
 use domain::{Currency, InstrumentId, Money, Price, Quantity, TradingDate, Weight};
@@ -68,7 +69,34 @@ use sqlx::{PgPool, Postgres, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::paper_io::{BlockingIoError, PAPER_CURATED_IO_DEADLINE, run_bounded_blocking};
 use crate::phase0::CURATED_VERSION;
+
+/// PostgreSQL limits used by every Paper transaction.
+///
+/// These are deliberately applied with `set_config(..., true)` (the SQL
+/// equivalent of `SET LOCAL`) after a transaction is opened.  A Paper write
+/// must either commit all of its ledger rows or none of them; a timeout aborts
+/// the current statement and the caller rolls the transaction back.
+pub const PAPER_STATEMENT_TIMEOUT: &str = "15s";
+pub const PAPER_LOCK_TIMEOUT: &str = "5s";
+
+/// Apply the Paper transaction limits without changing the pooled connection's
+/// defaults.  Keeping this helper in the worker crate lets the API settlement
+/// seam and the valuation/preview engines use exactly the same limits.
+pub async fn set_paper_transaction_timeouts(
+    tx: &mut Transaction<'_, Postgres>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT set_config('statement_timeout', $1, true), \
+                set_config('lock_timeout', $2, true)",
+    )
+    .bind(PAPER_STATEMENT_TIMEOUT)
+    .bind(PAPER_LOCK_TIMEOUT)
+    .execute(&mut **tx)
+    .await
+    .map(|_| ())
+}
 
 /// The curated market partition this product trades.
 ///
@@ -163,6 +191,18 @@ pub enum ExecutionError {
     /// unwrapped, because "impossible" is where the money goes missing.
     #[error("the ledger rejected a planned event: {0}")]
     Ledger(String),
+
+    /// The account changed after its database snapshot was read and before
+    /// curated prices finished loading. The caller must retry from a fresh
+    /// snapshot; no ledger rows were written.
+    #[error("Paper account {account_id} changed while preparing the session")]
+    AccountChanged { account_id: Uuid },
+
+    /// A dataset/entitlement preflight changed while curated prices were
+    /// being loaded. This is kept typed so the API can settle a denied target
+    /// as a deliberate skip without branching on SQL text.
+    #[error("Paper execution preflight denied: {code}: {message}")]
+    PreflightDenied { code: String, message: String },
 }
 
 /// Parses `pending_targets.targets_json` into the sizer's own target type.
@@ -199,17 +239,46 @@ pub fn targets_from_json(
 
 /// Executes one Paper session's open and persists everything it produced.
 ///
-/// The whole session is ONE transaction: a crash leaves either every order,
-/// fill and cash row of the session, or none of them. A half-written session
-/// is the one state the ledger's replay contract cannot describe.
+/// Database snapshots and curated-file reads are deliberately separate. The
+/// file read is bounded blocking work with no transaction held; a short final
+/// transaction revalidates the account snapshot and writes every order, fill,
+/// cash row, and position atomically. A concurrent executor is serialized by
+/// the account row lock and the deterministic order-ref uniqueness fence.
 pub async fn execute_session(
     pool: &PgPool,
     dataset_root: &Path,
     input: &SessionInput,
 ) -> Result<ExecutionOutcome, ExecutionError> {
-    let mut tx = pool.begin().await?;
+    let snapshot = read_execution_snapshot(pool, input).await?;
+    if snapshot.already > 0 {
+        return Ok(ExecutionOutcome::AlreadyExecuted {
+            orders: snapshot.already as usize,
+        });
+    }
+    let target = PendingTarget {
+        account_id: input.account_id,
+        effective_date: input.effective_date,
+        targets: input.targets.clone(),
+    };
+    let open_prices = load_session_opens_bounded(dataset_root, &snapshot.state, &target).await?;
 
-    let outcome = execute_session_in_tx(&mut tx, dataset_root, input).await;
+    let mut tx = pool.begin().await?;
+    set_paper_transaction_timeouts(&mut tx).await?;
+    let current = execution_snapshot_in_tx(&mut tx, input).await?;
+    if current.already > 0 {
+        tx.rollback().await?;
+        return Ok(ExecutionOutcome::AlreadyExecuted {
+            orders: current.already as usize,
+        });
+    }
+    if current.state != snapshot.state {
+        tx.rollback().await?;
+        return Err(ExecutionError::AccountChanged {
+            account_id: input.account_id,
+        });
+    }
+    let outcome =
+        execute_prepared_in_tx(&mut tx, input, &current.state, &target, open_prices).await;
     match outcome {
         Ok(executed @ ExecutionOutcome::Executed { .. }) => {
             tx.commit().await?;
@@ -226,20 +295,118 @@ pub async fn execute_session(
     }
 }
 
-/// Execute using an existing worker transaction. Callers that perform an
-/// authorization preflight use this seam so its row locks remain held until
-/// every order/fill/cash write commits.
-pub async fn execute_session_in_tx(
-    tx: &mut Transaction<'_, Postgres>,
+/// Executes a target whose recommendation lineage requires the database
+/// preflight gate. The gate is checked once before any file work for fast
+/// denial, then checked again in the final write transaction. That second
+/// check preserves the entitlement/target lock fence without holding it while
+/// a curated partition is read.
+pub async fn execute_session_with_preflight(
+    pool: &PgPool,
     dataset_root: &Path,
+    target_id: Uuid,
     input: &SessionInput,
 ) -> Result<ExecutionOutcome, ExecutionError> {
+    {
+        let mut tx = pool.begin().await?;
+        set_paper_transaction_timeouts(&mut tx).await?;
+        if let Some(denial) = preflight_in_tx(&mut tx, target_id, input.owner_user_id).await? {
+            // The trusted preflight function may have prepared a SKIPPED
+            // update, but the Paper API must commit that terminal state only
+            // together with its durable settlement-notification outbox row.
+            // Roll this probe back; `paper_session` performs the atomic
+            // terminal transition and enqueue after it has the typed reason.
+            tx.rollback().await?;
+            return Err(ExecutionError::PreflightDenied {
+                code: denial.code,
+                message: denial.message,
+            });
+        }
+        tx.commit().await?;
+    }
+
+    let snapshot = read_execution_snapshot(pool, input).await?;
+    if snapshot.already > 0 {
+        return Ok(ExecutionOutcome::AlreadyExecuted {
+            orders: snapshot.already as usize,
+        });
+    }
+    let target = PendingTarget {
+        account_id: input.account_id,
+        effective_date: input.effective_date,
+        targets: input.targets.clone(),
+    };
+    let open_prices = load_session_opens_bounded(dataset_root, &snapshot.state, &target).await?;
+
+    let mut tx = pool.begin().await?;
+    set_paper_transaction_timeouts(&mut tx).await?;
+    if let Some(denial) = preflight_in_tx(&mut tx, target_id, input.owner_user_id).await? {
+        tx.rollback().await?;
+        return Err(ExecutionError::PreflightDenied {
+            code: denial.code,
+            message: denial.message,
+        });
+    }
+    let current = execution_snapshot_in_tx(&mut tx, input).await?;
+    if current.already > 0 {
+        tx.rollback().await?;
+        return Ok(ExecutionOutcome::AlreadyExecuted {
+            orders: current.already as usize,
+        });
+    }
+    if current.state != snapshot.state {
+        tx.rollback().await?;
+        return Err(ExecutionError::AccountChanged {
+            account_id: input.account_id,
+        });
+    }
+    let outcome =
+        execute_prepared_in_tx(&mut tx, input, &current.state, &target, open_prices).await;
+    match outcome {
+        Ok(executed @ ExecutionOutcome::Executed { .. }) => {
+            tx.commit().await?;
+            Ok(executed)
+        }
+        Ok(other) => {
+            tx.rollback().await?;
+            Ok(other)
+        }
+        Err(error) => {
+            tx.rollback().await?;
+            Err(error)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExecutionSnapshot {
+    state: LedgerState,
+    already: i64,
+}
+
+#[derive(Debug)]
+struct PreflightDenial {
+    code: String,
+    message: String,
+}
+
+async fn read_execution_snapshot(
+    pool: &PgPool,
+    input: &SessionInput,
+) -> Result<ExecutionSnapshot, ExecutionError> {
+    let mut tx = pool.begin().await?;
+    set_paper_transaction_timeouts(&mut tx).await?;
+    let snapshot = execution_snapshot_in_tx(&mut tx, input).await?;
+    tx.commit().await?;
+    Ok(snapshot)
+}
+
+async fn execution_snapshot_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    input: &SessionInput,
+) -> Result<ExecutionSnapshot, ExecutionError> {
     let (profile, currency) = account_profile(tx, input).await?;
     let cash = account_cash(tx, input, currency).await?;
     let positions = account_positions(tx, input).await?;
-
-    // Already in the ledger? The same predicate settlement checks, so the two
-    // can never disagree about whether this session executed.
     let already: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM orders \
          WHERE account_id = $1 AND owner_user_id = $2 AND created_at::date = $3::date",
@@ -249,49 +416,70 @@ pub async fn execute_session_in_tx(
     .bind(input.effective_date.as_naive_date())
     .fetch_one(&mut **tx)
     .await?;
-    if already > 0 {
-        return Ok(ExecutionOutcome::AlreadyExecuted {
-            orders: already as usize,
-        });
+    Ok(ExecutionSnapshot {
+        state: LedgerState {
+            base_currency: currency,
+            cost_profile: profile,
+            cash,
+            positions,
+            orders: BTreeMap::new(),
+            fills: Vec::new(),
+            marks: BTreeMap::new(),
+            equity_curve: BTreeMap::new(),
+            last_seq: 0,
+        },
+        already,
+    })
+}
+
+async fn preflight_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    target_id: Uuid,
+    owner_user_id: Uuid,
+) -> Result<Option<PreflightDenial>, ExecutionError> {
+    let (authorized, reason): (bool, Option<serde_json::Value>) =
+        sqlx::query_as("SELECT authorized, reason FROM public.preflight_paper_target($1, $2)")
+            .bind(target_id)
+            .bind(owner_user_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    if authorized {
+        return Ok(None);
     }
+    let code = reason
+        .as_ref()
+        .and_then(|value| value.get("code"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("PAPER_PREFLIGHT_DENIED")
+        .to_owned();
+    let message = reason
+        .as_ref()
+        .and_then(|value| value.get("message"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Paper execution preflight denied execution")
+        .to_owned();
+    Ok(Some(PreflightDenial { code, message }))
+}
 
-    // The state the planner reasons about is the account as the DATABASE holds
-    // it. `last_seq` is a local baseline: the sequence numbers the planner
-    // assigns order the validation within THIS call and are never stored.
-    // `cash_ledger.seq` is a separate, DB-side per-account counter, read below.
-    let state = LedgerState {
-        base_currency: currency,
-        cost_profile: profile,
-        cash,
-        positions,
-        orders: BTreeMap::new(),
-        fills: Vec::new(),
-        marks: BTreeMap::new(),
-        equity_curve: BTreeMap::new(),
-        last_seq: 0,
-    };
-
-    let target = PendingTarget {
-        account_id: input.account_id,
-        effective_date: input.effective_date,
-        targets: input.targets.clone(),
-    };
-    let open_prices = session_opens(dataset_root, &state, &target)?;
-
-    // No instrument-master lot-size source is wired in this repository yet, and
-    // `sizing.rs` documents the fallback: "absent = 1". Inventing one here
-    // would be a second instrument master.
+async fn execute_prepared_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    input: &SessionInput,
+    state: &LedgerState,
+    target: &PendingTarget,
+    open_prices: BTreeMap<InstrumentId, Price>,
+) -> Result<ExecutionOutcome, ExecutionError> {
+    // No instrument-master lot-size source is wired in this repository yet,
+    // and `sizing.rs` documents the fallback: "absent = 1". Inventing one
+    // here would be a second instrument master.
     let lot_sizes: BTreeMap<InstrumentId, u64> = BTreeMap::new();
-
     let plan = plan_session_open(
-        &state,
-        &target,
+        state,
+        target,
         &input.effective_date,
         &open_prices,
         &lot_sizes,
     )
     .map_err(|e| ExecutionError::Plan(e.to_string()))?;
-
     if plan.report.orders.is_empty() {
         return Ok(ExecutionOutcome::NoTrade);
     }
@@ -305,13 +493,35 @@ pub async fn execute_session_in_tx(
             .apply(event.clone())
             .map_err(|e| ExecutionError::Ledger(e.to_string()))?;
     }
-
-    persist(tx, input, &plan.events, &applied, &state).await?;
-
+    persist(tx, input, &plan.events, &applied, state).await?;
     Ok(ExecutionOutcome::Executed {
         orders: plan.report.orders.len(),
         fills: applied.fills.len(),
     })
+}
+
+async fn load_session_opens_bounded(
+    dataset_root: &Path,
+    state: &LedgerState,
+    target: &PendingTarget,
+) -> Result<BTreeMap<InstrumentId, Price>, ExecutionError> {
+    let dataset_root = dataset_root.to_path_buf();
+    let state = state.clone();
+    let target = target.clone();
+    match run_bounded_blocking(PAPER_CURATED_IO_DEADLINE, None, move |canceled| {
+        session_opens(&dataset_root, &state, &target, &canceled)
+    })
+    .await
+    {
+        Ok(opens) => Ok(opens),
+        Err(BlockingIoError::Failed(error)) => Err(error),
+        Err(BlockingIoError::Canceled) => Err(ExecutionError::Prices(
+            "curated price read canceled during shutdown".to_owned(),
+        )),
+        Err(BlockingIoError::TimedOut) => Err(ExecutionError::Prices(format!(
+            "curated price read exceeded {PAPER_CURATED_IO_DEADLINE:?}"
+        ))),
+    }
 }
 
 /// The account's cost profile and currency.
@@ -339,7 +549,8 @@ async fn account_profile(
 ) -> Result<(CostProfile, Currency), ExecutionError> {
     let row: Option<(String, i32, String)> = sqlx::query_as(
         "SELECT cost_profile_id, cost_profile_version, currency FROM accounts \
-         WHERE id = $1 AND owner_user_id = $2 AND status = 'ACTIVE' AND account_type = 'PAPER'",
+         WHERE id = $1 AND owner_user_id = $2 AND status = 'ACTIVE' AND account_type = 'PAPER' \
+         FOR UPDATE",
     )
     .bind(input.account_id)
     .bind(input.owner_user_id)
@@ -465,6 +676,7 @@ fn session_opens(
     dataset_root: &Path,
     state: &LedgerState,
     target: &PendingTarget,
+    canceled: &AtomicBool,
 ) -> Result<BTreeMap<InstrumentId, Price>, ExecutionError> {
     // The worker is given the dataset root and the curated zone sits one level
     // in, exactly as `runner.rs` reaches it for the factor series.
@@ -489,12 +701,22 @@ fn session_opens(
 
     let mut opens = BTreeMap::new();
     for instrument in needed {
+        if canceled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(ExecutionError::Prices(
+                "curated price read canceled during shutdown".to_owned(),
+            ));
+        }
         let path = store.bars_path(MARKET, &instrument.to_string(), year, CURATED_VERSION);
         if !path.exists() {
             continue;
         }
         let bars = read_bars(&path)
             .map_err(|e| ExecutionError::Prices(format!("read {}: {e}", path.display())))?;
+        if canceled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(ExecutionError::Prices(
+                "curated price read canceled during shutdown".to_owned(),
+            ));
+        }
         if let Some(bar) = bars
             .iter()
             .find(|b| b.trading_date == target.effective_date)

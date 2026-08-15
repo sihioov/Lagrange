@@ -1,9 +1,11 @@
-# Default-deny: only the source inputs copied by the collectors Dockerfile enter
-# the build context.
+# Default-deny: only the source inputs copied by the production Dockerfiles
+# enter the build context.
 **
 !Cargo.toml
 !Cargo.lock
 !rust-toolchain.toml
+!package.json
+!package-lock.json
 !crates/
 !crates/**
 !nt/
@@ -15,7 +17,12 @@
 !data-pipelines/collectors/
 !data-pipelines/collectors/**
 !apps/
+!apps/web/
+!apps/web/**
 !apps/api-server/
+!apps/api-server/package.json
+!apps/api-server/generated/
+!apps/api-server/generated/openapi.ts
 !apps/api-server/auth/
 !apps/api-server/auth/**
 !tests/
@@ -26,6 +33,14 @@
 !tests/fixtures/kr-etf/
 !tests/fixtures/kr-etf/contract/
 !tests/fixtures/kr-etf/contract/**
+!deploy/
+deploy/*
+!deploy/runtime/
+!deploy/runtime/**
+!deploy/db/
+!deploy/db/**
+!migrations/
+!migrations/**
 
 # Security and generated-output deny rules override the allowlist above.
 **/.git
@@ -36,6 +51,15 @@
 **/target/**
 **/.venv
 **/.venv/**
+**/node_modules
+**/node_modules/**
+**/.next
+**/.next/**
+**/__pycache__
+**/__pycache__/**
+**/*.py[cod]
+**/.pytest_cache
+**/.pytest_cache/**
 **/.env
 **/.env.*
 **/*.env

@@ -1,0 +1,246 @@
+#!/bin/sh
+# Safety boundary for the Phase-3 live-node package.
+#
+# Dry-run mode owns a real deterministic simulator/reconciliation loop. It
+# holds the account lock, publishes atomic status, and handles SIGTERM. It
+# never reads KIS credentials or sends an order. Any attempt to turn on
+# non-dry-run execution exits before reading a credential or starting a broker
+# connection; the KIS-backed path remains an external prerequisite.
+set -eu
+
+# Keep child processes independent of the caller's ambient module/search
+# environment.  The only values intentionally forwarded below are the fixed
+# interpreter path, a fixed command PATH, and this package's own path.
+umask 077
+
+mode=${LIVE_NODE_MODE:-disabled}
+dry_run=${LIVE_NODE_DRY_RUN:-1}
+account=${LIVE_NODE_ACCOUNT_ID:-disabled}
+python=${LIVE_NODE_PYTHON:-/usr/local/bin/python}
+lock_dir=${LIVE_NODE_LOCK_DIR:-/tmp/live-node}
+interval=${LIVE_NODE_RECONCILIATION_INTERVAL_SECONDS:-30}
+status_file=${LIVE_NODE_STATUS_FILE:-$lock_dir/live-node-$account.status.json}
+gate_file=${LIVE_NODE_GATE_FILE:-}
+kill_switch=${LIVE_NODE_KILL_SWITCH:-0}
+risk_gate=${LIVE_NODE_RISK_GATE:-green}
+reconciliation_gate=${LIVE_NODE_RECONCILIATION_GATE:-green}
+data_fresh=${LIVE_NODE_DATA_FRESH:-1}
+
+# In the image the package lives here; when the checked-in script is run from
+# a source checkout, derive the equivalent directory so tests and operator
+# smoke checks use the same sealed environment.
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ "$script_dir" = /usr/local/bin ]; then
+  pythonpath=/opt/lagrange/live-node
+else
+  pythonpath=$(CDPATH= cd -- "$script_dir/.." && pwd)
+fi
+
+fail() {
+  echo "live-node: $*" >&2
+  exit 1
+}
+
+case "$mode" in
+  disabled|enabled) ;;
+  *) fail 'LIVE_NODE_MODE must be disabled or enabled' ;;
+esac
+case "$dry_run" in
+  0|1|true|false) ;;
+  *) fail 'LIVE_NODE_DRY_RUN must be 0, 1, true, or false' ;;
+esac
+case "$dry_run" in
+  1|true) dry_run=1 ;;
+  0|false) dry_run=0 ;;
+esac
+[ -n "$account" ] || fail 'LIVE_NODE_ACCOUNT_ID must not be empty'
+case "$account" in
+  *[!A-Za-z0-9_.:-]*) fail 'LIVE_NODE_ACCOUNT_ID contains unsupported characters' ;;
+esac
+[ -n "$lock_dir" ] || fail 'LIVE_NODE_LOCK_DIR must not be empty'
+case "$interval" in
+  ''|*[!0-9]*) fail 'LIVE_NODE_RECONCILIATION_INTERVAL_SECONDS must be a positive integer' ;;
+  0) fail 'LIVE_NODE_RECONCILIATION_INTERVAL_SECONDS must be a positive integer' ;;
+esac
+[ -n "$status_file" ] || fail 'LIVE_NODE_STATUS_FILE must not be empty'
+
+case "$kill_switch" in
+  0|false) kill_switch=0 ;;
+  1|true) kill_switch=1 ;;
+  *) fail 'LIVE_NODE_KILL_SWITCH must be 0, 1, true, or false' ;;
+esac
+case "$risk_gate" in
+  green|ready|0|false) risk_blocked=0 ;;
+  blocked|red|1|true) risk_blocked=1 ;;
+  *) fail 'LIVE_NODE_RISK_GATE must be green or blocked' ;;
+esac
+case "$reconciliation_gate" in
+  green|ready|0|false) reconciliation_blocked=0 ;;
+  blocked|red|1|true) reconciliation_blocked=1 ;;
+  *) fail 'LIVE_NODE_RECONCILIATION_GATE must be green or blocked' ;;
+esac
+case "$data_fresh" in
+  0|false|stale) data_stale=1 ;;
+  1|true|fresh) data_stale=0 ;;
+  *) fail 'LIVE_NODE_DATA_FRESH must be 0, 1, true, or false' ;;
+esac
+[ -z "$gate_file" ] || [ ! -L "$gate_file" ] || fail 'LIVE_NODE_GATE_FILE must not be a symlink'
+
+prepare_lock_dir() {
+  [ ! -L "$lock_dir" ] || fail 'LIVE_NODE_LOCK_DIR must not be a symlink'
+  if [ ! -e "$lock_dir" ]; then
+    mkdir -p -- "$lock_dir" || fail 'LIVE_NODE_LOCK_DIR could not be created'
+  fi
+  [ -d "$lock_dir" ] || fail 'LIVE_NODE_LOCK_DIR must be a directory'
+  [ ! -L "$lock_dir" ] || fail 'LIVE_NODE_LOCK_DIR must not be a symlink'
+  probe="$lock_dir/.live-node-write-test.$$"
+  if ! (set -C; : > "$probe") 2>/dev/null; then
+    fail 'LIVE_NODE_LOCK_DIR is not writable'
+  fi
+  rm -f -- "$probe" || fail 'LIVE_NODE_LOCK_DIR write probe could not be removed'
+}
+
+run_python() {
+  # Live-node currently has no database contract, but keep the process
+  # boundary sealed so a future caller cannot accidentally pass DB secret
+  # paths or credentials into the Python package.
+  env -i PATH=/usr/local/bin:/usr/bin:/bin PYTHONPATH="$pythonpath" \
+    PYTHONNOUSERSITE=1 "$python" "$@"
+}
+
+run_status() {
+  set -- -m live_node --lock-dir "$lock_dir" status \
+    --account "$account" --status-file "$status_file" "$@"
+  [ "$kill_switch" -eq 1 ] && set -- "$@" --kill-switch-engaged
+  [ "$risk_blocked" -eq 1 ] && set -- "$@" --risk-gate-blocked
+  [ "$reconciliation_blocked" -eq 1 ] && set -- "$@" --reconciliation-blocked
+  [ "$reconciliation_blocked" -eq 0 ] && set -- "$@" --reconciliation-green
+  [ "$data_stale" -eq 1 ] && set -- "$@" --data-stale
+  [ -z "$gate_file" ] || set -- "$@" --gate-file "$gate_file"
+  # A dry-run process must never be reported as trade-ready, even though its
+  # deterministic simulator may be operationally green.
+  [ "$dry_run" -eq 1 ] && set -- "$@" --execution-disabled
+  run_python "$@"
+}
+
+run_liveness() {
+  run_python -m live_node --lock-dir "$lock_dir" healthcheck \
+    --account "$account" --status-file "$status_file" \
+    --interval-seconds "$interval"
+}
+
+run_simulator() {
+  set -- -m live_node --lock-dir "$lock_dir" run \
+    --account "$account" --interval-seconds "$interval" \
+    --status-file "$status_file"
+  [ "$kill_switch" -eq 1 ] && set -- "$@" --kill-switch-engaged
+  [ "$risk_blocked" -eq 1 ] && set -- "$@" --risk-gate-blocked
+  [ "$reconciliation_blocked" -eq 1 ] && set -- "$@" --reconciliation-blocked
+  [ "$data_stale" -eq 1 ] && set -- "$@" --data-stale
+  [ -z "$gate_file" ] || set -- "$@" --gate-file "$gate_file"
+  # Replace the shell so SIGTERM reaches Python directly and its graceful
+  # handler can publish STOPPED before releasing the lock.
+  exec env -i PATH=/usr/local/bin:/usr/bin:/bin PYTHONPATH="$pythonpath" \
+    PYTHONNOUSERSITE=1 "$python" "$@"
+}
+
+check_package() {
+  package_check=$(run_python -c 'import live_node; print("ok")' 2>/dev/null) \
+    && [ "$package_check" = ok ] \
+    || fail 'live_node package is unavailable'
+}
+
+emit() {
+  status=$1
+  reason=$2
+  printf '{"status":"%s","mode":"%s","dry_run":%s,"account_id":"%s","reason":"%s"}\n' \
+    "$status" "$mode" "$dry_run" "$account" "$reason"
+}
+
+case "${1:-run}" in
+  healthcheck)
+    prepare_lock_dir
+    check_package
+    if [ "$mode" = enabled ]; then
+      run_liveness
+      exit $?
+    fi
+    # Disabled is intentionally healthy: there is no broken process to
+    # restart, and readiness is exposed separately below.
+    emit healthy process_alive
+    exit 0
+    ;;
+  readiness)
+    prepare_lock_dir
+    check_package
+    if [ "$mode" != enabled ]; then
+      emit not_ready LIVE_NODE_DISABLED
+      exit 1
+    fi
+    if [ "$dry_run" -ne 1 ]; then
+      emit not_ready LIVE_EXECUTION_UNAVAILABLE
+      exit 1
+    fi
+    # Delegate to the status document so readiness distinguishes a stopped
+    # simulator from a healthy simulator that is intentionally not trade
+    # ready. The Python command exits 2 for the latter; this shell contract
+    # remains non-zero because no real KIS order may be admitted.
+    if [ ! -f "$lock_dir/live-node-$account.lock" ]; then
+      emit not_ready LIVE_NODE_NOT_RUNNING
+      exit 1
+    fi
+    run_status || status_code=$?
+    case "${status_code:-0}" in
+      0|2) exit 1 ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  status)
+    prepare_lock_dir
+    check_package
+    shift
+    # Keep the status command's historical extra flags available to runbooks,
+    # while adding the runtime's persisted snapshot and dry-run admission bit.
+    run_status "$@"
+    exit $?
+    ;;
+  start)
+    prepare_lock_dir
+    check_package
+    if [ "$mode" != enabled ]; then
+      emit not_ready LIVE_NODE_DISABLED
+      exit 1
+    fi
+    [ "$dry_run" -eq 1 ] || fail 'non-dry-run live execution is not implemented'
+    exec env -i PATH=/usr/local/bin:/usr/bin:/bin PYTHONPATH="$pythonpath" \
+      PYTHONNOUSERSITE=1 "$python" -m live_node --lock-dir "$lock_dir" start \
+      --account "$account" --kill-switch-engaged
+    ;;
+  --help|-h)
+    cat <<'HELP'
+live-node [healthcheck|readiness|status|start|run]
+
+The production default is disabled. Enabled dry-run mode runs a deterministic
+reconciliation simulator with no network or order side effects; readiness
+still remains false for real trading. Non-dry-run execution is refused until
+a separately reviewed KIS execution loop is shipped.
+HELP
+    ;;
+  run)
+    prepare_lock_dir
+    check_package
+    if [ "$mode" = enabled ] && [ "$dry_run" -eq 0 ]; then
+      fail 'non-dry-run live execution is not implemented'
+    fi
+    if [ "$mode" = enabled ]; then
+      run_simulator
+    else
+      emit running LIVE_NODE_DISABLED
+    fi
+    trap 'exit 0' INT TERM HUP
+    while :; do sleep 3600; done
+    ;;
+  *)
+    fail "unknown command: $1"
+    ;;
+esac

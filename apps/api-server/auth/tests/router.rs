@@ -8,10 +8,12 @@
 //! fresh MFA allowed.
 
 use api_server_auth::{RouterState, router};
-use auth::audit::{AuthAuditKind, InMemoryAuthAudit};
+use auth::audit::{AuthAudit, AuthAuditError, AuthAuditEvent, AuthAuditKind, InMemoryAuthAudit};
 use auth::clock::FakeClock;
-use auth::entitlement::Role;
-use auth::invites::{InMemoryInviteStore, InMemoryUserStore, InviteService};
+use auth::entitlement::{Role, UserId};
+use auth::invites::{
+    InMemoryInviteStore, InMemoryUserStore, InviteError, InviteService, UserRecord, UserStore,
+};
 use auth::oidc::{
     InMemoryPendingAuthStore, OidcClient, OidcProviderConfig, PendingAuth, PendingAuthStore,
 };
@@ -37,7 +39,65 @@ struct TestApp {
     state: RouterState,
 }
 
+struct FailingAudit;
+
+#[async_trait::async_trait]
+impl AuthAudit for FailingAudit {
+    fn record(&self, _event: AuthAuditEvent) -> Result<(), AuthAuditError> {
+        Err(AuthAuditError::Unavailable)
+    }
+
+    async fn record_durable(&self, _event: AuthAuditEvent) -> Result<(), AuthAuditError> {
+        Err(AuthAuditError::Unavailable)
+    }
+}
+
+struct CanonicalUserStore {
+    inner: InMemoryUserStore,
+    canonical_id: UserId,
+}
+
+impl CanonicalUserStore {
+    fn new(canonical_id: &str) -> Self {
+        Self {
+            inner: InMemoryUserStore::default(),
+            canonical_id: UserId::new(canonical_id),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl UserStore for CanonicalUserStore {
+    async fn find_by_binding(
+        &self,
+        issuer: &str,
+        subject: &str,
+    ) -> Result<Option<UserRecord>, InviteError> {
+        self.inner.find_by_binding(issuer, subject).await
+    }
+
+    async fn insert_user(&self, mut user: UserRecord) -> Result<UserId, InviteError> {
+        user.user_id = self.canonical_id.clone();
+        self.inner.insert_user(user).await?;
+        Ok(self.canonical_id.clone())
+    }
+
+    async fn update_profile(&self, user_id: &str, email: &str) -> Result<(), InviteError> {
+        self.inner.update_profile(user_id, email).await
+    }
+}
+
 fn app() -> TestApp {
+    app_with_users(Arc::new(InMemoryUserStore::default()))
+}
+
+fn canonical_app() -> TestApp {
+    app_with_users(Arc::new(CanonicalUserStore::new(
+        "00000000-0000-0000-0000-000000000042",
+    )))
+}
+
+fn app_with_users(users: Arc<dyn UserStore>) -> TestApp {
     let sim = Arc::new(Simulator::new(ISSUER, CLIENT_ID, REDIRECT_URI));
     let cfg = OidcProviderConfig {
         issuer: ISSUER.to_string(),
@@ -53,7 +113,7 @@ fn app() -> TestApp {
     let pending = Arc::new(InMemoryPendingAuthStore::default());
     let invites = InviteService::new(
         Arc::new(InMemoryInviteStore::default()),
-        Arc::new(InMemoryUserStore::default()),
+        users,
         Arc::new(FakeClock(NOW)),
         audit.clone(),
     );
@@ -72,6 +132,8 @@ fn app() -> TestApp {
         pending,
         audit: audit.clone(),
         step_up_max_auth_age_secs: 900,
+        transaction_cookie_key: Arc::new([0x42; 32]),
+        durable_audit: None,
     };
     TestApp { sim, audit, state }
 }
@@ -155,6 +217,64 @@ fn set_cookie_value(headers: &[(String, String)]) -> String {
     set.split(';').next().unwrap().trim().to_string()
 }
 
+#[tokio::test]
+async fn oidc_transaction_cookie_is_secure_short_lived_and_bound_to_browser() {
+    let app = app();
+    let (status, _, first_headers) = get(&app, "/auth/login").await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let first_cookie = first_headers
+        .iter()
+        .find(|(key, _)| key == "set-cookie")
+        .map(|(_, value)| value.clone())
+        .expect("transaction cookie");
+    assert!(first_cookie.starts_with("__Host-lagrange_oidc_tx="));
+    assert!(first_cookie.contains("Path=/"));
+    assert!(first_cookie.contains("Secure"));
+    assert!(first_cookie.contains("HttpOnly"));
+    assert!(first_cookie.contains("SameSite=Lax"));
+    assert!(first_cookie.contains("Max-Age=300"));
+
+    let (_, _, second_headers) = get(&app, "/auth/login").await;
+    let second_cookie = second_headers
+        .iter()
+        .find(|(key, _)| key == "set-cookie")
+        .map(|(_, value)| value.clone())
+        .expect("second transaction cookie");
+    assert_ne!(
+        first_cookie, second_cookie,
+        "each browser transaction is unique"
+    );
+
+    let location = first_headers
+        .iter()
+        .find(|(key, _)| key == "location")
+        .map(|(_, value)| value.clone())
+        .expect("login location");
+    let state = Url::parse(&location)
+        .unwrap()
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .map(|(_, value)| value.into_owned())
+        .unwrap();
+    let (status, body, headers) = get_with_cookie(
+        &app,
+        &format!("/auth/callback?code=irrelevant&state={state}"),
+        "__Host-lagrange_oidc_tx=attacker-value",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"]["code"], "OIDC_TRANSACTION_MISMATCH");
+    assert!(headers.iter().any(|(key, value)| {
+        key == "set-cookie"
+            && value.starts_with("__Host-lagrange_oidc_tx=")
+            && value.contains("Max-Age=0")
+            && value.contains("Secure")
+            && value.contains("HttpOnly")
+            && value.contains("SameSite=Lax")
+    }));
+}
+
 /// Drives one full login over HTTP: /auth/login -> /auth/callback ->
 /// session cookie + CSRF -> authenticated /auth/session.
 async fn http_login(
@@ -167,6 +287,7 @@ async fn http_login(
 ) -> (String, String) {
     let (status, _, headers) = get(app, "/auth/login").await;
     assert_eq!(status, StatusCode::SEE_OTHER);
+    let transaction_cookie = set_cookie_value(&headers);
     let location = headers
         .iter()
         .find(|(k, _)| k == "location")
@@ -206,7 +327,13 @@ async fn http_login(
         &pending.code_verifier,
     );
 
-    let (status, _, headers) = get(app, &format!("/auth/callback?code={code}&state={state}")).await;
+    let (status, _, headers) = get_with_cookie(
+        app,
+        &format!("/auth/callback?code={code}&state={state}"),
+        &transaction_cookie,
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "callback redirects home");
     let cookie = set_cookie_value(&headers);
     let csrf = headers
@@ -226,6 +353,71 @@ async fn take_pending(store: &dyn PendingAuthStore, state: &str) -> Option<Pendi
     } else {
         None
     }
+}
+
+#[tokio::test]
+async fn first_callback_uses_canonical_user_id_and_replay_is_denied() {
+    const CANONICAL_ID: &str = "00000000-0000-0000-0000-000000000042";
+
+    let app = canonical_app();
+    app.state
+        .auth
+        .invites
+        .create_invite("canonical@example.com", Role::Member, 3600)
+        .await
+        .unwrap();
+
+    let (status, _, headers) = get(&app, "/auth/login").await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let transaction_cookie = set_cookie_value(&headers);
+    let location = headers
+        .iter()
+        .find(|(key, _)| key == "location")
+        .map(|(_, value)| value.clone())
+        .expect("login location");
+    let url = Url::parse(&location).unwrap();
+    let state = url
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .map(|(_, value)| value.into_owned())
+        .expect("login state");
+    let nonce = url
+        .query_pairs()
+        .find(|(key, _)| key == "nonce")
+        .map(|(_, value)| value.into_owned())
+        .expect("login nonce");
+    let pending = take_pending(&*app.state.pending, &state)
+        .await
+        .expect("pending login");
+    let code = app.sim.issue_code(
+        json!({
+            "iss": ISSUER,
+            "sub": "auth0|canonical-1",
+            "aud": [SIM_AUDIENCE],
+            "exp": NOW + 3600,
+            "iat": NOW,
+            "nonce": nonce,
+            "email": "canonical@example.com",
+            "email_verified": true,
+            "auth_time": NOW - 60,
+            "amr": ["pwd"],
+            "roles": ["member"],
+        }),
+        &pending.code_verifier,
+    );
+    let callback_path = format!("/auth/callback?code={code}&state={state}");
+
+    let (status, _, headers) =
+        get_with_cookie(&app, &callback_path, &transaction_cookie, None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let cookie = set_cookie_value(&headers);
+    let (status, body, _) = get_with_cookie(&app, "/auth/session", &cookie, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["user_id"], CANONICAL_ID);
+
+    let (status, body, _) = get_with_cookie(&app, &callback_path, &transaction_cookie, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"]["code"], "STATE_MISMATCH");
 }
 
 #[tokio::test]
@@ -322,6 +514,82 @@ async fn router_qa_full_login_logout_and_step_up() {
     println!("{}", "-".repeat(96));
     println!(
         "ROUTER QA PASSED: login -> cookie -> CSRF -> logout -> revoked denied; stale step-up denied; fresh MFA allowed."
+    );
+}
+
+#[tokio::test]
+async fn logout_failure_does_not_clear_live_cookie() {
+    let sim = Arc::new(Simulator::new(ISSUER, CLIENT_ID, REDIRECT_URI));
+    let audit: Arc<dyn AuthAudit> = Arc::new(FailingAudit);
+    let cfg = OidcProviderConfig {
+        issuer: ISSUER.to_string(),
+        client_id: CLIENT_ID.to_string(),
+        redirect_uri: REDIRECT_URI.to_string(),
+        authorize_url: format!("{ISSUER}/authorize"),
+        token_url: format!("{ISSUER}/oauth/token"),
+        jwks_url: format!("{ISSUER}/.well-known/jwks.json"),
+        audience: Some(SIM_AUDIENCE.to_string()),
+        clock_skew_secs: 60,
+    };
+    let auth = AuthService::new(
+        OidcClient {
+            config: cfg,
+            transport: sim,
+        },
+        InviteService::new(
+            Arc::new(InMemoryInviteStore::default()),
+            Arc::new(InMemoryUserStore::default()),
+            Arc::new(FakeClock(NOW)),
+            audit.clone(),
+        ),
+        SessionService::new(
+            Arc::new(InMemorySessionStore::default()),
+            Arc::new(FakeClock(NOW)),
+            audit,
+        ),
+        Arc::new(FailingAudit),
+    );
+    let state = RouterState {
+        auth: Arc::new(auth),
+        pending: Arc::new(InMemoryPendingAuthStore::default()),
+        audit: Arc::new(FailingAudit),
+        step_up_max_auth_age_secs: 900,
+        transaction_cookie_key: Arc::new([0x42; 32]),
+        durable_audit: None,
+    };
+    let identity = auth::invites::RedeemedIdentity {
+        user_id: UserId::new("00000000-0000-0000-0000-000000000099"),
+        role: Role::Owner,
+        email: "owner@example.test".to_string(),
+        binding: "issuer|subject".to_string(),
+    };
+    let issued = state
+        .auth
+        .sessions
+        .issue(&identity, NOW, vec!["mfa".to_string()])
+        .await
+        .expect("session issue");
+    let cookie_header = format!("{}={}", auth::sessions::cookie::NAME, issued.cookie_value);
+    let response = router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/logout")
+                .header(header::COOKIE, cookie_header)
+                .header("X-CSRF-Token", issued.csrf_token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        !response.headers().contains_key(header::SET_COOKIE),
+        "failed durable logout must not clear the browser cookie"
+    );
+    assert!(
+        state.auth.session_info(&issued.cookie_value).await.is_ok(),
+        "session remains live when durable revocation fails"
     );
 }
 
@@ -473,7 +741,12 @@ async fn invites_are_owner_only_and_csrf_protected() {
     assert_eq!(status, StatusCode::CREATED, "owner creates invite: {body}");
     assert_eq!(body["email"], "new@example.com");
     assert_eq!(body["role"], "member");
-    assert!(app.audit.has(AuthAuditKind::InviteCreated, None));
+    assert!(
+        app.audit
+            .events()
+            .iter()
+            .any(|event| event.kind == AuthAuditKind::InviteCreated && event.user.is_some())
+    );
 }
 
 #[tokio::test]
@@ -586,6 +859,7 @@ async fn uninvited_login_via_http_is_denied_and_audited() {
 
 async fn http_login_denied(app: &TestApp, sub: &str, email: &str) -> (StatusCode, Value) {
     let (_, _, headers) = get(app, "/auth/login").await;
+    let transaction_cookie = set_cookie_value(&headers);
     let location = headers
         .iter()
         .find(|(k, _)| k == "location")
@@ -613,6 +887,7 @@ async fn http_login_denied(app: &TestApp, sub: &str, email: &str) -> (StatusCode
             "sub": sub,
             "aud": [SIM_AUDIENCE],
             "exp": NOW + 3600,
+            "iat": NOW,
             "nonce": nonce,
             "email": email,
             "email_verified": true,
@@ -622,6 +897,12 @@ async fn http_login_denied(app: &TestApp, sub: &str, email: &str) -> (StatusCode
         }),
         &pending.code_verifier,
     );
-    let (status, body, _) = get(app, &format!("/auth/callback?code={code}&state={state}")).await;
+    let (status, body, _) = get_with_cookie(
+        app,
+        &format!("/auth/callback?code={code}&state={state}"),
+        &transaction_cookie,
+        None,
+    )
+    .await;
     (status, body)
 }

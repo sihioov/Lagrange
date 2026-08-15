@@ -61,7 +61,13 @@ pub trait UserStore: Send + Sync {
         issuer: &str,
         subject: &str,
     ) -> Result<Option<UserRecord>, InviteError>;
-    async fn insert_user(&self, user: UserRecord) -> Result<(), InviteError>;
+    /// Persist a first-time identity and return the store's canonical ID.
+    ///
+    /// In-memory implementations may preserve the caller's provisional ID,
+    /// while a durable store can allocate a database-native UUID. Callers
+    /// must use the returned value for sessions and audit records; the ID on
+    /// `user` is only a simulator/provisional candidate.
+    async fn insert_user(&self, user: UserRecord) -> Result<UserId, InviteError>;
     async fn update_profile(&self, user_id: &str, email: &str) -> Result<(), InviteError>;
 }
 
@@ -133,13 +139,14 @@ impl UserStore for InMemoryUserStore {
             .cloned())
     }
 
-    async fn insert_user(&self, user: UserRecord) -> Result<(), InviteError> {
+    async fn insert_user(&self, user: UserRecord) -> Result<UserId, InviteError> {
         let mut map = self
             .inner
             .write()
             .map_err(|_| InviteError::Store("lock".into()))?;
+        let user_id = user.user_id.clone();
         map.push(user);
-        Ok(())
+        Ok(user_id)
     }
 
     async fn update_profile(&self, user_id: &str, email: &str) -> Result<(), InviteError> {
@@ -190,6 +197,22 @@ impl InviteService {
         role: Role,
         ttl_secs: i64,
     ) -> Result<InviteRecord, InviteError> {
+        self.create_invite_as(email, role, ttl_secs, None).await
+    }
+
+    /// Create an invitation on behalf of an authenticated actor.
+    ///
+    /// The legacy convenience method above remains useful for the simulator,
+    /// but the HTTP Owner route must call this method so the audit row names
+    /// the authenticated Owner rather than silently recording an unattributed
+    /// mutation.
+    pub async fn create_invite_as(
+        &self,
+        email: &str,
+        role: Role,
+        ttl_secs: i64,
+        actor: Option<&UserId>,
+    ) -> Result<InviteRecord, InviteError> {
         let email = Self::normalize_email(email)?;
         let now = self.clock.now_epoch_secs();
         let invite = InviteRecord {
@@ -202,18 +225,20 @@ impl InviteService {
             redeemed_at_secs: None,
         };
         self.invites.insert(invite.clone()).await?;
-        self.audit.record(AuthAuditEvent {
-            at_secs: now,
-            kind: AuthAuditKind::InviteCreated,
-            user: None,
-            reason: None,
-            detail: format!(
-                "invite {} for {} as {}",
-                invite.id,
-                invite.email,
-                role_name(invite.role)
-            ),
-        });
+        self.audit
+            .record(AuthAuditEvent {
+                at_secs: now,
+                kind: AuthAuditKind::InviteCreated,
+                user: actor.map(|user| user.0.clone()),
+                reason: None,
+                detail: format!(
+                    "invite {} for {} as {}",
+                    invite.id,
+                    invite.email,
+                    role_name(invite.role)
+                ),
+            })
+            .map_err(|error| InviteError::Audit(format!("{error:?}")))?;
         Ok(invite)
     }
 
@@ -282,23 +307,28 @@ impl InviteService {
         } else {
             claims.mapped_role().ok_or(InviteError::RoleUnknown)?
         };
-        let user_id = UserId::new(format!("usr_{}", random_hex()));
+        // The in-memory store keeps this simulator ID, while a durable store
+        // may allocate a database-native UUID. The insertion result below is
+        // the only ID that may cross into sessions or audit records.
+        let provisional_user_id = UserId::new(format!("usr_{}", random_hex()));
         let user = UserRecord {
             binding_issuer: issuer,
             binding_subject: subject,
-            user_id: user_id.clone(),
+            user_id: provisional_user_id,
             role,
             email: email.clone(),
             created_at_secs: now,
         };
-        self.users.insert_user(user).await?;
-        self.audit.record(AuthAuditEvent {
-            at_secs: now,
-            kind: AuthAuditKind::InviteRedeemed,
-            user: Some(user_id.0.clone()),
-            reason: None,
-            detail: format!("invite {} redeemed as {}", invite.id, role_name(role)),
-        });
+        let user_id = self.users.insert_user(user).await?;
+        self.audit
+            .record(AuthAuditEvent {
+                at_secs: now,
+                kind: AuthAuditKind::InviteRedeemed,
+                user: Some(user_id.0.clone()),
+                reason: None,
+                detail: format!("invite {} redeemed as {}", invite.id, role_name(role)),
+            })
+            .map_err(|error| InviteError::Audit(format!("{error:?}")))?;
         Ok(RedeemedIdentity {
             user_id,
             role,
@@ -342,6 +372,8 @@ pub enum InviteError {
     RoleUnknown,
     #[error("invite/user store failure: {0}")]
     Store(String),
+    #[error("auth audit delivery failure: {0}")]
+    Audit(String),
 }
 
 impl InviteError {
@@ -355,6 +387,7 @@ impl InviteError {
             Self::AlreadyRedeemed => "INVITE_ALREADY_REDEEMED",
             Self::RoleUnknown => "INVITE_ROLE_UNKNOWN",
             Self::Store(_) => "INVITE_STORE",
+            Self::Audit(_) => "INVITE_AUDIT",
         }
     }
 }

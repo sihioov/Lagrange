@@ -1407,11 +1407,11 @@ fn worker_config(overrides: &[(&str, &str)]) -> HashMap<String, String> {
 }
 
 #[test]
-fn worker_config_parses_defaults_and_trims_file_secret() {
+fn worker_config_parses_defaults_and_trims_spaces_from_file_secret() {
     let values = worker_config(&[]);
     let config = ResearchWorkerConfig::from_map_with_reader(&values, |path| {
         assert_eq!(path.to_string_lossy(), "db-password");
-        Ok("  password from file\r\n".to_owned())
+        Ok("  password from file  ".to_owned())
     })
     .unwrap();
 
@@ -1439,8 +1439,8 @@ fn worker_config_parses_schedule_and_max_age_overrides() {
     ]);
     let config = ResearchWorkerConfig::from_map_with_reader(&values, |path| {
         Ok(match path.to_string_lossy().as_ref() {
-            "db-password" => "db-secret\n",
-            "provider-secret" => "provider-secret-value\n",
+            "db-password" => "db-secret",
+            "provider-secret" => "provider-secret-value",
             other => panic!("unexpected secret path {other}"),
         }
         .to_owned())
@@ -1490,6 +1490,34 @@ fn worker_config_rejects_invalid_and_missing_values_without_secret_contents() {
     })
     .unwrap_err();
     assert!(matches!(error, WorkerError::SecretFile { .. }));
+}
+
+#[test]
+fn worker_config_rejects_any_line_break_in_secret_files() {
+    for value in ["password\n", "password\r", "password\r\n", "pass\nword"] {
+        let error = ResearchWorkerConfig::from_map_with_reader(&worker_config(&[]), |_| {
+            Ok(value.to_owned())
+        })
+        .unwrap_err();
+        assert!(matches!(error, WorkerError::SecretFile { .. }));
+    }
+
+    let values = worker_config(&[
+        ("APP_ENV", "development"),
+        ("RESEARCH_FETCH_MODE", "credentialed"),
+        ("KRX_CREDENTIAL_FILE", "provider-secret"),
+    ]);
+    for value in ["provider\nsecret", "provider\rsecret"] {
+        let error = ResearchWorkerConfig::from_map_with_reader(&values, |path| {
+            Ok(if path.to_string_lossy() == "provider-secret" {
+                value.to_owned()
+            } else {
+                "database-password".to_owned()
+            })
+        })
+        .unwrap_err();
+        assert!(matches!(error, WorkerError::SecretFile { .. }));
+    }
 }
 
 #[test]
@@ -1698,7 +1726,7 @@ async fn worker_cli_once_runs_collection_in_the_bounded_hidden_helper() {
     let password_file = workspace.path().join("db-password");
     let stdout_file = workspace.path().join("worker-stdout");
     let stderr_file = workspace.path().join("worker-stderr");
-    std::fs::write(&password_file, "lagrange\n").unwrap();
+    std::fs::write(&password_file, "lagrange").unwrap();
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/kr-etf/contract")
         .canonicalize()
@@ -1783,7 +1811,7 @@ async fn worker_cli_permanent_ingest_failure_streams_failed_then_contextual_erro
     let workspace = tempfile::tempdir().unwrap();
     let raw_root = workspace.path().join("raw");
     let password_file = workspace.path().join("db-password");
-    std::fs::write(&password_file, "lagrange\n").unwrap();
+    std::fs::write(&password_file, "lagrange").unwrap();
     let malformed_fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/kr-etf/contract-variants/malformed-bars")
         .canonicalize()
@@ -1843,7 +1871,7 @@ async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() 
     let workspace = tempfile::tempdir().unwrap();
     let raw_root = workspace.path().join("raw");
     let password_file = workspace.path().join("db-password");
-    std::fs::write(&password_file, "lagrange\n").unwrap();
+    std::fs::write(&password_file, "lagrange").unwrap();
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/kr-etf/contract")
         .canonicalize()
@@ -1941,7 +1969,7 @@ async fn worker_recovery_write_failure_is_retryable_and_exact_replay_is_skipped(
     let workspace = tempfile::tempdir().unwrap();
     let raw_root = workspace.path().join("raw");
     let password_file = workspace.path().join("db-password");
-    std::fs::write(&password_file, "lagrange\n").unwrap();
+    std::fs::write(&password_file, "lagrange").unwrap();
     let store = RawStore::new(&raw_root);
     let orphan = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
         .unwrap()
@@ -3060,7 +3088,7 @@ async fn worker_production_pool_uses_discrete_fields_role_limits_and_timeouts() 
         ("DB_PASSWORD_FILE".to_owned(), "qa-password".to_owned()),
     ]);
     let config =
-        HealthcheckConfig::from_map_with_reader(&values, |_| Ok("lagrange\n".to_owned())).unwrap();
+        HealthcheckConfig::from_map_with_reader(&values, |_| Ok("lagrange".to_owned())).unwrap();
     let pool = build_postgres_pool(&config.database);
 
     let (one, current_user): (i32, String) = sqlx::query_as("SELECT 1, current_user::text")

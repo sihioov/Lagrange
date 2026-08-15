@@ -9,6 +9,9 @@ use domain::{
     ContentHash, Currency, DatasetId, InstrumentId, Money, Price, Quantity, TradingDate,
     UtcTimestamp, Weight,
 };
+use job_queue::paper_execution::{
+    PAPER_LOCK_TIMEOUT, PAPER_STATEMENT_TIMEOUT, set_paper_transaction_timeouts,
+};
 use job_queue::paper_preview::{
     PaperPreviewError, PreviewCalculationInput, PreviewLineage, PreviewRunOutcome,
     calculate_preview, load_recommendation_closes, run_preview_once,
@@ -64,6 +67,27 @@ fn calculation_input() -> PreviewCalculationInput {
         proposed_effective_date: TradingDate::parse("2026-05-12").unwrap(),
         lineage: lineage(),
     }
+}
+
+#[tokio::test]
+async fn paper_transaction_limits_are_local_and_effective() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let mut tx = db.pool.begin().await.unwrap();
+    set_paper_transaction_timeouts(&mut tx).await.unwrap();
+    let statement: String = sqlx::query_scalar("SHOW statement_timeout")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let lock: String = sqlx::query_scalar("SHOW lock_timeout")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(statement, PAPER_STATEMENT_TIMEOUT);
+    assert_eq!(lock, PAPER_LOCK_TIMEOUT);
+    tx.rollback().await.unwrap();
+    db.drop_db().await;
 }
 
 #[test]

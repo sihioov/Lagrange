@@ -1,8 +1,9 @@
-# Lagrange Station — single-host Compose skeleton (design §13.1 service set).
+# Lagrange Station — single-host production Compose deployment.
 #
 # Security posture (design §13.3, NFR-SEC-001..003):
 #   * ONLY port 443 is published to the host (reverse-proxy -> 8443 inside).
-#   * Every image is pinned BY DIGEST (no mutable tags anywhere).
+#   * Dockerfile base images are pinned BY DIGEST. Locally built service
+#     outputs are not immutable registry image digests.
 #   * PostgreSQL and all workers are reachable only on internal networks;
 #     published ports exist on NO other service.
 #   * nt-backtest-worker-1/2 are attached ONLY to `backtest-iso`, an
@@ -14,11 +15,13 @@
 #   * Data mounts for shared datasets are read-only; per-run artifact
 #     mounts are writable only for the service that produces them.
 #
-# Service code is added by later todos (8, 22, 27, 33, 36-42); this file
-# defines the structure: digest-pinned base images, healthcheck contracts
-# (endpoints the real services must serve), networks, secrets, and mounts.
-# Placeholder worker healthchecks are replaced by real liveness probes in
-# each service's owning todo.
+# Every long-lived service below runs its checked-in production entrypoint.
+# Build contexts point at Dockerfiles with digest-pinned base images; one-shot
+# bootstrap/migration/schema services fail closed before serving workloads.
+# The API and backtest-runner images embed the exact 40-hex Git commit in their
+# OCI revision labels and runtime ENV. CI must supply LAGRANGE_CODE_COMMIT at
+# build time; Compose intentionally does not override those image-baked values
+# later.
 
 name: lagrange-station
 
@@ -56,8 +59,16 @@ services:
       # (internal /internal-artifacts/ location; never a public path).
       - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}:/data/artifacts:ro
     secrets:
-      - lagrange_tls_cert
-      - lagrange_tls_key
+      - source: reverse_proxy_tls_cert
+        target: lagrange_tls_cert
+        uid: "101"
+        gid: "101"
+        mode: 0440
+      - source: reverse_proxy_tls_key
+        target: lagrange_tls_key
+        uid: "101"
+        gid: "101"
+        mode: 0440
     networks:
       - edge
     healthcheck:
@@ -75,25 +86,28 @@ services:
         condition: service_healthy
 
   # ------------------------------------------------------------------
-  # web — Next.js 24 LTS runtime (node:24.13.1-alpine). Auth is handled
-  # by api-server (Axum is the confidential OIDC authority); the web shell
-  # forwards only the opaque session cookie, so it holds NO secrets.
-  # Stub serves GET /healthz on 3000 until Todo 25 lands the real app.
+  # web — Next.js 16 standalone runtime (node:24.13.1-alpine). Auth is handled
+  # by api-server (the web shell forwards only the opaque session cookie, so
+  # it holds no credentials). The image is built from apps/web/Dockerfile.
   # ------------------------------------------------------------------
   web:
-    image: node@sha256:4f696fbf39f383c1e486030ba6b289a5d9af541642fc78ab197e584a113b9c03 # tag: 24.13.1-alpine
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api-server:8080}
     init: true
     restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp
     logging: *default-logging
-    command: ["node", "-e", "const h=require('http');h.createServer((q,s)=>{s.writeHead(200);s.end('ok')}).listen(3000);setInterval(()=>{},1<<30)"]
+    command: ["node", "apps/web/server.js"]
     environment:
       NODE_ENV: production
       PORT: "3000"
       # Same-origin API client target (internal network; never public).
-      API_INTERNAL_URL: http://api-server:8080
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api-server:8080}
       # Public base for the login/callback handoff (no secret material).
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:-}
       AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID:-}
@@ -111,22 +125,30 @@ services:
         condition: service_healthy
 
   # ------------------------------------------------------------------
-  # api-server — Axum REST/OpenAPI authority (Todo 24).
-  # Runtime: alpine:3.21. Build stage base rust:1.97.1-alpine
-  # (sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900)
-  # is pinned in the multi-stage Dockerfile added by Todo 24.
-  # Stub serves GET /healthz on 8080 (busybox httpd) until then.
+  # api-server — Axum REST/OpenAPI authority. The multi-stage Dockerfile
+  # builds and runs the checked-in binary as UID 10001; startup validates all
+  # role-scoped pools, the cursor secret, artifact root, and dataset pin.
   # ------------------------------------------------------------------
   api-server:
-    image: alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d # tag: 3.21
+    build:
+      context: ../..
+      dockerfile: crates/api-server/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     init: true
     restart: unless-stopped
+    # The API allows 30s for in-flight HTTP requests and up to 10s for the
+    # durable audit outbox drain. Keep a margin above that 40s process budget
+    # so Docker does not send SIGKILL before graceful shutdown completes.
+    stop_grace_period: 45s
     read_only: true
     tmpfs:
       - /tmp
     logging: *default-logging
-    command: ["/bin/sh", "-c", "mkdir -p /tmp/www && printf ok > /tmp/www/healthz && exec busybox httpd -f -p 8080 -h /tmp/www"]
+    entrypoint: ["/usr/local/bin/api-server"]
     environment:
+      APP_ENV: ${API_APP_ENV:-production}
+      APP_HOST: 0.0.0.0
       APP_PORT: "8080"
       RUST_LOG: ${RUST_LOG:-info}
       DB_HOST: postgres
@@ -134,25 +156,84 @@ services:
       DB_NAME: ${POSTGRES_DB:-lagrange}
       DB_USER: app
       DB_PASSWORD_FILE: /run/secrets/db_app_password
+      ADMIN_DB_HOST: postgres
+      ADMIN_DB_PORT: "5432"
+      ADMIN_DB_NAME: ${POSTGRES_DB:-lagrange}
+      ADMIN_DB_USER: admin
+      ADMIN_DB_PASSWORD_FILE: /run/secrets/db_admin_password
+      AUDIT_DB_HOST: postgres
+      AUDIT_DB_PORT: "5432"
+      AUDIT_DB_NAME: ${POSTGRES_DB:-lagrange}
+      AUDIT_DB_USER: audit_writer
+      AUDIT_DB_PASSWORD_FILE: /run/secrets/db_audit_password
+      DB_APP_MAX_CONNECTIONS: ${DB_APP_MAX_CONNECTIONS:-16}
+      DB_ADMIN_MAX_CONNECTIONS: ${DB_ADMIN_MAX_CONNECTIONS:-4}
+      DB_AUDIT_MAX_CONNECTIONS: ${DB_AUDIT_MAX_CONNECTIONS:-4}
+      DB_ACQUIRE_TIMEOUT_SECS: ${DB_ACQUIRE_TIMEOUT_SECS:-10}
+      CURSOR_SECRET_FILE: /run/secrets/cursor_secret
+      ARTIFACT_ROOT: /data/artifacts
+      RECOMMENDATION_DATASET_VERSION_ID: ${RECOMMENDATION_DATASET_VERSION_ID:-}
+      RECOMMENDATION_DATASET_ID: ${RECOMMENDATION_DATASET_ID:-}
+      RECOMMENDATION_DATASET_VERSION: ${RECOMMENDATION_DATASET_VERSION:-}
+      RECOMMENDATION_CURATED_VERSION: ${RECOMMENDATION_CURATED_VERSION:-}
+      RECOMMENDATION_DATASET_MANIFEST_SHA256: ${RECOMMENDATION_DATASET_MANIFEST_SHA256:-}
       SESSION_COOKIE_SECURE: "true"
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:-}
       AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID:-}
+      # Must exactly match the HTTPS callback registered with Auth0. The edge
+      # routes /auth/* to this API service before the web catch-all.
+      AUTH0_REDIRECT_URI: ${AUTH0_REDIRECT_URI:-https://app.lagrange.local/auth/callback}
       AUTH0_CLIENT_SECRET_FILE: /run/secrets/auth0_client_secret
     secrets:
-      - db_app_password
-      - db_audit_password
-      - session_secret
-      - csrf_secret
-      - auth0_client_secret
+      - source: api_db_app_password
+        target: db_app_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: api_db_admin_password
+        target: db_admin_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: api_db_audit_password
+        target: db_audit_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: api_cursor_secret
+        target: cursor_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: api_session_secret
+        target: session_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: api_csrf_secret
+        target: csrf_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: api_auth0_client_secret
+        target: auth0_client_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
     volumes:
       # Read-only artifact tree: the download route hashes files against the
-      # result_artifacts manifest before issuing the internal redirect.
+      # result_artifacts manifest before issuing the internal redirect. New
+      # backtest publications live below immutable generations/<commit>/<uuid>
+      # directories; legacy replicas may still write only the old canonical
+      # run names without being able to alter a settled generation.
       - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}:/data/artifacts:ro
     networks:
       - edge
       - backend
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      # Dependency conditions must wait for all role-scoped pools and startup
+      # gates, so use readiness rather than the liveness-only endpoint.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -160,6 +241,122 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+
+  # ------------------------------------------------------------------
+  # db-role-bootstrap — idempotent role/grant bootstrap. This is a one-shot
+  # administrator operation and is intentionally separate from migrations:
+  # migration SQL never creates login roles. Every role password is read from
+  # a Docker secret file and the service must complete before migrations.
+  # ------------------------------------------------------------------
+  db-role-bootstrap:
+    build:
+      context: ../..
+      dockerfile: deploy/db/Dockerfile
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    entrypoint: ["/usr/local/bin/lagrange-bootstrap-roles"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-lagrange}
+      DB_ADMIN_USER: ${POSTGRES_USER:-lagrange}
+      DB_ADMIN_PASSWORD_FILE: /run/secrets/postgres_password
+      DB_MIGRATION_OWNER_PASSWORD_FILE: /run/secrets/db_migration_owner_password
+      DB_APP_PASSWORD_FILE: /run/secrets/db_app_password
+      DB_WORKER_PASSWORD_FILE: /run/secrets/db_worker_password
+      DB_AUDIT_PASSWORD_FILE: /run/secrets/db_audit_password
+      DB_RESEARCH_PASSWORD_FILE: /run/secrets/db_research_password
+      DB_ADMIN_ROLE_PASSWORD_FILE: /run/secrets/db_admin_password
+    secrets:
+      - source: bootstrap_postgres_password
+        target: postgres_password
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: bootstrap_db_migration_owner_password
+        target: db_migration_owner_password
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: bootstrap_db_app_password
+        target: db_app_password
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: bootstrap_db_worker_password
+        target: db_worker_password
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: bootstrap_db_audit_password
+        target: db_audit_password
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: bootstrap_db_research_password
+        target: db_research_password
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: bootstrap_db_admin_password
+        target: db_admin_password
+        uid: "999"
+        gid: "999"
+        mode: 0400
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ------------------------------------------------------------------
+  # db-migrate — one-shot SQLx migration gate. It runs as migration_owner
+  # using component-mode DB_* settings and the mounted migration-owner
+  # password file, then every serving/worker service depends on successful
+  # completion. It never runs as a serving role and never accepts plaintext
+  # credentials.
+  # ------------------------------------------------------------------
+  db-migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/db/Dockerfile
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    entrypoint: ["/usr/local/bin/lagrange-migrate"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-lagrange}
+      DB_USER: migration_owner
+      DB_PASSWORD_FILE: /run/secrets/db_migration_owner_password
+      MIGRATIONS_DIR: /opt/lagrange/migrations
+    secrets:
+      - source: migrate_db_migration_owner_password
+        target: db_migration_owner_password
+        uid: "999"
+        gid: "999"
+        mode: 0400
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-role-bootstrap:
+        condition: service_completed_successfully
 
   # ------------------------------------------------------------------
   # postgres — PostgreSQL 18 (18.4). Internal-only; never published.
@@ -175,14 +372,16 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-lagrange}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
-      - postgres_password
+      - source: postgres_postgres_password
+        target: postgres_password
+        uid: "999"
+        gid: "999"
+        mode: 0440
     volumes:
       # DB data on a dedicated named volume (backed up by deploy/backup/).
       # Mounted at /var/lib/postgresql, NOT /var/lib/postgresql/data: the
-      # PG18 images keep data in a major-version subdirectory
-      # (/var/lib/postgresql/18/docker) and the entrypoint refuses to start
-      # when it finds a volume on the pre-18 path. Proven by the Todo 33
-      # restore drill, which hit exactly this on the same pinned digest.
+      # PG18 image keeps data in a major-version subdirectory
+      # (/var/lib/postgresql/18/docker) and refuses the pre-18 path.
       - pgdata:/var/lib/postgresql
     networks:
       - backend
@@ -230,8 +429,8 @@ services:
 
   # ------------------------------------------------------------------
   # research-schema-check — fail-closed migration/role contract gate.
-  # This service never migrates. Operators must apply migrations externally;
-  # only then can Compose start research-worker.
+  # This service never mutates schema. The db-migrate one-shot must complete;
+  # only then can this exact contract gate research-worker.
   # ------------------------------------------------------------------
   research-schema-check:
     image: postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a # tag: 18.4
@@ -256,7 +455,11 @@ services:
       DB_USER: ${POSTGRES_USER:-lagrange}
       DB_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
-      - postgres_password
+      - source: schema_check_postgres_password
+        target: postgres_password
+        uid: "999"
+        gid: "999"
+        mode: 0440
     volumes:
       - type: bind
         source: ./research-schema-check.sql
@@ -267,9 +470,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
 
   # ------------------------------------------------------------------
-  # research-worker — KRX ingestion/curation/catalog (Todo 8-13).
+  # research-worker — KRX ingestion/curation/catalog.
   # The ONLY data-collection worker; it needs internet egress for the
   # licensed KRX source, so it sits on `backend` (not internal).
   # Writes Raw evidence only. Publication metadata is written through the
@@ -289,11 +494,12 @@ services:
     cpus: "2"
     mem_limit: 4g
     environment:
-      # Development/QA defaults to the deterministic fixture. Setting
-      # APP_ENV=production while leaving synthetic mode enabled is rejected
-      # by the binary before it reads secrets or touches the filesystem.
-      APP_ENV: ${APP_ENV:-development}
-      RESEARCH_FETCH_MODE: ${RESEARCH_FETCH_MODE:-synthetic}
+      # Production Compose requires an explicit environment selection. The
+      # deterministic fixture is available only through an explicit
+      # nonproduction override, e.g. RESEARCH_APP_ENV=qa together with
+      # RESEARCH_FETCH_MODE=synthetic.
+      APP_ENV: ${RESEARCH_APP_ENV:?RESEARCH_APP_ENV must be explicitly set (production for deployment; qa/development only for fixture runs)}
+      RESEARCH_FETCH_MODE: ${RESEARCH_FETCH_MODE:-credentialed}
       RESEARCH_RUN_AT_KST: ${RESEARCH_RUN_AT_KST:-16:30}
       RESEARCH_MAX_PUBLICATION_AGE_SECS: ${RESEARCH_MAX_PUBLICATION_AGE_SECS:-345600}
       RESEARCH_RAW_ROOT: /data
@@ -305,8 +511,16 @@ services:
       DB_PASSWORD_FILE: /run/secrets/db_research_password
       KRX_CREDENTIAL_FILE: /run/secrets/krx_api_key
     secrets:
-      - db_research_password
-      - krx_api_key
+      - source: research_db_research_password
+        target: db_research_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_krx_api_key
+        target: krx_api_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
     networks:
@@ -316,10 +530,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       research-raw-init:
         condition: service_completed_successfully
       research-schema-check:
@@ -345,7 +561,7 @@ services:
     cpus: "2"
     mem_limit: 4g
     environment:
-      APP_ENV: ${RECOMMENDATION_APP_ENV:?RECOMMENDATION_APP_ENV must be set}
+      APP_ENV: ${RECOMMENDATION_APP_ENV:-production}
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
@@ -382,7 +598,11 @@ services:
       - --child-timeout-ms
       - "120000"
     secrets:
-      - db_worker_password
+      - source: recommendation_db_worker_password
+        target: db_worker_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated:ro
       - ../../configs/universes/kr-etf-core-v1.yaml:/opt/lagrange/configs/universes/kr-etf-core-v1.yaml:ro
@@ -397,43 +617,69 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
 
   # ------------------------------------------------------------------
-  # nt-backtest-worker-1 / nt-backtest-worker-2 — NautilusTrader backtests
-  # (Todo 20). Design §13.3: NO internet. Attached ONLY to `backtest-iso`
-  # (internal: true, no default route). Read-only dataset/catalog mounts;
-  # writable per-run artifact mount; DB access via postgres on backtest-iso.
+  # nt-backtest-worker-1 / nt-backtest-worker-2 — real queue daemons running
+  # the checked-in Rust supervisor and pinned NT child image. Design §13.3:
+  # NO internet. Attached ONLY to `backtest-iso` (internal: true, no default
+  # route). Read-only dataset/catalog mounts; writable per-run artifact mount;
+  # DB access via postgres on backtest-iso. The Rust runner publishes into
+  # immutable generations/<commit>/<publication-uuid>; the old canonical
+  # <run>/artifacts names remain compatibility-only for pre-isolation replicas.
   # ------------------------------------------------------------------
   nt-backtest-worker-1:
-    image: python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db # tag: 3.12.10-slim
+    build:
+      context: ../..
+      dockerfile: crates/job-queue/Dockerfile.backtest-runner
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     init: true
     restart: unless-stopped
+    # The supervisor needs its full 15s drain budget to terminate a child,
+    # settle the claim, and let the lease sweeper own anything unfinished.
+    # Docker's default 10s stop timeout would cut that recovery path short.
+    stop_grace_period: 20s
     read_only: true
     tmpfs:
       - /tmp
     logging: *default-logging
-    command: ["python", "-c", "import time; time.sleep(1e9)"] # placeholder; replaced in Todo 20
+    entrypoint: ["/usr/local/bin/backtest-runner"]
     cpus: "4"
     mem_limit: 6g
     environment:
+      APP_ENV: production
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
       DB_USER: worker
       DB_PASSWORD_FILE: /run/secrets/db_worker_password
+      LAGRANGE_REPO_ROOT: /opt/lagrange
+      LAGRANGE_DATASET_ROOT: /data
+      LAGRANGE_ARTIFACTS_ROOT: /data/artifacts/backtest/runs
+      LAGRANGE_UV_BIN: /usr/local/bin/uv
       DATA_CATALOG_DIR: /data/nautilus_catalog
       DATA_CURATED_DIR: /data/curated
       ARTIFACT_RUN_DIR: /data/artifacts/backtest/runs
+      BACKTEST_MIN_FREE_BYTES: ${BACKTEST_MIN_FREE_BYTES:?BACKTEST_MIN_FREE_BYTES must be set}
+      BACKTEST_MAX_QUEUED_BACKTESTS: ${BACKTEST_MAX_QUEUED_BACKTESTS:?BACKTEST_MAX_QUEUED_BACKTESTS must be set}
+      BACKTEST_RECONCILE_GRACE_SECS: ${BACKTEST_RECONCILE_GRACE_SECS:?BACKTEST_RECONCILE_GRACE_SECS must be set}
+      BACKTEST_RECONCILE_INTERVAL_SECS: ${BACKTEST_RECONCILE_INTERVAL_SECS:?BACKTEST_RECONCILE_INTERVAL_SECS must be set}
     secrets:
-      - db_worker_password
+      - source: backtest_1_db_worker_password
+        target: db_worker_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated:ro
       - ${LAGRANGE_DATA_DIR:-../data}/nautilus_catalog:/data/nautilus_catalog:ro
-      - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}/backtest:/data/artifacts/backtest
+      - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}/backtest/runs:/data/artifacts/backtest/runs
     networks:
       - backtest-iso
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import sys'"] # process-alive placeholder (Todo 20)
+      test: ["CMD", "/usr/local/bin/backtest-runner", "readiness"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -441,37 +687,57 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
 
   nt-backtest-worker-2:
-    image: python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db # tag: 3.12.10-slim
+    build:
+      context: ../..
+      dockerfile: crates/job-queue/Dockerfile.backtest-runner
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     init: true
     restart: unless-stopped
+    stop_grace_period: 20s
     read_only: true
     tmpfs:
       - /tmp
     logging: *default-logging
-    command: ["python", "-c", "import time; time.sleep(1e9)"] # placeholder; replaced in Todo 20
+    entrypoint: ["/usr/local/bin/backtest-runner"]
     cpus: "4"
     mem_limit: 6g
     environment:
+      APP_ENV: production
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
       DB_USER: worker
       DB_PASSWORD_FILE: /run/secrets/db_worker_password
+      LAGRANGE_REPO_ROOT: /opt/lagrange
+      LAGRANGE_DATASET_ROOT: /data
+      LAGRANGE_ARTIFACTS_ROOT: /data/artifacts/backtest/runs
+      LAGRANGE_UV_BIN: /usr/local/bin/uv
       DATA_CATALOG_DIR: /data/nautilus_catalog
       DATA_CURATED_DIR: /data/curated
       ARTIFACT_RUN_DIR: /data/artifacts/backtest/runs
+      BACKTEST_MIN_FREE_BYTES: ${BACKTEST_MIN_FREE_BYTES:?BACKTEST_MIN_FREE_BYTES must be set}
+      BACKTEST_MAX_QUEUED_BACKTESTS: ${BACKTEST_MAX_QUEUED_BACKTESTS:?BACKTEST_MAX_QUEUED_BACKTESTS must be set}
+      BACKTEST_RECONCILE_GRACE_SECS: ${BACKTEST_RECONCILE_GRACE_SECS:?BACKTEST_RECONCILE_GRACE_SECS must be set}
+      BACKTEST_RECONCILE_INTERVAL_SECS: ${BACKTEST_RECONCILE_INTERVAL_SECS:?BACKTEST_RECONCILE_INTERVAL_SECS must be set}
     secrets:
-      - db_worker_password
+      - source: backtest_2_db_worker_password
+        target: db_worker_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated:ro
       - ${LAGRANGE_DATA_DIR:-../data}/nautilus_catalog:/data/nautilus_catalog:ro
-      - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}/backtest:/data/artifacts/backtest
+      - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}/backtest/runs:/data/artifacts/backtest/runs
     networks:
       - backtest-iso
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import sys'"] # process-alive placeholder (Todo 20)
+      test: ["CMD", "/usr/local/bin/backtest-runner", "readiness"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -479,88 +745,99 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
 
   # ------------------------------------------------------------------
-  # paper-scheduler — scheduled per-user Paper runs (Todo 29-31).
+  # paper-scheduler — scheduled per-user Paper runs. The Rust worker image
+  # consumes four role-scoped DB component/password-file boundaries and its
+  # healthcheck probes all four pools, the curated dataset root, and the
+  # daemon's non-secret loop-progress state.
   # ------------------------------------------------------------------
   paper-scheduler:
-    image: python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db # tag: 3.12.10-slim
+    build:
+      context: ../..
+      dockerfile: deploy/runtime/Dockerfile.paper-runner
     init: true
     restart: unless-stopped
+    # The daemon's bounded shutdown contract is 20s; leave systemd/Docker
+    # enough time to observe SIGTERM, cancel in-flight stages, and close pools.
+    stop_grace_period: 30s
     read_only: true
     tmpfs:
       - /tmp
     logging: *default-logging
-    command: ["python", "-c", "import time; time.sleep(1e9)"] # placeholder; replaced in Todo 29
+    entrypoint: ["/usr/local/bin/paper-runner"]
     cpus: "1"
     mem_limit: 2g
     environment:
+      APP_ENV: ${PAPER_APP_ENV:-production}
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
-      DB_USER: app
-      DB_PASSWORD_FILE: /run/secrets/db_app_password
+      PAPER_APP_DB_USER: app
+      PAPER_APP_DB_PASSWORD_FILE: /run/secrets/db_app_password
+      PAPER_WORKER_DB_USER: worker
+      PAPER_WORKER_DB_PASSWORD_FILE: /run/secrets/db_worker_password
+      PAPER_ADMIN_DB_USER: admin
+      PAPER_ADMIN_DB_PASSWORD_FILE: /run/secrets/db_admin_password
+      PAPER_AUDIT_DB_USER: audit_writer
+      PAPER_AUDIT_DB_PASSWORD_FILE: /run/secrets/db_audit_password
+      LAGRANGE_REPO_ROOT: /opt/lagrange
+      LAGRANGE_DATASET_ROOT: /data
       ARTIFACT_PAPER_DIR: /data/artifacts/paper
+      PAPER_HEALTH_STATE_PATH: /tmp/paper-runner-health.json
+      PAPER_HEALTH_MAX_AGE_SECS: ${PAPER_HEALTH_MAX_AGE_SECS:-30}
+      PAPER_OPERATION_TIMEOUT_MS: ${PAPER_OPERATION_TIMEOUT_MS:-15000}
+      PAPER_CYCLE_TIMEOUT_MS: ${PAPER_CYCLE_TIMEOUT_MS:-90000}
+      PAPER_SHUTDOWN_GRACE_MS: ${PAPER_SHUTDOWN_GRACE_MS:-20000}
     secrets:
-      - db_app_password
+      - source: paper_db_app_password
+        target: db_app_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: paper_db_worker_password
+        target: db_worker_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: paper_db_admin_password
+        target: db_admin_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: paper_db_audit_password
+        target: db_audit_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
     volumes:
-      - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated:ro
-      - ${LAGRANGE_DATA_DIR:-../data}/nautilus_catalog:/data/nautilus_catalog:ro
+      - ${LAGRANGE_DATA_DIR:-../data}:/data:ro
       - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}/paper:/data/artifacts/paper
     networks:
       - backend
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import sys'"] # process-alive placeholder (Todo 29)
+      test: ["CMD", "/usr/local/bin/paper-runner", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       api-server:
         condition: service_healthy
 
   # ------------------------------------------------------------------
-  # report-worker — performance/report generation (Todo 30-31).
-  # ------------------------------------------------------------------
-  report-worker:
-    image: python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db # tag: 3.12.10-slim
-    init: true
-    restart: unless-stopped
-    read_only: true
-    tmpfs:
-      - /tmp
-    logging: *default-logging
-    command: ["python", "-c", "import time; time.sleep(1e9)"] # placeholder; replaced in Todo 30
-    cpus: "1"
-    mem_limit: 2g
-    environment:
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_NAME: ${POSTGRES_DB:-lagrange}
-      DB_USER: app
-      DB_PASSWORD_FILE: /run/secrets/db_app_password
-      ARTIFACT_REPORT_DIR: /data/artifacts/reports
-    secrets:
-      - db_app_password
-    volumes:
-      - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated:ro
-      - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}/reports:/data/artifacts/reports
-    networks:
-      - backend
-    healthcheck:
-      test: ["CMD-SHELL", "python -c 'import sys'"] # process-alive placeholder (Todo 30)
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    depends_on:
-      postgres:
-        condition: service_healthy
-      api-server:
-        condition: service_healthy
-
+  # No report-worker is declared. The repository has no report job payload,
+  # claimant/settlement protocol, or report artifact producer; report views
+  # are API read paths over existing backtest/Paper artifacts. Keeping a
+  # sleeping container here would falsely report healthy while leaving jobs
+  # queued, so deployment is intentionally disabled until that contract is
+  # specified and implemented.
   # ------------------------------------------------------------------
   # metrics — Prometheus (optional, `monitoring` profile). Scrapes the
   # api-server /metrics endpoint over the internal backend network.
@@ -596,13 +873,19 @@ services:
         condition: service_started
 
   # ------------------------------------------------------------------
-  # live-node-owner — Owner-only KIS Live (Phase 3, Todo 36-42).
-  # PROFILE-GATED (`live`): inactive by default; activated ONLY with
-  # `docker compose --profile live up`. Never part of the default set.
-  # Needs egress to KIS, hence `backend`.
+  # live-node-owner — Owner-only Live profile. PROFILE-GATED (`live`):
+  # inactive by default; activated ONLY with `docker compose --profile live
+  # up`. The checked-in image is a deterministic credential-free simulator:
+  # it holds the account lock and reconciles continuously, but its trade
+  # readiness remains false. It has no broker credentials, database
+  # dependency, network attachment, or order-submission path. A future KIS
+  # execution loop requires a separately reviewed image and deployment
+  # contract; enabling this profile cannot silently provision one.
   # ------------------------------------------------------------------
   live-node-owner:
-    image: python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db # tag: 3.12.10-slim
+    build:
+      context: ../..
+      dockerfile: nt/live-node/Dockerfile
     profiles: ["live"]
     init: true
     restart: unless-stopped
@@ -610,81 +893,103 @@ services:
     tmpfs:
       - /tmp
     logging: *default-logging
-    command: ["python", "-c", "import time; time.sleep(1e9)"] # placeholder; replaced in Todo 36
+    entrypoint: ["/usr/local/bin/live-node"]
     cpus: "1"
     mem_limit: 2g
     environment:
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_NAME: ${POSTGRES_DB:-lagrange}
-      DB_USER: app
-      DB_PASSWORD_FILE: /run/secrets/db_app_password
-      KIS_APP_KEY_FILE: /run/secrets/kis_app_key
-      KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret
-      KIS_ACCOUNT_REF_FILE: /run/secrets/kis_account_ref
-      ARTIFACT_LIVE_DIR: /data/artifacts/live
-    secrets:
-      - db_app_password
-      - kis_app_key
-      - kis_app_secret
-      - kis_account_ref
-    volumes:
-      - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated:ro
-      - ${LAGRANGE_DATA_DIR:-../data}/nautilus_catalog:/data/nautilus_catalog:ro
-      - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}/live:/data/artifacts/live
-    networks:
-      - backend
+      LIVE_NODE_MODE: ${LIVE_NODE_MODE:-disabled}
+      LIVE_NODE_DRY_RUN: ${LIVE_NODE_DRY_RUN:-1}
+      LIVE_NODE_ACCOUNT_ID: ${LIVE_NODE_ACCOUNT_ID:-disabled}
+      LIVE_NODE_RECONCILIATION_INTERVAL_SECONDS: ${LIVE_NODE_RECONCILIATION_INTERVAL_SECONDS:-30}
+      LIVE_NODE_KILL_SWITCH: ${LIVE_NODE_KILL_SWITCH:-0}
+      LIVE_NODE_RISK_GATE: ${LIVE_NODE_RISK_GATE:-green}
+      LIVE_NODE_RECONCILIATION_GATE: ${LIVE_NODE_RECONCILIATION_GATE:-green}
+      LIVE_NODE_DATA_FRESH: ${LIVE_NODE_DATA_FRESH:-1}
+      LIVE_NODE_GATE_FILE: ${LIVE_NODE_GATE_FILE:-}
+    # No network namespace, bind mounts, or Docker secrets are needed by the
+    # credential-free simulator.  This prevents accidental egress or secret
+    # exposure if an unrelated environment variable is added later.
+    network_mode: none
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import sys'"] # process-alive placeholder (Todo 36)
+      # Liveness is intentionally separate from readiness. `readiness` exits
+      # non-zero while disabled/dry-run because no real KIS loop exists.
+      test: ["CMD", "/usr/local/bin/live-node", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-    depends_on:
-      postgres:
-        condition: service_healthy
-      api-server:
-        condition: service_healthy
 
 # ----------------------------------------------------------------------
-# Secrets. Each maps to a file under ../secrets/ (see ../secrets/README.md).
-# Values are injected at runtime under /run/secrets/<name>; never inline.
+# Secrets. `provision-runtime-secrets.sh` creates service-specific copies under
+# the runtime directory with numeric ownership (101 nginx, 999 postgres,
+# 10001 application workers, and 999 for non-root database one-shot jobs).
+# Compose's long-syntax mode is defense in depth; native Linux bind-backed secrets still
+# rely on these host permissions. Values are injected under /run/secrets.
 # ----------------------------------------------------------------------
 secrets:
-  postgres_password:
-    file: ${LAGRANGE_POSTGRES_PASSWORD_SECRET_SOURCE:-../secrets/postgres_password}
-  db_app_password:
-    file: ../secrets/db_app_password
-  db_worker_password:
-    file: ../secrets/db_worker_password
-  db_research_password:
-    file: ${LAGRANGE_DB_RESEARCH_PASSWORD_SECRET_SOURCE:-../secrets/db_research_password}
-  db_audit_password:
-    file: ../secrets/db_audit_password
-  session_secret:
-    file: ../secrets/session_secret
-  csrf_secret:
-    file: ../secrets/csrf_secret
-  auth0_client_secret:
-    file: ../secrets/auth0_client_secret
-  krx_api_key:
-    file: ${LAGRANGE_KRX_API_KEY_SECRET_SOURCE:-../secrets/krx_api_key}
-  kis_app_key:
-    file: ../secrets/kis_app_key
-  kis_app_secret:
-    file: ../secrets/kis_app_secret
-  kis_account_ref:
-    file: ../secrets/kis_account_ref
-  lagrange_tls_cert:
-    file: ../secrets/tls/lagrange.crt
-  lagrange_tls_key:
-    file: ../secrets/tls/lagrange.key
+  reverse_proxy_tls_cert:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/reverse-proxy/lagrange_tls_cert
+  reverse_proxy_tls_key:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/reverse-proxy/lagrange_tls_key
+  api_db_app_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/api-server/db_app_password
+  api_db_admin_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/api-server/db_admin_password
+  api_db_audit_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/api-server/db_audit_password
+  api_cursor_secret:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/api-server/cursor_secret
+  api_session_secret:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/api-server/session_secret
+  api_csrf_secret:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/api-server/csrf_secret
+  api_auth0_client_secret:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/api-server/auth0_client_secret
+  bootstrap_postgres_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/postgres_password
+  bootstrap_db_migration_owner_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/db_migration_owner_password
+  bootstrap_db_app_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/db_app_password
+  bootstrap_db_worker_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/db_worker_password
+  bootstrap_db_audit_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/db_audit_password
+  bootstrap_db_research_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/db_research_password
+  bootstrap_db_admin_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/db_admin_password
+  migrate_db_migration_owner_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-migrate/db_migration_owner_password
+  postgres_postgres_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/postgres/postgres_password
+  schema_check_postgres_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-schema-check/postgres_password
+  research_db_research_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-worker/db_research_password
+  research_krx_api_key:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-worker/krx_api_key
+  recommendation_db_worker_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/recommendation-runner/db_worker_password
+  backtest_1_db_worker_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/nt-backtest-worker-1/db_worker_password
+  backtest_2_db_worker_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/nt-backtest-worker-2/db_worker_password
+  paper_db_app_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/paper-scheduler/db_app_password
+  paper_db_worker_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/paper-scheduler/db_worker_password
+  paper_db_admin_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/paper-scheduler/db_admin_password
+  paper_db_audit_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/paper-scheduler/db_audit_password
 
 # ----------------------------------------------------------------------
 # Networks (design §13.3).
 #   edge        internal:true — reverse-proxy/web/api-server only.
 #   backend     has egress — api-server (Auth0), research-worker (KRX),
-#               paper/report (queue), live-node-owner (KIS, profile-gated).
+#               paper-scheduler (queue). The profile-gated live-node-owner
+#               uses network_mode:none and has no external dependency.
 #   backtest-iso internal:true — nt-backtest-worker-1/2 + postgres ONLY.
 #               No default route => no internet for backtest workers.
 # ----------------------------------------------------------------------
@@ -702,4 +1007,3 @@ networks:
 volumes:
   pgdata:
     name: ${LAGRANGE_PGDATA_VOLUME:-lagrange-station-pgdata}
-

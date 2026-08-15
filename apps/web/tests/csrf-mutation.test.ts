@@ -68,6 +68,7 @@ describe("CSRF-aware browser mutations", () => {
       { method: "POST", url: "https://lagrange.test/api/v1/auth/logout" },
     ]);
     expect(api.calls[0]?.cache).toBe("no-store");
+    expect(api.calls[0]?.credentials).toBe("same-origin");
     expect(api.calls[1]?.cache).toBe("no-store");
     expect(api.calls[1]?.credentials).toBe("same-origin");
     expect(api.calls[1]?.csrf).toBe("synchronizer-owner");

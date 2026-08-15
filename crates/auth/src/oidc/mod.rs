@@ -28,6 +28,13 @@ use std::sync::{Arc, RwLock};
 use url::Url;
 
 pub const DEFAULT_PENDING_TTL_SECS: i64 = 300;
+pub const DEFAULT_CLOCK_SKEW_SECS: i64 = 60;
+pub const MAX_CLOCK_SKEW_SECS: i64 = 300;
+/// Maximum number of in-flight browser authorization transactions retained by
+/// one process. Production should use a shared pending store before running
+/// more than one API replica; this bound is a fail-closed local guard, not a
+/// distributed coordination mechanism.
+pub const DEFAULT_PENDING_AUTH_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub struct OidcProviderConfig {
@@ -150,7 +157,11 @@ impl OidcClient {
         if state != pending.state {
             return Err(OidcError::StateMismatch);
         }
-        if now_secs > pending.created_at_secs + pending.ttl_secs {
+        let expires_at = pending
+            .created_at_secs
+            .checked_add(pending.ttl_secs)
+            .ok_or(OidcError::PendingExpired)?;
+        if now_secs > expires_at {
             return Err(OidcError::PendingExpired);
         }
         let request = TokenRequest {
@@ -232,8 +243,19 @@ impl OidcClient {
                 got: claims.aud.clone(),
             });
         }
+        self.enforce_authorized_party(claims)?;
         let skew = self.config.clock_skew_secs;
-        if claims.exp + skew < now {
+        if !(0..=MAX_CLOCK_SKEW_SECS).contains(&skew) {
+            return Err(OidcError::InvalidClockSkew);
+        }
+        let expiry_with_skew = claims
+            .exp
+            .checked_add(skew)
+            .ok_or(OidcError::TokenExpired {
+                exp: claims.exp,
+                now,
+            })?;
+        if expiry_with_skew < now {
             return Err(OidcError::TokenExpired {
                 exp: claims.exp,
                 now,
@@ -246,6 +268,22 @@ impl OidcClient {
         }
         Ok(())
     }
+
+    /// OIDC Core requires `azp` when an ID token has more than one audience.
+    /// When present (including for a single-audience token), it must identify
+    /// this confidential client rather than another audience recipient.
+    fn enforce_authorized_party(&self, claims: &IdTokenClaims) -> Result<(), OidcError> {
+        match (claims.aud.len() > 1, claims.azp.as_deref()) {
+            (true, None) => Err(OidcError::AuthorizedPartyMissing),
+            (_, Some(azp)) if azp != self.config.client_id => {
+                Err(OidcError::AuthorizedPartyMismatch {
+                    expected: self.config.client_id.clone(),
+                    got: azp.to_string(),
+                })
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Single-use server-side store for in-flight authorize state.
@@ -255,22 +293,69 @@ pub trait PendingAuthStore: Send + Sync {
     async fn take(&self, state: &str) -> Result<Option<PendingAuth>, OidcError>;
 }
 
-/// In-memory pending-auth store (Todo 22). Bounded by a TTL sweep on insert;
-/// the shared PostgreSQL store lands with Todo 3/23 alongside `web_sessions`.
-#[derive(Debug, Default)]
+/// In-memory pending-auth store (Todo 22).
+///
+/// It is intentionally bounded. Inserts sweep expired transactions and, when
+/// still full, reject the new admission. Live `(created_at, state)` entries
+/// are never evicted: doing so would strand a browser with an apparently valid
+/// callback that can no longer be consumed. The shared PostgreSQL store
+/// remains required before horizontal replicas are enabled.
+#[derive(Debug)]
 pub struct InMemoryPendingAuthStore {
     inner: RwLock<std::collections::HashMap<String, PendingAuth>>,
+    capacity: usize,
+}
+
+impl Default for InMemoryPendingAuthStore {
+    fn default() -> Self {
+        Self::with_capacity(DEFAULT_PENDING_AUTH_CAPACITY)
+    }
+}
+
+impl InMemoryPendingAuthStore {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            inner: RwLock::new(std::collections::HashMap::new()),
+            capacity,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.read().map(|map| map.len()).unwrap_or_default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 #[async_trait::async_trait]
 impl PendingAuthStore for InMemoryPendingAuthStore {
     async fn insert(&self, state: String, pending: PendingAuth) -> Result<(), OidcError> {
+        if pending.ttl_secs < 0
+            || pending
+                .created_at_secs
+                .checked_add(pending.ttl_secs)
+                .is_none()
+        {
+            return Err(OidcError::Store("invalid pending auth lifetime".into()));
+        }
         let mut map = self
             .inner
             .write()
             .map_err(|_| OidcError::Store("lock".into()))?;
-        let cutoff = pending.created_at_secs;
-        map.retain(|_, p| p.created_at_secs + p.ttl_secs >= cutoff);
+        if self.capacity == 0 {
+            return Err(OidcError::Store("pending auth capacity is zero".into()));
+        }
+        let now = pending.created_at_secs;
+        map.retain(|_, p| {
+            p.created_at_secs
+                .checked_add(p.ttl_secs)
+                .is_some_and(|expires_at| now <= expires_at)
+        });
+        if !map.contains_key(&state) && map.len() >= self.capacity {
+            return Err(OidcError::Store("pending auth capacity reached".into()));
+        }
         map.insert(state, pending);
         Ok(())
     }
@@ -314,8 +399,14 @@ pub enum OidcError {
     IssuerMismatch { expected: String, got: String },
     #[error("audience mismatch: expected {expected}, got {got:?}")]
     AudienceMismatch { expected: String, got: Vec<String> },
+    #[error("authorized party (azp) is required for a multi-audience ID token")]
+    AuthorizedPartyMissing,
+    #[error("authorized party mismatch: expected {expected}, got {got}")]
+    AuthorizedPartyMismatch { expected: String, got: String },
     #[error("token expired at {exp}, now {now}")]
     TokenExpired { exp: i64, now: i64 },
+    #[error("OIDC clock skew is outside the permitted range")]
+    InvalidClockSkew,
     #[error("nonce mismatch")]
     NonceMismatch,
     #[error("invalid JWKS document: {0}")]
@@ -343,7 +434,10 @@ impl OidcError {
             Self::MissingKeyMaterial(_) => "KEY_MATERIAL_MISSING",
             Self::IssuerMismatch { .. } => "ISSUER_MISMATCH",
             Self::AudienceMismatch { .. } => "AUDIENCE_MISMATCH",
+            Self::AuthorizedPartyMissing => "AUTHORIZED_PARTY_MISSING",
+            Self::AuthorizedPartyMismatch { .. } => "AUTHORIZED_PARTY_MISMATCH",
             Self::TokenExpired { .. } => "TOKEN_EXPIRED",
+            Self::InvalidClockSkew => "CLOCK_SKEW_INVALID",
             Self::NonceMismatch => "NONCE_MISMATCH",
             Self::InvalidJwks(_) => "INVALID_JWKS",
             Self::Base64Decode => "BASE64_DECODE",

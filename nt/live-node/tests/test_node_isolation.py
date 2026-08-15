@@ -13,13 +13,57 @@ a host, which is what this closes.
 """
 from __future__ import annotations
 
+import multiprocessing as mp
 import os
+from queue import Empty
 
 import pytest
 
 from live_node.isolation import AccountLock, NodeAlreadyRunning
 
 ACCOUNT = "acct-live-1"
+
+
+def _stale_reclaim_worker(
+    lock_dir: str,
+    account: str,
+    rounds: int,
+    start_barrier,
+    finish_barrier,
+    done_barrier,
+    results,
+) -> None:
+    """Race one account lock repeatedly from independent processes."""
+
+    for round_number in range(rounds):
+        start_barrier.wait(timeout=20)
+        lock = AccountLock(lock_dir, account)
+        acquired = False
+        try:
+            holder = lock.acquire()
+        except NodeAlreadyRunning as exc:
+            results.put((round_number, "refused", os.getpid(), exc.holder.pid))
+        else:
+            acquired = True
+            results.put((round_number, "acquired", os.getpid(), holder.pid))
+
+        # Keep the winner alive until every contender has observed the result;
+        # otherwise a fast worker exit would leave a stale lock for the next
+        # round and make the test exercise process cleanup instead of mutual
+        # exclusion.
+        finish_barrier.wait(timeout=20)
+        if acquired:
+            lock.release()
+        done_barrier.wait(timeout=20)
+
+
+def _live_holder_worker(lock_dir: str, account: str, started, release, results) -> None:
+    lock = AccountLock(lock_dir, account)
+    holder = lock.acquire()
+    results.put(holder.pid)
+    started.set()
+    release.wait(timeout=20)
+    lock.release()
 
 
 def test_a_second_node_for_the_same_account_is_refused(tmp_path):
@@ -34,6 +78,15 @@ def test_a_second_node_for_the_same_account_is_refused(tmp_path):
     # process is really the one they think it is.
     assert excinfo.value.holder.pid == os.getpid()
     assert ACCOUNT in str(excinfo.value)
+
+
+def test_a_repeated_acquire_does_not_lose_the_original_ownership(tmp_path):
+    lock = AccountLock(tmp_path, ACCOUNT)
+    lock.acquire()
+    with pytest.raises(NodeAlreadyRunning):
+        lock.acquire()
+    lock.release()
+    assert not lock.path.exists()
 
 
 def test_different_accounts_do_not_block_each_other(tmp_path):
@@ -78,6 +131,96 @@ def test_a_lock_held_by_a_live_process_is_never_reclaimed(tmp_path):
         AccountLock(tmp_path, ACCOUNT).acquire()
 
 
+def test_concurrent_stale_reclamation_has_one_winner_every_time(tmp_path):
+    """A dead holder is reclaimed by exactly one synchronized starter."""
+
+    context = mp.get_context("spawn")
+    workers = 6
+    rounds = 12
+    start_barrier = context.Barrier(workers + 1)
+    finish_barrier = context.Barrier(workers + 1)
+    done_barrier = context.Barrier(workers + 1)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_stale_reclaim_worker,
+            args=(
+                str(tmp_path),
+                ACCOUNT,
+                rounds,
+                start_barrier,
+                finish_barrier,
+                done_barrier,
+                results,
+            ),
+        )
+        for _ in range(workers)
+    ]
+    lock_path = tmp_path / f"live-node-{ACCOUNT}.lock"
+
+    for process in processes:
+        process.start()
+    completed = False
+    try:
+        for round_number in range(rounds):
+            # This PID is intentionally outside the process table. Every
+            # starter therefore has the same stale holder to reclaim.
+            lock_path.write_text(f"999999999\n{ACCOUNT}", encoding="utf-8")
+            start_barrier.wait(timeout=20)
+            finish_barrier.wait(timeout=20)
+            observed = []
+            for _ in range(workers):
+                try:
+                    observed.append(results.get(timeout=20))
+                except Empty:
+                    pytest.fail("a stale-lock contender did not report")
+            assert [item[0] for item in observed] == [round_number] * workers
+            assert sum(item[1] == "acquired" for item in observed) == 1
+            assert sum(item[1] == "refused" for item in observed) == workers - 1
+            done_barrier.wait(timeout=20)
+            assert not lock_path.exists()
+        completed = True
+    finally:
+        if not completed:
+            for barrier in (start_barrier, finish_barrier, done_barrier):
+                barrier.abort()
+        for process in processes:
+            process.join(timeout=20)
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=20)
+
+    assert all(process.exitcode == 0 for process in processes)
+
+
+def test_a_live_holder_cannot_be_stolen_by_another_process(tmp_path):
+    context = mp.get_context("spawn")
+    started = context.Event()
+    release = context.Event()
+    results = context.Queue()
+    process = context.Process(
+        target=_live_holder_worker,
+        args=(str(tmp_path), ACCOUNT, started, release, results),
+    )
+    process.start()
+    try:
+        assert started.wait(timeout=20)
+        assert results.get(timeout=20) == process.pid
+        with pytest.raises(NodeAlreadyRunning) as excinfo:
+            AccountLock(tmp_path, ACCOUNT).acquire()
+        assert excinfo.value.holder.pid == process.pid
+        assert (tmp_path / f"live-node-{ACCOUNT}.lock").exists()
+    finally:
+        release.set()
+        process.join(timeout=20)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=20)
+    assert process.exitcode == 0
+    assert not (tmp_path / f"live-node-{ACCOUNT}.lock").exists()
+
+
 def test_a_corrupt_lock_refuses_rather_than_clearing_itself(tmp_path):
     # An unreadable lock is a fault someone should look at, not something to
     # silently clear -- clearing it is indistinguishable from stealing a live
@@ -91,11 +234,13 @@ def test_a_corrupt_lock_refuses_rather_than_clearing_itself(tmp_path):
 
 def test_release_does_not_delete_a_successors_claim(tmp_path):
     # A late release from a process that already lost the lock must not remove
-    # the new owner's file.
+    # the new owner's file, even if a same-process test double has the same
+    # PID in its replacement payload. The inode captured at acquire is the
+    # ownership proof that distinguishes the claims.
     first = AccountLock(tmp_path, ACCOUNT)
     first.acquire()
     # Simulate a successor taking over after this process was presumed dead.
-    first.path.write_text(f"{os.getpid() + 1}\n{ACCOUNT}", encoding="utf-8")
+    first.path.write_text(f"{os.getpid()}\n{ACCOUNT}", encoding="utf-8")
     first.release()
     assert first.path.exists(), "a foreign claim must survive our release"
 
@@ -110,6 +255,23 @@ def test_the_lock_works_as_a_context_manager(tmp_path):
 def test_an_account_lock_requires_an_account(tmp_path):
     with pytest.raises(ValueError):
         AccountLock(tmp_path, "")
+
+
+def test_an_account_id_cannot_escape_the_lock_directory(tmp_path):
+    with pytest.raises(ValueError):
+        AccountLock(tmp_path, "../outside")
+
+
+def test_a_symlinked_lock_directory_is_rejected(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (NotImplementedError, OSError):
+        pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError):
+        AccountLock(link, ACCOUNT)
 
 
 def test_liveness_recognises_a_dead_pid_on_this_platform():

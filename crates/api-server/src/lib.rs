@@ -33,6 +33,7 @@ pub mod paper_runner;
 pub mod paper_session;
 pub mod repos;
 pub mod risk_snapshot;
+pub mod runtime;
 
 pub use error::{TenancyError, TenancyResult};
 pub use repos::accounts::{AccountRepo, AccountRow, NewAccount};

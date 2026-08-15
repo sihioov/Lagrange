@@ -11,7 +11,10 @@
 use crate::actor_tx::{actor_uuid, begin_actor_tx};
 use crate::error::{TenancyError, TenancyResult};
 use auth::entitlement::{Actor, Role};
+use job_queue::paper_execution::set_paper_transaction_timeouts;
 use uuid::Uuid;
+
+use crate::repos::pending_targets::PaperSettlementOutboxRow;
 
 /// One delivery attempt outcome, recorded durably.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,60 +181,214 @@ impl Notifier {
         title: &str,
         body: &str,
     ) -> TenancyResult<Vec<AlertOutcome>> {
+        self.notify_recipient_with_source(recipient, channels, kind, title, body, None)
+            .await
+    }
+
+    /// Idempotent variant used by the Paper settlement outbox.  The source
+    /// key is unique per recipient, so a retry after a process kill reuses the
+    /// existing notification and each channel's delivery row instead of
+    /// creating a second alert.
+    async fn notify_recipient_with_source(
+        &self,
+        recipient: &Actor,
+        channels: &[&str],
+        kind: &str,
+        title: &str,
+        body: &str,
+        source_key: Option<&str>,
+    ) -> TenancyResult<Vec<AlertOutcome>> {
+        // Delivery transports are deliberately invoked before opening the
+        // database transaction.  The transaction only records the durable
+        // result; a future external transport can therefore not retain an RLS
+        // transaction while it waits on a network.
+        let attempted: Vec<(&str, &'static str, Option<String>)> = channels
+            .iter()
+            .map(|channel| {
+                let (status, error_detail) =
+                    match transport_for(channel).deliver(channel, title, body) {
+                        Ok(()) => ("SUCCESS", None),
+                        Err(error) => ("FAILED", Some(error)),
+                    };
+                (*channel, status, error_detail)
+            })
+            .collect();
         let mut tx = begin_actor_tx(&self.app_pool, recipient).await?;
-        let notification_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO notifications (owner_user_id, kind, title, body) \
-             VALUES ($1, $2, $3, $4) RETURNING id",
-        )
-        .bind(actor_uuid(recipient)?)
-        .bind(kind)
-        .bind(title)
-        .bind(body)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(TenancyError::from_sqlx)?;
-        let mut outcomes = Vec::with_capacity(channels.len());
-        for channel in channels {
-            let delivery = transport_for(channel).deliver(channel, title, body);
-            let (status, error_detail) = match delivery {
-                Ok(()) => ("SUCCESS", None),
-                Err(e) => ("FAILED", Some(e)),
-            };
-            sqlx::query(
+        let owner_user_id = actor_uuid(recipient)?;
+        let notification_id: Uuid = match source_key {
+            Some(source_key) => sqlx::query_scalar(
+                "INSERT INTO notifications \
+                 (owner_user_id, kind, title, body, source_key) \
+                 VALUES ($1, $2, $3, $4, $5) \
+                 ON CONFLICT (owner_user_id, source_key) DO UPDATE SET id = notifications.id \
+                 RETURNING id",
+            )
+            .bind(owner_user_id)
+            .bind(kind)
+            .bind(title)
+            .bind(body)
+            .bind(source_key)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?,
+            None => sqlx::query_scalar(
+                "INSERT INTO notifications (owner_user_id, kind, title, body) \
+                 VALUES ($1, $2, $3, $4) RETURNING id",
+            )
+            .bind(owner_user_id)
+            .bind(kind)
+            .bind(title)
+            .bind(body)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?,
+        };
+
+        // A source-key replay must carry exactly the original immutable
+        // payload.  Silently accepting a changed body would make a retry look
+        // successful while presenting stale or contradictory evidence.
+        if source_key.is_some() {
+            let existing: (String, String, String) =
+                sqlx::query_as("SELECT kind, title, body FROM notifications WHERE id = $1")
+                    .bind(notification_id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(TenancyError::from_sqlx)?;
+            if existing.0 != kind || existing.1 != title || existing.2 != body {
+                return Err(TenancyError::InvalidState(
+                    "Paper notification source key payload mismatch".to_owned(),
+                ));
+            }
+        }
+
+        let mut outcomes = Vec::with_capacity(attempted.len());
+        for (channel, attempted_status, attempted_error) in attempted {
+            let row: (String, String, Option<String>) = sqlx::query_as(
                 "INSERT INTO notification_deliveries \
                  (notification_id, owner_user_id, channel, status, error_detail) \
-                 VALUES ($1, $2, $3, $4, $5)",
+                 VALUES ($1, $2, $3, $4, $5) \
+                 ON CONFLICT (notification_id, channel) DO UPDATE SET \
+                     status = CASE \
+                         WHEN notification_deliveries.status = 'SUCCESS' THEN 'SUCCESS' \
+                         ELSE EXCLUDED.status \
+                     END, \
+                     error_detail = CASE \
+                         WHEN notification_deliveries.status = 'SUCCESS' THEN NULL \
+                         ELSE EXCLUDED.error_detail \
+                     END, \
+                     attempted_at = now() \
+                 RETURNING channel, status, error_detail",
             )
             .bind(notification_id)
-            .bind(actor_uuid(recipient)?)
+            .bind(owner_user_id)
             .bind(channel)
-            .bind(status)
-            .bind(&error_detail)
-            .execute(&mut *tx)
+            .bind(attempted_status)
+            .bind(&attempted_error)
+            .fetch_one(&mut *tx)
             .await
             .map_err(TenancyError::from_sqlx)?;
+            let status = if row.1 == "SUCCESS" {
+                "SUCCESS"
+            } else {
+                "FAILED"
+            };
             outcomes.push(AlertOutcome {
                 notification_id,
-                channel: channel.to_string(),
+                channel: row.0,
                 status,
-                error_detail,
+                error_detail: row.2,
             });
-            crate::observability::metrics::record_delivery(status);
         }
         tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        for outcome in &outcomes {
+            crate::observability::metrics::record_delivery(outcome.status);
+        }
         Ok(outcomes)
+    }
+
+    /// Dispatch one committed Paper settlement intent.  The intent itself is
+    /// never deleted, and each recipient/channel is keyed by the outbox id;
+    /// retries after cancellation are therefore safe and observable.
+    pub async fn dispatch_paper_settlement(
+        &self,
+        actor: &Actor,
+        outbox: &PaperSettlementOutboxRow,
+    ) -> TenancyResult<AlertResult> {
+        let actor_id = actor_uuid(actor)?;
+        if actor_id != outbox.owner_user_id {
+            return Err(TenancyError::Forbidden);
+        }
+        let severity = AlertSeverity::parse(&outbox.severity).ok_or_else(|| {
+            TenancyError::InvalidState("invalid Paper outbox severity".to_owned())
+        })?;
+        crate::observability::metrics::record_alert(severity.as_str());
+        let mut result = AlertResult::default();
+        let mut channels: Vec<&str> = if actor.is_owner() {
+            severity.channels().to_vec()
+        } else {
+            vec!["web"]
+        };
+        if self.has_subscription(actor, &outbox.kind, "email").await? {
+            channels.push("email");
+        }
+        let source_key = outbox.id.to_string();
+        let outcomes = self
+            .notify_recipient_with_source(
+                actor,
+                &channels,
+                &outbox.kind,
+                &outbox.title,
+                &outbox.body,
+                Some(&source_key),
+            )
+            .await?;
+        result
+            .notifications
+            .extend(outcomes.iter().map(|outcome| outcome.notification_id));
+        result.deliveries.extend(outcomes);
+
+        if severity != AlertSeverity::Info
+            && !actor.is_owner()
+            && let Some(owner_id) = self.owner_user_id().await?
+        {
+            let owner = Actor::new(owner_id.to_string(), Role::Owner);
+            let outcomes = self
+                .notify_recipient_with_source(
+                    &owner,
+                    &["admin"],
+                    &outbox.kind,
+                    &outbox.title,
+                    &outbox.body,
+                    Some(&source_key),
+                )
+                .await?;
+            result
+                .notifications
+                .extend(outcomes.iter().map(|outcome| outcome.notification_id));
+            result.deliveries.extend(outcomes);
+        }
+        Ok(result)
     }
 
     /// The Owner user id (admin role read; `None` when no owner exists).
     pub async fn owner_user_id(&self) -> TenancyResult<Option<Uuid>> {
+        let mut tx = self
+            .admin_pool
+            .begin()
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+        set_paper_transaction_timeouts(&mut tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
         let id: Option<Uuid> = sqlx::query_scalar(
             "SELECT u.id FROM users u \
              JOIN user_roles ur ON ur.user_id = u.id \
              WHERE ur.role_id = 'owner' ORDER BY u.created_at LIMIT 1",
         )
-        .fetch_optional(&self.admin_pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(TenancyError::from_sqlx)?;
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
         Ok(id)
     }
 

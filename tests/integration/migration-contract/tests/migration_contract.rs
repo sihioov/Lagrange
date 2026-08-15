@@ -40,6 +40,19 @@
 //!   - large curves/orders/fills live in Parquet with DB manifests
 //!     (result_artifacts: parquet_path + row_count + sha256 + summary_json).
 
+use api_server_auth::postgres::{
+    PostgresInviteStore, PostgresSessionStore, PostgresUserStore, with_actor_user_id,
+};
+use auth::audit::NoopAudit;
+use auth::clock::FakeClock;
+use auth::entitlement::{Role, UserId};
+use auth::invites::{InviteRecord, InviteStore, RedeemedIdentity, UserRecord, UserStore};
+use auth::oidc::{
+    InMemoryPendingAuthStore, OidcClient, OidcProviderConfig, PendingAuth, PendingAuthStore,
+};
+use auth::service::AuthService;
+use auth::sessions::SessionService;
+use auth::simulator::{SIM_AUDIENCE, Simulator};
 use sqlx::migrate::{MigrationType, Migrator};
 use sqlx::postgres::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -97,6 +110,1468 @@ const RESEARCH_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0022_research_publication.down.sql");
 const RESEARCH_SCHEMA_GATE_SQL: &str =
     include_str!("../../../../deploy/compose/research-schema-check.sql");
+const IDENTITY_PROVISIONING_UP_SQL: &str =
+    include_str!("../../../../migrations/0040_identity_provisioning.up.sql");
+const IDENTITY_PROVISIONING_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0040_identity_provisioning.down.sql");
+const AUTH_AUDIT_OUTBOX_UP_SQL: &str =
+    include_str!("../../../../migrations/0039_auth_audit_outbox.up.sql");
+const AUTH_AUDIT_OUTBOX_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0039_auth_audit_outbox.down.sql");
+const PAPER_SETTLEMENT_OUTBOX_UP_SQL: &str =
+    include_str!("../../../../migrations/0041_paper_settlement_outbox.up.sql");
+const PAPER_SETTLEMENT_OUTBOX_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0041_paper_settlement_outbox.down.sql");
+const PAPER_PARITY_REPO_RS: &str =
+    include_str!("../../../../crates/api-server/src/repos/parity.rs");
+const PAPER_PENDING_TARGET_REPO_RS: &str =
+    include_str!("../../../../crates/api-server/src/repos/pending_targets.rs");
+
+#[test]
+fn paper_settlement_outbox_contract_is_deferred_and_fail_closed() {
+    let (version, sql) = ("0038", PAPER_REBALANCE_PREVIEW_UP_SQL);
+    let preflight = sql
+        .split("CREATE FUNCTION public.preflight_paper_target")
+        .nth(1)
+        .or_else(|| {
+            sql.split("CREATE OR REPLACE FUNCTION public.preflight_paper_target")
+                .nth(1)
+        })
+        .expect("preflight implementation must exist")
+        .split("ALTER FUNCTION public.preflight_paper_target")
+        .next()
+        .expect("preflight implementation must be bounded");
+    assert!(
+        !preflight.contains("UPDATE public.pending_targets")
+            && !preflight.contains("SET status = 'SKIPPED'"),
+        "{version} preflight must not commit a terminal target"
+    );
+    for token in [
+        "paper_settlement_outbox",
+        "paper_settlement_outbox_archive",
+        "pending_targets_require_settlement_outbox",
+        "DEFERRABLE INITIALLY DEFERRED",
+        "terminal Paper target has no durable settlement outbox obligation",
+        "Backfill every terminal row",
+        "INSERT INTO public.paper_settlement_outbox",
+        "preflight_paper_target",
+        "Intentionally no UPDATE",
+        "enqueue_paper_settlement_outbox",
+        "v_target.owner_user_id",
+        "SET search_path = pg_catalog, public",
+        "REVOKE ALL ON TABLE public.paper_settlement_outbox",
+        "GRANT EXECUTE ON FUNCTION public.enqueue_paper_settlement_outbox",
+        "recommendation_runs_exact_lineage_uq",
+        "pending_targets_recommendation_exact_lineage_fk",
+        "paper_settlement_migration_validate_pending_targets",
+        "DROP POLICY paper_settlement_migration_validate_pending_targets",
+        "paper_settlement_migration_cleanup_notification_deliveries",
+        "DROP POLICY paper_settlement_migration_cleanup_notification_deliveries",
+        "notifications_id_owner_uq",
+        "notification_deliveries_notification_owner_fk",
+        "paper_settlement_outbox_stats",
+        "oldest_pending_age_secs",
+        "exhausted_count",
+        "prune_paper_settlement_outbox",
+        "LEAST(900",
+        "Paper settlement archive payload mismatch",
+    ] {
+        assert!(
+            PAPER_SETTLEMENT_OUTBOX_UP_SQL.contains(token),
+            "0041 up is missing {token}"
+        );
+    }
+    assert!(
+        !PAPER_SETTLEMENT_OUTBOX_UP_SQL
+            .contains("UPDATE public.pending_targets\n           SET status = 'SKIPPED'"),
+        "preflight must not commit a terminal target"
+    );
+    for token in [
+        "Paper settlement rollback blocked while pending outbox obligations exist",
+        "terminal target without durable obligation",
+        "DROP TABLE public.paper_settlement_outbox_archive",
+        "DROP FUNCTION IF EXISTS public.enqueue_paper_settlement_outbox",
+        "DROP CONSTRAINT IF EXISTS notification_deliveries_notification_channel_uq",
+        "DROP CONSTRAINT IF EXISTS notification_deliveries_notification_owner_fk",
+    ] {
+        assert!(
+            PAPER_SETTLEMENT_OUTBOX_DOWN_SQL.contains(token),
+            "0041 down is missing {token}"
+        );
+    }
+}
+
+#[test]
+fn paper_settlement_uses_exact_locked_lineage_and_idempotent_recovery() {
+    let settlement = PAPER_PARITY_REPO_RS
+        .split("pub(crate) async fn report_for_target_tx")
+        .nth(1)
+        .expect("settlement parity seam must exist");
+    let settlement = settlement
+        .split("fn missing_side")
+        .next()
+        .expect("settlement parity seam must have a bounded body");
+    for token in [
+        "target.recommendation_run_id",
+        "run.owner_user_id = $2",
+        "run.as_of = $4",
+        "run.dataset_version_id = $5",
+        "run.dataset_manifest_sha256 = $6",
+        "FOR SHARE OF run, config, dataset",
+        "recommendation_items",
+        "owner_user_id = $2",
+    ] {
+        assert!(
+            settlement.contains(token),
+            "exact settlement lineage lost {token}"
+        );
+    }
+    assert!(
+        !settlement.contains("ORDER BY r.created_at DESC") && !settlement.contains("LIMIT 1"),
+        "settlement may not fall back to the latest same-day recommendation"
+    );
+
+    for token in [
+        "enqueue_paper_settlement_outbox",
+        "mark_paper_settlement_outbox_delivered",
+        "fail_paper_settlement_outbox",
+        "paper_settlement_outbox_stats",
+        "prune_paper_settlement_outbox",
+        "delivered_at IS NULL AND exhausted_at IS NULL",
+    ] {
+        assert!(
+            PAPER_PENDING_TARGET_REPO_RS.contains(token),
+            "repository recovery seam is missing {token}"
+        );
+    }
+}
+
+/// DB-gated seam test for the irreversible parts of 0041.  It intentionally
+/// skips when no disposable PostgreSQL supervisor is configured; CI's
+/// migration lane supplies DATABASE_URL and exercises the real RLS/grants.
+#[tokio::test]
+async fn paper_settlement_outbox_db_contract() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = paper_settlement_outbox_db_contract_body(&super_url, &db, &owner).await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("Paper settlement outbox DB contract FAILED: {error}");
+    }
+}
+
+async fn paper_settlement_outbox_db_contract_body(
+    super_url: &str,
+    db: &str,
+    owner: &PgPool,
+) -> Result<(), Box<dyn Error>> {
+    MIGRATOR.run_to(40, owner).await?;
+    let user_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', 'paper-outbox-contract', 'paper-outbox@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO strategies (id, display_name, state) \
+         VALUES ('paper_outbox_contract', 'Paper Outbox Contract', 'Paper')",
+    )
+    .execute(owner)
+    .await?;
+    let owner_actor = actor_pool(super_url, db, "migration_owner", &user_id.to_string()).await?;
+    let worker = effective_role_pool(super_url, db, "worker", None, 2).await?;
+    let app = actor_pool(super_url, db, "app", &user_id.to_string()).await?;
+    let config_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO user_strategy_configs \
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, 'paper_outbox_contract', '1.0.0', '{}'::jsonb) RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let account_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO accounts (owner_user_id, account_type, name, status) \
+         VALUES ($1, 'PAPER', 'paper-outbox-contract', 'ACTIVE') RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let pending_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO pending_targets \
+         (account_id, owner_user_id, strategy_config_id, computed_on, effective_date, targets_json) \
+         VALUES ($1, $2, $3, DATE '2026-08-10', DATE '2026-08-11', '[]'::jsonb) \
+         RETURNING id",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .bind(config_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    let terminal_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO pending_targets \
+         (account_id, owner_user_id, strategy_config_id, computed_on, effective_date, \
+          targets_json, status, executed_at, non_execution_reason) \
+         VALUES ($1, $2, $3, DATE '2026-08-12', DATE '2026-08-13', '[]'::jsonb, \
+                 'SKIPPED', now(), '{\"code\":\"PAPER_LEGACY\",\"message\":\"legacy\"}'::jsonb) \
+         RETURNING id",
+    )
+    .bind(account_id)
+    .bind(user_id)
+    .bind(config_id)
+    .fetch_one(&owner_actor)
+    .await?;
+
+    // A direct worker preflight denial is read-only: it cannot commit a
+    // terminal target or manufacture an orphan.
+    let preflight: (bool, serde_json::Value) =
+        sqlx::query_as("SELECT authorized, reason FROM preflight_paper_target($1, $2)")
+            .bind(pending_id)
+            .bind(user_id)
+            .fetch_one(&worker)
+            .await?;
+    assert!(!preflight.0);
+    let pending_status: String =
+        sqlx::query_scalar("SELECT status FROM pending_targets WHERE id = $1")
+            .bind(pending_id)
+            .fetch_one(&owner_actor)
+            .await?;
+    assert_eq!(pending_status, "PENDING");
+
+    MIGRATOR.run_to(41, owner).await?;
+    let backfilled: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM paper_settlement_outbox WHERE pending_target_id = $1",
+    )
+    .bind(terminal_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    assert_eq!(backfilled, 1, "0041 must backfill terminal legacy rows");
+
+    // The worker has a target UPDATE grant for its execution role, but the
+    // deferred trigger still rejects a direct terminal transition without an
+    // outbox row.  This is the DB-level guard behind the read-only preflight.
+    let mut orphan_tx = worker.begin().await?;
+    sqlx::query(
+        "UPDATE pending_targets SET status = 'SKIPPED', executed_at = now(), \
+                non_execution_reason = '{\"code\":\"PAPER_DIRECT\",\"message\":\"direct\"}'::jsonb \
+         WHERE id = $1",
+    )
+    .bind(pending_id)
+    .execute(&mut *orphan_tx)
+    .await?;
+    let orphan_commit = orphan_tx.commit().await.unwrap_err();
+    assert_eq!(pg_code(&orphan_commit).as_deref(), Some("23514"));
+
+    let direct_insert = sqlx::query(
+        "INSERT INTO paper_settlement_outbox \
+         (pending_target_id, owner_user_id, severity, kind, title) \
+         VALUES ($1, $2, 'INFO', 'job', 'squat')",
+    )
+    .bind(terminal_id)
+    .bind(user_id)
+    .execute(&app)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&direct_insert).as_deref(), Some("42501"));
+
+    // The definer derives owner from the locked target.  A foreign actor
+    // cannot use the same target id to squat the tenant key.
+    let foreign_user: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', 'paper-outbox-foreign', 'paper-foreign@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    let foreign_app = actor_pool(super_url, db, "app", &foreign_user.to_string()).await?;
+    let foreign_enqueue =
+        sqlx::query("SELECT enqueue_paper_settlement_outbox($1, 'INFO', 'job', 'squat', '', NULL)")
+            .bind(terminal_id)
+            .execute(&foreign_app)
+            .await
+            .unwrap_err();
+    assert_eq!(pg_code(&foreign_enqueue).as_deref(), Some("42501"));
+    let foreign_notification: Uuid = sqlx::query_scalar(
+        "INSERT INTO notifications (owner_user_id, kind, title) \
+         VALUES ($1, 'alert', 'foreign') RETURNING id",
+    )
+    .bind(foreign_user)
+    .fetch_one(&foreign_app)
+    .await?;
+    let foreign_delivery = sqlx::query(
+        "INSERT INTO notification_deliveries \
+         (notification_id, owner_user_id, channel, status) \
+         VALUES ($1, $2, 'web', 'SUCCESS')",
+    )
+    .bind(foreign_notification)
+    .bind(user_id)
+    .execute(&app)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&foreign_delivery).as_deref(), Some("23503"));
+
+    // A target transition and enqueue may be ordered either way inside one
+    // transaction, but neither can commit alone.  This also gives the retry
+    // and pruning assertions an owned terminal target without bypassing the
+    // deferred invariant.
+    let recovery_target_id: Uuid;
+    let recovery_outbox_id: Uuid;
+    {
+        let mut tx = owner_actor.begin().await?;
+        recovery_target_id = sqlx::query_scalar(
+            "INSERT INTO pending_targets \
+             (account_id, owner_user_id, strategy_config_id, computed_on, effective_date, \
+              targets_json, status, executed_at, non_execution_reason) \
+             VALUES ($1, $2, $3, DATE '2026-08-14', DATE '2026-08-15', '[]'::jsonb, \
+                     'SKIPPED', now(), '{\"code\":\"PAPER_RECOVERY\",\"message\":\"recovery\"}'::jsonb) \
+             RETURNING id",
+        )
+        .bind(account_id)
+        .bind(user_id)
+        .bind(config_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        recovery_outbox_id = sqlx::query_scalar(
+            "SELECT enqueue_paper_settlement_outbox(\
+                 $1, 'WARNING', 'alert', 'recovery', 'retryable', NULL)",
+        )
+        .bind(recovery_target_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+    }
+    sqlx::query("UPDATE paper_settlement_outbox SET max_attempts = 2 WHERE id = $1")
+        .bind(recovery_outbox_id)
+        .execute(&owner_actor)
+        .await?;
+    let first_failure: (i32, bool) = sqlx::query_as(
+        "SELECT attempts, exhausted FROM fail_paper_settlement_outbox($1, $2, 'timeout')",
+    )
+    .bind(recovery_outbox_id)
+    .bind(user_id)
+    .fetch_one(&app)
+    .await?;
+    assert_eq!(first_failure, (1, false));
+    let second_failure: (i32, bool) = sqlx::query_as(
+        "SELECT attempts, exhausted FROM fail_paper_settlement_outbox($1, $2, 'timeout')",
+    )
+    .bind(recovery_outbox_id)
+    .bind(user_id)
+    .fetch_one(&app)
+    .await?;
+    assert_eq!(
+        second_failure,
+        (2, true),
+        "retry limit must exhaust exactly once"
+    );
+    let exhausted_stats: (i64, i64, bool) = sqlx::query_as(
+        "SELECT pending_count, exhausted_count, ready \
+         FROM paper_settlement_outbox_stats(900)",
+    )
+    .fetch_one(&worker)
+    .await?;
+    assert!(exhausted_stats.0 >= 1);
+    assert!(exhausted_stats.1 >= 1);
+    assert!(!exhausted_stats.2, "exhausted delivery blocks readiness");
+
+    // Delivery marking is idempotent: a timeout/restart replay can call the
+    // DB seam twice, but only the first call changes the obligation.
+    let first_mark: bool =
+        sqlx::query_scalar("SELECT mark_paper_settlement_outbox_delivered($1, $2)")
+            .bind(recovery_outbox_id)
+            .bind(user_id)
+            .fetch_one(&app)
+            .await?;
+    let second_mark: bool =
+        sqlx::query_scalar("SELECT mark_paper_settlement_outbox_delivered($1, $2)")
+            .bind(recovery_outbox_id)
+            .bind(user_id)
+            .fetch_one(&app)
+            .await?;
+    assert!(first_mark);
+    assert!(!second_mark);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM paper_settlement_outbox WHERE pending_target_id = $1",
+        )
+        .bind(recovery_target_id)
+        .fetch_one(&owner_actor)
+        .await?,
+        1
+    );
+
+    // The retention boundary archives before deleting the active delivered
+    // row.  The terminal target remains covered by the archive invariant.
+    sqlx::query(
+        "UPDATE paper_settlement_outbox \
+         SET delivered_at = now() - interval '86401 seconds' \
+         WHERE id = $1",
+    )
+    .bind(recovery_outbox_id)
+    .execute(&owner_actor)
+    .await?;
+    let pruned: i64 = sqlx::query_scalar("SELECT prune_paper_settlement_outbox(86400, 256)")
+        .fetch_one(&worker)
+        .await?;
+    assert_eq!(pruned, 1);
+    let retained: (i64, i64) = sqlx::query_as(
+        "SELECT \
+           (SELECT count(*) FROM paper_settlement_outbox WHERE pending_target_id = $1), \
+           (SELECT count(*) FROM paper_settlement_outbox_archive WHERE pending_target_id = $1)",
+    )
+    .bind(recovery_target_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    assert_eq!(retained, (0, 1));
+    let replay_id: Uuid = sqlx::query_scalar(
+        "SELECT enqueue_paper_settlement_outbox(\
+             $1, 'WARNING', 'alert', 'recovery', 'retryable', NULL)",
+    )
+    .bind(recovery_target_id)
+    .fetch_one(&app)
+    .await?;
+    assert_eq!(replay_id, recovery_outbox_id);
+    let active_after_replay: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM paper_settlement_outbox WHERE pending_target_id = $1",
+    )
+    .bind(recovery_target_id)
+    .fetch_one(&owner_actor)
+    .await?;
+    assert_eq!(
+        active_after_replay, 0,
+        "archive replay must not recreate active work"
+    );
+
+    let mut guarded = owner.acquire().await?;
+    let down_error = MIGRATOR.undo(&mut *guarded, 41).await.unwrap_err();
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut *guarded)
+        .await?;
+    drop(guarded);
+    assert_eq!(migrate_pg_code(&down_error).as_deref(), Some("55000"));
+    sqlx::query(
+        "UPDATE paper_settlement_outbox SET delivered_at = now() WHERE pending_target_id = $1",
+    )
+    .bind(terminal_id)
+    .execute(&owner_actor)
+    .await?;
+    MIGRATOR.undo(owner, 41).await?;
+    Ok(())
+}
+
+#[test]
+fn auth_audit_outbox_is_transactional_and_reversible() {
+    for token in [
+        "auth_audit_outbox",
+        "event_key",
+        "UNIQUE",
+        "delivered_at",
+        "ENABLE ROW LEVEL SECURITY",
+        "FORCE ROW LEVEL SECURITY",
+        "enqueue_auth_audit",
+        "SECURITY DEFINER",
+        "SET search_path = pg_catalog, pg_temp",
+        "ON CONFLICT (event_key) DO NOTHING",
+        "auth audit event key payload mismatch",
+        "GRANT EXECUTE ON FUNCTION",
+        "TO app, audit_writer",
+        "deliver_auth_audit_batch",
+        "delivered_count integer",
+        "failed_count integer",
+        "available_at = pg_catalog.clock_timestamp()",
+        "FOR UPDATE",
+        "SKIP LOCKED",
+        "auth_audit_outbox_stats",
+        "oldest_pending_age_secs",
+        "prune_auth_audit_outbox",
+        "delivered_at IS NOT NULL",
+        "auth_audit_log_insert_migration_owner",
+        "set_config('statement_timeout', '5000', true)",
+        "set_config('statement_timeout', '3000', true)",
+        "set_config('lock_timeout', '1000', true)",
+        "SET lock_timeout = '1s'",
+        "SET statement_timeout = '5s'",
+        "SET statement_timeout = '3s'",
+    ] {
+        assert!(
+            AUTH_AUDIT_OUTBOX_UP_SQL.contains(token),
+            "0039 outbox up is missing {token}"
+        );
+    }
+    for token in [
+        "DROP FUNCTION public.enqueue_auth_audit",
+        "DROP POLICY IF EXISTS auth_audit_outbox_owner_update",
+        "DROP TABLE public.auth_audit_outbox",
+        "DROP POLICY IF EXISTS auth_audit_log_insert_migration_owner",
+    ] {
+        assert!(
+            AUTH_AUDIT_OUTBOX_DOWN_SQL.contains(token),
+            "0039 outbox down is missing {token}"
+        );
+    }
+    assert!(
+        !AUTH_AUDIT_OUTBOX_UP_SQL.contains("GRANT SELECT, UPDATE ON public.auth_audit_outbox"),
+        "audit_writer must not receive direct outbox table DML"
+    );
+}
+
+#[test]
+fn auth_outbox_migration_precedes_identity_consumers_and_rolls_back_first() {
+    let up39 = MIGRATOR
+        .migrations
+        .iter()
+        .find(|migration| {
+            migration.version == 39 && migration.migration_type != MigrationType::ReversibleDown
+        })
+        .expect("0039 outbox migration is embedded");
+    let up40 = MIGRATOR
+        .migrations
+        .iter()
+        .find(|migration| {
+            migration.version == 40 && migration.migration_type != MigrationType::ReversibleDown
+        })
+        .expect("0040 identity migration is embedded");
+    assert!(
+        up39.sql
+            .as_str()
+            .contains("CREATE TABLE public.auth_audit_outbox")
+    );
+    assert!(
+        up40.sql
+            .as_str()
+            .contains("CREATE FUNCTION public.create_invitation")
+    );
+    assert!(up39.version < up40.version);
+    let down39 = MIGRATOR
+        .migrations
+        .iter()
+        .find(|migration| {
+            migration.version == 39 && migration.migration_type == MigrationType::ReversibleDown
+        })
+        .expect("0039 outbox rollback is embedded");
+    let down40 = MIGRATOR
+        .migrations
+        .iter()
+        .find(|migration| {
+            migration.version == 40 && migration.migration_type == MigrationType::ReversibleDown
+        })
+        .expect("0040 identity rollback is embedded");
+    assert!(
+        down40
+            .sql
+            .as_str()
+            .contains("DROP FUNCTION public.create_invitation")
+    );
+    assert!(
+        down39
+            .sql
+            .as_str()
+            .contains("DROP TABLE public.auth_audit_outbox")
+    );
+}
+
+#[test]
+fn identity_provisioning_migration_is_narrow_and_reversible() {
+    for token in [
+        "invitations",
+        "role_id",
+        "provisioned_by_user_id",
+        "invitations_pending_email_uq",
+        "create_invitation",
+        "claim_invitation",
+        "bind_redeemed_identity",
+        "SECURITY DEFINER",
+        "SET search_path = pg_catalog, pg_temp",
+        "REVOKE ALL ON FUNCTION",
+        "GRANT EXECUTE ON FUNCTION",
+        "TO app",
+        "pg_advisory_xact_lock",
+        "expire_pending_invitations",
+        "tenant_all_owner_invitations",
+        "status = 'EXPIRED'",
+        "expires_at <= pg_catalog.clock_timestamp()",
+        "FOR UPDATE",
+        "ON CONFLICT (issuer, subject) DO NOTHING",
+        "duplicate pending invitation emails require manual resolution",
+        "lower(pg_catalog.btrim(email))",
+        "provisioned_by_user_id = NULL",
+        "IS DISTINCT FROM",
+        "an identity already exists for this email",
+        "existing_user.email",
+        "pg_catalog.hashtextextended(v_email, 39039)",
+        "pg_catalog.lower(pg_catalog.btrim(v_invitation.email))",
+    ] {
+        assert!(
+            IDENTITY_PROVISIONING_UP_SQL.contains(token),
+            "0040 identity up is missing {token}"
+        );
+    }
+    let expire_position = IDENTITY_PROVISIONING_UP_SQL
+        .find("status = 'EXPIRED'")
+        .expect("0040 expires stale pending invitations");
+    let duplicate_position = IDENTITY_PROVISIONING_UP_SQL
+        .find("\n    IF EXISTS (\n        SELECT 1\n        FROM public.invitations AS invitation")
+        .expect("0040 duplicate check remains explicit");
+    assert!(
+        expire_position < duplicate_position,
+        "expired pending invitations must be released before duplicate detection"
+    );
+    let create_start = IDENTITY_PROVISIONING_UP_SQL
+        .find("CREATE FUNCTION public.create_invitation")
+        .expect("create_invitation definition");
+    let create_end = IDENTITY_PROVISIONING_UP_SQL[create_start..]
+        .find("ALTER FUNCTION public.create_invitation")
+        .map(|offset| create_start + offset)
+        .expect("create_invitation metadata");
+    let create_sql = &IDENTITY_PROVISIONING_UP_SQL[create_start..create_end];
+    let create_lock = create_sql
+        .find("pg_catalog.hashtextextended(v_email, 39039)")
+        .expect("create takes normalized-email lock");
+    let create_user_check = create_sql
+        .find("FROM public.users AS existing_user")
+        .expect("create has global user check");
+    assert!(
+        create_lock < create_user_check,
+        "create must lock before its global users check"
+    );
+    let claim_start = IDENTITY_PROVISIONING_UP_SQL
+        .find("CREATE FUNCTION public.claim_invitation")
+        .expect("claim_invitation definition");
+    let claim_end = IDENTITY_PROVISIONING_UP_SQL[claim_start..]
+        .find("ALTER FUNCTION public.claim_invitation")
+        .map(|offset| claim_start + offset)
+        .expect("claim_invitation metadata");
+    let claim_sql = &IDENTITY_PROVISIONING_UP_SQL[claim_start..claim_end];
+    let claim_lock = claim_sql
+        .find("pg_catalog.hashtextextended(")
+        .expect("claim takes normalized-email lock");
+    let claim_email_check = claim_sql
+        .find("FROM public.users\n        WHERE pg_catalog.lower")
+        .expect("claim has global normalized-email check");
+    assert!(
+        claim_lock < claim_email_check,
+        "claim must lock before its global users/provisional check"
+    );
+    let bind_start = IDENTITY_PROVISIONING_UP_SQL
+        .find("CREATE FUNCTION public.bind_redeemed_identity")
+        .expect("bind_redeemed_identity definition");
+    let bind_end = IDENTITY_PROVISIONING_UP_SQL[bind_start..]
+        .find("ALTER FUNCTION public.bind_redeemed_identity")
+        .map(|offset| bind_start + offset)
+        .expect("bind_redeemed_identity metadata");
+    let bind_sql = &IDENTITY_PROVISIONING_UP_SQL[bind_start..bind_end];
+    let bind_lock = bind_sql
+        .find("pg_catalog.hashtextextended(v_email, 39039)")
+        .expect("bind takes normalized-email lock");
+    let bind_user_check = bind_sql
+        .find("FROM public.users")
+        .expect("bind has global users check");
+    assert!(
+        bind_lock < bind_user_check,
+        "bind must lock before its global users/provisional check"
+    );
+    assert!(
+        !IDENTITY_PROVISIONING_UP_SQL.contains("SET search_path = pg_catalog, public"),
+        "SECURITY DEFINER functions must not search the writable public schema"
+    );
+    assert!(
+        !IDENTITY_PROVISIONING_UP_SQL.contains("GRANT INSERT ON TABLE public.users")
+            && !IDENTITY_PROVISIONING_UP_SQL.contains("GRANT INSERT ON TABLE public.user_roles"),
+        "identity provisioning must not add table write grants"
+    );
+    for token in [
+        "DROP FUNCTION public.bind_redeemed_identity",
+        "DROP FUNCTION public.claim_invitation",
+        "DROP FUNCTION public.expire_pending_invitations",
+        "DROP FUNCTION public.create_invitation",
+        "DROP COLUMN role_id",
+        "DROP COLUMN provisioned_by_user_id",
+        "DROP INDEX public.invitations_pending_email_uq",
+        "cannot roll back identity provisioning while provisional identities exist",
+        "cannot roll back identity provisioning while Owner invitations remain",
+        "WHERE role_id <> 'member'",
+        "NO FORCE ROW LEVEL SECURITY",
+        "FORCE ROW LEVEL SECURITY",
+    ] {
+        assert!(
+            IDENTITY_PROVISIONING_DOWN_SQL.contains(token),
+            "0040 down is missing {token}"
+        );
+    }
+    for signature in [
+        "public.create_invitation(uuid, text, text, text, bigint)",
+        "public.claim_invitation(uuid, uuid, text, text)",
+        "public.bind_redeemed_identity(text, text, text, text)",
+    ] {
+        assert!(
+            IDENTITY_PROVISIONING_DOWN_SQL.contains(signature),
+            "0040 down must revoke {signature} explicitly"
+        );
+    }
+}
+
+#[tokio::test]
+async fn identity_provisioning_is_atomic_and_role_scoped() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = identity_provisioning_body(&super_url, &db, &owner).await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("identity provisioning contract FAILED: {error}");
+    }
+}
+
+async fn identity_provisioning_body(
+    super_url: &str,
+    db: &str,
+    owner: &PgPool,
+) -> Result<(), Box<dyn Error>> {
+    MIGRATOR.run(owner).await?;
+
+    let owner_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', 'provision-owner', 'provision-owner@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    sqlx::query("INSERT INTO user_roles (user_id, role_id, granted_by) VALUES ($1, 'owner', $1)")
+        .bind(owner_id)
+        .execute(owner)
+        .await?;
+    let member_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', 'provision-member', 'provision-member@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    sqlx::query("INSERT INTO user_roles (user_id, role_id, granted_by) VALUES ($1, 'member', $2)")
+        .bind(member_id)
+        .bind(owner_id)
+        .execute(owner)
+        .await?;
+    let other_owner_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', 'provision-owner-2', 'provision-owner-2@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    sqlx::query("INSERT INTO user_roles (user_id, role_id, granted_by) VALUES ($1, 'owner', $1)")
+        .bind(other_owner_id)
+        .execute(owner)
+        .await?;
+
+    let app = role_pool(super_url, db, "app").await?;
+    let admin = role_pool(super_url, db, "admin").await?;
+    let audit = role_pool(super_url, db, "audit_writer").await?;
+    let expires_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64 + 3_600;
+    let owner_invitation_id: Uuid = sqlx::query_scalar(
+        "SELECT public.create_invitation($1, 'owner-rollback@example.test', 'owner', $2, $3)",
+    )
+    .bind(owner_id)
+    .bind("0f".repeat(32))
+    .bind(expires_at)
+    .fetch_one(&app)
+    .await?;
+    let invite_hash = "a1".repeat(32);
+    let invitation_id: Uuid =
+        sqlx::query_scalar("SELECT public.create_invitation($1, $2, $3, $4, $5)")
+            .bind(owner_id)
+            .bind("new-member@example.test")
+            .bind("member")
+            .bind(&invite_hash)
+            .bind(expires_at)
+            .fetch_one(&app)
+            .await?;
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM auth_audit_outbox \
+         WHERE event_key = $1 AND action = 'auth.invite_created'",
+    )
+    .bind(format!("invite:{invitation_id}:created"))
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(outbox_count, 1, "invite mutation must enqueue atomically");
+
+    // The event key is idempotent only for an identical immutable payload;
+    // replay returns the original id while a forged payload is rejected.
+    let event_key = format!("contract:{}", Uuid::new_v4());
+    let created_at = expires_at;
+    let mut event_tx = app.begin().await?;
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *event_tx)
+        .await?;
+    let first_id: Uuid = sqlx::query_scalar(
+        "SELECT public.enqueue_auth_audit($1, 'auth.contract_probe', $2, 'test', $3, NULL, $4)",
+    )
+    .bind(&event_key)
+    .bind(owner_id)
+    .bind("same")
+    .bind(created_at)
+    .fetch_one(&mut *event_tx)
+    .await?;
+    let replay_id: Uuid = sqlx::query_scalar(
+        "SELECT public.enqueue_auth_audit($1, 'auth.contract_probe', $2, 'test', $3, NULL, $4)",
+    )
+    .bind(&event_key)
+    .bind(owner_id)
+    .bind("same")
+    .bind(created_at)
+    .fetch_one(&mut *event_tx)
+    .await?;
+    event_tx.commit().await?;
+    assert_eq!(replay_id, first_id);
+    let mut mismatch_tx = app.begin().await?;
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *mismatch_tx)
+        .await?;
+    let mismatch = sqlx::query(
+        "SELECT public.enqueue_auth_audit($1, 'auth.tampered', $2, 'test', $3, NULL, $4)",
+    )
+    .bind(&event_key)
+    .bind(owner_id)
+    .bind("same")
+    .bind(created_at)
+    .fetch_one(&mut *mismatch_tx)
+    .await
+    .unwrap_err();
+    mismatch_tx.rollback().await?;
+    assert_eq!(pg_code(&mismatch).as_deref(), Some("23505"));
+
+    let stats: (i64, i64) = sqlx::query_as(
+        "SELECT pending_count, oldest_pending_age_secs \
+         FROM public.auth_audit_outbox_stats()",
+    )
+    .fetch_one(&audit)
+    .await?;
+    assert!(stats.0 >= 2);
+    let delivered: i32 = sqlx::query_scalar("SELECT public.deliver_auth_audit_batch(64)")
+        .fetch_one(&audit)
+        .await?;
+    assert!(delivered >= 2);
+    let copied: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM audit_logs WHERE id = $1")
+        .bind(first_id)
+        .fetch_one(owner)
+        .await?;
+    assert_eq!(copied, 1, "delivery must copy before marking delivered");
+    let retention_target: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM auth_audit_outbox WHERE id = $1 AND delivered_at IS NOT NULL",
+    )
+    .bind(first_id)
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(retention_target, 1);
+    sqlx::query(
+        "UPDATE auth_audit_outbox SET delivered_at = now() - interval '2 days' WHERE id = $1",
+    )
+    .bind(first_id)
+    .execute(owner)
+    .await?;
+    let pruned: i64 = sqlx::query_scalar("SELECT public.prune_auth_audit_outbox(86400, 256)")
+        .fetch_one(&audit)
+        .await?;
+    assert!(pruned >= 1);
+    let audit_survives: i64 =
+        sqlx::query_scalar("SELECT count(*)::bigint FROM audit_logs WHERE id = $1")
+            .bind(first_id)
+            .fetch_one(owner)
+            .await?;
+    assert_eq!(
+        audit_survives, 1,
+        "retention must never remove immutable audit copy"
+    );
+
+    let duplicate = sqlx::query("SELECT public.create_invitation($1, $2, $3, $4, $5)")
+        .bind(owner_id)
+        .bind("new-member@example.test")
+        .bind("member")
+        .bind("b2".repeat(32))
+        .bind(expires_at)
+        .fetch_one(&app)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&duplicate).as_deref(), Some("23505"));
+
+    // A stale PENDING row must be released while the same email advisory
+    // lock is held, so re-invitation is safe and does not require manual DB
+    // cleanup.
+    let stale_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO invitations (user_id, email, invite_hash, status, expires_at, role_id) \
+         VALUES ($1, 'stale@example.test', $2, 'PENDING', now() - interval '1 second', 'member') \
+         RETURNING id",
+    )
+    .bind(owner_id)
+    .bind("d4".repeat(32))
+    .fetch_one(owner)
+    .await?;
+    let replacement_id: Uuid = sqlx::query_scalar(
+        "SELECT public.create_invitation($1, 'stale@example.test', 'member', $2, $3)",
+    )
+    .bind(other_owner_id)
+    .bind("e5".repeat(32))
+    .bind(expires_at)
+    .fetch_one(&app)
+    .await?;
+    assert_ne!(replacement_id, stale_id);
+    let stale_status: String = sqlx::query_scalar("SELECT status FROM invitations WHERE id = $1")
+        .bind(stale_id)
+        .fetch_one(owner)
+        .await?;
+    assert_eq!(stale_status, "EXPIRED");
+
+    let forged_owner = sqlx::query("SELECT public.create_invitation($1, $2, $3, $4, $5)")
+        .bind(member_id)
+        .bind("forged@example.test")
+        .bind("member")
+        .bind("c3".repeat(32))
+        .bind(expires_at)
+        .fetch_one(&app)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&forged_owner).as_deref(), Some("42501"));
+
+    // Existing identities are globally ineligible for invitations, including
+    // a provisional identity redeemed under a different Owner tenant.
+    let existing_user = sqlx::query(
+        "SELECT public.create_invitation($1, 'provision-member@example.test', 'member', $2, $3)",
+    )
+    .bind(owner_id)
+    .bind("f1".repeat(32))
+    .bind(expires_at)
+    .fetch_one(&app)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&existing_user).as_deref(), Some("23505"));
+    let provisional_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email, provisioned_by_user_id) \
+         VALUES ('https://issuer.test', 'provisional-existing', 'provisional-existing@example.test', $1) \
+         RETURNING id",
+    )
+    .bind(owner_id)
+    .fetch_one(owner)
+    .await?;
+    let provisional_invite = sqlx::query(
+        "SELECT public.create_invitation($1, 'provisional-existing@example.test', 'member', $2, $3)",
+    )
+    .bind(other_owner_id)
+    .bind("f2".repeat(32))
+    .bind(expires_at)
+    .fetch_one(&app)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&provisional_invite).as_deref(), Some("23505"));
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(provisional_id)
+        .execute(owner)
+        .await?;
+
+    let direct_user_insert = sqlx::query(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://issuer.test', 'direct-app', 'direct-app@example.test')",
+    )
+    .execute(&app)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&direct_user_insert).as_deref(), Some("42501"));
+
+    // The create-vs-claim race uses separate app connections and one
+    // normalized address.  Whichever operation wins the advisory fence, the
+    // loser must observe the committed identity/ invitation state and no
+    // duplicate pending invitation or provisional user may result.
+    let race_email = format!("race-{}@example.test", Uuid::new_v4().simple());
+    let race_invitation_id: Uuid =
+        sqlx::query_scalar("SELECT public.create_invitation($1, $2, 'member', $3, $4)")
+            .bind(owner_id)
+            .bind(&race_email)
+            .bind("ab".repeat(32))
+            .bind(expires_at)
+            .fetch_one(&app)
+            .await?;
+    let race_create_pool = role_pool(super_url, db, "app").await?;
+    let race_claim_pool = role_pool(super_url, db, "app").await?;
+    let race_email_for_create = race_email.clone();
+    let create_race = async move {
+        sqlx::query("SELECT public.create_invitation($1, $2, 'member', $3, $4)")
+            .bind(owner_id)
+            .bind(race_email_for_create)
+            .bind("cd".repeat(32))
+            .bind(expires_at)
+            .fetch_one(&race_create_pool)
+            .await
+    };
+    let claim_race = async move {
+        sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4)")
+            .bind(owner_id)
+            .bind(race_invitation_id)
+            .bind("https://issuer.test")
+            .bind("auth0|create-vs-claim")
+            .fetch_one(&race_claim_pool)
+            .await
+    };
+    let (create_race, claim_race) = tokio::join!(create_race, claim_race);
+    let create_race = create_race.expect_err("racing creation must lose the email fence");
+    assert_eq!(pg_code(&create_race).as_deref(), Some("23505"));
+    assert!(
+        claim_race?,
+        "the pending invitation must be claimed exactly once"
+    );
+    let race_counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+            (SELECT count(*) FROM invitations WHERE lower(btrim(email)) = lower(btrim($1))), \
+            (SELECT count(*) FROM users WHERE lower(btrim(email)) = lower(btrim($1))), \
+            (SELECT count(*) FROM users WHERE issuer = 'https://issuer.test' \
+                AND subject = 'auth0|create-vs-claim')",
+    )
+    .bind(&race_email)
+    .fetch_one(&admin)
+    .await?;
+    assert_eq!(race_counts, (1, 1, 1));
+    let race_user_id: Uuid =
+        sqlx::query_scalar("SELECT redeemed_by_user_id FROM invitations WHERE id = $1")
+            .bind(race_invitation_id)
+            .fetch_one(&admin)
+            .await?;
+    sqlx::query("SELECT public.bind_redeemed_identity($1, $2, $3, 'member')")
+        .bind("https://issuer.test")
+        .bind("auth0|create-vs-claim")
+        .bind(&race_email)
+        .fetch_one(&app)
+        .await?;
+    let race_provenance: Option<Uuid> =
+        sqlx::query_scalar("SELECT provisioned_by_user_id FROM users WHERE id = $1")
+            .bind(race_user_id)
+            .fetch_one(&admin)
+            .await?;
+    assert!(race_provenance.is_none());
+
+    // Exercise the production adapters, not only the SQL procedures. The
+    // actor is supplied through the same request-scoped context used by the
+    // HTTP Owner invite handler; the serving connection still has no table
+    // write grant.
+    let adapter_invites = PostgresInviteStore::new(app.clone(), admin.clone());
+    let adapter_invite = InviteRecord {
+        id: format!("inv-{}", "d4".repeat(32)),
+        email: "adapter-member@example.test".to_string(),
+        role: Role::Member,
+        created_at_secs: expires_at - 3_600,
+        expires_at_secs: expires_at,
+        redeemed_by: None,
+        redeemed_at_secs: None,
+    };
+    with_actor_user_id(
+        &UserId::new(owner_id.to_string()),
+        adapter_invites.insert(adapter_invite),
+    )
+    .await?;
+    let adapter_pending = adapter_invites
+        .find_by_email("adapter-member@example.test")
+        .await?
+        .expect("adapter invitation");
+    let adapter_first_id = adapter_pending.id.clone();
+    let adapter_second_id = adapter_pending.id;
+    let adapter_first_store = adapter_invites.clone();
+    let adapter_second_store = adapter_invites.clone();
+    let adapter_first = async move {
+        adapter_first_store
+            .claim(
+                &adapter_first_id,
+                "https://issuer.test",
+                "auth0|adapter-member",
+                expires_at - 3_500,
+            )
+            .await
+    };
+    let adapter_second = async move {
+        adapter_second_store
+            .claim(
+                &adapter_second_id,
+                "https://issuer.test",
+                "auth0|adapter-member",
+                expires_at - 3_500,
+            )
+            .await
+    };
+    let (adapter_first, adapter_second) = tokio::join!(adapter_first, adapter_second);
+    let adapter_claimed = [adapter_first?, adapter_second?];
+    assert!(
+        adapter_claimed.iter().all(|claimed| *claimed),
+        "same-identity retries may acknowledge one atomic provisional claim"
+    );
+    let adapter_users = PostgresUserStore::new(app.clone(), admin.clone());
+    let canonical_adapter_id = adapter_users
+        .insert_user(UserRecord {
+            binding_issuer: "https://issuer.test".to_string(),
+            binding_subject: "auth0|adapter-member".to_string(),
+            user_id: UserId::new("usr_adapter_placeholder"),
+            role: Role::Member,
+            email: "adapter-member@example.test".to_string(),
+            created_at_secs: expires_at - 3_500,
+        })
+        .await?;
+    assert_eq!(
+        canonical_adapter_id,
+        adapter_users
+            .find_by_binding("https://issuer.test", "auth0|adapter-member")
+            .await?
+            .expect("adapter identity")
+            .user_id
+    );
+    assert!(
+        Uuid::parse_str(&canonical_adapter_id.0).is_ok(),
+        "production adapter must return the database UUID, not the provisional core ID"
+    );
+    let adapter_identity = adapter_users
+        .find_by_binding("https://issuer.test", "auth0|adapter-member")
+        .await?
+        .expect("adapter identity");
+    assert_eq!(adapter_identity.role, Role::Member);
+
+    // The canonical ID returned by UserStore is the one that reaches the
+    // durable session store. This is the production failure boundary: a
+    // provisional `usr_<hex>` ID must never be handed to a UUID column.
+    let session_service = SessionService::new(
+        std::sync::Arc::new(PostgresSessionStore::new(app.clone(), admin.clone())),
+        std::sync::Arc::new(FakeClock(expires_at - 3_500)),
+        std::sync::Arc::new(NoopAudit),
+    );
+    let issued = session_service
+        .issue(
+            &RedeemedIdentity {
+                user_id: canonical_adapter_id.clone(),
+                role: Role::Member,
+                email: "adapter-member@example.test".to_string(),
+                binding: "https://issuer.test|auth0|adapter-member".to_string(),
+            },
+            expires_at - 3_500,
+            vec!["pwd".to_string()],
+        )
+        .await?;
+    let persisted = session_service.validate(&issued.cookie_value).await?;
+    assert_eq!(persisted.user_id, canonical_adapter_id);
+
+    // A direct bind replay must fail closed once provenance has been cleared;
+    // normal login retries take the established find_by_binding path below.
+    let retry_error = adapter_users
+        .insert_user(UserRecord {
+            binding_issuer: "https://issuer.test".to_string(),
+            binding_subject: "auth0|adapter-member".to_string(),
+            user_id: UserId::new("usr_retry_placeholder"),
+            role: Role::Member,
+            email: "adapter-member@example.test".to_string(),
+            created_at_secs: expires_at - 3_400,
+        })
+        .await
+        .expect_err("direct bind replay must not mutate an established identity");
+    assert!(
+        matches!(retry_error, auth::invites::InviteError::Store(_)),
+        "adapter must not expose database details for a rejected bind replay"
+    );
+
+    // Drive the complete first-login callback through the production stores:
+    // the simulator supplies a signed OIDC response, while Postgres owns the
+    // invitation claim, canonical UUID binding, and durable session. A second
+    // callback with the consumed state is rejected, and a fresh login for the
+    // established immutable identity keeps the same UUID.
+    let callback_invites = PostgresInviteStore::new(app.clone(), admin.clone());
+    with_actor_user_id(
+        &UserId::new(owner_id.to_string()),
+        callback_invites.insert(InviteRecord {
+            id: format!("inv-{}", "e5".repeat(32)),
+            email: "callback-member@example.test".to_string(),
+            role: Role::Member,
+            created_at_secs: expires_at - 3_200,
+            expires_at_secs: expires_at,
+            redeemed_by: None,
+            redeemed_at_secs: None,
+        }),
+    )
+    .await?;
+    let callback_users = PostgresUserStore::new(app.clone(), admin.clone());
+    let callback_audit = std::sync::Arc::new(NoopAudit);
+    let callback_simulator = std::sync::Arc::new(Simulator::new(
+        "https://issuer.test",
+        "migration-test-client",
+        "https://app.lagrange.local/auth/callback",
+    ));
+    let callback_auth = AuthService::new(
+        OidcClient {
+            config: OidcProviderConfig {
+                issuer: "https://issuer.test".to_string(),
+                client_id: "migration-test-client".to_string(),
+                redirect_uri: "https://app.lagrange.local/auth/callback".to_string(),
+                authorize_url: "https://issuer.test/authorize".to_string(),
+                token_url: "https://issuer.test/oauth/token".to_string(),
+                jwks_url: "https://issuer.test/.well-known/jwks.json".to_string(),
+                audience: Some(SIM_AUDIENCE.to_string()),
+                clock_skew_secs: 60,
+            },
+            transport: callback_simulator.clone(),
+        },
+        auth::invites::InviteService::new(
+            std::sync::Arc::new(callback_invites.clone()),
+            std::sync::Arc::new(callback_users.clone()),
+            std::sync::Arc::new(FakeClock(expires_at - 3_200)),
+            callback_audit.clone(),
+        ),
+        SessionService::new(
+            std::sync::Arc::new(PostgresSessionStore::new(app.clone(), admin.clone())),
+            std::sync::Arc::new(FakeClock(expires_at - 3_200)),
+            callback_audit,
+        ),
+        std::sync::Arc::new(NoopAudit),
+    );
+    let pending_store = InMemoryPendingAuthStore::default();
+    let begin = callback_auth.begin_login()?;
+    let state = begin.state.clone();
+    let nonce = begin.nonce.clone();
+    pending_store
+        .insert(
+            state.clone(),
+            PendingAuth {
+                state: state.clone(),
+                nonce: nonce.clone(),
+                code_verifier: begin.pkce.verifier.clone(),
+                created_at_secs: expires_at - 3_200,
+                ttl_secs: 300,
+            },
+        )
+        .await?;
+    let callback_claims = |nonce: &str| {
+        serde_json::json!({
+            "iss": "https://issuer.test",
+            "sub": "auth0|callback-member",
+            "aud": [SIM_AUDIENCE],
+            "exp": expires_at,
+            "iat": expires_at - 3_200,
+            "nonce": nonce,
+            "email": "callback-member@example.test",
+            "email_verified": true,
+            "auth_time": expires_at - 3_260,
+            "amr": ["pwd"],
+            "roles": ["member"],
+        })
+    };
+    let code = callback_simulator.issue_code(callback_claims(&nonce), &begin.pkce.verifier);
+    let first_callback = callback_auth
+        .complete_login(&code, &state, &pending_store)
+        .await?;
+    assert!(Uuid::parse_str(&first_callback.session.user_id.0).is_ok());
+    assert_eq!(
+        callback_auth
+            .session_info(&first_callback.cookie_value)
+            .await?
+            .user_id,
+        first_callback.session.user_id
+    );
+    let replay = callback_auth
+        .complete_login(&code, &state, &pending_store)
+        .await
+        .expect_err("consumed callback state must not replay");
+    assert_eq!(replay.code(), "STATE_MISMATCH");
+
+    let retry_begin = callback_auth.begin_login()?;
+    let retry_state = retry_begin.state.clone();
+    let retry_nonce = retry_begin.nonce.clone();
+    pending_store
+        .insert(
+            retry_state.clone(),
+            PendingAuth {
+                state: retry_state.clone(),
+                nonce: retry_nonce.clone(),
+                code_verifier: retry_begin.pkce.verifier.clone(),
+                created_at_secs: expires_at - 3_100,
+                ttl_secs: 300,
+            },
+        )
+        .await?;
+    let retry_code =
+        callback_simulator.issue_code(callback_claims(&retry_nonce), &retry_begin.pkce.verifier);
+    let retry_callback = callback_auth
+        .complete_login(&retry_code, &retry_state, &pending_store)
+        .await?;
+    assert_eq!(
+        retry_callback.session.user_id, first_callback.session.user_id,
+        "established issuer/subject must retain its canonical UUID"
+    );
+
+    let app_first = app.clone();
+    let app_second = app.clone();
+    let first = async move {
+        sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4)")
+            .bind(owner_id)
+            .bind(invitation_id)
+            .bind("https://issuer.test")
+            .bind("auth0|concurrent-member")
+            .fetch_one(&app_first)
+            .await
+    };
+    let second = async move {
+        sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4)")
+            .bind(owner_id)
+            .bind(invitation_id)
+            .bind("https://issuer.test")
+            .bind("auth0|concurrent-member")
+            .fetch_one(&app_second)
+            .await
+    };
+    let (first, second) = tokio::join!(first, second);
+    let claimed = [first?, second?];
+    assert!(claimed.iter().all(|claimed| *claimed));
+
+    let redeemed: (String, Option<Uuid>, String) = sqlx::query_as(
+        "SELECT status, redeemed_by_user_id, role_id FROM invitations WHERE id = $1",
+    )
+    .bind(invitation_id)
+    .fetch_one(&admin)
+    .await?;
+    assert_eq!(redeemed.0, "REDEEMED");
+    assert!(redeemed.1.is_some());
+    assert_eq!(redeemed.2, "member");
+    assert!(
+        adapter_users
+            .find_by_binding("https://issuer.test", "auth0|concurrent-member")
+            .await?
+            .is_none(),
+        "provisional identities must not be treated as established sessions"
+    );
+    let provisional_invite = PostgresInviteStore::new(app.clone(), admin.clone())
+        .find_by_email("new-member@example.test")
+        .await?
+        .expect("redeemed provisional invitation remains retryable");
+    assert_eq!(provisional_invite.id, invitation_id.to_string());
+    let user_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM users WHERE issuer = 'https://issuer.test' \
+         AND subject = 'auth0|concurrent-member'",
+    )
+    .fetch_one(&admin)
+    .await?;
+    assert_eq!(user_count, 1);
+
+    let bound_id: Uuid = sqlx::query_scalar("SELECT public.bind_redeemed_identity($1, $2, $3, $4)")
+        .bind("https://issuer.test")
+        .bind("auth0|concurrent-member")
+        .bind("new-member@example.test")
+        .bind("member")
+        .fetch_one(&app)
+        .await?;
+    assert_eq!(bound_id, redeemed.1.expect("redeemed user"));
+    assert!(
+        adapter_users
+            .find_by_binding("https://issuer.test", "auth0|concurrent-member")
+            .await?
+            .is_some(),
+        "finalized identities must be visible to the serving adapter"
+    );
+    let provenance: Option<Uuid> =
+        sqlx::query_scalar("SELECT provisioned_by_user_id FROM users WHERE id = $1")
+            .bind(bound_id)
+            .fetch_one(&admin)
+            .await?;
+    assert!(provenance.is_none());
+    let repeat_bind = sqlx::query("SELECT public.bind_redeemed_identity($1, $2, $3, $4)")
+        .bind("https://issuer.test")
+        .bind("auth0|concurrent-member")
+        .bind("new-member@example.test")
+        .bind("member")
+        .fetch_one(&app)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&repeat_bind).as_deref(), Some("42501"));
+
+    let preprovisioned_bind = sqlx::query("SELECT public.bind_redeemed_identity($1, $2, $3, $4)")
+        .bind("https://issuer.test")
+        .bind("provision-owner")
+        .bind("provision-owner@example.test")
+        .bind("owner")
+        .fetch_one(&app)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&preprovisioned_bind).as_deref(), Some("42501"));
+
+    for (role, expected) in [
+        ("app", true),
+        ("admin", false),
+        ("worker", false),
+        ("audit_writer", false),
+        ("research_writer", false),
+    ] {
+        for signature in [
+            "public.create_invitation(uuid, text, text, text, bigint)",
+            "public.claim_invitation(uuid, uuid, text, text)",
+            "public.bind_redeemed_identity(text, text, text, text)",
+        ] {
+            let can_execute: bool =
+                sqlx::query_scalar("SELECT has_function_privilege($1, $2, 'EXECUTE')")
+                    .bind(role)
+                    .bind(signature)
+                    .fetch_one(owner)
+                    .await?;
+            assert_eq!(
+                can_execute, expected,
+                "unexpected {role} grant on {signature}"
+            );
+        }
+    }
+    let function_metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
+        "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
+         FROM pg_proc WHERE oid = \
+         'public.claim_invitation(uuid,uuid,text,text)'::regprocedure",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(function_metadata.0);
+    assert_eq!(function_metadata.1, "migration_owner");
+    let function_config = function_metadata.2.expect("claim function config");
+    assert!(
+        function_config
+            .iter()
+            .any(|config| config == "search_path=pg_catalog, pg_temp")
+    );
+    assert!(
+        function_config
+            .iter()
+            .any(|config| config == "lock_timeout=1s")
+    );
+    assert!(
+        function_config
+            .iter()
+            .any(|config| config == "statement_timeout=5s")
+    );
+
+    let blocked_rollback = MIGRATOR.undo(owner, 38).await.unwrap_err();
+    assert_eq!(migrate_pg_code(&blocked_rollback).as_deref(), Some("55000"));
+    sqlx::query("DELETE FROM invitations WHERE id = $1")
+        .bind(owner_invitation_id)
+        .execute(owner)
+        .await?;
+    MIGRATOR.undo(owner, 38).await?;
+    let function_exists: bool = sqlx::query_scalar(
+        "SELECT to_regprocedure('public.claim_invitation(uuid,uuid,text,text)') IS NOT NULL",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        !function_exists,
+        "0040 down must remove provisioning functions"
+    );
+    MIGRATOR.run(owner).await?;
+    Ok(())
+}
 
 #[test]
 fn recommendation_pipeline_migration_is_tracked() {
@@ -628,8 +2103,8 @@ fn fresh_db_name() -> String {
 /// Number of migrations `Migrator::run` applies. sqlx 0.9 records each
 /// `.up.sql` and `.down.sql` file as its OWN `Migration` entry
 /// (`ReversibleUp`/`ReversibleDown`), so `migrations.len()` is 2x the real
-/// count for the 9 up/down pairs in `migrations/`. `run` applies every
-/// non-`ReversibleDown` entry; `undo` consumes the down side.
+/// count for the reversible migration pairs in `migrations/`. `run` applies
+/// every non-`ReversibleDown` entry; `undo` consumes the down side.
 fn up_migration_count() -> usize {
     MIGRATOR
         .migrations
@@ -3139,7 +4614,7 @@ async fn recommendation_pipeline_contract_body(
     .await?;
     assert!(active_control);
     MIGRATOR.run_to(38, owner).await?;
-    assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
+    assert_eq!(applied_count(owner).await?, 38);
 
     let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
         "SELECT table_name, column_name, is_nullable, column_default \

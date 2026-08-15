@@ -20,6 +20,7 @@ use job_queue::runner::{
     Outcome, ResolveError, ResolvedStrategy, RunnerPaths, StrategyResolver, run_once,
 };
 use job_queue::types::{JobStatus, SubmitJob};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -50,7 +51,7 @@ impl StrategyResolver for GoldenResolver {
         Ok(ResolvedStrategy {
             strategy_path: "ma200_trend:MA200Trend".into(),
             config_path: "ma200_trend:MA200TrendConfig".into(),
-            strategy_id: "ma200-trend".into(),
+            strategy_id: "ma200_trend".into(),
             strategy_version: "1.0.0".into(),
             config: serde_json::json!({
                 "ma_period": 200,
@@ -72,6 +73,19 @@ impl StrategyResolver for BrokenResolver {
     async fn resolve(&self, _id: &str, _owner: Uuid) -> Result<ResolvedStrategy, ResolveError> {
         Err(ResolveError::Unavailable(
             "strategy registry is unavailable".into(),
+        ))
+    }
+}
+
+/// Holds the runner in pre-child strategy resolution long enough that an
+/// unmonitored short lease would expire and a second worker could claim it.
+struct SlowResolver;
+
+impl StrategyResolver for SlowResolver {
+    async fn resolve(&self, _id: &str, _owner: Uuid) -> Result<ResolvedStrategy, ResolveError> {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        Err(ResolveError::Unavailable(
+            "slow strategy registry is unavailable".into(),
         ))
     }
 }
@@ -127,6 +141,7 @@ fn paths(scratch: &tempfile::TempDir) -> RunnerPaths {
         repo_root: root,
         artifacts_root: scratch.path().to_path_buf(),
         uv_bin: uv_bin(),
+        code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
     }
 }
 
@@ -172,7 +187,78 @@ async fn submit_backtest_for(
             available_at: None,
         })
         .await?;
+    seed_run_for_job(
+        &queue.pool(),
+        job.id,
+        owner,
+        "ma200_trend",
+        serde_json::json!({
+            "ma_period": 200,
+            "slippage_bps": 10,
+            "lot_size": 100,
+            "initial_cash": "100000000",
+            "strategy_version": "1.0.0",
+            "probe_future_fields": false,
+        }),
+    )
+    .await;
     Ok(job.id)
+}
+
+async fn seed_run_for_job(
+    pool: &PgPool,
+    job_id: Uuid,
+    owner: Uuid,
+    strategy_id: &str,
+    config: serde_json::Value,
+) -> Uuid {
+    sqlx::query(
+        "INSERT INTO strategies (id, display_name) VALUES ($1, $1)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(strategy_id)
+    .execute(pool)
+    .await
+    .expect("seed strategy");
+    let run_id: Uuid =
+        sqlx::query_scalar("SELECT (payload_json->>'run_id')::uuid FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(pool)
+            .await
+            .expect("run id in payload");
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(config.to_string().as_bytes());
+    let config_sha256 = format!("{:x}", digest.finalize());
+    sqlx::query(
+        "INSERT INTO backtest_runs
+            (id, owner_user_id, job_id, strategy_id, strategy_version,
+             dataset_version, engine, engine_version, config_sha256, code_commit,
+             random_seed, timezone, status, summary_json)
+         VALUES ($1, $2, $3, $4, '1.0.0',
+                 'kr-etf-daily-phase0-v2@2026-01', 'nautilustrader', '1.231.0',
+                 $5, '0123456789abcdef0123456789abcdef01234567', 42,
+                 'Asia/Seoul', 'PENDING', '{}')
+         ON CONFLICT (id) DO UPDATE SET
+             owner_user_id = EXCLUDED.owner_user_id,
+             job_id = EXCLUDED.job_id,
+             strategy_id = EXCLUDED.strategy_id,
+             strategy_version = EXCLUDED.strategy_version,
+             config_sha256 = EXCLUDED.config_sha256,
+             status = 'PENDING',
+             summary_json = '{}'::jsonb,
+             started_at = NULL,
+             finished_at = NULL",
+    )
+    .bind(run_id)
+    .bind(owner)
+    .bind(job_id)
+    .bind(strategy_id)
+    .bind(config_sha256)
+    .execute(pool)
+    .await
+    .expect("seed backtest run");
+    run_id
 }
 
 /// The common case: the config id does not matter because the test's resolver
@@ -243,6 +329,96 @@ async fn a_submitted_backtest_actually_runs_and_finishes() {
             "{expected} missing from {produced:?}"
         );
     }
+
+    let run_id: Uuid =
+        sqlx::query_scalar("SELECT (payload_json->>'run_id')::uuid FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&db.pool)
+            .await
+            .expect("run id");
+    let run_dir = scratch.path().join(run_id.to_string());
+    let generation_root = run_dir.join("generations");
+    assert!(
+        generation_root.is_dir(),
+        "immutable generation root must exist"
+    );
+    assert!(
+        walk(&generation_root)
+            .iter()
+            .any(|path| path.ends_with("artifacts/manifest.json")),
+        "validated manifest must be promoted to an immutable generation"
+    );
+    assert!(
+        !walk(scratch.path())
+            .iter()
+            .any(|path| path.ends_with("status.json")),
+        "attempt status must be cleaned rather than left as a canonical fallback"
+    );
+    let published_paths: Vec<String> =
+        sqlx::query_scalar(
+            "SELECT parquet_path FROM result_artifacts WHERE backtest_run_id = $1 ORDER BY parquet_path",
+        )
+            .bind(run_id)
+            .fetch_all(&db.pool)
+            .await
+            .expect("published artifact paths");
+    assert!(!published_paths.is_empty());
+    let prefix = format!("backtest/runs/{run_id}/generations/");
+    assert!(
+        published_paths
+            .iter()
+            .all(|path| { path.starts_with(&prefix) && path.matches('/').count() == 7 })
+    );
+    assert!(
+        published_paths.iter().all(|path| {
+            let relative = path
+                .strip_prefix(&format!("backtest/runs/{run_id}/"))
+                .expect("path prefix");
+            run_dir.join(relative).is_file()
+        }),
+        "every DB path must resolve to the immutable bytes"
+    );
+
+    // Compatibility fence: the result transaction has committed, but a
+    // pre-isolation replica may still be alive and repeatedly write the old
+    // canonical names. Model that writer after settlement and prove the DB
+    // path, bytes, and hash it references remain unchanged.
+    let published_path = run_dir.join(
+        published_paths[0]
+            .strip_prefix(&format!("backtest/runs/{run_id}/"))
+            .expect("published path prefix"),
+    );
+    let before_bytes = std::fs::read(&published_path).expect("published bytes");
+    let before_hash = format!("{:x}", Sha256::digest(&before_bytes));
+    let legacy_root = run_dir.clone();
+    let legacy_writer = std::thread::spawn(move || {
+        let canonical = legacy_root.join("artifacts");
+        std::fs::create_dir_all(&canonical).expect("legacy canonical artifacts");
+        for index in 0..128 {
+            std::fs::write(
+                canonical.join("equity.parquet"),
+                format!("legacy overwrite {index}"),
+            )
+            .expect("legacy artifact write");
+            std::fs::write(
+                legacy_root.join("status.json"),
+                format!(r#"{{"state":"SUCCEEDED","legacy_write":{index}}}"#),
+            )
+            .expect("legacy status write");
+        }
+    });
+    legacy_writer.join().expect("legacy writer");
+    let after_paths: Vec<String> = sqlx::query_scalar(
+        "SELECT parquet_path FROM result_artifacts WHERE backtest_run_id = $1 ORDER BY parquet_path",
+    )
+    .bind(run_id)
+    .fetch_all(&db.pool)
+    .await
+    .expect("published artifact paths after legacy writer");
+    assert_eq!(after_paths, published_paths);
+    let after_bytes = std::fs::read(&published_path).expect("immutable bytes after legacy writer");
+    assert_eq!(after_bytes, before_bytes);
+    assert_eq!(format!("{:x}", Sha256::digest(&after_bytes)), before_hash);
 
     db.drop_db().await;
 }
@@ -354,6 +530,54 @@ async fn a_runner_fault_requeues_the_job_instead_of_discarding_it() {
     db.drop_db().await;
 }
 
+#[tokio::test]
+async fn lease_monitor_holds_claim_during_slow_preprocessing() {
+    let _serial = serial_backtest_environment().await;
+    let Some(db) = ScratchDb::create().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let queue = JobQueue::new(
+        db.pool.clone(),
+        None,
+        QueueConfig {
+            lease: std::time::Duration::from_millis(100),
+            backoff_base: std::time::Duration::from_millis(1),
+        },
+    );
+    let owner = seed_owner(&db.pool).await;
+    let job_id = submit_backtest(&queue, owner).await.expect("submit");
+    let first_queue = queue.clone();
+    let first_paths = paths(&scratch);
+    let first = tokio::spawn(async move {
+        run_once(&first_queue, "slow-worker-a", &first_paths, &SlowResolver).await
+    });
+
+    // The resolver is still running after three lease periods. The monitor
+    // must retain the exact claim, so a second worker sees no eligible job.
+    tokio::time::sleep(std::time::Duration::from_millis(220)).await;
+    let second = queue
+        .claim_next_for("slow-worker-b", "backtest")
+        .await
+        .expect("second claim query");
+    assert!(
+        second.is_none(),
+        "slow preprocessing must keep the lease alive"
+    );
+
+    let outcome = first
+        .await
+        .expect("first worker join")
+        .expect("first worker");
+    assert!(matches!(outcome, Outcome::Errored { .. }), "{outcome:?}");
+    assert_eq!(
+        queue.get_by_id(job_id).await.expect("job").status,
+        JobStatus::Queued
+    );
+    db.drop_db().await;
+}
+
 /// Seeds a real `user_strategy_configs` row for the deployed strategy.
 async fn seed_strategy_config(pool: &PgPool, owner: Uuid) -> Uuid {
     sqlx::query("INSERT INTO strategies (id, display_name) VALUES ('ma200_trend', 'MA200 Trend')")
@@ -406,11 +630,16 @@ async fn the_daemon_drains_a_real_job_under_the_worker_role() {
     let root = repo_root();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_backtest-runner"))
         .arg("--once")
+        .env("APP_ENV", "qa")
         .env("DATABASE_URL", db.role_url("worker"))
         .env("LAGRANGE_REPO_ROOT", &root)
         .env("LAGRANGE_DATASET_ROOT", root.join("data/phase0"))
         .env("LAGRANGE_ARTIFACTS_ROOT", scratch.path())
         .env("LAGRANGE_UV_BIN", uv_bin())
+        .env(
+            "LAGRANGE_CODE_COMMIT",
+            "0123456789abcdef0123456789abcdef01234567",
+        )
         .output()
         .expect("the daemon binary runs");
 
@@ -463,46 +692,45 @@ impl StrategyResolver for BaselineResolver {
             config_path: self.config_path.into(),
             strategy_id: self.strategy_id.into(),
             strategy_version: "1.0.0".into(),
-            config: {
-                let mut config = serde_json::json!({
-                    "slippage_bps": 10,
-                    "lot_size": 100,
-                    "initial_cash": "100000000",
-                    "strategy_version": "1.0.0",
-                });
-                // `instrument_ids` is deliberately absent: the worker
-                // overwrites it with what it found in the dataset, and a
-                // resolver that set it would be describing a universe the
-                // strategy will not actually see.
-                if let Some(params) = &self.parameters {
-                    config["parameters"] = params.clone();
-                }
-                config
-            },
+            config: self.config_value(),
         })
     }
 }
 
-/// Rows the worker reported for an artifact type, from its own status file.
-///
-/// The worker publishes an exact `row_count` per artifact, so the assertion
-/// reads that rather than inspecting parquet or guessing from file size. A
-/// size threshold would be a heuristic standing in for the number the worker
-/// already states, and the whole point of these tests is that "it produced a
-/// file" is not the same claim as "it produced results".
-fn status_of(scratch: &std::path::Path) -> Option<serde_json::Value> {
-    let status_path = walk(scratch)
+impl BaselineResolver {
+    fn config_value(&self) -> serde_json::Value {
+        let mut config = serde_json::json!({
+            "slippage_bps": 10,
+            "lot_size": 100,
+            "initial_cash": "100000000",
+            "strategy_version": "1.0.0",
+        });
+        // `instrument_ids` is deliberately absent: the worker overwrites it
+        // with what it found in the dataset, and a resolver that set it would
+        // describe a universe the strategy will not actually see.
+        if let Some(params) = &self.parameters {
+            config["parameters"] = params.clone();
+        }
+        config
+    }
+}
+
+/// The worker publishes an exact `row_count` in its validated manifest, so
+/// the assertion reads that rather than inspecting parquet or guessing from
+/// file size. Attempt status is intentionally cleaned with the attempt
+/// namespace after settlement; the manifest is the durable result artifact.
+fn manifest_of(scratch: &std::path::Path) -> Option<serde_json::Value> {
+    let manifest_path = walk(scratch)
         .into_iter()
-        .find(|p| p.ends_with("status.json"))?;
-    let raw = std::fs::read_to_string(&status_path).ok()?;
+        .find(|p| p.ends_with("manifest.json"))?;
+    let raw = std::fs::read_to_string(&manifest_path).ok()?;
     serde_json::from_str(&raw).ok()
 }
 
 /// The normalized result the worker published, which carries fee AMOUNTS.
 ///
-/// `status.json` reports only row counts, and a fees artifact holding one row
-/// of zero is what the uncharged version produced -- so anything asserting
-/// costs has to read the values.
+/// A fees artifact holding one row of zero is what the uncharged version
+/// produced -- so anything asserting costs has to read the values.
 fn normalized_result(scratch: &std::path::Path) -> Option<serde_json::Value> {
     let path = walk(scratch)
         .into_iter()
@@ -511,8 +739,8 @@ fn normalized_result(scratch: &std::path::Path) -> Option<serde_json::Value> {
 }
 
 fn reported_rows(scratch: &std::path::Path, artifact_type: &str) -> Option<u64> {
-    let status = status_of(scratch)?;
-    status
+    let manifest = manifest_of(scratch)?;
+    manifest
         .get("artifacts")?
         .as_array()?
         .iter()
@@ -541,7 +769,7 @@ async fn a_baseline_backtest_produces_orders_rather_than_an_empty_success() {
     let scratch = tempfile::tempdir().expect("scratch");
     let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
     let owner = seed_owner(&db.pool).await;
-    submit_backtest(&queue, owner).await.expect("submit");
+    let job_id = submit_backtest(&queue, owner).await.expect("submit");
 
     let resolver = BaselineResolver {
         strategy_id: "buy_and_hold",
@@ -549,6 +777,14 @@ async fn a_baseline_backtest_produces_orders_rather_than_an_empty_success() {
         config_path: "strategies.buy_and_hold.adapter:BuyAndHoldConfig",
         parameters: None,
     };
+    seed_run_for_job(
+        &db.pool,
+        job_id,
+        owner,
+        resolver.strategy_id,
+        resolver.config_value(),
+    )
+    .await;
     let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
         .await
         .expect("runner");
@@ -589,7 +825,7 @@ async fn a_fill_is_charged_the_profile_the_runner_resolved() {
     let scratch = tempfile::tempdir().expect("scratch");
     let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
     let owner = seed_owner(&db.pool).await;
-    submit_backtest(&queue, owner).await.expect("submit");
+    let job_id = submit_backtest(&queue, owner).await.expect("submit");
 
     let resolver = BaselineResolver {
         strategy_id: "buy_and_hold",
@@ -597,6 +833,14 @@ async fn a_fill_is_charged_the_profile_the_runner_resolved() {
         config_path: "strategies.buy_and_hold.adapter:BuyAndHoldConfig",
         parameters: None,
     };
+    seed_run_for_job(
+        &db.pool,
+        job_id,
+        owner,
+        resolver.strategy_id,
+        resolver.config_value(),
+    )
+    .await;
     let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
         .await
         .expect("runner");
@@ -653,7 +897,7 @@ async fn a_factor_driven_strategy_trades_on_the_computed_series() {
     let scratch = tempfile::tempdir().expect("scratch");
     let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
     let owner = seed_owner(&db.pool).await;
-    submit_backtest(&queue, owner).await.expect("submit");
+    let job_id = submit_backtest(&queue, owner).await.expect("submit");
 
     let resolver = BaselineResolver {
         strategy_id: "inverse_volatility",
@@ -661,6 +905,14 @@ async fn a_factor_driven_strategy_trades_on_the_computed_series() {
         config_path: "strategies.inverse_volatility.adapter:InverseVolatilityConfig",
         parameters: None,
     };
+    seed_run_for_job(
+        &db.pool,
+        job_id,
+        owner,
+        resolver.strategy_id,
+        resolver.config_value(),
+    )
+    .await;
     let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
         .await
         .expect("runner");
@@ -701,7 +953,7 @@ async fn a_strategy_that_reads_two_factors_executes_the_invested_branch() {
     let scratch = tempfile::tempdir().expect("scratch");
     let queue = JobQueue::new(db.pool.clone(), None, QueueConfig::default());
     let owner = seed_owner(&db.pool).await;
-    submit_backtest(&queue, owner).await.expect("submit");
+    let job_id = submit_backtest(&queue, owner).await.expect("submit");
 
     let resolver = BaselineResolver {
         strategy_id: "trend_following",
@@ -713,6 +965,14 @@ async fn a_strategy_that_reads_two_factors_executes_the_invested_branch() {
             "slow_ma": 50,
         })),
     };
+    seed_run_for_job(
+        &db.pool,
+        job_id,
+        owner,
+        resolver.strategy_id,
+        resolver.config_value(),
+    )
+    .await;
     let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
         .await
         .expect("runner");
@@ -763,6 +1023,14 @@ async fn parameters_that_ask_for_an_undeclared_factor_fail_loudly() {
             "slow_ma": 200,
         })),
     };
+    seed_run_for_job(
+        &db.pool,
+        job_id,
+        owner,
+        resolver.strategy_id,
+        resolver.config_value(),
+    )
+    .await;
     let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
         .await
         .expect("runner");
@@ -807,6 +1075,14 @@ async fn a_dataset_too_short_for_a_strategy_fails_permanently() {
         config_path: "strategies.dual_momentum.adapter:DualMomentumConfig",
         parameters: None,
     };
+    seed_run_for_job(
+        &db.pool,
+        job_id,
+        owner,
+        resolver.strategy_id,
+        resolver.config_value(),
+    )
+    .await;
     let outcome = run_once(&queue, "test-runner", &paths(&scratch), &resolver)
         .await
         .expect("runner");
@@ -889,5 +1165,63 @@ async fn a_claimed_job_never_stays_running() {
     );
     assert!(after.locked_by.is_none(), "the lease is released");
 
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn a_second_worker_cannot_settle_an_expired_backtest_claim() {
+    let _serial = serial_backtest_environment().await;
+    let Some(db) = ScratchDb::create().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let queue = JobQueue::new(
+        db.pool.clone(),
+        None,
+        QueueConfig {
+            lease: std::time::Duration::from_millis(25),
+            backoff_base: std::time::Duration::from_millis(1),
+        },
+    );
+    let owner = seed_owner(&db.pool).await;
+    let job = queue
+        .submit(SubmitJob {
+            owner_user_id: owner,
+            job_type: "backtest".to_owned(),
+            payload: serde_json::json!({"kind": "backtest"}),
+            priority: 1,
+            idempotency_key: Some(Uuid::new_v4().to_string()),
+            max_attempts: 2,
+            available_at: None,
+        })
+        .await
+        .expect("submit");
+    let first = queue
+        .claim_next_for("backtest-worker-a", "backtest")
+        .await
+        .expect("first claim")
+        .expect("first claim exists");
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    queue.sweep().await.expect("sweep expired lease");
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    let second = queue
+        .claim_next_for("backtest-worker-b", "backtest")
+        .await
+        .expect("second claim")
+        .expect("requeued claim exists");
+    assert_ne!(first.attempt.id, second.attempt.id);
+    assert!(matches!(
+        queue.settle_success(&first).await,
+        Err(QueueError::StaleClaim(id)) if id == job.id
+    ));
+    queue
+        .settle_failure(
+            &second,
+            job_queue::types::ErrorClass::Input,
+            "TEST_DONE",
+            "lease ownership test",
+        )
+        .await
+        .expect("second worker settles its own claim");
     db.drop_db().await;
 }

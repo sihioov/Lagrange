@@ -35,8 +35,9 @@ foreach ($required in @(
 
 $envText = Get-Content -Raw -LiteralPath $envExample
 foreach ($required in @(
-    'DATABASE_URL=', 'WORKER_DATABASE_URL=', 'ADMIN_DATABASE_URL=',
-    'AUDIT_DATABASE_URL=', 'LAGRANGE_DATASET_ROOT='
+    'PAPER_APP_DB_PASSWORD_FILE=', 'PAPER_WORKER_DB_PASSWORD_FILE=',
+    'PAPER_ADMIN_DB_PASSWORD_FILE=', 'PAPER_AUDIT_DB_PASSWORD_FILE=',
+    'LAGRANGE_DATASET_ROOT=', 'PAPER_HEALTH_STATE_PATH='
 )) {
     if ($envText -notmatch [regex]::Escape($required)) { throw "env template missing: $required" }
 }

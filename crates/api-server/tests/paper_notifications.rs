@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use api_server::notify::AlertSeverity;
 use api_server::paper_session::{SessionOutcome, settle_and_announce};
-use api_server::repos::pending_targets::NewPendingTarget;
+use api_server::repos::pending_targets::{NewPendingTarget, PaperSettlementAnnouncement};
 use result_model::paper_parity::ParityStatus;
 
 fn status(resp: &axum::http::Response<axum::body::Body>) -> StatusCode {
@@ -597,5 +597,134 @@ async fn a_session_that_recorded_nothing_is_not_announced_as_complete() {
         "the notice must say what was missing: {body}"
     );
 
+    h.teardown().await;
+}
+
+/// A deterministic stand-in for a runner cancellation immediately after the
+/// terminal target write: leave the committed outbox row untouched, then let
+/// the recovery scan dispatch it.  Replaying the same row proves the
+/// notification source key and per-channel uniqueness are idempotent.  The
+/// rollback half proves a failed transaction cannot leave either side behind.
+#[tokio::test]
+async fn failure_settlement_outbox_recovers_after_cancel_and_retries_once() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let member = h.member.clone();
+    let account = paper_account(&h, &member, "notify-outbox-recovery").await;
+    let config = strategy_config(&h, &member, "notify-outbox-recovery-cfg").await;
+    let target = queue_target(&h, &member, &account, &config).await;
+    let announcement = PaperSettlementAnnouncement {
+        severity: "WARNING".to_owned(),
+        kind: "alert".to_owned(),
+        title: "Paper settlement recovery test".to_owned(),
+        body: "the dispatcher was canceled after settlement".to_owned(),
+        parity_json: Some(json!({ "status": "MATCH" })),
+        non_execution_reason: None,
+    };
+
+    // The target/outbox transaction commits, then this test intentionally
+    // pauses before dispatch — the exact crash boundary that used to lose an
+    // alert forever.
+    let (settled, outbox) = h
+        .state_pending_targets()
+        .settle_with_announcement(&member.actor(), target, "SKIPPED", &announcement)
+        .await
+        .expect("terminal target and outbox commit together");
+    assert_eq!(settled.status, "SKIPPED");
+    let worker = h.worker_pool().await;
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM paper_settlement_outbox \
+         WHERE id=$1 AND delivered_at IS NULL",
+    )
+    .bind(outbox.id)
+    .fetch_one(&worker)
+    .await
+    .expect("pending outbox row");
+    assert_eq!(pending, 1, "cancellation leaves a recoverable intent");
+
+    let notifier = h.state().notifier();
+    let alerts = notifier
+        .dispatch_paper_settlement(&member.actor(), &outbox)
+        .await
+        .expect("recovery dispatch");
+    assert_eq!(alerts.deliveries.len(), 2, "member web plus owner admin");
+    h.state_pending_targets()
+        .mark_announcement_delivered(&member.actor(), outbox.id)
+        .await
+        .expect("mark dispatched");
+
+    // A retry after a worker restart sees the same immutable source key.  It
+    // must return the same rows rather than append another notification.
+    notifier
+        .dispatch_paper_settlement(&member.actor(), &outbox)
+        .await
+        .expect("idempotent retry");
+    let member_pool = h.member_pool().await;
+    let member_counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM notifications WHERE owner_user_id=$1), \
+                (SELECT count(*) FROM notification_deliveries WHERE owner_user_id=$1)",
+    )
+    .bind(member.user_id)
+    .fetch_one(&member_pool)
+    .await
+    .expect("member notification counts");
+    assert_eq!(member_counts, (1, 1));
+    let owner_counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM notifications WHERE owner_user_id=$1), \
+                (SELECT count(*) FROM notification_deliveries WHERE owner_user_id=$1)",
+    )
+    .bind(h.owner.user_id)
+    .fetch_one(&h.admin_pool)
+    .await
+    .expect("owner notification counts");
+    assert_eq!(owner_counts, (1, 1));
+    let parity: serde_json::Value =
+        sqlx::query_scalar("SELECT parity_json FROM paper_settlement_outbox WHERE id=$1")
+            .bind(outbox.id)
+            .fetch_one(&worker)
+            .await
+            .expect("durable parity snapshot");
+    assert_eq!(parity["status"], "MATCH");
+
+    // Rollback injection: neither a terminal target nor an outbox intent is
+    // visible when the transaction is canceled before commit.
+    let rollback_account = paper_account(&h, &member, "notify-outbox-rollback").await;
+    let rollback_config = strategy_config(&h, &member, "notify-outbox-rollback-cfg").await;
+    let rollback_target = queue_target(&h, &member, &rollback_account, &rollback_config).await;
+    let mut tx = api_server::actor_tx::begin_actor_tx(&h.app_pool, &member.actor())
+        .await
+        .expect("rollback transaction");
+    sqlx::query("UPDATE pending_targets SET status='SKIPPED', executed_at=now() WHERE id=$1")
+        .bind(rollback_target)
+        .execute(&mut *tx)
+        .await
+        .expect("terminal update before injected rollback");
+    sqlx::query(
+        "INSERT INTO paper_settlement_outbox \
+         (pending_target_id, owner_user_id, severity, kind, title, body) \
+         VALUES ($1, $2, 'WARNING', 'alert', 'rollback', 'rollback')",
+    )
+    .bind(rollback_target)
+    .bind(member.user_id)
+    .execute(&mut *tx)
+    .await
+    .expect("outbox insert before injected rollback");
+    tx.rollback().await.expect("injected cancellation rollback");
+    let status: String = sqlx::query_scalar("SELECT status FROM pending_targets WHERE id=$1")
+        .bind(rollback_target)
+        .fetch_one(&member_pool)
+        .await
+        .expect("rolled back target");
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM paper_settlement_outbox WHERE pending_target_id=$1",
+    )
+    .bind(rollback_target)
+    .fetch_one(&worker)
+    .await
+    .expect("rolled back outbox");
+    assert_eq!(status, "PENDING");
+    assert_eq!(outbox_count, 0);
     h.teardown().await;
 }

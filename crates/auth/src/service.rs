@@ -52,7 +52,8 @@ impl AuthService {
         let consumed = match pending_store.take(state).await {
             Ok(Some(p)) => p,
             Ok(None) => {
-                self.audit_login_denied(None, "PENDING_MISSING", state);
+                self.audit_login_denied(None, "PENDING_MISSING", state)
+                    .await?;
                 return Err(AuthError::Oidc(OidcError::StateMismatch));
             }
             Err(e) => return Err(AuthError::Oidc(e)),
@@ -64,7 +65,8 @@ impl AuthService {
         {
             Ok(c) => c,
             Err(e) => {
-                self.audit_login_denied(None, e.code(), "callback validation");
+                self.audit_login_denied(None, e.code(), "callback validation")
+                    .await?;
                 return Err(AuthError::Oidc(e));
             }
         };
@@ -75,7 +77,8 @@ impl AuthService {
                     Some(&claims.sub),
                     e.code(),
                     &claims.email.clone().unwrap_or_default(),
-                );
+                )
+                .await?;
                 return Err(AuthError::Invite(e));
             }
         };
@@ -85,13 +88,15 @@ impl AuthService {
             .issue(&identity, auth_time, claims.amr.clone())
             .await
             .map_err(AuthError::Session)?;
-        self.audit.record(AuthAuditEvent {
-            at_secs: now,
-            kind: AuthAuditKind::LoginSucceeded,
-            user: Some(identity.user_id.0.clone()),
-            reason: None,
-            detail: format!("identity {}", identity.binding),
-        });
+        self.audit
+            .record(AuthAuditEvent {
+                at_secs: now,
+                kind: AuthAuditKind::LoginSucceeded,
+                user: Some(identity.user_id.0.clone()),
+                reason: None,
+                detail: format!("identity {}", identity.binding),
+            })
+            .map_err(|error| AuthError::Audit(format!("{error:?}")))?;
         Ok(issued)
     }
 
@@ -106,13 +111,16 @@ impl AuthService {
         match self.sessions.validate(cookie_value).await {
             Ok(info) => Ok(info),
             Err(SessionError::Expired) => {
-                self.audit.record(AuthAuditEvent {
-                    at_secs: self.sessions.clock.now_epoch_secs(),
-                    kind: AuthAuditKind::SessionExpired,
-                    user: None,
-                    reason: Some("SESSION_EXPIRED".to_string()),
-                    detail: "session expired, re-login required".to_string(),
-                });
+                self.audit
+                    .record_durable(AuthAuditEvent {
+                        at_secs: self.sessions.clock.now_epoch_secs(),
+                        kind: AuthAuditKind::SessionExpired,
+                        user: None,
+                        reason: Some("SESSION_EXPIRED".to_string()),
+                        detail: "session expired, re-login required".to_string(),
+                    })
+                    .await
+                    .map_err(|error| AuthError::Audit(format!("{error:?}")))?;
                 Err(AuthError::Session(SessionError::Expired))
             }
             Err(e) => Err(AuthError::Session(e)),
@@ -126,14 +134,22 @@ impl AuthService {
             .map_err(AuthError::Session)
     }
 
-    fn audit_login_denied(&self, sub: Option<&str>, reason: &str, detail: &str) {
-        self.audit.record(AuthAuditEvent {
-            at_secs: self.sessions.clock.now_epoch_secs(),
-            kind: AuthAuditKind::LoginDenied,
-            user: sub.map(str::to_string),
-            reason: Some(reason.to_string()),
-            detail: detail.to_string(),
-        });
+    async fn audit_login_denied(
+        &self,
+        sub: Option<&str>,
+        reason: &str,
+        detail: &str,
+    ) -> Result<(), AuthError> {
+        self.audit
+            .record_durable(AuthAuditEvent {
+                at_secs: self.sessions.clock.now_epoch_secs(),
+                kind: AuthAuditKind::LoginDenied,
+                user: sub.map(str::to_string),
+                reason: Some(reason.to_string()),
+                detail: detail.to_string(),
+            })
+            .await
+            .map_err(|error| AuthError::Audit(format!("{error:?}")))
     }
 }
 
@@ -145,6 +161,8 @@ pub enum AuthError {
     Invite(#[from] InviteError),
     #[error(transparent)]
     Session(#[from] SessionError),
+    #[error("auth audit delivery failure: {0}")]
+    Audit(String),
 }
 
 impl AuthError {
@@ -153,6 +171,7 @@ impl AuthError {
             Self::Oidc(e) => e.code(),
             Self::Invite(e) => e.code(),
             Self::Session(e) => e.code(),
+            Self::Audit(_) => "AUTH_AUDIT",
         }
     }
 

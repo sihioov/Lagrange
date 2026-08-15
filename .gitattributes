@@ -1,3 +1,6 @@
 *.sh text eol=lf
 scripts/qa/*.sh text eol=lf
+deploy/db/* text eol=lf
+deploy/runtime/* text eol=lf
+nt/*/runtime/* text eol=lf
 tests/golden/robustness/**/*.json text eol=lf

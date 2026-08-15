@@ -27,6 +27,7 @@
 //! distinct under the unique index).
 
 use crate::error::QueueError;
+use crate::paper_execution::set_paper_transaction_timeouts;
 use crate::types::{
     AttemptOutcome, AuditActor, CancelResult, ClaimedJob, ErrorClass, HeartbeatStatus, Job,
     JobStatus, SettleResult, SubmitJob, SweepReport,
@@ -112,6 +113,53 @@ impl JobQueue {
 
     pub fn config(&self) -> &QueueConfig {
         &self.config
+    }
+
+    /// Clone the queue pool for a short, caller-owned transaction.
+    ///
+    /// Backtest publication must commit its manifest and queue transition at
+    /// one boundary.  The runner never holds this transaction while a child
+    /// is executing; it is opened only after the child has produced and
+    /// passed validation.
+    pub async fn begin(&self) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, QueueError> {
+        let mut tx = self.pool.begin().await?;
+        set_paper_transaction_timeouts(&mut tx).await?;
+        Ok(tx)
+    }
+
+    /// Open a coherent read-only snapshot for safety reconciliation. The
+    /// isolation level must be selected before the timeout setup query (and
+    /// before any other statement), so this cannot be layered on [`begin`].
+    pub async fn begin_repeatable_read(
+        &self,
+    ) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, QueueError> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            .execute(&mut *tx)
+            .await?;
+        set_paper_transaction_timeouts(&mut tx).await?;
+        Ok(tx)
+    }
+
+    /// Return a clone of the underlying pool for read-only worker metadata
+    /// lookups.  Callers must use [`JobQueue::begin`] for state transitions.
+    pub fn pool(&self) -> PgPool {
+        self.pool.clone()
+    }
+
+    /// Read the authoritative number of queued backtests for backpressure.
+    ///
+    /// This is intentionally a separate query from claiming. A failed read
+    /// must make the caller unready rather than silently treating an outage as
+    /// an empty queue and continuing to allocate artifact generations.
+    pub async fn backtest_queued_count(&self) -> Result<i64, QueueError> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM jobs
+             WHERE job_type = 'backtest' AND status = 'QUEUED'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
     }
 
     // ------------------------------------------------------------------
@@ -202,7 +250,7 @@ impl JobQueue {
                 "worker_id must not be empty".into(),
             ));
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin().await?;
         let candidate: Option<(Uuid,)> = match job_type {
             Some(job_type) => {
                 sqlx::query_as(
@@ -274,6 +322,7 @@ impl JobQueue {
     /// [`HeartbeatStatus::Canceled`] if a cancel request won meanwhile.
     /// Fails with [`QueueError::Database`]/[`QueueError::JobNotFound`] only.
     pub async fn heartbeat(&self, claim: &ClaimedJob) -> Result<HeartbeatStatus, QueueError> {
+        let mut tx = self.begin().await?;
         let rows = sqlx::query(
             "UPDATE jobs
              SET locked_at = now(), updated_at = now()
@@ -283,15 +332,17 @@ impl JobQueue {
         .bind(claim.job.id)
         .bind(&claim.worker_id)
         .bind(self.config.lease.as_secs_f64())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
         if rows.rows_affected() == 1 {
+            tx.commit().await?;
             return Ok(HeartbeatStatus::Extended);
         }
         let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
             .bind(claim.job.id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await?;
+        tx.commit().await?;
         match status {
             Some(JobStatus::Canceled) => Ok(HeartbeatStatus::Canceled),
             Some(_) => Ok(HeartbeatStatus::LeaseLost),
@@ -311,7 +362,7 @@ impl JobQueue {
     /// swept (job requeued) yields [`QueueError::StaleClaim`] and the zombie
     /// worker must not touch the attempt.
     pub async fn settle_success(&self, claim: &ClaimedJob) -> Result<SettleResult, QueueError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin().await?;
         let result = self.settle_success_in(&mut tx, claim).await;
         finish_settlement_transaction(tx, result).await
     }
@@ -523,7 +574,7 @@ impl JobQueue {
         actor: &AuditActor,
     ) -> Result<CancelResult, QueueError> {
         let audit = self.audit.as_ref().ok_or(QueueError::AuditUnavailable)?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin().await?;
         let before: Option<JobStatus> =
             sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1 FOR UPDATE")
                 .bind(job_id)
@@ -569,10 +620,12 @@ impl JobQueue {
     /// Cooperative cancel checkpoint: `true` once a cancel request won for this
     /// job. Workers poll this between work steps (never mid-transaction).
     pub async fn check_canceled(&self, job_id: Uuid) -> Result<bool, QueueError> {
+        let mut tx = self.begin().await?;
         let status: Option<JobStatus> = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
             .bind(job_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(status == Some(JobStatus::Canceled))
     }
 
@@ -585,7 +638,7 @@ impl JobQueue {
         claim: &ClaimedJob,
         reason: &str,
     ) -> Result<Job, QueueError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin().await?;
         let result = self.settle_aborted_in(&mut tx, claim, reason).await;
         match result {
             Ok(job) => {
@@ -639,7 +692,7 @@ impl JobQueue {
         code: &str,
         message: &str,
     ) -> Result<SettleResult, QueueError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin().await?;
         let result = self
             .settle_failure_in(&mut tx, claim, class, code, message)
             .await;
@@ -770,7 +823,7 @@ impl JobQueue {
     /// lease`) — never the client clock, whose skew against the database
     /// would decide liveness differently from the phase-1 scan.
     async fn sweep_job(&self, job_id: Uuid, report: &mut SweepReport) -> Result<(), QueueError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin().await?;
         let row: Option<(i32, i32, String)> = sqlx::query_as(
             "SELECT attempt_count, max_attempts, status FROM jobs
              WHERE id = $1

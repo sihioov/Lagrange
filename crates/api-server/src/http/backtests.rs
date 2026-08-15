@@ -32,6 +32,7 @@ pub async fn create(
         return r;
     }
     let actor = session.actor();
+    let code_commit = state.cfg.code_commit.clone();
 
     // --- validation (typed 4xx, zero side effects) -------------------------
     let Some(start) = parse_date(&body.start_date) else {
@@ -244,8 +245,10 @@ pub async fn create(
                         dataset_version: format!("{}@{}", dataset.dataset_id, dataset.version),
                         engine_version: "1.231.0".to_string(),
                         config_sha256: sha256_hex(&config.config_json),
-                        code_commit: "PENDING".to_string(),
-                        random_seed: None,
+                        code_commit: code_commit.clone(),
+                        // The seed is persisted before execution and is part
+                        // of the worker's exact provenance contract.
+                        random_seed: Some(42),
                         timezone: "Asia/Seoul".to_string(),
                         summary_json: serde_json::json!({}),
                     },
@@ -672,12 +675,6 @@ fn sanitize_dataset_version(raw: &str) -> String {
         .collect()
 }
 
-/// A valid placeholder `code_commit` for runs whose real commit is not yet
-/// known (Todo 20's `create()` stores the literal `"PENDING"`, which is not
-/// valid hex). Like [`sanitize_dataset_version`], this identity is compared
-/// only within one suite, never resolved externally.
-const PENDING_CODE_COMMIT: &str = "0000000";
-
 fn parent_provenance(
     run: &crate::repos::backtest_runs::BacktestRunRow,
 ) -> Result<domain::provenance::RunProvenance, String> {
@@ -689,9 +686,13 @@ fn parent_provenance(
         "nautilustrader" => Engine::NautilusTrader,
         other => return Err(format!("unknown engine {other}")),
     };
-    let code_commit = CodeCommit::parse(&run.code_commit)
-        .or_else(|_| CodeCommit::parse(PENDING_CODE_COMMIT))
-        .map_err(|e| e.to_string())?;
+    let code_commit = CodeCommit::parse(&run.code_commit).map_err(|e| e.to_string())?;
+    let random_seed = run
+        .random_seed
+        .ok_or_else(|| "backtest run has no persisted random seed".to_owned())?;
+    if random_seed < 0 {
+        return Err("backtest run random seed must be non-negative".to_owned());
+    }
     Ok(RunProvenance {
         engine,
         engine_version: SemVer::parse(&run.engine_version).map_err(|e| e.to_string())?,
@@ -703,7 +704,7 @@ fn parent_provenance(
         config_hash: ContentHash::parse(&format!("sha256:{}", run.config_sha256))
             .map_err(|e| e.to_string())?,
         code_commit,
-        random_seed: RandomSeed::new(run.random_seed.unwrap_or(0) as u64),
+        random_seed: RandomSeed::new(random_seed as u64),
         timezone: Zone::from_name(&run.timezone).map_err(|e| e.to_string())?,
     })
 }

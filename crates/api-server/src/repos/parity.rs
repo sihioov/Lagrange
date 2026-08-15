@@ -4,8 +4,8 @@
 //! The comparison itself lives in `result_model::paper_parity` (pure, and
 //! tested there). This module only fetches:
 //!
-//! - the **backtest side** from `recommendation_runs` + `recommendation_items`
-//!   for the account's bound strategy config at the requested `as_of`;
+//! - the **backtest side** from the target's exact
+//!   `recommendation_run_id` + `recommendation_items` lineage;
 //! - the **Paper side** from the `pending_targets` row that same close
 //!   produced.
 //!
@@ -25,10 +25,12 @@ use domain::provenance::{Engine, RandomSeed, RunProvenance};
 use domain::version::{SemVer, StrategyVersion};
 use domain::{CodeCommit, ContentHash, DatasetVersionId, InstrumentId, StrategyId, Weight, Zone};
 use result_model::paper_parity::{ParityReport, SignalSet, evaluate_parity};
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
-use crate::actor_tx::begin_actor_tx;
+use crate::actor_tx::{actor_uuid, begin_actor_tx};
 use crate::error::{TenancyError, TenancyResult};
+use crate::repos::pending_targets::PendingTargetRow;
 
 /// A sentinel dataset id used when a side's dataset is unknown. It can
 /// never equal a real one, so the parity report degrades to
@@ -42,6 +44,17 @@ struct RawSide {
     dataset_version: String,
     weights: BTreeMap<String, String>,
 }
+
+type PaperParityRow = (
+    Uuid,
+    serde_json::Value,
+    Option<String>,
+    String,
+    String,
+    Option<Uuid>,
+    Option<Uuid>,
+    Option<String>,
+);
 
 /// Typed repository assembling parity reports.
 #[derive(Debug, Clone)]
@@ -64,44 +77,61 @@ impl ParityRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
 
         // --- the Paper side: the target that close produced ----------------
-        let paper_row: Option<(Uuid, serde_json::Value, Option<String>, String, String)> =
-            sqlx::query_as(
-                "SELECT pt.strategy_config_id, pt.targets_json, pt.dataset_version, \
-                        c.strategy_id, c.strategy_version \
-                 FROM pending_targets pt \
-                 JOIN user_strategy_configs c ON c.id = pt.strategy_config_id \
-                 WHERE pt.account_id = $1 AND pt.computed_on = $2::date",
-            )
-            .bind(account_id)
-            .bind(as_of)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(TenancyError::from_sqlx)?;
+        let paper_row: Option<PaperParityRow> = sqlx::query_as(
+            "SELECT pt.strategy_config_id, pt.targets_json, pt.dataset_version, \
+                    c.strategy_id, c.strategy_version, pt.recommendation_run_id, \
+                    pt.dataset_version_id, pt.dataset_manifest_sha256 \
+             FROM pending_targets pt \
+             JOIN user_strategy_configs c ON c.id = pt.strategy_config_id \
+             WHERE pt.account_id = $1 AND pt.computed_on = $2::date",
+        )
+        .bind(account_id)
+        .bind(as_of)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
 
-        // --- the backtest side: the recommendation run for that config -----
+        // --- the backtest side: the target's exact recommendation run ------
         let backtest_row: Option<(Uuid, String, String, Option<String>)> = match &paper_row {
-            Some((config_id, _, _, _, _)) => sqlx::query_as(
-                "SELECT r.id, c.strategy_id, c.strategy_version, \
-                        r.summary_json->>'dataset_version' \
-                 FROM recommendation_runs r \
-                 JOIN user_strategy_configs c ON c.id = r.strategy_config_id \
-                 WHERE r.strategy_config_id = $1 AND r.as_of = $2::date \
-                   AND r.status = 'SUCCEEDED' \
-                 ORDER BY r.created_at DESC LIMIT 1",
-            )
-            .bind(config_id)
-            .bind(as_of)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(TenancyError::from_sqlx)?,
-            None => None,
+            Some((_, _, _, _, _, Some(run_id), dataset_version_id, dataset_manifest_sha256)) => {
+                sqlx::query_as(
+                    "SELECT r.id, c.strategy_id, c.strategy_version, \
+                            dataset.version \
+                     FROM recommendation_runs r \
+                     JOIN user_strategy_configs c \
+                       ON c.id = r.strategy_config_id \
+                      AND c.owner_user_id = r.owner_user_id \
+                     JOIN dataset_versions dataset ON dataset.id = r.dataset_version_id \
+                     WHERE r.id = $1 \
+                       AND r.owner_user_id = $5 \
+                       AND r.as_of = $2::date \
+                       AND r.status = 'SUCCEEDED' \
+                       AND r.dataset_version_id = $3 \
+                       AND r.dataset_manifest_sha256 = $4 \
+                     FOR SHARE OF r, c, dataset",
+                )
+                .bind(run_id)
+                .bind(as_of)
+                .bind(dataset_version_id)
+                .bind(dataset_manifest_sha256)
+                .bind(actor_uuid(actor)?)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(TenancyError::from_sqlx)?
+            }
+            _ => None,
         };
 
         let backtest_weights: BTreeMap<String, String> = match &backtest_row {
             Some((run_id, _, _, _)) => {
                 let rows: Vec<(String, Option<String>)> = sqlx::query_as(
                     "SELECT instrument_id, target_weight::text FROM recommendation_items \
-                     WHERE recommendation_run_id = $1 AND excluded = false",
+                     WHERE recommendation_run_id = $1 \
+                       AND owner_user_id = ( \
+                           SELECT owner_user_id FROM recommendation_runs WHERE id = $1 \
+                       ) \
+                       AND excluded = false \
+                     FOR SHARE",
                 )
                 .bind(run_id)
                 .fetch_all(&mut *tx)
@@ -116,7 +146,7 @@ impl ParityRepo {
         tx.commit().await.map_err(TenancyError::from_sqlx)?;
 
         let paper = match paper_row {
-            Some((_, targets_json, dataset, strategy_id, strategy_version)) => RawSide {
+            Some((_, targets_json, dataset, strategy_id, strategy_version, _, _, _)) => RawSide {
                 strategy_id,
                 strategy_version,
                 dataset_version: dataset.unwrap_or_else(|| UNKNOWN_DATASET.to_owned()),
@@ -137,6 +167,109 @@ impl ParityRepo {
         Ok(evaluate_parity(
             &to_signal_set(&backtest, as_of),
             &to_signal_set(&paper, as_of),
+        ))
+    }
+
+    /// Build the settlement snapshot from the target's exact immutable run
+    /// lineage while the caller holds `pending_targets FOR UPDATE` in the
+    /// same transaction.  There is intentionally no config/as_of fallback:
+    /// when the target has no exact recommendation_run_id, the backtest side
+    /// is missing and parity is NOT_COMPARABLE.
+    pub(crate) async fn report_for_target_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        target: &PendingTargetRow,
+    ) -> TenancyResult<ParityReport> {
+        let paper_identity: Option<(String, String)> = sqlx::query_as(
+            "SELECT strategy_id, strategy_version \
+             FROM user_strategy_configs \
+             WHERE id = $1 AND owner_user_id = $2 \
+             FOR SHARE",
+        )
+        .bind(target.strategy_config_id)
+        .bind(target.owner_user_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        let paper_row = match paper_identity {
+            Some((strategy_id, strategy_version)) => RawSide {
+                strategy_id,
+                strategy_version,
+                dataset_version: target
+                    .dataset_version
+                    .clone()
+                    .unwrap_or_else(|| UNKNOWN_DATASET.to_owned()),
+                weights: weights_from_json(&target.targets_json),
+            },
+            None => missing_side("paper"),
+        };
+
+        let backtest_row: Option<(Uuid, String, String, String)> =
+            if let Some(run_id) = target.recommendation_run_id {
+                sqlx::query_as(
+                    "SELECT run.id, config.strategy_id, config.strategy_version, dataset.version \
+                     FROM recommendation_runs AS run \
+                     JOIN user_strategy_configs AS config \
+                       ON config.id = run.strategy_config_id \
+                      AND config.owner_user_id = run.owner_user_id \
+                     JOIN dataset_versions AS dataset \
+                       ON dataset.id = run.dataset_version_id \
+                     WHERE run.id = $1 \
+                       AND run.owner_user_id = $2 \
+                       AND run.strategy_config_id = $3 \
+                       AND run.as_of = $4 \
+                       AND run.status = 'SUCCEEDED' \
+                       AND run.dataset_version_id = $5 \
+                       AND run.dataset_manifest_sha256 = $6 \
+                       AND dataset.version = $7 \
+                     FOR SHARE OF run, config, dataset",
+                )
+                .bind(run_id)
+                .bind(target.owner_user_id)
+                .bind(target.strategy_config_id)
+                .bind(target.computed_on)
+                .bind(target.dataset_version_id)
+                .bind(&target.dataset_manifest_sha256)
+                .bind(&target.dataset_version)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(TenancyError::from_sqlx)?
+            } else {
+                None
+            };
+
+        let backtest_weights = if let Some((run_id, _, _, _)) = backtest_row.as_ref() {
+            let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+                "SELECT instrument_id, target_weight::text \
+                 FROM recommendation_items \
+                 WHERE recommendation_run_id = $1 \
+                   AND owner_user_id = $2 \
+                   AND excluded = false \
+                 FOR SHARE",
+            )
+            .bind(run_id)
+            .bind(target.owner_user_id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+            rows.into_iter()
+                .filter_map(|(id, weight)| weight.map(|weight| (id, weight)))
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+
+        let backtest = match backtest_row {
+            Some((_, strategy_id, strategy_version, dataset_version)) => RawSide {
+                strategy_id,
+                strategy_version,
+                dataset_version,
+                weights: backtest_weights,
+            },
+            None => missing_side("backtest"),
+        };
+        Ok(evaluate_parity(
+            &to_signal_set(&backtest, &target.computed_on.to_string()),
+            &to_signal_set(&paper_row, &target.computed_on.to_string()),
         ))
     }
 }

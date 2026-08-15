@@ -10,6 +10,9 @@ use thiserror::Error;
 
 use crate::types::ErrorClass;
 
+/// Stable event/error code for an uncertain PostgreSQL COMMIT outcome.
+pub const BACKTEST_COMMIT_UNKNOWN_CODE: &str = "BACKTEST_PUBLICATION_COMMIT_UNKNOWN";
+
 /// Classify SQLx failures without inspecting display text. Database failures
 /// are decided solely from SQLSTATE; client-side contract/decode failures are
 /// permanent integrity errors.
@@ -45,6 +48,7 @@ pub(crate) fn database_error_class(error: &sqlx::Error) -> ErrorClass {
 pub(crate) fn queue_error_class(error: &QueueError) -> ErrorClass {
     match error {
         QueueError::Database(error) => database_error_class(error),
+        QueueError::CommitUnknown { .. } => ErrorClass::Transient,
         QueueError::JobNotFound(_)
         | QueueError::StaleClaim(_)
         | QueueError::AlreadyTerminal(_, _)
@@ -61,6 +65,22 @@ pub enum QueueError {
     /// production role matrix — a grant denial surfaced as SQLSTATE 42501).
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
+
+    /// The publication transaction reached PostgreSQL's COMMIT boundary but
+    /// the client could not learn whether it committed. The immutable
+    /// generation is intentionally retained and must be reconciled against
+    /// the authoritative DB before cleanup. This is separate from a normal
+    /// database error so operators receive the run/job/path needed to repair
+    /// or verify the result.
+    #[error(
+        "{BACKTEST_COMMIT_UNKNOWN_CODE}: run {run_id}, job {job_id}, generation {generation_path}: {detail}"
+    )]
+    CommitUnknown {
+        run_id: Uuid,
+        job_id: Uuid,
+        generation_path: String,
+        detail: String,
+    },
 
     /// No row matched the requested job id.
     #[error("job {0} not found")]
@@ -90,6 +110,22 @@ pub enum QueueError {
     /// surfaces as a typed error so callers can decide how to degrade.
     #[error("internal invariant broken: {0}")]
     Internal(String),
+}
+
+impl QueueError {
+    /// Stable machine-readable event code for operational logs.
+    pub fn event_code(&self) -> &'static str {
+        match self {
+            Self::CommitUnknown { .. } => BACKTEST_COMMIT_UNKNOWN_CODE,
+            Self::Database(_) => "JOB_QUEUE_DATABASE_ERROR",
+            Self::JobNotFound(_) => "JOB_NOT_FOUND",
+            Self::StaleClaim(_) => "JOB_STALE_CLAIM",
+            Self::AlreadyTerminal(_, _) => "JOB_ALREADY_TERMINAL",
+            Self::InvalidInput(_) => "JOB_INVALID_INPUT",
+            Self::AuditUnavailable => "JOB_AUDIT_UNAVAILABLE",
+            Self::Internal(_) => "JOB_QUEUE_INTERNAL",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -184,5 +220,18 @@ mod tests {
                 "{code}"
             );
         }
+    }
+
+    #[test]
+    fn commit_unknown_has_a_stable_operational_code_and_transient_class() {
+        let error = QueueError::CommitUnknown {
+            run_id: Uuid::new_v4(),
+            job_id: Uuid::new_v4(),
+            generation_path: "/data/artifacts/generation".to_owned(),
+            detail: "commit response lost".to_owned(),
+        };
+        assert_eq!(error.event_code(), BACKTEST_COMMIT_UNKNOWN_CODE);
+        assert_eq!(queue_error_class(&error), ErrorClass::Transient);
+        assert!(error.to_string().contains("generation"));
     }
 }

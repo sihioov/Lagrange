@@ -1,0 +1,304 @@
+#!/bin/sh
+# Paper's Rust binary predates the component DB configuration contract and
+# accepts four role-scoped URLs. This adapter keeps those URLs in mounted
+# secret files; they are exported only to the child process and never placed
+# in Compose YAML, command arguments, or logs.
+set -eu
+
+fail() {
+  echo "paper-runner: $*" >&2
+  exit 1
+}
+
+newline=$(printf '\n_')
+newline=${newline%_}
+carriage_return=$(printf '\r_')
+carriage_return=${carriage_return%_}
+
+reject_line_endings() {
+  label=$1
+  file=$2
+  line_count=$(env -i PATH="${PATH:-/usr/bin:/bin}" wc -l < "$file") \
+    || fail "$label file is unreadable"
+  [ "$line_count" -eq 0 ] \
+    || fail "$label file must contain one line"
+  if env -i PATH="${PATH:-/usr/bin:/bin}" grep -Fq "$carriage_return" "$file"; then
+    fail "$label file must contain one line"
+  fi
+}
+
+read_url() {
+  label=$1
+  file=$2
+  direct=$3
+  host=$4
+  port=$5
+  name=$6
+  user=$7
+  password_file=$8
+  if [ -n "$file" ] && [ -n "$direct" ]; then
+    fail "$label URL file and direct URL are mutually exclusive"
+  elif [ -n "$file" ]; then
+    [ -f "$file" ] || fail "$label URL file is missing"
+    [ ! -L "$file" ] || fail "$label URL file must not be a symlink"
+    [ -r "$file" ] || fail "$label URL file is unreadable"
+    reject_line_endings "$label URL" "$file"
+    value=$(env -i PATH="${PATH:-/usr/bin:/bin}" cat "$file") || fail "$label URL file is unreadable"
+    [ -n "$value" ] || fail "$label URL file is empty"
+    case "$value" in *"$newline"*|*"$carriage_return"*) fail "$label URL file must contain one line" ;; esac
+  elif [ -n "$direct" ]; then
+    # Direct URL values are retained solely for local/QA compatibility. A
+    # production process must receive every credential through a secret file.
+    value=$direct
+    [ "${APP_ENV:-development}" != production ] || fail "$label URL_FILE or password file is required in production"
+  else
+    [ -n "$password_file" ] || fail "$label URL or password file is required"
+    [ -f "$password_file" ] || fail "$label password file is missing"
+    [ ! -L "$password_file" ] || fail "$label password file must not be a symlink"
+    [ -r "$password_file" ] || fail "$label password file is unreadable"
+    reject_line_endings "$label password" "$password_file"
+    password=$(env -i PATH="${PATH:-/usr/bin:/bin}" cat "$password_file") || fail "$label password file is unreadable"
+    [ -n "$password" ] || fail "$label password file is empty"
+    case "$password" in *"$newline"*|*"$carriage_return"*) fail "$label password file must contain one line" ;; esac
+    value=$(printf '%s\n%s\n%s\n%s\n%s' "$host" "$port" "$name" "$user" "$password" \
+      | env -i PATH="${PATH:-/usr/bin:/bin}" python3 -c '
+import sys
+from urllib.parse import quote
+host, port, name, user, password = sys.stdin.read().splitlines()
+if not host or not port.isdigit() or not name or not user or not password:
+    raise SystemExit(1)
+if ":" in host and not host.startswith("["):
+    host = "[" + host + "]"
+print("postgresql://%s:%s@%s:%s/%s" % (quote(user, safe=""), quote(password, safe=""), host, port, quote(name, safe="")))
+') || fail "$label database components are invalid"
+  fi
+  case "$value" in
+    postgres://*|postgresql://*) ;;
+    *) fail "$label URL must use postgres:// or postgresql://" ;;
+  esac
+  printf '%s' "$value"
+}
+
+require_directory() {
+  label=$1
+  path=$2
+  [ -n "$path" ] || fail "$label path is empty"
+  [ ! -L "$path" ] || fail "$label must not be a symlink"
+  [ -d "$path" ] || fail "$label directory is missing"
+}
+
+validate_curated_dataset() {
+  root=$1
+  manifest=$(find "$root/curated/datasets" -xdev -type f \
+    -path '*/version=2/manifest.json' -print -quit 2>/dev/null || true)
+  [ -n "$manifest" ] || fail 'curated version=2 manifest is missing'
+  bars=$(find "$root/curated/bars/market=kr" -xdev -type f \
+    -path '*/version=2/bars.parquet' -size +0c -print -quit 2>/dev/null || true)
+  [ -n "$bars" ] || fail 'curated version=2 bars are missing or empty'
+  env -i PATH="${PATH:-/usr/bin:/bin}" python3 - "$manifest" <<'PY' || fail 'curated manifest is invalid or empty'
+import hashlib
+import json
+import re
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as stream:
+        manifest = json.load(stream)
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+if not isinstance(manifest, dict):
+    raise SystemExit(1)
+if not isinstance(manifest.get("dataset_id"), str) or not manifest["dataset_id"]:
+    raise SystemExit(1)
+if manifest.get("version") != 2:
+    raise SystemExit(1)
+if not isinstance(manifest.get("source_batches"), list):
+    raise SystemExit(1)
+if not isinstance(manifest.get("bar_count"), int) or manifest["bar_count"] <= 0:
+    raise SystemExit(1)
+if not isinstance(manifest.get("action_count"), int) or manifest["action_count"] < 0:
+    raise SystemExit(1)
+digest = manifest.get("content_hash")
+if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+    raise SystemExit(1)
+PY
+}
+
+validate_health_state() {
+  state_path=${PAPER_HEALTH_STATE_PATH:-}
+  [ -n "$state_path" ] || fail 'PAPER_HEALTH_STATE_PATH is required for runtime healthcheck'
+  max_age=${PAPER_HEALTH_MAX_AGE_SECS:-30}
+  case "$max_age" in
+    ''|*[!0-9]*) fail 'PAPER_HEALTH_MAX_AGE_SECS must be a positive integer' ;;
+  esac
+  [ "$max_age" -gt 0 ] || fail 'PAPER_HEALTH_MAX_AGE_SECS must be positive'
+  [ -f "$state_path" ] || fail 'Paper progress state is absent'
+  [ ! -L "$state_path" ] || fail 'Paper progress state must not be a symlink'
+  state_parent=$(dirname -- "$state_path")
+  [ ! -L "$state_parent" ] || fail 'Paper progress state directory must not be a symlink'
+  env -i PATH="${PATH:-/usr/bin:/bin}" python3 - "$state_path" "$max_age" <<'PY' \
+    || fail 'Paper progress state is stale or malformed'
+import datetime as dt
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+max_age = int(sys.argv[2])
+try:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("state is not a regular file")
+    state = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(state, dict):
+        raise ValueError("state is not an object")
+    pid = state.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or not pathlib.Path("/proc", str(pid)).is_dir():
+        raise ValueError("runner process is not alive")
+    def timestamp(key, required=True):
+        value = state.get(key)
+        if value is None and not required:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(key + " is missing")
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError(key + " is not UTC")
+        return parsed.astimezone(dt.timezone.utc)
+    now = dt.datetime.now(dt.timezone.utc)
+    heartbeat = timestamp("heartbeat_at")
+    progress = timestamp("last_progress_at")
+    if (now - heartbeat).total_seconds() < 0 or (now - heartbeat).total_seconds() > max_age:
+        raise ValueError("heartbeat is stale")
+    if (now - progress).total_seconds() < 0:
+        raise ValueError("progress is from the future")
+    in_progress = state.get("cycle_in_progress")
+    if not isinstance(in_progress, bool):
+        raise ValueError("cycle state is malformed")
+    started = timestamp("cycle_started_at", required=in_progress)
+    deadline = timestamp("cycle_deadline_at", required=in_progress)
+    if in_progress:
+        # A live cycle is healthy while it remains within the explicitly
+        # recorded cycle deadline. This avoids restarting a worker during a
+        # legitimately bounded DB/preview operation merely because the last
+        # phase update is older than the idle-loop freshness window.
+        if started > deadline:
+            raise ValueError("cycle start is after its deadline")
+        if now > deadline + dt.timedelta(seconds=max_age):
+            raise ValueError("cycle deadline exceeded")
+    elif (now - progress).total_seconds() > max_age:
+        raise ValueError("loop progress is stale")
+    phase = state.get("phase")
+    cycle_id = state.get("cycle_id")
+    if not isinstance(phase, str) or len(phase) > 64 or not isinstance(cycle_id, int) or isinstance(cycle_id, bool) or cycle_id < 0:
+        raise ValueError("progress metadata is malformed")
+except (OSError, OverflowError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+PY
+}
+
+db_host=${PAPER_DB_HOST:-${DB_HOST:-postgres}}
+db_port=${PAPER_DB_PORT:-${DB_PORT:-5432}}
+db_name=${PAPER_DB_NAME:-${DB_NAME:-lagrange}}
+app_url=$(read_url app "${PAPER_APP_DATABASE_URL_FILE:-${DATABASE_URL_FILE:-}}" "${DATABASE_URL:-}" "$db_host" "$db_port" "$db_name" "${PAPER_APP_DB_USER:-app}" "${PAPER_APP_DB_PASSWORD_FILE:-/run/secrets/db_app_password}")
+worker_url=$(read_url worker "${PAPER_WORKER_DATABASE_URL_FILE:-${WORKER_DATABASE_URL_FILE:-}}" "${WORKER_DATABASE_URL:-}" "$db_host" "$db_port" "$db_name" "${PAPER_WORKER_DB_USER:-worker}" "${PAPER_WORKER_DB_PASSWORD_FILE:-/run/secrets/db_worker_password}")
+admin_url=$(read_url admin "${PAPER_ADMIN_DATABASE_URL_FILE:-${ADMIN_DATABASE_URL_FILE:-}}" "${ADMIN_DATABASE_URL:-}" "$db_host" "$db_port" "$db_name" "${PAPER_ADMIN_DB_USER:-admin}" "${PAPER_ADMIN_DB_PASSWORD_FILE:-/run/secrets/db_admin_password}")
+audit_url=$(read_url audit "${PAPER_AUDIT_DATABASE_URL_FILE:-${AUDIT_DATABASE_URL_FILE:-}}" "${AUDIT_DATABASE_URL:-}" "$db_host" "$db_port" "$db_name" "${PAPER_AUDIT_DB_USER:-audit_writer}" "${PAPER_AUDIT_DB_PASSWORD_FILE:-/run/secrets/db_audit_password}")
+
+case "${1:-}" in
+  healthcheck)
+    command -v psql >/dev/null 2>&1 || fail 'psql is missing from the runtime image'
+    command -v python3 >/dev/null 2>&1 || fail 'python3 is missing from the runtime image'
+    require_directory 'LAGRANGE_DATASET_ROOT' "${LAGRANGE_DATASET_ROOT:-${LAGRANGE_REPO_ROOT:-/opt/lagrange}/data/phase0}"
+    validate_curated_dataset "${LAGRANGE_DATASET_ROOT:-${LAGRANGE_REPO_ROOT:-/opt/lagrange}/data/phase0}"
+    service_file=$(mktemp /tmp/lagrange-paper-pg-service.XXXXXX)
+    chmod 0600 "$service_file"
+    trap 'rm -f -- "$service_file"' EXIT HUP INT TERM
+    write_service() {
+      service=$1
+      url=$2
+      # Parse/decode the URL in a process that receives it on stdin. The
+      # generated libpq service file is mode 0600 and is deleted on exit;
+      # neither the URL nor its password appears in an argument vector.
+      printf '%s' "$url" | env -i PATH="${PATH:-/usr/bin:/bin}" python3 -c '
+import sys
+from urllib.parse import unquote, urlsplit
+path, name = sys.argv[1:]
+parts = urlsplit(sys.stdin.read())
+if parts.scheme not in ("postgres", "postgresql") or not parts.hostname or not parts.path.strip("/"):
+    raise SystemExit(1)
+def conninfo(value):
+    # libpq service files use double-quoted values for whitespace and
+    # metacharacters. Keep decoded passwords out of argv while preserving
+    # every byte when psql parses the temporary service file.
+    quote = chr(34)
+    slash = chr(92)
+    return quote + value.replace(slash, slash + slash).replace(quote, slash + quote) + quote
+with open(path, "a", encoding="utf-8") as stream:
+    stream.write(f"[{name}]\\n")
+    stream.write(f"host={conninfo(parts.hostname)}\\n")
+    if parts.port:
+        stream.write(f"port={conninfo(str(parts.port))}\\n")
+    if parts.username:
+        stream.write(f"user={conninfo(unquote(parts.username))}\\n")
+    if parts.password is not None:
+        stream.write(f"password={conninfo(unquote(parts.password))}\\n")
+    stream.write(f"dbname={conninfo(unquote(parts.path.lstrip(chr(47))))}\\n")
+' "$service_file" "$service"
+    }
+    write_service app "$app_url" || fail 'app database URL is invalid'
+    write_service worker "$worker_url" || fail 'worker database URL is invalid'
+    write_service admin "$admin_url" || fail 'admin database URL is invalid'
+    write_service audit "$audit_url" || fail 'audit database URL is invalid'
+    probe_url() {
+      role=$1
+      env -i PATH="${PATH:-/usr/bin:/bin}" HOME=/tmp \
+        PGSERVICEFILE="$service_file" PGSERVICE="$role" \
+        PGAPPNAME=lagrange-paper-readiness \
+        psql -X -qAt -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1
+    }
+    probe_url app || fail 'app database is not ready'
+    probe_url worker || fail 'worker database is not ready'
+    probe_url admin || fail 'admin database is not ready'
+    probe_url audit || fail 'audit database is not ready'
+    settlement_ready=$(env -i PATH="${PATH:-/usr/bin:/bin}" HOME=/tmp \
+      PGSERVICEFILE="$service_file" PGSERVICE=worker \
+      PGAPPNAME=lagrange-paper-readiness \
+      psql -X -qAt -v ON_ERROR_STOP=1 \
+      -c 'SELECT ready FROM public.paper_settlement_outbox_stats()' 2>/dev/null \
+      | tr -d '[:space:]') || fail 'Paper settlement backlog readiness query failed'
+    [ "$settlement_ready" = 't' ] || fail 'Paper settlement backlog is not ready'
+    if [ "${2:-}" = "--startup" ]; then
+      # systemd runs this before the daemon has had a chance to create its
+      # progress file. Runtime/container healthchecks omit --startup and must
+      # validate the live loop heartbeat and bounded cycle deadline below.
+      printf '%s\n' '{"status":"starting","roles":["app","worker","admin","audit"]}'
+    else
+      validate_health_state
+      # Never print connection strings, user names, or secret-derived values.
+      printf '%s\n' '{"status":"healthy","roles":["app","worker","admin","audit"],"progress":"fresh"}'
+    fi
+    exit 0
+    ;;
+  --help|-h)
+    exec /usr/local/bin/paper-runner-bin --help
+    ;;
+esac
+
+# The Rust daemon receives the four resolved URLs below. Do not also pass the
+# source file paths, component values, or plaintext compatibility variable
+# into its environment, where they could be exposed by a diagnostic or a
+# descendant process.
+unset DATABASE_URL_FILE WORKER_DATABASE_URL_FILE ADMIN_DATABASE_URL_FILE AUDIT_DATABASE_URL_FILE \
+  PAPER_APP_DATABASE_URL_FILE PAPER_WORKER_DATABASE_URL_FILE \
+  PAPER_ADMIN_DATABASE_URL_FILE PAPER_AUDIT_DATABASE_URL_FILE \
+  PAPER_APP_DB_PASSWORD_FILE PAPER_WORKER_DB_PASSWORD_FILE \
+  PAPER_ADMIN_DB_PASSWORD_FILE PAPER_AUDIT_DB_PASSWORD_FILE \
+  DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD DB_PASSWORD_FILE
+export DATABASE_URL="$app_url"
+export WORKER_DATABASE_URL="$worker_url"
+export ADMIN_DATABASE_URL="$admin_url"
+export AUDIT_DATABASE_URL="$audit_url"
+shift 0
+exec /usr/local/bin/paper-runner-bin "$@"

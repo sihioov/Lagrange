@@ -2,9 +2,9 @@
 //!
 //! Every login denial/allowance, invite lifecycle step, session revocation,
 //! CSRF rejection, and step-up verdict is recorded here. The in-memory
-//! implementation is the Todo 22 store; the append-only PostgreSQL `audit_logs`
-//! table lands with Todo 23 (tenancy/RLS) and the admin surface (Todo 27) -
-//! the trait is the contract, so the swap is drop-in.
+//! implementation remains the simulator/test store; production PostgreSQL
+//! adapters enqueue through the transactional audit outbox before a worker
+//! copies committed rows to append-only `audit_logs` under RLS.
 
 use std::sync::Mutex;
 
@@ -48,8 +48,25 @@ pub struct AuthAuditEvent {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthAuditError {
+    Saturated,
+    Closed,
+    Unavailable,
+}
+
+#[async_trait::async_trait]
 pub trait AuthAudit: Send + Sync {
-    fn record(&self, event: AuthAuditEvent);
+    /// Enqueue an event without blocking the caller. Production sinks must
+    /// return an explicit error when durable delivery cannot be admitted.
+    fn record(&self, event: AuthAuditEvent) -> Result<(), AuthAuditError>;
+
+    /// Enqueue before the protected operation succeeds. In-memory sinks do
+    /// this synchronously; the production sink writes the transactional
+    /// PostgreSQL outbox and returns only after commit.
+    async fn record_durable(&self, event: AuthAuditEvent) -> Result<(), AuthAuditError> {
+        self.record(event)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -57,9 +74,14 @@ pub struct InMemoryAuthAudit {
     events: Mutex<Vec<AuthAuditEvent>>,
 }
 
+#[async_trait::async_trait]
 impl AuthAudit for InMemoryAuthAudit {
-    fn record(&self, event: AuthAuditEvent) {
-        self.events.lock().unwrap().push(event);
+    fn record(&self, event: AuthAuditEvent) -> Result<(), AuthAuditError> {
+        self.events
+            .lock()
+            .map_err(|_| AuthAuditError::Unavailable)?
+            .push(event);
+        Ok(())
     }
 }
 
@@ -79,10 +101,14 @@ impl InMemoryAuthAudit {
     }
 }
 
-/// Discard sink for production until the append-only store lands (Todo 23).
+/// Explicit no-op sink for simulator/tests. Production uses the durable
+/// bounded Postgres sink; callers retain the same admission result contract.
 #[derive(Debug, Default)]
 pub struct NoopAudit;
 
+#[async_trait::async_trait]
 impl AuthAudit for NoopAudit {
-    fn record(&self, _event: AuthAuditEvent) {}
+    fn record(&self, _event: AuthAuditEvent) -> Result<(), AuthAuditError> {
+        Ok(())
+    }
 }

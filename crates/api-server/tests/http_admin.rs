@@ -13,8 +13,8 @@ async fn seed_artifact(h: &Harness, actor: &common::UserCtx) -> (String, String)
     h.seed_tenant(
         actor,
         &format!(
-            "INSERT INTO backtest_runs (id, owner_user_id, strategy_id, strategy_version, dataset_version, engine_version, config_sha256, code_commit, status, summary_json) VALUES \
-             (gen_random_uuid(), '{owner}', 'buy_and_hold', '1.0.0', 'krx_eod_bars@2026-01-01', '1.231.0', repeat('1',64), 'PENDING', 'SUCCEEDED', '{{}}'::jsonb)",
+            "INSERT INTO backtest_runs (id, owner_user_id, strategy_id, strategy_version, dataset_version, engine_version, config_sha256, code_commit, random_seed, status, summary_json) VALUES \
+             (gen_random_uuid(), '{owner}', 'buy_and_hold', '1.0.0', 'krx_eod_bars@2026-01-01', '1.231.0', repeat('1',64), '0123456789abcdef0123456789abcdef01234567', 42, 'SUCCEEDED', '{{}}'::jsonb)",
             owner = actor.user_id
         ),
     )
