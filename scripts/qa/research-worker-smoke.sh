@@ -324,6 +324,8 @@ temp_root="$(mktemp -d "${TMPDIR:-/tmp}/${project}.XXXXXX")"
 raw_root="$temp_root/data"
 runtime_secret_root="$temp_root/runtime-secrets"
 postgres_secret="$runtime_secret_root/postgres/postgres_password"
+bootstrap_secret_root="$runtime_secret_root/db-role-bootstrap"
+migrate_secret_root="$runtime_secret_root/db-migrate"
 schema_postgres_secret="$runtime_secret_root/research-schema-check/postgres_password"
 research_secret="$runtime_secret_root/research-worker/db_research_password"
 krx_secret="$runtime_secret_root/research-worker/krx_api_key"
@@ -388,6 +390,8 @@ raw_init_ownership_probe() (
 install -d -m 0700 \
   "$raw_root/raw" \
   "$runtime_secret_root/postgres" \
+  "$bootstrap_secret_root" \
+  "$migrate_secret_root" \
   "$runtime_secret_root/research-schema-check" \
   "$runtime_secret_root/research-worker"
 [ -d "$raw_root/raw" ] && [ -w "$raw_root/raw" ] || fail 'disposable Raw directory is not writable'
@@ -400,8 +404,14 @@ else
   head -c 32 /dev/urandom | base64 >"$research_secret"
 fi
 cp -- "$postgres_secret" "$schema_postgres_secret"
+cp -- "$postgres_secret" "$bootstrap_secret_root/postgres_password"
+for role_secret in db_migration_owner_password db_app_password db_worker_password \
+  db_audit_password db_research_password db_admin_password; do
+  cp -- "$research_secret" "$bootstrap_secret_root/$role_secret"
+done
+cp -- "$research_secret" "$migrate_secret_root/db_migration_owner_password"
 printf '%s' 'unused-in-synthetic-smoke' >"$krx_secret"
-chmod 0444 "$postgres_secret" "$schema_postgres_secret" "$research_secret" "$krx_secret"
+find "$runtime_secret_root" -type f -exec chmod 0444 {} +
 
 export LAGRANGE_RUNTIME_SECRET_DIR="$(hostpath "$runtime_secret_root")"
 export LAGRANGE_DATA_DIR="$(hostpath "$raw_root")"

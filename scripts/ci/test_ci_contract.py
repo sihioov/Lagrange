@@ -187,13 +187,29 @@ class WorkflowContractTests(unittest.TestCase):
             "export LAGRANGE_RUNTIME_SECRET_DIR", 1
         )[0]
         self.assertIn(
-            'chmod 0444 "$postgres_secret" "$schema_postgres_secret" "$research_secret" "$krx_secret"',
+            'find "$runtime_secret_root" -type f -exec chmod 0444 {} +',
             secret_setup,
         )
         self.assertIn(
             'schema_postgres_secret="$runtime_secret_root/research-schema-check/postgres_password"',
             script,
         )
+        self.assertIn(
+            'bootstrap_secret_root="$runtime_secret_root/db-role-bootstrap"', script
+        )
+        self.assertIn(
+            'migrate_secret_root="$runtime_secret_root/db-migrate"', script
+        )
+        for required_secret in (
+            "postgres_password",
+            "db_migration_owner_password",
+            "db_app_password",
+            "db_worker_password",
+            "db_audit_password",
+            "db_research_password",
+            "db_admin_password",
+        ):
+            self.assertIn(required_secret, secret_setup)
 
         self.assertIn("ledger_state=", script)
         self.assertIn('if [ "$ledger_state" != "7" ]', script)

@@ -373,6 +373,8 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) $project
 $rawRoot = Join-Path $tempRoot 'data'
 $runtimeSecretRoot = Join-Path $tempRoot 'runtime-secrets'
 $postgresSecret = Join-Path $runtimeSecretRoot 'postgres/postgres_password'
+$bootstrapSecretRoot = Join-Path $runtimeSecretRoot 'db-role-bootstrap'
+$migrateSecretRoot = Join-Path $runtimeSecretRoot 'db-migrate'
 $schemaPostgresSecret = Join-Path $runtimeSecretRoot 'research-schema-check/postgres_password'
 $researchSecret = Join-Path $runtimeSecretRoot 'research-worker/db_research_password'
 $krxSecret = Join-Path $runtimeSecretRoot 'research-worker/krx_api_key'
@@ -609,13 +611,26 @@ try {
     foreach ($directory in @(
         (Join-Path $rawRoot 'raw'),
         (Join-Path $runtimeSecretRoot 'postgres'),
+        $bootstrapSecretRoot,
+        $migrateSecretRoot,
         (Join-Path $runtimeSecretRoot 'research-schema-check'),
         (Join-Path $runtimeSecretRoot 'research-worker')
     )) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
     $postgresPassword = New-RandomSecret
+    $rolePassword = New-RandomSecret
     [IO.File]::WriteAllText($postgresSecret, $postgresPassword)
     [IO.File]::WriteAllText($schemaPostgresSecret, $postgresPassword)
-    [IO.File]::WriteAllText($researchSecret, (New-RandomSecret))
+    [IO.File]::WriteAllText((Join-Path $bootstrapSecretRoot 'postgres_password'), $postgresPassword)
+    foreach ($name in @(
+        'db_migration_owner_password',
+        'db_app_password',
+        'db_worker_password',
+        'db_audit_password',
+        'db_research_password',
+        'db_admin_password'
+    )) { [IO.File]::WriteAllText((Join-Path $bootstrapSecretRoot $name), $rolePassword) }
+    [IO.File]::WriteAllText((Join-Path $migrateSecretRoot 'db_migration_owner_password'), $rolePassword)
+    [IO.File]::WriteAllText($researchSecret, $rolePassword)
     [IO.File]::WriteAllText($krxSecret, 'unused-in-synthetic-smoke')
     $env:LAGRANGE_RUNTIME_SECRET_DIR = $runtimeSecretRoot
     $env:LAGRANGE_DATA_DIR = $rawRoot
