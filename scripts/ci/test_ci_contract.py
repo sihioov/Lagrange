@@ -82,12 +82,29 @@ class WorkflowContractTests(unittest.TestCase):
         path, ci = load_workflow("ci.yml")
         self.assertEqual(
             set(ci["jobs"]),
-            {"policy", "format", "clippy", "workspace-tests", "required"},
+            {
+                "policy",
+                "format",
+                "clippy",
+                "workspace-tests",
+                "postgres-integration-validation",
+                "required",
+            },
         )
         text = path.read_text(encoding="utf-8")
         self.assertIn("scripts/ci/prepare_phase0.py --root data/phase0", text)
         self.assertIn("deploy/qa/qa-db.compose.yml up -d --wait", text)
         self.assertIn("cargo test --workspace --locked --no-fail-fast", text)
+        self.assertIn(
+            "bash deploy/db/integration-validation/static-check.sh", text
+        )
+        self.assertIn(
+            "bash deploy/db/integration-validation/validate.sh --self-test", text
+        )
+        self.assertIn(
+            'bash deploy/db/integration-validation/validate.sh --evidence-dir "$evidence_dir"',
+            text,
+        )
         self.assertIn(
             "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
             text,
@@ -105,6 +122,30 @@ class WorkflowContractTests(unittest.TestCase):
             "python -m pip install --disable-pip-version-check --no-cache-dir "
             "pyarrow==25.0.0 uv==0.12.1",
             text,
+        )
+        postgres_job = ci["jobs"]["postgres-integration-validation"]
+        self.assertEqual(postgres_job["timeout-minutes"], "60")
+        postgres_steps = postgres_job["steps"]
+        self.assertTrue(any(step.get("if") == "always()" for step in postgres_steps))
+        self.assertTrue(any(step.get("if") == "failure()" for step in postgres_steps))
+        postgres_commands = "\n".join(step.get("run", "") for step in postgres_steps)
+        self.assertIn("evidence.json", postgres_commands)
+        self.assertIn("tail -n 200", postgres_commands)
+
+        required = ci["jobs"]["required"]
+        self.assertEqual(
+            set(required["needs"]),
+            {
+                "policy",
+                "format",
+                "clippy",
+                "workspace-tests",
+                "postgres-integration-validation",
+            },
+        )
+        self.assertEqual(
+            required["steps"][0]["env"]["POSTGRES_VALIDATION_RESULT"],
+            "${{ needs.postgres-integration-validation.result }}",
         )
         qa_compose = (ROOT / "deploy" / "qa" / "qa-db.compose.yml").read_text(
             encoding="utf-8"
