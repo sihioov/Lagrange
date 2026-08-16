@@ -108,7 +108,7 @@ impl ParityRepo {
                        AND r.status = 'SUCCEEDED' \
                        AND r.dataset_version_id = $3 \
                        AND r.dataset_manifest_sha256 = $4 \
-                     FOR SHARE OF r, c, dataset",
+                     FOR SHARE OF r, c",
                 )
                 .bind(run_id)
                 .bind(as_of)
@@ -221,7 +221,7 @@ impl ParityRepo {
                        AND run.dataset_version_id = $5 \
                        AND run.dataset_manifest_sha256 = $6 \
                        AND dataset.version = $7 \
-                     FOR SHARE OF run, config, dataset",
+                     FOR SHARE OF run, config",
                 )
                 .bind(run_id)
                 .bind(target.owner_user_id)

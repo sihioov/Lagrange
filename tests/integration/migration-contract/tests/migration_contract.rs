@@ -41,7 +41,7 @@
 //!     (result_artifacts: parquet_path + row_count + sha256 + summary_json).
 
 use api_server_auth::postgres::{
-    PostgresInviteStore, PostgresSessionStore, PostgresUserStore, with_actor_user_id,
+    PostgresInviteStore, PostgresSessionStore, PostgresUserStore, with_authenticated_actor,
 };
 use auth::audit::NoopAudit;
 use auth::clock::FakeClock;
@@ -175,6 +175,18 @@ fn paper_settlement_outbox_contract_is_deferred_and_fail_closed() {
         "prune_paper_settlement_outbox",
         "LEAST(900",
         "Paper settlement archive payload mismatch",
+        "paper_settlement_outbox_claim_state_check",
+        "claim_expires_at",
+        "no increments beyond max_attempts",
+        "at-least-once",
+        "notification_deliveries_delivery_lease_check",
+        "tenant_all_app_pending_targets",
+        "tenant_all_owner_pending_targets",
+        "tenant_all_app_recommendation_runs",
+        "tenant_all_owner_recommendation_runs",
+        "tenant_all_app_notification_deliveries",
+        "tenant_all_owner_notification_deliveries",
+        "NULLIF(",
     ] {
         assert!(
             PAPER_SETTLEMENT_OUTBOX_UP_SQL.contains(token),
@@ -186,6 +198,15 @@ fn paper_settlement_outbox_contract_is_deferred_and_fail_closed() {
             .contains("UPDATE public.pending_targets\n           SET status = 'SKIPPED'"),
         "preflight must not commit a terminal target"
     );
+    for sql in [
+        PAPER_SETTLEMENT_OUTBOX_UP_SQL,
+        PAPER_SETTLEMENT_OUTBOX_DOWN_SQL,
+    ] {
+        assert!(
+            !sql.contains("current_setting('app.actor_user_id', true)::uuid"),
+            "0041 must not cast an empty actor GUC directly to uuid"
+        );
+    }
     for token in [
         "Paper settlement rollback blocked while pending outbox obligations exist",
         "terminal target without durable obligation",
@@ -193,6 +214,10 @@ fn paper_settlement_outbox_contract_is_deferred_and_fail_closed() {
         "DROP FUNCTION IF EXISTS public.enqueue_paper_settlement_outbox",
         "DROP CONSTRAINT IF EXISTS notification_deliveries_notification_channel_uq",
         "DROP CONSTRAINT IF EXISTS notification_deliveries_notification_owner_fk",
+        "DROP POLICY IF EXISTS tenant_all_app_recommendation_runs",
+        "DROP POLICY IF EXISTS tenant_all_owner_recommendation_runs",
+        "DROP POLICY IF EXISTS tenant_all_app_notification_deliveries",
+        "DROP POLICY IF EXISTS tenant_all_owner_notification_deliveries",
     ] {
         assert!(
             PAPER_SETTLEMENT_OUTBOX_DOWN_SQL.contains(token),
@@ -217,7 +242,8 @@ fn paper_settlement_uses_exact_locked_lineage_and_idempotent_recovery() {
         "run.as_of = $4",
         "run.dataset_version_id = $5",
         "run.dataset_manifest_sha256 = $6",
-        "FOR SHARE OF run, config, dataset",
+        "dataset.version",
+        "FOR SHARE OF run, config",
         "recommendation_items",
         "owner_user_id = $2",
     ] {
@@ -226,6 +252,14 @@ fn paper_settlement_uses_exact_locked_lineage_and_idempotent_recovery() {
             "exact settlement lineage lost {token}"
         );
     }
+    assert!(
+        !settlement.contains("FOR SHARE OF run, config, dataset"),
+        "app parity must not row-lock the read-only dataset_versions table"
+    );
+    assert!(
+        !settlement.contains("dataset.dataset_id || '@' || dataset.version"),
+        "parity must retain production's plain dataset.version representation"
+    );
     assert!(
         !settlement.contains("ORDER BY r.created_at DESC") && !settlement.contains("LIMIT 1"),
         "settlement may not fall back to the latest same-day recommendation"
@@ -237,11 +271,26 @@ fn paper_settlement_uses_exact_locked_lineage_and_idempotent_recovery() {
         "fail_paper_settlement_outbox",
         "paper_settlement_outbox_stats",
         "prune_paper_settlement_outbox",
-        "delivered_at IS NULL AND exhausted_at IS NULL",
+        "claim_paper_settlement_outbox",
+        "claim_token",
     ] {
         assert!(
             PAPER_PENDING_TARGET_REPO_RS.contains(token),
             "repository recovery seam is missing {token}"
+        );
+    }
+}
+
+#[test]
+fn paper_announcement_claim_binds_postgres_integer_limit() {
+    for token in [
+        "pub async fn due_announcements_worker(",
+        "limit: i32",
+        ".bind(limit.clamp(1, 1000))",
+    ] {
+        assert!(
+            PAPER_PENDING_TARGET_REPO_RS.contains(token),
+            "announcement claim boundary is missing {token}"
         );
     }
 }
@@ -450,25 +499,122 @@ async fn paper_settlement_outbox_db_contract_body(
         .bind(recovery_outbox_id)
         .execute(&owner_actor)
         .await?;
-    let first_failure: (i32, bool) = sqlx::query_as(
-        "SELECT attempts, exhausted FROM fail_paper_settlement_outbox($1, $2, 'timeout')",
+    // The migration backfill creates another due row for the terminal target
+    // above.  Move every unrelated pending obligation out of this bounded
+    // claim window so the race below proves single-lease ownership of this
+    // exact recovery row rather than depending on global queue cardinality.
+    sqlx::query(
+        "UPDATE paper_settlement_outbox \
+            SET available_at = CASE WHEN id = $1 THEN now() \
+                                    ELSE now() + interval '1 hour' END, \
+                claim_token = NULL, claim_expires_at = NULL \
+          WHERE delivered_at IS NULL AND exhausted_at IS NULL",
     )
     .bind(recovery_outbox_id)
-    .bind(user_id)
-    .fetch_one(&app)
+    .execute(&owner_actor)
     .await?;
-    assert_eq!(first_failure, (1, false));
-    let second_failure: (i32, bool) = sqlx::query_as(
+    let claim_worker_a = effective_role_pool(super_url, db, "worker", None, 2).await?;
+    let claim_worker_b = effective_role_pool(super_url, db, "worker", None, 2).await?;
+    let claim_a = async {
+        sqlx::query_as::<_, (Uuid, Uuid)>(
+            "SELECT id, claim_token FROM claim_paper_settlement_outbox(1, 60)",
+        )
+        .fetch_optional(&claim_worker_a)
+        .await
+    };
+    let claim_b = async {
+        sqlx::query_as::<_, (Uuid, Uuid)>(
+            "SELECT id, claim_token FROM claim_paper_settlement_outbox(1, 60)",
+        )
+        .fetch_optional(&claim_worker_b)
+        .await
+    };
+    let (claim_a, claim_b) = tokio::join!(claim_a, claim_b);
+    let claims = [claim_a?, claim_b?];
+    assert_eq!(
+        claims
+            .iter()
+            .flatten()
+            .filter(|(id, _)| *id == recovery_outbox_id)
+            .count(),
+        1,
+        "concurrent workers must lease this due outbox row only once"
+    );
+    // Clear every lease returned by this bounded probe before exercising the
+    // failure transition; unrelated due rows are valid queue work and must
+    // not affect the assertion for the recovery row.
+    for (claimed_id, claim_token) in claims.iter().flatten() {
+        sqlx::query(
+            "UPDATE paper_settlement_outbox \
+             SET claim_token = NULL, claim_expires_at = NULL \
+             WHERE id = $1 AND claim_token = $2",
+        )
+        .bind(claimed_id)
+        .bind(claim_token)
+        .execute(&owner_actor)
+        .await?;
+    }
+    let app_failure_a = app.clone();
+    let app_failure_b = app.clone();
+    let failure_a = async move {
+        sqlx::query_as::<_, (i32, bool)>(
+            "SELECT attempts, exhausted FROM fail_paper_settlement_outbox($1, $2, 'timeout')",
+        )
+        .bind(recovery_outbox_id)
+        .bind(user_id)
+        .fetch_optional(&app_failure_a)
+        .await
+    };
+    let failure_b = async move {
+        sqlx::query_as::<_, (i32, bool)>(
+            "SELECT attempts, exhausted FROM fail_paper_settlement_outbox($1, $2, 'timeout')",
+        )
+        .bind(recovery_outbox_id)
+        .bind(user_id)
+        .fetch_optional(&app_failure_b)
+        .await
+    };
+    let (first_failure, second_failure) = tokio::join!(failure_a, failure_b);
+    let concurrent_failures = [first_failure?, second_failure?];
+    assert_eq!(
+        concurrent_failures
+            .iter()
+            .filter(|failure| failure.is_some())
+            .count(),
+        1,
+        "a locked due check must let only one concurrent runner count a failure"
+    );
+    assert_eq!(
+        concurrent_failures.iter().flatten().next().copied(),
+        Some((1, false))
+    );
+    sqlx::query("UPDATE paper_settlement_outbox SET available_at = now() WHERE id = $1")
+        .bind(recovery_outbox_id)
+        .execute(&owner_actor)
+        .await?;
+    let second_failure: Option<(i32, bool)> = sqlx::query_as(
         "SELECT attempts, exhausted FROM fail_paper_settlement_outbox($1, $2, 'timeout')",
     )
     .bind(recovery_outbox_id)
     .bind(user_id)
-    .fetch_one(&app)
+    .fetch_optional(&app)
+    .await?;
+    assert_eq!(second_failure, Some((2, true)));
+    sqlx::query("UPDATE paper_settlement_outbox SET available_at = now() WHERE id = $1")
+        .bind(recovery_outbox_id)
+        .execute(&owner_actor)
+        .await?;
+    let post_exhaustion: Option<(i32, bool)> = sqlx::query_as(
+        "SELECT attempts, exhausted FROM fail_paper_settlement_outbox($1, $2, 'late-timeout')",
+    )
+    .bind(recovery_outbox_id)
+    .bind(user_id)
+    .fetch_optional(&app)
     .await?;
     assert_eq!(
-        second_failure,
-        (2, true),
-        "retry limit must exhaust exactly once"
+        post_exhaustion,
+        Some((2, true)),
+        "terminal failure reports must not increment beyond max_attempts"
     );
     let exhausted_stats: (i64, i64, bool) = sqlx::query_as(
         "SELECT pending_count, exhausted_count, ready \
@@ -549,7 +695,7 @@ async fn paper_settlement_outbox_db_contract_body(
     );
 
     let mut guarded = owner.acquire().await?;
-    let down_error = MIGRATOR.undo(&mut *guarded, 41).await.unwrap_err();
+    let down_error = MIGRATOR.undo(&mut *guarded, 40).await.unwrap_err();
     sqlx::query("SELECT pg_advisory_unlock_all()")
         .execute(&mut *guarded)
         .await?;
@@ -561,7 +707,7 @@ async fn paper_settlement_outbox_db_contract_body(
     .bind(terminal_id)
     .execute(&owner_actor)
     .await?;
-    MIGRATOR.undo(owner, 41).await?;
+    MIGRATOR.undo(owner, 40).await?;
     Ok(())
 }
 
@@ -592,6 +738,7 @@ fn auth_audit_outbox_is_transactional_and_reversible() {
         "prune_auth_audit_outbox",
         "delivered_at IS NOT NULL",
         "auth_audit_log_insert_migration_owner",
+        "auth_audit_log_select_migration_owner",
         "set_config('statement_timeout', '5000', true)",
         "set_config('statement_timeout', '3000', true)",
         "set_config('lock_timeout', '1000', true)",
@@ -609,6 +756,10 @@ fn auth_audit_outbox_is_transactional_and_reversible() {
         "DROP POLICY IF EXISTS auth_audit_outbox_owner_update",
         "DROP TABLE public.auth_audit_outbox",
         "DROP POLICY IF EXISTS auth_audit_log_insert_migration_owner",
+        "DROP POLICY IF EXISTS auth_audit_log_select_migration_owner",
+        "undelivered outbox obligations",
+        "auth audit rollback blocked while undelivered outbox obligations exist",
+        "USING ERRCODE = '55000'",
     ] {
         assert!(
             AUTH_AUDIT_OUTBOX_DOWN_SQL.contains(token),
@@ -619,6 +770,76 @@ fn auth_audit_outbox_is_transactional_and_reversible() {
         !AUTH_AUDIT_OUTBOX_UP_SQL.contains("GRANT SELECT, UPDATE ON public.auth_audit_outbox"),
         "audit_writer must not receive direct outbox table DML"
     );
+    for (name, sql) in [
+        ("0039", AUTH_AUDIT_OUTBOX_UP_SQL),
+        ("0040", IDENTITY_PROVISIONING_UP_SQL),
+        ("0041", PAPER_SETTLEMENT_OUTBOX_UP_SQL),
+    ] {
+        for forbidden in [
+            "pg_catalog.nullif",
+            "pg_catalog.coalesce",
+            "pg_catalog.extract",
+        ] {
+            assert!(
+                !sql.contains(forbidden),
+                "{name} must use PostgreSQL special form {forbidden}, not a nonexistent catalog function"
+            );
+        }
+    }
+    let guard = AUTH_AUDIT_OUTBOX_DOWN_SQL
+        .find("auth audit rollback blocked while undelivered outbox obligations exist")
+        .expect("0039 rollback guard");
+    let drop_table = AUTH_AUDIT_OUTBOX_DOWN_SQL
+        .find("DROP TABLE public.auth_audit_outbox")
+        .expect("0039 rollback drop");
+    assert!(
+        guard < drop_table,
+        "0039 must guard before dropping the outbox"
+    );
+}
+
+/// DB-gated rollback probe for 0039.  A pending event blocks the destructive
+/// down migration; once the durable copy is marked delivered, the same down
+/// migration is allowed to remove the bounded outbox table.
+#[tokio::test]
+async fn auth_audit_rollback_guard_is_fail_closed_and_allows_delivered_rows() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = async {
+        MIGRATOR.run_to(39, &owner).await?;
+        let event_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO auth_audit_outbox \
+             (event_key, action, created_at) \
+             VALUES ('rollback-guard-probe', 'auth.test', now()) \
+             RETURNING id",
+        )
+        .fetch_one(&owner)
+        .await?;
+        let blocked = MIGRATOR.undo(&owner, 38).await.unwrap_err();
+        assert_eq!(migrate_pg_code(&blocked).as_deref(), Some("55000"));
+        sqlx::query("UPDATE auth_audit_outbox SET delivered_at = now() WHERE id = $1")
+            .bind(event_id)
+            .execute(&owner)
+            .await?;
+        MIGRATOR.undo(&owner, 38).await?;
+        let gone: bool =
+            sqlx::query_scalar("SELECT to_regclass('public.auth_audit_outbox') IS NULL")
+                .fetch_one(&owner)
+                .await?;
+        assert!(gone, "delivered outbox rows permit a safe rollback");
+        Ok::<(), Box<dyn Error>>(())
+    }
+    .await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("auth audit rollback guard FAILED: {error}");
+    }
 }
 
 #[test]
@@ -706,12 +927,28 @@ fn identity_provisioning_migration_is_narrow_and_reversible() {
         "existing_user.email",
         "pg_catalog.hashtextextended(v_email, 39039)",
         "pg_catalog.lower(pg_catalog.btrim(v_invitation.email))",
+        "identity_actor_capabilities",
+        "authenticate_identity_actor",
+        "consume_identity_actor_capability",
+        "transaction_id",
+        "backend_pid",
+        "p_actor_capability",
+        "p_invite_hash",
+        "NO FORCE ROW LEVEL SECURITY",
+        "FORCE ROW LEVEL SECURITY",
+        "EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())",
+        "REVOKE INSERT, UPDATE, DELETE ON TABLE public.invitations FROM app",
+        "GRANT SELECT ON TABLE public.invitations TO app",
     ] {
         assert!(
             IDENTITY_PROVISIONING_UP_SQL.contains(token),
             "0040 identity up is missing {token}"
         );
     }
+    assert!(
+        !IDENTITY_PROVISIONING_UP_SQL.contains("pg_catalog.extract"),
+        "0040 must use PostgreSQL's EXTRACT special form, not a nonexistent catalog function"
+    );
     let expire_position = IDENTITY_PROVISIONING_UP_SQL
         .find("status = 'EXPIRED'")
         .expect("0040 expires stale pending invitations");
@@ -782,22 +1019,29 @@ fn identity_provisioning_migration_is_narrow_and_reversible() {
     );
     assert!(
         !IDENTITY_PROVISIONING_UP_SQL.contains("GRANT INSERT ON TABLE public.users")
-            && !IDENTITY_PROVISIONING_UP_SQL.contains("GRANT INSERT ON TABLE public.user_roles"),
+            && !IDENTITY_PROVISIONING_UP_SQL.contains("GRANT INSERT ON TABLE public.user_roles")
+            && !IDENTITY_PROVISIONING_UP_SQL
+                .contains("GRANT INSERT, UPDATE, DELETE ON TABLE public.invitations TO app"),
         "identity provisioning must not add table write grants"
+    );
+    assert!(
+        IDENTITY_PROVISIONING_DOWN_SQL
+            .contains("GRANT INSERT, UPDATE, DELETE ON TABLE public.invitations TO app"),
+        "0040 down must restore the 0009 invitation DML grants"
     );
     for token in [
         "DROP FUNCTION public.bind_redeemed_identity",
-        "DROP FUNCTION public.claim_invitation",
+        "DROP FUNCTION public.claim_invitation(uuid, uuid, text, text, text)",
         "DROP FUNCTION public.expire_pending_invitations",
-        "DROP FUNCTION public.create_invitation",
+        "DROP FUNCTION public.create_invitation(uuid, text, text, text, bigint, uuid)",
+        "authenticate_identity_actor",
+        "identity_actor_capabilities",
         "DROP COLUMN role_id",
         "DROP COLUMN provisioned_by_user_id",
         "DROP INDEX public.invitations_pending_email_uq",
         "cannot roll back identity provisioning while provisional identities exist",
         "cannot roll back identity provisioning while Owner invitations remain",
         "WHERE role_id <> 'member'",
-        "NO FORCE ROW LEVEL SECURITY",
-        "FORCE ROW LEVEL SECURITY",
     ] {
         assert!(
             IDENTITY_PROVISIONING_DOWN_SQL.contains(token),
@@ -805,8 +1049,8 @@ fn identity_provisioning_migration_is_narrow_and_reversible() {
         );
     }
     for signature in [
-        "public.create_invitation(uuid, text, text, text, bigint)",
-        "public.claim_invitation(uuid, uuid, text, text)",
+        "public.create_invitation(uuid, text, text, text, bigint, uuid)",
+        "public.claim_invitation(uuid, uuid, text, text, text)",
         "public.bind_redeemed_identity(text, text, text, text)",
     ] {
         assert!(
@@ -831,6 +1075,35 @@ async fn identity_provisioning_is_atomic_and_role_scoped() {
     if let Err(error) = result {
         panic!("identity provisioning contract FAILED: {error}");
     }
+}
+
+async fn create_invitation_with_capability(
+    app: &PgPool,
+    owner_id: Uuid,
+    session_hash: &str,
+    email: &str,
+    role: &str,
+    invite_hash: &str,
+    expires_at: i64,
+) -> Result<Uuid, sqlx::Error> {
+    let mut tx = app.begin().await?;
+    let capability: Uuid = sqlx::query_scalar("SELECT public.authenticate_identity_actor($1, $2)")
+        .bind(owner_id)
+        .bind(session_hash)
+        .fetch_one(&mut *tx)
+        .await?;
+    let invitation_id: Uuid =
+        sqlx::query_scalar("SELECT public.create_invitation($1, $2, $3, $4, $5, $6)")
+            .bind(owner_id)
+            .bind(email)
+            .bind(role)
+            .bind(invite_hash)
+            .bind(expires_at)
+            .bind(capability)
+            .fetch_one(&mut *tx)
+            .await?;
+    tx.commit().await?;
+    Ok(invitation_id)
 }
 
 async fn identity_provisioning_body(
@@ -875,28 +1148,88 @@ async fn identity_provisioning_body(
         .execute(owner)
         .await?;
 
+    let owner_session_hash = "11".repeat(32);
+    let other_owner_session_hash = "22".repeat(32);
+    let owner_actor = actor_pool(super_url, db, "migration_owner", &owner_id.to_string()).await?;
+    let other_owner_actor = actor_pool(
+        super_url,
+        db,
+        "migration_owner",
+        &other_owner_id.to_string(),
+    )
+    .await?;
+    for (actor_pool, user_id, session_hash, csrf_hash) in [
+        (
+            &owner_actor,
+            owner_id,
+            owner_session_hash.as_str(),
+            "33".repeat(32),
+        ),
+        (
+            &other_owner_actor,
+            other_owner_id,
+            other_owner_session_hash.as_str(),
+            "44".repeat(32),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO web_sessions \
+             (user_id, session_hash, csrf_hash, expires_at) \
+             VALUES ($1, $2, $3, now() + interval '1 hour')",
+        )
+        .bind(user_id)
+        .bind(session_hash)
+        .bind(csrf_hash)
+        .execute(actor_pool)
+        .await?;
+    }
+
     let app = role_pool(super_url, db, "app").await?;
     let admin = role_pool(super_url, db, "admin").await?;
     let audit = role_pool(super_url, db, "audit_writer").await?;
-    let expires_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64 + 3_600;
-    let owner_invitation_id: Uuid = sqlx::query_scalar(
-        "SELECT public.create_invitation($1, 'owner-rollback@example.test', 'owner', $2, $3)",
+    let app_identity: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+        .fetch_one(&app)
+        .await?;
+    assert_eq!(app_identity.0, "app");
+    assert_eq!(
+        app_identity.0, app_identity.1,
+        "production identity probes must use a direct app login, not an elevated role"
+    );
+    let invitation_privileges: (bool, bool, bool, bool) = sqlx::query_as(
+        "SELECT has_table_privilege('app', 'public.invitations', 'SELECT'), \
+                has_table_privilege('app', 'public.invitations', 'INSERT'), \
+                has_table_privilege('app', 'public.invitations', 'UPDATE'), \
+                has_table_privilege('app', 'public.invitations', 'DELETE')",
     )
-    .bind(owner_id)
-    .bind("0f".repeat(32))
-    .bind(expires_at)
-    .fetch_one(&app)
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        invitation_privileges,
+        (true, false, false, false),
+        "app may inspect invitations but direct DML requires the capability seam"
+    );
+    let expires_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64 + 3_600;
+    let owner_invitation_id = create_invitation_with_capability(
+        &app,
+        owner_id,
+        &owner_session_hash,
+        "owner-rollback@example.test",
+        "owner",
+        &"0f".repeat(32),
+        expires_at,
+    )
     .await?;
     let invite_hash = "a1".repeat(32);
-    let invitation_id: Uuid =
-        sqlx::query_scalar("SELECT public.create_invitation($1, $2, $3, $4, $5)")
-            .bind(owner_id)
-            .bind("new-member@example.test")
-            .bind("member")
-            .bind(&invite_hash)
-            .bind(expires_at)
-            .fetch_one(&app)
-            .await?;
+    let invitation_id = create_invitation_with_capability(
+        &app,
+        owner_id,
+        &owner_session_hash,
+        "new-member@example.test",
+        "member",
+        &invite_hash,
+        expires_at,
+    )
+    .await?;
     let outbox_count: i64 = sqlx::query_scalar(
         "SELECT count(*)::bigint FROM auth_audit_outbox \
          WHERE event_key = $1 AND action = 'auth.invite_created'",
@@ -905,6 +1238,102 @@ async fn identity_provisioning_body(
     .fetch_one(owner)
     .await?;
     assert_eq!(outbox_count, 1, "invite mutation must enqueue atomically");
+
+    // The actor GUC is only a tenant selector, never a write authorization
+    // boundary.  Exercise every invitation DML verb through direct app
+    // logins, explicitly setting the actor in the transaction.  Each failed
+    // statement is rolled back so the next probe uses a clean transaction.
+    let app_owner_actor = actor_pool(super_url, db, "app", &owner_id.to_string()).await?;
+    let app_other_actor = actor_pool(super_url, db, "app", &other_owner_id.to_string()).await?;
+    let mut acl_tx = app_owner_actor.begin().await?;
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *acl_tx)
+        .await?;
+    let acl_insert_own = sqlx::query(
+        "INSERT INTO invitations (user_id, email, invite_hash, status, expires_at, role_id) \
+         VALUES ($1, $2, $3, 'PENDING', now() + interval '1 hour', 'member')",
+    )
+    .bind(owner_id)
+    .bind("acl-own@example.test")
+    .bind("ab".repeat(32))
+    .execute(&mut *acl_tx)
+    .await
+    .expect_err("direct app INSERT must be denied for its own tenant");
+    acl_tx.rollback().await?;
+    assert_eq!(pg_code(&acl_insert_own).as_deref(), Some("42501"));
+
+    let mut acl_tx = app_owner_actor.begin().await?;
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *acl_tx)
+        .await?;
+    let acl_insert_cross = sqlx::query(
+        "INSERT INTO invitations (user_id, email, invite_hash, status, expires_at, role_id) \
+         VALUES ($1, $2, $3, 'PENDING', now() + interval '1 hour', 'member')",
+    )
+    .bind(other_owner_id)
+    .bind("acl-cross@example.test")
+    .bind("ac".repeat(32))
+    .execute(&mut *acl_tx)
+    .await
+    .expect_err("direct app INSERT must be denied across tenants");
+    acl_tx.rollback().await?;
+    assert_eq!(pg_code(&acl_insert_cross).as_deref(), Some("42501"));
+
+    let mut acl_tx = app_owner_actor.begin().await?;
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *acl_tx)
+        .await?;
+    let acl_update_own = sqlx::query("UPDATE invitations SET email = $1 WHERE id = $2")
+        .bind("acl-update-own@example.test")
+        .bind(invitation_id)
+        .execute(&mut *acl_tx)
+        .await
+        .expect_err("direct app UPDATE must be denied for its own tenant");
+    acl_tx.rollback().await?;
+    assert_eq!(pg_code(&acl_update_own).as_deref(), Some("42501"));
+
+    let mut acl_tx = app_other_actor.begin().await?;
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(other_owner_id.to_string())
+        .execute(&mut *acl_tx)
+        .await?;
+    let acl_update_cross = sqlx::query("UPDATE invitations SET email = $1 WHERE id = $2")
+        .bind("acl-update-cross@example.test")
+        .bind(invitation_id)
+        .execute(&mut *acl_tx)
+        .await
+        .expect_err("direct app UPDATE must be denied across tenants");
+    acl_tx.rollback().await?;
+    assert_eq!(pg_code(&acl_update_cross).as_deref(), Some("42501"));
+
+    let mut acl_tx = app_owner_actor.begin().await?;
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(owner_id.to_string())
+        .execute(&mut *acl_tx)
+        .await?;
+    let acl_delete_own = sqlx::query("DELETE FROM invitations WHERE id = $1")
+        .bind(invitation_id)
+        .execute(&mut *acl_tx)
+        .await
+        .expect_err("direct app DELETE must be denied for its own tenant");
+    acl_tx.rollback().await?;
+    assert_eq!(pg_code(&acl_delete_own).as_deref(), Some("42501"));
+
+    let mut acl_tx = app_other_actor.begin().await?;
+    sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+        .bind(other_owner_id.to_string())
+        .execute(&mut *acl_tx)
+        .await?;
+    let acl_delete_cross = sqlx::query("DELETE FROM invitations WHERE id = $1")
+        .bind(owner_invitation_id)
+        .execute(&mut *acl_tx)
+        .await
+        .expect_err("direct app DELETE must be denied across tenants");
+    acl_tx.rollback().await?;
+    assert_eq!(pg_code(&acl_delete_cross).as_deref(), Some("42501"));
 
     // The event key is idempotent only for an identical immutable payload;
     // replay returns the original id while a forged payload is rejected.
@@ -960,10 +1389,13 @@ async fn identity_provisioning_body(
     .fetch_one(&audit)
     .await?;
     assert!(stats.0 >= 2);
-    let delivered: i32 = sqlx::query_scalar("SELECT public.deliver_auth_audit_batch(64)")
-        .fetch_one(&audit)
-        .await?;
-    assert!(delivered >= 2);
+    let delivered: (i32, i32) = sqlx::query_as(
+        "SELECT delivered_count, failed_count FROM public.deliver_auth_audit_batch(64)",
+    )
+    .fetch_one(&audit)
+    .await?;
+    assert!(delivered.0 >= 2);
+    assert_eq!(delivered.1, 0, "contract audit delivery must not fail");
     let copied: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM audit_logs WHERE id = $1")
         .bind(first_id)
         .fetch_one(owner)
@@ -996,15 +1428,17 @@ async fn identity_provisioning_body(
         "retention must never remove immutable audit copy"
     );
 
-    let duplicate = sqlx::query("SELECT public.create_invitation($1, $2, $3, $4, $5)")
-        .bind(owner_id)
-        .bind("new-member@example.test")
-        .bind("member")
-        .bind("b2".repeat(32))
-        .bind(expires_at)
-        .fetch_one(&app)
-        .await
-        .unwrap_err();
+    let duplicate = create_invitation_with_capability(
+        &app,
+        owner_id,
+        &owner_session_hash,
+        "new-member@example.test",
+        "member",
+        &"b2".repeat(32),
+        expires_at,
+    )
+    .await
+    .unwrap_err();
     assert_eq!(pg_code(&duplicate).as_deref(), Some("23505"));
 
     // A stale PENDING row must be released while the same email advisory
@@ -1017,43 +1451,97 @@ async fn identity_provisioning_body(
     )
     .bind(owner_id)
     .bind("d4".repeat(32))
-    .fetch_one(owner)
+    .fetch_one(&owner_actor)
     .await?;
-    let replacement_id: Uuid = sqlx::query_scalar(
-        "SELECT public.create_invitation($1, 'stale@example.test', 'member', $2, $3)",
+    let replacement_id = create_invitation_with_capability(
+        &app,
+        other_owner_id,
+        &other_owner_session_hash,
+        "stale@example.test",
+        "member",
+        &"e5".repeat(32),
+        expires_at,
     )
-    .bind(other_owner_id)
-    .bind("e5".repeat(32))
-    .bind(expires_at)
-    .fetch_one(&app)
     .await?;
     assert_ne!(replacement_id, stale_id);
     let stale_status: String = sqlx::query_scalar("SELECT status FROM invitations WHERE id = $1")
         .bind(stale_id)
-        .fetch_one(owner)
+        .fetch_one(&owner_actor)
         .await?;
     assert_eq!(stale_status, "EXPIRED");
 
-    let forged_owner = sqlx::query("SELECT public.create_invitation($1, $2, $3, $4, $5)")
-        .bind(member_id)
-        .bind("forged@example.test")
-        .bind("member")
-        .bind("c3".repeat(32))
-        .bind(expires_at)
-        .fetch_one(&app)
-        .await
-        .unwrap_err();
+    let forged_owner = create_invitation_with_capability(
+        &app,
+        member_id,
+        &owner_session_hash,
+        "forged@example.test",
+        "member",
+        &"c3".repeat(32),
+        expires_at,
+    )
+    .await
+    .unwrap_err();
     assert_eq!(pg_code(&forged_owner).as_deref(), Some("42501"));
+
+    // Direct app callers cannot mint Owner-B's capability with Owner-A's live
+    // session, even when they forge the supplied owner UUID and actor GUC.
+    let app_a = actor_pool(super_url, db, "app", &owner_id.to_string()).await?;
+    let mut forged_tx = app_a.begin().await?;
+    let owner_a_capability: Uuid =
+        sqlx::query_scalar("SELECT public.authenticate_identity_actor($1, $2)")
+            .bind(owner_id)
+            .bind(&owner_session_hash)
+            .fetch_one(&mut *forged_tx)
+            .await?;
+    let forged_cross_owner = sqlx::query(
+        "SELECT public.create_invitation($1, 'cross-owner@example.test', 'member', $2, $3, $4)",
+    )
+    .bind(other_owner_id)
+    .bind("c4".repeat(32))
+    .bind(expires_at)
+    .bind(owner_a_capability)
+    .fetch_one(&mut *forged_tx)
+    .await
+    .unwrap_err();
+    forged_tx.rollback().await?;
+    assert_eq!(pg_code(&forged_cross_owner).as_deref(), Some("42501"));
+
+    let owner_b_invite_hash = "c5".repeat(32);
+    let owner_b_invitation = create_invitation_with_capability(
+        &app,
+        other_owner_id,
+        &other_owner_session_hash,
+        "owner-b-claim@example.test",
+        "member",
+        &owner_b_invite_hash,
+        expires_at,
+    )
+    .await?;
+    let forged_claim =
+        sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4, $5)")
+            .bind(other_owner_id)
+            .bind(owner_b_invitation)
+            .bind(&owner_b_invite_hash)
+            .bind("https://issuer.test")
+            .bind("auth0|forged-owner-b")
+            .fetch_one(&app_a)
+            .await?;
+    assert!(
+        !forged_claim,
+        "Owner-A's invitation capability cannot claim Owner-B"
+    );
 
     // Existing identities are globally ineligible for invitations, including
     // a provisional identity redeemed under a different Owner tenant.
-    let existing_user = sqlx::query(
-        "SELECT public.create_invitation($1, 'provision-member@example.test', 'member', $2, $3)",
+    let existing_user = create_invitation_with_capability(
+        &app,
+        owner_id,
+        &owner_session_hash,
+        "provision-member@example.test",
+        "member",
+        &"f1".repeat(32),
+        expires_at,
     )
-    .bind(owner_id)
-    .bind("f1".repeat(32))
-    .bind(expires_at)
-    .fetch_one(&app)
     .await
     .unwrap_err();
     assert_eq!(pg_code(&existing_user).as_deref(), Some("23505"));
@@ -1065,13 +1553,15 @@ async fn identity_provisioning_body(
     .bind(owner_id)
     .fetch_one(owner)
     .await?;
-    let provisional_invite = sqlx::query(
-        "SELECT public.create_invitation($1, 'provisional-existing@example.test', 'member', $2, $3)",
+    let provisional_invite = create_invitation_with_capability(
+        &app,
+        other_owner_id,
+        &other_owner_session_hash,
+        "provisional-existing@example.test",
+        "member",
+        &"f2".repeat(32),
+        expires_at,
     )
-    .bind(other_owner_id)
-    .bind("f2".repeat(32))
-    .bind(expires_at)
-    .fetch_one(&app)
     .await
     .unwrap_err();
     assert_eq!(pg_code(&provisional_invite).as_deref(), Some("23505"));
@@ -1094,30 +1584,47 @@ async fn identity_provisioning_body(
     // loser must observe the committed identity/ invitation state and no
     // duplicate pending invitation or provisional user may result.
     let race_email = format!("race-{}@example.test", Uuid::new_v4().simple());
-    let race_invitation_id: Uuid =
-        sqlx::query_scalar("SELECT public.create_invitation($1, $2, 'member', $3, $4)")
-            .bind(owner_id)
-            .bind(&race_email)
-            .bind("ab".repeat(32))
-            .bind(expires_at)
-            .fetch_one(&app)
-            .await?;
+    let race_invite_hash = "ab".repeat(32);
+    let race_invitation_id = create_invitation_with_capability(
+        &app,
+        owner_id,
+        &owner_session_hash,
+        &race_email,
+        "member",
+        &race_invite_hash,
+        expires_at,
+    )
+    .await?;
     let race_create_pool = role_pool(super_url, db, "app").await?;
     let race_claim_pool = role_pool(super_url, db, "app").await?;
     let race_email_for_create = race_email.clone();
+    let race_session_hash = owner_session_hash.clone();
     let create_race = async move {
-        sqlx::query("SELECT public.create_invitation($1, $2, 'member', $3, $4)")
+        // The race loser must still fail at the global unique invitation
+        // boundary, but it needs its own authenticated Owner capability.
+        let mut tx = race_create_pool.begin().await?;
+        let capability: Uuid =
+            sqlx::query_scalar("SELECT public.authenticate_identity_actor($1, $2)")
+                .bind(owner_id)
+                .bind(&race_session_hash)
+                .fetch_one(&mut *tx)
+                .await?;
+        let result = sqlx::query("SELECT public.create_invitation($1, $2, 'member', $3, $4, $5)")
             .bind(owner_id)
             .bind(race_email_for_create)
             .bind("cd".repeat(32))
             .bind(expires_at)
-            .fetch_one(&race_create_pool)
-            .await
+            .bind(capability)
+            .fetch_one(&mut *tx)
+            .await;
+        tx.rollback().await?;
+        result
     };
     let claim_race = async move {
-        sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4)")
+        sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4, $5)")
             .bind(owner_id)
             .bind(race_invitation_id)
+            .bind(&race_invite_hash)
             .bind("https://issuer.test")
             .bind("auth0|create-vs-claim")
             .fetch_one(&race_claim_pool)
@@ -1165,7 +1672,7 @@ async fn identity_provisioning_body(
     // write grant.
     let adapter_invites = PostgresInviteStore::new(app.clone(), admin.clone());
     let adapter_invite = InviteRecord {
-        id: format!("inv-{}", "d4".repeat(32)),
+        id: format!("inv-{}", "f3".repeat(32)),
         email: "adapter-member@example.test".to_string(),
         role: Role::Member,
         created_at_secs: expires_at - 3_600,
@@ -1173,8 +1680,9 @@ async fn identity_provisioning_body(
         redeemed_by: None,
         redeemed_at_secs: None,
     };
-    with_actor_user_id(
+    with_authenticated_actor(
         &UserId::new(owner_id.to_string()),
+        &owner_session_hash,
         adapter_invites.insert(adapter_invite),
     )
     .await?;
@@ -1288,10 +1796,11 @@ async fn identity_provisioning_body(
     // callback with the consumed state is rejected, and a fresh login for the
     // established immutable identity keeps the same UUID.
     let callback_invites = PostgresInviteStore::new(app.clone(), admin.clone());
-    with_actor_user_id(
+    with_authenticated_actor(
         &UserId::new(owner_id.to_string()),
+        &owner_session_hash,
         callback_invites.insert(InviteRecord {
-            id: format!("inv-{}", "e5".repeat(32)),
+            id: format!("inv-{}", "f4".repeat(32)),
             email: "callback-member@example.test".to_string(),
             role: Role::Member,
             created_at_secs: expires_at - 3_200,
@@ -1411,19 +1920,23 @@ async fn identity_provisioning_body(
 
     let app_first = app.clone();
     let app_second = app.clone();
+    let invite_hash_first = invite_hash.clone();
+    let invite_hash_second = invite_hash.clone();
     let first = async move {
-        sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4)")
+        sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4, $5)")
             .bind(owner_id)
             .bind(invitation_id)
+            .bind(&invite_hash_first)
             .bind("https://issuer.test")
             .bind("auth0|concurrent-member")
             .fetch_one(&app_first)
             .await
     };
     let second = async move {
-        sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4)")
+        sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4, $5)")
             .bind(owner_id)
             .bind(invitation_id)
+            .bind(&invite_hash_second)
             .bind("https://issuer.test")
             .bind("auth0|concurrent-member")
             .fetch_one(&app_second)
@@ -1511,8 +2024,8 @@ async fn identity_provisioning_body(
         ("research_writer", false),
     ] {
         for signature in [
-            "public.create_invitation(uuid, text, text, text, bigint)",
-            "public.claim_invitation(uuid, uuid, text, text)",
+            "public.create_invitation(uuid, text, text, text, bigint, uuid)",
+            "public.claim_invitation(uuid, uuid, text, text, text)",
             "public.bind_redeemed_identity(text, text, text, text)",
         ] {
             let can_execute: bool =
@@ -1530,7 +2043,7 @@ async fn identity_provisioning_body(
     let function_metadata: (bool, String, Option<Vec<String>>) = sqlx::query_as(
         "SELECT prosecdef, pg_get_userbyid(proowner), proconfig \
          FROM pg_proc WHERE oid = \
-         'public.claim_invitation(uuid,uuid,text,text)'::regprocedure",
+         'public.claim_invitation(uuid,uuid,text,text,text)'::regprocedure",
     )
     .fetch_one(owner)
     .await?;
@@ -1553,15 +2066,35 @@ async fn identity_provisioning_body(
             .any(|config| config == "statement_timeout=5s")
     );
 
-    let blocked_rollback = MIGRATOR.undo(owner, 38).await.unwrap_err();
+    let mut guarded = owner.acquire().await?;
+    let blocked_rollback = MIGRATOR.undo(&mut *guarded, 38).await.unwrap_err();
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut *guarded)
+        .await?;
+    drop(guarded);
     assert_eq!(migrate_pg_code(&blocked_rollback).as_deref(), Some("55000"));
     sqlx::query("DELETE FROM invitations WHERE id = $1")
         .bind(owner_invitation_id)
-        .execute(owner)
+        .execute(&owner_actor)
         .await?;
+    let tail_delivery: (i32, i32) = sqlx::query_as(
+        "SELECT delivered_count, failed_count \
+         FROM public.deliver_auth_audit_batch(1000)",
+    )
+    .fetch_one(&audit)
+    .await?;
+    assert_eq!(tail_delivery.1, 0, "contract audit delivery must not fail");
+    let pending_tail: i64 =
+        sqlx::query_scalar("SELECT pending_count FROM public.auth_audit_outbox_stats()")
+            .fetch_one(&audit)
+            .await?;
+    assert_eq!(
+        pending_tail, 0,
+        "rollback must have no audit obligations left"
+    );
     MIGRATOR.undo(owner, 38).await?;
     let function_exists: bool = sqlx::query_scalar(
-        "SELECT to_regprocedure('public.claim_invitation(uuid,uuid,text,text)') IS NOT NULL",
+        "SELECT to_regprocedure('public.claim_invitation(uuid,uuid,text,text,text)') IS NOT NULL",
     )
     .fetch_one(owner)
     .await?;
@@ -2028,6 +2561,7 @@ async fn effective_role_pool(
 ) -> Result<PgPool, Box<dyn Error>> {
     let setup = match role {
         "migration_owner" => "SET ROLE migration_owner",
+        "worker" => "SET ROLE worker",
         "research_writer" => "SET ROLE research_writer",
         _ => return Err(format!("unsupported effective role {role}").into()),
     };
@@ -2075,11 +2609,20 @@ async fn actor_pool(
     let opts: sqlx::postgres::PgConnectOptions = conn_url(super_url, role, db)
         .parse()
         .map_err(Box::<dyn Error>::from)?;
-    PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(3)
         .connect_with(opts.options([("app.actor_user_id", user_id.to_string())]))
         .await
-        .map_err(Box::<dyn Error>::from)
+        .map_err(Box::<dyn Error>::from)?;
+    let identities: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(identities.0, role);
+    assert_eq!(
+        identities.0, identities.1,
+        "actor pools must use the production direct-login identity"
+    );
+    Ok(pool)
 }
 
 /// Scratch-database name, unique per call. Both tests share one process and
@@ -2178,10 +2721,19 @@ async fn role_pool(super_url: &str, db: &str, role: &str) -> Result<PgPool, Box<
     let opts: sqlx::postgres::PgConnectOptions = conn_url(super_url, role, db)
         .parse()
         .map_err(Box::<dyn Error>::from)?;
-    Ok(PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect_with(opts)
-        .await?)
+        .await?;
+    let identities: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(identities.0, role);
+    assert_eq!(
+        identities.0, identities.1,
+        "role pools must use the production direct-login identity"
+    );
+    Ok(pool)
 }
 
 fn require_db_url() -> Result<String, Box<dyn Error>> {

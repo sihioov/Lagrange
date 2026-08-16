@@ -104,6 +104,9 @@ pub struct PaperSettlementOutboxRow {
     pub exhausted_at: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// Worker lease token. `None` means the row was produced by an inline
+    /// settlement path and is not currently leased by the recovery scanner.
+    pub claim_token: Option<Uuid>,
 }
 
 /// Input for queueing a target at close(T).
@@ -399,14 +402,14 @@ impl PendingTargetRepo {
         let outbox = sqlx::query_as::<_, PaperSettlementOutboxRow>(
             "SELECT id, pending_target_id, owner_user_id, severity, kind, title, body, \
                     parity_json, attempts, max_attempts, available_at, delivered_at, \
-                    exhausted_at, last_error, created_at \
+                    exhausted_at, last_error, created_at, claim_token \
              FROM paper_settlement_outbox WHERE id = $1 \
              UNION ALL \
              SELECT archive.id, archive.pending_target_id, archive.owner_user_id, \
                     archive.severity, archive.kind, archive.title, archive.body, \
                     archive.parity_json, archive.attempts, archive.max_attempts, \
                     archive.created_at, archive.delivered_at, NULL::timestamptz, \
-                    NULL::text, archive.created_at \
+                    NULL::text, archive.created_at, NULL::uuid \
              FROM paper_settlement_outbox_archive archive \
              WHERE archive.id = $1 \
                AND NOT EXISTS (SELECT 1 FROM paper_settlement_outbox WHERE id = $1)",
@@ -464,14 +467,14 @@ impl PendingTargetRepo {
         let outbox = sqlx::query_as::<_, PaperSettlementOutboxRow>(
             "SELECT id, pending_target_id, owner_user_id, severity, kind, title, body, \
                     parity_json, attempts, max_attempts, available_at, delivered_at, \
-                    exhausted_at, last_error, created_at \
+                    exhausted_at, last_error, created_at, claim_token \
              FROM paper_settlement_outbox WHERE id = $1 \
              UNION ALL \
              SELECT archive.id, archive.pending_target_id, archive.owner_user_id, \
                     archive.severity, archive.kind, archive.title, archive.body, \
                     archive.parity_json, archive.attempts, archive.max_attempts, \
                     archive.created_at, archive.delivered_at, NULL::timestamptz, \
-                    NULL::text, archive.created_at \
+                    NULL::text, archive.created_at, NULL::uuid \
              FROM paper_settlement_outbox_archive archive \
              WHERE archive.id = $1 \
                AND NOT EXISTS (SELECT 1 FROM paper_settlement_outbox WHERE id = $1)",
@@ -489,7 +492,7 @@ impl PendingTargetRepo {
     /// [`Self::due_worker`], which only scans executable PENDING targets.
     pub async fn due_announcements_worker(
         pool: &sqlx::PgPool,
-        limit: i64,
+        limit: i32,
     ) -> TenancyResult<Vec<PaperSettlementOutboxRow>> {
         let mut tx = pool.begin().await.map_err(TenancyError::from_sqlx)?;
         set_paper_transaction_timeouts(&mut tx)
@@ -498,10 +501,8 @@ impl PendingTargetRepo {
         let rows = sqlx::query_as::<_, PaperSettlementOutboxRow>(
             "SELECT id, pending_target_id, owner_user_id, severity, kind, title, body, \
                     parity_json, attempts, max_attempts, available_at, delivered_at, \
-                    exhausted_at, last_error, created_at \
-             FROM paper_settlement_outbox \
-             WHERE delivered_at IS NULL AND exhausted_at IS NULL AND available_at <= now() \
-             ORDER BY available_at, id LIMIT $1",
+                    exhausted_at, last_error, created_at, claim_token \
+             FROM public.claim_paper_settlement_outbox($1, 60)",
         )
         .bind(limit.clamp(1, 1000))
         .fetch_all(&mut *tx)
@@ -518,12 +519,14 @@ impl PendingTargetRepo {
         &self,
         actor: &Actor,
         outbox_id: Uuid,
+        claim_token: Option<Uuid>,
     ) -> TenancyResult<bool> {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let changed: bool =
-            sqlx::query_scalar("SELECT public.mark_paper_settlement_outbox_delivered($1, $2)")
+            sqlx::query_scalar("SELECT public.mark_paper_settlement_outbox_delivered($1, $2, $3)")
                 .bind(outbox_id)
                 .bind(actor_uuid(actor)?)
+                .bind(claim_token)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(TenancyError::from_sqlx)?;
@@ -537,14 +540,16 @@ impl PendingTargetRepo {
         actor: &Actor,
         outbox_id: Uuid,
         error: &str,
+        claim_token: Option<Uuid>,
     ) -> TenancyResult<()> {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         sqlx::query(
-            "SELECT attempts, exhausted FROM public.fail_paper_settlement_outbox($1, $2, $3)",
+            "SELECT attempts, exhausted FROM public.fail_paper_settlement_outbox($1, $2, $3, $4)",
         )
         .bind(outbox_id)
         .bind(actor_uuid(actor)?)
         .bind(error)
+        .bind(claim_token)
         .fetch_optional(&mut *tx)
         .await
         .map_err(TenancyError::from_sqlx)?;

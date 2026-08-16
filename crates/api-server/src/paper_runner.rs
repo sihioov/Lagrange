@@ -687,7 +687,7 @@ async fn drain_announcements(
                 match services
                     .state
                     .pending_targets()
-                    .mark_announcement_delivered(&actor, outbox.id)
+                    .mark_announcement_delivered(&actor, outbox.id, outbox.claim_token)
                     .await
                 {
                     Ok(_) => report.notifications_delivered += 1,
@@ -713,7 +713,7 @@ async fn drain_announcements(
                 let _ = services
                     .state
                     .pending_targets()
-                    .record_announcement_failure(&actor, outbox.id, &detail)
+                    .record_announcement_failure(&actor, outbox.id, &detail, outbox.claim_token)
                     .await;
                 crate::observability::metrics::record_paper_settlement_retry("transport_failed");
                 report.item_errors.push(RunnerItemError {
@@ -731,7 +731,12 @@ async fn drain_announcements(
                 let _ = services
                     .state
                     .pending_targets()
-                    .record_announcement_failure(&actor, outbox.id, &error.to_string())
+                    .record_announcement_failure(
+                        &actor,
+                        outbox.id,
+                        &error.to_string(),
+                        outbox.claim_token,
+                    )
                     .await;
                 report.item_errors.push(RunnerItemError {
                     kind: "notification",

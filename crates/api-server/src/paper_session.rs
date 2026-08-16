@@ -216,7 +216,8 @@ async fn finish_announcement(
         // A recovery lookup may resolve an obligation that was already moved
         // to the immutable archive.  Its notification was delivered before
         // pruning, so replaying the external transport would violate the
-        // exactly-once DB delivery contract.
+        // durable source-key delivery contract. External transports remain
+        // at-least-once across a crash between send and the result update.
         return Ok(SettlementOutcome {
             target,
             parity: None,
@@ -237,7 +238,12 @@ async fn finish_announcement(
             // itself encounters the same outage.
             let _ = state
                 .pending_targets()
-                .record_announcement_failure(actor, outbox.id, &error.to_string())
+                .record_announcement_failure(
+                    actor,
+                    outbox.id,
+                    &error.to_string(),
+                    outbox.claim_token,
+                )
                 .await;
             return Err(error);
         }
@@ -256,7 +262,7 @@ async fn finish_announcement(
             .join("; ");
         let _ = state
             .pending_targets()
-            .record_announcement_failure(actor, outbox.id, &detail)
+            .record_announcement_failure(actor, outbox.id, &detail, outbox.claim_token)
             .await;
         crate::observability::metrics::record_paper_settlement_retry("transport_failed");
         return Err(TenancyError::InvalidState(if detail.is_empty() {
@@ -267,7 +273,7 @@ async fn finish_announcement(
     }
     state
         .pending_targets()
-        .mark_announcement_delivered(actor, outbox.id)
+        .mark_announcement_delivered(actor, outbox.id, outbox.claim_token)
         .await?;
     Ok(SettlementOutcome {
         target,

@@ -4,6 +4,14 @@
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '30s';
 
+-- The rollback guard must inspect every tenant's recommendation lineage, while
+-- the serving policies on both tables intentionally require an actor GUC.
+-- Temporarily remove FORCE-RLS for this owner-only transactional check and
+-- restore it immediately after the guard (or via transaction rollback on
+-- failure).
+ALTER TABLE public.paper_rebalance_previews NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.pending_targets NO FORCE ROW LEVEL SECURITY;
+
 DO $$
 BEGIN
     IF EXISTS (
@@ -18,6 +26,9 @@ BEGIN
     END IF;
 END;
 $$;
+
+ALTER TABLE public.paper_rebalance_previews FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.pending_targets FORCE ROW LEVEL SECURITY;
 
 REVOKE EXECUTE ON FUNCTION public.apply_paper_rebalance_preview(uuid, uuid, text, date)
     FROM app;

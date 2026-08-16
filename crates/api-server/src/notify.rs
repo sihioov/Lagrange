@@ -198,21 +198,12 @@ impl Notifier {
         body: &str,
         source_key: Option<&str>,
     ) -> TenancyResult<Vec<AlertOutcome>> {
-        // Delivery transports are deliberately invoked before opening the
-        // database transaction.  The transaction only records the durable
-        // result; a future external transport can therefore not retain an RLS
-        // transaction while it waits on a network.
-        let attempted: Vec<(&str, &'static str, Option<String>)> = channels
-            .iter()
-            .map(|channel| {
-                let (status, error_detail) =
-                    match transport_for(channel).deliver(channel, title, body) {
-                        Ok(()) => ("SUCCESS", None),
-                        Err(error) => ("FAILED", Some(error)),
-                    };
-                (*channel, status, error_detail)
-            })
-            .collect();
+        // First commit a per-channel lease, then invoke the transport.  This
+        // ordering is deliberate: transport-before-DB-dedupe lets concurrent
+        // retries send the same source key twice.  A process killed after an
+        // external send but before the result update can still be retried
+        // after lease expiry (explicit at-least-once semantics), but concurrent
+        // runners cannot both own the same delivery row.
         let mut tx = begin_actor_tx(&self.app_pool, recipient).await?;
         let owner_user_id = actor_uuid(recipient)?;
         let notification_id: Uuid = match source_key {
@@ -220,7 +211,8 @@ impl Notifier {
                 "INSERT INTO notifications \
                  (owner_user_id, kind, title, body, source_key) \
                  VALUES ($1, $2, $3, $4, $5) \
-                 ON CONFLICT (owner_user_id, source_key) DO UPDATE SET id = notifications.id \
+                 ON CONFLICT (owner_user_id, source_key) WHERE source_key IS NOT NULL \
+                 DO UPDATE SET id = notifications.id \
                  RETURNING id",
             )
             .bind(owner_user_id)
@@ -261,45 +253,119 @@ impl Notifier {
             }
         }
 
-        let mut outcomes = Vec::with_capacity(attempted.len());
-        for (channel, attempted_status, attempted_error) in attempted {
-            let row: (String, String, Option<String>) = sqlx::query_as(
+        let mut claims = Vec::with_capacity(channels.len());
+        let mut outcomes = Vec::with_capacity(channels.len());
+        for channel in channels {
+            let token = Uuid::new_v4();
+            let claimed: Option<(Uuid, String, Option<String>)> = sqlx::query_as(
                 "INSERT INTO notification_deliveries \
-                 (notification_id, owner_user_id, channel, status, error_detail) \
-                 VALUES ($1, $2, $3, $4, $5) \
+                 (notification_id, owner_user_id, channel, status, error_detail, \
+                  delivery_token, delivery_lease_expires_at, delivery_attempts) \
+                 VALUES ($1, $2, $3, 'FAILED', 'delivery claim pending', $4, \
+                         now() + interval '60 seconds', 1) \
                  ON CONFLICT (notification_id, channel) DO UPDATE SET \
-                     status = CASE \
-                         WHEN notification_deliveries.status = 'SUCCESS' THEN 'SUCCESS' \
-                         ELSE EXCLUDED.status \
-                     END, \
-                     error_detail = CASE \
-                         WHEN notification_deliveries.status = 'SUCCESS' THEN NULL \
-                         ELSE EXCLUDED.error_detail \
-                     END, \
+                     status = 'FAILED', \
+                     error_detail = 'delivery claim pending', \
+                     delivery_token = EXCLUDED.delivery_token, \
+                     delivery_lease_expires_at = EXCLUDED.delivery_lease_expires_at, \
+                     delivery_attempts = notification_deliveries.delivery_attempts + 1, \
                      attempted_at = now() \
-                 RETURNING channel, status, error_detail",
+                 WHERE notification_deliveries.status <> 'SUCCESS' \
+                   AND (notification_deliveries.delivery_lease_expires_at IS NULL \
+                        OR notification_deliveries.delivery_lease_expires_at <= now()) \
+                 RETURNING id, channel, error_detail",
             )
             .bind(notification_id)
             .bind(owner_user_id)
             .bind(channel)
-            .bind(attempted_status)
-            .bind(&attempted_error)
+            .bind(token)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+            if let Some((delivery_id, claimed_channel, _)) = claimed {
+                claims.push((delivery_id, claimed_channel, token));
+                continue;
+            }
+            let existing: (String, String, Option<String>) = sqlx::query_as(
+                "SELECT channel, status, error_detail \
+                 FROM notification_deliveries \
+                 WHERE notification_id = $1 AND channel = $2",
+            )
+            .bind(notification_id)
+            .bind(channel)
             .fetch_one(&mut *tx)
             .await
             .map_err(TenancyError::from_sqlx)?;
-            let status = if row.1 == "SUCCESS" {
-                "SUCCESS"
-            } else {
-                "FAILED"
-            };
             outcomes.push(AlertOutcome {
                 notification_id,
-                channel: row.0,
-                status,
-                error_detail: row.2,
+                channel: existing.0,
+                status: if existing.1 == "SUCCESS" {
+                    "SUCCESS"
+                } else {
+                    "FAILED"
+                },
+                error_detail: existing.2,
             });
         }
         tx.commit().await.map_err(TenancyError::from_sqlx)?;
+
+        // No database transaction is held while transports run.  Only the
+        // rows whose lease was returned above are allowed to invoke a
+        // transport; an already-successful row or an unexpired lease is a
+        // durable no-op for this runner.
+        let attempted: Vec<(Uuid, String, Uuid, &'static str, Option<String>)> = claims
+            .into_iter()
+            .map(|(delivery_id, channel, token)| {
+                let (status, error_detail) =
+                    match transport_for(&channel).deliver(&channel, title, body) {
+                        Ok(()) => ("SUCCESS", None),
+                        Err(error) => ("FAILED", Some(error)),
+                    };
+                (delivery_id, channel, token, status, error_detail)
+            })
+            .collect();
+        if !attempted.is_empty() {
+            let mut finish_tx = begin_actor_tx(&self.app_pool, recipient).await?;
+            for (delivery_id, channel, token, status, error_detail) in attempted {
+                let persisted: Option<(String, Option<String>)> = sqlx::query_as(
+                    "UPDATE notification_deliveries \
+                     SET status = $2, error_detail = $3, attempted_at = now(), \
+                         delivery_token = NULL, delivery_lease_expires_at = NULL \
+                     WHERE id = $1 AND delivery_token = $4 \
+                     RETURNING status, error_detail",
+                )
+                .bind(delivery_id)
+                .bind(status)
+                .bind(&error_detail)
+                .bind(token)
+                .fetch_optional(&mut *finish_tx)
+                .await
+                .map_err(TenancyError::from_sqlx)?;
+                let row = match persisted {
+                    Some(row) => row,
+                    None => sqlx::query_as(
+                        "SELECT status, error_detail FROM notification_deliveries \
+                         WHERE id = $1 AND channel = $2",
+                    )
+                    .bind(delivery_id)
+                    .bind(&channel)
+                    .fetch_one(&mut *finish_tx)
+                    .await
+                    .map_err(TenancyError::from_sqlx)?,
+                };
+                outcomes.push(AlertOutcome {
+                    notification_id,
+                    channel,
+                    status: if row.0 == "SUCCESS" {
+                        "SUCCESS"
+                    } else {
+                        "FAILED"
+                    },
+                    error_detail: row.1,
+                });
+            }
+            finish_tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        }
         for outcome in &outcomes {
             crate::observability::metrics::record_delivery(outcome.status);
         }
