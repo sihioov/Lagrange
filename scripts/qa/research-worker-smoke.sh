@@ -322,9 +322,11 @@ dkr() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' docker "$@"; }
 project="lagrange-research-smoke-$$-$(date +%s)"
 temp_root="$(mktemp -d "${TMPDIR:-/tmp}/${project}.XXXXXX")"
 raw_root="$temp_root/data"
-postgres_secret="$temp_root/postgres_password"
-research_secret="$temp_root/db_research_password"
-krx_secret="$temp_root/krx_api_key"
+runtime_secret_root="$temp_root/runtime-secrets"
+postgres_secret="$runtime_secret_root/postgres/postgres_password"
+schema_postgres_secret="$runtime_secret_root/research-schema-check/postgres_password"
+research_secret="$runtime_secret_root/research-worker/db_research_password"
+krx_secret="$runtime_secret_root/research-worker/krx_api_key"
 created=0
 rc() { dkr compose -p "$project" -f "$(hostpath "$compose_file")" "$@"; }
 context_audit_tag="${project}-context-audit"
@@ -383,7 +385,11 @@ raw_init_ownership_probe() (
   ' || fail 'Raw init changed the outside symlink target'
 )
 
-install -d -m 0700 "$raw_root/raw"
+install -d -m 0700 \
+  "$raw_root/raw" \
+  "$runtime_secret_root/postgres" \
+  "$runtime_secret_root/research-schema-check" \
+  "$runtime_secret_root/research-worker"
 [ -d "$raw_root/raw" ] && [ -w "$raw_root/raw" ] || fail 'disposable Raw directory is not writable'
 umask 077
 if command -v openssl >/dev/null 2>&1; then
@@ -393,12 +399,11 @@ else
   head -c 32 /dev/urandom | base64 >"$postgres_secret"
   head -c 32 /dev/urandom | base64 >"$research_secret"
 fi
+cp -- "$postgres_secret" "$schema_postgres_secret"
 printf '%s' 'unused-in-synthetic-smoke' >"$krx_secret"
-chmod 0444 "$postgres_secret" "$research_secret" "$krx_secret"
+chmod 0444 "$postgres_secret" "$schema_postgres_secret" "$research_secret" "$krx_secret"
 
-export LAGRANGE_POSTGRES_PASSWORD_SECRET_SOURCE="$(hostpath "$postgres_secret")"
-export LAGRANGE_DB_RESEARCH_PASSWORD_SECRET_SOURCE="$(hostpath "$research_secret")"
-export LAGRANGE_KRX_API_KEY_SECRET_SOURCE="$(hostpath "$krx_secret")"
+export LAGRANGE_RUNTIME_SECRET_DIR="$(hostpath "$runtime_secret_root")"
 export LAGRANGE_DATA_DIR="$(hostpath "$raw_root")"
 export LAGRANGE_PGDATA_VOLUME="${project}-pgdata"
 export POSTGRES_USER=lagrange POSTGRES_DB=lagrange APP_ENV=qa RESEARCH_FETCH_MODE=synthetic

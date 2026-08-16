@@ -184,11 +184,15 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn(">/dev/null 2>&1", function)
 
         secret_setup = script.split("umask 077", 1)[1].split(
-            "export LAGRANGE_POSTGRES_PASSWORD_SECRET_SOURCE", 1
+            "export LAGRANGE_RUNTIME_SECRET_DIR", 1
         )[0]
         self.assertIn(
-            'chmod 0444 "$postgres_secret" "$research_secret" "$krx_secret"',
+            'chmod 0444 "$postgres_secret" "$schema_postgres_secret" "$research_secret" "$krx_secret"',
             secret_setup,
+        )
+        self.assertIn(
+            'schema_postgres_secret="$runtime_secret_root/research-schema-check/postgres_password"',
+            script,
         )
 
         self.assertIn("ledger_state=", script)
