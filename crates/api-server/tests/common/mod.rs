@@ -486,6 +486,28 @@ impl Harness {
             .unwrap_or_else(|e| panic!("seed_tenant failed: {e} ({sql:?})"));
     }
 
+    /// Seed a tenant row through the migration-owner fixture while carrying an
+    /// explicit actor GUC. This is reserved for immutable migration-origin
+    /// fixtures (for example, recommendation lineage) that the app role must
+    /// not be able to forge through the production trigger boundary.
+    pub async fn seed_migration_owner(&self, actor: &UserCtx, sql: &str) {
+        let mut tx = self
+            .owner_pool
+            .begin()
+            .await
+            .expect("owner seed transaction");
+        sqlx::query("SELECT set_config('app.actor_user_id', $1, true)")
+            .bind(actor.user_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("owner seed actor context");
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .execute(&mut *tx)
+            .await
+            .unwrap_or_else(|e| panic!("seed_migration_owner failed: {e} ({sql:?})"));
+        tx.commit().await.expect("owner seed transaction commits");
+    }
+
     /// Create a user (shared rows) + a live session (tenant row, GUC'd).
     pub async fn seed_user(&self, role: Role, email: &str, iss: &str, sub: &str) -> UserCtx {
         let role_id = match role {

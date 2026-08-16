@@ -478,18 +478,19 @@ async fn dataset_blocked_after_queue_is_atomically_skipped() {
     )).await;
     h.seed_shared("UPDATE dataset_versions SET status='BLOCKED' WHERE version='2026-01-01'")
         .await;
-    let worker = h.worker_pool().await;
-    let mut tx = worker.begin().await.unwrap();
-    let result: (bool, serde_json::Value) =
-        sqlx::query_as("SELECT authorized, reason FROM public.preflight_paper_target($1,$2)")
-            .bind(queued.id)
-            .bind(user.user_id)
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-    assert!(!result.0);
-    assert_eq!(result.1["code"], "PAPER_DATASET_BLOCKED");
-    tx.commit().await.unwrap();
+    let data = runner_dataset_for("2026-01-06");
+    let services = RunnerServices::new(h.state(), h.worker_pool().await, data.root().to_path_buf());
+    let report = run_cycle(&services, date("2026-01-06"))
+        .await
+        .expect("blocked dataset is settled atomically");
+    assert_eq!(report.targets_seen, 1);
+    assert_eq!(report.targets_settled, 1);
+    assert!(
+        report.item_errors.is_empty(),
+        "cycle errors: {:?}",
+        report.item_errors
+    );
+    let worker = services.worker_pool.clone();
     let status: String = sqlx::query_scalar("SELECT status FROM pending_targets WHERE id=$1")
         .bind(queued.id)
         .fetch_one(&worker)

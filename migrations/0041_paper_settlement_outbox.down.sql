@@ -1,6 +1,93 @@
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '30s';
 
+-- Preserve the empty-GUC-safe pending_targets boundary when 0041 is removed;
+-- never restore the legacy direct text-to-uuid cast from 0014.
+DROP POLICY IF EXISTS tenant_all_app_pending_targets ON public.pending_targets;
+DROP POLICY IF EXISTS tenant_all_owner_pending_targets ON public.pending_targets;
+CREATE POLICY tenant_all_app_pending_targets ON public.pending_targets
+    FOR ALL TO app
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+CREATE POLICY tenant_all_owner_pending_targets ON public.pending_targets
+    FOR ALL TO migration_owner
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+
+DROP POLICY IF EXISTS tenant_all_app_recommendation_runs
+    ON public.recommendation_runs;
+DROP POLICY IF EXISTS tenant_all_owner_recommendation_runs
+    ON public.recommendation_runs;
+CREATE POLICY tenant_all_app_recommendation_runs
+    ON public.recommendation_runs FOR ALL TO app
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+CREATE POLICY tenant_all_owner_recommendation_runs
+    ON public.recommendation_runs FOR ALL TO migration_owner
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+
+DROP POLICY IF EXISTS tenant_all_app_notification_deliveries
+    ON public.notification_deliveries;
+DROP POLICY IF EXISTS tenant_all_owner_notification_deliveries
+    ON public.notification_deliveries;
+CREATE POLICY tenant_all_app_notification_deliveries
+    ON public.notification_deliveries FOR ALL TO app
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+CREATE POLICY tenant_all_owner_notification_deliveries
+    ON public.notification_deliveries FOR ALL TO migration_owner
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+
 -- Never remove the only durable obligation for a terminal target. Operators
 -- must drain/reconcile pending delivery before asking migrations to roll back.
 DO $guard$
@@ -52,7 +139,10 @@ DROP FUNCTION IF EXISTS public.assert_paper_settlement_obligation();
 
 DROP FUNCTION IF EXISTS public.prune_paper_settlement_outbox(bigint, integer);
 DROP FUNCTION IF EXISTS public.paper_settlement_outbox_stats(bigint);
+DROP FUNCTION IF EXISTS public.claim_paper_settlement_outbox(integer, integer);
+DROP FUNCTION IF EXISTS public.mark_paper_settlement_outbox_delivered(uuid, uuid, uuid);
 DROP FUNCTION IF EXISTS public.fail_paper_settlement_outbox(uuid, uuid, text);
+DROP FUNCTION IF EXISTS public.fail_paper_settlement_outbox(uuid, uuid, text, uuid);
 DROP FUNCTION IF EXISTS public.mark_paper_settlement_outbox_delivered(uuid, uuid);
 DROP FUNCTION IF EXISTS public.enqueue_paper_settlement_outbox(uuid, text, text, text, text, jsonb);
 
@@ -67,8 +157,14 @@ ALTER TABLE public.recommendation_runs
     DROP CONSTRAINT IF EXISTS recommendation_runs_exact_lineage_uq;
 
 ALTER TABLE public.notification_deliveries
+    DROP CONSTRAINT IF EXISTS notification_deliveries_delivery_attempts_check,
+    DROP CONSTRAINT IF EXISTS notification_deliveries_delivery_lease_check,
     DROP CONSTRAINT IF EXISTS notification_deliveries_notification_owner_fk,
-    DROP CONSTRAINT IF EXISTS notification_deliveries_notification_channel_uq;
+    DROP CONSTRAINT IF EXISTS notification_deliveries_notification_channel_uq,
+    DROP COLUMN IF EXISTS delivery_token,
+    DROP COLUMN IF EXISTS delivery_lease_expires_at,
+    DROP COLUMN IF EXISTS delivery_attempts;
+DROP INDEX IF EXISTS public.notification_deliveries_delivery_lease_idx;
 ALTER TABLE public.notifications
     DROP CONSTRAINT IF EXISTS notifications_id_owner_uq;
 DROP INDEX IF EXISTS public.notifications_owner_source_key_uq;

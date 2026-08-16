@@ -43,6 +43,7 @@ fn epoch_now() -> u64 {
 
 tokio::task_local! {
     static INVITE_ACTOR: String;
+    static INVITE_ACTOR_SESSION_HASH: String;
 }
 
 /// Run an invitation mutation with the authenticated Owner identity available
@@ -55,11 +56,37 @@ where
     INVITE_ACTOR.scope(user_id.0.clone(), future).await
 }
 
+/// Run an invitation mutation with both the authenticated Owner identity and
+/// the hash of that request's live session. The SQL adapter turns this hash
+/// into a transaction-bound capability before permitting the mutation; an
+/// actor GUC by itself is intentionally insufficient.
+pub async fn with_authenticated_actor<T, Fut>(
+    user_id: &UserId,
+    session_hash: &str,
+    future: Fut,
+) -> Result<T, InviteError>
+where
+    Fut: Future<Output = Result<T, InviteError>>,
+{
+    INVITE_ACTOR
+        .scope(
+            user_id.0.clone(),
+            INVITE_ACTOR_SESSION_HASH.scope(session_hash.to_owned(), future),
+        )
+        .await
+}
+
 fn invite_actor() -> Result<Uuid, InviteError> {
     INVITE_ACTOR
         .try_with(|actor| Uuid::parse_str(actor))
         .map_err(|_| InviteError::Store("actor context missing".to_string()))?
         .map_err(|_| InviteError::Store("invalid actor identity".to_string()))
+}
+
+fn invite_session_hash() -> Result<String, InviteError> {
+    INVITE_ACTOR_SESSION_HASH
+        .try_with(Clone::clone)
+        .map_err(|_| InviteError::Store("authenticated actor capability missing".to_string()))
 }
 
 fn invite_hash_from_id(id: &str) -> Option<&str> {
@@ -464,22 +491,34 @@ impl PostgresInviteStore {
 impl InviteStore for PostgresInviteStore {
     async fn insert(&self, invite: InviteRecord) -> Result<(), InviteError> {
         let owner_id = invite_actor()?;
+        let session_hash = invite_session_hash()?;
         let invite_hash = invite_hash_from_id(&invite.id)
             .ok_or_else(|| InviteError::Store("invalid invitation identifier".to_string()))?;
-        tokio::time::timeout(
-            AUTH_SQL_OPERATION_DEADLINE,
-            sqlx::query_scalar::<_, Uuid>("SELECT public.create_invitation($1, $2, $3, $4, $5)")
-                .bind(owner_id)
-                .bind(invite.email)
-                .bind(role_name(invite.role))
-                .bind(invite_hash)
-                .bind(invite.expires_at_secs)
-                .fetch_one(&self.app_pool),
-        )
+        tokio::time::timeout(AUTH_SQL_OPERATION_DEADLINE, async {
+            let mut transaction = self.app_pool.begin().await.map_err(invite_store_error)?;
+            let capability: Uuid =
+                sqlx::query_scalar("SELECT public.authenticate_identity_actor($1, $2)")
+                    .bind(owner_id)
+                    .bind(session_hash)
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(invite_store_error)?;
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT public.create_invitation($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(owner_id)
+            .bind(invite.email)
+            .bind(role_name(invite.role))
+            .bind(invite_hash)
+            .bind(invite.expires_at_secs)
+            .bind(capability)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(invite_store_error)?;
+            transaction.commit().await.map_err(invite_store_error)
+        })
         .await
         .map_err(|_| invite_store_timeout())?
-        .map(|_| ())
-        .map_err(invite_store_error)
     }
 
     async fn find_by_email(&self, email: &str) -> Result<Option<InviteRecord>, InviteError> {
@@ -544,23 +583,22 @@ impl InviteStore for PostgresInviteStore {
         tokio::time::timeout(AUTH_SQL_OPERATION_DEADLINE, async {
             let invitation_id = Uuid::parse_str(id)
                 .map_err(|_| InviteError::Store("invalid invitation identifier".to_string()))?;
-            let owner_id = tokio::time::timeout(
+            let invitation: Option<(Uuid, String)> = tokio::time::timeout(
                 AUTH_SQL_OPERATION_DEADLINE,
-                sqlx::query_scalar::<_, Uuid>(
-                    "SELECT user_id FROM public.invitations WHERE id = $1",
-                )
-                .bind(invitation_id)
-                .fetch_optional(&self.admin_pool),
+                sqlx::query_as("SELECT user_id, invite_hash FROM public.invitations WHERE id = $1")
+                    .bind(invitation_id)
+                    .fetch_optional(&self.admin_pool),
             )
             .await
             .map_err(|_| invite_store_timeout())?
             .map_err(invite_store_error)?;
-            let Some(owner_id) = owner_id else {
+            let Some((owner_id, invite_hash)) = invitation else {
                 return Ok(false);
             };
-            sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4)")
+            sqlx::query_scalar::<_, bool>("SELECT public.claim_invitation($1, $2, $3, $4, $5)")
                 .bind(owner_id)
                 .bind(invitation_id)
+                .bind(invite_hash)
                 .bind(issuer)
                 .bind(subject)
                 .fetch_one(&self.app_pool)
@@ -591,6 +629,20 @@ impl AuthAuditReadiness {
             && !self.worker_stale
             && self.consecutive_failures < MAX_CONSECUTIVE_FAILURES
             && self.oldest_pending_age_secs <= AUTH_AUDIT_PENDING_SLA_SECS
+    }
+}
+
+/// Advance the writer's consecutive-failure state for one poll. An empty poll
+/// is not a successful delivery: rows may simply be in backoff, or a runner
+/// may have raced another worker. Only a poll that actually delivered at least
+/// one row clears an unresolved failure streak.
+fn next_consecutive_failures(current: u64, delivered: usize, failed: usize) -> u64 {
+    if failed > 0 {
+        current.saturating_add(1)
+    } else if delivered > 0 {
+        0
+    } else {
+        current
     }
 }
 
@@ -642,15 +694,13 @@ impl PostgresAuthAudit {
                     worker_heartbeat.store(epoch_now(), Ordering::Release);
                     match runtime.block_on(deliver_outbox_batch(&worker_pool)) {
                         Ok((delivered, failed)) => {
-                            if failed == 0 {
-                                consecutive_failures = 0;
-                                worker_consecutive_failures.store(0, Ordering::Release);
-                            } else {
+                            if failed > 0 {
                                 worker_failures.fetch_add(failed as u64, Ordering::Relaxed);
-                                consecutive_failures = consecutive_failures.saturating_add(1);
-                                worker_consecutive_failures
-                                    .store(consecutive_failures, Ordering::Release);
                             }
+                            consecutive_failures =
+                                next_consecutive_failures(consecutive_failures, delivered, failed);
+                            worker_consecutive_failures
+                                .store(consecutive_failures, Ordering::Release);
                             let _ = worker_backlog.fetch_update(
                                 Ordering::AcqRel,
                                 Ordering::Acquire,
@@ -983,5 +1033,36 @@ mod tests {
             }
             .is_ready()
         );
+    }
+
+    #[test]
+    fn audit_empty_backoff_polls_preserve_unresolved_failure_streak() {
+        let mut consecutive = 0;
+        consecutive = next_consecutive_failures(consecutive, 0, 2);
+        assert_eq!(consecutive, 1);
+        consecutive = next_consecutive_failures(consecutive, 0, 1);
+        assert_eq!(consecutive, 2);
+        consecutive = next_consecutive_failures(consecutive, 0, 1);
+        assert_eq!(consecutive, 3);
+        // The failed rows are unavailable during exponential backoff. Empty
+        // polls must not make readiness look healthy again.
+        consecutive = next_consecutive_failures(consecutive, 0, 0);
+        assert_eq!(consecutive, 3);
+        consecutive = next_consecutive_failures(consecutive, 0, 0);
+        assert_eq!(consecutive, 3);
+        assert!(
+            !AuthAuditReadiness {
+                backlog: 1,
+                oldest_pending_age_secs: 1,
+                worker_alive: true,
+                worker_stale: false,
+                consecutive_failures: consecutive,
+                failures: 2,
+            }
+            .is_ready()
+        );
+        // A real delivery, rather than an empty poll, resolves the streak.
+        consecutive = next_consecutive_failures(consecutive, 1, 0);
+        assert_eq!(consecutive, 0);
     }
 }

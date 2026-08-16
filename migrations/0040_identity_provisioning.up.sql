@@ -6,6 +6,12 @@
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '30s';
 
+-- Invitations are mutated only through the capability-bound SECURITY DEFINER
+-- functions below.  The serving role may inspect them for authenticated
+-- flows, but a caller-controlled actor GUC must never authorize direct DML.
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.invitations FROM app;
+GRANT SELECT ON TABLE public.invitations TO app;
+
 -- The invitation role is data, not a caller-controlled table name. Keep the
 -- check local to this table because the migration-contract scratch database
 -- intentionally does not seed role rows until its test fixtures run.
@@ -28,11 +34,144 @@ ON CONFLICT (id) DO NOTHING;
 ALTER TABLE public.users
     ADD COLUMN provisioned_by_user_id uuid REFERENCES public.users(id);
 
+-- An app connection is shared by every authenticated request, so a caller
+-- supplied actor GUC is not an authentication boundary.  The narrow adapter
+-- below mints a transaction-bound capability only after it proves that the
+-- presented session hash belongs to the requested, live Owner session.  The
+-- capability table has no serving-role grants; only the definer functions can
+-- consume it.  `backend_pid` and `transaction_id` make a capability unusable
+-- if an application accidentally carries it across pool connections or
+-- transactions.
+CREATE TABLE public.identity_actor_capabilities (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_user_id  uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    backend_pid    integer NOT NULL,
+    transaction_id bigint NOT NULL,
+    issued_at      timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
+    expires_at     timestamptz NOT NULL,
+    CONSTRAINT identity_actor_capability_expiry_check
+        CHECK (expires_at > issued_at)
+);
+
+ALTER TABLE public.identity_actor_capabilities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.identity_actor_capabilities FORCE ROW LEVEL SECURITY;
+CREATE POLICY identity_actor_capabilities_owner_all
+    ON public.identity_actor_capabilities FOR ALL TO migration_owner
+    USING (true) WITH CHECK (true);
+REVOKE ALL ON TABLE public.identity_actor_capabilities
+    FROM PUBLIC, app, worker, admin, audit_writer, research_writer;
+
+CREATE FUNCTION public.authenticate_identity_actor(
+    p_owner_user_id uuid,
+    p_session_hash text
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+SET lock_timeout = '1s'
+SET statement_timeout = '5s'
+AS $function$
+DECLARE
+    v_capability uuid;
+BEGIN
+    IF p_owner_user_id IS NULL
+        OR p_session_hash IS NULL
+        OR p_session_hash !~ '^[0-9a-f]{64}$'
+    THEN
+        RAISE EXCEPTION 'identity actor capability is invalid'
+            USING ERRCODE = '42501';
+    END IF;
+
+    -- This GUC only selects the requested tenant row for FORCE-RLS.  It is
+    -- deliberately not used as proof of identity: the session hash and live
+    -- Owner role below are the authentication boundary.
+    PERFORM pg_catalog.set_config(
+        'app.actor_user_id', p_owner_user_id::text, true
+    );
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.web_sessions AS session
+        JOIN public.user_roles AS role
+          ON role.user_id = session.user_id AND role.role_id = 'owner'
+        WHERE session.user_id = p_owner_user_id
+          AND session.session_hash = p_session_hash
+          AND session.revoked_at IS NULL
+          AND session.expires_at > pg_catalog.clock_timestamp()
+    ) THEN
+        RAISE EXCEPTION 'identity actor session is not an active Owner session'
+            USING ERRCODE = '42501';
+    END IF;
+
+    v_capability := pg_catalog.gen_random_uuid();
+    INSERT INTO public.identity_actor_capabilities (
+        id, actor_user_id, backend_pid, transaction_id, expires_at
+    )
+    VALUES (
+        v_capability,
+        p_owner_user_id,
+        pg_catalog.pg_backend_pid(),
+        pg_catalog.txid_current(),
+        pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => 30)
+    );
+    RETURN v_capability;
+END
+$function$;
+
+ALTER FUNCTION public.authenticate_identity_actor(uuid, text)
+    OWNER TO migration_owner;
+REVOKE ALL ON FUNCTION public.authenticate_identity_actor(uuid, text)
+    FROM PUBLIC, worker, admin, audit_writer, research_writer;
+GRANT EXECUTE ON FUNCTION public.authenticate_identity_actor(uuid, text) TO app;
+
+-- Consume the capability inside the same transaction in which it was minted.
+-- This is intentionally private (no EXECUTE grant) and is called only by the
+-- two mutation functions below.
+CREATE FUNCTION public.consume_identity_actor_capability(
+    p_owner_user_id uuid,
+    p_capability uuid
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+SET lock_timeout = '1s'
+SET statement_timeout = '5s'
+AS $function$
+DECLARE
+    v_actor_user_id uuid;
+BEGIN
+    SELECT capability.actor_user_id
+      INTO v_actor_user_id
+      FROM public.identity_actor_capabilities AS capability
+     WHERE capability.id = p_capability
+       AND capability.backend_pid = pg_catalog.pg_backend_pid()
+       AND capability.transaction_id = pg_catalog.txid_current()
+       AND capability.expires_at > pg_catalog.clock_timestamp()
+     FOR UPDATE;
+    IF NOT FOUND OR v_actor_user_id IS DISTINCT FROM p_owner_user_id THEN
+        RAISE EXCEPTION 'identity actor capability is invalid'
+            USING ERRCODE = '42501';
+    END IF;
+    DELETE FROM public.identity_actor_capabilities
+     WHERE id = p_capability;
+END
+$function$;
+
+ALTER FUNCTION public.consume_identity_actor_capability(uuid, uuid)
+    OWNER TO migration_owner;
+REVOKE ALL ON FUNCTION public.consume_identity_actor_capability(uuid, uuid)
+    FROM PUBLIC, app, worker, admin, audit_writer, research_writer;
+
 -- RLS intentionally hides another Owner's invitation rows from the serving
 -- path; the unique index is the global race-proof boundary that still stops
 -- two Owners from issuing simultaneous pending invites for one email.  Fail
 -- closed if an older database already contains duplicate pending addresses;
 -- silently choosing one row would make the migration non-deterministic.
+-- The migration connection has no tenant actor, and invitations is FORCE-RLS;
+-- temporarily remove FORCE only for this global invariant check.  Restore it
+-- before creating any serving function so the policy remains actor-scoped.
+ALTER TABLE public.invitations NO FORCE ROW LEVEL SECURITY;
 DO $guard$
 BEGIN
     IF EXISTS (
@@ -48,10 +187,33 @@ BEGIN
     END IF;
 END
 $guard$;
+ALTER TABLE public.invitations FORCE ROW LEVEL SECURITY;
 
 CREATE UNIQUE INDEX invitations_pending_email_uq
     ON public.invitations (pg_catalog.lower(pg_catalog.btrim(email)))
     WHERE status = 'PENDING';
+
+-- A private, transaction-bound marker lets the definer-only expiry helper
+-- perform the one cross-owner PENDING -> EXPIRED transition required by the
+-- global email index.  No serving role can mint or read this marker.  Binding
+-- it to the backend, transaction, and normalized email prevents a caller from
+-- turning it into a general invitation read/update capability.
+CREATE TABLE public.identity_invitation_expiry_capabilities (
+    id             uuid PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+    email          text NOT NULL,
+    backend_pid    integer NOT NULL,
+    transaction_id bigint NOT NULL,
+    expires_at     timestamptz NOT NULL,
+    CONSTRAINT identity_invitation_expiry_capability_expiry_check
+        CHECK (expires_at > pg_catalog.clock_timestamp())
+);
+ALTER TABLE public.identity_invitation_expiry_capabilities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.identity_invitation_expiry_capabilities FORCE ROW LEVEL SECURITY;
+CREATE POLICY identity_invitation_expiry_capabilities_owner_all
+    ON public.identity_invitation_expiry_capabilities FOR ALL TO migration_owner
+    USING (true) WITH CHECK (true);
+REVOKE ALL ON TABLE public.identity_invitation_expiry_capabilities
+    FROM PUBLIC, app, worker, admin, audit_writer, research_writer;
 
 -- FORCE RLS normally limits migration_owner to the current actor.  Expired
 -- pending rows are the one cross-owner cleanup exception needed by the global
@@ -61,12 +223,28 @@ DROP POLICY IF EXISTS tenant_all_owner_invitations ON public.invitations;
 CREATE POLICY tenant_all_owner_invitations ON public.invitations
     FOR ALL TO migration_owner
     USING (
-        user_id = current_setting('app.actor_user_id', true)::uuid
+        user_id = NULLIF(current_setting('app.actor_user_id', true), '')::uuid
         OR (status = 'PENDING' AND expires_at <= pg_catalog.clock_timestamp())
+        OR EXISTS (
+            SELECT 1
+            FROM public.identity_invitation_expiry_capabilities AS capability
+            WHERE capability.email = pg_catalog.lower(pg_catalog.btrim(public.invitations.email))
+              AND capability.backend_pid = pg_catalog.pg_backend_pid()
+              AND capability.transaction_id = pg_catalog.txid_current()
+              AND capability.expires_at > pg_catalog.clock_timestamp()
+        )
     )
     WITH CHECK (
-        user_id = current_setting('app.actor_user_id', true)::uuid
+        user_id = NULLIF(current_setting('app.actor_user_id', true), '')::uuid
         OR (status = 'EXPIRED' AND expires_at <= pg_catalog.clock_timestamp())
+        OR EXISTS (
+            SELECT 1
+            FROM public.identity_invitation_expiry_capabilities AS capability
+            WHERE capability.email = pg_catalog.lower(pg_catalog.btrim(public.invitations.email))
+              AND capability.backend_pid = pg_catalog.pg_backend_pid()
+              AND capability.transaction_id = pg_catalog.txid_current()
+              AND capability.expires_at > pg_catalog.clock_timestamp()
+        )
     );
 
 -- Narrow SECURITY DEFINER cleanup used only by create_invitation. It returns
@@ -82,6 +260,7 @@ SET statement_timeout = '5s'
 AS $function$
 DECLARE
     v_email text;
+    v_capability uuid;
 BEGIN
     v_email := pg_catalog.lower(pg_catalog.btrim(coalesce(p_email, '')));
     IF v_email !~ '^[^[:space:]@]+@[^[:space:]@]+$'
@@ -94,11 +273,23 @@ BEGIN
     PERFORM pg_catalog.pg_advisory_xact_lock(
         pg_catalog.hashtextextended(v_email, 39039)
     );
+    INSERT INTO public.identity_invitation_expiry_capabilities (
+        email, backend_pid, transaction_id, expires_at
+    )
+    VALUES (
+        v_email,
+        pg_catalog.pg_backend_pid(),
+        pg_catalog.txid_current(),
+        pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => 5)
+    )
+    RETURNING id INTO v_capability;
     UPDATE public.invitations
     SET status = 'EXPIRED'
     WHERE pg_catalog.lower(pg_catalog.btrim(email)) = v_email
       AND status = 'PENDING'
       AND expires_at <= pg_catalog.clock_timestamp();
+    DELETE FROM public.identity_invitation_expiry_capabilities
+     WHERE id = v_capability;
 END
 $function$;
 
@@ -116,7 +307,8 @@ CREATE FUNCTION public.create_invitation(
     p_email text,
     p_role_id text,
     p_invite_hash text,
-    p_expires_at_epoch bigint
+    p_expires_at_epoch bigint,
+    p_actor_capability uuid
 )
 RETURNS uuid
 LANGUAGE plpgsql
@@ -134,6 +326,7 @@ BEGIN
         OR p_role_id IS NULL
         OR p_invite_hash IS NULL
         OR p_expires_at_epoch IS NULL
+        OR p_actor_capability IS NULL
     THEN
         RAISE EXCEPTION 'identity provisioning input is incomplete'
             USING ERRCODE = '22023';
@@ -162,6 +355,13 @@ BEGIN
         RAISE EXCEPTION 'invitation expiry is outside the permitted window'
             USING ERRCODE = '22023';
     END IF;
+
+    -- The supplied owner is bound to an authenticated, transaction-local
+    -- capability minted by authenticate_identity_actor. A caller may set
+    -- app.actor_user_id to any UUID, but that alone cannot satisfy this check.
+    PERFORM public.consume_identity_actor_capability(
+        p_owner_user_id, p_actor_capability
+    );
 
     -- Every global identity/provisional check below must observe one
     -- normalized-email serialization point.  This lock is transaction-scoped,
@@ -242,17 +442,17 @@ BEGIN
         'invite:' || v_invitation_id::text || ':created',
         'auth.invite_created', p_owner_user_id, 'invitation',
         v_invitation_id::text, NULL,
-        pg_catalog.extract(epoch FROM pg_catalog.clock_timestamp())::bigint
+        EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::bigint
     );
     RETURN v_invitation_id;
 END
 $function$;
 
-ALTER FUNCTION public.create_invitation(uuid, text, text, text, bigint)
+ALTER FUNCTION public.create_invitation(uuid, text, text, text, bigint, uuid)
     OWNER TO migration_owner;
-REVOKE ALL ON FUNCTION public.create_invitation(uuid, text, text, text, bigint)
+REVOKE ALL ON FUNCTION public.create_invitation(uuid, text, text, text, bigint, uuid)
     FROM PUBLIC, app, worker, admin, audit_writer, research_writer;
-GRANT EXECUTE ON FUNCTION public.create_invitation(uuid, text, text, text, bigint)
+GRANT EXECUTE ON FUNCTION public.create_invitation(uuid, text, text, text, bigint, uuid)
     TO app;
 
 -- Atomically consume one pending invitation and create the first durable user
@@ -261,6 +461,7 @@ GRANT EXECUTE ON FUNCTION public.create_invitation(uuid, text, text, text, bigin
 CREATE FUNCTION public.claim_invitation(
     p_owner_user_id uuid,
     p_invitation_id uuid,
+    p_invite_hash text,
     p_issuer text,
     p_subject text
 )
@@ -274,15 +475,18 @@ AS $function$
 DECLARE
     v_invitation public.invitations%ROWTYPE;
     v_user_id uuid;
+    v_actor uuid;
 BEGIN
     IF p_owner_user_id IS NULL
         OR p_invitation_id IS NULL
+        OR p_invite_hash IS NULL
         OR p_issuer IS NULL
         OR p_subject IS NULL
         OR pg_catalog.length(p_issuer) = 0
         OR pg_catalog.length(p_subject) = 0
         OR pg_catalog.length(p_issuer) > 512
         OR pg_catalog.length(p_subject) > 512
+        OR p_invite_hash !~ '^[0-9a-f]{64}$'
         OR p_issuer ~ '[[:cntrl:]]'
         OR p_subject ~ '[[:cntrl:]]'
     THEN
@@ -290,10 +494,26 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
 
+    -- If an app pool already carries a request actor, a supplied Owner must
+    -- agree with it.  This is only a consistency check (the invitation hash
+    -- remains the capability); it prevents an Owner-A direct SQL session from
+    -- switching the function's internal GUC to Owner-B.
+    IF session_user <> 'migration_owner' THEN
+        v_actor := NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid;
+        IF v_actor IS NOT NULL AND v_actor IS DISTINCT FROM p_owner_user_id THEN
+            RETURN false;
+        END IF;
+    END IF;
+
     -- A legacy/operator-created invitation must not become a capability for
     -- a non-Owner tenant. The normal create path already enforces this, but
     -- re-checking at redemption makes the boundary fail closed after role
-    -- changes and across pre-existing rows.
+    -- changes and across pre-existing rows. The invite hash is an
+    -- invitation-scoped capability: an Owner-A request carrying only its own
+    -- hash cannot redeem Owner-B's row even if it forges p_owner_user_id or
+    -- app.actor_user_id.
     IF NOT EXISTS (
         SELECT 1
         FROM public.user_roles
@@ -315,7 +535,10 @@ BEGIN
     FROM public.invitations
     WHERE id = p_invitation_id;
 
-    IF NOT FOUND OR v_invitation.user_id <> p_owner_user_id THEN
+    IF NOT FOUND
+        OR v_invitation.user_id <> p_owner_user_id
+        OR v_invitation.invite_hash IS DISTINCT FROM p_invite_hash
+    THEN
         RETURN false;
     END IF;
     PERFORM pg_catalog.pg_advisory_xact_lock(
@@ -328,7 +551,10 @@ BEGIN
     WHERE id = p_invitation_id
     FOR UPDATE;
 
-    IF NOT FOUND OR v_invitation.user_id <> p_owner_user_id THEN
+    IF NOT FOUND
+        OR v_invitation.user_id <> p_owner_user_id
+        OR v_invitation.invite_hash IS DISTINCT FROM p_invite_hash
+    THEN
         RETURN false;
     END IF;
     -- A callback can fail after claim_invitation has atomically created the
@@ -398,17 +624,17 @@ BEGIN
         'invite:' || p_invitation_id::text || ':redeemed:' || v_user_id::text,
         'auth.invite_redeemed', p_owner_user_id, 'invitation',
         p_invitation_id::text, NULL,
-        pg_catalog.extract(epoch FROM pg_catalog.clock_timestamp())::bigint
+        EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::bigint
     );
     RETURN true;
 END
 $function$;
 
-ALTER FUNCTION public.claim_invitation(uuid, uuid, text, text)
+ALTER FUNCTION public.claim_invitation(uuid, uuid, text, text, text)
     OWNER TO migration_owner;
-REVOKE ALL ON FUNCTION public.claim_invitation(uuid, uuid, text, text)
+REVOKE ALL ON FUNCTION public.claim_invitation(uuid, uuid, text, text, text)
     FROM PUBLIC, app, worker, admin, audit_writer, research_writer;
-GRANT EXECUTE ON FUNCTION public.claim_invitation(uuid, uuid, text, text)
+GRANT EXECUTE ON FUNCTION public.claim_invitation(uuid, uuid, text, text, text)
     TO app;
 
 -- Finalize the role/email chosen by the validated OIDC claims. This function
@@ -526,7 +752,7 @@ BEGIN
     PERFORM public.enqueue_auth_audit(
         'user:' || v_user_id::text || ':bound',
         'auth.identity_bound', v_inviter, 'user', v_user_id::text, NULL,
-        pg_catalog.extract(epoch FROM pg_catalog.clock_timestamp())::bigint
+        EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::bigint
     );
     RETURN v_user_id;
 END

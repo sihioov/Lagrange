@@ -556,13 +556,24 @@ async fn create_invite(
     if session.role != Role::Owner {
         return forbidden("INVITE_NOT_OWNER", "only the Owner may invite users");
     }
+    let session_hash = headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| cookie::parse(value, cookie::NAME))
+        .map(|value| auth::sessions::cookie::hash(&value))
+        .ok_or_else(|| internal("authenticated session capability missing"));
+    let session_hash = match session_hash {
+        Ok(hash) => hash,
+        Err(response) => return response,
+    };
     let role = match body.role.as_str() {
         "owner" => Role::Owner,
         "member" => Role::Member,
         _ => return bad_request("INVITE_INVALID_ROLE", "role must be owner or member"),
     };
-    let result = postgres::with_actor_user_id(
+    let result = postgres::with_authenticated_actor(
         &session.user_id,
+        &session_hash,
         state.auth.invites.create_invite_as(
             &body.email,
             role,

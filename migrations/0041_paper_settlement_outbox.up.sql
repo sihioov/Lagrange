@@ -19,6 +19,102 @@ CREATE POLICY paper_settlement_migration_validate_recommendation_runs
 CREATE POLICY paper_settlement_migration_validate_pending_targets
     ON public.pending_targets FOR SELECT TO migration_owner USING (true);
 
+-- Older pending_targets policies cast an empty actor GUC directly to uuid.
+-- A migration connection (and a freshly reset pool connection) legitimately
+-- has no actor, so harden both serving policies before any 0041 backfill or
+-- constraint validation can touch this FORCE-RLS table.  Keep the policy
+-- names and tenant semantics unchanged while making the empty-GUC path fail
+-- closed as an ordinary NULL comparison.
+DROP POLICY tenant_all_app_pending_targets ON public.pending_targets;
+DROP POLICY tenant_all_owner_pending_targets ON public.pending_targets;
+CREATE POLICY tenant_all_app_pending_targets ON public.pending_targets
+    FOR ALL TO app
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+CREATE POLICY tenant_all_owner_pending_targets ON public.pending_targets
+    FOR ALL TO migration_owner
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+
+-- The exact-lineage validation policy below is permissive, but PostgreSQL may
+-- still evaluate the pre-existing recommendation_runs policies while planning
+-- constraint checks. Harden those policies too, so a no-actor migration never
+-- parses an empty string as uuid while retaining the same tenant boundary.
+DROP POLICY tenant_all_app_recommendation_runs ON public.recommendation_runs;
+DROP POLICY tenant_all_owner_recommendation_runs ON public.recommendation_runs;
+CREATE POLICY tenant_all_app_recommendation_runs ON public.recommendation_runs
+    FOR ALL TO app
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+CREATE POLICY tenant_all_owner_recommendation_runs ON public.recommendation_runs
+    FOR ALL TO migration_owner
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+
+-- The duplicate-delivery cleanup policy is likewise permissive. Harden the
+-- serving policies it coexists with before the cleanup DML runs under FORCE
+-- RLS, including the empty-GUC path on a fresh migration connection.
+DROP POLICY tenant_all_app_notification_deliveries
+    ON public.notification_deliveries;
+DROP POLICY tenant_all_owner_notification_deliveries
+    ON public.notification_deliveries;
+CREATE POLICY tenant_all_app_notification_deliveries
+    ON public.notification_deliveries FOR ALL TO app
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+CREATE POLICY tenant_all_owner_notification_deliveries
+    ON public.notification_deliveries FOR ALL TO migration_owner
+    USING (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    )
+    WITH CHECK (
+        owner_user_id = NULLIF(
+            pg_catalog.current_setting('app.actor_user_id', true), ''
+        )::uuid
+    );
+
 -- Exact recommendation lineage is part of the target identity.  The
 -- recommendation_run_id-only FK from 0038 is insufficient: a caller could
 -- pair a run from one tenant/config/date with a target from another tenant.
@@ -103,6 +199,27 @@ ALTER TABLE public.notification_deliveries
     ADD CONSTRAINT notification_deliveries_notification_channel_uq
     UNIQUE (notification_id, channel);
 
+-- A transport call can outlive the SQL transaction that records its result.
+-- Keep a short durable lease on each channel row so concurrent runners do not
+-- invoke the same source-key transport at the same time.  A lease expiry is
+-- an explicit at-least-once boundary: a process killed after external send but
+-- before the result update may be retried, while the source key still
+-- prevents duplicate notification rows.
+ALTER TABLE public.notification_deliveries
+    ADD COLUMN delivery_token uuid,
+    ADD COLUMN delivery_lease_expires_at timestamptz,
+    ADD COLUMN delivery_attempts integer NOT NULL DEFAULT 0,
+    ADD CONSTRAINT notification_deliveries_delivery_lease_check
+        CHECK (
+            (delivery_token IS NULL AND delivery_lease_expires_at IS NULL)
+            OR (delivery_token IS NOT NULL AND delivery_lease_expires_at IS NOT NULL)
+        ),
+    ADD CONSTRAINT notification_deliveries_delivery_attempts_check
+        CHECK (delivery_attempts >= 0);
+CREATE INDEX notification_deliveries_delivery_lease_idx
+    ON public.notification_deliveries (delivery_lease_expires_at)
+    WHERE delivery_token IS NOT NULL;
+
 CREATE TABLE public.paper_settlement_outbox (
     id                 uuid PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
     pending_target_id  uuid NOT NULL UNIQUE,
@@ -118,6 +235,8 @@ CREATE TABLE public.paper_settlement_outbox (
     delivered_at       timestamptz,
     exhausted_at       timestamptz,
     last_error         text,
+    claim_token        uuid,
+    claim_expires_at   timestamptz,
     created_at         timestamptz NOT NULL DEFAULT pg_catalog.now(),
     CONSTRAINT paper_settlement_outbox_target_owner_fk
         FOREIGN KEY (pending_target_id, owner_user_id)
@@ -131,7 +250,12 @@ CREATE TABLE public.paper_settlement_outbox (
     CONSTRAINT paper_settlement_outbox_exhausted_check
         CHECK (exhausted_at IS NULL OR attempts >= max_attempts),
     CONSTRAINT paper_settlement_outbox_delivery_state_check
-        CHECK (delivered_at IS NULL OR exhausted_at IS NULL)
+        CHECK (delivered_at IS NULL OR exhausted_at IS NULL),
+    CONSTRAINT paper_settlement_outbox_claim_state_check
+        CHECK (
+            (claim_token IS NULL AND claim_expires_at IS NULL)
+            OR (claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)
+        )
 );
 
 -- Delivered rows are prunable only after this immutable archive row exists.
@@ -165,6 +289,9 @@ CREATE TABLE public.paper_settlement_outbox_archive (
 CREATE INDEX paper_settlement_outbox_pending_idx
     ON public.paper_settlement_outbox (available_at, id)
     WHERE delivered_at IS NULL AND exhausted_at IS NULL;
+CREATE INDEX paper_settlement_outbox_claim_idx
+    ON public.paper_settlement_outbox (claim_expires_at, available_at, id)
+    WHERE delivered_at IS NULL AND exhausted_at IS NULL;
 CREATE INDEX paper_settlement_outbox_owner_idx
     ON public.paper_settlement_outbox (owner_user_id, created_at);
 CREATE INDEX paper_settlement_outbox_archive_owner_idx
@@ -181,7 +308,7 @@ ALTER TABLE public.paper_settlement_outbox_archive FORCE ROW LEVEL SECURITY;
 CREATE POLICY paper_settlement_outbox_app_select
     ON public.paper_settlement_outbox FOR SELECT TO app
     USING (
-        owner_user_id = pg_catalog.nullif(
+        owner_user_id = NULLIF(
             pg_catalog.current_setting('app.actor_user_id', true), ''
         )::uuid
     );
@@ -199,7 +326,7 @@ CREATE POLICY paper_settlement_outbox_archive_owner_all
 CREATE POLICY paper_settlement_outbox_archive_app_select
     ON public.paper_settlement_outbox_archive FOR SELECT TO app
     USING (
-        owner_user_id = pg_catalog.nullif(
+        owner_user_id = NULLIF(
             pg_catalog.current_setting('app.actor_user_id', true), ''
         )::uuid
     );
@@ -520,7 +647,7 @@ BEGIN
     END IF;
 
     IF session_user NOT IN ('migration_owner') THEN
-        v_actor := pg_catalog.nullif(
+        v_actor := NULLIF(
             pg_catalog.current_setting('app.actor_user_id', true), ''
         )::uuid;
         IF v_actor IS DISTINCT FROM v_target.owner_user_id THEN
@@ -597,9 +724,85 @@ REVOKE ALL ON FUNCTION public.enqueue_paper_settlement_outbox(uuid, text, text, 
 GRANT EXECUTE ON FUNCTION public.enqueue_paper_settlement_outbox(uuid, text, text, text, text, jsonb)
     TO app;
 
+-- Claim a bounded batch before a worker performs any external transport.  The
+-- row lease closes the race where two runner replicas both scan the same due
+-- row and send it concurrently.  If a worker dies, the lease expires and the
+-- durable obligation is retried (at-least-once, never silently discarded).
+CREATE FUNCTION public.claim_paper_settlement_outbox(
+    p_limit integer DEFAULT 128,
+    p_lease_seconds integer DEFAULT 60
+) RETURNS TABLE (
+    id uuid,
+    pending_target_id uuid,
+    owner_user_id uuid,
+    severity text,
+    kind text,
+    title text,
+    body text,
+    parity_json jsonb,
+    attempts integer,
+    max_attempts integer,
+    available_at timestamptz,
+    delivered_at timestamptz,
+    exhausted_at timestamptz,
+    last_error text,
+    created_at timestamptz,
+    claim_token uuid
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET lock_timeout = '5s'
+SET statement_timeout = '15s'
+AS $function$
+BEGIN
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000
+       OR p_lease_seconds IS NULL OR p_lease_seconds < 5 OR p_lease_seconds > 900
+    THEN
+        RAISE EXCEPTION 'Paper outbox claim parameters are invalid'
+            USING ERRCODE = '22023';
+    END IF;
+
+    RETURN QUERY
+    WITH candidates AS (
+        SELECT outbox.id
+          FROM public.paper_settlement_outbox AS outbox
+         WHERE outbox.delivered_at IS NULL
+           AND outbox.exhausted_at IS NULL
+           AND outbox.available_at <= pg_catalog.clock_timestamp()
+           AND (
+               outbox.claim_expires_at IS NULL
+               OR outbox.claim_expires_at <= pg_catalog.clock_timestamp()
+           )
+         ORDER BY outbox.available_at, outbox.id
+         FOR UPDATE SKIP LOCKED
+         LIMIT p_limit
+    )
+    UPDATE public.paper_settlement_outbox AS outbox
+       SET claim_token = pg_catalog.gen_random_uuid(),
+           claim_expires_at = pg_catalog.clock_timestamp()
+               + pg_catalog.make_interval(secs => p_lease_seconds)
+      FROM candidates
+     WHERE outbox.id = candidates.id
+    RETURNING outbox.id, outbox.pending_target_id, outbox.owner_user_id,
+              outbox.severity, outbox.kind, outbox.title, outbox.body,
+              outbox.parity_json, outbox.attempts, outbox.max_attempts,
+              outbox.available_at, outbox.delivered_at, outbox.exhausted_at,
+              outbox.last_error, outbox.created_at, outbox.claim_token;
+END
+$function$;
+
+ALTER FUNCTION public.claim_paper_settlement_outbox(integer, integer)
+    OWNER TO migration_owner;
+REVOKE ALL ON FUNCTION public.claim_paper_settlement_outbox(integer, integer)
+    FROM PUBLIC, app, admin, audit_writer, research_writer;
+GRANT EXECUTE ON FUNCTION public.claim_paper_settlement_outbox(integer, integer)
+    TO worker;
+
 CREATE FUNCTION public.mark_paper_settlement_outbox_delivered(
     p_outbox_id uuid,
-    p_owner_user_id uuid
+    p_owner_user_id uuid,
+    p_claim_token uuid
 ) RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -611,7 +814,7 @@ DECLARE
     v_actor uuid;
 BEGIN
     IF session_user <> 'migration_owner' THEN
-        v_actor := pg_catalog.nullif(
+        v_actor := NULLIF(
             pg_catalog.current_setting('app.actor_user_id', true), ''
         )::uuid;
         IF v_actor IS NULL OR p_owner_user_id IS DISTINCT FROM v_actor THEN
@@ -621,15 +824,43 @@ BEGIN
     UPDATE public.paper_settlement_outbox
        SET delivered_at = COALESCE(delivered_at, pg_catalog.now()),
            last_error = NULL,
-           exhausted_at = NULL
+           exhausted_at = NULL,
+           claim_token = NULL,
+           claim_expires_at = NULL
      WHERE id = p_outbox_id
        AND owner_user_id = p_owner_user_id
-       AND delivered_at IS NULL;
+       AND delivered_at IS NULL
+       AND claim_token IS NOT DISTINCT FROM p_claim_token
+       AND (
+           p_claim_token IS NOT NULL
+           OR claim_expires_at IS NULL
+       );
     RETURN FOUND;
 END
 $function$;
 
-ALTER FUNCTION public.mark_paper_settlement_outbox_delivered(uuid, uuid) OWNER TO migration_owner;
+ALTER FUNCTION public.mark_paper_settlement_outbox_delivered(uuid, uuid, uuid) OWNER TO migration_owner;
+REVOKE ALL ON FUNCTION public.mark_paper_settlement_outbox_delivered(uuid, uuid, uuid)
+    FROM PUBLIC, worker, admin, audit_writer, research_writer;
+GRANT EXECUTE ON FUNCTION public.mark_paper_settlement_outbox_delivered(uuid, uuid, uuid) TO app;
+
+CREATE FUNCTION public.mark_paper_settlement_outbox_delivered(
+    p_outbox_id uuid,
+    p_owner_user_id uuid
+) RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET lock_timeout = '5s'
+SET statement_timeout = '15s'
+AS $function$
+    SELECT public.mark_paper_settlement_outbox_delivered(
+        p_outbox_id, p_owner_user_id, NULL::uuid
+    )
+$function$;
+
+ALTER FUNCTION public.mark_paper_settlement_outbox_delivered(uuid, uuid)
+    OWNER TO migration_owner;
 REVOKE ALL ON FUNCTION public.mark_paper_settlement_outbox_delivered(uuid, uuid)
     FROM PUBLIC, worker, admin, audit_writer, research_writer;
 GRANT EXECUTE ON FUNCTION public.mark_paper_settlement_outbox_delivered(uuid, uuid) TO app;
@@ -637,7 +868,8 @@ GRANT EXECUTE ON FUNCTION public.mark_paper_settlement_outbox_delivered(uuid, uu
 CREATE FUNCTION public.fail_paper_settlement_outbox(
     p_outbox_id uuid,
     p_owner_user_id uuid,
-    p_error text
+    p_error text,
+    p_claim_token uuid
 ) RETURNS TABLE (attempts integer, exhausted boolean)
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -647,18 +879,48 @@ SET statement_timeout = '15s'
 AS $function$
 DECLARE
     v_actor uuid;
+    v_attempts integer;
+    v_max_attempts integer;
+    v_exhausted_at timestamptz;
+    v_delivered_at timestamptz;
+    v_claim_token uuid;
+    v_available_at timestamptz;
 BEGIN
     IF session_user <> 'migration_owner' THEN
-        v_actor := pg_catalog.nullif(
+        v_actor := NULLIF(
             pg_catalog.current_setting('app.actor_user_id', true), ''
         )::uuid;
         IF v_actor IS NULL OR p_owner_user_id IS DISTINCT FROM v_actor THEN
             RAISE EXCEPTION 'Paper outbox failure actor is invalid' USING ERRCODE = '42501';
         END IF;
     END IF;
+
+    SELECT outbox.attempts, outbox.max_attempts, outbox.exhausted_at,
+           outbox.delivered_at, outbox.claim_token, outbox.available_at
+      INTO v_attempts, v_max_attempts, v_exhausted_at, v_delivered_at,
+           v_claim_token, v_available_at
+      FROM public.paper_settlement_outbox AS outbox
+     WHERE outbox.id = p_outbox_id
+       AND outbox.owner_user_id = p_owner_user_id
+     FOR UPDATE;
+    IF NOT FOUND OR v_delivered_at IS NOT NULL
+       OR v_claim_token IS DISTINCT FROM p_claim_token
+       OR (p_claim_token IS NULL AND v_claim_token IS NOT NULL)
+       OR (p_claim_token IS NULL
+           AND v_available_at > pg_catalog.clock_timestamp())
+    THEN
+        RETURN;
+    END IF;
+    -- Exhaustion is terminal.  A late/concurrent failure report is an
+    -- idempotent observation, with no increments beyond max_attempts.
+    IF v_exhausted_at IS NOT NULL OR v_attempts >= v_max_attempts THEN
+        RETURN QUERY SELECT v_attempts, true;
+        RETURN;
+    END IF;
+
     RETURN QUERY
     UPDATE public.paper_settlement_outbox AS outbox
-       SET attempts = outbox.attempts + 1,
+       SET attempts = LEAST(outbox.max_attempts, outbox.attempts + 1),
            available_at = pg_catalog.now() + pg_catalog.make_interval(
                secs => LEAST(900, 5 * (2 ^ LEAST(outbox.attempts, 8))::integer)
            ),
@@ -666,12 +928,41 @@ BEGIN
                WHEN outbox.attempts + 1 >= outbox.max_attempts THEN pg_catalog.now()
                ELSE NULL
            END,
-           last_error = pg_catalog.left(COALESCE(p_error, 'Paper settlement delivery failed'), 2048)
+           last_error = pg_catalog.left(COALESCE(p_error, 'Paper settlement delivery failed'), 2048),
+           claim_token = NULL,
+           claim_expires_at = NULL
      WHERE outbox.id = p_outbox_id
        AND outbox.owner_user_id = p_owner_user_id
        AND outbox.delivered_at IS NULL
-    RETURNING outbox.attempts, outbox.exhausted_at IS NOT NULL;
+       AND outbox.exhausted_at IS NULL
+       AND outbox.claim_token IS NOT DISTINCT FROM p_claim_token
+       AND (
+           p_claim_token IS NOT NULL
+           OR outbox.available_at <= pg_catalog.clock_timestamp()
+       )
+     RETURNING outbox.attempts, outbox.exhausted_at IS NOT NULL;
 END
+$function$;
+
+ALTER FUNCTION public.fail_paper_settlement_outbox(uuid, uuid, text, uuid) OWNER TO migration_owner;
+REVOKE ALL ON FUNCTION public.fail_paper_settlement_outbox(uuid, uuid, text, uuid)
+    FROM PUBLIC, worker, admin, audit_writer, research_writer;
+GRANT EXECUTE ON FUNCTION public.fail_paper_settlement_outbox(uuid, uuid, text, uuid) TO app;
+
+CREATE FUNCTION public.fail_paper_settlement_outbox(
+    p_outbox_id uuid,
+    p_owner_user_id uuid,
+    p_error text
+) RETURNS TABLE (attempts integer, exhausted boolean)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET lock_timeout = '5s'
+SET statement_timeout = '15s'
+AS $function$
+    SELECT * FROM public.fail_paper_settlement_outbox(
+        p_outbox_id, p_owner_user_id, p_error, NULL::uuid
+    )
 $function$;
 
 ALTER FUNCTION public.fail_paper_settlement_outbox(uuid, uuid, text) OWNER TO migration_owner;

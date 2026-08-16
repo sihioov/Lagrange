@@ -22,7 +22,8 @@ use uuid::Uuid;
 use api_server::notify::AlertSeverity;
 use api_server::paper_session::{SessionOutcome, settle_and_announce};
 use api_server::repos::pending_targets::{NewPendingTarget, PaperSettlementAnnouncement};
-use result_model::paper_parity::ParityStatus;
+use domain::DatasetVersionId;
+use result_model::paper_parity::{ParityReport, ParityStatus};
 
 fn status(resp: &axum::http::Response<axum::body::Body>) -> StatusCode {
     resp.status()
@@ -32,7 +33,7 @@ fn date(iso: &str) -> NaiveDate {
     NaiveDate::parse_from_str(iso, "%Y-%m-%d").expect("valid date")
 }
 
-const DATASET: &str = "krx_eod_bars@2026-01-01";
+const DATASET: &str = "2026-01-01";
 
 fn targets_json() -> serde_json::Value {
     json!([
@@ -127,15 +128,25 @@ async fn seed_executed_session(h: &Harness, u: &UserCtx, account: &str) {
 /// Seeds the backtest side of the parity comparison: a SUCCEEDED
 /// recommendation run for the same config and close, with the weights the
 /// caller passes.
-async fn seed_backtest_side(h: &Harness, u: &UserCtx, config: &str, weights: &[(&str, &str)]) {
+async fn seed_backtest_side(
+    h: &Harness,
+    u: &UserCtx,
+    config: &str,
+    weights: &[(&str, &str)],
+) -> Uuid {
     let run_id = Uuid::new_v4();
     h.seed_tenant(
         u,
         &format!(
             "INSERT INTO recommendation_runs \
-             (id, owner_user_id, strategy_config_id, as_of, status, summary_json) \
+             (id, owner_user_id, strategy_config_id, as_of, status, summary_json, \
+              dataset_version_id, dataset_manifest_sha256) \
              VALUES ('{run_id}', '{owner}', '{config}', DATE '2026-01-05', 'SUCCEEDED', \
-                     '{{\"dataset_version\": \"{DATASET}\"}}'::jsonb)",
+                     '{{\"dataset_version\": \"{DATASET}\"}}'::jsonb, \
+                     (SELECT id FROM dataset_versions \
+                       WHERE dataset_id = 'krx_eod_bars' AND version = '2026-01-01'), \
+                     (SELECT manifest_sha256 FROM dataset_versions \
+                       WHERE dataset_id = 'krx_eod_bars' AND version = '2026-01-01'))",
             owner = u.user_id,
         ),
     )
@@ -153,6 +164,26 @@ async fn seed_backtest_side(h: &Harness, u: &UserCtx, config: &str, weights: &[(
         )
         .await;
     }
+    run_id
+}
+
+async fn bind_target_backtest_lineage(h: &Harness, u: &UserCtx, target: Uuid, run_id: Uuid) {
+    h.seed_migration_owner(
+        u,
+        &format!(
+            "UPDATE pending_targets \
+                SET source_kind = 'MANUAL_RECOMMENDATION', \
+                    recommendation_run_id = '{run_id}', \
+                    dataset_version_id = (SELECT id FROM dataset_versions \
+                                           WHERE dataset_id = 'krx_eod_bars' \
+                                             AND version = '2026-01-01'), \
+                    dataset_manifest_sha256 = (SELECT manifest_sha256 FROM dataset_versions \
+                                                 WHERE dataset_id = 'krx_eod_bars' \
+                                                   AND version = '2026-01-01') \
+              WHERE id = '{target}'",
+        ),
+    )
+    .await;
 }
 
 async fn feed(h: &Harness, u: &UserCtx) -> Vec<serde_json::Value> {
@@ -162,6 +193,24 @@ async fn feed(h: &Harness, u: &UserCtx) -> Vec<serde_json::Value> {
         .as_array()
         .expect("items")
         .clone()
+}
+
+fn assert_exact_dataset_lineage(parity: &ParityReport) {
+    let dataset = parity
+        .lineage
+        .fields
+        .iter()
+        .find(|field| field.field == "dataset_version")
+        .expect("parity report carries dataset lineage");
+    assert_eq!(dataset.backtest, DATASET);
+    assert_eq!(dataset.paper, DATASET);
+    assert_ne!(dataset.backtest, "unknown-dataset");
+    assert_eq!(
+        DatasetVersionId::parse(&dataset.backtest)
+            .expect("production dataset version parses")
+            .as_str(),
+        DATASET
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +226,7 @@ async fn a_matching_session_completes_with_an_info_notice() {
     let m = h.member.clone();
     let account = paper_account(&h, &m, "notify-match").await;
     let config = strategy_config(&h, &m, "notify-match-cfg").await;
-    seed_backtest_side(
+    let run_id = seed_backtest_side(
         &h,
         &m,
         &config,
@@ -189,6 +238,7 @@ async fn a_matching_session_completes_with_an_info_notice() {
     )
     .await;
     let target = queue_target(&h, &m, &account, &config).await;
+    bind_target_backtest_lineage(&h, &m, target, run_id).await;
 
     seed_executed_session(&h, &m, &account).await;
     let outcome = settle_and_announce(&h.state(), &m.actor(), target, SessionOutcome::Executed)
@@ -196,11 +246,9 @@ async fn a_matching_session_completes_with_an_info_notice() {
         .expect("the runner settles and announces");
 
     assert_eq!(outcome.target.status, "EXECUTED");
-    assert_eq!(
-        outcome.parity.as_ref().map(|p| p.status),
-        Some(ParityStatus::Match),
-        "identical weights on identical lineage match"
-    );
+    let parity = outcome.parity.as_ref().expect("parity report");
+    assert_exact_dataset_lineage(parity);
+    assert_eq!(parity.status, ParityStatus::Match);
     assert_eq!(outcome.severity, AlertSeverity::Info);
     assert_eq!(
         outcome.alerts.deliveries.len(),
@@ -235,7 +283,7 @@ async fn a_divergent_session_warns_and_reaches_the_owner() {
     let config = strategy_config(&h, &m, "notify-diverge-cfg").await;
     // Same lineage, DIFFERENT weights: the comparison is meaningful and it
     // fails, which is precisely the case a user must not miss.
-    seed_backtest_side(
+    let run_id = seed_backtest_side(
         &h,
         &m,
         &config,
@@ -243,16 +291,16 @@ async fn a_divergent_session_warns_and_reaches_the_owner() {
     )
     .await;
     let target = queue_target(&h, &m, &account, &config).await;
+    bind_target_backtest_lineage(&h, &m, target, run_id).await;
 
     seed_executed_session(&h, &m, &account).await;
     let outcome = settle_and_announce(&h.state(), &m.actor(), target, SessionOutcome::Executed)
         .await
         .expect("settles and announces");
 
-    assert_eq!(
-        outcome.parity.as_ref().map(|p| p.status),
-        Some(ParityStatus::Divergent)
-    );
+    let parity = outcome.parity.as_ref().expect("parity report");
+    assert_exact_dataset_lineage(parity);
+    assert_eq!(parity.status, ParityStatus::Divergent);
     assert_eq!(outcome.severity, AlertSeverity::Warning);
     let items = feed(&h, &m).await;
     assert_eq!(items.len(), 1);
@@ -462,7 +510,7 @@ async fn an_email_outage_is_visible_in_the_recipients_own_feed() {
     let account = paper_account(&h, &m, "notify-outage").await;
     let config = strategy_config(&h, &m, "notify-outage-cfg").await;
     let target = queue_target(&h, &m, &account, &config).await;
-    let outcome = settle_and_announce(
+    let settlement_error = settle_and_announce(
         &h.state(),
         &m.actor(),
         target,
@@ -471,8 +519,13 @@ async fn an_email_outage_is_visible_in_the_recipients_own_feed() {
         },
     )
     .await
-    .expect("settles and announces");
-    assert_eq!(outcome.severity, AlertSeverity::Warning);
+    .expect_err("email outage is surfaced after durable settlement");
+    assert!(
+        settlement_error
+            .to_string()
+            .contains("email delivery not configured"),
+        "unexpected durable email failure: {settlement_error}"
+    );
 
     let items = feed(&h, &m).await;
     let deliveries = items[0]["deliveries"].as_array().expect("deliveries");
@@ -645,13 +698,34 @@ async fn failure_settlement_outbox_recovers_after_cancel_and_retries_once() {
     assert_eq!(pending, 1, "cancellation leaves a recoverable intent");
 
     let notifier = h.state().notifier();
-    let alerts = notifier
-        .dispatch_paper_settlement(&member.actor(), &outbox)
-        .await
-        .expect("recovery dispatch");
-    assert_eq!(alerts.deliveries.len(), 2, "member web plus owner admin");
+    let first_notifier = notifier.clone();
+    let second_notifier = notifier.clone();
+    let first_actor = member.actor();
+    let second_actor = member.actor();
+    let first_outbox = outbox.clone();
+    let second_outbox = outbox.clone();
+    let (first, second) = tokio::join!(
+        async move {
+            first_notifier
+                .dispatch_paper_settlement(&first_actor, &first_outbox)
+                .await
+        },
+        async move {
+            second_notifier
+                .dispatch_paper_settlement(&second_actor, &second_outbox)
+                .await
+        }
+    );
+    let first = first.expect("first recovery dispatch");
+    let second = second.expect("second recovery dispatch");
+    assert!(
+        [first, second]
+            .iter()
+            .any(|alerts| alerts.deliveries.iter().any(|d| d.status == "SUCCESS")),
+        "one concurrent runner must own the durable delivery lease"
+    );
     h.state_pending_targets()
-        .mark_announcement_delivered(&member.actor(), outbox.id)
+        .mark_announcement_delivered(&member.actor(), outbox.id, outbox.claim_token)
         .await
         .expect("mark dispatched");
 
@@ -701,16 +775,14 @@ async fn failure_settlement_outbox_recovers_after_cancel_and_retries_once() {
         .execute(&mut *tx)
         .await
         .expect("terminal update before injected rollback");
-    sqlx::query(
-        "INSERT INTO paper_settlement_outbox \
-         (pending_target_id, owner_user_id, severity, kind, title, body) \
-         VALUES ($1, $2, 'WARNING', 'alert', 'rollback', 'rollback')",
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT public.enqueue_paper_settlement_outbox(\
+                 $1, 'WARNING', 'alert', 'rollback', 'rollback', NULL)",
     )
     .bind(rollback_target)
-    .bind(member.user_id)
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await
-    .expect("outbox insert before injected rollback");
+    .expect("outbox enqueue before injected rollback");
     tx.rollback().await.expect("injected cancellation rollback");
     let status: String = sqlx::query_scalar("SELECT status FROM pending_targets WHERE id=$1")
         .bind(rollback_target)

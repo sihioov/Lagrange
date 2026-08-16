@@ -35,6 +35,11 @@ CREATE POLICY auth_audit_outbox_owner_delete ON public.auth_audit_outbox
     FOR DELETE TO migration_owner USING (true);
 CREATE POLICY auth_audit_log_insert_migration_owner ON public.audit_logs
     FOR INSERT TO migration_owner WITH CHECK (true);
+-- The definer delivery function needs a narrow migration-owner read policy for
+-- `ON CONFLICT DO NOTHING` conflict checks and operational copy verification.
+-- No serving role receives this policy or a direct audit table grant.
+CREATE POLICY auth_audit_log_select_migration_owner ON public.audit_logs
+    FOR SELECT TO migration_owner USING (true);
 
 -- The function is the only serving-role write capability. It runs inside the
 -- caller's transaction, validates actor attribution, and is idempotent only
@@ -77,7 +82,7 @@ BEGIN
     v_created_at := pg_catalog.to_timestamp(p_created_at_epoch::double precision);
 
     IF session_user NOT IN ('audit_writer', 'migration_owner') THEN
-        v_actor := pg_catalog.nullif(
+        v_actor := NULLIF(
             pg_catalog.current_setting('app.actor_user_id', true), ''
         )::uuid;
         IF p_actor_user_id IS NULL OR p_actor_user_id IS DISTINCT FROM v_actor THEN
