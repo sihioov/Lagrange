@@ -35,6 +35,8 @@ jobs:
       - run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.2
       - run: bash scripts/check-pins.sh
       - run: bash scripts/validate-foundation.sh
+      - run: bash deploy/db/integration-validation/static-check.sh
+      - run: bash deploy/db/integration-validation/validate.sh --self-test
       - run: python -m unittest scripts.ci.test_ci_contract -v
 
   format:
@@ -74,9 +76,41 @@ jobs:
       - if: always()
         run: docker compose -f deploy/qa/qa-db.compose.yml down -v --remove-orphans
 
+  postgres-integration-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate PostgreSQL migrations and serving-role boundaries
+        run: |
+          evidence_dir="${RUNNER_TEMP}/lagrange-pg-validation"
+          bash deploy/db/integration-validation/validate.sh --evidence-dir "$evidence_dir"
+      - name: Print sanitized PostgreSQL validation evidence
+        if: always()
+        run: |
+          evidence_file="${RUNNER_TEMP}/lagrange-pg-validation/evidence.json"
+          if [ -f "$evidence_file" ]; then
+            cat "$evidence_file"
+          else
+            echo 'PostgreSQL validation produced no evidence.json' >&2
+          fi
+      - name: Print sanitized PostgreSQL validation failure logs
+        if: failure()
+        run: |
+          evidence_dir="${RUNNER_TEMP}/lagrange-pg-validation"
+          find "$evidence_dir" -maxdepth 1 -type f -name '*.log' -print0 2>/dev/null |
+            sort -z |
+            while IFS= read -r -d '' log_file; do
+              echo "::group::$(basename "$log_file")"
+              tail -n 200 "$log_file"
+              echo '::endgroup::'
+            done
+
   required:
     if: always()
-    needs: [policy, format, clippy, workspace-tests]
+    needs: [policy, format, clippy, workspace-tests, postgres-integration-validation]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -86,8 +120,10 @@ jobs:
           FORMAT_RESULT: ${{ needs.format.result }}
           CLIPPY_RESULT: ${{ needs.clippy.result }}
           TEST_RESULT: ${{ needs.workspace-tests.result }}
+          POSTGRES_VALIDATION_RESULT: ${{ needs.postgres-integration-validation.result }}
         run: |
           test "$POLICY_RESULT" = success
           test "$FORMAT_RESULT" = success
           test "$CLIPPY_RESULT" = success
           test "$TEST_RESULT" = success
+          test "$POSTGRES_VALIDATION_RESULT" = success
