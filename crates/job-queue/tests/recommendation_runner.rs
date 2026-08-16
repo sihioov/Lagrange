@@ -1437,9 +1437,21 @@ async fn real_worker_and_uv_publish_all_five_shipped_strategies() {
     .execute(&db.pool)
     .await
     .unwrap();
-    let invalid_uv = child_repo.path().join("not-an-executable");
+    // The production child prefers the prebuilt virtualenv over uv. Exercise
+    // the uv launch-failure path in a separate project without `.venv` so the
+    // injected executable remains the process that is actually selected.
+    let broken_repo = tempfile::Builder::new()
+        .prefix(".recommendation-runner-broken-repo-")
+        .tempdir_in(&repo)
+        .unwrap();
+    copy_python_project(
+        &child_repo.path().join("nt"),
+        &broken_repo.path().join("nt"),
+    );
+    let invalid_uv = broken_repo.path().join("not-an-executable");
     std::fs::write(&invalid_uv, b"not an executable").unwrap();
     let mut broken_paths = paths.clone();
+    broken_paths.child.repo_root = broken_repo.path().to_path_buf();
     broken_paths.child.uv_bin = invalid_uv;
     let first = run_once(
         &worker,

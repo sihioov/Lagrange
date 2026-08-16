@@ -123,6 +123,14 @@ class WorkflowContractTests(unittest.TestCase):
             "pyarrow==25.0.0 uv==0.12.1",
             text,
         )
+        workspace_commands = [
+            step.get("run", "") for step in ci["jobs"]["workspace-tests"]["steps"]
+        ]
+        self.assertIn("uv sync --project nt --locked", workspace_commands)
+        self.assertLess(
+            workspace_commands.index("uv sync --project nt --locked"),
+            workspace_commands.index("cargo test --workspace --locked --no-fail-fast"),
+        )
         postgres_job = ci["jobs"]["postgres-integration-validation"]
         self.assertEqual(postgres_job["timeout-minutes"], "60")
         postgres_steps = postgres_job["steps"]
@@ -162,6 +170,15 @@ class WorkflowContractTests(unittest.TestCase):
         script = (ROOT / "scripts" / "qa" / "research-worker-smoke.sh").read_text(
             encoding="utf-8"
         )
+        for fixture in (
+            'BACKTEST_MIN_FREE_BYTES="${BACKTEST_MIN_FREE_BYTES:-1073741824}"',
+            'BACKTEST_MAX_QUEUED_BACKTESTS="${BACKTEST_MAX_QUEUED_BACKTESTS:-1000}"',
+            'BACKTEST_RECONCILE_GRACE_SECS="${BACKTEST_RECONCILE_GRACE_SECS:-900}"',
+            'BACKTEST_RECONCILE_INTERVAL_SECS="${BACKTEST_RECONCILE_INTERVAL_SECS:-60}"',
+        ):
+            self.assertIn(fixture, script)
+        self.assertIn("provision-runtime-secrets.sh|runtime-static-check.sh", script)
+        self.assertNotIn("README.md|.gitignore|*.example|*.sh", script)
         function = script.split("schema_gate_must_pass() {", 1)[1].split("}", 1)[0]
         self.assertIn("schema_output=", function)
         self.assertNotIn(">/dev/null 2>&1", function)

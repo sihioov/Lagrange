@@ -16,6 +16,17 @@ self_test=0
 # fixtures use a deterministic placeholder only when the caller did not
 # provide one; this does not relax the production Compose contract.
 static_commit="${LAGRANGE_CODE_COMMIT:-0123456789abcdef0123456789abcdef01234567}"
+export LAGRANGE_CODE_COMMIT="$static_commit"
+export RESEARCH_APP_ENV=qa
+export RESEARCH_FETCH_MODE=synthetic
+# The research smoke resolves the complete production Compose model even
+# though it starts only research services. Supply deterministic QA values for
+# the independent backtest capacity/reconciler contract so interpolation
+# remains fail-closed in production and reproducible here.
+export BACKTEST_MIN_FREE_BYTES="${BACKTEST_MIN_FREE_BYTES:-1073741824}"
+export BACKTEST_MAX_QUEUED_BACKTESTS="${BACKTEST_MAX_QUEUED_BACKTESTS:-1000}"
+export BACKTEST_RECONCILE_GRACE_SECS="${BACKTEST_RECONCILE_GRACE_SECS:-900}"
+export BACKTEST_RECONCILE_INTERVAL_SECS="${BACKTEST_RECONCILE_INTERVAL_SECS:-60}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -290,7 +301,10 @@ tracked_secrets="$(git_ls_files)" || fail 'git ls-files failed while checking se
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   name="${path##*/}"
-  case "$name" in README.md|.gitignore|*.example) ;; *) fail "real secret-like file is tracked: $path" ;; esac
+  case "$name" in
+    README.md|.gitignore|*.example|provision-runtime-secrets.sh|runtime-static-check.sh) ;;
+    *) fail "real secret-like file is tracked: $path" ;;
+  esac
 done <<<"$tracked_secrets"
 echo 'RESEARCH_WORKER_SMOKE: static PASS'
 
