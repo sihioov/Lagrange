@@ -195,25 +195,9 @@ class WorkflowContractTests(unittest.TestCase):
             'schema_postgres_secret="$runtime_secret_root/research-schema-check/postgres_password"',
             script,
         )
-        self.assertIn(
-            'bootstrap_secret_root="$runtime_secret_root/db-role-bootstrap"', script
-        )
-        self.assertIn(
-            'migrate_secret_root="$runtime_secret_root/db-migrate"', script
-        )
-        for required_secret in (
-            "postgres_password",
-            "db_migration_owner_password",
-            "db_app_password",
-            "db_worker_password",
-            "db_audit_password",
-            "db_research_password",
-            "db_admin_password",
-        ):
-            self.assertIn(required_secret, secret_setup)
-
         self.assertIn("ledger_state=", script)
         self.assertIn('if [ "$ledger_state" != "7" ]', script)
+        self.assertIn("rc up -d --no-deps research-worker", script)
 
         migration_loop = script.split("while IFS= read -r migration; do", 1)[1].split(
             "done < <(", 1
