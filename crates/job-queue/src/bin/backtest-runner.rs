@@ -451,11 +451,14 @@ fn validate_uv_path(path: &std::path::Path) -> Result<(), String> {
 }
 
 fn worker_python_path(repo_root: &std::path::Path) -> String {
+    let separator = if cfg!(windows) { ";" } else { ":" };
     format!(
-        "{}{}{}",
+        "{}{}{}{}{}",
         repo_root.join("nt/backtest-worker").display(),
-        if cfg!(windows) { ";" } else { ":" },
-        repo_root.join("nt/strategies").display()
+        separator,
+        repo_root.join("nt/strategies").display(),
+        separator,
+        repo_root.join("nt").display(),
     )
 }
 
@@ -1105,6 +1108,20 @@ mod tests {
             code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         };
         validate_runner_paths(&paths).unwrap();
+    }
+
+    #[test]
+    fn worker_python_path_includes_custom_data_parent() {
+        let root = std::path::Path::new("repo-root");
+        let entries = std::env::split_paths(&worker_python_path(root)).collect::<Vec<_>>();
+        assert_eq!(
+            entries,
+            vec![
+                root.join("nt/backtest-worker"),
+                root.join("nt/strategies"),
+                root.join("nt"),
+            ]
+        );
     }
 
     #[test]

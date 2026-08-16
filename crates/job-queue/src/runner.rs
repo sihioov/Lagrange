@@ -3345,11 +3345,14 @@ async fn run_worker(
 ) -> Result<bool, WorkerRunError> {
     let repo_root = absolute_path(&paths.repo_root);
     let nt_dir = repo_root.join("nt");
+    let separator = if cfg!(windows) { ";" } else { ":" };
     let python_path = format!(
-        "{}{}{}",
+        "{}{}{}{}{}",
         repo_root.join("nt/backtest-worker").display(),
-        if cfg!(windows) { ";" } else { ":" },
-        repo_root.join("nt/strategies").display()
+        separator,
+        repo_root.join("nt/strategies").display(),
+        separator,
+        repo_root.join("nt").display(),
     );
 
     // The runner has database credentials in its own environment. A Python

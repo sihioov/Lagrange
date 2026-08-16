@@ -371,9 +371,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Docker Compose is unavailable' }
 $project = "lagrange-research-smoke-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) $project
 $rawRoot = Join-Path $tempRoot 'data'
-$postgresSecret = Join-Path $tempRoot 'postgres_password'
-$researchSecret = Join-Path $tempRoot 'db_research_password'
-$krxSecret = Join-Path $tempRoot 'krx_api_key'
+$runtimeSecretRoot = Join-Path $tempRoot 'runtime-secrets'
+$postgresSecret = Join-Path $runtimeSecretRoot 'postgres/postgres_password'
+$schemaPostgresSecret = Join-Path $runtimeSecretRoot 'research-schema-check/postgres_password'
+$researchSecret = Join-Path $runtimeSecretRoot 'research-worker/db_research_password'
+$krxSecret = Join-Path $runtimeSecretRoot 'research-worker/krx_api_key'
 $contextAuditTag = "$project-context-audit"
 $created = $false
 
@@ -604,13 +606,18 @@ RUN test -f /context/Cargo.toml \
 }
 
 try {
-    New-Item -ItemType Directory -Path (Join-Path $rawRoot 'raw') -Force | Out-Null
-    [IO.File]::WriteAllText($postgresSecret, (New-RandomSecret))
+    foreach ($directory in @(
+        (Join-Path $rawRoot 'raw'),
+        (Join-Path $runtimeSecretRoot 'postgres'),
+        (Join-Path $runtimeSecretRoot 'research-schema-check'),
+        (Join-Path $runtimeSecretRoot 'research-worker')
+    )) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
+    $postgresPassword = New-RandomSecret
+    [IO.File]::WriteAllText($postgresSecret, $postgresPassword)
+    [IO.File]::WriteAllText($schemaPostgresSecret, $postgresPassword)
     [IO.File]::WriteAllText($researchSecret, (New-RandomSecret))
     [IO.File]::WriteAllText($krxSecret, 'unused-in-synthetic-smoke')
-    $env:LAGRANGE_POSTGRES_PASSWORD_SECRET_SOURCE = $postgresSecret
-    $env:LAGRANGE_DB_RESEARCH_PASSWORD_SECRET_SOURCE = $researchSecret
-    $env:LAGRANGE_KRX_API_KEY_SECRET_SOURCE = $krxSecret
+    $env:LAGRANGE_RUNTIME_SECRET_DIR = $runtimeSecretRoot
     $env:LAGRANGE_DATA_DIR = $rawRoot
     $env:LAGRANGE_PGDATA_VOLUME = "$project-pgdata"
     $env:POSTGRES_USER = 'lagrange'
