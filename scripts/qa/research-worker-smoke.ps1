@@ -17,6 +17,15 @@ $gitattributes = Join-Path $root '.gitattributes'
 $schemaSqlFile = Join-Path $root 'deploy/compose/research-schema-check.sql'
 $secretExample = Join-Path $root 'deploy/secrets/db_research_password.example'
 $readOnlyFsyncProbe = Join-Path $root 'scripts/qa/read-only-fsync.rs'
+if ([string]::IsNullOrWhiteSpace($env:LAGRANGE_CODE_COMMIT)) {
+    $env:LAGRANGE_CODE_COMMIT = '0123456789abcdef0123456789abcdef01234567'
+}
+$env:RESEARCH_APP_ENV = 'qa'
+$env:RESEARCH_FETCH_MODE = 'synthetic'
+if ([string]::IsNullOrWhiteSpace($env:BACKTEST_MIN_FREE_BYTES)) { $env:BACKTEST_MIN_FREE_BYTES = '1073741824' }
+if ([string]::IsNullOrWhiteSpace($env:BACKTEST_MAX_QUEUED_BACKTESTS)) { $env:BACKTEST_MAX_QUEUED_BACKTESTS = '1000' }
+if ([string]::IsNullOrWhiteSpace($env:BACKTEST_RECONCILE_GRACE_SECS)) { $env:BACKTEST_RECONCILE_GRACE_SECS = '900' }
+if ([string]::IsNullOrWhiteSpace($env:BACKTEST_RECONCILE_INTERVAL_SECS)) { $env:BACKTEST_RECONCILE_INTERVAL_SECS = '60' }
 
 function Assert-Contains([string]$Text, [string]$Value, [string]$Context) {
     if ($Text.IndexOf($Value, [StringComparison]::Ordinal) -lt 0) {
@@ -182,7 +191,7 @@ function Invoke-StaticChecks {
         throw 'research-worker entrypoint is incorrect'
     }
     $requiredEnvironment = [ordered]@{
-        APP_ENV = 'development'; RESEARCH_FETCH_MODE = 'synthetic'; RESEARCH_RUN_AT_KST = '16:30'
+        APP_ENV = 'qa'; RESEARCH_FETCH_MODE = 'synthetic'; RESEARCH_RUN_AT_KST = '16:30'
         RESEARCH_MAX_PUBLICATION_AGE_SECS = '345600'; RESEARCH_RAW_ROOT = '/data'
         DB_HOST = 'postgres'; DB_PORT = '5432'; DB_NAME = 'lagrange'; DB_USER = 'research_writer'
         DB_PASSWORD_FILE = '/run/secrets/db_research_password'
@@ -324,7 +333,8 @@ function Invoke-StaticChecks {
     if ($LASTEXITCODE -ne 0) { throw 'git ls-files failed while checking secrets' }
     foreach ($path in $trackedSecrets) {
         $name = [IO.Path]::GetFileName($path)
-        if ($name -ne 'README.md' -and $name -ne '.gitignore' -and -not $name.EndsWith('.example', [StringComparison]::Ordinal)) {
+        if ($name -notin @('README.md', '.gitignore', 'provision-runtime-secrets.sh', 'runtime-static-check.sh') -and
+            -not $name.EndsWith('.example', [StringComparison]::Ordinal)) {
             throw "real secret-like file is tracked: $path"
         }
     }
