@@ -397,11 +397,11 @@ install -d -m 0700 \
 [ -d "$raw_root/raw" ] && [ -w "$raw_root/raw" ] || fail 'disposable Raw directory is not writable'
 umask 077
 if command -v openssl >/dev/null 2>&1; then
-  openssl rand -base64 32 >"$postgres_secret"
-  openssl rand -base64 32 >"$research_secret"
+  openssl rand -base64 32 | tr -d '\r\n' >"$postgres_secret"
+  openssl rand -base64 32 | tr -d '\r\n' >"$research_secret"
 else
-  head -c 32 /dev/urandom | base64 >"$postgres_secret"
-  head -c 32 /dev/urandom | base64 >"$research_secret"
+  head -c 32 /dev/urandom | base64 | tr -d '\r\n' >"$postgres_secret"
+  head -c 32 /dev/urandom | base64 | tr -d '\r\n' >"$research_secret"
 fi
 cp -- "$postgres_secret" "$schema_postgres_secret"
 cp -- "$postgres_secret" "$bootstrap_secret_root/postgres_password"
@@ -576,7 +576,11 @@ rc run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -e
   : > "$probe"
   rm -f "$probe"
 ' || fail 'research-worker UID 10001 cannot prepare the startup orphan'
-rc up -d research-worker >/dev/null || fail 'research-worker service failed to start'
+if ! rc up -d research-worker >/dev/null; then
+  rc ps >&2 || true
+  rc logs --no-color db-role-bootstrap db-migrate research-schema-check research-worker >&2 || true
+  fail 'research-worker service failed to start'
+fi
 
 healthy=0
 for _ in $(seq 1 30); do

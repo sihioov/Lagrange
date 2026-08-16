@@ -190,6 +190,7 @@ class WorkflowContractTests(unittest.TestCase):
             'find "$runtime_secret_root" -type f -exec chmod 0444 {} +',
             secret_setup,
         )
+        self.assertIn("tr -d '\\r\\n'", secret_setup)
         self.assertIn(
             'schema_postgres_secret="$runtime_secret_root/research-schema-check/postgres_password"',
             script,

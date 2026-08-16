@@ -720,7 +720,11 @@ rm -f "$probe"
 '@
     if ($LASTEXITCODE -ne 0) { throw 'research-worker UID 10001 cannot prepare the startup orphan' }
     Invoke-ResearchCompose up -d research-worker | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'research-worker service failed to start' }
+    if ($LASTEXITCODE -ne 0) {
+        Invoke-ResearchCompose ps | Out-Host
+        Invoke-ResearchCompose logs --no-color db-role-bootstrap db-migrate research-schema-check research-worker | Out-Host
+        throw 'research-worker service failed to start'
+    }
 
     $healthy = $false
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
