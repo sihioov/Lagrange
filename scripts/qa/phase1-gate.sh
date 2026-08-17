@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# phase1-gate.sh - Phase 1 invite-only multi-user release gate (POSIX/CI twin).
+# phase1-gate.sh - Phase 1 invite-only multi-user release gate (native Linux).
 #
-# Logic twin of scripts/qa/phase1-gate.ps1: same check list E1..E7, same
-# single machine-readable verdict on stdout:
+# Emits ONE machine-readable verdict on stdout:
 #   VERDICT: APPROVED
 #   VERDICT: BLOCKED_EXTERNAL_DATA_RIGHTS
 #
@@ -11,15 +10,37 @@
 # failing suites, or documented BLOCKED_EXTERNAL written-rights/vendor
 # conditions => BLOCKED_EXTERNAL_DATA_RIGHTS (never a false success).
 #
-# Runs natively in WSL2/CI: cargo via the inside-WSL lane (CARGO_TARGET_DIR
-# and DATABASE_URL honored from env), validate-policy.sh for the pre-Member
-# gate (A1). The Playwright lane (E7) uses node/npx when present, else
-# falls back to the PHASE1_E7_TRANSCRIPT file written by the .ps1 twin -
-# without evidence the gate stays BLOCKED.
+# HOST: this file used to be the "inside-WSL twin". It replaced PATH with one
+# ending in /root/.cargo/bin, forced CARGO_TARGET_DIR=/root/lagrange-target,
+# and pointed DATABASE_URL at the inside-WSL 127.0.0.1:5432. Services now run
+# on native Linux only, so all three are gone and this script uses the same
+# conventions as its siblings phase2-gate.sh and phase3-gate.sh: the caller's
+# cargo, $root/target, and the QA database on 127.0.0.1:${LAGRANGE_QA_DB_PORT}.
+# scripts/qa/phase1-gate.ps1 is the retired Windows-era bridge (it drove this
+# lane through `wsl -d Ubuntu`); it is no longer a fallback for anything here.
+#
+# Environment:
+#   DATABASE_URL                  QA database URL (default built from the port
+#                                 below); E5 is the DB-gated check
+#   LAGRANGE_QA_DB_PORT           QA database port (default 55432)
+#   CARGO_TARGET_DIR              cargo target directory (default $root/target)
+#   LAGRANGE_AUTH0_DOMAIN         E2 needs all three. Without them the vendor
+#   LAGRANGE_AUTH0_CLIENT_ID      suite panics BLOCKED_EXTERNAL by design and
+#   LAGRANGE_AUTH0_CLIENT_SECRET  E2 is recorded BLOCKED_EXTERNAL, never PASS.
+#                                 This gate deliberately does NOT read
+#                                 deploy/secrets/auth0_client_secret itself:
+#                                 injecting a credential stays the operator's
+#                                 explicit act, and a gate that reads secret
+#                                 files acquires a surface it does not need.
+#   PHASE1_SKIP_PLAYWRIGHT=1      record E7 as EVIDENCE_MISSING without running
+#   PHASE1_E7_TRANSCRIPT          external Playwright transcript to accept as E7
+#
+# The QA database must ALREADY be running (deploy/qa/qa-db.compose.yml). This
+# gate does not start or stop it: full-system-gate.sh owns that lifecycle for
+# the composite run, and a child that tore down the shared database would leave
+# every later phase without one.
 #
 # Exit codes: 0 = verdict emitted; 2 = gate could not run.
-#
-# Twin: scripts/qa/phase1-gate.ps1
 set -u
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -27,31 +48,53 @@ data_rights_dir="$root/configs/data-rights"
 evidence_dir="$root/.omo/evidence"
 ev_path="$evidence_dir/task-28-lagrange-station-implementation.json"
 transcript_dir="$evidence_dir/task-28-transcripts"
-wsl_db_url="${WSL_DATABASE_URL:-postgres://postgres:lagrange@127.0.0.1:5432/postgres}"
+qa_port="${LAGRANGE_QA_DB_PORT:-55432}"
+db_url="${DATABASE_URL:-postgres://postgres:lagrange@127.0.0.1:${qa_port}/postgres}"
 skip_playwright="${PHASE1_SKIP_PLAYWRIGHT:-0}"
 
-# This twin runs INSIDE WSL. Refuse anywhere else rather than answer wrongly.
+# A gate that cannot run must say so and stop: exit 2, no verdict.
 #
-# `run_cargo` below replaces PATH with a Linux one ending in /root/.cargo/bin
-# and targets /root/lagrange-target. On Windows Git Bash those do not exist, so
-# `cargo` disappears -- and the failure surfaced as `cargo: command not found`
-# captured into a transcript and recorded as a SUITE FAILURE. E3, E4 and E5
-# were reported FAIL, E6 separately on `python3: command not found`, and the
-# gate went on to publish a verdict built from four checks that never ran. Run
-# under phase1-gate.ps1 with the same environment and all four PASS.
-#
-# A gate that cannot run must say so and stop: exit 2, no verdict. The tools
-# are probed at the paths run_cargo will actually use, not the caller's PATH,
-# because the caller's cargo is exactly the one that is about to be discarded.
-[ -x /root/.cargo/bin/cargo ] || {
-  echo "ENV ERROR: this is the inside-WSL twin (needs /root/.cargo/bin/cargo);" >&2
-  echo "           on Windows run scripts/qa/phase1-gate.ps1 instead" >&2
+# The tools are probed on the caller's PATH because that is now the PATH the
+# cargo lane below actually uses. While this file was the inside-WSL twin the
+# probe deliberately looked at /root/.cargo/bin instead, since run_cargo threw
+# the caller's PATH away -- on Windows Git Bash `cargo` then disappeared, the
+# failure was captured into a transcript as `cargo: command not found`, and the
+# gate published a verdict built from four checks that never ran.
+command -v cargo >/dev/null 2>&1 || {
+  echo "ENV ERROR: cargo not found on PATH" >&2
   exit 2
 }
 command -v python3 >/dev/null 2>&1 || {
   echo "ENV ERROR: python3 not found on PATH (E6 restore-policy needs it)" >&2
   exit 2
 }
+
+# The QA database is REQUIRED by E5, and a gate that cannot reach it must not
+# emit a verdict. phase3-gate.sh learned this the expensive way (§3.3): with a
+# dead database its checks recorded `PoolTimedOut` as suite failures and it
+# published DENIED, which means "a real defect" and sent someone hunting a bug
+# in code that was fine. Exit 2 already means "could not run, no verdict".
+#
+# Unlike phase2/phase3 this gate does NOT bring the database up. It is a child
+# of full-system-gate.sh, which owns the shared instance.
+db_host_port="$(python3 - "$db_url" <<'PYEOF'
+import sys, urllib.parse
+u = urllib.parse.urlparse(sys.argv[1])
+print(u.hostname or "127.0.0.1", u.port or 5432)
+PYEOF
+)" || {
+  echo "ENV ERROR: could not parse DATABASE_URL" >&2
+  exit 2
+}
+db_host="${db_host_port% *}"
+db_port="${db_host_port#* }"
+if ! (exec 3<>"/dev/tcp/$db_host/$db_port") 2>/dev/null; then
+  echo "ENV ERROR: QA database unreachable at $db_host:$db_port" >&2
+  echo "           start it with: docker compose -p lagrange-qa -f deploy/qa/qa-db.compose.yml up -d --wait qa-db" >&2
+  echo "           (or point DATABASE_URL / LAGRANGE_QA_DB_PORT at a running one)" >&2
+  exit 2
+fi
+exec 3>&-
 
 mkdir -p "$evidence_dir" "$transcript_dir"
 
@@ -63,17 +106,46 @@ $1 $2 $3 $4"
   printf 'CHECK %s %s = %s  %s\n' "$1" "$2" "$3" "$4"
 }
 
-# --- inside-WSL cargo lane --------------------------------------------------
-run_cargo() { # run_cargo <name> <transcript> <command...>
+# --- native cargo lane ------------------------------------------------------
+# run_cargo <name> <transcript> <cargo args...> [-- <libtest args...>]
+#
+# Returns 0 only when cargo exited 0 AND at least one test actually ran, and
+# leaves that count in $run_cargo_ran. Both halves are load-bearing:
+#
+#   * `cargo test <filter>` that selects nothing exits 0 with "0 passed".
+#     Recording that as evidence lets the gate approve a release on the
+#     strength of tests that never executed (phase2-gate.sh has counted for
+#     this reason since Todo 35).
+#   * The caller's libtest arguments are kept SEPARATE from the cargo ones and
+#     spliced in after a single `--`. The old signature appended `-- --nocapture`
+#     to whatever it was handed, so E2's call produced
+#         cargo test -p auth --test vendor_auth0 -- --ignored -- --nocapture
+#     with two separators. libtest read the second `--` and `--nocapture` as
+#     name filters, matched nothing, and exited 0 having run 0 of the 5 tests
+#     -- which this gate recorded as "real Auth0 tenant suite green". The .ps1
+#     twin built the same command with one separator, so the bug only ever bit
+#     the POSIX lane, which is now the only lane.
+run_cargo_ran=0
+run_cargo() {
   local name="$1" t="$2"; shift 2
+  local cargo_args=() test_args=() seen_sep=0 a
+  for a in "$@"; do
+    if [ "$seen_sep" -eq 0 ] && [ "$a" = "--" ]; then seen_sep=1; continue; fi
+    if [ "$seen_sep" -eq 0 ]; then cargo_args+=("$a"); else test_args+=("$a"); fi
+  done
   {
-    export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.cargo/bin"
-    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/root/lagrange-target}"
-    export DATABASE_URL="$wsl_db_url"
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target}"
+    export DATABASE_URL="$db_url"
     cd "$root" || exit 2
-    cargo test "$@" -- --nocapture
+    cargo test ${cargo_args[@]+"${cargo_args[@]}"} \
+      -- ${test_args[@]+"${test_args[@]}"} --nocapture
   } >"$t" 2>&1
-  return $?
+  local rc=$?
+  run_cargo_ran="$(grep -Eo '^test result: ok\. [0-9]+ passed' "$t" \
+    | grep -Eo '[0-9]+' | awk '{s+=$1} END {print s+0}')"
+  [ "$rc" -eq 0 ] || return "$rc"
+  [ "${run_cargo_ran:-0}" -gt 0 ] || return 90
+  return 0
 }
 
 # --- E1 written-rights artifact ---------------------------------------------
@@ -107,9 +179,9 @@ test_written_rights() {
 test_vendor_auth0() {
   local t="$transcript_dir/E2-vendor-auth0.txt"
   if run_cargo vendor-auth0 "$t" -p auth --test vendor_auth0 -- --ignored; then
-    add_check E2 vendor-auth0 PASS "real Auth0 tenant suite green (transcript $t)"
+    add_check E2 vendor-auth0 PASS "real Auth0 tenant suite green, $run_cargo_ran test(s) (transcript $t)"
   else
-    add_check E2 vendor-auth0 BLOCKED_EXTERNAL "no Auth0 tenant/credentials on this host (suite panics BLOCKED_EXTERNAL); transcript $t"
+    add_check E2 vendor-auth0 BLOCKED_EXTERNAL "no Auth0 tenant/credentials on this host (suite panics BLOCKED_EXTERNAL without LAGRANGE_AUTH0_*); transcript $t"
   fi
 }
 
@@ -117,28 +189,50 @@ test_vendor_auth0() {
 test_auth0_simulator() {
   local t="$transcript_dir/E3-auth0-simulator.txt"
   if run_cargo auth0-simulator "$t" -p auth --test auth0_simulator; then
-    add_check E3 auth0-simulator PASS "contract suite green (transcript $t)"
+    add_check E3 auth0-simulator PASS "contract suite green, $run_cargo_ran test(s) (transcript $t)"
   else
     add_check E3 auth0-simulator FAIL "contract suite failed (transcript $t)"
   fi
 }
 
+# Three suites, three transcripts. They shared one path before, each `>`
+# truncating the last, so the evidence file kept only the stepup run while
+# claiming all three -- and the per-suite test count below would have been read
+# from that same last transcript.
+#
+# `--test <name>` selects the test TARGET. The bare `-p auth protocol` form used
+# before passed "protocol" to libtest as a test-NAME filter, ran it across every
+# target in the package, matched nothing, and exited 0 -- so this check reported
+# "protocol/invites/stepup suites green" having executed 0, 0 and 4 tests. The
+# targets hold 32, 15 and 5. Both twins carried the same form.
 test_invite_mfa() {
-  local t="$transcript_dir/E4-auth0-invite-mfa.txt"
-  if run_cargo auth0-invite-mfa "$t" -p auth protocol && \
-     run_cargo auth0-invites "$t" -p auth invites && \
-     run_cargo auth0-stepup "$t" -p auth stepup; then
-    add_check E4 auth0-invite-mfa PASS "protocol/invites/stepup suites green (transcript $t)"
+  local tp="$transcript_dir/E4a-auth0-protocol.txt"
+  local ti="$transcript_dir/E4b-auth0-invites.txt"
+  local ts="$transcript_dir/E4c-auth0-stepup.txt"
+  local total=0 ok=1
+  if run_cargo auth0-protocol "$tp" -p auth --test protocol; then total=$((total + run_cargo_ran)); else ok=0; fi
+  if run_cargo auth0-invites "$ti" -p auth --test invites; then total=$((total + run_cargo_ran)); else ok=0; fi
+  if run_cargo auth0-stepup "$ts" -p auth --test stepup; then total=$((total + run_cargo_ran)); else ok=0; fi
+  if [ "$ok" -eq 1 ]; then
+    add_check E4 auth0-invite-mfa PASS "protocol/invites/stepup suites green, $total test(s) (transcripts $tp $ti $ts)"
   else
-    add_check E4 auth0-invite-mfa FAIL "invite/MFA suites failed (transcript $t)"
+    add_check E4 auth0-invite-mfa FAIL "invite/MFA suites failed (transcripts $tp $ti $ts)"
   fi
 }
 
 # --- E5 integrated five-user suite ------------------------------------------
+# DB-gated. The suite skips itself when DATABASE_URL is unset -- and a skipped
+# test still counts as passed, so the count guard cannot see it. The database
+# guard at the top of this file is what keeps that from becoming a PASS; the
+# grep below is the second lock on the same door.
 test_five_user() {
   local t="$transcript_dir/E5-phase1-five-user.txt"
   if run_cargo phase1-five-user "$t" -p api-server --test phase1_gate; then
-    add_check E5 phase1-five-user PASS "five-user suite green (transcript $t)"
+    if grep -q "SKIP: DATABASE_URL not set" "$t"; then
+      add_check E5 phase1-five-user FAIL "suite skipped itself: no DATABASE_URL inside the lane (transcript $t)"
+    else
+      add_check E5 phase1-five-user PASS "five-user suite green, $run_cargo_ran test(s) (transcript $t)"
+    fi
   elif grep -Eq "no test target named|could not find|No tests" "$t"; then
     add_check E5 phase1-five-user BLOCKED_EXTERNAL "EVIDENCE_MISSING: phase1_gate suite not present yet (transcript $t)"
   else
@@ -166,23 +260,30 @@ test_playwright_phase1() {
     return 0
   fi
   local node_bin npx_bin
-  node_bin="$(command -v node 2>/dev/null || command -v node.exe 2>/dev/null || true)"
-  npx_bin="$(command -v npx 2>/dev/null || command -v npx.cmd 2>/dev/null || true)"
+  node_bin="$(command -v node 2>/dev/null || true)"
+  npx_bin="$(command -v npx 2>/dev/null || true)"
   if [ -z "$node_bin" ] || [ -z "$npx_bin" ]; then
     if [ -n "${PHASE1_E7_TRANSCRIPT:-}" ] && [ -f "$PHASE1_E7_TRANSCRIPT" ] \
        && grep -qE "passed" "$PHASE1_E7_TRANSCRIPT" && ! grep -qE "failed|No tests" "$PHASE1_E7_TRANSCRIPT"; then
       add_check E7 playwright-phase1 PASS "phase1 e2e green via external transcript $PHASE1_E7_TRANSCRIPT"
       return 0
     fi
-    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "no node/npx on PATH; run phase1-gate.ps1 for the Playwright lane (or set PHASE1_E7_TRANSCRIPT)"
+    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "no node/npx on PATH (install Node, or set PHASE1_E7_TRANSCRIPT to a transcript produced elsewhere)"
     return 0
   fi
-  # Launch synthetic-api mock (38180) + next dev app (33000) detached.
   local web_dir="$root/apps/web"
+  # Without installed dependencies neither child can start, and the lane would
+  # otherwise discover that only after binding ports and shelling out.
+  if [ ! -d "$web_dir/node_modules/@playwright" ]; then
+    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "EVIDENCE_MISSING: apps/web dependencies not installed (run npm ci in apps/web, then npx playwright install)"
+    return 0
+  fi
+  # Ports are overridable because this host runs several worktrees at once and
+  # the fixed pair collides between them.
+  local mock_port="${PHASE1_E7_MOCK_PORT:-38180}"
+  local app_port="${PHASE1_E7_APP_PORT:-33000}"
   local mock_pid="" app_pid=""
-  ( cd "$web_dir" && nohup "$node_bin" tests/e2e/support/synthetic-api.mjs >"$transcript_dir/mock.stdout.txt" 2>&1 & echo $! >"$transcript_dir/mock.pid" )
-  sleep 1
-  mock_pid="$(cat "$transcript_dir/mock.pid" 2>/dev/null || true)"
+
   ready_port() { # ready_port <port> <attempts>
     local p="$1" n="$2" i=0
     while [ $i -lt "$n" ]; do
@@ -191,26 +292,61 @@ test_playwright_phase1() {
     done
     return 1
   }
-  if ! ready_port 38180 40; then
-    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "mock did not become ready on 38180"
+
+  # An open port is not proof that OUR child opened it.
+  #
+  # Both children used to be launched into a subshell whose PID was recorded
+  # instead of theirs, and readiness was decided by ready_port alone. On this
+  # host that combination tested a stranger's server: the mock died with
+  # EADDRINUSE and next dev died with "Cannot find module", yet both ports
+  # answered -- another worktree was serving them -- so the lane went on to run
+  # Playwright against an application this gate never started. It failed for an
+  # unrelated reason that day; nothing in the check would have noticed if it had
+  # passed. `exec` makes $! the child itself, and liveness is now checked before
+  # and after the port.
+  ( cd "$web_dir" && SYNTHETIC_API_PORT="$mock_port" \
+      exec "$node_bin" tests/e2e/support/synthetic-api.mjs ) \
+    >"$transcript_dir/mock.stdout.txt" 2>&1 &
+  mock_pid=$!
+  sleep 1
+  if ! kill -0 "$mock_pid" 2>/dev/null; then
+    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "synthetic-api mock exited immediately (see $transcript_dir/mock.stdout.txt; port $mock_port may be taken by another worktree)"
     return 0
   fi
+  if ! ready_port "$mock_port" 40 || ! kill -0 "$mock_pid" 2>/dev/null; then
+    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "mock did not become ready on $mock_port (see $transcript_dir/mock.stdout.txt)"
+    kill "$mock_pid" 2>/dev/null || true
+    return 0
+  fi
+
   # The spec side reads SYNTHETIC_API_ORIGIN; the app itself resolves its
   # upstream from API_INTERNAL_URL. Without the second one the app renders every
   # page against the absent real API and the whole lane 500s.
-  ( cd "$web_dir" && PORT=33000 SYNTHETIC_API_ORIGIN=http://127.0.0.1:38180 \
-      API_INTERNAL_URL=http://127.0.0.1:38180 \
-      nohup "$node_bin" node_modules/next/dist/bin/next dev -p 33000 >"$transcript_dir/app.stdout.txt" 2>&1 & echo $! >"$transcript_dir/app.pid" )
-  app_pid="$(cat "$transcript_dir/app.pid" 2>/dev/null || true)"
-  if ! ready_port 33000 120; then
-    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "next app did not become ready on 33000"
-    [ -n "$mock_pid" ] && kill "$mock_pid" 2>/dev/null || true
+  ( cd "$web_dir" && PORT="$app_port" \
+      SYNTHETIC_API_ORIGIN="http://127.0.0.1:$mock_port" \
+      API_INTERNAL_URL="http://127.0.0.1:$mock_port" \
+      exec "$node_bin" node_modules/next/dist/bin/next dev -p "$app_port" ) \
+    >"$transcript_dir/app.stdout.txt" 2>&1 &
+  app_pid=$!
+  sleep 1
+  if ! kill -0 "$app_pid" 2>/dev/null; then
+    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "next dev exited immediately (see $transcript_dir/app.stdout.txt; port $app_port may be taken by another worktree)"
+    kill "$mock_pid" 2>/dev/null || true
     return 0
   fi
-  ( cd "$web_dir" && "$npx_bin" playwright test tests/e2e/phase1 >"$t" 2>&1 )
+  if ! ready_port "$app_port" 120 || ! kill -0 "$app_pid" 2>/dev/null; then
+    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "next app did not become ready on $app_port (see $transcript_dir/app.stdout.txt)"
+    kill "$app_pid" 2>/dev/null || true
+    kill "$mock_pid" 2>/dev/null || true
+    return 0
+  fi
+
+  ( cd "$web_dir" && PLAYWRIGHT_BASE_URL="http://127.0.0.1:$app_port" \
+      SYNTHETIC_API_ORIGIN="http://127.0.0.1:$mock_port" \
+      "$npx_bin" playwright test tests/e2e/phase1 >"$t" 2>&1 )
   local code=$?
-  [ -n "$app_pid" ] && kill "$app_pid" 2>/dev/null || true
-  [ -n "$mock_pid" ] && kill "$mock_pid" 2>/dev/null || true
+  kill "$app_pid" 2>/dev/null || true
+  kill "$mock_pid" 2>/dev/null || true
   if [ $code -eq 0 ] && ! grep -qE "[0-9]+ failed|No tests found|no tests" "$t"; then
     add_check E7 playwright-phase1 PASS "phase1 e2e green (transcript $t)"
   else
@@ -219,6 +355,11 @@ test_playwright_phase1() {
 }
 
 # ---------------------------------------------------------------------------
+echo "== Phase 1 release gate =="
+echo "   cargo:    $(command -v cargo)"
+echo "   target:   ${CARGO_TARGET_DIR:-$root/target}"
+echo "   database: $db_host:$db_port"
+
 test_written_rights
 test_vendor_auth0
 test_auth0_simulator
