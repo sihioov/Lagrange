@@ -74,9 +74,10 @@ pub use candidate_normalize::{
     normalize_kis_candidate_envelopes,
 };
 pub use contract::{
-    ALL_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR,
-    PROVIDER_KIS, PROVIDER_KIS_CANDIDATE, PROVIDER_KIS_CANDIDATE_NORMALIZED,
-    PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
+    ALL_RESPONSE_KINDS, CANDIDATE_MASTER_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS,
+    EOD_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CANDIDATE,
+    PROVIDER_KIS_CANDIDATE_NORMALIZED, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, RawEnvelope,
+    RequestMetadata, ResponseKind, StoredFile,
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{
@@ -106,6 +107,19 @@ pub use provider::{
 pub use providers::kis::{KR_ETF_CORE_SYMBOLS, KisProvider, KisRead};
 pub use providers::kis_candidate::{
     KIS_CANDIDATE_SUPPORTED_KINDS, KIS_CANDIDATE_UNSUPPORTED_KINDS, KisCandidateProvider,
+};
+pub use providers::kis_candidate_master::{
+    CandidateMarket, CandidateMasterArchive, CandidateMasterArchiveProvenance,
+    CandidateMasterError, CandidateMasterProvider, CandidateMasterRead, CandidateMasterRow,
+    CandidateMasterSnapshot, CandidateMasterSource, CandidateMembershipFlags,
+    CandidateSectorFields, CandidateStatusRawFlags, IDXCODE_EMPTY_SENTINEL, IDXCODE_MASTER_MEMBER,
+    IDXCODE_MASTER_URL, IDXCODE_MST_URL, IdxCodeMasterRow, IndexCodeMasterRow,
+    KIS_CANDIDATE_MASTER_SOURCES, KOSDAQ_CODE_MST_URL, KOSDAQ_MASTER_MEMBER, KOSDAQ_MASTER_URL,
+    KOSPI_CODE_MST_URL, KOSPI_MASTER_MEMBER, KOSPI_MASTER_URL, KisCandidateMasterProvider,
+    KisCandidateMasterRead, gate_candidate_master_publication, ingest_kis_candidate_master_bundle,
+    parse_candidate_master_batch, parse_candidate_master_envelopes,
+    parse_candidate_master_snapshot, parse_kis_candidate_master, require_candidate_master_pit,
+    validate_candidate_master_archive,
 };
 pub use publication::{
     CalendarFact, CalendarSessionType, DataBatchKind, PublicationBundle, PublicationError,

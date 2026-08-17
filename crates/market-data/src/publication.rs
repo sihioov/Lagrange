@@ -331,6 +331,13 @@ impl PublicationBundle {
                 ResponseKind::Fundamentals => DataBatchKind::Fundamentals,
                 ResponseKind::IndexMembership => DataBatchKind::IndexMembership,
                 ResponseKind::SectorClassification => DataBatchKind::SectorClassification,
+                ResponseKind::CandidateMaster => {
+                    return Err(PublicationError::UnsupportedManifestScope {
+                        expected_scopes: "krx/kr or kis-normalized/kr",
+                        provider: manifest.provider.clone(),
+                        market: manifest.market.clone(),
+                    });
+                }
             };
             files.push(PublicationFile {
                 file_name: verified.entry.file_name.clone(),

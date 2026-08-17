@@ -68,6 +68,12 @@ pub enum ResponseKind {
     IndexMembership,
     /// Versioned sector/taxonomy classifications.
     SectorClassification,
+    /// KIS fixed-width candidate master archives (KOSPI, KOSDAQ, idxcode).
+    ///
+    /// This is deliberately distinct from [`Reference`]: these ZIP bodies are
+    /// candidate-source evidence and must never enter the EOD reference
+    /// normalizer or publication path.
+    CandidateMaster,
 }
 
 impl ResponseKind {
@@ -83,6 +89,7 @@ impl ResponseKind {
             Self::Fundamentals => "fundamentals",
             Self::IndexMembership => "index_membership",
             Self::SectorClassification => "sector_classification",
+            Self::CandidateMaster => "candidate_master",
         }
     }
 
@@ -98,6 +105,7 @@ impl ResponseKind {
             "fundamentals" => Some(Self::Fundamentals),
             "index_membership" => Some(Self::IndexMembership),
             "sector_classification" => Some(Self::SectorClassification),
+            "candidate_master" => Some(Self::CandidateMaster),
             _ => None,
         }
     }
@@ -126,8 +134,15 @@ pub const CANDIDATE_RESPONSE_KINDS: [ResponseKind; 5] = [
     ResponseKind::SectorClassification,
 ];
 
-/// All known licensed response classes, in stable order. This list is a schema
-/// registry, not a promise that every provider bundle supplies every class.
+/// The separate fixed-width KIS candidate-master archive scope.  It is kept
+/// out of [`CANDIDATE_RESPONSE_KINDS`] because those JSON classes feed the
+/// candidate document pipeline; candidate-master ZIPs are Raw-only evidence.
+pub const CANDIDATE_MASTER_RESPONSE_KINDS: [ResponseKind; 1] = [ResponseKind::CandidateMaster];
+
+/// All generic licensed response classes, in stable order. This list is a
+/// schema registry, not a promise that every provider bundle supplies every
+/// class. The Raw-only candidate-master scope has its own registry above and
+/// is intentionally not accepted by generic JSON candidate collectors.
 pub const ALL_RESPONSE_KINDS: [ResponseKind; 9] = [
     ResponseKind::Bars,
     ResponseKind::Reference,

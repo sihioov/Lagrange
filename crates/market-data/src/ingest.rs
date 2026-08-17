@@ -409,6 +409,29 @@ fn persist_bundle<S: IngestStore + ?Sized>(
     })
 }
 
+/// Candidate-master's explicit ingest path uses the same immutable Raw
+/// transaction as the EOD/candidate JSON paths, but is kept crate-private so
+/// callers cannot accidentally widen the generic EOD provider surface.
+pub(crate) fn persist_candidate_master_bundle(
+    store: &RawStore,
+    provider_id: &str,
+    fetch_mode: crate::contract::FetchMode,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    batch_id: BatchId,
+    envelopes: &[crate::contract::RawEnvelope],
+) -> Result<IngestOutcome, IngestError> {
+    persist_bundle(
+        store,
+        provider_id,
+        fetch_mode,
+        req,
+        entitlement_reference,
+        batch_id,
+        envelopes,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};

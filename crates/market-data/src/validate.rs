@@ -202,6 +202,13 @@ pub fn validate_response(kind: ResponseKind, bytes: &[u8]) -> Result<(), Validat
             ],
             &[],
         )?,
+        ResponseKind::CandidateMaster => {
+            return Err(ValidationError {
+                kind,
+                reason: "candidate master is a ZIP source; use the strict candidate-master parser"
+                    .to_owned(),
+            });
+        }
     }
     Ok(())
 }

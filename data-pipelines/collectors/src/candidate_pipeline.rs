@@ -501,7 +501,8 @@ fn dataset_for(kind: ResponseKind) -> Option<&'static str> {
         ResponseKind::Bars
         | ResponseKind::Reference
         | ResponseKind::Calendar
-        | ResponseKind::CorporateActions => None,
+        | ResponseKind::CorporateActions
+        | ResponseKind::CandidateMaster => None,
     }
 }
 
