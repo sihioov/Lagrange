@@ -1,5 +1,6 @@
 //! Daily common candidate feed and deep stock-analysis routes.
 
+use crate::contract::UniverseKey;
 use crate::http::error::{api_error, code_error, request_id};
 use crate::http::session::Session;
 use crate::http::state::ApiState;
@@ -19,8 +20,14 @@ pub async fn latest_feed(
     State(state): State<ApiState>,
     session: Session,
     headers: HeaderMap,
+    Query(params): Query<UniverseParams>,
 ) -> Response {
-    feed_response(&state, &session, &headers, None).await
+    let rid = request_id(&headers);
+    let universe = match parse_universe(params.universe.as_deref()) {
+        Ok(universe) => universe,
+        Err(message) => return code_error("INVALID_PARAMETER", message, &rid),
+    };
+    feed_response(&state, &session, &headers, universe, None).await
 }
 
 pub async fn feed_on_date(
@@ -28,6 +35,7 @@ pub async fn feed_on_date(
     session: Session,
     headers: HeaderMap,
     Path(date): Path<String>,
+    Query(params): Query<UniverseParams>,
 ) -> Response {
     let rid = request_id(&headers);
     let Some(date) = parse_date(&date) else {
@@ -39,13 +47,29 @@ pub async fn feed_on_date(
             None,
         );
     };
-    feed_response(&state, &session, &headers, Some(date)).await
+    let universe = match parse_universe(params.universe.as_deref()) {
+        Ok(universe) => universe,
+        Err(message) => return code_error("INVALID_PARAMETER", message, &rid),
+    };
+    feed_response(&state, &session, &headers, universe, Some(date)).await
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnalysisParams {
     pub date: Option<String>,
+    pub universe: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UniverseParams {
+    pub universe: Option<String>,
+}
+
+fn parse_universe(value: Option<&str>) -> Result<UniverseKey, &'static str> {
+    UniverseKey::parse(value.unwrap_or("kospi200"))
+        .map_err(|_| "universe must be kospi200 or kosdaq150")
 }
 
 pub async fn stock_analysis(
@@ -80,9 +104,13 @@ pub async fn stock_analysis(
         },
         None => None,
     };
+    let universe = match parse_universe(params.universe.as_deref()) {
+        Ok(universe) => universe,
+        Err(message) => return code_error("INVALID_PARAMETER", message, &rid),
+    };
     let (run, analysis) = match state
         .candidates()
-        .instrument_analysis(&instrument_id, as_of)
+        .instrument_analysis(&instrument_id, universe.as_str(), as_of)
         .await
     {
         Ok(Some(row)) => row,
@@ -103,6 +131,7 @@ pub async fn stock_analysis(
         Err(response) => return response,
     };
     no_store(Json(json!({
+        "universe": run.universe_key,
         "state": freshness,
         "as_of": run.as_of_date,
         "cutoff_at": run.cutoff_at,
@@ -121,10 +150,15 @@ async fn feed_response(
     state: &ApiState,
     session: &Session,
     headers: &HeaderMap,
+    universe: UniverseKey,
     as_of: Option<chrono::NaiveDate>,
 ) -> Response {
     let rid = request_id(headers);
-    let (feed, run) = match state.candidates().latest_feed(as_of).await {
+    let (feed, run) = match state
+        .candidates()
+        .latest_feed(universe.as_str(), as_of)
+        .await
+    {
         Ok(Some(rows)) => rows,
         Ok(None) | Err(crate::error::TenancyError::NotFound) => {
             return code_error("RESOURCE_NOT_FOUND", "candidate feed not found", &rid);
@@ -148,6 +182,7 @@ async fn feed_response(
     };
     no_store(Json(json!({
         "feed_id": feed.id,
+        "universe": run.universe_key,
         "state": freshness,
         "as_of": run.as_of_date,
         "cutoff_at": run.cutoff_at,
@@ -209,6 +244,33 @@ pub(crate) async fn gate_run(
             None,
         ));
     }
+    let expected_universe_dataset = match run.universe_key.as_str() {
+        "kospi200" => "krx_kospi200_membership",
+        "kosdaq150" => "krx_kosdaq150_membership",
+        _ => {
+            return Err(api_error(
+                StatusCode::FORBIDDEN,
+                "DATA_ENTITLEMENT_REQUIRED",
+                "candidate run has an unknown universe identity",
+                &rid,
+                None,
+            ));
+        }
+    };
+    if attributions.iter().any(|attribution| {
+        attribution.source == "universe" && attribution.dataset_id != expected_universe_dataset
+    }) || !attributions
+        .iter()
+        .any(|attribution| attribution.source == "universe")
+    {
+        return Err(api_error(
+            StatusCode::FORBIDDEN,
+            "DATA_ENTITLEMENT_REQUIRED",
+            "candidate universe entitlement lineage does not match the run",
+            &rid,
+            None,
+        ));
+    }
     let dataset_ids: Vec<&str> = attributions
         .iter()
         .map(|attribution| attribution.dataset_id.as_str())
@@ -252,6 +314,7 @@ pub(crate) fn analysis_json(row: CandidateAnalysisRow) -> serde_json::Value {
     json!({
         "analysis_id": row.id,
         "run_id": row.run_id,
+        "universe": row.universe_key,
         "instrument_id": row.instrument_id,
         "name": row.instrument_name,
         "sector_code": row.sector_code,

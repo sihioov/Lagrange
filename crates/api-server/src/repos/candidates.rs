@@ -12,6 +12,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, FromRow)]
 pub struct CandidateRunRow {
     pub id: Uuid,
+    pub universe_key: String,
     pub as_of_date: NaiveDate,
     pub cutoff_at: DateTime<Utc>,
     pub computation_seq: i32,
@@ -36,6 +37,7 @@ pub struct CandidateRunRow {
 pub struct CandidateFeedRow {
     pub id: Uuid,
     pub run_id: Uuid,
+    pub universe_key: String,
     pub as_of_date: NaiveDate,
     pub computation_seq: i32,
     pub published_at: DateTime<Utc>,
@@ -45,6 +47,7 @@ pub struct CandidateFeedRow {
 pub struct CandidateAnalysisRow {
     pub id: Uuid,
     pub run_id: Uuid,
+    pub universe_key: String,
     pub instrument_id: String,
     pub instrument_name: Option<String>,
     pub sector_code: String,
@@ -82,7 +85,9 @@ pub struct SavedScreenRow {
 
 #[derive(Debug, Clone)]
 pub struct ScreenFilter {
-    pub run_id: Option<Uuid>,
+    /// The immutable run-set selected for this request. The order is the
+    /// registry order and is part of the cursor capability.
+    pub run_set: Vec<(String, Uuid)>,
     pub as_of_date: Option<NaiveDate>,
     pub sectors: Vec<String>,
     pub evidence: Vec<String>,
@@ -91,6 +96,7 @@ pub struct ScreenFilter {
     pub min_fundamental_score: Option<f64>,
     pub min_technical_score: Option<f64>,
     /// Exact `numeric` text from the cursor anchor.
+    pub after_universe: Option<String>,
     pub after_score: Option<String>,
     pub after_instrument: Option<String>,
     pub limit: usize,
@@ -192,16 +198,20 @@ impl CandidateRepo {
 
     pub async fn latest_feed(
         &self,
+        universe_key: &str,
         as_of: Option<NaiveDate>,
     ) -> TenancyResult<Option<(CandidateFeedRow, CandidateRunRow)>> {
         let feed = sqlx::query_as::<_, CandidateFeedRow>(
-            "SELECT feed.id, feed.run_id, feed.as_of_date, feed.computation_seq, feed.published_at
+            "SELECT feed.id, feed.run_id, feed.universe_key,
+                    feed.as_of_date, feed.computation_seq, feed.published_at
              FROM candidate_feed_snapshots AS feed
              WHERE feed.status = 'PUBLISHED'
-               AND ($1::date IS NULL OR feed.as_of_date = $1)
+               AND feed.universe_key = $1
+               AND ($2::date IS NULL OR feed.as_of_date = $2)
              ORDER BY feed.as_of_date DESC, feed.computation_seq DESC
              LIMIT 1",
         )
+        .bind(universe_key)
         .bind(as_of)
         .fetch_optional(&self.pool)
         .await
@@ -217,6 +227,7 @@ impl CandidateRepo {
                FROM candidate_feed_items AS item
                JOIN stock_analysis_snapshots AS snapshot
                  ON snapshot.id = item.stock_analysis_snapshot_id
+               JOIN stock_analysis_runs AS run ON run.id = snapshot.run_id
                JOIN instruments AS instrument ON instrument.id = snapshot.instrument_id
               WHERE item.feed_id = $1
               ORDER BY item.rank"
@@ -230,6 +241,7 @@ impl CandidateRepo {
     pub async fn instrument_analysis(
         &self,
         instrument_id: &str,
+        universe_key: &str,
         as_of: Option<NaiveDate>,
     ) -> TenancyResult<Option<(CandidateRunRow, CandidateAnalysisRow)>> {
         let row = sqlx::query_as::<_, CandidateAnalysisRow>(sqlx::AssertSqlSafe(format!(
@@ -238,11 +250,13 @@ impl CandidateRepo {
              JOIN stock_analysis_runs AS run ON run.id = snapshot.run_id
              JOIN candidate_feed_snapshots AS feed ON feed.run_id = run.id
              JOIN instruments AS instrument ON instrument.id = snapshot.instrument_id
-             WHERE snapshot.instrument_id = $1 AND feed.status = 'PUBLISHED'
-               AND ($2::date IS NULL OR run.as_of_date = $2)
+               WHERE snapshot.instrument_id = $1 AND feed.status = 'PUBLISHED'
+               AND run.universe_key = $2
+               AND ($3::date IS NULL OR run.as_of_date = $3)
              ORDER BY run.as_of_date DESC, run.computation_seq DESC LIMIT 1"
         )))
         .bind(instrument_id)
+        .bind(universe_key)
         .bind(as_of)
         .fetch_optional(&self.pool)
         .await
@@ -252,12 +266,77 @@ impl CandidateRepo {
         Ok(Some((run, analysis)))
     }
 
+    /// Resolve the newest published run for each requested universe. This is
+    /// called only when a screener request starts without a cursor; subsequent
+    /// pages carry the exact run-set in their signed capability.
+    pub async fn latest_runs(
+        &self,
+        universes: &[String],
+        as_of: Option<NaiveDate>,
+    ) -> TenancyResult<Vec<CandidateRunRow>> {
+        let rows: Vec<CandidateRunRow> = sqlx::query_as(
+            "SELECT DISTINCT ON (registry.universe_key)
+                    run.id, run.universe_key, run.as_of_date, run.cutoff_at,
+                    run.computation_seq, run.scoring_config_version,
+                    run.scoring_config_sha256, run.input_identity_sha256,
+                    run.universe_snapshot_id, run.price_dataset_version_id,
+                    run.price_curated_version, run.price_manifest_sha256,
+                    run.status_dataset_version_id, run.status_manifest_sha256,
+                    run.flow_dataset_version_id, run.flow_manifest_sha256,
+                    run.fundamental_dataset_version_id,
+                    run.fundamental_manifest_sha256, run.sector_version_id,
+                    run.published_at
+               FROM stock_analysis_runs AS run
+               JOIN candidate_feed_snapshots AS feed
+                 ON feed.run_id = run.id
+                AND feed.universe_key = run.universe_key
+                AND feed.status = 'PUBLISHED'
+               JOIN candidate_universe_registry AS registry
+                 ON registry.universe_key = run.universe_key
+                AND registry.enabled
+              WHERE run.status = 'SUCCEEDED'
+                AND run.universe_key = ANY($1::text[])
+                AND ($2::date IS NULL OR run.as_of_date = $2)
+              ORDER BY registry.universe_key, registry.sort_order,
+                       run.as_of_date DESC, run.computation_seq DESC",
+        )
+        .bind(universes)
+        .bind(as_of)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(TenancyError::from_sqlx)?;
+        Ok(rows)
+    }
+
+    /// Read a run's immutable universe identity for the legacy `run_id`
+    /// request path. The caller validates that it matches the requested
+    /// universe instead of silently falling back to another feed.
+    pub async fn run_universe(&self, run_id: Uuid) -> TenancyResult<Option<String>> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT universe_key
+               FROM stock_analysis_runs
+              WHERE id = $1 AND status = 'SUCCEEDED'",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(TenancyError::from_sqlx)
+    }
+
     pub async fn screen(
         &self,
         filter: &ScreenFilter,
-    ) -> TenancyResult<(CandidateRunRow, Vec<CandidateAnalysisRow>)> {
-        let run: CandidateRunRow = sqlx::query_as(
-            "SELECT id, as_of_date, cutoff_at, computation_seq,
+    ) -> TenancyResult<Vec<(CandidateRunRow, Vec<CandidateAnalysisRow>)>> {
+        if filter.run_set.is_empty() {
+            return Err(TenancyError::NotFound);
+        }
+
+        // A cursor pins every run in the request. Do not re-resolve the
+        // latest feed here: a correction may supersede the active feed while
+        // a client is paging through the original immutable run-set.
+        let run_ids = filter.run_set.iter().map(|(_, id)| *id).collect::<Vec<_>>();
+        let runs: Vec<CandidateRunRow> = sqlx::query_as(
+            "SELECT id, universe_key, as_of_date, cutoff_at, computation_seq,
                     scoring_config_version, scoring_config_sha256, input_identity_sha256,
                     universe_snapshot_id, price_dataset_version_id, price_curated_version,
                     price_manifest_sha256, status_dataset_version_id, status_manifest_sha256,
@@ -266,55 +345,98 @@ impl CandidateRepo {
                     sector_version_id, published_at
                FROM stock_analysis_runs
               WHERE status = 'SUCCEEDED'
-                AND ($1::uuid IS NULL OR id = $1)
-                AND ($2::date IS NULL OR as_of_date = $2)
-                AND EXISTS (
-                    SELECT 1 FROM candidate_feed_snapshots AS feed
-                     WHERE feed.run_id = stock_analysis_runs.id
-                       AND feed.status = 'PUBLISHED'
-                )
-              ORDER BY as_of_date DESC, computation_seq DESC LIMIT 1",
+                AND id = ANY($1::uuid[])
+                AND ($2::date IS NULL OR as_of_date = $2)",
         )
-        .bind(filter.run_id)
+        .bind(&run_ids)
         .bind(filter.as_of_date)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(TenancyError::from_sqlx)?
-        .ok_or(TenancyError::NotFound)?;
-        let probe = i64::try_from(filter.limit.saturating_add(1)).unwrap_or(i64::MAX);
-        let rows = sqlx::query_as::<_, CandidateAnalysisRow>(sqlx::AssertSqlSafe(format!(
-            "SELECT {ANALYSIS_COLUMNS}
-               FROM stock_analysis_snapshots AS snapshot
-               JOIN instruments AS instrument ON instrument.id = snapshot.instrument_id
-              WHERE snapshot.run_id = $1 AND snapshot.eligible
-                AND (cardinality($2::text[]) = 0 OR snapshot.sector_code = ANY($2))
-                AND (cardinality($3::text[]) = 0 OR snapshot.evidence_strength = ANY($3))
-                AND ($4::double precision IS NULL OR snapshot.total_score >= $4)
-                AND ($5::double precision IS NULL OR snapshot.flow_score >= $5)
-                AND ($6::double precision IS NULL OR snapshot.fundamental_score >= $6)
-                AND ($7::double precision IS NULL OR snapshot.technical_score >= $7)
-                AND (
-                    $8::numeric IS NULL
-                    OR snapshot.total_score < $8::numeric
-                    OR (snapshot.total_score = $8::numeric AND snapshot.instrument_id > $9)
-                )
-              ORDER BY snapshot.total_score DESC, snapshot.instrument_id
-              LIMIT $10"
-        )))
-        .bind(run.id)
-        .bind(&filter.sectors)
-        .bind(&filter.evidence)
-        .bind(filter.min_total_score)
-        .bind(filter.min_flow_score)
-        .bind(filter.min_fundamental_score)
-        .bind(filter.min_technical_score)
-        .bind(filter.after_score.clone())
-        .bind(&filter.after_instrument)
-        .bind(probe)
         .fetch_all(&self.pool)
         .await
         .map_err(TenancyError::from_sqlx)?;
-        Ok((run, rows))
+
+        let mut ordered_runs = Vec::with_capacity(filter.run_set.len());
+        for (expected_universe, expected_run_id) in &filter.run_set {
+            let run = runs
+                .iter()
+                .find(|run| run.id == *expected_run_id && run.universe_key == *expected_universe)
+                .cloned()
+                .ok_or(TenancyError::NotFound)?;
+            ordered_runs.push(run);
+        }
+
+        let probe = i64::try_from(filter.limit.saturating_add(1)).unwrap_or(i64::MAX);
+        let mut blocks = Vec::with_capacity(ordered_runs.len());
+        for run in ordered_runs {
+            // Rows in blocks after the cursor's universe are unanchored. The
+            // anchor only applies inside the block where the cursor stopped.
+            let anchored = filter
+                .after_universe
+                .as_deref()
+                .map(|universe| universe == run.universe_key)
+                .unwrap_or(false);
+            let before_anchor = filter.after_universe.as_deref().is_some_and(|universe| {
+                run.universe_key != universe
+                    && crate::contract::UniverseKey::parse(&run.universe_key)
+                        .ok()
+                        .is_some_and(|key| {
+                            crate::contract::UniverseKey::parse(universe)
+                                .ok()
+                                .is_some_and(|anchor| key.sort_order() < anchor.sort_order())
+                        })
+            });
+            if before_anchor {
+                blocks.push((run, Vec::new()));
+                continue;
+            }
+            let after_score = if anchored {
+                filter.after_score.clone()
+            } else {
+                None
+            };
+            let after_instrument = if anchored {
+                filter.after_instrument.clone()
+            } else {
+                None
+            };
+            let rows = sqlx::query_as::<_, CandidateAnalysisRow>(sqlx::AssertSqlSafe(format!(
+                "SELECT {ANALYSIS_COLUMNS}
+                   FROM stock_analysis_snapshots AS snapshot
+                   JOIN stock_analysis_runs AS run ON run.id = snapshot.run_id
+                   JOIN instruments AS instrument ON instrument.id = snapshot.instrument_id
+                  WHERE snapshot.run_id = $1 AND snapshot.eligible
+                    AND (cardinality($2::text[]) = 0 OR snapshot.sector_code = ANY($2))
+                    AND (cardinality($3::text[]) = 0 OR snapshot.evidence_strength = ANY($3))
+                    AND ($4::double precision IS NULL OR snapshot.total_score >= $4)
+                    AND ($5::double precision IS NULL OR snapshot.flow_score >= $5)
+                    AND ($6::double precision IS NULL OR snapshot.fundamental_score >= $6)
+                    AND ($7::double precision IS NULL OR snapshot.technical_score >= $7)
+                    AND (
+                        $8::numeric IS NULL
+                        OR snapshot.total_score < $8::numeric
+                        OR (snapshot.total_score = $8::numeric AND snapshot.instrument_id > $9)
+                    )
+                  ORDER BY snapshot.total_score DESC, snapshot.instrument_id
+                  LIMIT $10"
+            )))
+            .bind(run.id)
+            .bind(&filter.sectors)
+            .bind(&filter.evidence)
+            .bind(filter.min_total_score)
+            .bind(filter.min_flow_score)
+            .bind(filter.min_fundamental_score)
+            .bind(filter.min_technical_score)
+            .bind(after_score)
+            .bind(&after_instrument)
+            .bind(probe)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+            blocks.push((run, rows));
+        }
+        if blocks.is_empty() {
+            return Err(TenancyError::NotFound);
+        }
+        Ok(blocks)
     }
 
     pub async fn license_attributions(
@@ -352,7 +474,7 @@ impl CandidateRepo {
 
     async fn run_by_id(&self, run_id: Uuid) -> TenancyResult<CandidateRunRow> {
         let row = sqlx::query_as(
-            "SELECT id, as_of_date, cutoff_at, computation_seq,
+            "SELECT id, universe_key, as_of_date, cutoff_at, computation_seq,
                     scoring_config_version, scoring_config_sha256, input_identity_sha256,
                     universe_snapshot_id, price_dataset_version_id, price_curated_version,
                     price_manifest_sha256, status_dataset_version_id, status_manifest_sha256,
@@ -406,7 +528,7 @@ impl CandidateRepo {
         let row = sqlx::query_as(
             "INSERT INTO screener_saved_screens
                 (owner_user_id, name, criteria_schema_version, criteria_json)
-             VALUES ($1, $2, 1, $3)
+             VALUES ($1, $2, 2, $3)
              RETURNING id, name, criteria_schema_version, criteria_json, created_at, updated_at",
         )
         .bind(owner)
@@ -429,7 +551,8 @@ impl CandidateRepo {
         let mut tx = begin_actor_tx(&self.pool, actor).await?;
         let row = sqlx::query_as(
             "UPDATE screener_saved_screens
-                SET name = $2, criteria_json = $3, updated_at = clock_timestamp()
+                SET name = $2, criteria_schema_version = 2,
+                    criteria_json = $3, updated_at = clock_timestamp()
               WHERE id = $1
               RETURNING id, name, criteria_schema_version, criteria_json, created_at, updated_at",
         )
@@ -461,7 +584,7 @@ impl CandidateRepo {
 }
 
 const ANALYSIS_COLUMNS: &str = "
-    snapshot.id, snapshot.run_id, snapshot.instrument_id,
+    snapshot.id, snapshot.run_id, run.universe_key, snapshot.instrument_id,
     instrument.name AS instrument_name, snapshot.sector_code,
     snapshot.fundamental_profile, snapshot.eligible, snapshot.exclusion_codes,
     snapshot.flow_score::double precision AS flow_score,
