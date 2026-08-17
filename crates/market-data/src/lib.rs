@@ -79,6 +79,7 @@ pub use curate::{
 };
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,
+    ingest_kis_bundle,
 };
 pub use instrument_master::{
     AliasNamespace, Instrument, InstrumentAlias, InstrumentMaster, ListingReason, MasterError,

@@ -14,6 +14,7 @@ use domain::{BatchId, TradingDate, UtcTimestamp};
 
 use crate::contract::{ResponseKind, StoredFile};
 use crate::provider::{EodProvider, ProviderError};
+use crate::providers::kis::{KisProvider, KisRead, validate_kis_response};
 use crate::storage::{BatchSpec, ManifestEntry, RawStore, StoreError};
 use crate::validate::{ValidationError, validate_response};
 
@@ -186,6 +187,42 @@ pub fn ingest_bundle_with_kinds(
     ingest_bundle_with_kinds_and_store(store, provider, req, entitlement_reference, kinds)
 }
 
+/// Fetches one credentialed KIS EOD delivery and persists every broker reply
+/// byte-for-byte in one immutable Raw batch.
+///
+/// KIS is async because token issuance, rate limiting, retry sleeps, and HTTP
+/// are async. Its wire documents are validated against the endpoint-specific
+/// KIS shape rather than the recorded provider-neutral fixture shape.
+pub async fn ingest_kis_bundle<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+) -> Result<IngestOutcome, IngestError> {
+    let batch_id = BatchId::generate();
+    let fetch_req = crate::provider::FetchRequest {
+        market: req.market.clone(),
+        date: req.date,
+        kinds: crate::contract::EOD_RESPONSE_KINDS.to_vec(),
+        now: req.now,
+        batch_id,
+    };
+    let envelopes = provider.fetch(&fetch_req).await?;
+    validate_returned_kinds(&crate::contract::EOD_RESPONSE_KINDS, &envelopes)?;
+    for envelope in &envelopes {
+        validate_kis_response(envelope.kind, &envelope.request.endpoint, &envelope.bytes)?;
+    }
+    persist_bundle(
+        store,
+        provider.provider_id(),
+        provider.fetch_mode(),
+        req,
+        entitlement_reference,
+        batch_id,
+        &envelopes,
+    )
+}
+
 fn ingest_bundle_with_store<S: IngestStore + ?Sized>(
     store: &S,
     provider: &dyn EodProvider,
@@ -224,6 +261,33 @@ fn ingest_bundle_with_kinds_and_store<S: IngestStore + ?Sized>(
     };
     let envelopes = provider.fetch(&fetch_req)?;
 
+    validate_returned_kinds(kinds, &envelopes)?;
+
+    for env in &envelopes {
+        validate_response(env.kind, &env.bytes)?;
+    }
+
+    persist_bundle(
+        store,
+        provider.provider_id(),
+        provider.fetch_mode(),
+        req,
+        entitlement_reference,
+        batch_id,
+        &envelopes,
+    )
+}
+
+fn validate_returned_kinds(
+    kinds: &[ResponseKind],
+    envelopes: &[crate::contract::RawEnvelope],
+) -> Result<(), IngestError> {
+    let requested: BTreeSet<_> = kinds.iter().copied().collect();
+    if requested.is_empty() || requested.len() != kinds.len() {
+        return Err(IngestError::ResponseShape {
+            detail: "requested response classes must be nonempty and unique".to_owned(),
+        });
+    }
     let returned: BTreeSet<_> = envelopes.iter().map(|envelope| envelope.kind).collect();
     let missing: Vec<_> = requested
         .difference(&returned)
@@ -242,20 +306,28 @@ fn ingest_bundle_with_kinds_and_store<S: IngestStore + ?Sized>(
             ),
         });
     }
+    Ok(())
+}
 
-    for env in &envelopes {
-        validate_response(env.kind, &env.bytes)?;
-    }
-
+#[allow(clippy::too_many_arguments)]
+fn persist_bundle<S: IngestStore + ?Sized>(
+    store: &S,
+    provider_id: &str,
+    fetch_mode: crate::contract::FetchMode,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    batch_id: BatchId,
+    envelopes: &[crate::contract::RawEnvelope],
+) -> Result<IngestOutcome, IngestError> {
     let spec = BatchSpec {
-        provider: provider.provider_id(),
+        provider: provider_id,
         market: &req.market,
         date: &req.date,
         batch_id,
         entitlement_reference,
-        mode: provider.fetch_mode(),
+        mode: fetch_mode,
     };
-    let entry = store.store_batch(&spec, &envelopes)?;
+    let entry = store.store_batch(&spec, envelopes)?;
 
     let files = store
         .read_batch_bytes(&entry.provider, &entry.market, &entry)

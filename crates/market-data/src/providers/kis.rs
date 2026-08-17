@@ -14,6 +14,7 @@ use kis_client::{
 
 use crate::contract::{FetchMode, PROVIDER_KIS, RawEnvelope, RequestMetadata, ResponseKind};
 use crate::provider::{FetchRequest, ProviderError};
+use crate::validate::ValidationError;
 
 /// Fixed launch universe from `configs/universes/kr-etf-core-v1.yaml`.
 pub const KR_ETF_CORE_SYMBOLS: [&str; 11] = [
@@ -368,6 +369,60 @@ fn update_continuation_query(query: &mut [(String, String)], body: &[u8]) {
     }
 }
 
+pub(crate) fn validate_kis_response(
+    kind: ResponseKind,
+    endpoint: &str,
+    bytes: &[u8],
+) -> Result<(), ValidationError> {
+    let document: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|error| ValidationError {
+            kind,
+            reason: format!("not valid KIS JSON: {error}"),
+        })?;
+    let object = document.as_object().ok_or_else(|| ValidationError {
+        kind,
+        reason: "KIS response must be a JSON object".to_owned(),
+    })?;
+    if object.get("rt_cd").and_then(serde_json::Value::as_str) != Some("0") {
+        return Err(ValidationError {
+            kind,
+            reason: "KIS response rt_cd must equal 0".to_owned(),
+        });
+    }
+
+    let valid = match (kind, endpoint) {
+        (ResponseKind::Bars, DAILY_BARS_PATH) => {
+            object
+                .get("output1")
+                .is_some_and(serde_json::Value::is_object)
+                && object
+                    .get("output2")
+                    .is_some_and(serde_json::Value::is_array)
+        }
+        (ResponseKind::Reference, REFERENCE_PATH) => object
+            .get("output")
+            .is_some_and(serde_json::Value::is_object),
+        (ResponseKind::Calendar, CALENDAR_PATH) => object
+            .get("output")
+            .is_some_and(|value| value.is_object() || value.is_array()),
+        (ResponseKind::CorporateActions, path)
+            if path.starts_with("/uapi/domestic-stock/v1/ksdinfo/") =>
+        {
+            object
+                .get("output1")
+                .is_some_and(|value| value.is_object() || value.is_array())
+        }
+        _ => false,
+    };
+    if !valid {
+        return Err(ValidationError {
+            kind,
+            reason: format!("unexpected KIS response shape for endpoint {endpoint:?}"),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -376,6 +431,8 @@ mod tests {
     use kis_client::MarketDataReply;
 
     use super::*;
+    use crate::ingest::{IngestError, IngestRequest, ingest_kis_bundle};
+    use crate::storage::RawStore;
 
     #[derive(Debug)]
     struct FixtureReader {
@@ -418,14 +475,36 @@ mod tests {
                 continuation: continuation.map(str::to_owned),
             });
             let should_continue = self.continuation_once && continuation.is_none();
-            Ok(MarketDataReply {
-                body: if path == CALENDAR_PATH {
+            let body = match path {
+                DAILY_BARS_PATH => br#"{"rt_cd":"0","output1":{},"output2":[]}"#.to_vec(),
+                REFERENCE_PATH => br#"{"rt_cd":"0","output":{}}"#.to_vec(),
+                CALENDAR_PATH => {
                     br#"{"rt_cd":"0","ctx_area_fk":"next-fk","ctx_area_nk":"next-nk","output":[]}"#
                         .to_vec()
-                } else {
-                    br#"{"rt_cd":"0","output":[],"output1":[],"output2":[]}"#.to_vec()
-                },
+                }
+                _ => br#"{"rt_cd":"0","output1":[]}"#.to_vec(),
+            };
+            Ok(MarketDataReply {
+                body,
                 continuation: should_continue.then(|| "F".to_owned()),
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct MalformedReader;
+
+    impl KisRead for MalformedReader {
+        async fn get(
+            &self,
+            _path: &str,
+            _tr_id: &str,
+            _query: &[(String, String)],
+            _continuation: Option<&str>,
+        ) -> Result<MarketDataReply, KisError> {
+            Ok(MarketDataReply {
+                body: br#"{"rt_cd":"0","wrong":[]}"#.to_vec(),
+                continuation: None,
             })
         }
     }
@@ -496,12 +575,64 @@ mod tests {
         }));
         assert_eq!(
             fetched[0].bytes,
-            br#"{"rt_cd":"0","output":[],"output1":[],"output2":[]}"#
+            br#"{"rt_cd":"0","output1":{},"output2":[]}"#
         );
         assert_eq!(
             fetched[0].content_hash,
             domain::ContentHash::from_bytes(&fetched[0].bytes)
         );
+    }
+
+    #[tokio::test]
+    async fn credentialed_ingest_commits_one_exact_kis_raw_batch() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let provider = KisProvider::kr_etf_core(FixtureReader::new());
+        let req = IngestRequest::new(
+            "kr".to_owned(),
+            TradingDate::parse("2026-08-14").unwrap(),
+            UtcTimestamp::parse_rfc3339("2026-08-14T07:00:00Z").unwrap(),
+        );
+
+        let outcome =
+            ingest_kis_bundle(&store, &provider, &req, Some("contract://kis-market-data"))
+                .await
+                .unwrap();
+
+        assert_eq!(outcome.entry.provider, PROVIDER_KIS);
+        assert_eq!(outcome.entry.mode, FetchMode::Credentialed);
+        assert_eq!(
+            outcome.entry.entitlement_reference.as_deref(),
+            Some("contract://kis-market-data")
+        );
+        assert_eq!(outcome.files.len(), 30);
+        assert_eq!(
+            outcome.files[0].bytes,
+            br#"{"rt_cd":"0","output1":{},"output2":[]}"#
+        );
+        assert_eq!(
+            store.read_manifest(PROVIDER_KIS, "kr").unwrap(),
+            vec![outcome.entry]
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_kis_wire_is_rejected_before_raw_visibility() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let provider = KisProvider::kr_etf_core(MalformedReader);
+        let req = IngestRequest::new(
+            "kr".to_owned(),
+            TradingDate::parse("2026-08-14").unwrap(),
+            UtcTimestamp::parse_rfc3339("2026-08-14T07:00:00Z").unwrap(),
+        );
+
+        let error = ingest_kis_bundle(&store, &provider, &req, None)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, IngestError::MalformedResponse { .. }));
+        assert!(store.read_manifest(PROVIDER_KIS, "kr").unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -559,5 +690,48 @@ mod tests {
                     .expect_err("invalid KIS domestic instrument");
             assert!(matches!(error, ProviderError::InvalidConfiguration { .. }));
         }
+    }
+
+    #[test]
+    fn kis_wire_validation_is_endpoint_specific_and_fail_closed() {
+        for (kind, endpoint, body) in [
+            (
+                ResponseKind::Bars,
+                DAILY_BARS_PATH,
+                br#"{"rt_cd":"0","output1":{},"output2":[]}"#.as_slice(),
+            ),
+            (
+                ResponseKind::Reference,
+                REFERENCE_PATH,
+                br#"{"rt_cd":"0","output":{}}"#.as_slice(),
+            ),
+            (
+                ResponseKind::Calendar,
+                CALENDAR_PATH,
+                br#"{"rt_cd":"0","output":[]}"#.as_slice(),
+            ),
+            (
+                ResponseKind::CorporateActions,
+                "/uapi/domestic-stock/v1/ksdinfo/dividend",
+                br#"{"rt_cd":"0","output1":[]}"#.as_slice(),
+            ),
+        ] {
+            validate_kis_response(kind, endpoint, body).expect("official KIS wire shape");
+        }
+
+        for body in [
+            br#"{"rt_cd":"1","output2":[]}"#.as_slice(),
+            br#"{"rt_cd":"0","bars":[]}"#.as_slice(),
+        ] {
+            assert!(validate_kis_response(ResponseKind::Bars, DAILY_BARS_PATH, body).is_err());
+        }
+        assert!(
+            validate_kis_response(
+                ResponseKind::Bars,
+                "/uapi/domestic-stock/v1/quotations/unknown",
+                br#"{"rt_cd":"0","output1":{},"output2":[]}"#,
+            )
+            .is_err()
+        );
     }
 }
