@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseApiResponse } from "@/lib/api/response";
+import { useLocale } from "@/lib/i18n/client";
+import { backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
 import { robustnessQueuedSchema } from "@/lib/products/backtest-contracts";
 
 export type RobustnessControlProps = {
@@ -12,6 +14,8 @@ export type RobustnessControlProps = {
 export function RobustnessControl({ runId }: RobustnessControlProps) {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const { locale } = useLocale();
+  const t = backtestsDictionary[locale];
 
   async function queue(): Promise<void> {
     setSubmitting(true);
@@ -21,7 +25,7 @@ export function RobustnessControl({ runId }: RobustnessControlProps) {
         method: "POST",
       });
       await parseApiResponse(response, robustnessQueuedSchema);
-      setMessage("Robustness queued. Existing evidence remains visible while the server runs it.");
+      setMessage(t.robustnessQueuedMessage);
     } catch (error) {
       if (error instanceof Error) {
         setMessage(error.message);
@@ -41,7 +45,7 @@ export function RobustnessControl({ runId }: RobustnessControlProps) {
         onClick={() => void queue()}
         type="button"
       >
-        {submitting ? "Queueing robustness evidence" : "Run robustness evidence"}
+        {submitting ? t.queueingRobustnessLabel : t.runRobustnessButton}
       </button>
       {message === "" ? null : (
         <p className="form-result" role="status">

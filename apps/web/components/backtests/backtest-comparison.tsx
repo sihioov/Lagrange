@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseApiResponse } from "@/lib/api/response";
+import { useLocale } from "@/lib/i18n/client";
+import { backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
 import {
   type BacktestCompareModel,
   type BacktestRunModel,
@@ -18,11 +20,13 @@ export type BacktestComparisonProps = {
 export function BacktestComparison({ runs }: BacktestComparisonProps) {
   const [comparison, setComparison] = useState<BacktestCompareModel | null>(null);
   const [message, setMessage] = useState("");
+  const { locale } = useLocale();
+  const t = backtestsDictionary[locale];
 
   async function compare(form: HTMLFormElement): Promise<void> {
     const runIds = new FormData(form).getAll("run_id").filter((value) => typeof value === "string");
     if (runIds.length !== 2) {
-      setMessage("Select exactly two completed runs.");
+      setMessage(t.selectTwoRunsMessage);
       return;
     }
     try {
@@ -45,12 +49,12 @@ export function BacktestComparison({ runs }: BacktestComparisonProps) {
     <section className="product-section">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Server comparison</p>
-          <h2>Compare runs</h2>
+          <p className="eyebrow">{t.comparisonEyebrow}</p>
+          <h2>{t.compareRunsHeading}</h2>
         </div>
       </div>
       <form
-        aria-label="Compare backtest runs"
+        aria-label={t.compareRunsAriaLabel}
         className="workflow-form"
         onSubmit={(event) => {
           event.preventDefault();
@@ -58,7 +62,7 @@ export function BacktestComparison({ runs }: BacktestComparisonProps) {
         }}
       >
         <fieldset>
-          <legend>Completed runs</legend>
+          <legend>{t.completedRunsLegend}</legend>
           <div className="field-grid">
             {runs.map((run) => (
               <label className="form-field" key={run.id}>
@@ -69,7 +73,7 @@ export function BacktestComparison({ runs }: BacktestComparisonProps) {
           </div>
         </fieldset>
         <button className="secondary-action" type="submit">
-          Compare selected runs
+          {t.compareSelectedRunsButton}
         </button>
         {message === "" ? null : (
           <p className="form-result" role="alert">
@@ -79,10 +83,10 @@ export function BacktestComparison({ runs }: BacktestComparisonProps) {
       </form>
       {comparison === null ? null : (
         <section aria-labelledby="comparison-result-title" className="report-section">
-          <h3 id="comparison-result-title">Run comparison</h3>
+          <h3 id="comparison-result-title">{t.runComparisonHeading}</h3>
           <dl className="provenance-grid">
             <div>
-              <dt>Total return delta</dt>
+              <dt>{t.totalReturnDeltaLabel}</dt>
               <dd>{formatPercentage(comparison.deltas.total_return)}</dd>
             </div>
           </dl>

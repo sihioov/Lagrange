@@ -1,4 +1,5 @@
 import { type ReactNode, useId } from "react";
+import { EquilibriumMark } from "@/components/shell/equilibrium-mark";
 
 export type StateKind = "blocked" | "empty" | "error" | "loading";
 
@@ -34,7 +35,9 @@ export function StatePanel({ action, kind, message, title }: StatePanelProps) {
       data-kind={kind}
       role={STATE_ROLES[kind]}
     >
-      <span aria-hidden="true" className="state-panel-marker" />
+      <span className="state-panel-marker">
+        <EquilibriumMark size={28} />
+      </span>
       <h2 id={titleId}>{title}</h2>
       <p>{message}</p>
       {action === undefined ? null : <div className="state-panel-action">{action}</div>}

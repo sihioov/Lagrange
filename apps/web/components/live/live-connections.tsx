@@ -1,3 +1,7 @@
+"use client";
+
+import { useLocale } from "@/lib/i18n/client";
+import { liveDictionary } from "@/lib/i18n/dictionaries/live";
 import { isLiveProfile, type LiveConnectionModel } from "@/lib/products/live-contracts";
 
 export type LiveConnectionsProps = {
@@ -18,28 +22,29 @@ export type LiveConnectionsProps = {
  * operator needs in order to fix a misconfiguration.
  */
 export function LiveConnections({ connections }: LiveConnectionsProps) {
+  const { locale } = useLocale();
+  const t = liveDictionary[locale];
+
   if (connections.length === 0) {
     return (
       <section aria-labelledby="live-connections-title" className="report-section">
-        <h3 id="live-connections-title">Broker connections</h3>
-        <p className="supporting-copy">
-          No broker connection is configured. Live trading cannot start until one exists.
-        </p>
+        <h3 id="live-connections-title">{t.connectionsTitle}</h3>
+        <p className="supporting-copy">{t.noConnectionMessage}</p>
       </section>
     );
   }
 
   return (
     <section aria-labelledby="live-connections-title" className="report-section">
-      <h3 id="live-connections-title">Broker connections</h3>
+      <h3 id="live-connections-title">{t.connectionsTitle}</h3>
       <table>
-        <caption>Configured broker connections</caption>
+        <caption>{t.connectionsCaption}</caption>
         <thead>
           <tr>
-            <th scope="col">Connection</th>
-            <th scope="col">Profile</th>
-            <th scope="col">Account</th>
-            <th scope="col">Credential locations</th>
+            <th scope="col">{t.columnConnection}</th>
+            <th scope="col">{t.columnProfile}</th>
+            <th scope="col">{t.columnAccount}</th>
+            <th scope="col">{t.columnCredentialLocations}</th>
           </tr>
         </thead>
         <tbody>
@@ -48,9 +53,9 @@ export function LiveConnections({ connections }: LiveConnectionsProps) {
               <th scope="row">{connection.label}</th>
               <td>
                 {isLiveProfile(connection) ? (
-                  <strong>LIVE — places real orders</strong>
+                  <strong>{t.liveProfileLabel}</strong>
                 ) : (
-                  "Mock — simulated"
+                  t.mockProfileLabel
                 )}
               </td>
               <td>
@@ -58,18 +63,15 @@ export function LiveConnections({ connections }: LiveConnectionsProps) {
               </td>
               <td>
                 <ul>
-                  <li>key: {connection.kis_app_key_ref}</li>
-                  <li>secret: {connection.kis_app_secret_ref}</li>
+                  <li>{t.keyLabel(connection.kis_app_key_ref)}</li>
+                  <li>{t.secretLabel(connection.kis_app_secret_ref)}</li>
                 </ul>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="supporting-copy">
-        Credentials are shown as locations, never values. The server stores a reference to where
-        each credential lives and has no field capable of holding the credential itself.
-      </p>
+      <p className="supporting-copy">{t.credentialsFootnote}</p>
     </section>
   );
 }

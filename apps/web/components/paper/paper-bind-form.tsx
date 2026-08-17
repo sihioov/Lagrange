@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseApiResponse } from "@/lib/api/response";
+import { useLocale } from "@/lib/i18n/client";
+import { paperDictionary } from "@/lib/i18n/dictionaries/paper";
 import { bindStrategySchema } from "@/lib/products/paper-contracts";
 
 type BindState =
@@ -30,11 +32,13 @@ export type PaperBindFormProps = {
 export function PaperBindForm({ accountId, activeStrategy, configs }: PaperBindFormProps) {
   const router = useRouter();
   const [state, setState] = useState<BindState>({ kind: "idle" });
+  const { locale } = useLocale();
+  const t = paperDictionary[locale];
 
   async function submit(form: HTMLFormElement): Promise<void> {
     const configId = new FormData(form).get("strategy_config_id");
     if (typeof configId !== "string" || configId === "") {
-      setState({ kind: "error", message: "Select a strategy configuration to bind." });
+      setState({ kind: "error", message: t.bindFormSelectConfigError });
       return;
     }
     setState({ kind: "submitting" });
@@ -46,7 +50,7 @@ export function PaperBindForm({ accountId, activeStrategy, configs }: PaperBindF
       const bound = await parseApiResponse(response, bindStrategySchema);
       setState({
         kind: "bound",
-        message: `Bound ${bound.strategy_id}@${bound.strategy_version}. Sessions from the next close run on this version; earlier sessions keep theirs.`,
+        message: t.bindFormBoundMessage(bound.strategy_id, bound.strategy_version),
       });
       router.refresh();
     } catch (error) {
@@ -60,7 +64,7 @@ export function PaperBindForm({ accountId, activeStrategy, configs }: PaperBindF
 
   return (
     <form
-      aria-label="Bind strategy"
+      aria-label={t.bindFormAriaLabel}
       className="workflow-form"
       noValidate
       onSubmit={(event) => {
@@ -69,7 +73,7 @@ export function PaperBindForm({ accountId, activeStrategy, configs }: PaperBindF
       }}
     >
       <label className="form-field">
-        <span>Strategy configuration</span>
+        <span>{t.bindFormStrategyConfigLabel}</span>
         <select defaultValue={configs[0]?.id ?? ""} name="strategy_config_id" required>
           {configs.map((config) => (
             <option key={config.id} value={config.id}>
@@ -80,13 +84,12 @@ export function PaperBindForm({ accountId, activeStrategy, configs }: PaperBindF
       </label>
       <p className="supporting-copy">
         {activeStrategy === null
-          ? "This account has no active binding yet."
-          : `Currently bound to ${activeStrategy}.`}{" "}
-        Binding a different configuration branches the account: the current binding is closed and a
-        new one opens, so execution history never mixes strategy versions.
+          ? t.bindFormNoActiveBinding
+          : t.bindFormCurrentlyBoundTo(activeStrategy)}{" "}
+        {t.bindFormBranchExplanation}
       </p>
       <button className="primary-action" disabled={state.kind === "submitting"} type="submit">
-        {state.kind === "submitting" ? "Binding strategy" : "Bind strategy"}
+        {state.kind === "submitting" ? t.bindFormButtonBinding : t.bindFormButtonBind}
       </button>
       {state.kind === "error" || state.kind === "bound" ? (
         <p className="form-result" role={state.kind === "error" ? "alert" : "status"}>

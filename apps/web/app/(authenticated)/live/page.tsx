@@ -5,6 +5,8 @@ import { OwnerRoute } from "@/components/pages/owner-route";
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
+import { type LiveDictionary, liveDictionary } from "@/lib/i18n/dictionaries/live";
+import { getLocale } from "@/lib/i18n/server";
 import { liveUnavailableReason } from "@/lib/products/live-contracts";
 
 export const dynamic = "force-dynamic";
@@ -14,9 +16,6 @@ export const revalidate = 0;
 export const metadata: Metadata = {
   title: "Live controls",
 };
-
-const DESCRIPTION =
-  "Owner-only broker connections, node lifecycle, and the Live kill switch. Every action requires a fresh multi-factor authentication.";
 
 /**
  * The Live controls page.
@@ -33,14 +32,16 @@ const DESCRIPTION =
  * not answer would draw exactly the wrong conclusion.
  */
 export default async function LivePage() {
+  const locale = await getLocale();
+  const t = liveDictionary[locale];
   return (
-    <OwnerRoute description={DESCRIPTION} title="Live controls">
-      <LiveWorkspace />
+    <OwnerRoute description={t.pageDescription} title={t.pageTitle}>
+      <LiveWorkspace t={t} />
     </OwnerRoute>
   );
 }
 
-async function LiveWorkspace() {
+async function LiveWorkspace({ t }: { readonly t: LiveDictionary }) {
   try {
     const api = await getProductApi();
     const connections = await api.getLiveConnections();
@@ -61,26 +62,18 @@ async function LiveWorkspace() {
           <StatePanel
             kind="blocked"
             message={liveUnavailableReason(error.code)}
-            title="Fresh authentication required"
+            title={t.freshAuthRequiredTitle}
           />
         );
       }
       if (error.code === "RESOURCE_NOT_FOUND") {
         return (
-          <StatePanel
-            kind="blocked"
-            message="Live controls are not available to this session."
-            title="Live controls unavailable"
-          />
+          <StatePanel kind="blocked" message={t.notAvailableMessage} title={t.unavailableTitle} />
         );
       }
     }
     return (
-      <StatePanel
-        kind="error"
-        message="Live configuration could not be loaded. The kill switch remains engaged until this resolves."
-        title="Live controls unavailable"
-      />
+      <StatePanel kind="error" message={t.configLoadFailedMessage} title={t.unavailableTitle} />
     );
   }
 }

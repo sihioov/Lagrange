@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseApiResponse } from "@/lib/api/response";
+import { useLocale } from "@/lib/i18n/client";
+import { backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
 import { backtestCreateSchema } from "@/lib/products/backtest-contracts";
 
 type CreateState =
@@ -23,6 +25,8 @@ export type BacktestCreateFormProps = {
 export function BacktestCreateForm(props: BacktestCreateFormProps) {
   const router = useRouter();
   const [state, setState] = useState<CreateState>({ kind: "idle" });
+  const { locale } = useLocale();
+  const t = backtestsDictionary[locale];
 
   async function submit(form: HTMLFormElement): Promise<void> {
     const data = new FormData(form);
@@ -40,7 +44,7 @@ export function BacktestCreateForm(props: BacktestCreateFormProps) {
     ) {
       setState({
         kind: "error",
-        message: "Enter a valid date range and a positive KRW amount.",
+        message: t.invalidDateRangeMessage,
       });
       return;
     }
@@ -61,7 +65,7 @@ export function BacktestCreateForm(props: BacktestCreateFormProps) {
         method: "POST",
       });
       const created = await parseApiResponse(response, backtestCreateSchema);
-      setState({ kind: "queued", message: `Backtest queued (${created.id}).` });
+      setState({ kind: "queued", message: t.backtestQueuedMessage(created.id) });
       router.refresh();
     } catch (error) {
       if (error instanceof Error) {
@@ -74,7 +78,7 @@ export function BacktestCreateForm(props: BacktestCreateFormProps) {
 
   return (
     <form
-      aria-label="Create backtest"
+      aria-label={t.createBacktestLabel}
       className="workflow-form"
       noValidate
       onSubmit={(event) => {
@@ -84,24 +88,23 @@ export function BacktestCreateForm(props: BacktestCreateFormProps) {
     >
       <div className="field-grid">
         <label className="form-field">
-          <span>Start date</span>
+          <span>{t.startDateLabel}</span>
           <input defaultValue="2020-01-02" name="start_date" required type="date" />
         </label>
         <label className="form-field">
-          <span>End date</span>
+          <span>{t.endDateLabel}</span>
           <input defaultValue="2025-12-31" name="end_date" required type="date" />
         </label>
         <label className="form-field">
-          <span>Initial cash (KRW)</span>
+          <span>{t.initialCashLabel}</span>
           <input defaultValue="100000000" inputMode="decimal" name="initial_cash" required />
         </label>
       </div>
       <p className="supporting-copy">
-        The server applies {props.executionProfile}, {props.costProfileId}, and benchmark{" "}
-        {props.benchmark}.
+        {t.supportingCopy(props.executionProfile, props.costProfileId, props.benchmark)}
       </p>
       <button className="primary-action" disabled={state.kind === "submitting"} type="submit">
-        {state.kind === "submitting" ? "Creating backtest" : "Create backtest"}
+        {state.kind === "submitting" ? t.creatingBacktestLabel : t.createBacktestLabel}
       </button>
       {state.kind === "error" || state.kind === "queued" ? (
         <p className="form-result" role={state.kind === "error" ? "alert" : "status"}>

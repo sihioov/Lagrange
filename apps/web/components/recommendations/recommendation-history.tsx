@@ -1,12 +1,14 @@
 import { StatusPill } from "@/components/states/status-pill";
+import type { RecommendationsDictionary } from "@/lib/i18n/dictionaries/recommendations";
 import type { RecommendationRunModel } from "@/lib/products/contracts";
 import { formatDate, formatTimestamp } from "@/lib/products/format";
 
 export type RecommendationHistoryProps = {
   readonly runs: readonly RecommendationRunModel[];
+  readonly t: RecommendationsDictionary;
 };
 
-export function RecommendationHistory({ runs }: RecommendationHistoryProps) {
+export function RecommendationHistory({ runs, t }: RecommendationHistoryProps) {
   const newestFirst = [...runs].sort((left, right) =>
     right.created_at.localeCompare(left.created_at),
   );
@@ -14,22 +16,22 @@ export function RecommendationHistory({ runs }: RecommendationHistoryProps) {
     <section aria-labelledby="recommendation-history-title" className="product-section">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Historical runs</p>
-          <h2 id="recommendation-history-title">Recommendation history</h2>
+          <p className="eyebrow">{t.historyEyebrow}</p>
+          <h2 id="recommendation-history-title">{t.historyHeading}</h2>
         </div>
       </div>
       {newestFirst.length === 0 ? (
-        <p className="empty-copy">No historical recommendation runs are available.</p>
+        <p className="empty-copy">{t.historyEmptyMessage}</p>
       ) : (
         <div className="data-table-wrap">
           <table>
-            <caption>Recommendation run history</caption>
+            <caption>{t.historyCaption}</caption>
             <thead>
               <tr>
-                <th scope="col">As of</th>
-                <th scope="col">Created</th>
-                <th scope="col">Status</th>
-                <th scope="col">Run ID</th>
+                <th scope="col">{t.columnAsOf}</th>
+                <th scope="col">{t.columnCreated}</th>
+                <th scope="col">{t.columnStatus}</th>
+                <th scope="col">{t.columnRunId}</th>
               </tr>
             </thead>
             <tbody>
@@ -37,9 +39,7 @@ export function RecommendationHistory({ runs }: RecommendationHistoryProps) {
                 <tr key={run.id}>
                   <th scope="row">{formatDate(run.as_of)}</th>
                   <td>
-                    {run.created_at === undefined
-                      ? "Not reported"
-                      : formatTimestamp(run.created_at)}
+                    {run.created_at === undefined ? t.notReported : formatTimestamp(run.created_at)}
                   </td>
                   <td>
                     <StatusPill

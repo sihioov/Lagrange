@@ -2,11 +2,15 @@
 
 import { useState } from "react";
 import { logout } from "@/lib/api/browser-client";
+import { useLocale } from "@/lib/i18n/client";
+import { shellDictionary } from "@/lib/i18n/dictionaries/shell";
 
 type LogoutState = "idle" | "submitting" | "error";
 
 export function LogoutForm() {
   const [state, setState] = useState<LogoutState>("idle");
+  const { locale } = useLocale();
+  const t = shellDictionary[locale];
 
   async function submitLogout(): Promise<void> {
     setState("submitting");
@@ -28,7 +32,7 @@ export function LogoutForm() {
 
   return (
     <form
-      aria-label="Sign out"
+      aria-label={t.signOut}
       className="shell-signout"
       onSubmit={(event) => {
         event.preventDefault();
@@ -36,11 +40,9 @@ export function LogoutForm() {
       }}
     >
       <button disabled={state === "submitting"} type="submit">
-        {state === "submitting" ? "Signing out" : "Sign out"}
+        {state === "submitting" ? t.signingOut : t.signOut}
       </button>
-      {state === "error" ? (
-        <p role="alert">Sign out failed. Check your connection and retry.</p>
-      ) : null}
+      {state === "error" ? <p role="alert">{t.signOutFailed}</p> : null}
     </form>
   );
 }

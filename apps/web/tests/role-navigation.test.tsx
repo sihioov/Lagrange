@@ -4,6 +4,7 @@ import { AppShell } from "@/components/shell/app-shell";
 import type { ApiSession } from "@/lib/api/contracts";
 
 vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: () => undefined }),
   usePathname: () => "/recommendations",
 }));
 
@@ -34,9 +35,9 @@ describe("role-aware primary navigation", () => {
 
     // When
     const markup = renderShell(session);
-    const currentLabels = Array.from(markup.matchAll(/<a([^>]*)>([^<]+)<\/a>/g), (match) => ({
+    const currentLabels = Array.from(markup.matchAll(/<a([^>]*)>([\s\S]*?)<\/a>/g), (match) => ({
       attributes: match[1] ?? "",
-      label: match[2] ?? "",
+      label: (match[2] ?? "").replace(/<[^>]*>/g, "").trim(),
     }))
       .filter((link) => link.attributes.includes('aria-current="page"'))
       .map((link) => link.label);

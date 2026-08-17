@@ -1,3 +1,4 @@
+import type { PaperDictionary } from "@/lib/i18n/dictionaries/paper";
 import type {
   PaperAccountModel,
   PaperOrderModel,
@@ -8,33 +9,34 @@ export type PaperHoldingsProps = {
   readonly account: PaperAccountModel;
   readonly orders: readonly PaperOrderModel[];
   readonly positions: readonly PaperPositionModel[];
+  readonly t: PaperDictionary;
 };
 
 /** The account's identity, current positions, and order history. */
-export function PaperHoldings({ account, orders, positions }: PaperHoldingsProps) {
+export function PaperHoldings({ account, orders, positions, t }: PaperHoldingsProps) {
   return (
     <section aria-labelledby="paper-holdings-title" className="report-section">
-      <h3 id="paper-holdings-title">Account and holdings</h3>
+      <h3 id="paper-holdings-title">{t.holdingsTitle}</h3>
       <dl className="definition-grid">
-        <dt>Account</dt>
+        <dt>{t.accountLabel}</dt>
         <dd>{account.name}</dd>
-        <dt>Status</dt>
+        <dt>{t.statusLabel}</dt>
         <dd>{account.status}</dd>
-        <dt>Opening cash</dt>
-        <dd>{account.initial_cash ?? "Not reported"}</dd>
-        <dt>Cost profile</dt>
+        <dt>{t.openingCashLabel}</dt>
+        <dd>{account.initial_cash ?? t.notReported}</dd>
+        <dt>{t.costProfileLabel}</dt>
         <dd>
           {account.cost_profile_id}@{account.cost_profile_version}
         </dd>
       </dl>
 
       <table>
-        <caption>Current positions</caption>
+        <caption>{t.currentPositionsCaption}</caption>
         <thead>
           <tr>
-            <th scope="col">Instrument</th>
-            <th scope="col">Quantity</th>
-            <th scope="col">Average price</th>
+            <th scope="col">{t.columnInstrument}</th>
+            <th scope="col">{t.columnQuantity}</th>
+            <th scope="col">{t.columnAveragePrice}</th>
           </tr>
         </thead>
         <tbody>
@@ -42,22 +44,22 @@ export function PaperHoldings({ account, orders, positions }: PaperHoldingsProps
             <tr key={position.instrument_id}>
               <th scope="row">{position.instrument_id}</th>
               <td>{position.quantity}</td>
-              <td>{position.avg_price ?? "Not reported"}</td>
+              <td>{position.avg_price ?? t.notReported}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
       <table>
-        <caption>Paper orders and fills</caption>
+        <caption>{t.paperOrdersCaption}</caption>
         <thead>
           <tr>
-            <th scope="col">Order</th>
-            <th scope="col">Instrument</th>
-            <th scope="col">Side</th>
-            <th scope="col">Quantity</th>
-            <th scope="col">Price</th>
-            <th scope="col">Status</th>
+            <th scope="col">{t.columnOrder}</th>
+            <th scope="col">{t.columnInstrument}</th>
+            <th scope="col">{t.columnSide}</th>
+            <th scope="col">{t.columnQuantity}</th>
+            <th scope="col">{t.columnPrice}</th>
+            <th scope="col">{t.statusLabel}</th>
           </tr>
         </thead>
         <tbody>
@@ -67,7 +69,7 @@ export function PaperHoldings({ account, orders, positions }: PaperHoldingsProps
               <td>{order.instrument_id}</td>
               <td>{order.side}</td>
               <td>{order.quantity}</td>
-              <td>{order.price ?? "Not reported"}</td>
+              <td>{order.price ?? t.notReported}</td>
               <td>{order.status}</td>
             </tr>
           ))}

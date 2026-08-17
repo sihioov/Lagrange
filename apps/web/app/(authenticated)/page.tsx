@@ -2,51 +2,42 @@ import { ArrowUpRightIcon } from "@phosphor-icons/react/ssr";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { RoutePage } from "@/components/pages/route-page";
+import { type ShellDictionary, shellDictionary } from "@/lib/i18n/dictionaries/shell";
+import { getLocale } from "@/lib/i18n/server";
 
-const WORKSPACES = [
-  {
-    description: "Review approved strategies and their constrained parameters.",
-    href: "/strategies",
-    label: "Strategies",
-  },
-  {
-    description: "Inspect explainable candidates, weights, and exclusions.",
-    href: "/recommendations",
-    label: "Recommendations",
-  },
-  {
-    description: "Create reproducible runs and review risk evidence.",
-    href: "/backtests",
-    label: "Backtests",
-  },
-  {
-    description: "Monitor your private simulated account and orders.",
-    href: "/paper",
-    label: "Paper account",
-  },
-] as const;
+function workspaces(t: ShellDictionary) {
+  return [
+    { description: t.strategiesDescription, href: "/strategies", label: t.navStrategies },
+    {
+      description: t.recommendationsDescription,
+      href: "/recommendations",
+      label: t.navRecommendations,
+    },
+    { description: t.backtestsDescription, href: "/backtests", label: t.navBacktests },
+    { description: t.paperAccountDescription, href: "/paper", label: t.navPaperAccount },
+  ] as const;
+}
 
 export const metadata: Metadata = {
   title: "Dashboard",
 };
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const locale = await getLocale();
+  const t = shellDictionary[locale];
   return (
-    <RoutePage
-      description="Move between isolated research workspaces. Authenticated data is fetched per request and is never shared across sessions."
-      title="Research dashboard"
-    >
+    <RoutePage description={t.dashboardDescription} title={t.dashboardTitle}>
       <section aria-labelledby="workspace-heading" className="surface-panel workspace-overview">
         <div className="workspace-introduction">
           <p className="status-pill">
             <span aria-hidden="true" />
-            Private session
+            {t.privateSession}
           </p>
-          <h2 id="workspace-heading">Choose a workspace</h2>
-          <p>Each destination opens a server-authorized view with conservative failure states.</p>
+          <h2 id="workspace-heading">{t.chooseWorkspaceHeading}</h2>
+          <p>{t.chooseWorkspaceDescription}</p>
         </div>
         <div className="workspace-grid">
-          {WORKSPACES.map((workspace) => (
+          {workspaces(t).map((workspace) => (
             <Link className="workspace-link" href={workspace.href} key={workspace.href}>
               <span>
                 <strong>{workspace.label}</strong>

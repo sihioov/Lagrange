@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseApiResponse } from "@/lib/api/response";
+import { useLocale } from "@/lib/i18n/client";
+import { liveDictionary } from "@/lib/i18n/dictionaries/live";
 import { killSwitchSchema, liveUnavailableReason } from "@/lib/products/live-contracts";
 
 type SwitchState =
@@ -30,6 +32,8 @@ export function LiveKillSwitch({ engaged }: LiveKillSwitchProps) {
   const router = useRouter();
   const [state, setState] = useState<SwitchState>({ kind: "idle" });
   const [reason, setReason] = useState("");
+  const { locale } = useLocale();
+  const t = liveDictionary[locale];
 
   async function send(target: "enable" | "disable"): Promise<void> {
     setState({ kind: "working" });
@@ -41,9 +45,7 @@ export function LiveKillSwitch({ engaged }: LiveKillSwitchProps) {
       const result = await parseApiResponse(response, killSwitchSchema);
       setState({
         kind: "done",
-        message: result.engaged
-          ? "Kill switch engaged. No Live node can start."
-          : "Kill switch disengaged. Live nodes may now start.",
+        message: result.engaged ? t.engagedMessage : t.disengagedMessage,
       });
       setReason("");
       router.refresh();
@@ -69,15 +71,15 @@ export function LiveKillSwitch({ engaged }: LiveKillSwitchProps) {
     <section aria-labelledby="live-kill-switch-title" className="workflow-panel">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Safety</p>
-          <h2 id="live-kill-switch-title">Kill switch</h2>
+          <p className="eyebrow">{t.safetyEyebrow}</p>
+          <h2 id="live-kill-switch-title">{t.killSwitchTitle}</h2>
         </div>
-        <p>{engaged ? "Engaged — Live is stopped" : "Disengaged — Live may run"}</p>
+        <p>{engaged ? t.engagedStatus : t.disengagedStatus}</p>
       </div>
 
       {engaged ? (
         <form
-          aria-label="Disengage kill switch"
+          aria-label={t.disengageAriaLabel}
           className="workflow-form"
           noValidate
           onSubmit={(event) => {
@@ -86,7 +88,7 @@ export function LiveKillSwitch({ engaged }: LiveKillSwitchProps) {
           }}
         >
           <label className="form-field">
-            <span>Reason for disengaging</span>
+            <span>{t.reasonForDisengagingLabel}</span>
             <input
               name="reason"
               onChange={(event) => setReason(event.target.value)}
@@ -94,21 +96,18 @@ export function LiveKillSwitch({ engaged }: LiveKillSwitchProps) {
               value={reason}
             />
           </label>
-          <p className="supporting-copy">
-            Disengaging permits Live nodes to start and place real orders. The reason is recorded in
-            the audit trail.
-          </p>
+          <p className="supporting-copy">{t.disengagingSupportingCopy}</p>
           <button
-            className="primary-action"
+            className="caution-action"
             disabled={state.kind === "working" || reason.trim() === ""}
             type="submit"
           >
-            {state.kind === "working" ? "Disengaging" : "Disengage kill switch"}
+            {state.kind === "working" ? t.disengageButtonDisengaging : t.disengageButtonDisengage}
           </button>
         </form>
       ) : (
         <form
-          aria-label="Engage kill switch"
+          aria-label={t.engageAriaLabel}
           className="workflow-form"
           noValidate
           onSubmit={(event) => {
@@ -116,13 +115,9 @@ export function LiveKillSwitch({ engaged }: LiveKillSwitchProps) {
             void send("enable");
           }}
         >
-          <p className="supporting-copy">
-            Engaging stops Live immediately. No reason is required — refusing to stop trading
-            because an operator has not explained themselves would be the wrong trade in the one
-            moment it matters most.
-          </p>
+          <p className="supporting-copy">{t.engagingSupportingCopy}</p>
           <button className="primary-action" disabled={state.kind === "working"} type="submit">
-            {state.kind === "working" ? "Engaging" : "Engage kill switch"}
+            {state.kind === "working" ? t.engageButtonEngaging : t.engageButtonEngage}
           </button>
         </form>
       )}

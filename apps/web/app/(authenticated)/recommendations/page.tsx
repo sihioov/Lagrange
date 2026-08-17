@@ -7,6 +7,11 @@ import { RecommendationRunStatus } from "@/components/recommendations/recommenda
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
+import {
+  type RecommendationsDictionary,
+  recommendationsDictionary,
+} from "@/lib/i18n/dictionaries/recommendations";
+import { getLocale } from "@/lib/i18n/server";
 import { type LicensingStatusModel, permitsUse } from "@/lib/products/contracts";
 
 export const dynamic = "force-dynamic";
@@ -28,13 +33,10 @@ function recommendationLicenseState(status: LicensingStatusModel): string {
   );
 }
 
-function blockedPage(message: string) {
+function blockedPage(message: string, t: RecommendationsDictionary) {
   return (
-    <RoutePage
-      description="Inspect server-produced candidates, target weights, factor evidence, and exclusions."
-      title="Recommendations"
-    >
-      <StatePanel kind="blocked" message={message} title="Recommendation data is blocked" />
+    <RoutePage description={t.routeDescription} title={t.routeTitle}>
+      <StatePanel kind="blocked" message={message} title={t.blockedDataTitle} />
     </RoutePage>
   );
 }
@@ -52,13 +54,13 @@ function noRun(error: unknown): boolean {
 }
 
 export default async function RecommendationsPage({ searchParams }: RecommendationsPageProps = {}) {
+  const locale = await getLocale();
+  const t = recommendationsDictionary[locale];
   try {
     const api = await getProductApi();
     const licensing = await api.getLicensingStatus();
     if (!permitsUse(licensing, "recommendation")) {
-      return blockedPage(
-        "The recommendation entitlement is inactive. Creation is disabled and proprietary candidate data is not rendered.",
-      );
+      return blockedPage(t.entitlementInactiveMessage, t);
     }
 
     const [configs, latest, history] = await Promise.all([
@@ -82,24 +84,17 @@ export default async function RecommendationsPage({ searchParams }: Recommendati
     const reportRun = selected?.status === "SUCCEEDED" ? selected : latestSuccessful;
 
     return (
-      <RoutePage
-        description="Inspect server-produced candidates, target weights, factor evidence, and exclusions."
-        title="Recommendations"
-      >
+      <RoutePage description={t.routeDescription} title={t.routeTitle}>
         {activeConfigs.length === 0 ? (
-          <StatePanel
-            kind="empty"
-            message="Save an allowed strategy configuration before creating a recommendation run."
-            title="No strategy configuration is available"
-          />
+          <StatePanel kind="empty" message={t.noConfigMessage} title={t.noConfigTitle} />
         ) : (
           <section aria-labelledby="recommendation-run-title" className="workflow-panel">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">New governed run</p>
-                <h2 id="recommendation-run-title">Generate recommendation</h2>
+                <p className="eyebrow">{t.newRunEyebrow}</p>
+                <h2 id="recommendation-run-title">{t.generateRecommendation}</h2>
               </div>
-              <p>The API validates the stored strategy configuration and as-of dataset.</p>
+              <p>{t.newRunHelp}</p>
             </div>
             <RecommendationRunForm
               configs={activeConfigs.map((config) => ({
@@ -117,17 +112,18 @@ export default async function RecommendationsPage({ searchParams }: Recommendati
           activeRun === null && activeConfigs.length > 0 ? (
             <StatePanel
               kind="empty"
-              message="Generate a recommendation to inspect its governed proposal."
-              title="No recommendation available"
+              message={t.noRecommendationMessage}
+              title={t.noRecommendationTitle}
             />
           ) : null
         ) : (
           <RecommendationReport
             licenseState={recommendationLicenseState(licensing)}
             run={reportRun}
+            t={t}
           />
         )}
-        <RecommendationHistory runs={history.items} />
+        <RecommendationHistory runs={history.items} t={t} />
       </RoutePage>
     );
   } catch (error) {
@@ -135,20 +131,11 @@ export default async function RecommendationsPage({ searchParams }: Recommendati
       error instanceof ApiProblem &&
       ["DATASET_BLOCKED", "DATA_ENTITLEMENT_REQUIRED", "FORBIDDEN"].includes(error.code)
     ) {
-      return blockedPage(
-        "The recommendation entitlement or dataset is blocked. Creation is disabled and proprietary candidate data is not rendered.",
-      );
+      return blockedPage(t.entitlementBlockedMessage, t);
     }
     return (
-      <RoutePage
-        description="Inspect server-produced candidates, target weights, factor evidence, and exclusions."
-        title="Recommendations"
-      >
-        <StatePanel
-          kind="error"
-          message="Recommendation data could not be loaded. Retry after checking the service status."
-          title="Recommendations unavailable"
-        />
+      <RoutePage description={t.routeDescription} title={t.routeTitle}>
+        <StatePanel kind="error" message={t.unavailableMessage} title={t.unavailableTitle} />
       </RoutePage>
     );
   }

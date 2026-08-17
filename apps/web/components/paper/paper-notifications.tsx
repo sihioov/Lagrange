@@ -1,7 +1,9 @@
+import type { PaperDictionary } from "@/lib/i18n/dictionaries/paper";
 import type { NotificationModel } from "@/lib/products/paper-contracts";
 
 export type PaperNotificationsProps = {
   readonly notifications: readonly NotificationModel[];
+  readonly t: PaperDictionary;
 };
 
 /**
@@ -17,30 +19,27 @@ export type PaperNotificationsProps = {
  * only be done by matching titles — a scoping this cannot honestly promise.
  * Backtest and recommendation notices will appear here too.
  */
-export function PaperNotifications({ notifications }: PaperNotificationsProps) {
+export function PaperNotifications({ notifications, t }: PaperNotificationsProps) {
   if (notifications.length === 0) {
     return (
       <section aria-labelledby="paper-notifications-title" className="report-section">
-        <h3 id="paper-notifications-title">Session notifications</h3>
-        <p className="supporting-copy">
-          No session notices yet. Completion, block, and divergence notices appear here once a
-          session settles.
-        </p>
+        <h3 id="paper-notifications-title">{t.notificationsTitle}</h3>
+        <p className="supporting-copy">{t.noNoticesMessage}</p>
       </section>
     );
   }
 
   return (
     <section aria-labelledby="paper-notifications-title" className="report-section">
-      <h3 id="paper-notifications-title">Session notifications</h3>
+      <h3 id="paper-notifications-title">{t.notificationsTitle}</h3>
       <table>
-        <caption>Notices and delivery outcome</caption>
+        <caption>{t.noticesCaption}</caption>
         <thead>
           <tr>
-            <th scope="col">Notice</th>
-            <th scope="col">Kind</th>
-            <th scope="col">Raised</th>
-            <th scope="col">Delivery</th>
+            <th scope="col">{t.columnNotice}</th>
+            <th scope="col">{t.columnKind}</th>
+            <th scope="col">{t.columnRaised}</th>
+            <th scope="col">{t.columnDelivery}</th>
           </tr>
         </thead>
         <tbody>
@@ -60,7 +59,7 @@ export function PaperNotifications({ notifications }: PaperNotificationsProps) {
                       {delivery.status === "FAILED" ? (
                         <span role="alert">
                           {" "}
-                          Delivery failed — {delivery.error_detail ?? "no detail recorded"}
+                          {t.deliveryFailedMessage(delivery.error_detail ?? t.noDetailRecorded)}
                         </span>
                       ) : null}
                     </li>

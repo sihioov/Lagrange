@@ -4,6 +4,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { StatePanel } from "@/components/states/state-panel";
 import { parseApiResponse } from "@/lib/api/response";
+import { useLocale } from "@/lib/i18n/client";
+import {
+  type RecommendationsDictionary,
+  recommendationsDictionary,
+} from "@/lib/i18n/dictionaries/recommendations";
 import { type RecommendationRunModel, recommendationRunSchema } from "@/lib/products/contracts";
 
 const POLL_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000] as const;
@@ -18,28 +23,26 @@ export type RecommendationRunStatusProps = {
   readonly run: RecommendationRunModel;
 };
 
-function statusPanel(run: RecommendationRunModel) {
+function statusPanel(run: RecommendationRunModel, t: RecommendationsDictionary) {
   if (run.status === "PENDING") {
     return {
       kind: "loading" as const,
-      message:
-        "The server is producing the recommendation. The last successful proposal remains available.",
-      title: "Recommendation is in progress",
+      message: t.pendingRunMessage,
+      title: t.pendingRunTitle,
     };
   }
   if (run.status === "FAILED") {
     return {
       kind: "error" as const,
-      message:
-        "The worker did not produce a recommendation. Candidate payloads for this run remain hidden.",
-      title: "Recommendation failed",
+      message: t.failedRunMessage,
+      title: t.failedRunTitle,
     };
   }
   if (run.status === "BLOCKED") {
     return {
       kind: "blocked" as const,
-      message: "The server blocked this run. Candidate payloads remain hidden.",
-      title: "Recommendation run blocked",
+      message: t.blockedRunMessage,
+      title: t.blockedRunTitle,
     };
   }
   return null;
@@ -51,6 +54,8 @@ export function RecommendationRunStatus({
   run,
 }: RecommendationRunStatusProps) {
   const router = useRouter();
+  const { locale } = useLocale();
+  const t = recommendationsDictionary[locale];
   const [currentRun, setCurrentRun] = useState(run);
   const [pollError, setPollError] = useState<string | null>(null);
 
@@ -84,9 +89,7 @@ export function RecommendationRunStatus({
         }
       } catch (error) {
         if (!cancelled) {
-          setPollError(
-            error instanceof Error ? error.message : "Run status could not be refreshed.",
-          );
+          setPollError(error instanceof Error ? error.message : t.pollErrorFallback);
         }
       }
       if (!cancelled) {
@@ -106,9 +109,9 @@ export function RecommendationRunStatus({
         clearTimeout(timeout);
       }
     };
-  }, [currentRun.status, onSettled, poll, router, run.id]);
+  }, [currentRun.status, onSettled, poll, router, run.id, t.pollErrorFallback]);
 
-  const panel = statusPanel(currentRun);
+  const panel = statusPanel(currentRun, t);
   if (panel === null) {
     return null;
   }

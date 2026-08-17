@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
 
 export type PrimaryNavigationItem = {
   readonly href: string;
+  readonly icon: ReactNode;
   readonly label: string;
 };
 
@@ -21,6 +23,7 @@ export function PrimaryNavigation({ items }: PrimaryNavigationProps) {
           pathname === item.href || (item.href !== "/" && pathname.startsWith(`${item.href}/`));
         return (
           <Link aria-current={isCurrent ? "page" : undefined} href={item.href} key={item.href}>
+            {item.icon}
             {item.label}
           </Link>
         );

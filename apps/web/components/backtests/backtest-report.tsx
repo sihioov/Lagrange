@@ -1,5 +1,6 @@
 import { ReportFooter } from "@/components/reports/report-footer";
 import { StatusPill } from "@/components/states/status-pill";
+import type { BacktestsDictionary } from "@/lib/i18n/dictionaries/backtests";
 import {
   type BacktestReportModel,
   backtestRobustness,
@@ -11,9 +12,10 @@ import { RobustnessControl } from "./robustness-control";
 export type BacktestReportProps = {
   readonly licenseState: string;
   readonly report: BacktestReportModel;
+  readonly t: BacktestsDictionary;
 };
 
-export function BacktestReport({ licenseState, report }: BacktestReportProps) {
+export function BacktestReport({ licenseState, report, t }: BacktestReportProps) {
   const endingEquity = metricValue(report.metrics, "ending_equity");
   const maximumDrawdown = metricValue(report.metrics, "maximum_drawdown");
   const totalCost = metricValue(report.metrics, "total_cost");
@@ -23,19 +25,19 @@ export function BacktestReport({ licenseState, report }: BacktestReportProps) {
     <section aria-labelledby="backtest-report-title" className="data-report">
       <header className="report-heading">
         <div>
-          <p className="eyebrow">Verified server result</p>
-          <h2 id="backtest-report-title">Backtest result</h2>
-          <p>Historical strategy simulation. Review execution assumptions and warnings.</p>
+          <p className="eyebrow">{t.reportEyebrow}</p>
+          <h2 id="backtest-report-title">{t.reportHeading}</h2>
+          <p>{t.reportSubheading}</p>
         </div>
         <div className="status-cluster">
           <StatusPill label={report.run.status} tone="success" />
-          <span>As of {asOf === null ? "Not reported" : formatDate(asOf)}</span>
+          <span>{t.asOfLabel(asOf === null ? t.notReported : formatDate(asOf))}</span>
         </div>
       </header>
-      <aside aria-label="Backtest warnings" className="warning-strip">
-        <strong>Warnings</strong>
+      <aside aria-label={t.warningsAriaLabel} className="warning-strip">
+        <strong>{t.warningsHeading}</strong>
         {report.provenance.warnings.length === 0 ? (
-          <p>No server warnings.</p>
+          <p>{t.noWarnings}</p>
         ) : (
           <ul>
             {report.provenance.warnings.map((warning) => (
@@ -45,24 +47,24 @@ export function BacktestReport({ licenseState, report }: BacktestReportProps) {
         )}
       </aside>
       <section aria-labelledby="equity-drawdown-title" className="report-section">
-        <h3 id="equity-drawdown-title">Equity and drawdown</h3>
+        <h3 id="equity-drawdown-title">{t.equityDrawdownHeading}</h3>
         <dl className="provenance-grid">
           <div>
-            <dt>Ending equity</dt>
-            <dd>{endingEquity === null ? "Not reported" : formatKrw(endingEquity)}</dd>
+            <dt>{t.endingEquityLabel}</dt>
+            <dd>{endingEquity === null ? t.notReported : formatKrw(endingEquity)}</dd>
           </div>
           <div>
-            <dt>Maximum drawdown</dt>
-            <dd>{maximumDrawdown === null ? "Not reported" : formatPercentage(maximumDrawdown)}</dd>
+            <dt>{t.maximumDrawdownLabel}</dt>
+            <dd>{maximumDrawdown === null ? t.notReported : formatPercentage(maximumDrawdown)}</dd>
           </div>
         </dl>
         <div className="data-table-wrap">
           <table>
-            <caption>Server-provided equity curve</caption>
+            <caption>{t.equityCurveCaption}</caption>
             <thead>
               <tr>
-                <th scope="col">Date</th>
-                <th scope="col">Equity</th>
+                <th scope="col">{t.dateColumnHeader}</th>
+                <th scope="col">{t.equityColumnHeader}</th>
               </tr>
             </thead>
             <tbody>
@@ -77,11 +79,11 @@ export function BacktestReport({ licenseState, report }: BacktestReportProps) {
         </div>
         <div className="data-table-wrap">
           <table>
-            <caption>Server-provided drawdown curve</caption>
+            <caption>{t.drawdownCurveCaption}</caption>
             <thead>
               <tr>
-                <th scope="col">Date</th>
-                <th scope="col">Drawdown</th>
+                <th scope="col">{t.dateColumnHeader}</th>
+                <th scope="col">{t.drawdownColumnHeader}</th>
               </tr>
             </thead>
             <tbody>
@@ -96,14 +98,14 @@ export function BacktestReport({ licenseState, report }: BacktestReportProps) {
         </div>
       </section>
       <section aria-labelledby="monthly-returns-title" className="report-section">
-        <h3 id="monthly-returns-title">Monthly returns</h3>
+        <h3 id="monthly-returns-title">{t.monthlyReturnsHeading}</h3>
         <div className="data-table-wrap">
           <table>
-            <caption>Server-provided monthly returns</caption>
+            <caption>{t.monthlyReturnsCaption}</caption>
             <thead>
               <tr>
-                <th scope="col">Month</th>
-                <th scope="col">Return</th>
+                <th scope="col">{t.monthColumnHeader}</th>
+                <th scope="col">{t.returnColumnHeader}</th>
               </tr>
             </thead>
             <tbody>
@@ -118,22 +120,24 @@ export function BacktestReport({ licenseState, report }: BacktestReportProps) {
         </div>
       </section>
       <section aria-labelledby="trades-costs-title" className="report-section">
-        <h3 id="trades-costs-title">Trades and costs</h3>
+        <h3 id="trades-costs-title">{t.tradesCostsHeading}</h3>
         <p>
-          {report.trades.total_count.toLocaleString("en-US")} trades. Total cost{" "}
-          {totalCost === null ? "Not reported" : formatKrw(totalCost)}.
+          {t.tradesSummary(
+            report.trades.total_count.toLocaleString("en-US"),
+            totalCost === null ? t.notReported : formatKrw(totalCost),
+          )}
         </p>
         <div className="data-table-wrap">
           <table>
-            <caption>Executed trades and server-calculated costs</caption>
+            <caption>{t.tradesCaption}</caption>
             <thead>
               <tr>
-                <th scope="col">Trade</th>
-                <th scope="col">Time</th>
-                <th scope="col">Instrument</th>
-                <th scope="col">Side</th>
-                <th scope="col">Quantity</th>
-                <th scope="col">Cost</th>
+                <th scope="col">{t.tradeColumnHeader}</th>
+                <th scope="col">{t.timeColumnHeader}</th>
+                <th scope="col">{t.instrumentColumnHeader}</th>
+                <th scope="col">{t.sideColumnHeader}</th>
+                <th scope="col">{t.quantityColumnHeader}</th>
+                <th scope="col">{t.costColumnHeader}</th>
               </tr>
             </thead>
             <tbody>
@@ -154,18 +158,18 @@ export function BacktestReport({ licenseState, report }: BacktestReportProps) {
       <RobustnessControl runId={report.run.id} />
       {robustness === null ? null : (
         <section aria-labelledby="robustness-evidence-title" className="report-section">
-          <h3 id="robustness-evidence-title">Robustness evidence</h3>
+          <h3 id="robustness-evidence-title">{t.robustnessEvidenceHeading}</h3>
           <dl className="provenance-grid">
             <div>
-              <dt>Parameter sensitivity</dt>
+              <dt>{t.parameterSensitivityLabel}</dt>
               <dd>{robustness.parameter_sensitivity}</dd>
             </div>
             <div>
-              <dt>Cost stress</dt>
+              <dt>{t.costStressLabel}</dt>
               <dd>{robustness.cost_stress}</dd>
             </div>
             <div>
-              <dt>Validation periods</dt>
+              <dt>{t.validationPeriodsLabel}</dt>
               <dd>{robustness.validation_periods}</dd>
             </div>
           </dl>

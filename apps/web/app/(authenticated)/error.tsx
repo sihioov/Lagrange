@@ -1,22 +1,26 @@
 "use client";
 
 import { StatePanel } from "@/components/states/state-panel";
+import { useLocale } from "@/lib/i18n/client";
+import { shellDictionary } from "@/lib/i18n/dictionaries/shell";
 
 export type AuthenticatedErrorProps = {
   readonly reset: () => void;
 };
 
 export default function AuthenticatedError({ reset }: AuthenticatedErrorProps) {
+  const { locale } = useLocale();
+  const t = shellDictionary[locale];
   return (
     <StatePanel
       action={
         <button className="primary-action" onClick={reset} type="button">
-          Try again
+          {t.tryAgain}
         </button>
       }
       kind="error"
-      message="The authenticated request could not be completed. Retry the request without reusing a cached response."
-      title="We could not load this workspace"
+      message={t.errorMessage}
+      title={t.errorTitle}
     />
   );
 }

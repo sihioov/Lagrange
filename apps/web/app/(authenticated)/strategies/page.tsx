@@ -4,6 +4,8 @@ import { StatePanel } from "@/components/states/state-panel";
 import { StrategyCatalog } from "@/components/strategies/strategy-catalog";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
+import { strategiesDictionary } from "@/lib/i18n/dictionaries/strategies";
+import { getLocale } from "@/lib/i18n/server";
 import { permitsUse } from "@/lib/products/contracts";
 
 export const dynamic = "force-dynamic";
@@ -17,48 +19,33 @@ export const metadata: Metadata = {
 const BLOCKED_CODES = new Set(["DATASET_BLOCKED", "DATA_ENTITLEMENT_REQUIRED", "FORBIDDEN"]);
 
 export default async function StrategiesPage() {
+  const locale = await getLocale();
+  const t = strategiesDictionary[locale];
   try {
     const api = await getProductApi();
     const [catalog, licensing] = await Promise.all([api.getStrategies(), api.getLicensingStatus()]);
     if (catalog.items.length === 0) {
       return (
-        <RoutePage
-          description="Review approved strategy definitions, versions, states, and constrained parameters."
-          title="Strategies"
-        >
-          <StatePanel
-            kind="empty"
-            message="The server returned no approved strategies. No configuration can be created."
-            title="Strategy catalog is empty"
-          />
+        <RoutePage description={t.routeDescription} title={t.routeTitle}>
+          <StatePanel kind="empty" message={t.catalogEmptyMessage} title={t.catalogEmptyTitle} />
         </RoutePage>
       );
     }
     const canConfigure =
       permitsUse(licensing, "recommendation") || permitsUse(licensing, "backtest");
     return (
-      <RoutePage
-        description="Review approved strategy definitions, versions, states, and constrained parameters."
-        title="Strategies"
-      >
-        <StrategyCatalog canConfigure={canConfigure} strategies={catalog.items} />
+      <RoutePage description={t.routeDescription} title={t.routeTitle}>
+        <StrategyCatalog canConfigure={canConfigure} strategies={catalog.items} t={t} />
       </RoutePage>
     );
   } catch (error) {
     const blocked = error instanceof ApiProblem && BLOCKED_CODES.has(error.code);
     return (
-      <RoutePage
-        description="Review approved strategy definitions, versions, states, and constrained parameters."
-        title="Strategies"
-      >
+      <RoutePage description={t.routeDescription} title={t.routeTitle}>
         <StatePanel
           kind={blocked ? "blocked" : "error"}
-          message={
-            blocked
-              ? "Strategy configuration is blocked because the required data entitlement is inactive. No configuration was submitted."
-              : "The strategy catalog could not be loaded. Retry after checking the service status."
-          }
-          title={blocked ? "Strategy configuration is blocked" : "Strategy catalog unavailable"}
+          message={blocked ? t.blockedCatalogMessage : t.unavailableCatalogMessage}
+          title={blocked ? t.blockedCatalogTitle : t.unavailableCatalogTitle}
         />
       </RoutePage>
     );

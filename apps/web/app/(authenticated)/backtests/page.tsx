@@ -8,6 +8,8 @@ import { RoutePage } from "@/components/pages/route-page";
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
+import { type BacktestsDictionary, backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
+import { getLocale } from "@/lib/i18n/server";
 import { type BacktestRunModel, backtestCreationDefaults } from "@/lib/products/backtest-contracts";
 import { type LicensingStatusModel, permitsUse } from "@/lib/products/contracts";
 
@@ -26,20 +28,18 @@ const BLOCKED_CODES = new Set([
   "FORBIDDEN",
 ]);
 
-function blockedPage(message: string) {
+function blockedPage(t: BacktestsDictionary, message: string) {
   return (
-    <RoutePage
-      description="Create reproducible simulations and inspect performance, cost, drawdown, and robustness evidence."
-      title="Backtests"
-    >
-      <StatePanel kind="blocked" message={message} title="Backtest data is blocked" />
+    <RoutePage description={t.pageDescription} title={t.pageTitle}>
+      <StatePanel kind="blocked" message={message} title={t.blockedTitle} />
     </RoutePage>
   );
 }
 
-function backtestLicenseState(status: LicensingStatusModel): string {
+function backtestLicenseState(t: BacktestsDictionary, status: LicensingStatusModel): string {
   return (
-    status.datasets.find((dataset) => dataset.use_kind === "backtest")?.state ?? "NOT REPORTED"
+    status.datasets.find((dataset) => dataset.use_kind === "backtest")?.state ??
+    t.licenseStateNotReported
   );
 }
 
@@ -48,13 +48,13 @@ function firstByStatus(runs: readonly BacktestRunModel[], status: BacktestRunMod
 }
 
 export default async function BacktestsPage() {
+  const locale = await getLocale();
+  const t = backtestsDictionary[locale];
   try {
     const api = await getProductApi();
     const licensing = await api.getLicensingStatus();
     if (!permitsUse(licensing, "backtest")) {
-      return blockedPage(
-        "The backtest entitlement is inactive. Creation is disabled and proprietary results are not rendered.",
-      );
+      return blockedPage(t, t.entitlementInactiveMessage);
     }
     const runs = await api.getBacktestRuns();
     const succeeded = runs.items.filter((run) => run.status === "SUCCEEDED");
@@ -67,70 +67,48 @@ export default async function BacktestsPage() {
     const canceled = firstByStatus(runs.items, "CANCELED");
 
     return (
-      <RoutePage
-        description="Create reproducible simulations and inspect performance, cost, drawdown, and robustness evidence."
-        title="Backtests"
-      >
+      <RoutePage description={t.pageDescription} title={t.pageTitle}>
         {defaults === null ? (
           <StatePanel
             kind="blocked"
-            message="The server did not provide the versioned strategy and dataset defaults required for creation."
-            title="Backtest creation is unavailable"
+            message={t.creationUnavailableMessage}
+            title={t.creationUnavailableTitle}
           />
         ) : (
           <section aria-labelledby="create-backtest-title" className="workflow-panel">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">Version-pinned simulation</p>
-                <h2 id="create-backtest-title">Create backtest</h2>
+                <p className="eyebrow">{t.createEyebrow}</p>
+                <h2 id="create-backtest-title">{t.createBacktestLabel}</h2>
               </div>
-              <p>Only the server queues and calculates backtest results.</p>
+              <p>{t.serverQueuesMessage}</p>
             </div>
             <BacktestCreateForm {...defaults} />
           </section>
         )}
         {failed === undefined ? null : (
-          <StatePanel
-            kind="error"
-            message="The worker did not produce a verified result. Review the run status before retrying."
-            title="Backtest failed"
-          />
+          <StatePanel kind="error" message={t.failedMessage} title={t.failedTitle} />
         )}
-        {canceled === undefined ? null : (
-          <p className="blocked-inline">Canceled and failed runs do not expose result payloads.</p>
-        )}
+        {canceled === undefined ? null : <p className="blocked-inline">{t.canceledRunsMessage}</p>}
         {running === undefined ? null : <BacktestProgress run={running} />}
         {report === null ? null : (
-          <BacktestReport licenseState={backtestLicenseState(licensing)} report={report} />
+          <BacktestReport licenseState={backtestLicenseState(t, licensing)} report={report} t={t} />
         )}
         {succeeded.length < 2 ? null : <BacktestComparison runs={succeeded} />}
         {runs.items.length === 0 ? (
-          <StatePanel
-            kind="empty"
-            message="Create a version-pinned backtest to populate this history."
-            title="No backtests available"
-          />
+          <StatePanel kind="empty" message={t.emptyMessage} title={t.emptyTitle} />
         ) : (
-          <BacktestHistory runs={runs.items} />
+          <BacktestHistory runs={runs.items} t={t} />
         )}
       </RoutePage>
     );
   } catch (error) {
     if (error instanceof ApiProblem && BLOCKED_CODES.has(error.code)) {
-      return blockedPage(
-        "The entitlement or dataset is blocked. Creation is disabled and proprietary results are not rendered.",
-      );
+      return blockedPage(t, t.datasetBlockedMessage);
     }
     return (
-      <RoutePage
-        description="Create reproducible simulations and inspect performance, cost, drawdown, and robustness evidence."
-        title="Backtests"
-      >
-        <StatePanel
-          kind="error"
-          message="Backtest data could not be loaded. Retry after checking the service status."
-          title="Backtests unavailable"
-        />
+      <RoutePage description={t.pageDescription} title={t.pageTitle}>
+        <StatePanel kind="error" message={t.unavailableMessage} title={t.unavailableTitle} />
       </RoutePage>
     );
   }

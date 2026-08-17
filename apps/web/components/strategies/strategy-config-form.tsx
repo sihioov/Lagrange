@@ -3,6 +3,11 @@
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseApiResponse } from "@/lib/api/response";
+import { useLocale } from "@/lib/i18n/client";
+import {
+  type StrategiesDictionary,
+  strategiesDictionary,
+} from "@/lib/i18n/dictionaries/strategies";
 import {
   type ParameterDefinition,
   type ParameterSchema,
@@ -28,6 +33,7 @@ function parseParameter(
   name: string,
   definition: ParameterDefinition,
   formData: FormData,
+  t: StrategiesDictionary,
 ): ValidationResult {
   const raw = formData.get(name);
   switch (definition.type) {
@@ -36,26 +42,28 @@ function parseParameter(
     case "integer":
     case "number": {
       if (typeof raw !== "string" || raw.trim() === "") {
-        return invalid(`${definition.title} is required.`);
+        return invalid(t.fieldRequired(definition.title));
       }
       const value = Number(raw);
       if (!Number.isFinite(value) || (definition.type === "integer" && !Number.isInteger(value))) {
-        return invalid(`${definition.title} must be a valid ${definition.type}.`);
+        return invalid(t.fieldMustBeValidType(definition.title, definition.type));
       }
       if (definition.minimum !== undefined && value < definition.minimum) {
-        const maximum = definition.maximum ?? "the allowed maximum";
-        return invalid(`${definition.title} must be between ${definition.minimum} and ${maximum}.`);
+        const maximum =
+          definition.maximum === undefined ? t.allowedMaximumFallback : String(definition.maximum);
+        return invalid(t.fieldMustBeBetween(definition.title, String(definition.minimum), maximum));
       }
       if (definition.maximum !== undefined && value > definition.maximum) {
-        const minimum = definition.minimum ?? "the allowed minimum";
-        return invalid(`${definition.title} must be between ${minimum} and ${definition.maximum}.`);
+        const minimum =
+          definition.minimum === undefined ? t.allowedMinimumFallback : String(definition.minimum);
+        return invalid(t.fieldMustBeBetween(definition.title, minimum, String(definition.maximum)));
       }
       return { kind: "valid", value };
     }
     case "string":
       return typeof raw === "string" && raw.trim() !== ""
         ? { kind: "valid", value: raw.trim() }
-        : invalid(`${definition.title} is required.`);
+        : invalid(t.fieldRequired(definition.title));
   }
 }
 
@@ -69,10 +77,12 @@ export type StrategyConfigFormProps = {
 
 export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
   const [state, setState] = useState<SubmissionState>({ kind: "idle" });
+  const { locale } = useLocale();
+  const t = strategiesDictionary[locale];
   const schema = strategy.parameter_schema;
   const version = strategy.latest_version;
   if (schema === undefined || version === undefined || version === null) {
-    return <p className="supporting-copy">No configurable parameter schema is available.</p>;
+    return <p className="supporting-copy">{t.noSchemaAvailable}</p>;
   }
   const activeSchema: ParameterSchema = schema;
 
@@ -80,7 +90,7 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
     const config: Record<string, unknown> = {};
     const formData = new FormData(form);
     for (const [name, definition] of Object.entries(activeSchema.properties)) {
-      const result = parseParameter(name, definition, formData);
+      const result = parseParameter(name, definition, formData, t);
       if (result.kind === "invalid") {
         setState({ kind: "error", message: result.message });
         return;
@@ -94,7 +104,7 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
         method: "POST",
       });
       const saved = await parseApiResponse(response, strategyConfigSchema);
-      setState({ kind: "saved", message: `Configuration saved (${saved.id}).` });
+      setState({ kind: "saved", message: t.configurationSaved(saved.id) });
     } catch (error) {
       if (error instanceof Error) {
         setState({ kind: "error", message: error.message });
@@ -106,7 +116,7 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
 
   return (
     <form
-      aria-label={`Configure ${strategy.display_name}`}
+      aria-label={t.configureAriaLabel(strategy.display_name)}
       className="config-form"
       noValidate
       onSubmit={(event) => {
@@ -115,7 +125,7 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
       }}
     >
       <fieldset disabled={state.kind === "submitting"}>
-        <legend>Allowed parameters</legend>
+        <legend>{t.allowedParametersLegend}</legend>
         <div className="field-grid">
           {Object.entries(activeSchema.properties).map(([name, definition]) => {
             const fieldId = `strategy-${strategy.id}-${name}`;
@@ -164,7 +174,7 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
         </div>
       </fieldset>
       <button className="primary-action" disabled={state.kind === "submitting"} type="submit">
-        {state.kind === "submitting" ? "Saving configuration" : "Save strategy configuration"}
+        {state.kind === "submitting" ? t.savingConfiguration : t.saveStrategyConfiguration}
       </button>
       {state.kind === "error" || state.kind === "saved" ? (
         <p className="form-result" role={state.kind === "error" ? "alert" : "status"}>

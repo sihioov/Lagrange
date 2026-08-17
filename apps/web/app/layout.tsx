@@ -3,6 +3,8 @@ import { GeistSans } from "geist/font/sans";
 import type { Metadata } from "next";
 import Script from "next/script";
 import type { ReactNode } from "react";
+import { getLocale } from "@/lib/i18n/server";
+import { getTheme } from "@/lib/theme/server";
 import "./globals.css";
 import "./product.css";
 
@@ -21,9 +23,14 @@ export type RootLayoutProps = {
   readonly children: ReactNode;
 };
 
-export default function RootLayout({ children }: RootLayoutProps) {
+export default async function RootLayout({ children }: RootLayoutProps) {
+  const [locale, theme] = await Promise.all([getLocale(), getTheme()]);
   return (
-    <html className={`${GeistSans.variable} ${GeistMono.variable}`} lang="en">
+    <html
+      className={`${GeistSans.variable} ${GeistMono.variable}`}
+      data-theme={theme}
+      lang={locale}
+    >
       <head>
         {enableReactDevTools ? (
           <>

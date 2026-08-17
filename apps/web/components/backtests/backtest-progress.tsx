@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseApiResponse } from "@/lib/api/response";
+import { useLocale } from "@/lib/i18n/client";
+import { backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
 import {
   type BacktestRunModel,
   backtestProgress,
@@ -17,6 +19,8 @@ export function BacktestProgress({ run }: BacktestProgressProps) {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const progress = backtestProgress(run);
+  const { locale } = useLocale();
+  const t = backtestsDictionary[locale];
 
   async function cancel(): Promise<void> {
     setSubmitting(true);
@@ -26,7 +30,7 @@ export function BacktestProgress({ run }: BacktestProgressProps) {
         method: "POST",
       });
       await parseApiResponse(response, cancelBacktestSchema);
-      setMessage("Cancellation requested. The server will preserve the job audit trail.");
+      setMessage(t.cancellationRequestedMessage);
     } catch (error) {
       if (error instanceof Error) {
         setMessage(error.message);
@@ -42,19 +46,19 @@ export function BacktestProgress({ run }: BacktestProgressProps) {
     <section aria-labelledby="backtest-progress-title" className="workflow-panel">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Queued execution</p>
-          <h2 id="backtest-progress-title">Backtest progress</h2>
+          <p className="eyebrow">{t.progressEyebrow}</p>
+          <h2 id="backtest-progress-title">{t.progressHeading}</h2>
         </div>
         <strong>{run.status}</strong>
       </div>
-      <p>{progress === null ? "Progress not reported" : `${progress}% complete`}</p>
+      <p>{progress === null ? t.progressNotReported : t.percentComplete(progress)}</p>
       <button
         className="secondary-action"
         disabled={submitting}
         onClick={() => void cancel()}
         type="button"
       >
-        {submitting ? "Requesting cancellation" : "Cancel backtest"}
+        {submitting ? t.requestingCancellationLabel : t.cancelBacktestButton}
       </button>
       {message === "" ? null : (
         <p className="form-result" role="status">

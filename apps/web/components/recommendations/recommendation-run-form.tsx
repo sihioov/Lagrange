@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseApiResponse } from "@/lib/api/response";
+import { useLocale } from "@/lib/i18n/client";
+import { recommendationsDictionary } from "@/lib/i18n/dictionaries/recommendations";
 import { type RecommendationRunModel, recommendationRunSchema } from "@/lib/products/contracts";
 import { RecommendationRunStatus } from "./recommendation-run-status";
 
@@ -20,6 +22,8 @@ export function RecommendationRunForm({ configs, defaultAsOf }: RecommendationRu
   const [state, setState] = useState<RunState>("idle");
   const [message, setMessage] = useState("");
   const [submittedRun, setSubmittedRun] = useState<RecommendationRunModel | null>(null);
+  const { locale } = useLocale();
+  const t = recommendationsDictionary[locale];
 
   async function submit(form: HTMLFormElement): Promise<void> {
     const formData = new FormData(form);
@@ -27,12 +31,12 @@ export function RecommendationRunForm({ configs, defaultAsOf }: RecommendationRu
     const strategyConfigId = formData.get("strategy_config_id");
     if (typeof asOf !== "string" || asOf === "") {
       setState("error");
-      setMessage("As-of date is required.");
+      setMessage(t.asOfDateRequired);
       return;
     }
     if (typeof strategyConfigId !== "string" || strategyConfigId === "") {
       setState("error");
-      setMessage("Select a strategy configuration.");
+      setMessage(t.selectStrategyConfig);
       return;
     }
     setState("submitting");
@@ -58,7 +62,7 @@ export function RecommendationRunForm({ configs, defaultAsOf }: RecommendationRu
   return (
     <>
       <form
-        aria-label="Generate recommendation"
+        aria-label={t.generateRecommendation}
         className="workflow-form"
         noValidate
         onSubmit={(event) => {
@@ -67,7 +71,7 @@ export function RecommendationRunForm({ configs, defaultAsOf }: RecommendationRu
         }}
       >
         <label className="form-field">
-          <span>Strategy configuration</span>
+          <span>{t.strategyConfigurationLabel}</span>
           <select defaultValue={configs[0]?.id ?? ""} name="strategy_config_id" required>
             {configs.map((config) => (
               <option key={config.id} value={config.id}>
@@ -77,11 +81,11 @@ export function RecommendationRunForm({ configs, defaultAsOf }: RecommendationRu
           </select>
         </label>
         <label className="form-field">
-          <span>As-of date</span>
+          <span>{t.asOfDateLabel}</span>
           <input defaultValue={defaultAsOf} name="as_of" required type="date" />
         </label>
         <button className="primary-action" disabled={state === "submitting"} type="submit">
-          {state === "submitting" ? "Generating strategy proposal" : "Generate strategy proposal"}
+          {state === "submitting" ? t.generatingStrategyProposal : t.generateStrategyProposal}
         </button>
         {state === "error" ? (
           <p className="form-result" role="alert">

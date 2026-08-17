@@ -1,13 +1,9 @@
+import type { PaperDictionary } from "@/lib/i18n/dictionaries/paper";
 import { type PaperParityModel, parityReason } from "@/lib/products/paper-contracts";
 
 export type PaperParityPanelProps = {
   readonly parity: PaperParityModel;
-};
-
-const STATUS_LABEL: Record<PaperParityModel["status"], string> = {
-  DIVERGENT: "Divergent",
-  MATCH: "Match",
-  NOT_COMPARABLE: "Not comparable",
+  readonly t: PaperDictionary;
 };
 
 /**
@@ -19,41 +15,46 @@ const STATUS_LABEL: Record<PaperParityModel["status"], string> = {
  * The fill-model difference is shown on EVERY status including a match —
  * a reader must never assume the two executions are interchangeable.
  */
-export function PaperParityPanel({ parity }: PaperParityPanelProps) {
+export function PaperParityPanel({ parity, t }: PaperParityPanelProps) {
+  const statusLabel: Record<PaperParityModel["status"], string> = {
+    DIVERGENT: t.statusDivergent,
+    MATCH: t.statusMatch,
+    NOT_COMPARABLE: t.statusNotComparable,
+  };
   const mismatched = parity.lineage.fields.filter((field) => field.backtest !== field.paper);
 
   return (
     <section aria-labelledby="paper-parity-title" className="report-section">
-      <h3 id="paper-parity-title">Backtest parity</h3>
+      <h3 id="paper-parity-title">{t.parityTitle}</h3>
       {parity.warrants_alert ? (
         <div
-          aria-label={`Paper parity ${STATUS_LABEL[parity.status]}`}
+          aria-label={t.parityAriaLabel(statusLabel[parity.status])}
           className="state-panel"
           data-kind="warning"
           role="alert"
         >
-          <strong>{STATUS_LABEL[parity.status]}</strong>
+          <strong>{statusLabel[parity.status]}</strong>
           <p>{parityReason(parity)}</p>
         </div>
       ) : (
         <p className="form-result" role="status">
-          <strong>{STATUS_LABEL[parity.status]}</strong> — {parityReason(parity)}
+          <strong>{statusLabel[parity.status]}</strong> — {parityReason(parity)}
         </p>
       )}
 
       <dl className="definition-grid">
-        <dt>Session</dt>
+        <dt>{t.sessionLabel}</dt>
         <dd>{parity.as_of}</dd>
       </dl>
 
       {mismatched.length > 0 ? (
         <table>
-          <caption>Lineage differences</caption>
+          <caption>{t.lineageDifferencesCaption}</caption>
           <thead>
             <tr>
-              <th scope="col">Field</th>
-              <th scope="col">Backtest</th>
-              <th scope="col">Paper</th>
+              <th scope="col">{t.columnField}</th>
+              <th scope="col">{t.columnBacktest}</th>
+              <th scope="col">{t.columnPaper}</th>
             </tr>
           </thead>
           <tbody>
@@ -70,20 +71,20 @@ export function PaperParityPanel({ parity }: PaperParityPanelProps) {
 
       {parity.divergences.length > 0 ? (
         <table>
-          <caption>Signal divergences</caption>
+          <caption>{t.signalDivergencesCaption}</caption>
           <thead>
             <tr>
-              <th scope="col">Instrument</th>
-              <th scope="col">Backtest weight</th>
-              <th scope="col">Paper weight</th>
+              <th scope="col">{t.columnInstrument}</th>
+              <th scope="col">{t.columnBacktestWeight}</th>
+              <th scope="col">{t.columnPaperWeight}</th>
             </tr>
           </thead>
           <tbody>
             {parity.divergences.map((divergence) => (
               <tr key={divergence.instrument_id}>
                 <th scope="row">{divergence.instrument_id}</th>
-                <td>{divergence.backtest_weight ?? "Not targeted"}</td>
-                <td>{divergence.paper_weight ?? "Not targeted"}</td>
+                <td>{divergence.backtest_weight ?? t.notTargeted}</td>
+                <td>{divergence.paper_weight ?? t.notTargeted}</td>
               </tr>
             ))}
           </tbody>
@@ -91,7 +92,7 @@ export function PaperParityPanel({ parity }: PaperParityPanelProps) {
       ) : null}
 
       <p className="supporting-copy">
-        <strong>Fill model difference</strong> {parity.fill_model_difference}
+        <strong>{t.fillModelDifferenceLabel}</strong> {parity.fill_model_difference}
       </p>
     </section>
   );

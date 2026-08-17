@@ -1,5 +1,6 @@
 import { ReportFooter } from "@/components/reports/report-footer";
 import { StatusPill } from "@/components/states/status-pill";
+import type { RecommendationsDictionary } from "@/lib/i18n/dictionaries/recommendations";
 import {
   type RecommendationItemModel,
   type RecommendationRunModel,
@@ -7,36 +8,48 @@ import {
 } from "@/lib/products/contracts";
 import { formatDate, formatDecimal, formatPercentage } from "@/lib/products/format";
 
-function factorValue(value: unknown): string {
+function factorValue(value: unknown, t: RecommendationsDictionary): string {
   if (typeof value === "string") {
     return /^-?\d+(?:\.\d+)?$/.test(value) ? formatDecimal(value, 4) : value;
   }
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
   }
-  return "Structured server evidence";
+  return t.structuredServerEvidence;
 }
 
-function ScoreList({ item }: { readonly item: RecommendationItemModel }) {
+function ScoreList({
+  item,
+  t,
+}: {
+  readonly item: RecommendationItemModel;
+  readonly t: RecommendationsDictionary;
+}) {
   const factors = Object.entries(item.factors ?? {});
   return factors.length === 0 ? (
-    <span>Not reported</span>
+    <span>{t.notReported}</span>
   ) : (
     <dl className="factor-list">
       {factors.map(([name, value]) => (
         <div key={name}>
           <dt>{name.replaceAll("_", " ")}</dt>
-          <dd>{factorValue(value)}</dd>
+          <dd>{factorValue(value, t)}</dd>
         </div>
       ))}
     </dl>
   );
 }
 
-function ReasonList({ item }: { readonly item: RecommendationItemModel }) {
+function ReasonList({
+  item,
+  t,
+}: {
+  readonly item: RecommendationItemModel;
+  readonly t: RecommendationsDictionary;
+}) {
   const reasons = item.reason_codes ?? [];
   return reasons.length === 0 ? (
-    <span>Not reported</span>
+    <span>{t.notReported}</span>
   ) : (
     <ul className="code-list">
       {reasons.map((reason) => (
@@ -49,9 +62,10 @@ function ReasonList({ item }: { readonly item: RecommendationItemModel }) {
 export type RecommendationReportProps = {
   readonly licenseState: string;
   readonly run: RecommendationRunModel;
+  readonly t: RecommendationsDictionary;
 };
 
-export function RecommendationReport({ licenseState, run }: RecommendationReportProps) {
+export function RecommendationReport({ licenseState, run, t }: RecommendationReportProps) {
   const items = run.items ?? [];
   const selected = items.filter((item) => !item.excluded);
   const excluded = items.filter((item) => item.excluded);
@@ -62,24 +76,24 @@ export function RecommendationReport({ licenseState, run }: RecommendationReport
     <section aria-labelledby="recommendation-report-title" className="data-report">
       <header className="report-heading">
         <div>
-          <p className="eyebrow">Latest governed output</p>
-          <h2 id="recommendation-report-title">Strategy-based proposal</h2>
-          <p>Strategy-based proposal, not investment advice. Review warnings and the as-of date.</p>
+          <p className="eyebrow">{t.reportEyebrow}</p>
+          <h2 id="recommendation-report-title">{t.reportHeading}</h2>
+          <p>{t.proposalDisclaimer}</p>
         </div>
         <div className="status-cluster">
           <StatusPill
             label={run.status}
             tone={run.status === "SUCCEEDED" ? "success" : "warning"}
           />
-          <span>As of {formatDate(run.as_of)}</span>
+          <span>{t.asOf(formatDate(run.as_of))}</span>
         </div>
       </header>
       {provenance.warnings.length === 0 ? null : (
-        <aside aria-label="Recommendation warnings" className="warning-strip" role="status">
+        <aside aria-label={t.warningsAriaLabel} className="warning-strip" role="status">
           <strong>
             {provenance.warnings.some((warning) => warning.startsWith("Stale result"))
-              ? "Stale result"
-              : "Warnings"}
+              ? t.staleResultLabel
+              : t.warningsLabel}
           </strong>
           <ul>
             {provenance.warnings.map((warning) => (
@@ -90,65 +104,63 @@ export function RecommendationReport({ licenseState, run }: RecommendationReport
       )}
       {cashWeight === undefined ? null : (
         <p className="supporting-copy">
-          {allCash
-            ? "All-cash allocation: the governed constraints did not select an instrument for this proposal."
-            : `Cash allocation: ${formatPercentage(cashWeight)}.`}
+          {allCash ? t.allCashAllocation : t.cashAllocation(formatPercentage(cashWeight))}
         </p>
       )}
       {provenance.origin === "synthetic" ? (
         <aside className="warning-strip" role="status">
-          <strong>Synthetic QA data</strong>
-          <p>This proposal is based on synthetic QA data and is not a live market-data result.</p>
+          <strong>{t.syntheticDataLabel}</strong>
+          <p>{t.syntheticDataMessage}</p>
         </aside>
       ) : null}
       <section aria-labelledby="recommendation-lineage-title" className="report-section">
-        <h3 id="recommendation-lineage-title">Run provenance</h3>
+        <h3 id="recommendation-lineage-title">{t.provenanceHeading}</h3>
         <dl className="provenance-grid">
           <div>
-            <dt>Origin</dt>
-            <dd>{provenance.origin ?? "Not reported"}</dd>
+            <dt>{t.originLabel}</dt>
+            <dd>{provenance.origin ?? t.notReported}</dd>
           </div>
           <div>
-            <dt>Dataset version</dt>
-            <dd>{provenance.dataset_version ?? "Not reported"}</dd>
+            <dt>{t.datasetVersionLabel}</dt>
+            <dd>{provenance.dataset_version ?? t.notReported}</dd>
           </div>
           <div>
-            <dt>Universe snapshot</dt>
-            <dd>{provenance.universe_snapshot_id ?? "Not reported"}</dd>
+            <dt>{t.universeSnapshotLabel}</dt>
+            <dd>{provenance.universe_snapshot_id ?? t.notReported}</dd>
           </div>
           <div>
-            <dt>Factor snapshot</dt>
-            <dd>{provenance.factor_snapshot_hash ?? "Not reported"}</dd>
+            <dt>{t.factorSnapshotLabel}</dt>
+            <dd>{provenance.factor_snapshot_hash ?? t.notReported}</dd>
           </div>
           <div>
-            <dt>Portfolio snapshot</dt>
-            <dd>{provenance.portfolio_snapshot_id ?? "Not reported"}</dd>
+            <dt>{t.portfolioSnapshotLabel}</dt>
+            <dd>{provenance.portfolio_snapshot_id ?? t.notReported}</dd>
           </div>
           <div>
-            <dt>Dataset manifest</dt>
+            <dt>{t.datasetManifestLabel}</dt>
             <dd>
               {run.provenance.dataset_manifest_sha256 ??
                 provenance.manifest_sha256 ??
-                "Not reported"}
+                t.notReported}
             </dd>
           </div>
         </dl>
       </section>
       <section aria-labelledby="selected-candidates-title" className="report-section">
-        <h3 id="selected-candidates-title">Selected candidates</h3>
+        <h3 id="selected-candidates-title">{t.selectedCandidatesHeading}</h3>
         {selected.length === 0 ? (
-          <p className="empty-copy">No instruments were selected.</p>
+          <p className="empty-copy">{t.noInstrumentsSelected}</p>
         ) : (
           <div className="data-table-wrap">
             <table>
-              <caption>Selected instruments and target weights</caption>
+              <caption>{t.selectedTableCaption}</caption>
               <thead>
                 <tr>
-                  <th scope="col">Rank</th>
-                  <th scope="col">Instrument</th>
-                  <th scope="col">Target weight</th>
-                  <th scope="col">Factor scores</th>
-                  <th scope="col">Selection reasons</th>
+                  <th scope="col">{t.columnRank}</th>
+                  <th scope="col">{t.columnInstrument}</th>
+                  <th scope="col">{t.columnTargetWeight}</th>
+                  <th scope="col">{t.columnFactorScores}</th>
+                  <th scope="col">{t.columnSelectionReasons}</th>
                 </tr>
               </thead>
               <tbody>
@@ -162,10 +174,10 @@ export function RecommendationReport({ licenseState, run }: RecommendationReport
                         : formatPercentage(item.target_weight)}
                     </td>
                     <td>
-                      <ScoreList item={item} />
+                      <ScoreList item={item} t={t} />
                     </td>
                     <td>
-                      <ReasonList item={item} />
+                      <ReasonList item={item} t={t} />
                     </td>
                   </tr>
                 ))}
@@ -175,27 +187,27 @@ export function RecommendationReport({ licenseState, run }: RecommendationReport
         )}
       </section>
       <section aria-labelledby="excluded-candidates-title" className="report-section">
-        <h3 id="excluded-candidates-title">Exclusions</h3>
+        <h3 id="excluded-candidates-title">{t.exclusionsHeading}</h3>
         {excluded.length === 0 ? (
-          <p className="empty-copy">No instruments were excluded.</p>
+          <p className="empty-copy">{t.noInstrumentsExcluded}</p>
         ) : (
           <div className="data-table-wrap">
             <table>
-              <caption>Excluded instruments and policy reasons</caption>
+              <caption>{t.excludedTableCaption}</caption>
               <thead>
                 <tr>
-                  <th scope="col">Instrument</th>
-                  <th scope="col">Reason</th>
-                  <th scope="col">Evidence</th>
+                  <th scope="col">{t.columnInstrument}</th>
+                  <th scope="col">{t.columnReason}</th>
+                  <th scope="col">{t.columnEvidence}</th>
                 </tr>
               </thead>
               <tbody>
                 {excluded.map((item) => (
                   <tr key={item.instrument_id}>
                     <th scope="row">{item.instrument_id}</th>
-                    <td>{item.exclusion_reason ?? "No exclusion reason was reported."}</td>
+                    <td>{item.exclusion_reason ?? t.noExclusionReason}</td>
                     <td>
-                      <ReasonList item={item} />
+                      <ReasonList item={item} t={t} />
                     </td>
                   </tr>
                 ))}

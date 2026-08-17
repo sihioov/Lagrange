@@ -1,11 +1,9 @@
 import { StatePanel } from "@/components/states/state-panel";
+import { shellDictionary } from "@/lib/i18n/dictionaries/shell";
+import { getLocale } from "@/lib/i18n/server";
 
-export default function AuthenticatedLoading() {
-  return (
-    <StatePanel
-      kind="loading"
-      message="The authenticated workspace is requesting current data without using a shared cache."
-      title="Loading workspace"
-    />
-  );
+export default async function AuthenticatedLoading() {
+  const locale = await getLocale();
+  const t = shellDictionary[locale];
+  return <StatePanel kind="loading" message={t.loadingMessage} title={t.loadingTitle} />;
 }

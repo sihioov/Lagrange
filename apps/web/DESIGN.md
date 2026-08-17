@@ -3,15 +3,19 @@
 ## 0. Research Log
 
 - Product brief: Todo 25 and the system requirements define an authenticated investment-research shell for invited Members and Owner/Admin operators; trust, isolation, and clear system state outrank spectacle.
-- Embedded references: selected `taste-skill` + `layout-skill` for a regulated application shell and `revolut.md` for cool-neutral fintech discipline, pill actions, semantic color, and shadowless depth. Geist replaces proprietary Aeonik while preserving geometric clarity.
-- UI/UX database: the query `fintech investment research dashboard trust-first cool neutral cobalt accessible content-dense` supported a dual-mode, WCAG-AA, data-dense dashboard and a professional sans family. Its newsletter layout and gold/purple palette were rejected because they conflict with the product model and the approved Revolut-inspired direction.
+- Subject grounding: the product's own name supplied the visual direction that a generic fintech reference could not. A Lagrange point is where a small body holds a stable position between the gravity of two much larger ones — the exact shape of what this console does for four or five people navigating a market with real money on one side and their own discipline on the other. The redesign is built from that subject's own vernacular: orbital mechanics, mission-telemetry readouts, and precision instrument dials, not a fintech-dashboard mood board.
+- Rejected defaults: this pass was checked against the three visual patterns that recur regardless of brief — warm cream canvas with a high-contrast serif and a terracotta accent; near-black canvas with one neon accent; and zero-radius newspaper hairlines. The canvas is cool-neutral rather than cream, the accent is a desaturated instrument-steel blue rather than a saturated neon, and the pill/rounded-panel radius system from the prior pass is kept rather than flattened to a broadsheet grid. None of the three defaults apply here.
+- Superseded reference: the initial pass borrowed `revolut.md`'s cool-neutral cobalt fintech discipline directly. That palette read as competent but generic — the same shell a hundred other invite-only fintech tools could wear. This revision keeps the shadowless, pill-and-hairline depth strategy (still correct for a regulated, data-dense shell) but replaces the borrowed cobalt identity with one derived from the product's own name.
 - Product documents: `Lagrange_Station_System_Design_v1.1.md` supplies the screen hierarchy; `Lagrange_Station_Requirements_v1.1.md` supplies Member/Owner permissions and conservative failure behavior.
-- Skipped lanes: Lazyweb and Imagen were not used because the brief already supplies a concrete brand reference and an approved product-shell direction; this is not a clone or image-first concept exercise.
-- Design dials: `DESIGN_VARIANCE 4`, `MOTION_INTENSITY 3`, `VISUAL_DENSITY 6`.
+- Design dials: `DESIGN_VARIANCE 6`, `MOTION_INTENSITY 3`, `VISUAL_DENSITY 6`. Variance moved up from the first pass because the palette and type system are no longer a borrowed reference; motion and density are unchanged — this pass restyles the shell, it does not add animation or change how much information a screen carries.
 
 ## 1. Atmosphere & Identity
 
-Lagrange Station is a quiet risk console: precise, calm, and visibly conservative when data or permissions are uncertain. Cool neutral layers and a single cobalt signal line create the signature. The memorable moment is not decoration; it is the shell making role, freshness, and blocked states unmistakable before a user acts.
+Lagrange Station is a quiet risk console: precise, calm, and visibly conservative when data or permissions are uncertain. A cool graphite-and-vellum surface family, a single instrument-steel accent, and one reserved signature color read as a mission console, not a consumer fintech app. The memorable moment is not decoration; it is the shell making role, freshness, and blocked states unmistakable before a user acts.
+
+### 1.1 Signature: the equilibrium mark
+
+The one deliberate risk this pass takes is a small custom glyph — two solid points (the large and small body) triangulated against a third, lighter point where the two forces balance. It is drawn once (`components/shell/equilibrium-mark.tsx`) and used in exactly two places, never more: the header wordmark, and the icon inside every `State Panel`, tinted to the panel's status color. The same figure that means "in balance" in the header is legible as "out of balance" when it turns warning-amber or error-red — the mark is not a logo bolted onto the shell, it is load-bearing UI. The third, marked point uses `--signature` and appears nowhere else in the interface; every other interactive surface uses `--accent-primary`, so a reader never has to wonder whether the gold point is clickable.
 
 The interface serves two primary personas:
 
@@ -26,54 +30,59 @@ Ability-spectrum stress personas are keyboard-only users, low-vision users at 20
 
 | Role | Token | Light | Dark | Usage |
 |---|---|---:|---:|---|
-| Canvas | `--surface-canvas` | `#F4F6F9` | `#0D1117` | App background |
-| Panel | `--surface-panel` | `#FFFFFF` | `#141A22` | Main regions and cards |
-| Muted surface | `--surface-muted` | `#EAEFF5` | `#1B2330` | Selected rows and quiet controls |
-| Strong surface | `--surface-strong` | `#DDE4ED` | `#253041` | Pressed and emphasized regions |
-| Primary text | `--text-primary` | `#171C24` | `#F3F6FA` | Headings and body |
-| Secondary text | `--text-secondary` | `#536071` | `#AFBAC8` | Supporting copy |
-| Tertiary text | `--text-tertiary` | `#5C6778` | `#8F9BAD` | Metadata only |
-| Default border | `--border-default` | `#CDD6E2` | `#303C4C` | Region and control outlines |
-| Subtle border | `--border-subtle` | `#DEE5EE` | `#25303E` | Dividers |
-| Cobalt 400 | `--accent-soft` | `#E5E8FF` | `#252C63` | Selected background |
-| Cobalt 600 | `--accent-primary` | `#4351D8` | `#8790FF` | Links, active nav, primary action |
-| Cobalt 700 | `--accent-hover` | `#3441BB` | `#A1A8FF` | Hover and focus emphasis |
-| On accent | `--accent-on` | `#FFFFFF` | `#10142A` | Text on accent |
-| Success | `--status-success` | `#087A57` | `#56D5AA` | Positive status with text/icon |
-| Warning | `--status-warning` | `#9B5700` | `#FFB76B` | Caution with text/icon |
-| Error | `--status-error` | `#B83344` | `#FF7C89` | Failure/destructive with text/icon |
-| Information | `--status-info` | `#245EA8` | `#79AAFF` | Informational state with text/icon |
-| Focus | `--focus-ring` | `#4351D8` | `#A1A8FF` | Two-pixel keyboard focus ring |
+| Vellum (canvas) | `--surface-canvas` | `#EBEFF0` | `#0D1116` | App background |
+| Panel | `--surface-panel` | `#FBFCFC` | `#131A20` | Main regions and cards |
+| Muted surface | `--surface-muted` | `#E1E7E8` | `#1A232A` | Selected rows and quiet controls |
+| Strong surface | `--surface-strong` | `#D1D9DA` | `#29343E` | Pressed and emphasized regions |
+| Deep Ink (primary text) | `--text-primary` | `#0E1417` | `#F3F7F8` | Headings and body |
+| Secondary text | `--text-secondary` | `#3E4D51` | `#B7C4C7` | Supporting copy |
+| Tertiary text | `--text-tertiary` | `#57696D` | `#8BA0A3` | Metadata only |
+| Default border | `--border-default` | `#B7C2C4` | `#33414B` | Region and control outlines |
+| Subtle border | `--border-subtle` | `#D0D9DB` | `#232F38` | Dividers |
+| Accent soft | `--accent-soft` | `#D2EEF5` | `#0F3745` | Selected background |
+| Steel Blue (accent) | `--accent-primary` | `#077299` | `#4FC6E8` | Links, active nav, primary action |
+| Steel Blue, hover | `--accent-hover` | `#045A7A` | `#7ADCF2` | Hover and focus emphasis |
+| On accent | `--accent-on` | `#FFFFFF` | `#04141A` | Text on accent |
+| Signature Brass | `--signature` | `#8C6310` | `#E7B65E` | The equilibrium mark's third point, and the eyebrow micro-label color — never a button, link, or other clickable surface |
+| Success | `--status-success` | `#0E8C5C` | `#4FE0A8` | Positive status with text/icon |
+| Warning | `--status-warning` | `#B4650F` | `#F0A855` | Caution with text/icon |
+| Error | `--status-error` | `#B8264A` | `#FF8592` | Failure/destructive with text/icon |
+| Information | `--status-info` | `#2E6FB0` | `#7EC0F2` | Informational state with text/icon |
+| Focus | `--focus-ring` | `#077299` | `#4FC6E8` | Two-pixel keyboard focus ring |
 
 ### Rules
 
-- Cobalt is interactive, never decorative. Semantic colors always include an icon or explicit label.
-- Surfaces stay in one cool-neutral family. No warm gray, neon, purple glow, or gradient text.
-- Light and dark values are paired at the token layer using `prefers-color-scheme`; components never choose theme-specific raw colors.
-- Body contrast targets WCAG 2.2 AA at minimum; primary reading text targets AAA where practical.
+- Steel Blue is interactive, never decorative. Semantic colors always include an icon or explicit label.
+- Signature Brass marks exactly one shape (the equilibrium mark's third point) plus the recurring eyebrow micro-label, and is never applied to a button, link, or any other clickable surface — the rule that keeps "gold" from being mistaken for "clickable."
+- Surfaces stay in one cool-neutral family. The canvas is a graphite/vellum grey, deliberately not a warm cream — a high-contrast serif-on-cream pairing is the single most common AI-generated default and is rejected outright here. No warm gray, neon, purple glow, or gradient text.
+- Light and dark values are paired at the token layer; components never choose theme-specific raw colors. Theme resolution has two layers: `prefers-color-scheme` picks a default, and an explicit `data-theme="dark"`/`data-theme="light"` attribute on `<html>` — set by the header's theme toggle and persisted in a `theme` cookie — overrides it in either direction. A first-time visitor with no cookie yet gets the OS default with zero extra requests; a returning visitor's explicit choice is read server-side before the first byte, so there is no flash of the wrong theme.
+- Body contrast targets WCAG 2.2 AA at minimum; primary reading text targets AAA where practical. Every accent/status pairing above is re-verified by `tests/shell-runtime.test.ts`'s automated contrast check, not just eyeballed — a future palette change that regresses contrast fails CI, not just review.
+- Round 2 (this pass) increased accent saturation and contrast in response to feedback that the round-1 palette read as muted; the hue families (cool graphite neutrals, blue accent, warm brass signature) are unchanged from round 1, only the specific values.
 
 ## 3. Typography
 
 ### Font Stack
 
-- Primary: Geist Sans from the installed `geist` package, then `system-ui`, sans-serif.
-- Data: Geist Mono, then `ui-monospace`, monospace.
+- Body: Geist Sans from the installed `geist` package, then `system-ui`, sans-serif. Unchanged from the first pass — it is already legible, AA-safe, and geometrically neutral; nothing about the redesign required replacing it.
+- Display (`--font-display`): Geist Mono, then `ui-monospace`, monospace — reused, not added, and given an unusual job. Page `h1`s, the uppercase eyebrow micro-labels, and data-table column headers are set in mono rather than the humanist sans, so short strings read like a mission-console readout ("BACKTESTS", "QUEUED EXECUTION") instead of a marketing headline. Reserved for short strings only — every place it is applied in this shell holds one to three words.
+- Data: Geist Mono, then `ui-monospace`, monospace. IDs, dates, and tabular numbers — unchanged from the first pass.
 - No serif family. Numeric results use tabular figures.
 
 ### Scale
 
-| Level | Size | Weight | Line height | Tracking | Usage |
-|---|---:|---:|---:|---:|---|
-| Display | `2.5rem` | 560 | 1.08 | `-0.035em` | Login statement only |
-| H1 | `2rem` | 560 | 1.18 | `-0.025em` | Page title |
-| H2 | `1.5rem` | 560 | 1.25 | `-0.015em` | Major region |
-| H3 | `1.125rem` | 560 | 1.35 | `-0.01em` | Panel title |
-| Body | `1rem` | 420 | 1.55 | `0` | Default reading text |
-| Body small | `0.875rem` | 430 | 1.5 | `0.005em` | Secondary information |
-| Label | `0.75rem` | 560 | 1.35 | `0.04em` | Short metadata labels |
-| Data | `0.875rem` | 500 | 1.45 | `0` | IDs, dates, numbers |
+| Level | Size | Weight | Line height | Tracking | Font | Usage |
+|---|---:|---:|---:|---:|---|---|
+| Display | `2.5rem` | 560 | 1.08 | `-0.035em` | Body | Login statement only |
+| H1 | `clamp(1.375rem, 3.4vw, 1.875rem)` | 600 | 1.22 | `-0.01em` | Display (mono) | Page title |
+| H2 | `1.5rem` | 560 | 1.25 | `-0.015em` | Body | Major region |
+| H3 | `1.125rem` | 560 | 1.35 | `-0.01em` | Body | Panel title |
+| Body | `1rem` | 420 | 1.55 | `0` | Body | Default reading text |
+| Body small | `0.875rem` | 430 | 1.5 | `0.005em` | Body | Secondary information |
+| Label / eyebrow | `0.6875rem` | 600 | 1.35 | `0.08em` | Display (mono) | Uppercase micro-labels |
+| Table header | `0.6875rem` | 500 | 1.35 | `0.06em` | Display (mono) | Column headers |
+| Data | `0.875rem` | 500 | 1.45 | `0` | Data (mono) | IDs, dates, numbers |
 
-Body text never drops below `0.875rem`. Labels remain short and never carry essential instructions alone.
+Body text never drops below `0.875rem`. Labels remain short and never carry essential instructions alone. H2 and H3 stay in Geist Sans rather than the mono display face — a dashboard region can carry several of them, and mono headings repeated at that density would read as a gimmick rather than a readout. The mono display treatment is spent once per page (the `h1`) and on labels genuinely short enough to look intentional in a fixed-width face.
 
 ## 4. Spacing & Layout
 
@@ -114,15 +123,15 @@ All spacing intent derives from a four-pixel unit.
 
 ### Primary Navigation Item
 
-- **Structure**: Phosphor regular-weight icon plus visible text label inside a real link.
+- **Structure**: Phosphor regular-weight icon plus visible text label inside a real link. The icon is `aria-hidden` — it is a scanning aid, not part of the accessible name — and chosen to name the destination's instrument rather than a generic dashboard glyph: `Planet` (Dashboard, the body the station orbits), `Target` (Strategies, precision), `Compass` (Recommendations, heading), `Flask` (Backtests, experiment), `Wallet` (Paper account), `Gauge` (Administration), `Broadcast` (Live controls, a signal leaving the station).
 - **Variants**: default, current, Owner-only.
-- **States**: hover uses muted surface; active uses strong surface; current adds the cobalt signal line and text weight; focus uses the focus token.
+- **States**: hover uses muted surface; active uses strong surface; current adds the Steel Blue signal line, tints its icon to match, and increases text weight; focus uses the focus token.
 - **Motion**: color and transform feedback only; no automatic movement.
 
 ### Action
 
 - **Structure**: native button or link with visible label; icons supplement text.
-- **Variants**: primary cobalt pill, secondary neutral pill, quiet text action, destructive semantic action.
+- **Variants**: primary Steel Blue pill (`.primary-action`), secondary neutral pill (`.secondary-action`), quiet text action (`.quiet-action`, no fill or border — used for a low-stakes navigational action next to or instead of a real primary, e.g. "Return to dashboard" on an Owner-only refusal), caution pill (`.caution-action`, filled with `--status-warning` — used for the more consequential direction of a two-way safety control, e.g. disengaging the Live kill switch, never for the safe direction of the same control).
 - **States**: hover, pressed, focus-visible, disabled, and busy. Busy actions retain their label and expose status text.
 - **Accessibility**: minimum `44px` target; primary labels stay on one line; disabled semantics are native.
 
@@ -135,7 +144,7 @@ All spacing intent derives from a four-pixel unit.
 
 ### State Panel
 
-- **Structure**: Phosphor status icon, title, plain-language message, optional action.
+- **Structure**: the equilibrium mark (see §1.1), title, plain-language message, optional action. The mark's color follows the panel's `data-kind`, so the one glyph the shell uses to mean "in balance" is also how it shows "out of balance."
 - **Variants**: loading, empty, error, blocked entitlement.
 - **States**: loading and empty use `role="status"` with polite announcements; error and blocked use `role="alert"`. Loading skeletons match final geometry and do not shimmer under reduced motion.
 - **Recovery**: error text states what failed and what the action does; blocked entitlement never hints that retrying will bypass policy.
@@ -192,12 +201,12 @@ All spacing intent derives from a four-pixel unit.
 
 ## 7. Depth & Surface
 
-Depth strategy is **tonal shift with selective hairlines**. This adapts Revolut's shadowless confidence to a data-heavy shell.
+Depth strategy is **tonal shift with selective hairlines** — shadowless confidence carried over unchanged from the first pass, because it was already correct for a data-heavy shell and owed nothing to the borrowed cobalt identity it is now paired with instead.
 
 - Canvas, panel, muted, and strong tokens create four visible planes.
 - Cards use a `1rem` radius; compact controls use `0.75rem`; action buttons use full pills. This radius hierarchy is fixed.
 - No `box-shadow`, ambient glow, backdrop blur, glass panel, or gradient card is part of the shell.
-- The cobalt signal line is reserved for current navigation and focused workflow context.
+- The Steel Blue signal line is reserved for current navigation and focused workflow context. Signature Brass never appears here — it marks the equilibrium point, not interactive state.
 
 ## 8. Accessibility Constraints & Accepted Debt
 

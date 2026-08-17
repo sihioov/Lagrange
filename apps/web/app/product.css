@@ -46,10 +46,11 @@
 }
 
 .eyebrow {
-  color: var(--accent-primary);
-  font-size: 0.75rem;
-  font-weight: 560;
-  letter-spacing: 0.04em;
+  color: var(--signature);
+  font-family: var(--font-display);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -242,8 +243,10 @@ td {
 
 thead th {
   color: var(--text-secondary);
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
+  font-family: var(--font-display);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 

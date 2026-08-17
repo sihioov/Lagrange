@@ -1,22 +1,19 @@
 import type { Metadata } from "next";
 import { OwnerRoute } from "@/components/pages/owner-route";
 import { StatePanel } from "@/components/states/state-panel";
+import { adminDictionary } from "@/lib/i18n/dictionaries/admin";
+import { getLocale } from "@/lib/i18n/server";
 
 export const metadata: Metadata = {
   title: "Administration",
 };
 
-export default function AdminPage() {
+export default async function AdminPage() {
+  const locale = await getLocale();
+  const t = adminDictionary[locale];
   return (
-    <OwnerRoute
-      description="Review datasets, jobs, workers, users, and immutable audit evidence through explicit Owner pathways."
-      title="Administration"
-    >
-      <StatePanel
-        kind="empty"
-        message="No administrative area is selected. Operational data can populate this route only through audited Owner APIs."
-        title="Choose an administrative area"
-      />
+    <OwnerRoute description={t.pageDescription} title={t.pageTitle}>
+      <StatePanel kind="empty" message={t.noAreaMessage} title={t.noAreaTitle} />
     </OwnerRoute>
   );
 }

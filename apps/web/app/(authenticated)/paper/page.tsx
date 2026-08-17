@@ -10,6 +10,8 @@ import { PaperPerformance } from "@/components/paper/paper-performance";
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
+import { type PaperDictionary, paperDictionary } from "@/lib/i18n/dictionaries/paper";
+import { getLocale } from "@/lib/i18n/server";
 import {
   defaultAccount,
   type PaperLineageModel,
@@ -24,9 +26,6 @@ export const metadata: Metadata = {
   title: "Paper account",
 };
 
-const DESCRIPTION =
-  "Review the cash, positions, orders, fills, and daily performance of your private simulated account.";
-
 const BLOCKED_CODES = new Set([
   "DATASET_BLOCKED",
   "DATA_ENTITLEMENT_REQUIRED",
@@ -34,9 +33,9 @@ const BLOCKED_CODES = new Set([
   "FORBIDDEN",
 ]);
 
-function shell(children: React.ReactNode) {
+function shell(children: React.ReactNode, t: PaperDictionary) {
   return (
-    <RoutePage description={DESCRIPTION} title="Paper account">
+    <RoutePage description={t.pageDescription} title={t.pageTitle}>
       {children}
     </RoutePage>
   );
@@ -55,6 +54,8 @@ function latestSession(lineage: PaperLineageModel): string | null {
 }
 
 export default async function PaperPage() {
+  const locale = await getLocale();
+  const t = paperDictionary[locale];
   try {
     const api = await getProductApi();
     const accounts = await api.getPaperAccounts();
@@ -64,13 +65,14 @@ export default async function PaperPage() {
         <StatePanel
           action={
             <Link className="secondary-action" href="/strategies">
-              Review strategies
+              {t.reviewStrategiesLink}
             </Link>
           }
           kind="empty"
-          message="No paper account is selected. Account data can populate this route only after server ownership checks succeed."
-          title="No paper account selected"
+          message={t.noAccountMessage}
+          title={t.noAccountTitle}
         />,
+        t,
       );
     }
 
@@ -97,37 +99,33 @@ export default async function PaperPage() {
 
     return shell(
       <>
-        <PaperHoldings account={account} orders={orders.items} positions={positions.items} />
-        <PaperPerformance performance={performance} />
+        <PaperHoldings account={account} orders={orders.items} positions={positions.items} t={t} />
+        <PaperPerformance performance={performance} t={t} />
         {parity === null ? (
-          <StatePanel
-            kind="empty"
-            message="No session has queued a target yet, so there is nothing to compare against a backtest."
-            title="No parity report available"
-          />
+          <StatePanel kind="empty" message={t.noParityMessage} title={t.noParityTitle} />
         ) : (
-          <PaperParityPanel parity={parity} />
+          <PaperParityPanel parity={parity} t={t} />
         )}
-        <PaperLineage lineage={lineage} />
+        <PaperLineage lineage={lineage} t={t} />
         {bindable.length === 0 ? (
           <StatePanel
             action={
               <Link className="secondary-action" href="/strategies">
-                Create a strategy configuration
+                {t.createStrategyConfigLink}
               </Link>
             }
             kind="empty"
-            message="Binding an account needs a saved strategy configuration."
-            title="No strategy configuration to bind"
+            message={t.noConfigMessage}
+            title={t.noConfigTitle}
           />
         ) : (
           <section aria-labelledby="paper-bind-title" className="workflow-panel">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">Account branching</p>
-                <h2 id="paper-bind-title">Bind strategy</h2>
+                <p className="eyebrow">{t.accountBranchingEyebrow}</p>
+                <h2 id="paper-bind-title">{t.bindStrategyHeading}</h2>
               </div>
-              <p>Only the server opens and closes bindings.</p>
+              <p>{t.onlyServerBindsNote}</p>
             </div>
             <PaperBindForm
               accountId={account.id}
@@ -140,25 +138,24 @@ export default async function PaperPage() {
             />
           </section>
         )}
-        <PaperNotifications notifications={notifications.items} />
+        <PaperNotifications notifications={notifications.items} t={t} />
       </>,
+      t,
     );
   } catch (error) {
     if (error instanceof ApiProblem && BLOCKED_CODES.has(error.code)) {
       return shell(
         <StatePanel
           kind="blocked"
-          message="The paper entitlement is inactive. Account data and simulated results are not rendered."
-          title="Paper data is blocked"
+          message={t.entitlementInactiveMessage}
+          title={t.dataBlockedTitle}
         />,
+        t,
       );
     }
     return shell(
-      <StatePanel
-        kind="error"
-        message="Paper account data could not be loaded. Retry after checking the service status."
-        title="Paper account unavailable"
-      />,
+      <StatePanel kind="error" message={t.unavailableMessage} title={t.unavailableTitle} />,
+      t,
     );
   }
 }
