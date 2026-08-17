@@ -1,6 +1,6 @@
 # Lagrange Station — 상태 종합
 
-**기준일: 2026년 8월 13일 (2026-08-13)** · **2026-08-14 갱신분은 §2.6에 별도로 기록한다 — 저장소가 Windows/WSL에서 Linux 호스트로 이관됐고, 그 결과 아래 §2.1~§2.3의 판정과 증거가 현재 호스트에 존재하지 않는다.** · **2026-08-17 갱신분은 §2.8에 기록한다 — 서비스가 실행되는 호스트는 이제 native Linux 하나이며, Auth0 vendor 검증이 실 테넌트를 상대로 통과했다.** 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지다. Auth0 confidential client 배선은 main의 `8c22f79`~`a03d8fc`(08-12), 고정 ETF 추천 파이프라인과 Paper 리밸런싱 미리보기는 `554834c`~`dc4dd0e`(53커밋)이며, **08-13 15:02에 `feat/recommendation-pipeline`이 fast-forward로 main에 병합됐다** — 이 문서 이전 판의 "아직 main 미병합" 서술은 작성 시점(08-13 21:19)에 이미 틀린 것이었다. 병합 이후 게이트는 아직 한 번도 재실행되지 않았다.
+**기준일: 2026년 8월 13일 (2026-08-13)** · **2026-08-14 갱신분은 §2.6에 별도로 기록한다 — 저장소가 Windows/WSL에서 Linux 호스트로 이관됐고, 그 결과 아래 §2.1~§2.3의 판정과 증거가 현재 호스트에 존재하지 않는다.** · **2026-08-17 갱신분은 §2.8~§2.9에 기록한다 — 서비스가 실행되는 호스트는 이제 native Linux 하나이고, Auth0 vendor 검증이 실 테넌트를 상대로 통과했으며, phase1 게이트가 이식되어 이 호스트 최초의 판정을 발행했다.** 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지다. Auth0 confidential client 배선은 main의 `8c22f79`~`a03d8fc`(08-12), 고정 ETF 추천 파이프라인과 Paper 리밸런싱 미리보기는 `554834c`~`dc4dd0e`(53커밋)이며, **08-13 15:02에 `feat/recommendation-pipeline`이 fast-forward로 main에 병합됐다** — 이 문서 이전 판의 "아직 main 미병합" 서술은 작성 시점(08-13 21:19)에 이미 틀린 것이었다. 병합 이후 게이트는 아직 한 번도 재실행되지 않았다.
 
 ---
 
@@ -30,7 +30,7 @@
 
 ## 2. 어디까지 왔나
 
-**한 줄 요약: 고정 11-ETF 추천 파이프라인이 제출→계산→발행→화면→Paper 연계까지 동작하고(§3.10), Auth0 confidential client 배선도 끝났다(§3.9). 릴리스는 여전히 외부 조달(E1 KRX 권리, X1/X2 KIS)과 실제 KRX provider에 막혀 있으며, 그 차단은 fail-closed 설계의 정상 상태다. E2(Auth0)는 테넌트 선택·배선·secret provisioning에 이어 08-17에 실 테넌트 vendor 스위트가 5/5 통과해(§2.8), 게이트 재실행으로 증거를 발행하는 것만 남았다.**
+**한 줄 요약: 고정 11-ETF 추천 파이프라인이 제출→계산→발행→화면→Paper 연계까지 동작하고(§3.10), Auth0 confidential client 배선도 끝났다(§3.9). 릴리스는 여전히 외부 조달(E1 KRX 권리, X1/X2 KIS)과 실제 KRX provider에 막혀 있으며, 그 차단은 fail-closed 설계의 정상 상태다. E2(Auth0)는 08-17에 해소됐다 — 실 테넌트 vendor 스위트 5/5 통과(§2.8)에 이어 이식된 phase1 게이트가 E2 PASS를 발행했다(§2.9).**
 
 ### 2.1 게이트 판정 (2026-08-10 재실행, `--include-failure --include-restore` 포함)
 
@@ -130,17 +130,46 @@ CI(`.github/workflows/ci.yml` `workspace-tests`)의 순서를 그대로 재현�
 
 **서비스가 실행되는 호스트는 native Ubuntu Linux 하나다.** Windows/WSL은 개발 이력이며 운영 경로가 아니다. 이 확정이 만드는 실질적 결과가 하나 있다 — WSL 전용 스크립트(`scripts/qa/phase1-gate.sh`의 `/root/.cargo/bin/cargo` 가드, `research-worker-smoke.sh`의 `wsl`/`wslpath` 분기)에 대해 §3.3과 §5가 남겨둔 "Windows에서는 `.ps1` 쌍둥이로 우회한다"는 선택지는 **더 이상 대체 경로가 아니다.** 해당 스크립트는 native Linux용으로 이식하거나, GitHub Actions 결과를 증거로 삼는 결정을 해야 한다(§2.6-1, 런북 §8.2).
 
-`phase1-gate.sh`의 WSL 잔재는 46행 가드 하나가 아니다. `run_cargo`가 PATH를 `/root/.cargo/bin`으로 교체하고, `CARGO_TARGET_DIR`을 `/root/lagrange-target`으로 강제하며, `WSL_DATABASE_URL` 기본값이 `:5432`인데 이 호스트의 QA DB는 `:55432`다. 여기에 §2.7의 pyarrow 전제도 함께 걸린다. 이식은 이 넷을 모두 다루는 작업이다.
+**`phase1-gate.sh`는 native Linux로 이식됐다(같은 날, 아래 §2.9).** WSL 잔재는 46행 가드 하나가 아니라 넷이었다 — PATH 교체, `CARGO_TARGET_DIR=/root/lagrange-target` 강제, `WSL_DATABASE_URL` 기본값 `:5432`(이 호스트 QA DB는 `:55432`). 이제 phase2/phase3 게이트와 같은 관례(호출자의 cargo, `$root/target`, `LAGRANGE_QA_DB_PORT`)를 쓴다. `research-worker-smoke.sh`의 `wsl`/`wslpath` 분기는 아직 남아 있다.
 
 **Auth0 vendor 스위트가 실 테넌트를 상대로 통과했다.** `lagrange-station.jp.auth0.com` / client `YZ4T7g575IohtS1HsltlFAiU7AlyUUuI` 조합으로 `cargo test -p auth --test vendor_auth0 -- --include-ignored` 실행, commit `41e8005`에서 **5개 전부 통과**(vendor 3개 + 비-vendor 2개, 실패 0). 개별 확인은 JWKS가 RS256 키 2개를 게시하고, `/authorize`가 등록된 콜백으로 302를 반환하며, 설정된 credential이 `403 invalid_grant`(클라이언트 인증 통과 후 의도적 무효 code만 거부)를, 음성 대조군이 `401 access_denied`를 받는 것이다.
 
 `auth0_client_secret` 실파일은 이 Linux 호스트의 `deploy/secrets/`에 배치됐다(mode 0600, 개행 없는 단일 행, symlink 아님 — `ClientSecret::from_file`의 거부 조건 전부 회피). §3.9가 기록한 "secret 파일은 이 호스트에 provisioning되어 있음"은 Windows 호스트 기준 서술이었고, 이번 배치로 Linux에서 처음 충족됐다.
 
-**그러나 E2 게이트 증거는 여전히 미발행이다.** 스위트 통과는 실체이지만, 이 저장소에서 체크가 존재한다는 것은 게이트가 판정을 발행했다는 뜻이다. `phase1-gate.sh`가 위 이유로 실행되지 않으므로 `.omo/`는 이 호스트에서 여전히 비어 있다. 게이트의 E2 검사는 위에서 실행한 것과 동일한 명령을 부르므로, 게이트가 돌기만 하면 PASS가 된다. **게이트 밖에서 증거 파일을 손으로 만들지 않는다**(원칙 5·6).
+**E2 게이트 증거는 §2.9의 게이트 실행으로 발행됐다.** 스위트 통과와 게이트 판정 발행은 다른 사건이며, 이 저장소에서 체크가 존재한다는 것은 후자를 뜻한다. 게이트 밖에서 증거 파일을 손으로 만들지 않는다는 원칙(5·6)은 그대로다.
 
-게이트 실행 시 잊기 쉬운 전제: `LAGRANGE_AUTH0_DOMAIN`, `LAGRANGE_AUTH0_CLIENT_ID`, `LAGRANGE_AUTH0_CLIENT_SECRET` 세 환경변수를 미리 export해야 한다. `run_cargo`는 부모 환경을 상속하지만 이 값들을 설정해 주는 코드는 저장소 어디에도 없다. secret은 `"$(cat deploy/secrets/auth0_client_secret)"`로 주입하고 인자나 로그에 남기지 않는다.
+게이트 실행 시 잊기 쉬운 전제: `LAGRANGE_AUTH0_DOMAIN`, `LAGRANGE_AUTH0_CLIENT_ID`, `LAGRANGE_AUTH0_CLIENT_SECRET` 세 환경변수를 미리 export해야 한다. 게이트는 부모 환경을 상속하지만 이 값들을 설정해 주는 코드는 저장소 어디에도 없고, 게이트가 secret 파일을 직접 읽지도 않는다 — 자격증명 주입은 운영자의 명시적 행위로 남긴다. secret은 `"$(cat deploy/secrets/auth0_client_secret)"`로 주입하고 인자나 로그에 남기지 않는다.
 
 배포 대상 앱은 JP 테넌트의 `YZ4T7g575IohtS1HsltlFAiU7AlyUUuI` **하나**다. 검증 과정에서 다른 테넌트의 앱(`kwaoPWGvfvRQWlAIwUQd3LtiYr67UlAI`)이 후보로 등장했으나 이 저장소와 무관하며, 그 앱의 secret으로는 pin된 client가 인증되지 않는다.
+
+### 2.9 phase1 게이트 Linux 이식과 이 호스트 최초 증거 (2026-08-17, `5b3f832`)
+
+게이트를 Linux에서 실행 가능하게 만들자 **이 게이트가 실행되지 않은 테스트에 PASS를 줄 수 있는 경로 3개**가 드러났다. §3.3("검사 도구 자체의 결함")의 연장이며, 게이트가 검사하는 내용을 바꾸는 일이므로 전부 커밋 메시지에 선언했다.
+
+| # | 결함 | 실제로 실행된 테스트 | 수정 |
+|---|---|---|---|
+| E2 | `run_cargo`가 이미 `--`가 있는 호출에 `-- --nocapture`를 덧붙여 `cargo test … -- --ignored -- --nocapture`가 됐다. libtest가 두 번째 `--`와 `--nocapture`를 이름 필터로 읽어 5개 중 **0개** 실행 후 exit 0 → 게이트는 "real Auth0 tenant suite green" 기록 | 0 / 5 | cargo 인자와 libtest 인자를 분리해 구분자 하나만 삽입 |
+| E4 | `cargo test -p auth protocol`은 테스트 **이름** 필터라 아무것도 매치하지 않는다. `invites`도 0개, `stepup`만 5개 중 4개 | 0 / 0 / 4 → **32 / 15 / 5** | `--test <target>` 사용. 세 스위트가 transcript 한 경로를 공유해 서로 덮어쓰던 것도 분리 |
+| E7 | 준비 판정이 TCP 프로브뿐이고 자식이 아닌 subshell PID를 기록했다. 이 호스트에서는 mock이 `EADDRINUSE`, next dev가 `Cannot find module`로 죽었는데도 **다른 워크트리가 그 포트를 서빙 중이라 두 포트 모두 응답** → 게이트가 남의 앱을 상대로 Playwright를 돌렸다 | — | `exec`로 자식 PID를 잡고, 포트 전후로 생존 확인, 포트 override 허용, 의존성 부재 시 조기 차단 |
+
+일반화 가드 2개를 함께 넣었다. 검사는 **cargo exit 0 + 최소 1개 테스트 실행**일 때만 PASS다(phase2 게이트가 Todo 35부터 쓰던 계수 방식). 그리고 **QA DB 도달성을 선검사해 안 되면 exit 2**, 판정 없음이다 — E5는 DB-gated인데 `DATABASE_URL`이 없으면 스스로 skip하고 skip은 passed로 집계되며, 반대로 DB가 죽어 있으면 모든 DB 검사가 suite failure가 된다(phase3가 그래서 DENIED를 발행했던 사고, §3.3). 게이트는 DB를 띄우지 않는다 — 공유 인스턴스는 `full-system-gate.sh`가 소유한다.
+
+**이 호스트 최초의 phase1 판정** (2026-08-17T08:32:21Z, disposable QA DB, `LAGRANGE_AUTH0_*` export):
+
+| 검사 | 결과 | 비고 |
+|---|---|---|
+| E1 written-rights | `BLOCKED_EXTERNAL` | `krx.entitlement.example.json`이 placeholder — E1 조달 대기, 정상 상태 |
+| E2 vendor-auth0 | **PASS** (3) | §2.8의 실 테넌트 검증이 게이트 증거가 됐다 |
+| E3 auth0-simulator | **PASS** (10) | |
+| E4 auth0-invite-mfa | **PASS** (52) | 이전 게이트에서는 4개만 돌았다 |
+| E5 phase1-five-user | **PASS** (5) | DB-gated, 실제 실행 확인 |
+| E6 restore-policy | **PASS** | |
+| E7 playwright-phase1 | `BLOCKED_EXTERNAL` | `apps/web/node_modules` 미설치 — 외부 차단이 아니라 **환경 미비**, `npm ci` + `npx playwright install`로 해소 가능 |
+| **VERDICT** | **`BLOCKED_EXTERNAL_DATA_RIGHTS`** | E1 때문이며 이것이 Phase 1의 정상 결과다 |
+
+증거는 `.omo/evidence/task-28-lagrange-station-implementation.json`에 있다. **`.omo/`는 gitignore 대상이므로 이 판정도 이 호스트에만 존재한다** — §2.6이 지적한 성질은 변하지 않았다.
+
+남은 것은 E7의 web 의존성 설치와, phase2/phase3/종합 게이트 재실행이다(6b는 아직 부분 완료다).
 
 ---
 
@@ -265,10 +294,10 @@ CI(`.github/workflows/ci.yml` `workspace-tests`)의 순서를 그대로 재현�
 | 4 | 추천→Paper 자동화(scheduled opt-in) + 리밸런싱 미리보기 백엔드 | **코드 작업** | ✅ **완료** (`fd3fc5b`, §2.5) |
 | 5 | Auth0 confidential client 배선 | **코드 작업** | ✅ **완료** (§3.9, main) |
 | 6 | `feat/recommendation-pipeline` → main 병합 | **코드 작업** | ✅ **완료** (08-13 fast-forward, §2.6) |
-| 6b | 전체 게이트 재실행(E7 포함) → Linux 호스트 최초 증거 발행 | **코드/운영** | ▶️ **다음 순서** — `phase1-gate.sh`의 Linux 이식이 선행 조건. WSL 잔재는 가드·PATH·`CARGO_TARGET_DIR`·DB 포트 4건 (§2.8) |
+| 6b | 전체 게이트 재실행(E7 포함) → Linux 호스트 최초 증거 발행 | **코드/운영** | ◐ **phase1 발행 완료** (`BLOCKED_EXTERNAL_DATA_RIGHTS`, §2.9). 남은 것: E7 web 의존성 설치, phase2·phase3·종합 게이트 |
 | 7 | 리밸런싱 미리보기 UI (백엔드만 완료, UI 미포함) | **코드 작업** | ▶️ 착수 가능 |
 | 8 | paper-runner·recommendation-runner 배포 서비스 활성화 | **운영자** | ▶️ 착수 가능 |
-| 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ◐ **스위트 5/5 통과 (08-17, §2.8)** — E2 게이트 증거 발행은 6b에 종속 |
+| 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ✅ **완료** — 스위트 5/5 통과(§2.8), phase1 게이트가 **E2 PASS**를 발행(§2.9) |
 | 10 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
 | 11 | KRX 계약·실제 provider/credential/endpoint / KIS 실계좌 | **외부 구현·사장님 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
 
@@ -279,7 +308,7 @@ Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가�
 | 항목 | 구체적으로 |
 |---|---|
 | **E1** KRX 서면 데이터 권리 + 실제 공급자 | 초대 사용자 5명 + 파생 분석물을 포괄하는 계약 아티팩트, 라이선스·entitlement-aware KRX HTTP transport 구현, 실제 endpoint/credential, `research_writer` role·secret·Raw volume 운영자 provisioning. 현재 저장소에는 synthetic fixture와 발행 이음매만 있고 real feed는 live가 아님. `configs/data-rights/`는 여전히 placeholder뿐 |
-| **E2** Auth0 테넌트 | **상태 변경(08-17):** 테넌트(`lagrange-station.jp.auth0.com`) 선택과 confidential client 배선(08-12, §3.9)에 이어, Linux 호스트 secret 배치와 **실 테넌트 vendor 스위트 5/5 통과**가 끝났다(§2.8). 조달·운영 확인 요소는 소진됐고, 남은 것은 phase1 게이트 재실행으로 E2 증거를 발행하는 것뿐이다 — 그 자체는 게이트 스크립트의 Linux 이식(§2.8)에 막혀 있다 |
+| **E2** Auth0 테넌트 | **해소(08-17):** 테넌트 선택·confidential client 배선(08-12, §3.9), Linux 호스트 secret 배치와 실 테넌트 vendor 스위트 5/5 통과(§2.8)에 이어, phase1 게이트가 **E2 = PASS**를 발행했다(§2.9). 이 항목은 더 이상 외부 조달 대기가 아니다 |
 | **X1/X2** KIS 실계좌 | 실거래 자격증명 + 소액 실주문 증거 (변동 없음) |
 
 이 3건이 없는 동안 게이트는 `BLOCKED_EXTERNAL`이며 **그것이 합격 조건이다. 위조해서 APPROVED에 도달하는 것은 금지** — 닫히는 쪽으로 실패하는 것 자체가 게이트의 존재 이유다. 한국 데이터 권리가 끝내 안 오면 계획의 답은 Member 접근 연기다, 시장 변경이 아니라.
@@ -292,7 +321,7 @@ Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가�
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
 1. **`feat/recommendation-pipeline` 병합.** 53커밋(추천 파이프라인 + 리밸런싱 미리보기)이 브랜치에만 있다. 병합 전 리뷰 대상이며, 병합 후에만 게이트 재실행이 의미를 가진다.
-2. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화. 08-10 이후의 Auth0 배선·추천 파이프라인·미리보기가 전부 게이트 미검증 상태이고, F1/F2/F4 판정문도 ~100커밋 뒤처져 사람 재검토가 필요하다.
+2. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화. **phase1은 08-17에 발행됐다(§2.9).** 남은 것은 E7의 `apps/web` 의존성 설치(`npm ci` + `npx playwright install`), phase2·phase3·종합 게이트 재실행이다. F1/F2/F4 판정문은 여전히 ~120커밋 뒤처져 사람 재검토가 필요하다.
 3. **리밸런싱 미리보기 UI.** §2.5의 백엔드 계약(생성/조회/적용 3개 라우트, OpenAPI 반영됨)은 완료됐지만 화면이 없다. Live 주문도 의도적으로 범위 밖.
 4. **배포 서비스 활성화.** `deploy/systemd/paper-runner.service`와 recommendation-runner의 Compose/systemd 단위(§3.11)를 설치·시작하고, 실제 role-scoped DB URL과 curated dataset 마운트를 호스트 Secret Manager에서 주입해야 한다. 저장소에는 비밀값을 넣지 않는다.
 5. ~~**Auth0 vendor 스위트 실행(운영자).**~~ **완료 (2026-08-17, §2.8)** — 실 테넌트 상대 5/5 통과. E2를 닫는 것은 게이트 재실행(2번)이며, 그때 `LAGRANGE_AUTH0_*` 세 변수를 export해야 한다.
