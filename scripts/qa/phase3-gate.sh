@@ -122,6 +122,10 @@ command -v docker >/dev/null 2>&1 || {
   echo "ENV ERROR: docker not found on PATH" >&2
   exit 2
 }
+if ! dkr version --format '{{.Server.Version}}' >/dev/null 2>&1; then
+  echo "ENV ERROR: Docker engine is unavailable or this user cannot access its socket" >&2
+  exit 2
+fi
 if ! qc up -d --wait qa-db >/dev/null 2>&1; then
   echo "ENV ERROR: the QA database did not become healthy" >&2
   exit 2

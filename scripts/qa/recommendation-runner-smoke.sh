@@ -6,11 +6,27 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 compose="$root/deploy/compose/compose.yml"
 env_example="$root/deploy/compose/.env.example"
 unit="$root/deploy/systemd/lagrange-recommendation-runner.service"
+systemd_env_example="$root/deploy/systemd/recommendation-runner.env.example"
+static_only=0
 
-for command in cargo docker python uv; do
-  command -v "$command" >/dev/null 2>&1 || { echo "$command not found on PATH" >&2; exit 2; }
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --static-only) static_only=1; shift ;;
+    *) echo "USAGE: $0 [--static-only]" >&2; exit 2 ;;
+  esac
 done
-for file in "$compose" "$unit" "$root/crates/job-queue/Dockerfile"; do
+
+if [ "$static_only" -eq 0 ]; then
+  for command in cargo docker python uv; do
+    command -v "$command" >/dev/null 2>&1 \
+      || { echo "$command not found on PATH" >&2; exit 2; }
+  done
+  docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || {
+    echo 'Docker engine is unavailable or this user cannot access its socket' >&2
+    exit 2
+  }
+fi
+for file in "$compose" "$unit" "$systemd_env_example" "$root/crates/job-queue/Dockerfile"; do
   [ -f "$file" ] || { echo "missing required deployment file: $file" >&2; exit 2; }
 done
 grep -Fq '**/.venv' "$root/.dockerignore" || {
@@ -45,6 +61,30 @@ done
 if grep -Eq '^ExecStartPost=' "$unit"; then
   echo 'systemd unit must not race startup health-state creation with ExecStartPost' >&2
   exit 2
+fi
+for required in \
+  'APP_ENV=production' \
+  'DB_HOST=127.0.0.1' \
+  'DB_PORT=5432' \
+  'DB_NAME=lagrange' \
+  'DB_USER=worker' \
+  'DB_PASSWORD_FILE=/etc/lagrange/secrets/db_worker_password' \
+  'RECOMMENDATION_DATASET_VERSION_ID=' \
+  'RECOMMENDATION_DATASET_ID=krx_eod_bars' \
+  'RECOMMENDATION_DATASET_VERSION=' \
+  'RECOMMENDATION_CURATED_VERSION=' \
+  'RECOMMENDATION_DATASET_MANIFEST_SHA256=' \
+  'RECOMMENDATION_HEALTH_STATE_PATH=/run/lagrange-recommendation-runner/health.json'; do
+  grep -Fxq "$required" "$systemd_env_example" \
+    || { echo "systemd env example missing: $required" >&2; exit 2; }
+done
+if grep -Eq '^(DATABASE_URL|DB_PASSWORD)=' "$systemd_env_example"; then
+  echo 'systemd env example must use the password-file component contract' >&2
+  exit 2
+fi
+if [ "$static_only" -eq 1 ]; then
+  echo 'RECOMMENDATION_RUNNER_STATIC: PASS'
+  exit 0
 fi
 
 export DATABASE_URL="postgres://postgres:lagrange@127.0.0.1:${LAGRANGE_QA_DB_PORT:-55432}/postgres"

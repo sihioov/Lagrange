@@ -80,8 +80,9 @@ fail closed; investigate the recorded `last_error` before retrying or pruning.
 ## Recommendation runner
 
 `lagrange-recommendation-runner.service` runs the fixed 11-ETF recommendation
-queue daemon. Create `/etc/lagrange/recommendation-runner.env` (root-owned,
-mode 600) with `APP_ENV=production`, `DB_HOST`, `DB_PORT`, `DB_NAME`,
+queue daemon. Copy `recommendation-runner.env.example` to
+`/etc/lagrange/recommendation-runner.env` (root-owned, mode 600), then fill
+`APP_ENV=production`, `DB_HOST`, `DB_PORT`, `DB_NAME`,
 `DB_USER=worker`, and `DB_PASSWORD_FILE` pointing to the worker password
 secret, plus the five immutable
 `RECOMMENDATION_DATASET_*` pin values, and

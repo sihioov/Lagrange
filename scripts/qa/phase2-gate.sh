@@ -51,6 +51,10 @@ done
 
 command -v docker >/dev/null 2>&1 || { echo "ENV ERROR: docker not found on PATH" >&2; exit 2; }
 command -v cargo  >/dev/null 2>&1 || { echo "ENV ERROR: cargo not found on PATH" >&2; exit 2; }
+docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || {
+  echo "ENV ERROR: Docker engine is unavailable or this user cannot access its socket" >&2
+  exit 2
+}
 mkdir -p "$evidence_dir" "$transcript_dir"
 
 hostpath() {

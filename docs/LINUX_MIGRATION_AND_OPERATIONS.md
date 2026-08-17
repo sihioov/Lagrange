@@ -457,7 +457,12 @@ bash scripts/qa/research-worker-smoke.sh --static-only
 
 ### 7.2 Compose의 현재 범위를 이해한다
 
-현재 `deploy/compose/compose.yml`은 이미지 digest, 네트워크, secret, volume, schema gate, research/recommendation worker 배포 계약을 정의한다. 일부 API/web/paper/report 서비스는 아직 placeholder health/command를 갖는 skeleton이다. Compose가 올라갔다는 사실만으로 제품 전체가 운영 가능하다고 판단하지 않는다.
+현재 `deploy/compose/compose.yml`은 reverse proxy, Web, API, PostgreSQL,
+migration/role bootstrap, research/recommendation/candidate/backtest/Paper worker의
+실제 production entrypoint와 healthcheck를 정의한다. `report-worker`는 처리 계약과
+producer가 없어 sleeping placeholder 대신 의도적으로 배포하지 않으며, Live profile은
+credential-free simulator라 실주문 readiness를 제공하지 않는다. Compose가 올라갔다는
+사실만으로 실제 데이터 권리나 KIS 실거래가 준비됐다고 판단하지 않는다.
 
 실제 runner 운영은 아래 systemd unit을 단일 owner로 사용한다. 같은 queue에 Compose recommendation runner와 systemd recommendation runner를 동시에 띄우지 않는다. Paper runner도 동일하다.
 
@@ -481,6 +486,8 @@ sudo rsync -a \
   --exclude 'data/artifacts/' \
   "$HOME/src/lagrange/" /opt/lagrange/
 sudo install -m 0755 target/release/paper-runner \
+  /usr/local/bin/paper-runner-bin
+sudo install -m 0755 deploy/runtime/paper-runner-entrypoint \
   /opt/lagrange/bin/paper-runner
 sudo install -m 0755 target/release/recommendation-runner \
   /opt/lagrange/bin/recommendation-runner
@@ -508,6 +515,9 @@ sudo chown -R root:root /opt/lagrange
 ~~~bash
 sudo install -m 0600 -o root -g root \
   deploy/systemd/paper-runner.env.example /etc/lagrange/paper-runner.env
+sudo install -m 0600 -o root -g root \
+  deploy/systemd/recommendation-runner.env.example \
+  /etc/lagrange/recommendation-runner.env
 sudoedit /etc/lagrange/paper-runner.env
 sudoedit /etc/lagrange/recommendation-runner.env
 sudo install -m 0444 -o root -g root \
@@ -515,7 +525,7 @@ sudo install -m 0444 -o root -g root \
   /etc/lagrange/universes/kr-etf-core-v1.yaml
 ~~~
 
-`/etc/lagrange/recommendation-runner.env`는 repository에 example이 없으므로 운영자가 직접 작성한다. 필요한 핵심 값은 `APP_ENV`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER=worker`, `DB_PASSWORD_FILE`, 그리고 다섯 개 `RECOMMENDATION_DATASET_*` pin이다. service unit이 health path와 runtime directory를 소유한다.
+`/etc/lagrange/recommendation-runner.env`의 빈 dataset pin은 승인된 immutable curated dataset 값으로 모두 채운다. 필요한 핵심 값은 `APP_ENV`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER=worker`, `DB_PASSWORD_FILE`, 그리고 다섯 개 `RECOMMENDATION_DATASET_*` pin이다. service unit이 health path와 runtime directory를 소유한다.
 
 unit을 설치하고, DB·data·secret 검증이 끝난 뒤에만 활성화한다.
 
@@ -585,18 +595,22 @@ docker compose -p lagrange-qa \
 ~~~bash
 # Raw/Compose 권한·digest·schema 계약만 확인
 bash scripts/qa/research-worker-smoke.sh --static-only
+bash scripts/qa/recommendation-runner-smoke.sh --static-only
 
 # 별도 QA DB를 사용하는 실제 runner smoke
 bash scripts/qa/recommendation-runner-smoke.sh
 bash scripts/qa/paper-runner-smoke.sh
 ~~~
 
-현재 `scripts/qa/phase1-gate.sh`에는 WSL 전용 `/root/.cargo/bin/cargo` 환경 가드가 있다. native Ubuntu 일반 사용자에서 이 스크립트가 내는 결과를 그대로 Phase 1 증거로 취급하지 않는다. Linux 이관 후에는 다음 중 하나를 먼저 결정한다.
+`scripts/qa/phase1-gate.sh`는 native Linux용으로 이식됐다. 호출자의 Cargo와
+`LAGRANGE_QA_DB_PORT`를 사용하며, E2~E5는 cargo exit 0뿐 아니라 실제 실행된
+test 수가 1개 이상이어야 PASS다. 실행 전에 별도 QA DB를 준비하고 실 Auth0
+tenant 환경변수를 명시적으로 주입한다. E7은 저장소 루트의 npm workspace에서
+의존성을 해석하므로 루트에서 `npm ci`를 실행하고 Chromium을 설치해야 한다.
 
-1. GitHub Actions의 Ubuntu runner에서 phase gate를 실행하고 해당 commit의 evidence를 사용한다.
-2. phase1 gate의 WSL 전용 경로 가드를 native Linux용으로 별도 수정·검증한 뒤 실행한다.
-
-그 전까지 `phase1-gate.sh` 또는 종합 gate가 환경 오류를 내는 것을 외부 blocker나 코드 합격으로 오해하지 않는다. E7 Playwright를 포함한 전체 gate는 안정된 코드·DB·data·browser 환경에서 한 번에 재실행하고, 증거의 commit과 실행 시각을 기록한다.
+Phase 1 증거와 이후 Phase 2/3/F3 증거는 같은 commit과 실행 환경에 고정해
+발행한다. 환경 오류(exit 2), 누락된 evidence, 또는 다른 worktree의 포트 응답을
+외부 blocker나 코드 합격으로 오해하지 않는다.
 
 ### 8.3 데이터·service 검증
 

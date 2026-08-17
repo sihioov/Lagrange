@@ -36,9 +36,12 @@
 #   tls/lagrange.crt         TLS certificate (reverse-proxy)
 #   tls/lagrange.key         TLS private key (reverse-proxy)
 #
-# To provision a local development set (gitignored), copy each *.example
-# to its real name and fill it in, or run scripts/provision-dev-secrets.ps1
-# once it lands with Todo 35.
+# To provision a local development set (gitignored), copy each *.example to
+# its real name and fill it in. For native-Linux Compose, supply the source
+# values through the operator's secret manager and then run
+# `deploy/secrets/provision-runtime-secrets.sh` as root to create the
+# service-specific UID/mode copies. The provisioner copies and validates
+# supplied values; it deliberately does not generate production credentials.
 
 ## Database role credentials and cursor key
 
@@ -185,9 +188,9 @@ PGOPTIONS='-c lock_timeout=5s' sqlx migrate run
 ```
 
 Compose first runs `db-migrate` to apply every checked-in SQLx migration
-through `0040`, then runs `research-schema-check` as a fail-closed one-shot.
+through `0045`, then runs `research-schema-check` as a fail-closed one-shot.
 The worker is not launched unless that gate finds successful migrations
-`22–25` and `33–35` (the research schema versions it checks), exact normalized
+`22–25`, `33–35`, `42`, and `45` (the research schema versions it checks), exact normalized
 PK/unique/CHECK definitions, the required publication column
 type/nullability/identity/default contract, exact valid/ready indexes, RLS
 policies, append-only enforcement, and the exact `research_writer` role/grant

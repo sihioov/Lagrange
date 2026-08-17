@@ -90,15 +90,21 @@ qc() { dkr compose -p lagrange-qa -f "$(hostpath "$qa_compose")" "$@"; }
 echo "== full system gate =="
 [ "$clean" -eq 1 ] && echo "(clean run requested)"
 
-if command -v docker >/dev/null 2>&1; then
-  echo "   recreating the QA database (its tmpfs is the shared resource)"
-  qc down -v --remove-orphans >/dev/null 2>&1 || true
-  qc up -d --wait qa-db >/dev/null 2>&1 || {
-    echo "ENV ERROR: the QA database did not become healthy" >&2; exit 2; }
-  # Torn down at the end, not by any child: a child that reclaimed the shared
-  # database would leave every later phase without one.
-  trap 'qc down -v --remove-orphans >/dev/null 2>&1 || true' EXIT
+command -v docker >/dev/null 2>&1 || {
+  echo "ENV ERROR: docker not found on PATH" >&2
+  exit 2
+}
+if ! dkr version --format '{{.Server.Version}}' >/dev/null 2>&1; then
+  echo "ENV ERROR: Docker engine is unavailable or this user cannot access its socket" >&2
+  exit 2
 fi
+echo "   recreating the QA database (its tmpfs is the shared resource)"
+qc down -v --remove-orphans >/dev/null 2>&1 || true
+qc up -d --wait qa-db >/dev/null 2>&1 || {
+  echo "ENV ERROR: the QA database did not become healthy" >&2; exit 2; }
+# Torn down at the end, not by any child: a child that reclaimed the shared
+# database would leave every later phase without one.
+trap 'qc down -v --remove-orphans >/dev/null 2>&1 || true' EXIT
 
 # --- phase 1 --------------------------------------------------------------------
 # NOT re-run here. phase1-gate.sh has no --keep-db flag, so running it would

@@ -18,6 +18,10 @@ done
 
 command -v docker >/dev/null 2>&1 || { echo 'docker not found on PATH' >&2; exit 2; }
 command -v cargo >/dev/null 2>&1 || { echo 'cargo not found on PATH' >&2; exit 2; }
+docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || {
+  echo 'Docker engine is unavailable or this user cannot access its socket' >&2
+  exit 2
+}
 [ -f "$unit" ] || { echo "missing deployment unit: $unit" >&2; exit 2; }
 [ -f "$env_example" ] || { echo "missing env template: $env_example" >&2; exit 2; }
 

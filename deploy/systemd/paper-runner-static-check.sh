@@ -11,6 +11,7 @@ unit="$root/deploy/systemd/paper-runner.service"
 env_example="$root/deploy/systemd/paper-runner.env.example"
 wrapper="$root/deploy/runtime/paper-runner-entrypoint"
 health_test="$root/deploy/runtime/paper-runner-healthcheck-test.sh"
+operations_runbook="$root/docs/LINUX_MIGRATION_AND_OPERATIONS.md"
 
 die() {
   echo "paper-runner-systemd-check: $*" >&2
@@ -20,6 +21,7 @@ die() {
 [ -f "$unit" ] || die "missing unit: $unit"
 [ -f "$env_example" ] || die "missing environment template: $env_example"
 [ -f "$wrapper" ] || die "missing secret-file wrapper: $wrapper"
+[ -f "$operations_runbook" ] || die "missing Linux operations runbook: $operations_runbook"
 [ -x "$health_test" ] || die "missing executable healthcheck contract test: $health_test"
 
 grep -Fq 'ConditionPathExists=/opt/lagrange/bin/paper-runner' "$unit" \
@@ -96,6 +98,16 @@ grep -Fq 'systemd_notify_sends_ready_and_watchdog_to_abstract_socket' \
   || die 'Paper runner must test abstract READY/WATCHDOG notifications'
 grep -Fq 'deploy/runtime/paper-runner-entrypoint' "$root/deploy/systemd/README.md" \
   || die 'README must document the wrapper installation'
+grep -Fq 'target/release/paper-runner' "$operations_runbook" \
+  || die 'operations runbook must install the Paper Rust binary'
+grep -Fq '/usr/local/bin/paper-runner-bin' "$operations_runbook" \
+  || die 'operations runbook must install the Paper Rust binary at the wrapper target'
+grep -Fq 'deploy/runtime/paper-runner-entrypoint' "$operations_runbook" \
+  || die 'operations runbook must install the Paper secret-file wrapper'
+if grep -F 'target/release/paper-runner' -A1 "$operations_runbook" \
+  | grep -Fq '/opt/lagrange/bin/paper-runner'; then
+  die 'operations runbook must not overwrite the Paper wrapper with the Rust binary'
+fi
 
 "$health_test" >/dev/null || die 'runtime healthcheck contract test failed'
 
