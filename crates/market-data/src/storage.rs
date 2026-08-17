@@ -435,8 +435,15 @@ impl RawStore {
             )
         })?;
         fs::create_dir_all(parent).map_err(|e| io_err("create date partition", e))?;
-        fs::create_dir(&dir)
-            .map_err(|e| io_err(&format!("create batch dir {}", dir.display()), e))?;
+        fs::create_dir(&dir).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                StoreError::FileExists {
+                    path: dir.display().to_string(),
+                }
+            } else {
+                io_err(&format!("create batch dir {}", dir.display()), error)
+            }
+        })?;
 
         let cleanup = |original: StoreError| -> StoreError {
             match operations.cleanup_batch(&dir) {

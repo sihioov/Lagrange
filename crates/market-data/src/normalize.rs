@@ -11,10 +11,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
+use std::time::Duration;
 
 use domain::{BatchId, ContentHash, TradingDate};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
+use uuid::Uuid;
 
 use crate::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, RawEnvelope, RequestMetadata,
@@ -26,6 +28,8 @@ use crate::validate::validate_response;
 
 const NORMALIZER: &str = "kis-wire-to-canonical-v1";
 const NORMALIZER_SCHEMA_VERSION: u32 = 1;
+const COLLISION_RETRIES: usize = 100;
+const COLLISION_RETRY_DELAY: Duration = Duration::from_millis(2);
 const DAILY_BARS_ENDPOINT: &str = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice";
 const REFERENCE_ENDPOINT: &str = "/uapi/domestic-stock/v1/quotations/inquire-price";
 const CALENDAR_ENDPOINT: &str = "/uapi/domestic-stock/v1/quotations/chk-holiday";
@@ -80,6 +84,8 @@ pub enum NormalizeError {
     },
     #[error("source KIS batch is not credentialed")]
     UnsupportedMode,
+    #[error("existing deterministic normalized batch {batch_id} conflicts: {reason}")]
+    ExistingBatchConflict { batch_id: BatchId, reason: String },
     #[error("normalized evidence count differs from manifest: expected {expected}, got {actual}")]
     EvidenceCountMismatch { expected: usize, actual: usize },
     #[error("normalized evidence is missing manifest file {file_name}")]
@@ -150,16 +156,29 @@ pub enum NormalizeError {
     },
 }
 
-/// Reads one stored KIS wire batch, normalizes it, and stores a new immutable
-/// `provider=kis-normalized` batch. The source batch is only read through RawStore's hash
-/// verification path and is never changed.
+/// Returns the stable canonical batch identity for one KIS source batch.
+///
+/// The normalizer version is part of the UUID-v5 name, so a future mapping
+/// version cannot silently reuse bytes produced by this version.
+pub fn deterministic_kis_normalized_batch_id(source_batch_id: BatchId) -> BatchId {
+    let name = format!(
+        "provider={PROVIDER_KIS_NORMALIZED}\nnormalizer={NORMALIZER}\nsource_batch={source_batch_id}"
+    );
+    BatchId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_URL, name.as_bytes()))
+}
+
+/// Reads one stored KIS wire batch, normalizes it, and stores one immutable
+/// `provider=kis-normalized` batch. The canonical identity is deterministic
+/// for the source batch, so retries return the already verified immutable
+/// result instead of appending a second manifest row. The source batch is
+/// only read through RawStore's hash verification path and is never changed.
 pub fn normalize_kis_batch(
     raw: &RawStore,
     source: &ManifestEntry,
 ) -> Result<NormalizationOutcome, NormalizeError> {
     validate_source_scope(source)?;
     let stored = raw.read_batch_bytes(&source.provider, &source.market, source)?;
-    let batch_id = BatchId::generate();
+    let batch_id = deterministic_kis_normalized_batch_id(source.batch_id);
     let envelopes = normalize_kis_envelopes_with_batch_id(source, &stored, batch_id)?;
     let source_files = source_lineage(source);
     let lineage = NormalizationLineage {
@@ -179,14 +198,131 @@ pub fn normalize_kis_batch(
         entitlement_reference: source.entitlement_reference.as_deref(),
         mode: FetchMode::Credentialed,
     };
-    let entry = raw.store_batch(&spec, &envelopes)?;
+    let expected_entry = expected_manifest_entry(source, &spec, &envelopes);
+
+    if let Some(outcome) =
+        load_existing_normalized_batch(raw, source, &expected_entry, &envelopes, lineage.clone())?
+    {
+        return Ok(outcome);
+    }
+
+    match raw.store_batch(&spec, &envelopes) {
+        Ok(entry) => {
+            if entry != expected_entry {
+                return Err(existing_batch_conflict(
+                    batch_id,
+                    "RawStore returned manifest metadata different from the deterministic contract",
+                ));
+            }
+            let files = raw.read_batch_bytes(PROVIDER_KIS_NORMALIZED, MARKET_KR, &entry)?;
+            validate_stored_evidence(&entry, &files)?;
+            Ok(NormalizationOutcome {
+                source_batch_id: source.batch_id,
+                entry,
+                files,
+                lineage,
+            })
+        }
+        Err(error @ StoreError::FileExists { .. }) => {
+            // Another caller can create the deterministic directory before its
+            // manifest line becomes visible. Re-read a few times so concurrent
+            // retries converge once the durable metadata is exposed.
+            for _ in 0..COLLISION_RETRIES {
+                if let Some(outcome) = load_existing_normalized_batch(
+                    raw,
+                    source,
+                    &expected_entry,
+                    &envelopes,
+                    lineage.clone(),
+                )? {
+                    return Ok(outcome);
+                }
+                std::thread::sleep(COLLISION_RETRY_DELAY);
+            }
+            Err(NormalizeError::Store(error))
+        }
+        Err(error) => Err(NormalizeError::Store(error)),
+    }
+}
+
+fn expected_manifest_entry(
+    source: &ManifestEntry,
+    spec: &BatchSpec<'_>,
+    envelopes: &[RawEnvelope],
+) -> ManifestEntry {
+    ManifestEntry {
+        batch_id: spec.batch_id,
+        provider: spec.provider.to_owned(),
+        market: spec.market.to_owned(),
+        date: *spec.date,
+        retrieved_at: source.retrieved_at,
+        mode: spec.mode,
+        entitlement_reference: spec.entitlement_reference.map(str::to_owned),
+        files: envelopes
+            .iter()
+            .map(|envelope| FileEntry {
+                kind: envelope.kind,
+                file_name: envelope.file_name.clone(),
+                content_hash: envelope.content_hash.clone(),
+                size_bytes: envelope.bytes.len() as u64,
+                request: envelope.request.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn load_existing_normalized_batch(
+    raw: &RawStore,
+    source: &ManifestEntry,
+    expected_entry: &ManifestEntry,
+    expected_envelopes: &[RawEnvelope],
+    lineage: NormalizationLineage,
+) -> Result<Option<NormalizationOutcome>, NormalizeError> {
+    let existing = raw
+        .read_reconciled_manifest(PROVIDER_KIS_NORMALIZED, MARKET_KR)?
+        .into_iter()
+        .find(|entry| entry.batch_id == expected_entry.batch_id);
+    let Some(entry) = existing else {
+        return Ok(None);
+    };
+    if &entry != expected_entry {
+        return Err(existing_batch_conflict(
+            entry.batch_id,
+            "manifest metadata, canonical shape, lineage, or content hash differs",
+        ));
+    }
     let files = raw.read_batch_bytes(PROVIDER_KIS_NORMALIZED, MARKET_KR, &entry)?;
-    Ok(NormalizationOutcome {
+    validate_stored_evidence(&entry, &files)?;
+    for expected in expected_envelopes {
+        let Some(actual) = files
+            .iter()
+            .find(|file| file.file_name == expected.file_name)
+        else {
+            return Err(existing_batch_conflict(
+                entry.batch_id,
+                format!("canonical file {} is missing", expected.file_name),
+            ));
+        };
+        if actual.bytes != expected.bytes {
+            return Err(existing_batch_conflict(
+                entry.batch_id,
+                format!("canonical file {} bytes differ", expected.file_name),
+            ));
+        }
+    }
+    Ok(Some(NormalizationOutcome {
         source_batch_id: source.batch_id,
         entry,
         files,
         lineage,
-    })
+    }))
+}
+
+fn existing_batch_conflict(batch_id: BatchId, reason: impl Into<String>) -> NormalizeError {
+    NormalizeError::ExistingBatchConflict {
+        batch_id,
+        reason: reason.into(),
+    }
 }
 
 /// Normalizes a verified KIS source batch into exactly four canonical raw

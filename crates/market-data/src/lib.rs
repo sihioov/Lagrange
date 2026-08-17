@@ -89,7 +89,7 @@ pub use instrument_master::{
 };
 pub use normalize::{
     NormalizationLineage, NormalizationOutcome, NormalizationSourceFile, NormalizeError,
-    normalize_kis_batch, normalize_kis_envelopes,
+    deterministic_kis_normalized_batch_id, normalize_kis_batch, normalize_kis_envelopes,
 };
 pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,

@@ -3,12 +3,16 @@ use market_data::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, RawEnvelope, RequestMetadata,
     ResponseKind,
 };
-use market_data::normalize::{NormalizeError, normalize_kis_batch, normalize_kis_envelopes};
+use market_data::normalize::{
+    NormalizeError, deterministic_kis_normalized_batch_id, normalize_kis_batch,
+    normalize_kis_envelopes,
+};
 use market_data::providers::kis::KR_ETF_CORE_SYMBOLS;
 use market_data::storage::{BatchSpec, RawStore};
 use market_data::validate::validate_response;
 use market_data::{CurateRequest, CurateStore, curate_batch, curation_inputs_from_raw};
 use serde_json::{Value, json};
+use std::sync::{Arc, Barrier};
 use tempfile::TempDir;
 
 const TARGET_DATE: &str = "2026-08-14";
@@ -292,6 +296,109 @@ fn successful_normalization_is_four_canonical_documents_and_preserves_wire_bytes
     )
     .expect("canonical batch is curation-compatible");
     assert_eq!(curated_outcome.bars_written, 11);
+}
+
+#[test]
+fn stored_normalization_is_idempotent_for_one_source_batch() {
+    let (_temp, store, source, _stored) = fixture(|_| {});
+    let first = normalize_kis_batch(&store, &source).expect("first normalization");
+    let first_files = first.files.clone();
+    let second = normalize_kis_batch(&store, &source).expect("idempotent retry");
+
+    assert_eq!(
+        first.entry.batch_id,
+        deterministic_kis_normalized_batch_id(source.batch_id)
+    );
+    assert_eq!(first.entry, second.entry);
+    assert_eq!(first_files, second.files);
+    let manifest = store
+        .read_manifest(PROVIDER_KIS_NORMALIZED, MARKET_KR)
+        .expect("normalized manifest");
+    assert_eq!(manifest, vec![first.entry]);
+}
+
+#[test]
+fn concurrent_normalization_converges_to_one_batch() {
+    let (_temp, store, source, _stored) = fixture(|_| {});
+    let barrier = Arc::new(Barrier::new(4));
+    let handles = (0..4)
+        .map(|_| {
+            let barrier = Arc::clone(&barrier);
+            let store = store.clone();
+            let source = source.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                normalize_kis_batch(&store, &source)
+            })
+        })
+        .collect::<Vec<_>>();
+    let outcomes = handles
+        .into_iter()
+        .map(|handle| {
+            handle
+                .join()
+                .expect("normalizer thread")
+                .expect("concurrent normalization")
+        })
+        .collect::<Vec<_>>();
+
+    let first = &outcomes[0];
+    assert_eq!(
+        first.entry.batch_id,
+        deterministic_kis_normalized_batch_id(source.batch_id)
+    );
+    for outcome in &outcomes[1..] {
+        assert_eq!(outcome.entry, first.entry);
+        assert_eq!(outcome.files, first.files);
+    }
+    assert_eq!(
+        store
+            .read_manifest(PROVIDER_KIS_NORMALIZED, MARKET_KR)
+            .expect("normalized manifest")
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn existing_deterministic_batch_conflict_fails_closed() {
+    let (_temp, store, source, _stored) = fixture(|_| {});
+    let batch_id = deterministic_kis_normalized_batch_id(source.batch_id);
+    let wrong = RawEnvelope::new(
+        batch_id,
+        ResponseKind::Bars,
+        "bars.json",
+        b"not the canonical bars document".to_vec(),
+        source.retrieved_at,
+        RequestMetadata {
+            endpoint: "kis.normalized/kis-wire-to-canonical-v1/bars".to_owned(),
+            query: Vec::new(),
+            headers: Vec::new(),
+            mode: FetchMode::Credentialed,
+        },
+    );
+    store
+        .store_batch(
+            &BatchSpec {
+                provider: PROVIDER_KIS_NORMALIZED,
+                market: MARKET_KR,
+                date: &source.date,
+                batch_id,
+                entitlement_reference: source.entitlement_reference.as_deref(),
+                mode: FetchMode::Credentialed,
+            },
+            &[wrong],
+        )
+        .expect("conflicting deterministic batch fixture");
+
+    let error = normalize_kis_batch(&store, &source).expect_err("conflicting batch");
+    assert!(matches!(
+        error,
+        NormalizeError::ExistingBatchConflict {
+            batch_id: actual,
+            ..
+        } if actual == batch_id
+    ));
 }
 
 #[test]
