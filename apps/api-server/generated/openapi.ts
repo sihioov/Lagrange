@@ -204,6 +204,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/candidates/feed/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/candidates/feed/latest */
+        get: operations["get__api_v1_candidates_feed_latest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/candidates/feed/{date}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/candidates/feed/{date} */
+        get: operations["get__api_v1_candidates_feed__date_"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stocks/{instrument_id}/analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/stocks/{instrument_id}/analysis */
+        get: operations["get__api_v1_stocks__instrument_id__analysis"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/screener/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/screener/query */
+        post: operations["post__api_v1_screener_query"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/screener/screens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/screener/screens */
+        get: operations["get__api_v1_screener_screens"];
+        put?: never;
+        /** POST /api/v1/screener/screens */
+        post: operations["post__api_v1_screener_screens"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/screener/screens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/screener/screens/{id} */
+        get: operations["get__api_v1_screener_screens__id_"];
+        /** PUT /api/v1/screener/screens/{id} */
+        put: operations["put__api_v1_screener_screens__id_"];
+        post?: never;
+        /** DELETE /api/v1/screener/screens/{id} */
+        delete: operations["delete__api_v1_screener_screens__id_"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/backtests": {
         parameters: {
             query?: never;
@@ -1048,6 +1153,159 @@ export interface components {
             strategy_config_id: string;
             /** @example 2026-01-31 */
             as_of: string;
+        };
+        CandidateDatasetPins: {
+            /** Format: uuid */
+            universe_snapshot_id: string;
+            price: {
+                /** Format: uuid */
+                dataset_version_id: string;
+                curated_version: number;
+                manifest_sha256: string;
+            };
+            market_status: components["schemas"]["CandidateSourcePin"];
+            flow: components["schemas"]["CandidateSourcePin"];
+            fundamental: components["schemas"]["CandidateSourcePin"];
+            /** Format: uuid */
+            sector_version_id: string;
+            input_identity_sha256: string;
+        };
+        CandidateSourcePin: {
+            /** Format: uuid */
+            dataset_version_id: string;
+            manifest_sha256: string;
+        };
+        CandidateScores: {
+            flow: number | null;
+            fundamental: number | null;
+            technical: number | null;
+            total: number | null;
+        };
+        CandidateCoverage: {
+            flow: number;
+            fundamental: number;
+            technical: number;
+        };
+        CandidateAnalysis: {
+            /** Format: uuid */
+            analysis_id: string;
+            /** Format: uuid */
+            run_id: string;
+            /** @example 005930.KRX */
+            instrument_id: string;
+            name?: string | null;
+            sector_code: string;
+            /**
+             * @description Versioned fundamental scoring profile selected for the instrument.
+             * @enum {string}
+             */
+            fundamental_profile: "candidate-non-financial-v1" | "candidate-financial-v1" | "unsupported";
+            eligible: boolean;
+            exclusion_codes: string[];
+            scores: components["schemas"]["CandidateScores"];
+            coverage: components["schemas"]["CandidateCoverage"];
+            /** @enum {string} */
+            evidence_strength: "STRONG" | "MODERATE" | "WEAK";
+            rank?: number | null;
+            /** @enum {string} */
+            normalization_scope: "SECTOR" | "UNIVERSE_FALLBACK" | "UNAVAILABLE";
+            factors: {
+                [key: string]: unknown;
+            };
+            /** @description Deterministic upside/neutral/downside trigger records; never probabilities or target prices. */
+            scenarios: {
+                [key: string]: unknown;
+            };
+            provenance: {
+                [key: string]: unknown;
+            };
+            content_sha256: string;
+        };
+        CandidateResearchEnvelope: {
+            /** @enum {string} */
+            state: "READY" | "STALE";
+            /** @example 2026-01-31 */
+            as_of: string;
+            /** Format: date-time */
+            cutoff_at: string;
+            scoring_config: {
+                version: string;
+                sha256: string;
+            };
+            dataset_pins: components["schemas"]["CandidateDatasetPins"];
+            license_attributions: components["schemas"]["CandidateLicenseAttribution"][];
+            disclaimer: string;
+        };
+        CandidateLicenseAttribution: {
+            /** @enum {string} */
+            source: "price" | "universe" | "market_status" | "flow" | "fundamental" | "sector";
+            dataset_id: string;
+            license_ref: string;
+            /** Format: uuid */
+            entitlement_id: string;
+            contract_reference: string;
+            contract_document_sha256: string;
+        };
+        CandidateFeed: components["schemas"]["CandidateResearchEnvelope"] & {
+            /** Format: uuid */
+            feed_id: string;
+            /** Format: date-time */
+            published_at: string;
+            computation_seq: number;
+            items: components["schemas"]["CandidateAnalysis"][];
+        };
+        StockAnalysisResponse: components["schemas"]["CandidateResearchEnvelope"] & {
+            analysis: components["schemas"]["CandidateAnalysis"];
+        };
+        ScreenCriteria: {
+            sectors?: string[];
+            evidence_strength?: ("STRONG" | "MODERATE" | "WEAK")[];
+            min_total_score?: number | null;
+            min_flow_score?: number | null;
+            min_fundamental_score?: number | null;
+            min_technical_score?: number | null;
+        };
+        ScreenerQueryBody: {
+            /** Format: uuid */
+            run_id: string;
+            /** @example 2026-01-31 */
+            as_of?: string;
+            criteria: components["schemas"]["ScreenCriteria"];
+            /** @description opaque HMAC-signed run/filter/decimal-score/instrument cursor */
+            cursor?: string | null;
+            /** @default 25 */
+            limit: number | null;
+        };
+        ScreenerResult: components["schemas"]["CandidateResearchEnvelope"] & {
+            /** Format: uuid */
+            run_id: string;
+            items: components["schemas"]["CandidateAnalysis"][];
+            next_cursor: string | null;
+        };
+        SavedScreenBody: {
+            name: string;
+            criteria: components["schemas"]["ScreenCriteria"];
+        };
+        SavedScreen: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @constant */
+            criteria_schema_version: 1;
+            criteria: components["schemas"]["ScreenCriteria"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SavedScreenList: {
+            items: components["schemas"]["SavedScreen"][];
+        };
+        DeleteSavedScreenResult: {
+            /** Format: uuid */
+            id: string;
+            /** @constant */
+            deleted: true;
         };
         BacktestRun: {
             /** Format: uuid */
@@ -2042,6 +2300,300 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecommendationLatest"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_candidates_feed_latest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Immutable daily stock-research Top-5 feed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateFeed"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_candidates_feed__date_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                date: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Immutable daily stock-research Top-5 feed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateFeed"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_stocks__instrument_id__analysis: {
+        parameters: {
+            query?: {
+                date?: string;
+            };
+            header?: never;
+            path: {
+                instrument_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Point-in-time deep stock analysis */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockAnalysisResponse"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    post__api_v1_screener_query: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScreenerQueryBody"];
+            };
+        };
+        responses: {
+            /** @description Point-in-time candidate screen result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScreenerResult"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_screener_screens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Actor-owned saved screens */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedScreenList"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    post__api_v1_screener_screens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedScreenBody"];
+            };
+        };
+        responses: {
+            /** @description Saved screen created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedScreen"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    get__api_v1_screener_screens__id_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Actor-owned saved screen */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedScreen"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    put__api_v1_screener_screens__id_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedScreenBody"];
+            };
+        };
+        responses: {
+            /** @description Actor-owned saved screen */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedScreen"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+        };
+    };
+    delete__api_v1_screener_screens__id_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved screen deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteSavedScreenResult"];
                 };
             };
             400: components["responses"]["Error400"];

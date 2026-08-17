@@ -150,7 +150,10 @@ timeout variables.
 | `RESEARCH_FETCH_MODE` | required | `synthetic` or `credentialed`; credentialed currently fails permanently because the real provider is not implemented |
 | `RESEARCH_RUN_AT_KST` | default `16:30` | exact `HH:MM` daily daemon time in KST |
 | `RESEARCH_MAX_PUBLICATION_AGE_SECS` | default `345600` | positive healthcheck maximum age in seconds |
-| `RESEARCH_RAW_ROOT` | required | writable data root; `RawStore` appends `/raw`, so Compose sets `/data` while mounting host `${LAGRANGE_DATA_DIR}/raw` at `/data/raw` |
+| `RESEARCH_ATTEMPT_TIMEOUT_SECS` | default `900`, range `60..=3600` | bound for curation/recovery child attempts; Compose stop grace exceeds it |
+| `RESEARCH_RAW_ROOT` | required | writable data root; `RawStore` appends `/raw` |
+| `RESEARCH_CURATED_ROOT` | required | writable immutable curation root; `CurateStore` appends `/curated` |
+| `RESEARCH_ENTITLEMENT_REFERENCE` | required | non-secret exact contract id pinned into Raw and resolved to one active six-dataset candidate entitlement |
 | `RESEARCH_SYNTHETIC_BUNDLE` | default `tests/fixtures/kr-etf/contract` | recorded bundle path; development/QA only |
 | `DB_HOST` | required | PostgreSQL host |
 | `DB_PORT` | required | positive PostgreSQL port |
@@ -253,7 +256,7 @@ normalized `pg_get_functiondef` body,
 role-attribute/membership, or exact grant drift. `research-raw-init` separately
 runs without network or secrets, drops all capabilities, adds back only
 `CHOWN`, `FOWNER`, and `DAC_OVERRIDE`, and recursively prepares existing
-directories and regular files on the Raw filesystem for UID/GID `10001:10001`.
+directories and regular files on the Raw and Curated filesystems for UID/GID `10001:10001`.
 It does not follow symlinks or cross filesystems; directories are `0750`,
 immutable evidence and `batch.json` are `0440`, and only
 `manifest.jsonl`/`commit.lock` are `0640`. Unix orphan recovery opens immutable
@@ -264,12 +267,23 @@ the unprivileged worker. If a host CLI writes new Raw content after this
 ownership transfer, rerun the init one-shot or use an operator-approved shared
 ownership workflow before restarting the worker.
 
-Compose deliberately keeps the host bind `${LAGRANGE_DATA_DIR}/raw:/data/raw`
-while setting `RESEARCH_RAW_ROOT=/data`, because `RawStore` itself appends the
-`raw` component. Evidence is therefore directly under
+Compose separately binds `${LAGRANGE_DATA_DIR}/raw:/data/raw` and
+`${LAGRANGE_DATA_DIR}/curated:/data/curated` while setting both roots to
+`/data`. `RawStore` appends `raw` and `CurateStore` appends `curated`; unrelated
+artifact directories remain outside the worker. Evidence is directly under
 `${LAGRANGE_DATA_DIR}/raw/provider=...` and the manifest under
 `${LAGRANGE_DATA_DIR}/raw/manifests/...`; `/raw/raw` is always a configuration
 error.
+
+Each ingest/curation/recovery child is bounded by
+`RESEARCH_ATTEMPT_TIMEOUT_SECS` (15 minutes by default, one hour maximum), and
+Compose grants 16 minutes for graceful shutdown. A forced kill can leave a
+manifest-less `version=N` directory and partition files. `CurateStore` never
+reuses that generation: the next attempt advances to a new generation, so the
+partial bytes cannot become READY or be read through a catalog pin. Operators
+should alert on manifest-less generations and quarantine them only after
+confirming that no research-worker process is active; automatic deletion is
+deliberately avoided at this trust boundary.
 
 Compose mounts `db_research_password` and `krx_api_key` from external files at
 `/run/secrets/...`; real secret files must remain untracked. See

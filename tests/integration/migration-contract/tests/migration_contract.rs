@@ -126,6 +126,395 @@ const PAPER_PARITY_REPO_RS: &str =
     include_str!("../../../../crates/api-server/src/repos/parity.rs");
 const PAPER_PENDING_TARGET_REPO_RS: &str =
     include_str!("../../../../crates/api-server/src/repos/pending_targets.rs");
+const CANDIDATE_SOURCE_UP_SQL: &str =
+    include_str!("../../../../migrations/0042_candidate_source_contracts.up.sql");
+const CANDIDATE_SOURCE_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0042_candidate_source_contracts.down.sql");
+const CANDIDATE_ANALYSIS_UP_SQL: &str =
+    include_str!("../../../../migrations/0043_candidate_analysis_surfaces.up.sql");
+const CANDIDATE_ANALYSIS_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0043_candidate_analysis_surfaces.down.sql");
+const CANDIDATE_PIPELINE_UP_SQL: &str =
+    include_str!("../../../../migrations/0044_candidate_pipeline.up.sql");
+const CANDIDATE_PIPELINE_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0044_candidate_pipeline.down.sql");
+const CANDIDATE_SCHEDULE_RS: &str =
+    include_str!("../../../../crates/job-queue/src/candidate/schedule.rs");
+const CANDIDATE_RUNNER_RS: &str =
+    include_str!("../../../../crates/job-queue/src/candidate/runner.rs");
+const RESEARCH_WORKER_RS: &str =
+    include_str!("../../../../data-pipelines/collectors/src/worker.rs");
+
+#[test]
+fn candidate_vertical_contract_is_separate_pit_and_fail_closed() {
+    for token in [
+        "candidate_universe_snapshots",
+        "candidate_universe_members",
+        "candidate_investor_flows",
+        "candidate_investor_flow_snapshot_rows",
+        "candidate_market_status_observations",
+        "candidate_fundamental_observations",
+        "candidate_sector_versions",
+        "candidate_sector_entries",
+        "fundamental_profile",
+        "available_at",
+        "source_revision",
+        "license_ref",
+        "entitlement_id",
+        "entitlement_date",
+        "candidate_price_publications",
+        "candidate_price_instrument_coverage",
+        "candidate_price_instrument_sessions",
+        "candidate_raw_batch_publications",
+        "candidate_raw_batch_datasets",
+        "candidate_raw_dataset_single_origin_idx",
+        "begin_candidate_raw_batch",
+        "bind_candidate_raw_dataset",
+        "seal_candidate_raw_batch",
+        "block_candidate_raw_batch_for_inactive_rights",
+        "ENTITLEMENT_INACTIVE",
+        "candidate_instrument_registrations",
+        "curated_generation",
+        "candidate_source_entitlement_is_valid",
+        "resolve_candidate_contract_entitlement",
+        "register_candidate_instrument",
+        "register_candidate_source_dataset",
+        "publish_candidate_price_publication",
+        "p_instrument_coverage jsonb",
+        "candidate price coverage conflicts with immutable generation",
+        "v_expected_storage_path := 'db://candidate/'",
+        "candidate source catalog requires exact active candidate-use rights",
+        "covered_uses @> '[\"candidate\"]'::jsonb",
+        "candidate_source_validate_dataset_pin",
+        "SECURITY DEFINER",
+        "candidate_universe_validate_members",
+        "DEFERRABLE INITIALLY DEFERRED",
+        "FORCE ROW LEVEL SECURITY",
+        "GRANT SELECT ON TABLE public.dataset_versions TO research_writer",
+        "candidate_dataset_versions_select_research_writer",
+        "insert_candidate_investor_flow",
+        "insert_candidate_market_status",
+        "insert_candidate_fundamental",
+        "pg_catalog.pg_advisory_xact_lock",
+        "candidate universe-member natural identity is occupied by different content",
+        "candidate fundamental restatement lineage is invalid",
+        "p_entitlement_date <> p_last_session",
+    ] {
+        assert!(
+            CANDIDATE_SOURCE_UP_SQL.contains(token),
+            "0042 candidate source contract is missing {token}"
+        );
+    }
+    assert!(
+        !CANDIDATE_SOURCE_UP_SQL
+            .contains("GRANT INSERT ON TABLE public.dataset_versions TO research_writer"),
+        "research_writer must only catalog through narrow definer procedures"
+    );
+    assert!(
+        !CANDIDATE_SOURCE_UP_SQL.contains("GRANT INSERT ON TABLE public.%I TO research_writer"),
+        "research_writer must publish typed source rows only through narrow definers"
+    );
+    for token in [
+        "published candidate source observations",
+        "candidate_instrument_registrations",
+        "candidate_price_instrument_coverage",
+        "candidate_price_instrument_sessions",
+        "candidate_investor_flow_snapshot_rows",
+        "candidate_raw_batch_publications",
+        "candidate_raw_batch_datasets",
+        "DROP FUNCTION public.seal_candidate_raw_batch",
+        "candidate_source_validate_dataset_pin",
+        "candidate_universe_validate_members",
+        "REVOKE SELECT ON TABLE public.dataset_versions FROM research_writer",
+        "DROP POLICY candidate_dataset_versions_select_research_writer",
+    ] {
+        assert!(
+            CANDIDATE_SOURCE_DOWN_SQL.contains(token),
+            "0042 rollback is missing {token}"
+        );
+    }
+
+    for token in [
+        "candidate_scoring_configs",
+        "stock_analysis_runs",
+        "stock_analysis_snapshots",
+        "candidate_feed_snapshots",
+        "candidate_feed_items",
+        "screener_saved_screens",
+        "CREATE POLICY screener_saved_screens_owner",
+        "candidate-score-v1",
+        "1cd70f7a79af85896b015f265bea8ae931bbba29aef12a0b95f32c82ee056377",
+        "min_average_trading_value_20",
+        "price_curated_version",
+        "price_entitlement_id",
+        "universe_entitlement_id",
+        "status_dataset_version_id",
+        "status_entitlement_id",
+        "status_manifest_sha256",
+        "flow_entitlement_id",
+        "fundamental_entitlement_id",
+        "sector_entitlement_id",
+        "UNIVERSE_FALLBACK",
+        "STRONG', 'MODERATE', 'WEAK",
+        "published candidate feed must contain exactly five items",
+        "screener_saved_screens_app",
+        "NULLIF(current_setting('app.actor_user_id', true), '')::uuid",
+    ] {
+        assert!(
+            CANDIDATE_ANALYSIS_UP_SQL.contains(token),
+            "0043 candidate analysis contract is missing {token}"
+        );
+    }
+    assert!(
+        !CANDIDATE_ANALYSIS_UP_SQL.contains("GRANT INSERT ON TABLE public.stock_analysis")
+            && !CANDIDATE_ANALYSIS_UP_SQL.contains("GRANT UPDATE ON TABLE public.stock_analysis"),
+        "serving roles must not receive candidate publication DML"
+    );
+    assert!(
+        CANDIDATE_ANALYSIS_DOWN_SQL
+            .contains("rollback blocked by candidate analysis or saved screens"),
+        "0043 rollback must preserve published/user data"
+    );
+
+    for token in [
+        "candidate-scheduler@system.invalid",
+        "candidate_scheduler_control",
+        "required_fetch_mode",
+        "jobs_reject_candidate_scheduled_mutation",
+        "candidate:scheduled:",
+        "candidate_compute",
+        "schedule_candidate_run",
+        "candidate source pins are not sealed under the required fetch mode",
+        "candidate cutoff does not match exact pinned source availability",
+        "candidate run requires 60 confirmed KRX sessions",
+        "v_required_first_session, p_as_of_date",
+        "candidate_published_source_attributions",
+        "refs.first_use_date, refs.last_use_date",
+        "'app.actor_user_id', v_service_user_id::text, true",
+        "publish_candidate_analysis",
+        "fail_candidate_analysis_run",
+        "assert_candidate_publication_settlement",
+        "candidate publication and queue settlement must commit atomically",
+        "p_summary IS DISTINCT FROM v_run.summary_json",
+        "jsonb_path_query",
+        "content_sha256",
+        "count(DISTINCT supplied.value ->> 'instrument_id')",
+        "GRANT EXECUTE ON FUNCTION public.schedule_candidate_run",
+        "GRANT EXECUTE ON FUNCTION public.publish_candidate_analysis",
+        "TO worker",
+    ] {
+        assert!(
+            CANDIDATE_PIPELINE_UP_SQL.contains(token),
+            "0044 candidate pipeline contract is missing {token}"
+        );
+    }
+    assert!(
+        !CANDIDATE_PIPELINE_UP_SQL.contains("INSERT INTO public.recommendation_runs")
+            && !CANDIDATE_PIPELINE_UP_SQL.contains("INSERT INTO public.recommendation_items")
+            && !CANDIDATE_PIPELINE_UP_SQL.contains("INSERT INTO public.target_portfolios")
+            && !CANDIDATE_PIPELINE_UP_SQL.contains("recommendation:scheduled:"),
+        "candidate publication must remain separate from ETF recommendations"
+    );
+    assert_eq!(
+        CANDIDATE_PIPELINE_UP_SQL
+            .matches("entitlement became inactive before publication")
+            .count(),
+        6,
+        "publication must re-attest all six exact entitlements"
+    );
+    assert!(
+        CANDIDATE_PIPELINE_UP_SQL.contains("supplied.value ? 'content_sha256'")
+            && CANDIDATE_PIPELINE_UP_SQL
+                .contains("pg_catalog.sha256(pg_catalog.jsonb_send(value))"),
+        "PostgreSQL must own snapshot hashes and reject worker-supplied hashes"
+    );
+    assert!(
+        CANDIDATE_SCHEDULE_RS.contains("canonical_cutoff")
+            && CANDIDATE_SCHEDULE_RS.contains("candidate_price_publications")
+            && CANDIDATE_SCHEDULE_RS.contains("candidate_price_instrument_sessions")
+            && CANDIDATE_SCHEDULE_RS.contains("MIN_PRICE_CONTEXT_SESSIONS")
+            && CANDIDATE_SCHEDULE_RS.contains("required_sessions AS MATERIALIZED")
+            && CANDIDATE_SCHEDULE_RS.contains("price_session.session_date=required.session_date")
+            && !CANDIDATE_SCHEDULE_RS.contains("CANDIDATE_PRICE_CURATED_VERSION"),
+        "scheduler identity must be derived from exact publications, not poll time or env"
+    );
+    assert!(
+        CANDIDATE_RUNNER_RS.contains("read_dataset_manifest")
+            && CANDIDATE_RUNNER_RS.contains("dataset_manifest_hash"),
+        "candidate computation must attest the on-disk price manifest"
+    );
+    assert!(
+        CANDIDATE_PIPELINE_UP_SQL.contains("candidate_price_instrument_sessions")
+            && CANDIDATE_PIPELINE_UP_SQL.contains("LIMIT 60")
+            && CANDIDATE_PIPELINE_UP_SQL
+                .contains("price_session.session_date=required.session_date")
+            && CANDIDATE_PIPELINE_UP_SQL
+                .contains("fewer than five candidate members have complete 60-session inputs"),
+        "direct candidate scheduling must require five viable 60-session members"
+    );
+    assert!(
+        RESEARCH_WORKER_RS.contains("run_candidate_source_ingest")
+            && RESEARCH_WORKER_RS.contains("RESEARCH_CANDIDATE_ENABLED")
+            && RESEARCH_WORKER_RS.contains("batch.fetch_mode = $3")
+            && RESEARCH_WORKER_RS.contains("trade_date = $1 AND entitlement_date = $1")
+            && RESEARCH_WORKER_RS.contains("fiscal_period_end <= $1")
+            && RESEARCH_WORKER_RS.contains("effective_from <= $1")
+            && RESEARCH_WORKER_RS.contains("FROM trading_calendars AS calendar")
+            && RESEARCH_WORKER_RS.contains("calendar.session_type = 'TRADING'")
+            && RESEARCH_WORKER_RS.contains("candidate_price_instrument_sessions")
+            && RESEARCH_WORKER_RS
+                .contains("price.first_session <= $1 AND price.last_session >= $1"),
+        "candidate Raw-to-publication path must be wired into the production worker"
+    );
+    for token in [
+        "pg_advisory_xact_lock(1815099521, 44)",
+        "rollback blocked by candidate job or run lineage",
+        "reserved service principal dependencies",
+        "FROM public.screener_saved_screens",
+        "DROP FUNCTION public.assert_candidate_publication_settlement",
+    ] {
+        assert!(
+            CANDIDATE_PIPELINE_DOWN_SQL.contains(token),
+            "0044 rollback is missing {token}"
+        );
+    }
+
+    for sql in [
+        CANDIDATE_SOURCE_UP_SQL,
+        CANDIDATE_ANALYSIS_UP_SQL,
+        CANDIDATE_PIPELINE_UP_SQL,
+    ] {
+        assert!(!sql.contains("pg_catalog.nullif"));
+        assert!(!sql.contains("pg_catalog.coalesce"));
+        assert!(!sql.contains("pg_catalog.extract"));
+    }
+}
+
+/// Live boundary proof for the three candidate migrations. CI supplies the
+/// disposable PostgreSQL supervisor; developer machines without one retain
+/// the static contract above and skip this probe explicitly.
+#[tokio::test]
+async fn candidate_vertical_roles_rls_and_rollback_are_fail_closed() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = async {
+        MIGRATOR.run(&owner).await?;
+
+        let privileges: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT
+                has_table_privilege('research_writer', 'public.dataset_versions', 'SELECT'),
+                has_table_privilege('research_writer', 'public.candidate_investor_flows', 'INSERT'),
+                has_table_privilege('research_writer', 'public.candidate_investor_flows', 'UPDATE'),
+                has_table_privilege('app', 'public.stock_analysis_runs', 'INSERT'),
+                has_function_privilege('worker',
+                  'public.publish_candidate_analysis(uuid,uuid,integer,text,jsonb,jsonb)', 'EXECUTE'),
+                has_function_privilege('app',
+                  'public.publish_candidate_analysis(uuid,uuid,integer,text,jsonb,jsonb)', 'EXECUTE')",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(privileges, (true, false, false, false, true, false));
+
+        let app = role_pool(&super_url, &db, "app").await?;
+        let worker = role_pool(&super_url, &db, "worker").await?;
+        let research_writer = role_pool(&super_url, &db, "research_writer").await?;
+        let app_insert = sqlx::query("INSERT INTO stock_analysis_runs DEFAULT VALUES")
+            .execute(&app)
+            .await
+            .unwrap_err();
+        assert_eq!(pg_code(&app_insert).as_deref(), Some("42501"));
+        let worker_insert = sqlx::query("INSERT INTO candidate_feed_snapshots DEFAULT VALUES")
+            .execute(&worker)
+            .await
+            .unwrap_err();
+        assert_eq!(pg_code(&worker_insert).as_deref(), Some("42501"));
+        let source_update = sqlx::query("UPDATE candidate_investor_flows SET net_amount = 0")
+            .execute(&research_writer)
+            .await
+            .unwrap_err();
+        assert_eq!(pg_code(&source_update).as_deref(), Some("42501"));
+        drop(app);
+        drop(worker);
+        drop(research_writer);
+
+        let service_user = "00000000-0000-4000-8000-000000000099";
+        let other_user = "00000000-0000-4000-8000-000000000043";
+        sqlx::query(
+            "INSERT INTO users (id,issuer,subject,email,display_name)
+             VALUES ($1,'urn:lagrange:test','candidate-rollback-owner',
+                     'candidate-rollback-owner@example.invalid','Candidate rollback owner')",
+        )
+        .bind(Uuid::parse_str(service_user)?)
+        .execute(&owner)
+        .await?;
+        let service_actor = actor_pool(&super_url, &db, "app", service_user).await?;
+        let screen_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO screener_saved_screens
+                (owner_user_id, name, criteria_schema_version, criteria_json)
+             VALUES ($1, 'rollback-boundary', 1, '{}'::jsonb)
+             RETURNING id",
+        )
+        .bind(Uuid::parse_str(service_user)?)
+        .fetch_one(&service_actor)
+        .await?;
+        let other_actor = actor_pool(&super_url, &db, "app", other_user).await?;
+        let leaked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM screener_saved_screens WHERE id = $1",
+        )
+        .bind(screen_id)
+        .fetch_one(&other_actor)
+        .await?;
+        assert_eq!(leaked, 0, "saved screens must remain actor-private");
+        drop(other_actor);
+
+        MIGRATOR.undo(&owner, 43).await?;
+        // A failed SQLx migration retains its session advisory lock. Keep the
+        // guarded rollback on one acquired connection and release that lock
+        // explicitly before the successful retry below.
+        let mut guarded = owner.acquire().await?;
+        let blocked = MIGRATOR.undo(&mut *guarded, 42).await.unwrap_err();
+        sqlx::query("SELECT pg_advisory_unlock_all()")
+            .execute(&mut *guarded)
+            .await?;
+        drop(guarded);
+        assert_eq!(migrate_pg_code(&blocked).as_deref(), Some("55000"));
+        let retained: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM screener_saved_screens WHERE id = $1)",
+        )
+        .bind(screen_id)
+        .fetch_one(&service_actor)
+        .await?;
+        assert!(retained, "blocked rollback must not cascade-delete a saved screen");
+        sqlx::query("DELETE FROM screener_saved_screens WHERE id = $1")
+            .bind(screen_id)
+            .execute(&service_actor)
+            .await?;
+        drop(service_actor);
+
+        MIGRATOR.undo(&owner, 41).await?;
+        let removed: (bool, bool, bool) = sqlx::query_as(
+            "SELECT
+                to_regclass('public.candidate_universe_snapshots') IS NULL,
+                to_regclass('public.stock_analysis_runs') IS NULL,
+                to_regclass('public.candidate_scheduler_control') IS NULL",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(removed, (true, true, true));
+        Ok::<(), Box<dyn Error>>(())
+    }
+    .await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("candidate migration boundaries FAILED: {error}");
+    }
+}
 
 #[test]
 fn paper_settlement_outbox_contract_is_deferred_and_fail_closed() {
@@ -2293,7 +2682,7 @@ fn recommendation_pipeline_migration_is_tracked() {
 #[test]
 fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
     for token in [
-        "version IN (22, 23, 24, 25, 33, 34, 35)",
+        "version IN (22, 23, 24, 25, 33, 34, 35, 42)",
         "convalidated",
         "pg_get_constraintdef",
         "format_type",
@@ -2376,7 +2765,7 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         assert!(
             missing_required
                 .to_string()
-                .contains("successful SQLx migrations 22-25 and 33-35 are required")
+                .contains("successful SQLx migrations 22-25, 33-35, and 42 are required")
         );
         sqlx::query("UPDATE _sqlx_migrations SET success = true WHERE version = 33")
             .execute(&owner)
@@ -3569,45 +3958,123 @@ async fn full_contract_body(
     )
     .fetch_all(owner)
     .await?;
+    let expected_writer_policies = [
+        (
+            "candidate_fundamental_observations",
+            "candidate_source_select_candidate_fundamental_observations",
+            "SELECT",
+        ),
+        (
+            "candidate_instrument_registrations",
+            "candidate_instrument_registrations_select",
+            "SELECT",
+        ),
+        (
+            "candidate_investor_flow_snapshot_rows",
+            "candidate_source_select_candidate_investor_flow_snapshot_rows",
+            "SELECT",
+        ),
+        (
+            "candidate_investor_flows",
+            "candidate_source_select_candidate_investor_flows",
+            "SELECT",
+        ),
+        (
+            "candidate_market_status_observations",
+            "candidate_source_select_candidate_market_status_observations",
+            "SELECT",
+        ),
+        (
+            "candidate_price_instrument_coverage",
+            "candidate_source_select_candidate_price_instrument_coverage",
+            "SELECT",
+        ),
+        (
+            "candidate_price_instrument_sessions",
+            "candidate_source_select_candidate_price_instrument_sessions",
+            "SELECT",
+        ),
+        (
+            "candidate_price_publications",
+            "candidate_source_select_candidate_price_publications",
+            "SELECT",
+        ),
+        (
+            "candidate_raw_batch_datasets",
+            "candidate_source_select_candidate_raw_batch_datasets",
+            "SELECT",
+        ),
+        (
+            "candidate_raw_batch_publications",
+            "candidate_source_select_candidate_raw_batch_publications",
+            "SELECT",
+        ),
+        (
+            "candidate_sector_entries",
+            "candidate_source_select_candidate_sector_entries",
+            "SELECT",
+        ),
+        (
+            "candidate_sector_versions",
+            "candidate_source_select_candidate_sector_versions",
+            "SELECT",
+        ),
+        (
+            "candidate_universe_members",
+            "candidate_source_select_candidate_universe_members",
+            "SELECT",
+        ),
+        (
+            "candidate_universe_snapshots",
+            "candidate_source_select_candidate_universe_snapshots",
+            "SELECT",
+        ),
+        (
+            "data_batches",
+            "data_batches_insert_research_writer",
+            "INSERT",
+        ),
+        (
+            "data_batches",
+            "data_batches_select_research_writer",
+            "SELECT",
+        ),
+        (
+            "dataset_versions",
+            "candidate_dataset_versions_select_research_writer",
+            "SELECT",
+        ),
+        (
+            "trading_calendar_versions",
+            "trading_calendar_versions_insert_research_writer",
+            "INSERT",
+        ),
+        (
+            "trading_calendar_versions",
+            "trading_calendar_versions_select_research_writer",
+            "SELECT",
+        ),
+        (
+            "trading_calendars",
+            "trading_calendars_insert_research_writer",
+            "INSERT",
+        ),
+        (
+            "trading_calendars",
+            "trading_calendars_select_research_writer",
+            "SELECT",
+        ),
+        (
+            "trading_calendars",
+            "trading_calendars_update_research_writer",
+            "UPDATE",
+        ),
+    ]
+    .into_iter()
+    .map(|(table, policy, command)| (table.into(), policy.into(), command.into()))
+    .collect::<Vec<(String, String, String)>>();
     assert_eq!(
-        writer_policies,
-        vec![
-            (
-                "data_batches".into(),
-                "data_batches_insert_research_writer".into(),
-                "INSERT".into()
-            ),
-            (
-                "data_batches".into(),
-                "data_batches_select_research_writer".into(),
-                "SELECT".into()
-            ),
-            (
-                "trading_calendar_versions".into(),
-                "trading_calendar_versions_insert_research_writer".into(),
-                "INSERT".into()
-            ),
-            (
-                "trading_calendar_versions".into(),
-                "trading_calendar_versions_select_research_writer".into(),
-                "SELECT".into()
-            ),
-            (
-                "trading_calendars".into(),
-                "trading_calendars_insert_research_writer".into(),
-                "INSERT".into()
-            ),
-            (
-                "trading_calendars".into(),
-                "trading_calendars_select_research_writer".into(),
-                "SELECT".into()
-            ),
-            (
-                "trading_calendars".into(),
-                "trading_calendars_update_research_writer".into(),
-                "UPDATE".into()
-            ),
-        ],
+        writer_policies, expected_writer_policies,
         "research_writer must have only the requested publication RLS policies"
     );
     let sequence_privileges: (bool, bool, bool) = sqlx::query_as(

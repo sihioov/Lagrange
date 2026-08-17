@@ -146,6 +146,8 @@ pub struct Harness {
     /// actor GUC, so this pool needs none — every statement binds its own
     /// `account_id`/`owner_user_id` predicate instead.
     pub worker_url: String,
+    /// Research publication role used by end-to-end Raw ingestion tests.
+    pub research_writer_url: String,
     /// Temp artifact tree the download route hashes against (C: temp, keeps
     /// D: safe; mirrors the read-only /data/artifacts mount in compose).
     pub artifact_root: std::path::PathBuf,
@@ -221,6 +223,7 @@ impl Harness {
         let admin_url = conn_url(&super_url, "admin", &db_name);
         let audit_url = conn_url(&super_url, "audit_writer", &db_name);
         let worker_url = conn_url(&super_url, "worker", &db_name);
+        let research_writer_url = conn_url(&super_url, "research_writer", &db_name);
 
         let owner_pool = pool(&owner_url, 4).await;
         MIGRATOR.run(&owner_pool).await.expect("migrations run");
@@ -257,6 +260,7 @@ impl Harness {
             owner_pool,
             app_url,
             worker_url,
+            research_writer_url,
             artifact_root,
             state: None,
         };
@@ -360,6 +364,7 @@ impl Harness {
             step_up_max_auth_age_secs: 900,
             artifact_root: h.artifact_root.clone(),
             seoul_today: || chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
+            candidate_eod_ready: || true,
             code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         };
         let state = ApiState::from_pools(
@@ -430,6 +435,21 @@ impl Harness {
     /// rather than decorative.
     pub async fn worker_pool(&self) -> PgPool {
         pool(&self.worker_url, 4).await
+    }
+
+    pub async fn research_writer_pool(&self) -> PgPool {
+        pool(&self.research_writer_url, 4).await
+    }
+
+    pub async fn restart_api_with_candidate_clock(
+        &mut self,
+        seoul_today: fn() -> chrono::NaiveDate,
+        candidate_eod_ready: fn() -> bool,
+    ) {
+        let mut cfg = (*self.state().cfg).clone();
+        cfg.seoul_today = seoul_today;
+        cfg.candidate_eod_ready = candidate_eod_ready;
+        self.restart_api_with_config(cfg).await;
     }
 
     /// The `pending_targets` repository over the harness app pool.

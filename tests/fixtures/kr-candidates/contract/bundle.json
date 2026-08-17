@@ -1,0 +1,46 @@
+{
+  "provider": "krx",
+  "market": "kr",
+  "schema_version": 1,
+  "source": "synthetic",
+  "date": "2026-08-14",
+  "simulate": null,
+  "note": "Fabricated candidate-source contract fixture. It contains no licensed KRX values and cannot satisfy production readiness.",
+  "responses": [
+    {
+      "kind": "investor_flow",
+      "file": "investor-flow-response.json",
+      "endpoint": "krx.synthetic.investor-flow.v1",
+      "query": [["date", "2026-08-14"]],
+      "headers": [["X-Data-License", "redacted"]]
+    },
+    {
+      "kind": "market_status",
+      "file": "market-status-response.json",
+      "endpoint": "krx.synthetic.market-status.v1",
+      "query": [["date", "2026-08-14"]],
+      "headers": [["X-Data-License", "redacted"]]
+    },
+    {
+      "kind": "fundamentals",
+      "file": "fundamentals-response.json",
+      "endpoint": "krx.synthetic.fundamentals.v1",
+      "query": [["available_by", "2026-08-14T07:00:00Z"]],
+      "headers": [["X-Data-License", "redacted"]]
+    },
+    {
+      "kind": "index_membership",
+      "file": "index-membership-response.json",
+      "endpoint": "krx.synthetic.index-membership.v1",
+      "query": [["index", "kospi200"], ["date", "2026-08-14"]],
+      "headers": [["X-Data-License", "redacted"]]
+    },
+    {
+      "kind": "sector_classification",
+      "file": "sector-classification-response.json",
+      "endpoint": "krx.synthetic.sector-classification.v1",
+      "query": [["taxonomy", "krx-sector"]],
+      "headers": [["X-Data-License", "redacted"]]
+    }
+  ]
+}

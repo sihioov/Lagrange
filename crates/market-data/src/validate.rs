@@ -114,6 +114,158 @@ pub fn validate_response(kind: ResponseKind, bytes: &[u8]) -> Result<(), Validat
                 return Err(invalid_type(kind, "actions", "array"));
             }
         }
+        ResponseKind::InvestorFlow => validate_rows(
+            kind,
+            obj,
+            "flows",
+            &[
+                "instrument",
+                "trade_date",
+                "investor_class",
+                "source_revision",
+                "available_at",
+            ],
+            &["net_amount", "net_volume"],
+        )?,
+        ResponseKind::MarketStatus => {
+            validate_rows(
+                kind,
+                obj,
+                "statuses",
+                &[
+                    "instrument",
+                    "trade_date",
+                    "source_revision",
+                    "available_at",
+                ],
+                &[],
+            )?;
+            validate_boolean_fields(
+                kind,
+                obj,
+                "statuses",
+                &[
+                    "suspended",
+                    "administrative",
+                    "liquidation",
+                    "inactive",
+                    "disqualifying_audit_opinion",
+                    "complete_capital_impairment",
+                ],
+            )?;
+        }
+        ResponseKind::Fundamentals => validate_rows(
+            kind,
+            obj,
+            "fundamentals",
+            &[
+                "instrument",
+                "fiscal_period_start",
+                "fiscal_period_end",
+                "period_kind",
+                "statement_scope",
+                "metric",
+                "disclosed_at",
+                "available_at",
+                "source_revision",
+            ],
+            &["value", "unit_scale"],
+        )?,
+        ResponseKind::IndexMembership => validate_rows(
+            kind,
+            obj,
+            "memberships",
+            &[
+                "index_id",
+                "instrument",
+                "announced_at",
+                "effective_from",
+                "available_at",
+                "source_revision",
+                "source_revision",
+            ],
+            &[],
+        )?,
+        ResponseKind::SectorClassification => validate_rows(
+            kind,
+            obj,
+            "sectors",
+            &[
+                "taxonomy_id",
+                "taxonomy_version",
+                "instrument",
+                "sector_code",
+                "sector_name",
+                "fundamental_profile",
+                "effective_from",
+                "available_at",
+            ],
+            &[],
+        )?,
+    }
+    Ok(())
+}
+
+fn validate_rows(
+    kind: ResponseKind,
+    obj: &serde_json::Map<String, Value>,
+    collection: &str,
+    string_fields: &[&str],
+    number_fields: &[&str],
+) -> Result<(), ValidationError> {
+    let rows = obj
+        .get(collection)
+        .ok_or_else(|| missing(kind, collection))?
+        .as_array()
+        .ok_or_else(|| invalid_type(kind, collection, "array"))?;
+    for (index, row) in rows.iter().enumerate() {
+        let row = row.as_object().ok_or_else(|| ValidationError {
+            kind,
+            reason: format!("{collection}[{index}] is not an object"),
+        })?;
+        for field in string_fields {
+            if !row.get(*field).is_some_and(Value::is_string) {
+                return Err(ValidationError {
+                    kind,
+                    reason: format!("{collection}[{index}].{field} must be a string"),
+                });
+            }
+        }
+        for field in number_fields {
+            if !row.get(*field).is_some_and(Value::is_number) {
+                return Err(ValidationError {
+                    kind,
+                    reason: format!("{collection}[{index}].{field} must be a number"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_boolean_fields(
+    kind: ResponseKind,
+    obj: &serde_json::Map<String, Value>,
+    collection: &str,
+    fields: &[&str],
+) -> Result<(), ValidationError> {
+    let rows = obj
+        .get(collection)
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_type(kind, collection, "array"))?;
+    for (index, row) in rows.iter().enumerate() {
+        let row = row.as_object().ok_or_else(|| ValidationError {
+            kind,
+            reason: format!("{collection}[{index}] is not an object"),
+        })?;
+        for field in fields {
+            if !row.get(*field).is_some_and(Value::is_boolean) {
+                return Err(ValidationError {
+                    kind,
+                    reason: format!("{collection}[{index}].{field} must be a boolean"),
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -146,6 +298,16 @@ mod tests {
         assert!(validate_response(ResponseKind::Calendar, cal).is_ok());
         let actions = br#"{"actions":[]}"#;
         assert!(validate_response(ResponseKind::CorporateActions, actions).is_ok());
+        let flow = br#"{"flows":[{"instrument":"005930.KRX","trade_date":"2026-08-14","investor_class":"FOREIGN","net_amount":1,"net_volume":2,"source_revision":"1","available_at":"2026-08-14T07:00:00Z"}]}"#;
+        assert!(validate_response(ResponseKind::InvestorFlow, flow).is_ok());
+        let status = br#"{"statuses":[{"instrument":"005930.KRX","trade_date":"2026-08-14","suspended":false,"administrative":false,"liquidation":false,"inactive":false,"disqualifying_audit_opinion":false,"complete_capital_impairment":false,"source_revision":"1","available_at":"2026-08-14T07:00:00Z"}]}"#;
+        assert!(validate_response(ResponseKind::MarketStatus, status).is_ok());
+        let fundamentals = br#"{"fundamentals":[{"instrument":"005930.KRX","fiscal_period_start":"2026-01-01","fiscal_period_end":"2026-03-31","period_kind":"QUARTER","statement_scope":"CONSOLIDATED","metric":"revenue","value":1,"unit_scale":1,"disclosed_at":"2026-05-01T00:00:00Z","available_at":"2026-05-01T00:01:00Z","source_revision":"1"}]}"#;
+        assert!(validate_response(ResponseKind::Fundamentals, fundamentals).is_ok());
+        let membership = br#"{"memberships":[{"index_id":"kospi200","instrument":"005930.KRX","announced_at":"2026-06-01T00:00:00Z","effective_from":"2026-06-12","available_at":"2026-06-01T00:01:00Z","source_revision":"1"}]}"#;
+        assert!(validate_response(ResponseKind::IndexMembership, membership).is_ok());
+        let sectors = br#"{"sectors":[{"taxonomy_id":"krx","taxonomy_version":"2026","instrument":"005930.KRX","sector_code":"IT","sector_name":"Information Technology","fundamental_profile":"NON_FINANCIAL","effective_from":"2026-01-01","available_at":"2026-01-01T00:00:00Z","source_revision":"1"}]}"#;
+        assert!(validate_response(ResponseKind::SectorClassification, sectors).is_ok());
     }
 
     #[test]
@@ -162,6 +324,14 @@ mod tests {
             ),
             (br#"{"sessions":"nope"}"#, ResponseKind::Calendar),
             (br#"{"actions":{}}"#, ResponseKind::CorporateActions),
+            (
+                br#"{"flows":[{"instrument":1}]}"#,
+                ResponseKind::InvestorFlow,
+            ),
+            (br#"{"statuses":{}}"#, ResponseKind::MarketStatus),
+            (br#"{"fundamentals":{}}"#, ResponseKind::Fundamentals),
+            (br#"{"memberships":[1]}"#, ResponseKind::IndexMembership),
+            (br#"{"sectors":"nope"}"#, ResponseKind::SectorClassification),
             (b"not json", ResponseKind::Bars),
         ];
         for (bytes, kind) in cases {

@@ -198,7 +198,7 @@ impl ScratchDb {
         sqlx::raw_sql(ROLE_BOOTSTRAP_SQL).execute(&fresh).await?;
         sqlx::raw_sql(ddl_for(
             &db,
-            "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, audit_writer",
+            "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, audit_writer, research_writer, admin",
         ))
         .execute(&fresh)
         .await?;

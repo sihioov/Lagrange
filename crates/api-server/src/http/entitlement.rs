@@ -23,6 +23,7 @@ pub fn use_from_name(name: &str) -> Option<KrUse> {
         "dataset" => Some(KrUse::Dataset),
         "factor" => Some(KrUse::Factor),
         "recommendation" => Some(KrUse::Recommendation),
+        "candidate" => Some(KrUse::Candidate),
         "backtest" => Some(KrUse::Backtest),
         "report" => Some(KrUse::Report),
         "benchmark" => Some(KrUse::Benchmark),
@@ -61,6 +62,20 @@ pub async fn require_use(
     use_kind: KrUse,
     as_of: &str,
 ) -> Result<(), Response> {
+    require_dataset_use(state, session, headers, use_kind, KRX_EOD_DATASET, as_of).await
+}
+
+/// Grant access for one exact logical dataset/use pair. Multi-source surfaces
+/// (the stock-candidate vertical) invoke this for every pinned source rather
+/// than treating EOD rights as permission for unrelated flow/fundamental data.
+pub async fn require_dataset_use(
+    state: &ApiState,
+    session: &Session,
+    headers: &HeaderMap,
+    use_kind: KrUse,
+    dataset_id: &str,
+    as_of: &str,
+) -> Result<(), Response> {
     let rid = crate::http::error::request_id(headers);
     let service = fresh_service(state).await?;
     let Some(date) = parse_date(as_of) else {
@@ -74,7 +89,7 @@ pub async fn require_use(
     };
     let req = AccessRequest {
         actor: session.actor(),
-        dataset: DatasetId::new(KRX_EOD_DATASET),
+        dataset: DatasetId::new(dataset_id),
         as_of: CalendarDate::parse(&date.format("%Y-%m-%d").to_string()).map_err(|_| {
             api_error(
                 axum::http::StatusCode::BAD_REQUEST,

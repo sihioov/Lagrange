@@ -8,6 +8,8 @@
 //! any failure leaves an exact-identity batch for [`RawStore::read_manifest`]
 //! to re-sync before recovery.
 
+use std::collections::BTreeSet;
+
 use domain::{BatchId, TradingDate, UtcTimestamp};
 
 use crate::contract::{ResponseKind, StoredFile};
@@ -22,6 +24,8 @@ pub enum IngestError {
     Provider(ProviderError),
     /// The response bytes failed structural schema validation.
     MalformedResponse { kind: ResponseKind, reason: String },
+    /// The provider returned a partial or out-of-scope response-class set.
+    ResponseShape { detail: String },
     /// The immutable store rejected the batch.
     Store(StoreError),
     /// The batch was stored, but its mandatory post-store verification failed.
@@ -37,6 +41,9 @@ impl std::fmt::Display for IngestError {
             Self::Provider(e) => write!(f, "ingest provider failure: {e}"),
             Self::MalformedResponse { kind, reason } => {
                 write!(f, "malformed {kind} response: {reason}")
+            }
+            Self::ResponseShape { detail } => {
+                write!(f, "invalid provider response shape: {detail}")
             }
             Self::Store(e) => write!(f, "ingest store failure: {e}"),
             Self::Readback { entry, source } => write!(
@@ -54,7 +61,7 @@ impl std::error::Error for IngestError {
             Self::Provider(source) => Some(source),
             Self::Store(source) => Some(source),
             Self::Readback { source, .. } => Some(source),
-            Self::MalformedResponse { .. } => None,
+            Self::MalformedResponse { .. } | Self::ResponseShape { .. } => None,
         }
     }
 }
@@ -64,7 +71,7 @@ impl IngestError {
         match self {
             Self::Store(source) => source.batch_id(),
             Self::Readback { entry, .. } => Some(entry.batch_id),
-            Self::Provider(_) | Self::MalformedResponse { .. } => None,
+            Self::Provider(_) | Self::MalformedResponse { .. } | Self::ResponseShape { .. } => None,
         }
     }
 }
@@ -162,21 +169,79 @@ pub fn ingest_bundle(
     ingest_bundle_with_store(store, provider, req, entitlement_reference)
 }
 
+/// Runs one immutable delivery for an explicit provider capability set.
+///
+/// Candidate-source collection uses this entry point with
+/// [`crate::CANDIDATE_RESPONSE_KINDS`]. Every requested response class must be
+/// present at least once and the provider may not smuggle an unrequested class
+/// into the batch. Multiple files of one class remain valid for paginated
+/// licensed deliveries.
+pub fn ingest_bundle_with_kinds(
+    store: &RawStore,
+    provider: &dyn EodProvider,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    kinds: &[ResponseKind],
+) -> Result<IngestOutcome, IngestError> {
+    ingest_bundle_with_kinds_and_store(store, provider, req, entitlement_reference, kinds)
+}
+
 fn ingest_bundle_with_store<S: IngestStore + ?Sized>(
     store: &S,
     provider: &dyn EodProvider,
     req: &IngestRequest,
     entitlement_reference: Option<&str>,
 ) -> Result<IngestOutcome, IngestError> {
+    ingest_bundle_with_kinds_and_store(
+        store,
+        provider,
+        req,
+        entitlement_reference,
+        &crate::contract::EOD_RESPONSE_KINDS,
+    )
+}
+
+fn ingest_bundle_with_kinds_and_store<S: IngestStore + ?Sized>(
+    store: &S,
+    provider: &dyn EodProvider,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    kinds: &[ResponseKind],
+) -> Result<IngestOutcome, IngestError> {
+    let requested: BTreeSet<_> = kinds.iter().copied().collect();
+    if requested.is_empty() || requested.len() != kinds.len() {
+        return Err(IngestError::ResponseShape {
+            detail: "requested response classes must be nonempty and unique".to_owned(),
+        });
+    }
     let batch_id = BatchId::generate();
     let fetch_req = crate::provider::FetchRequest {
         market: req.market.clone(),
         date: req.date,
-        kinds: crate::contract::ALL_RESPONSE_KINDS.to_vec(),
+        kinds: kinds.to_vec(),
         now: req.now,
         batch_id,
     };
     let envelopes = provider.fetch(&fetch_req)?;
+
+    let returned: BTreeSet<_> = envelopes.iter().map(|envelope| envelope.kind).collect();
+    let missing: Vec<_> = requested
+        .difference(&returned)
+        .map(ToString::to_string)
+        .collect();
+    let unexpected: Vec<_> = returned
+        .difference(&requested)
+        .map(ToString::to_string)
+        .collect();
+    if !missing.is_empty() || !unexpected.is_empty() {
+        return Err(IngestError::ResponseShape {
+            detail: format!(
+                "missing [{}], unexpected [{}]",
+                missing.join(","),
+                unexpected.join(",")
+            ),
+        });
+    }
 
     for env in &envelopes {
         validate_response(env.kind, &env.bytes)?;

@@ -19,6 +19,7 @@ static_commit="${LAGRANGE_CODE_COMMIT:-0123456789abcdef0123456789abcdef01234567}
 export LAGRANGE_CODE_COMMIT="$static_commit"
 export RESEARCH_APP_ENV=qa
 export RESEARCH_FETCH_MODE=synthetic
+export RESEARCH_ENTITLEMENT_REFERENCE="${RESEARCH_ENTITLEMENT_REFERENCE:-REPLACE_WITH_EXACT_CONTRACT_REFERENCE}"
 # The research smoke resolves the complete production Compose model even
 # though it starts only research services. Supply deterministic QA values for
 # the independent backtest capacity/reconciler contract so interpolation
@@ -37,7 +38,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 fail() { echo "RESEARCH_WORKER_SMOKE: $*" >&2; exit 1; }
-contains() { printf '%s' "$1" | grep -Fq -- "$2" || fail "$3 missing required value: $2"; }
+contains() { grep -Fq -- "$2" <<<"$1" || fail "$3 missing required value: $2"; }
 
 validator_self_tests() (
   test_root="$(mktemp -d "$root/.research-validator.XXXXXX")"
@@ -65,7 +66,11 @@ validator_self_tests() (
   test_script="$test_root/scripts/qa/research-worker-smoke.sh"
   test_compose="$test_root/deploy/compose/compose.yml"
   test_dockerfile="$test_root/data-pipelines/collectors/Dockerfile"
-  bash "$test_script" --static-only >/dev/null 2>&1 || fail 'self-test baseline fixture must pass'
+  local baseline_output
+  if ! baseline_output="$(bash "$test_script" --static-only 2>&1)"; then
+    printf '%s\n' "$baseline_output" >&2
+    fail 'self-test baseline fixture must pass'
+  fi
 
   cp "$test_compose" "$test_compose.baseline"
   sed 's#${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw#${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw:ro#' "$test_compose.baseline" >"$test_compose"
@@ -104,18 +109,7 @@ validator_self_tests() (
     esac
     if bash "$test_script" --static-only >/dev/null 2>&1; then fail "validator accepted commented-out $mutation"; fi
   done
-  awk '
-    { print }
-    /\$\{LAGRANGE_DATA_DIR:-\.\.\/data\}\/raw:\/data\/raw$/ {
-      print "      - type: bind"
-      print "        source: ${LAGRANGE_DATA_DIR:-../data}/curated"
-      print "        target: /data/curated"
-      print "        read_only: false"
-    }
-  ' "$test_compose.baseline" >"$test_compose"
-  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a writable long-syntax curated mount'; fi
   cp "$test_compose.baseline" "$test_compose"
-
   cp "$test_dockerfile" "$test_dockerfile.baseline"
   awk '!changed && /^FROM / { sub(/^FROM /, "from "); changed=1 } { print }' "$test_dockerfile.baseline" >"$test_dockerfile"
   bash "$test_script" --static-only >/dev/null 2>&1 || fail 'validator rejected a lowercase digest-pinned FROM'
@@ -185,7 +179,10 @@ require(worker.get("entrypoint") == ["/usr/local/bin/research-worker"], "researc
 expected_env = {
     "APP_ENV": "qa", "RESEARCH_FETCH_MODE": "synthetic",
     "RESEARCH_RUN_AT_KST": "16:30", "RESEARCH_MAX_PUBLICATION_AGE_SECS": "345600",
-    "RESEARCH_RAW_ROOT": "/data", "DB_HOST": "postgres", "DB_PORT": "5432",
+    "RESEARCH_ATTEMPT_TIMEOUT_SECS": "900",
+    "RESEARCH_RAW_ROOT": "/data", "RESEARCH_CURATED_ROOT": "/data",
+    "RESEARCH_ENTITLEMENT_REFERENCE": "REPLACE_WITH_EXACT_CONTRACT_REFERENCE",
+    "DB_HOST": "postgres", "DB_PORT": "5432",
     "DB_NAME": "lagrange", "DB_USER": "research_writer",
     "DB_PASSWORD_FILE": "/run/secrets/db_research_password",
 }
@@ -195,6 +192,7 @@ for key, value in expected_env.items():
 worker_secrets = {item.get("source") for item in worker.get("secrets", [])}
 require({"research_db_research_password", "research_krx_api_key"}.issubset(worker_secrets), "research-worker secrets are incomplete")
 require((worker.get("healthcheck") or {}).get("test") == ["CMD", "/usr/local/bin/research-worker", "healthcheck"], "research-worker healthcheck is incorrect")
+require(worker.get("stop_grace_period") in ("16m0s", "16m"), "research-worker stop grace must exceed its 15 minute attempt bound")
 for dependency, condition in {
     "postgres": "service_healthy",
     "research-raw-init": "service_completed_successfully",
@@ -204,21 +202,26 @@ for dependency, condition in {
 
 volumes = worker.get("volumes", [])
 raw = [volume for volume in volumes if volume.get("target") == "/data/raw"]
+curated = [volume for volume in volumes if volume.get("target") == "/data/curated"]
 require(len(raw) == 1 and raw[0].get("type") == "bind" and not raw[0].get("read_only", False), "research-worker must have exactly one read/write bind targeting /data/raw")
+require(len(curated) == 1 and curated[0].get("type") == "bind" and not curated[0].get("read_only", False), "research-worker must have exactly one read/write bind targeting /data/curated")
 for volume in volumes:
     target = volume.get("target", "")
-    require(not (target.startswith("/data/") and target != "/data/raw" and not volume.get("read_only", False)), f"research-worker data mount is writable: {target}")
+    require(not (target.startswith("/data/") and target not in ("/data/raw", "/data/curated") and not volume.get("read_only", False)), f"research-worker has an unexpected nested writable data mount: {target}")
 
 raw_init = services["research-raw-init"]
 alpine = "alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d"
 init_raw = [volume for volume in raw_init.get("volumes", []) if volume.get("target") == "/data/raw"]
+init_curated = [volume for volume in raw_init.get("volumes", []) if volume.get("target") == "/data/curated"]
 require(raw_init.get("image") == alpine and raw_init.get("user") == "0:0" and raw_init.get("read_only") is True, "research-raw-init identity/root filesystem is incorrect")
 require(raw_init.get("network_mode") == "none" and raw_init.get("restart") == "no" and "secrets" not in raw_init and "networks" not in raw_init, "research-raw-init isolation is incorrect")
 require(raw_init.get("cap_drop") == ["ALL"] and sorted(raw_init.get("cap_add", [])) == ["CHOWN", "DAC_OVERRIDE", "FOWNER"], "research-raw-init capability contract is incorrect")
 require("no-new-privileges:true" in raw_init.get("security_opt", []), "research-raw-init no-new-privileges contract is missing")
 require(len(init_raw) == 1 and not init_raw[0].get("read_only", False) and init_raw[0].get("source") == raw[0].get("source"), "research-raw-init Raw mount is incorrect")
+require(len(init_curated) == 1 and not init_curated[0].get("read_only", False) and init_curated[0].get("source") == curated[0].get("source"), "research-raw-init Curated mount is incorrect")
 init_command = " ".join(raw_init.get("command", []))
 require("find /data/raw -xdev -type d" in init_command and "find /data/raw -xdev -type f" in init_command, "research-raw-init must recurse without crossing filesystems")
+require("find /data/curated -xdev -type d" in init_command and "find /data/curated -xdev -type f" in init_command, "research-raw-init must prepare Curated without crossing filesystems")
 require("manifest.jsonl" in init_command and "commit.lock" in init_command, "research-raw-init mutable-file contract is missing")
 require("chown 10001:10001" in init_command and all(mode in init_command for mode in ("chmod 0750", "chmod 0640", "chmod 0440")), "research-raw-init ownership/mode contract is missing")
 require(not re.search(r"(^|\s)-L(\s|$)", init_command) and "-type l" not in init_command, "research-raw-init must never follow or mutate symlinks")
@@ -270,7 +273,7 @@ done
 if grep -Eq '^!scripts(/|$)' "$dockerignore"; then fail 'QA fsync probe must remain outside the worker build context'; fi
 grep -Eq '^scripts/qa/\*\.sh[[:space:]]+text[[:space:]]+eol=lf[[:space:]]*$' "$gitattributes" || fail 'scripts/qa shell scripts must be forced to LF by .gitattributes'
 schema_text="$(<"$schema_sql")"
-for token in _sqlx_migrations 'version IN (22, 23, 24, 25, 33, 34, 35)' convalidated \
+for token in _sqlx_migrations 'version IN (22, 23, 24, 25, 33, 34, 35, 42)' convalidated \
   pg_get_constraintdef format_type attnotnull attidentity pg_get_expr storage_path EXCEPT \
   data_batches_source_file_uq trading_calendar_versions_source_lookup_idx \
   indisunique indisvalid indisready indislive relrowsecurity research_writer \
@@ -278,7 +281,10 @@ for token in _sqlx_migrations 'version IN (22, 23, 24, 25, 33, 34, 35)' convalid
   pg_policy polcmd polpermissive trading_calendar_versions_append_only \
   tgenabled tgtype prosecdef pg_get_functiondef regexp_replace actual_function expected_function \
   role_table_grants has_schema_privilege \
-  has_table_privilege has_sequence_privilege lock_recommendation_source_pins MAINTAIN; do
+  has_table_privilege has_sequence_privilege lock_recommendation_source_pins \
+  resolve_candidate_contract_entitlement register_candidate_source_dataset \
+  register_candidate_instrument publish_candidate_price_publication \
+  candidate_dataset_versions_select_research_writer MAINTAIN; do
   contains "$schema_text" "$token" 'research-schema-check SQL'
 done
 
@@ -322,6 +328,8 @@ dkr() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' docker "$@"; }
 project="lagrange-research-smoke-$$-$(date +%s)"
 temp_root="$(mktemp -d "${TMPDIR:-/tmp}/${project}.XXXXXX")"
 raw_root="$temp_root/data"
+candidate_smoke_bundle="$temp_root/candidate-contract"
+eod_smoke_bundle="$temp_root/eod-contract"
 runtime_secret_root="$temp_root/runtime-secrets"
 postgres_secret="$runtime_secret_root/postgres/postgres_password"
 schema_postgres_secret="$runtime_secret_root/research-schema-check/postgres_password"
@@ -333,7 +341,7 @@ context_audit_tag="${project}-context-audit"
 cleanup() {
   if [ "$created" -eq 1 ]; then
     rc run --rm --no-deps --entrypoint /bin/sh --user 0:0 research-raw-init \
-      -ec 'find /data/raw -mindepth 1 -delete' >/dev/null 2>&1 || true
+      -ec 'for path in /data/raw /data/curated; do find "$path" -mindepth 1 -delete; done' >/dev/null 2>&1 || true
     rc down -v --remove-orphans --rmi local >/dev/null 2>&1 || true
   fi
   dkr image rm -f "$context_audit_tag" >/dev/null 2>&1 || true
@@ -461,13 +469,19 @@ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin') THEN CREATE ROLE admin LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '$escaped_password'; END IF;
 END
 \$roles\$;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public
+  TO migration_owner, app, worker, audit_writer, research_writer, admin;
+GRANT CREATE ON SCHEMA public TO migration_owner;
 SQL
-unset research_password escaped_password
+unset escaped_password
 
 if rc run --rm --no-deps research-schema-check >/dev/null 2>&1; then
   fail 'research-schema-check accepted an unmigrated database'
 fi
-dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U lagrange -d lagrange >/dev/null <<'SQL'
+dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T \
+  -e "PGPASSWORD=$research_password" postgres \
+  psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -U migration_owner -d lagrange >/dev/null <<'SQL'
 CREATE TABLE _sqlx_migrations (
   version bigint PRIMARY KEY,
   description text NOT NULL,
@@ -481,22 +495,27 @@ SQL
 while IFS= read -r migration; do
   transaction_args=(-1)
   if grep -Eq '^-- no-transaction[[:space:]]*$' "$migration"; then transaction_args=(); fi
-  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T -e 'PGOPTIONS=-c lock_timeout=5s' postgres \
-    psql -X -q -v ON_ERROR_STOP=1 "${transaction_args[@]}" -U lagrange -d lagrange <"$migration" >/dev/null || fail "migration failed: ${migration##*/}"
+  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T \
+    -e "PGPASSWORD=$research_password" -e 'PGOPTIONS=-c lock_timeout=5s' postgres \
+    psql -X -q -v ON_ERROR_STOP=1 "${transaction_args[@]}" \
+      -h 127.0.0.1 -U migration_owner -d lagrange <"$migration" >/dev/null \
+    || fail "migration failed: ${migration##*/}"
   migration_name="${migration##*/}"
   migration_base="${migration_name%.up.sql}"
   version=$((10#${migration_base:0:4}))
   description="${migration_base:5}"
-  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U lagrange -d lagrange \
+  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T \
+    -e "PGPASSWORD=$research_password" postgres \
+    psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -U migration_owner -d lagrange \
     -c "INSERT INTO _sqlx_migrations(version, description, success, checksum, execution_time) VALUES ($version, '$description', true, decode(repeat('00', 32), 'hex'), 0)" </dev/null >/dev/null || fail "migration ledger insert failed: $migration_name"
 done < <(find "$root/migrations" -maxdepth 1 -type f -name '*.up.sql' | sort)
 
 ledger_state="$(
   dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
     psql -X -qAt -v ON_ERROR_STOP=1 -U lagrange -d lagrange \
-    -c "SELECT count(*) FILTER (WHERE version IN (22, 23, 24, 25, 33, 34, 35) AND success) FROM public._sqlx_migrations"
+    -c "SELECT count(*) FILTER (WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42) AND success) FROM public._sqlx_migrations"
 )" || fail 'migration ledger verification query failed'
-if [ "$ledger_state" != "7" ]; then
+if [ "$ledger_state" != "8" ]; then
   fail "migration ledger mismatch after applying migrations: $ledger_state"
 fi
 
@@ -545,12 +564,346 @@ psql_admin 'GRANT DELETE ON orders TO research_writer' 'grant forbidden order pr
 schema_gate_must_fail 'a forbidden order-table grant'
 psql_admin 'REVOKE DELETE ON orders FROM research_writer' 'revoke forbidden order privilege'
 schema_gate_must_pass 'the restored least-privilege role'
+psql_admin 'ALTER TABLE data_entitlements OWNER TO lagrange' 'drift entitlement table owner'
+schema_gate_must_fail 'a source table owned outside migration_owner'
+psql_admin 'ALTER TABLE data_entitlements OWNER TO migration_owner' 'restore entitlement table owner'
+schema_gate_must_pass 'the restored source-table ownership'
+
+# The production worker now requires one exact entitlement covering the EOD
+# price pin and all five candidate sources. Seed that narrow synthetic contract
+# in the disposable database; no production credential or licensed payload is
+# involved.
+dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
+  psql -X -q -v ON_ERROR_STOP=1 -v entitlement_ref="$RESEARCH_ENTITLEMENT_REFERENCE" \
+  -U lagrange -d lagrange >/dev/null <<'SQL'
+INSERT INTO data_entitlements (
+  contract_document_sha256,
+  contract_reference,
+  status,
+  covered_datasets,
+  covered_uses,
+  effective_from,
+  effective_until,
+  managed_by
+)
+VALUES (
+  repeat('8', 64),
+  :'entitlement_ref',
+  'ACTIVE',
+  '["krx_eod_bars","krx_investor_flows","krx_market_status","krx_fundamentals","krx_kospi200_membership","krx_sector_classification"]'::jsonb,
+  '["candidate"]'::jsonb,
+  DATE '2019-01-01',
+  DATE '2030-12-31',
+  '00000000-0000-4000-8000-000000000042'::uuid
+);
+SQL
+
+role_preflight="$(
+  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T \
+    -e "PGPASSWORD=$research_password" postgres \
+    psql -X -qAt -v ON_ERROR_STOP=1 -h 127.0.0.1 -U research_writer -d lagrange \
+      2>/dev/null <<'SQL'
+SELECT concat_ws(
+  '|',
+  current_user,
+  session_user,
+  pg_get_userbyid((
+    SELECT relowner
+      FROM pg_class
+     WHERE oid = 'public.data_entitlements'::regclass
+  )),
+  pg_get_userbyid((
+    SELECT proowner
+      FROM pg_proc
+     WHERE oid = 'public.resolve_candidate_contract_entitlement(text,date,date)'::regprocedure
+  )),
+  has_table_privilege(current_user, 'public.data_entitlements', 'SELECT')
+);
+SQL
+)" || fail 'actual research_writer role preflight query failed'
+[ "$role_preflight" = 'research_writer|research_writer|migration_owner|migration_owner|f' ] \
+  || fail "actual research_writer ownership/privilege preflight drifted: $role_preflight"
+
+if dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T \
+  -e "PGPASSWORD=$research_password" postgres \
+  psql -X -qAt -v ON_ERROR_STOP=1 -h 127.0.0.1 -U research_writer -d lagrange \
+    -c 'SELECT id FROM public.data_entitlements LIMIT 1' >/dev/null 2>&1; then
+  fail 'research_writer unexpectedly received direct data_entitlements SELECT'
+fi
+
+resolved_entitlement="$(
+  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T \
+    -e "PGPASSWORD=$research_password" postgres \
+    psql -X -qAt -v ON_ERROR_STOP=1 -h 127.0.0.1 -U research_writer -d lagrange \
+      -v entitlement_ref="$RESEARCH_ENTITLEMENT_REFERENCE" 2>/dev/null <<'SQL'
+SELECT public.resolve_candidate_contract_entitlement(
+  :'entitlement_ref', DATE '2020-01-01', DATE '2020-01-31'
+);
+SQL
+)" || fail 'research_writer definer could not resolve the exact entitlement'
+[[ "$resolved_entitlement" =~ ^[0-9a-f-]{36}$ ]] \
+  || fail 'research_writer definer returned an invalid entitlement id'
+
+dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T \
+  -e "PGPASSWORD=$research_password" postgres \
+  psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -U research_writer -d lagrange \
+    -c "SELECT public.block_candidate_raw_batch_for_inactive_rights(
+          '00000000-0000-4000-8000-000000004242'::uuid,'source',repeat('e',64),
+          'synthetic','fixture://inactive-candidate-rights',DATE '2020-01-31',
+          DATE '2020-01-01',DATE '2020-01-31')" >/dev/null \
+  || fail 'research_writer block definer cannot read entitlement state safely'
+blocked_probe="$(dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
+  psql -X -qAt -v ON_ERROR_STOP=1 -U lagrange -d lagrange \
+    -c "SELECT state FROM candidate_raw_batch_publications WHERE batch_id='00000000-0000-4000-8000-000000004242'::uuid AND surface='source'")" \
+    || fail 'candidate block definer probe query failed'
+[ "$blocked_probe" = 'BLOCKED' ] || fail 'candidate block definer did not persist terminal evidence'
+unset research_password
+
+# Re-date the fabricated candidate fixture to the legacy EOD smoke session.
+# This keeps the committed current-date fixture unchanged while making the
+# Docker smoke prove the full EOD -> curation -> candidate publication path.
+python3 - \
+  "$root/tests/fixtures/kr-candidates/contract" "$candidate_smoke_bundle" \
+  "$root/tests/fixtures/kr-etf/contract" "$eod_smoke_bundle" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+target = pathlib.Path(sys.argv[2])
+target.mkdir(mode=0o700)
+eod_source = pathlib.Path(sys.argv[3])
+eod_target = pathlib.Path(sys.argv[4])
+eod_target.mkdir(mode=0o700)
+replacements = {
+    "2026-08-14": "2020-01-31",
+    "2026-08-10T00:00:00Z": "2020-01-30T00:00:00Z",
+    "2026-08-10T00:05:00Z": "2020-01-30T00:05:00Z",
+    "2026-01-01": "2019-01-01",
+    "2026-06-30": "2019-12-31",
+    "2026-06-01T00:00:00Z": "2020-01-01T00:00:00Z",
+    "2026-06-01T00:05:00Z": "2020-01-01T00:05:00Z",
+    "2026-06-12": "2020-01-02",
+}
+
+
+def rewrite(value):
+    if isinstance(value, str):
+        for old, new in replacements.items():
+            value = value.replace(old, new)
+        return value
+    if isinstance(value, list):
+        return [rewrite(item) for item in value]
+    if isinstance(value, dict):
+        return {key: rewrite(item) for key, item in value.items()}
+    return value
+
+
+for path in sorted(source.glob("*.json")):
+    payload = rewrite(json.loads(path.read_text(encoding="utf-8")))
+    output = target / path.name
+    output.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+# Health and scheduling require at least five compute-capable members with an
+# exact 60-session price and FOREIGN/INSTITUTION flow history. Generate those
+# records at the provider boundary instead of seeding curated/source rows with
+# supervisor SQL.
+symbols = [
+    ("069500.KRX", "SYNTHETIC-KODEX200", "G25"),
+    ("229200.KRX", "SYNTHETIC-KOSPI200", "G25"),
+    ("005930.KRX", "SYNTHETIC-SAMSUNG", "G45"),
+    ("000660.KRX", "SYNTHETIC-SKHYNIX", "G45"),
+    ("035420.KRX", "SYNTHETIC-NAVER", "G50"),
+]
+end = datetime.date(2020, 1, 31)
+sessions = []
+cursor = end
+while len(sessions) < 60:
+    if cursor.weekday() < 5:
+        sessions.append(cursor)
+    cursor -= datetime.timedelta(days=1)
+sessions.reverse()
+
+membership = json.loads((target / "index-membership-response.json").read_text())
+membership["memberships"] = [
+    {
+        "index_id": "kospi200",
+        "instrument": symbol,
+        "announced_at": "2019-10-01T00:00:00Z",
+        "effective_from": "2019-10-15",
+        "effective_until": None,
+        "available_at": "2019-10-01T00:05:00Z",
+        "source_revision": "synthetic-membership-r1",
+    }
+    for symbol, _, _ in symbols
+]
+(target / "index-membership-response.json").write_text(
+    json.dumps(membership, indent=2) + "\n", encoding="utf-8"
+)
+
+flows = json.loads((target / "investor-flow-response.json").read_text())
+flows["flows"] = [
+    {
+        "instrument": symbol,
+        "trade_date": session.isoformat(),
+        "investor_class": investor_class,
+        "net_amount": float((session.toordinal() % 1000 + instrument_index * 17) * multiplier),
+        "net_volume": float((session.toordinal() % 100 + instrument_index * 3) * multiplier),
+        "currency": "KRW",
+        "volume_unit": "SHARE",
+        "source_revision": f"synthetic-flow-{session.isoformat()}",
+        "available_at": f"{session.isoformat()}T06:50:00Z",
+    }
+    for instrument_index, (symbol, _, _) in enumerate(symbols)
+    for session in sessions
+    for investor_class, multiplier in (("FOREIGN", 1000), ("INSTITUTION", 700))
+]
+(target / "investor-flow-response.json").write_text(
+    json.dumps(flows, indent=2) + "\n", encoding="utf-8"
+)
+
+statuses = json.loads((target / "market-status-response.json").read_text())
+statuses["statuses"] = [
+    {
+        "instrument": symbol,
+        "trade_date": end.isoformat(),
+        "suspended": False,
+        "administrative": False,
+        "liquidation": False,
+        "inactive": False,
+        "disqualifying_audit_opinion": False,
+        "complete_capital_impairment": False,
+        "source_revision": "synthetic-status-r1",
+        "available_at": f"{end.isoformat()}T06:45:00Z",
+    }
+    for symbol, _, _ in symbols
+]
+(target / "market-status-response.json").write_text(
+    json.dumps(statuses, indent=2) + "\n", encoding="utf-8"
+)
+
+fundamentals = json.loads((target / "fundamentals-response.json").read_text())
+fundamentals["fundamentals"] = [
+    {
+        "instrument": symbol,
+        "fiscal_period_start": "2019-01-01",
+        "fiscal_period_end": "2019-12-31",
+        "period_kind": "ANNUAL",
+        "statement_scope": "CONSOLIDATED",
+        "metric": "roe",
+        "value": 0.10 + instrument_index * 0.01,
+        "currency": None,
+        "unit_scale": 1,
+        "audited": True,
+        "disclosed_at": "2020-01-29T00:00:00Z",
+        "available_at": "2020-01-29T00:05:00Z",
+        "source_revision": "synthetic-fundamental-r1",
+        "restates_source_revision": None,
+    }
+    for instrument_index, (symbol, _, _) in enumerate(symbols)
+]
+(target / "fundamentals-response.json").write_text(
+    json.dumps(fundamentals, indent=2) + "\n", encoding="utf-8"
+)
+
+sectors = json.loads((target / "sector-classification-response.json").read_text())
+sectors["sectors"] = [
+    {
+        "taxonomy_id": "krx-sector",
+        "taxonomy_version": "synthetic-2020-h1",
+        "instrument": symbol,
+        "sector_code": sector_code,
+        "sector_name": f"Synthetic sector {sector_code}",
+        "fundamental_profile": "NON_FINANCIAL",
+        "effective_from": "2019-10-15",
+        "effective_until": None,
+        "available_at": "2019-10-01T00:05:00Z",
+        "source_revision": "synthetic-sector-r1",
+    }
+    for symbol, _, sector_code in symbols
+]
+(target / "sector-classification-response.json").write_text(
+    json.dumps(sectors, indent=2) + "\n", encoding="utf-8"
+)
+
+for path in sorted(eod_source.glob("*.json")):
+    output = eod_target / path.name
+    output.write_bytes(path.read_bytes())
+
+reference = json.loads((eod_target / "reference-response.json").read_text())
+reference["instruments"] = [
+    {
+        "symbol": symbol,
+        "name": name,
+        "lot_size": 100,
+        "currency": "KRW",
+        "kind": "equity-etf",
+    }
+    for symbol, name, _ in symbols
+]
+(eod_target / "reference-response.json").write_text(
+    json.dumps(reference, indent=2) + "\n", encoding="utf-8"
+)
+
+bars = json.loads((eod_target / "bars-response.json").read_text())
+bars["instruments"] = [
+    {"symbol": symbol, "lot_size": 100, "currency": "KRW"}
+    for symbol, _, _ in symbols
+]
+bars["bars"] = []
+for instrument_index, (symbol, _, _) in enumerate(symbols):
+    for session in sessions:
+        close = 10000 + instrument_index * 1000 + session.toordinal() % 500
+        volume = 1_000_000 + instrument_index * 10_000 + session.toordinal() % 1000
+        bars["bars"].append(
+            {
+                "instrument": symbol,
+                "date": session.isoformat(),
+                "open": close - 10,
+                "high": close + 20,
+                "low": close - 30,
+                "close": close,
+                "volume": volume,
+                "value": close * volume,
+            }
+        )
+(eod_target / "bars-response.json").write_text(
+    json.dumps(bars, indent=2) + "\n", encoding="utf-8"
+)
+
+calendar = json.loads((eod_target / "calendar-response.json").read_text())
+calendar["calendar_id"] = "krx-rolling-60-synthetic"
+calendar["sessions"] = [
+    {
+        "date": session.isoformat(),
+        "weekday": session.strftime("%A"),
+        "open_utc": f"{session.isoformat()}T00:00:00Z",
+        "close_utc": f"{session.isoformat()}T06:30:00Z",
+    }
+    for session in sessions
+]
+(eod_target / "calendar-response.json").write_text(
+    json.dumps(calendar, indent=2) + "\n", encoding="utf-8"
+)
+
+# Both directories are bind-mounted read-only into the UID 10001 worker.
+# Make them traversable and their contents immutable to every container user.
+for fixture_root in (target, eod_target):
+    for path in fixture_root.glob("*.json"):
+        path.chmod(0o444)
+    fixture_root.chmod(0o755)
+PY
 
 rc build research-worker || fail 'research-worker image build failed'
 command -v cargo >/dev/null 2>&1 || fail 'cargo is required to prove the manual --root Raw contract'
 manual_output="$(cargo run --quiet --locked -p collectors --bin collectors -- ingest-krx \
   --root "$raw_root" --date 2020-01-31 --mode synthetic \
-  --bundle "$root/tests/fixtures/kr-etf/contract" --now 2020-01-31T08:00:00Z)" || fail 'manual collectors --root ingest failed'
+  --bundle "$eod_smoke_bundle" --now 2020-01-31T08:00:00Z \
+  --entitlement-ref "$RESEARCH_ENTITLEMENT_REFERENCE")" || fail 'manual collectors --root ingest failed'
 direct_manifest="$raw_root/raw/manifests/provider=krx/market=kr/manifest.jsonl"
 [ -f "$direct_manifest" ] || fail "direct host Raw manifest is missing: $direct_manifest"
 [ ! -e "$raw_root/raw/raw" ] || fail 'Raw evidence was nested under <data>/raw/raw'
@@ -566,6 +919,32 @@ rc run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -e
   : > "$probe"
   rm -f "$probe"
 ' || fail 'research-worker UID 10001 cannot prepare the startup orphan'
+
+# Recover the deliberately orphaned EOD batch first without attempting the
+# separately re-dated candidate fixture.
+if ! recovery_output="$(rc run --rm --no-deps -e RESEARCH_CANDIDATE_ENABLED=false \
+  research-worker __research-internal-recover 2>&1)"; then
+  printf '%s\n' "$recovery_output" >&2
+  rc logs --no-color postgres >&2 || true
+  fail 'research-worker did not recover the EOD startup orphan'
+fi
+manual_batch_id="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["batch_id"])')" || fail 'manual collectors output omitted batch_id'
+rc run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 \
+  -e "EXPECTED_BATCH_ID=$manual_batch_id" research-worker -ec '
+  manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=krx/market=kr/manifest.jsonl"
+  test "$(grep -Fc "$EXPECTED_BATCH_ID" "$manifest")" -eq 1
+' || fail 'startup orphan recovery did not restore the exact manifest row'
+
+candidate_one_shot() {
+  rc run --rm --no-deps \
+    --volume "$(hostpath "$candidate_smoke_bundle"):/qa/candidate:ro" \
+    --volume "$(hostpath "$eod_smoke_bundle"):/qa/eod:ro" \
+    -e RESEARCH_CANDIDATE_SYNTHETIC_BUNDLE=/qa/candidate \
+    -e RESEARCH_SYNTHETIC_BUNDLE=/qa/eod \
+    research-worker --once --date 2020-01-31
+}
+candidate_one_shot || fail 'candidate source and price publication one-shot failed'
+
 if ! rc up -d --no-deps research-worker >/dev/null; then
   rc ps >&2 || true
   rc logs --no-color db-role-bootstrap db-migrate research-schema-check research-worker >&2 || true
@@ -578,11 +957,6 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 [ "$healthy" -eq 1 ] || fail 'research-worker did not become functionally healthy'
-manual_batch_id="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["batch_id"])')" || fail 'manual collectors output omitted batch_id'
-rc exec -T -e "EXPECTED_BATCH_ID=$manual_batch_id" research-worker /bin/sh -ec '
-  manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=krx/market=kr/manifest.jsonl"
-  test "$(grep -Fc "$EXPECTED_BATCH_ID" "$manifest")" -eq 1
-' || fail 'startup orphan recovery did not restore the exact manifest row'
 
 publication_evidence() {
   local value
@@ -600,8 +974,6 @@ SELECT concat_ws('|',
   (SELECT count(*) FROM trading_calendar_versions WHERE exchange = 'KRX'),
   (SELECT count(*) FROM trading_calendars WHERE exchange = 'KRX'),
   (SELECT string_agg(DISTINCT kind, ',' ORDER BY kind) FROM data_batches WHERE provider = 'KRX' AND market = 'KR' AND batch_date = DATE '2020-01-31'),
-  (SELECT string_agg(to_char(session_date, 'YYYY-MM-DD') || ':' || session_type, ',' ORDER BY session_date) FROM trading_calendar_versions WHERE exchange = 'KRX'),
-  (SELECT string_agg(to_char(session_date, 'YYYY-MM-DD') || ':' || session_type, ',' ORDER BY session_date) FROM trading_calendars WHERE exchange = 'KRX'),
   (SELECT bool_and(v.source_batch_id = source.id) FROM trading_calendar_versions v CROSS JOIN source WHERE v.exchange = 'KRX'),
   (SELECT bool_and(
       c.source_batch_id IS NOT NULL
@@ -625,13 +997,13 @@ SELECT concat_ws('|',
 ) FROM source;
 SQL
 )"
-  expected='1|4|4|t|2|2|CALENDAR,CORPORATE_ACTIONS,EOD,REFERENCE|2020-01-30:TRADING,2020-01-31:TRADING|2020-01-30:TRADING,2020-01-31:TRADING|t|t'
+  expected='1|4|4|t|60|60|CALENDAR,CORPORATE_ACTIONS,EOD,REFERENCE|t|t'
   [ "$value" = "$expected" ] || fail "publication evidence mismatch: $value"
   printf '%s' "$value"
 }
 
 before="$(publication_evidence)"
-rc run --rm --no-deps research-worker --once --date 2020-01-31 || fail 'second research-worker one-shot failed'
+candidate_one_shot || fail 'second research-worker one-shot failed'
 after="$(publication_evidence)"
 [ "$before" = "$after" ] || fail "idempotency failed: counts changed from $before to $after"
 echo "RESEARCH_WORKER_SMOKE: functional PASS ($after)"

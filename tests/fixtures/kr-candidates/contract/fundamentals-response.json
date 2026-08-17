@@ -1,0 +1,20 @@
+{
+  "fundamentals": [
+    {
+      "instrument": "069500.KRX",
+      "fiscal_period_start": "2026-01-01",
+      "fiscal_period_end": "2026-06-30",
+      "period_kind": "HALF",
+      "statement_scope": "CONSOLIDATED",
+      "metric": "roe",
+      "value": 0.142,
+      "currency": null,
+      "unit_scale": 1,
+      "audited": false,
+      "disclosed_at": "2026-08-10T00:00:00Z",
+      "available_at": "2026-08-10T00:05:00Z",
+      "source_revision": "synthetic-r1",
+      "restates_source_revision": null
+    }
+  ]
+}

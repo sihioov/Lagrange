@@ -86,6 +86,7 @@ class WorkflowContractTests(unittest.TestCase):
                 "policy",
                 "format",
                 "clippy",
+                "web",
                 "workspace-tests",
                 "postgres-integration-validation",
                 "required",
@@ -101,6 +102,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn(
             "bash deploy/db/integration-validation/validate.sh --self-test", text
         )
+        self.assertIn("bash deploy/compose/candidate-static-check.sh", text)
         self.assertIn(
             'bash deploy/db/integration-validation/validate.sh --evidence-dir "$evidence_dir"',
             text,
@@ -111,6 +113,30 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("cargo fmt --all -- --check", text)
         self.assertIn("CARGO_INCREMENTAL: '0'", text)
+        web_commands = [
+            step.get("run", "") for step in ci["jobs"]["web"]["steps"]
+        ]
+        self.assertEqual(
+            web_commands,
+            [
+                "",
+                "",
+                "npm ci",
+                "npm run openapi:check --workspace @lagrange/api-server",
+                "npm run lint --workspace @lagrange/web",
+                "npm run typecheck --workspace @lagrange/web",
+                "npm test --workspace @lagrange/web",
+                "npm run build --workspace @lagrange/web",
+                "npx playwright install --with-deps chromium",
+                "bash scripts/qa/candidate-web-e2e.sh",
+            ],
+        )
+        playwright_step = next(
+            step
+            for step in ci["jobs"]["web"]["steps"]
+            if step.get("run") == "npx playwright install --with-deps chromium"
+        )
+        self.assertEqual(playwright_step.get("working-directory"), "apps/web")
         policy_steps = ci["jobs"]["policy"]["steps"]
         setup_node = next(
             step
@@ -147,6 +173,7 @@ class WorkflowContractTests(unittest.TestCase):
                 "policy",
                 "format",
                 "clippy",
+                "web",
                 "workspace-tests",
                 "postgres-integration-validation",
             },
@@ -154,6 +181,10 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(
             required["steps"][0]["env"]["POSTGRES_VALIDATION_RESULT"],
             "${{ needs.postgres-integration-validation.result }}",
+        )
+        self.assertEqual(
+            required["steps"][0]["env"]["WEB_RESULT"],
+            "${{ needs.web.result }}",
         )
         qa_compose = (ROOT / "deploy" / "qa" / "qa-db.compose.yml").read_text(
             encoding="utf-8"
@@ -196,7 +227,7 @@ class WorkflowContractTests(unittest.TestCase):
             script,
         )
         self.assertIn("ledger_state=", script)
-        self.assertIn('if [ "$ledger_state" != "7" ]', script)
+        self.assertIn('if [ "$ledger_state" != "8" ]', script)
         self.assertIn("rc up -d --no-deps research-worker", script)
 
         migration_loop = script.split("while IFS= read -r migration; do", 1)[1].split(
@@ -219,7 +250,13 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn("c.source_batch_id IS NOT NULL", smoke_text)
             self.assertIn("batch.source_batch_id = c.source_batch_id", smoke_text)
             self.assertIn("history.content_sha256 = c.content_sha256", smoke_text)
-            self.assertIn("find /data/raw -mindepth 1 -delete", smoke_text)
+            self.assertIn("find /data/raw -xdev -type d", smoke_text)
+            self.assertIn("find /data/raw -xdev -type f", smoke_text)
+            if smoke_name.endswith(".sh"):
+                self.assertIn("find /data/curated -xdev -type d", smoke_text)
+                self.assertIn("find /data/curated -xdev -type f", smoke_text)
+            self.assertIn("find -L /data/raw -type l", smoke_text)
+            self.assertIn("validator accepted a symlink-following Raw init", smoke_text)
 
 
 if __name__ == "__main__":

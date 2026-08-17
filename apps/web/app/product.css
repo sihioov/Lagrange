@@ -279,6 +279,192 @@ thead th {
   overflow-wrap: anywhere;
 }
 
+.data-link {
+  display: inline-grid;
+  gap: var(--space-1);
+  min-block-size: 2.75rem;
+  align-content: center;
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-decoration-thickness: 0.0625rem;
+  text-underline-offset: 0.2em;
+}
+
+.data-link small {
+  color: var(--text-tertiary);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  text-decoration: none;
+}
+
+.score-emphasis {
+  color: var(--text-primary);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 1rem;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+}
+
+.candidate-actions,
+.context-navigation,
+.choice-row,
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.candidate-actions {
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.context-navigation a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  padding: var(--space-2) var(--space-4);
+  border: 0.0625rem solid var(--border-default);
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+  color: var(--accent-primary);
+  font-size: 0.875rem;
+  font-weight: 560;
+}
+
+.choice-row label {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  border: 0.0625rem solid var(--border-default);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.choice-row input {
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  accent-color: var(--accent-primary);
+}
+
+.score-grid,
+.scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
+  gap: var(--space-3);
+}
+
+.score-grid article,
+.scenario-panel {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  padding: var(--space-4);
+  border: 0.0625rem solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.score-label,
+.score-caption,
+.scenario-panel p,
+.scenario-panel dt {
+  color: var(--text-secondary);
+}
+
+.score-grid article > strong {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.scenario-panel h4 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+.scenario-panel dl,
+.scenario-panel dd {
+  margin: 0;
+}
+
+.scenario-panel dd {
+  overflow-wrap: anywhere;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.875rem;
+}
+
+.candidate-provenance > div:first-child {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.lineage-details {
+  min-inline-size: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0.0625rem solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.lineage-details summary {
+  min-block-size: 2.75rem;
+  color: var(--accent-primary);
+  font-weight: 560;
+  cursor: pointer;
+}
+
+.lineage-details .factor-list {
+  padding-block-start: var(--space-3);
+}
+
+.lineage-details dd {
+  overflow-wrap: anywhere;
+}
+
+.inline-form {
+  align-items: end;
+}
+
+.inline-form .form-field {
+  flex: 1 1 16rem;
+}
+
+.saved-screen-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.saved-screen-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  padding: var(--space-3);
+  border: 0.0625rem solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.saved-screen-list a {
+  display: flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  min-inline-size: 0;
+  color: var(--accent-primary);
+  font-weight: 560;
+  overflow-wrap: anywhere;
+}
+
 .data-cell {
   max-inline-size: 18rem;
   overflow-wrap: anywhere;
@@ -319,5 +505,10 @@ thead th {
   .product-section,
   .workflow-panel {
     padding: var(--space-4);
+  }
+
+  .saved-screen-list li {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

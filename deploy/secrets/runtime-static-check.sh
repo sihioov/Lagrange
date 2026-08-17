@@ -57,7 +57,7 @@ grep -Fq 'deploy/secrets/provision-runtime-secrets.sh' "$env_example" \
 grep -Fq 'deploy/secrets/provision-runtime-secrets.sh' "$secrets_readme" \
   || die 'secret documentation must reference the provisioner'
 for service in reverse-proxy api-server db-role-bootstrap db-migrate postgres \
-  research-schema-check research-worker recommendation-runner \
+  research-schema-check research-worker recommendation-runner candidate-runner \
   nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler; do
   grep -Fq "/$service/" "$compose" \
     || die "Compose is missing service-specific runtime path for $service"

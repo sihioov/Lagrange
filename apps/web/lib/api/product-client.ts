@@ -10,6 +10,17 @@ import {
   backtestTradesSchema,
 } from "@/lib/products/backtest-contracts";
 import {
+  type CandidateFeed,
+  candidateFeedSchema,
+  type SavedScreen,
+  type ScreenerQuery,
+  type ScreenerResult,
+  type StockAnalysisResponse,
+  savedScreenListSchema,
+  screenerResultSchema,
+  stockAnalysisResponseSchema,
+} from "@/lib/products/candidate-contracts";
+import {
   type LicensingStatusModel,
   latestRecommendationSchema,
   licensingStatusSchema,
@@ -54,6 +65,13 @@ export type ProductApiClient = {
   readonly getNotifications: () => Promise<PageResult<NotificationModel>>;
   readonly getStrategyConfigs: () => Promise<PageResult<StrategyConfigModel>>;
   readonly getLiveConnections: () => Promise<PageResult<LiveConnectionModel>>;
+  readonly getCandidateFeed: (asOf?: string) => Promise<CandidateFeed>;
+  readonly getSavedScreens: () => Promise<{ readonly items: readonly SavedScreen[] }>;
+  readonly getStockAnalysis: (
+    instrumentId: string,
+    asOf?: string,
+  ) => Promise<StockAnalysisResponse>;
+  readonly queryScreener: (query: ScreenerQuery) => Promise<ScreenerResult>;
   readonly getPaperPerformance: (accountId: string) => Promise<PaperPerformanceModel>;
   readonly getPaperLineage: (accountId: string) => Promise<PaperLineageModel>;
   readonly getPaperParity: (accountId: string, asOf: string) => Promise<PaperParityModel>;
@@ -97,6 +115,14 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
       return { equity, metrics, provenance: backtestProvenance(run), run, trades };
     },
     getBacktestRuns: () => getParsed(client, "/api/v1/backtests", backtestPageSchema),
+    getCandidateFeed: (asOf) =>
+      getParsed(
+        client,
+        asOf === undefined
+          ? "/api/v1/candidates/feed/latest"
+          : `/api/v1/candidates/feed/${encodeURIComponent(asOf)}`,
+        candidateFeedSchema,
+      ),
     getLatestRecommendation: () =>
       getParsed(client, "/api/v1/recommendations/latest", latestRecommendationSchema),
     getLicensingStatus: () => getParsed(client, "/api/v1/licensing-status", licensingStatusSchema),
@@ -115,6 +141,15 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
       getParsed(client, "/api/v1/strategy-configs", strategyConfigPageSchema),
     getLiveConnections: () =>
       getParsed(client, "/api/v1/admin/live/connections", liveConnectionPageSchema),
+    getSavedScreens: () => getParsed(client, "/api/v1/screener/screens", savedScreenListSchema),
+    getStockAnalysis: (instrumentId, asOf) => {
+      const date = asOf === undefined ? "" : `?date=${encodeURIComponent(asOf)}`;
+      return getParsed(
+        client,
+        `/api/v1/stocks/${encodeURIComponent(instrumentId)}/analysis${date}`,
+        stockAnalysisResponseSchema,
+      );
+    },
     getPaperAccount: (accountId) =>
       getParsed(
         client,
@@ -151,5 +186,9 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
         `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/orders`,
         paperOrderPageSchema,
       ),
+    queryScreener: async (query) => {
+      const response = await client.post("api/v1/screener/query", { json: query });
+      return parseApiResponse(response, screenerResultSchema);
+    },
   };
 }

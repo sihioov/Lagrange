@@ -5,6 +5,7 @@
 pub mod admin;
 pub mod artifacts;
 pub mod backtests;
+pub mod candidates;
 pub mod dto;
 pub mod entitlement;
 pub mod error;
@@ -16,6 +17,7 @@ pub mod notifications;
 pub mod pagination;
 pub mod paper;
 pub mod recommendations;
+pub mod screener;
 pub mod session;
 pub mod state;
 pub mod strategies;
@@ -292,6 +294,24 @@ pub fn api_router(state: ApiState) -> Router {
             get(recommendations::get_run),
         )
         .route("/recommendations/latest", get(recommendations::latest))
+        // common individual-stock research (separate from ETF recommendations)
+        .route("/candidates/feed/latest", get(candidates::latest_feed))
+        .route("/candidates/feed/{date}", get(candidates::feed_on_date))
+        .route(
+            "/stocks/{instrument_id}/analysis",
+            get(candidates::stock_analysis),
+        )
+        .route("/screener/query", post(screener::query))
+        .route(
+            "/screener/screens",
+            get(screener::list_screens).post(screener::create_screen),
+        )
+        .route(
+            "/screener/screens/{id}",
+            get(screener::get_screen)
+                .put(screener::update_screen)
+                .delete(screener::delete_screen),
+        )
         // backtests
         .route("/backtests", post(backtests::create))
         .route("/backtests", get(backtests::list))

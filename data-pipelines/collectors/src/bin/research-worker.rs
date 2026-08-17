@@ -9,7 +9,7 @@ use chrono::Utc;
 use collectors::{
     HealthcheckConfig, RecoveryPosition, WORKER_ENV_KEYS, WaitOutcome, WorkerControl, WorkerError,
     WorkerEvent, WorkerObserver, WorkerRunOutcome, bootstrap_worker, build_postgres_pool,
-    healthcheck, run_internal_ingest, run_internal_recovery_page_stream,
+    candidate_healthcheck, healthcheck, run_internal_ingest, run_internal_recovery_page_stream,
 };
 use domain::{TradingDate, UtcTimestamp};
 use serde::Serialize;
@@ -293,6 +293,17 @@ async fn run_healthcheck(values: &HashMap<String, String>) -> Result<SuccessReco
     let config = HealthcheckConfig::from_map(values)?;
     let pool = build_postgres_pool(&config.database);
     let status = healthcheck(&pool, Utc::now(), config.max_publication_age).await?;
+    if config.candidate_sources_enabled {
+        candidate_healthcheck(
+            &pool,
+            &config.curated_root,
+            Utc::now(),
+            config.max_publication_age,
+            config.expected_fetch_mode,
+            config.run_at_kst,
+        )
+        .await?;
+    }
     pool.close().await;
     Ok(SuccessRecord {
         status: "ok",
@@ -406,6 +417,8 @@ fn error_code(error: &WorkerError) -> &'static str {
         WorkerError::Database { .. } => "DATABASE_UNAVAILABLE",
         WorkerError::Unhealthy { .. } => "UNHEALTHY",
         WorkerError::Pipeline(_) => "PIPELINE_FAILED",
+        WorkerError::CandidatePipeline(_) => "CANDIDATE_PIPELINE_FAILED",
+        WorkerError::Curation(_) => "PRICE_CURATION_FAILED",
         WorkerError::ChildIo { .. } => "HELPER_IO_FAILED",
         WorkerError::ChildContainment { .. } => "HELPER_CONTAINMENT_FAILED",
         WorkerError::ChildOutput { .. } => "HELPER_OUTPUT_INVALID",

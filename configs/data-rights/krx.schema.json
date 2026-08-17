@@ -76,6 +76,7 @@
           "dataset",
           "factor",
           "recommendation",
+          "candidate",
           "backtest",
           "report",
           "benchmark",

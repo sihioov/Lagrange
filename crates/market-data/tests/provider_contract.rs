@@ -10,7 +10,10 @@
 use std::fs;
 
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
-use market_data::contract::{ALL_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KRX, ResponseKind};
+use market_data::contract::{
+    ALL_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR,
+    PROVIDER_KRX, ResponseKind,
+};
 use market_data::provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
 };
@@ -56,7 +59,7 @@ fn recorded_bundle_delivers_four_envelopes_with_contract_fields() {
         "all four licensed response classes expected"
     );
     let kinds: Vec<ResponseKind> = envelopes.iter().map(|e| e.kind).collect();
-    for k in ALL_RESPONSE_KINDS {
+    for k in EOD_RESPONSE_KINDS {
         assert!(kinds.contains(&k), "missing response kind {k:?}");
     }
 
@@ -252,16 +255,22 @@ fn missing_recorded_response_is_typed_permanent_configuration() {
 }
 
 #[test]
-fn fetch_request_defaults_to_all_kinds() {
+fn fetch_request_defaults_to_eod_and_allows_candidate_capabilities() {
     let req = FetchRequest::new(
         MARKET_KR.to_owned(),
         TradingDate::parse("2020-01-31").unwrap(),
         UtcTimestamp::parse_rfc3339("2026-08-05T06:00:00Z").unwrap(),
     );
-    assert_eq!(req.kinds, ALL_RESPONSE_KINDS.to_vec());
+    assert_eq!(req.kinds, EOD_RESPONSE_KINDS.to_vec());
     assert_eq!(req.market, MARKET_KR);
     // Batch id is stable per request so envelopes carry it.
     assert_eq!(req.batch_id, req.batch_id);
     let _: BatchId = req.batch_id;
+    let candidate = request("2026-08-05T06:00:00Z").with_kinds(CANDIDATE_RESPONSE_KINDS);
+    assert_eq!(candidate.kinds, CANDIDATE_RESPONSE_KINDS.to_vec());
+    assert_eq!(
+        ALL_RESPONSE_KINDS.len(),
+        EOD_RESPONSE_KINDS.len() + CANDIDATE_RESPONSE_KINDS.len()
+    );
     let _: KrxMode = KrxMode::Credentialed(CredentialRef::new("env:KRX_CREDENTIAL_REF"));
 }

@@ -37,6 +37,7 @@ jobs:
       - run: bash scripts/validate-foundation.sh
       - run: bash deploy/db/integration-validation/static-check.sh
       - run: bash deploy/db/integration-validation/validate.sh --self-test
+      - run: bash deploy/compose/candidate-static-check.sh
       - run: python -m unittest scripts.ci.test_ci_contract -v
 
   format:
@@ -56,6 +57,26 @@ jobs:
         with:
           persist-credentials: false
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run openapi:check --workspace @lagrange/api-server
+      - run: npm run lint --workspace @lagrange/web
+      - run: npm run typecheck --workspace @lagrange/web
+      - run: npm test --workspace @lagrange/web
+      - run: npm run build --workspace @lagrange/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: bash scripts/qa/candidate-web-e2e.sh
 
   workspace-tests:
     runs-on: ubuntu-latest
@@ -111,7 +132,7 @@ jobs:
 
   required:
     if: always()
-    needs: [policy, format, clippy, workspace-tests, postgres-integration-validation]
+    needs: [policy, format, clippy, web, workspace-tests, postgres-integration-validation]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -120,11 +141,13 @@ jobs:
           POLICY_RESULT: ${{ needs.policy.result }}
           FORMAT_RESULT: ${{ needs.format.result }}
           CLIPPY_RESULT: ${{ needs.clippy.result }}
+          WEB_RESULT: ${{ needs.web.result }}
           TEST_RESULT: ${{ needs.workspace-tests.result }}
           POSTGRES_VALIDATION_RESULT: ${{ needs.postgres-integration-validation.result }}
         run: |
           test "$POLICY_RESULT" = success
           test "$FORMAT_RESULT" = success
           test "$CLIPPY_RESULT" = success
+          test "$WEB_RESULT" = success
           test "$TEST_RESULT" = success
           test "$POSTGRES_VALIDATION_RESULT" = success

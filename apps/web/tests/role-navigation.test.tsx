@@ -55,6 +55,8 @@ describe("role-aware primary navigation", () => {
     // Then
     expect(markup).toContain('href="/strategies"');
     expect(markup).toContain('href="/recommendations"');
+    expect(markup).toContain('href="/candidates"');
+    expect(markup).toContain('href="/screener"');
     expect(markup).toContain('href="/backtests"');
     expect(markup).toContain('href="/paper"');
     expect(markup).not.toContain('href="/admin"');

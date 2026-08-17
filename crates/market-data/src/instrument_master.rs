@@ -218,6 +218,13 @@ impl InstrumentMaster {
         Ok(())
     }
 
+    /// Immutable canonical records rebuilt from the verified reference
+    /// document. Callers may catalog these records but cannot mutate the
+    /// in-memory master through this iterator.
+    pub fn instruments(&self) -> impl Iterator<Item = &Instrument> {
+        self.instruments.values()
+    }
+
     /// Registers an alias record, rejecting inverted intervals and overlaps
     /// with any existing alias of the same `(namespace, symbol)`.
     pub fn register_alias(&mut self, alias: InstrumentAlias) -> Result<(), MasterError> {

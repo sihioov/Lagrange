@@ -60,7 +60,7 @@ for (const [path, item] of Object.entries(spec.paths)) {
     for (const key of metaKeys) {
       if (!(key in meta)) fail(`${method} ${path}: missing x-lagrange.${key}`);
     }
-    if (op.requestBody && !(meta.idempotency && (meta.idempotency.required || meta.idempotency.natural))) {
+    if (op.requestBody && meta.idempotency?.note !== "read-only" && !(meta.idempotency && (meta.idempotency.required || meta.idempotency.natural))) {
       fail(`${method} ${path}: request body without idempotency semantics`);
     }
     if (meta.cache?.policy !== "no-store") {

@@ -8,14 +8,88 @@ DECLARE
 BEGIN
   IF to_regclass('public._sqlx_migrations') IS NULL
      OR (SELECT count(*) FROM _sqlx_migrations
-         WHERE version IN (22, 23, 24, 25, 33, 34, 35) AND success) <> 7 THEN
-    RAISE EXCEPTION 'successful SQLx migrations 22-25 and 33-35 are required';
+         WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42) AND success) <> 8 THEN
+    RAISE EXCEPTION 'successful SQLx migrations 22-25, 33-35, and 42 are required';
   END IF;
 
   IF to_regclass('public.data_batches') IS NULL
      OR to_regclass('public.trading_calendar_versions') IS NULL
-     OR to_regclass('public.trading_calendars') IS NULL THEN
+     OR to_regclass('public.trading_calendars') IS NULL
+     OR to_regclass('public.candidate_price_publications') IS NULL
+     OR to_regclass('public.candidate_price_instrument_coverage') IS NULL
+     OR to_regclass('public.candidate_price_instrument_sessions') IS NULL
+     OR to_regclass('public.candidate_raw_batch_publications') IS NULL
+     OR to_regclass('public.candidate_raw_batch_datasets') IS NULL
+     OR to_regclass('public.candidate_investor_flow_snapshot_rows') IS NULL THEN
     RAISE EXCEPTION 'research publication tables are missing';
+  END IF;
+
+  IF EXISTS (
+       SELECT 1
+         FROM pg_class table_row
+         JOIN pg_namespace table_schema ON table_schema.oid=table_row.relnamespace
+        WHERE table_schema.nspname='public'
+          AND table_row.relname=ANY(ARRAY[
+            'data_entitlements','dataset_versions','instruments','data_batches',
+            'trading_calendars','trading_calendar_versions',
+            'candidate_raw_batch_publications','candidate_raw_batch_datasets',
+            'candidate_instrument_registrations','candidate_price_publications',
+            'candidate_price_instrument_coverage','candidate_price_instrument_sessions'
+          ])
+          AND pg_get_userbyid(table_row.relowner)<>'migration_owner'
+     ) THEN
+    RAISE EXCEPTION 'research source tables must be owned by migration_owner';
+  END IF;
+
+  IF NOT EXISTS (
+       SELECT 1 FROM pg_proc
+       WHERE oid = 'public.resolve_candidate_contract_entitlement(text,date,date)'::regprocedure
+         AND prosecdef
+         AND pg_get_userbyid(proowner) = 'migration_owner'
+         AND proconfig = ARRAY['search_path=pg_catalog']::text[]
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_proc
+       WHERE oid = 'public.register_candidate_instrument(text,text,text,text,date,uuid,text,date,text,text,timestamp with time zone)'::regprocedure
+         AND prosecdef
+         AND pg_get_userbyid(proowner) = 'migration_owner'
+         AND proconfig = ARRAY['search_path=pg_catalog']::text[]
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_proc
+       WHERE oid = 'public.register_candidate_source_dataset(text,text,text,uuid,text,date)'::regprocedure
+         AND prosecdef
+         AND pg_get_userbyid(proowner) = 'migration_owner'
+         AND proconfig = ARRAY['search_path=pg_catalog']::text[]
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_proc
+       WHERE oid = 'public.publish_candidate_price_publication(text,text,text,bigint,date,date,jsonb,text,uuid,text,text,uuid,text,text,date,timestamp with time zone,timestamp with time zone)'::regprocedure
+         AND prosecdef
+         AND pg_get_userbyid(proowner) = 'migration_owner'
+         AND proconfig = ARRAY['search_path=pg_catalog']::text[]
+     )
+     OR NOT has_function_privilege(
+          'research_writer', 'public.resolve_candidate_contract_entitlement(text,date,date)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'research_writer', 'public.register_candidate_instrument(text,text,text,text,date,uuid,text,date,text,text,timestamp with time zone)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'research_writer', 'public.register_candidate_source_dataset(text,text,text,uuid,text,date)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'research_writer', 'public.publish_candidate_price_publication(text,text,text,bigint,date,date,jsonb,text,uuid,text,text,uuid,text,text,date,timestamp with time zone,timestamp with time zone)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'research_writer', 'public.begin_candidate_raw_batch(uuid,text,text,text,text,date)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'research_writer', 'public.bind_candidate_raw_dataset(uuid,text,text,uuid,boolean)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'research_writer', 'public.seal_candidate_raw_batch(uuid,text,text,text)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'research_writer', 'public.block_candidate_raw_batch_for_inactive_rights(uuid,text,text,text,text,date,date,date)', 'EXECUTE')
+     OR has_table_privilege(
+          'research_writer', 'public.dataset_versions', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+     OR has_table_privilege(
+          'research_writer', 'public.data_entitlements', 'SELECT') THEN
+    RAISE EXCEPTION 'candidate catalog publisher privilege contract is missing or unsafe';
   END IF;
 
   IF NOT EXISTS (
@@ -207,7 +281,7 @@ BEGIN
     RAISE EXCEPTION 'research_writer has unexpected role memberships';
   END IF;
 
-  IF (SELECT count(*) FROM pg_policy WHERE research_role = ANY(polroles)) <> 7
+  IF (SELECT count(*) FROM pg_policy WHERE research_role = ANY(polroles)) <> 22
      OR (SELECT count(*)
          FROM pg_policy p
          JOIN pg_class c ON c.oid = p.polrelid
@@ -230,6 +304,68 @@ BEGIN
            AND (NOT expected.needs_check OR pg_get_expr(p.polwithcheck, p.polrelid) = 'true')
            AND (expected.needs_check OR p.polwithcheck IS NULL)) <> 7 THEN
     RAISE EXCEPTION 'required research_writer RLS policies are missing or drifted';
+  END IF;
+
+  IF NOT EXISTS (
+       SELECT 1
+         FROM pg_policy p
+        WHERE p.polrelid = 'public.candidate_instrument_registrations'::regclass
+          AND p.polname = 'candidate_instrument_registrations_select'
+          AND p.polcmd = 'r'
+          AND p.polpermissive
+          AND research_role = ANY(p.polroles)
+          AND pg_get_expr(p.polqual, p.polrelid) = 'true'
+          AND p.polwithcheck IS NULL
+     ) THEN
+    RAISE EXCEPTION 'candidate instrument registration SELECT policy is missing or drifted';
+  END IF;
+
+  IF NOT EXISTS (
+       SELECT 1
+         FROM pg_policy p
+        WHERE p.polrelid = 'public.dataset_versions'::regclass
+          AND p.polname = 'candidate_dataset_versions_select_research_writer'
+          AND p.polcmd = 'r'
+          AND p.polpermissive
+          AND p.polroles = ARRAY[research_role]::oid[]
+          AND pg_get_expr(p.polqual, p.polrelid) = 'true'
+          AND p.polwithcheck IS NULL
+     ) THEN
+    RAISE EXCEPTION 'candidate dataset catalog SELECT policy is missing or drifted';
+  END IF;
+
+  IF (SELECT count(*)
+        FROM pg_policy p
+        JOIN pg_class c ON c.oid = p.polrelid
+       WHERE c.relname = ANY (ARRAY[
+         'candidate_universe_snapshots', 'candidate_universe_members',
+         'candidate_investor_flows', 'candidate_investor_flow_snapshot_rows',
+         'candidate_market_status_observations',
+         'candidate_fundamental_observations', 'candidate_sector_versions',
+         'candidate_sector_entries'
+       ])
+         AND research_role = ANY(p.polroles)
+         AND p.polpermissive
+         AND (p.polcmd = 'r' AND p.polname = 'candidate_source_select_' || c.relname
+               AND pg_get_expr(p.polqual, p.polrelid) = 'true'
+               AND p.polwithcheck IS NULL)) <> 8 THEN
+    RAISE EXCEPTION 'candidate source research_writer RLS policies are missing or drifted';
+  END IF;
+
+  IF (SELECT count(*)
+        FROM pg_policy p
+        JOIN pg_class c ON c.oid = p.polrelid
+       WHERE c.relname IN (
+         'candidate_price_publications', 'candidate_price_instrument_coverage'
+         , 'candidate_price_instrument_sessions'
+       )
+         AND research_role = ANY(p.polroles)
+         AND p.polpermissive
+         AND p.polcmd = 'r'
+         AND p.polname = 'candidate_source_select_' || c.relname
+         AND pg_get_expr(p.polqual, p.polrelid) = 'true'
+         AND p.polwithcheck IS NULL) <> 3 THEN
+    RAISE EXCEPTION 'candidate price evidence SELECT policies are missing or drifted';
   END IF;
 
   IF NOT EXISTS (
@@ -281,7 +417,22 @@ BEGIN
       ('trading_calendar_versions', 'INSERT'),
       ('trading_calendars', 'SELECT'),
       ('trading_calendars', 'INSERT'),
-      ('trading_calendars', 'UPDATE')
+      ('trading_calendars', 'UPDATE'),
+      ('dataset_versions', 'SELECT'),
+      ('candidate_instrument_registrations', 'SELECT'),
+      ('candidate_universe_snapshots', 'SELECT'),
+      ('candidate_universe_members', 'SELECT'),
+      ('candidate_investor_flows', 'SELECT'),
+      ('candidate_investor_flow_snapshot_rows', 'SELECT'),
+      ('candidate_market_status_observations', 'SELECT'),
+      ('candidate_fundamental_observations', 'SELECT'),
+      ('candidate_sector_versions', 'SELECT'),
+      ('candidate_sector_entries', 'SELECT'),
+      ('candidate_price_publications', 'SELECT'),
+      ('candidate_price_instrument_coverage', 'SELECT'),
+      ('candidate_price_instrument_sessions', 'SELECT')
+      ,('candidate_raw_batch_publications', 'SELECT')
+      ,('candidate_raw_batch_datasets', 'SELECT')
     )
     (SELECT * FROM actual EXCEPT SELECT * FROM expected)
     UNION ALL
@@ -298,7 +449,17 @@ BEGIN
      OR EXISTS (
        SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
        WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m','f')
-         AND c.relname NOT IN ('data_batches','trading_calendar_versions','trading_calendars')
+         AND c.relname NOT IN (
+           'data_batches','trading_calendar_versions','trading_calendars','dataset_versions',
+           'candidate_instrument_registrations',
+           'candidate_universe_snapshots','candidate_universe_members',
+           'candidate_investor_flows','candidate_investor_flow_snapshot_rows',
+           'candidate_market_status_observations',
+           'candidate_fundamental_observations','candidate_sector_versions',
+           'candidate_sector_entries','candidate_price_publications',
+           'candidate_price_instrument_coverage','candidate_price_instrument_sessions',
+           'candidate_raw_batch_publications','candidate_raw_batch_datasets'
+         )
          AND has_table_privilege(
            'research_writer', c.oid,
            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN'

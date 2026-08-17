@@ -30,7 +30,9 @@ pub const PROVIDER_KRX: &str = "krx";
 /// Canonical market id of the Korean market.
 pub const MARKET_KR: &str = "kr";
 
-/// The four licensed KRX response classes this contract covers.
+/// The licensed response classes this contract covers. The first four are the
+/// original EOD surface; the final four feed the separate stock-candidate
+/// research vertical and remain provider-neutral.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseKind {
@@ -42,16 +44,31 @@ pub enum ResponseKind {
     Calendar,
     /// Corporate actions (splits, dividends, ticker changes).
     CorporateActions,
+    /// Daily foreign/institutional net-flow observations.
+    InvestorFlow,
+    /// Daily suspension/administrative/audit/capital-impairment flags.
+    MarketStatus,
+    /// Point-in-time financial statement observations and revisions.
+    Fundamentals,
+    /// Point-in-time index membership intervals.
+    IndexMembership,
+    /// Versioned sector/taxonomy classifications.
+    SectorClassification,
 }
 
 impl ResponseKind {
-    /// The stable wire name (`bars`, `reference`, `calendar`, `corporate_actions`).
+    /// The stable lower-snake-case wire name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Bars => "bars",
             Self::Reference => "reference",
             Self::Calendar => "calendar",
             Self::CorporateActions => "corporate_actions",
+            Self::InvestorFlow => "investor_flow",
+            Self::MarketStatus => "market_status",
+            Self::Fundamentals => "fundamentals",
+            Self::IndexMembership => "index_membership",
+            Self::SectorClassification => "sector_classification",
         }
     }
 
@@ -62,6 +79,11 @@ impl ResponseKind {
             "reference" => Some(Self::Reference),
             "calendar" => Some(Self::Calendar),
             "corporate_actions" => Some(Self::CorporateActions),
+            "investor_flow" => Some(Self::InvestorFlow),
+            "market_status" => Some(Self::MarketStatus),
+            "fundamentals" => Some(Self::Fundamentals),
+            "index_membership" => Some(Self::IndexMembership),
+            "sector_classification" => Some(Self::SectorClassification),
             _ => None,
         }
     }
@@ -73,12 +95,35 @@ impl std::fmt::Display for ResponseKind {
     }
 }
 
-/// All four licensed response classes, in stable order.
-pub const ALL_RESPONSE_KINDS: [ResponseKind; 4] = [
+/// The original EOD response classes requested by the default collector.
+pub const EOD_RESPONSE_KINDS: [ResponseKind; 4] = [
     ResponseKind::Bars,
     ResponseKind::Reference,
     ResponseKind::Calendar,
     ResponseKind::CorporateActions,
+];
+
+/// Optional source classes for the separate stock-candidate pipeline.
+pub const CANDIDATE_RESPONSE_KINDS: [ResponseKind; 5] = [
+    ResponseKind::InvestorFlow,
+    ResponseKind::MarketStatus,
+    ResponseKind::Fundamentals,
+    ResponseKind::IndexMembership,
+    ResponseKind::SectorClassification,
+];
+
+/// All known licensed response classes, in stable order. This list is a schema
+/// registry, not a promise that every provider bundle supplies every class.
+pub const ALL_RESPONSE_KINDS: [ResponseKind; 9] = [
+    ResponseKind::Bars,
+    ResponseKind::Reference,
+    ResponseKind::Calendar,
+    ResponseKind::CorporateActions,
+    ResponseKind::InvestorFlow,
+    ResponseKind::MarketStatus,
+    ResponseKind::Fundamentals,
+    ResponseKind::IndexMembership,
+    ResponseKind::SectorClassification,
 ];
 
 /// How a delivery was fetched.

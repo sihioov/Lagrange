@@ -18,7 +18,7 @@ use auth::entitlement::{
 };
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KRX, ResponseKind};
-use market_data::ingest::{IngestError, IngestRequest, ingest_bundle};
+use market_data::ingest::{IngestError, IngestRequest, ingest_bundle, ingest_bundle_with_kinds};
 use market_data::provider::{KrxProvider, ProviderError, RecordedBundle};
 use market_data::storage::{RawStore, StoreError};
 
@@ -194,7 +194,8 @@ fn malformed_response_typed_failure_with_no_partial_output() {
     let provider = KrxProvider::synthetic(recorded);
     let req = request("2026-08-05T07:00:00Z");
 
-    let err = ingest_bundle(&store, &provider, &req, None).expect_err("malformed schema must fail");
+    let err = ingest_bundle_with_kinds(&store, &provider, &req, None, &[ResponseKind::Bars])
+        .expect_err("malformed schema must fail");
     match &err {
         IngestError::MalformedResponse { kind, reason } => {
             assert_eq!(*kind, ResponseKind::Bars);

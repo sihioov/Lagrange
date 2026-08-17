@@ -47,6 +47,30 @@ impl FrozenUniverse {
         }
     }
 
+    /// Builds a frozen universe from already validated typed ids. This is the
+    /// non-panicking constructor for database-backed workers.
+    pub fn from_instruments(
+        snapshot_id: impl Into<String>,
+        instruments: impl IntoIterator<Item = InstrumentId>,
+    ) -> Result<Self, FactorError> {
+        let snapshot_id = snapshot_id.into();
+        if snapshot_id.trim().is_empty() {
+            return Err(FactorError::InvalidDefinition {
+                detail: "universe snapshot id must not be empty".to_owned(),
+            });
+        }
+        let instruments: BTreeSet<InstrumentId> = instruments.into_iter().collect();
+        if instruments.is_empty() {
+            return Err(FactorError::InvalidDefinition {
+                detail: "frozen universe must not be empty".to_owned(),
+            });
+        }
+        Ok(Self {
+            snapshot_id,
+            instruments,
+        })
+    }
+
     /// The immutable universe snapshot id (Todo 12 manifest id).
     pub fn snapshot_id(&self) -> &str {
         &self.snapshot_id
