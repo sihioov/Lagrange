@@ -14,9 +14,17 @@ by the host secret manager.
 2. Install `deploy/runtime/paper-runner-entrypoint` as
    `/opt/lagrange/bin/paper-runner` and set mode `0755`. Install the wrapper's
    runtime dependencies (`python3` and `psql`) on the host.
-3. Create the `lagrange` user/group and the directories
-   `/opt/lagrange`, `/var/lib/lagrange/data/phase0`,
-   `/etc/lagrange/secrets`, and `/etc/lagrange`.
+3. Run `scripts/ops/provision-linux.sh --apply` as root to create the
+   `lagrange` user/group, create the canonical `lagrange-data` group at GID
+   `10001` when it is unused, add `lagrange` to that group's supplementary
+   membership, and create the directories `/opt/lagrange`,
+   `/var/lib/lagrange/data/phase0`, `/etc/lagrange/secrets`, and
+   `/etc/lagrange`. A pre-existing `lagrange-data` group is accepted only at
+   the exact GID with no unrelated explicit members or primary accounts; a
+   foreign group already using GID `10001` is a hard conflict. The
+   recommendation unit uses `SupplementaryGroups=10001` to read the
+   container-owned curated/catalog directories; those paths remain read-only
+   to the service.
 4. Provision regular, non-symlink role password files in
    `/etc/lagrange/secrets/` (`db_app_password`, `db_worker_password`,
    `db_admin_password`, and `db_audit_password`). They must be readable by

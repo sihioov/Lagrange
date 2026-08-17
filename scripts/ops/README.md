@@ -9,19 +9,22 @@ before Compose can reinterpret a value.
 | Script | Default behavior | External action |
 |---|---|---|
 | `provision-linux.sh` | `--dry-run` | `--apply` creates only the approved account/directories as root |
-| `validate-production-config.sh` | strict `--scope release` validation | `--scope backfill` checks only KIS worker/bootstrap inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
-| `compose-release.sh` | `--scope release --plan` | `--scope backfill --apply` bootstraps DB/raw and builds the research-worker image without starting its daemon; release scope starts serving after approval |
+| `validate-production-config.sh` | strict `--scope release` validation | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
+| `compose-release.sh` | `--scope release --plan` | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
 | `backfill-production.sh` | `--plan` | `--execute` calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
 | `post-backfill-health.sh` | `--scope backfill --plan` | `--check` runs the existing research-worker EOD freshness health gate; no KIS call |
 | `self-test.sh` | static/no-infrastructure tests | none |
 
-Production execution is intentionally split into two approvals:
+Production execution is intentionally split into infrastructure, data, and serving approvals:
 
-1. host and secret provisioning (`provision-linux.sh --apply`, then
-   `deploy/secrets/provision-runtime-secrets.sh --scope backfill`), and
-2. data bootstrap/backfill (`compose-release.sh --scope backfill --apply`, then
+1. host and non-KIS DB secret provisioning (`provision-linux.sh --apply`, then
+   `deploy/secrets/provision-runtime-secrets.sh --scope infrastructure`),
+2. database/raw/schema bootstrap (`compose-release.sh --scope infrastructure --apply`),
+3. KIS data bootstrap/backfill (`deploy/secrets/provision-runtime-secrets.sh --scope backfill`, then
+   `compose-release.sh --scope backfill --apply`, then
    the bounded ETF `research-worker --once` backfill command), followed by the
-   dependency-free worker healthcheck, curated dataset approval, and the full
+   dependency-free worker healthcheck, curated dataset approval, and
+4. the full
    serving release (`compose-release.sh --scope release --apply`).
 
 No script enables Compose `live`, asks for a KIS account/order credential, or
@@ -29,8 +32,10 @@ calls an order endpoint. KOSPI200/KOSDAQ150 candidate backfill is a separate
 blocked workflow until its credentialed candidate bridge and entitlement are
 available. See [`docs/runbooks/kis-production-backfill.md`](../../docs/runbooks/kis-production-backfill.md).
 
-`validate-production-config.sh --scope backfill` intentionally does not require
-serving-only Auth0/TLS values or the recommendation dataset five-pin. Those
+`validate-production-config.sh --scope infrastructure` intentionally does not
+require KIS credentials, serving-only Auth0/TLS values, or the recommendation
+dataset five-pin. The subsequent `--scope backfill` also does not require
+serving-only values or pins. Those
 values are outputs/approval inputs produced after the ETF Raw→Curated review.
 The backfill state identity binds only pre-run inputs (date range, universe,
 code commit, entitlement, and source scope), so entering the approved pin later

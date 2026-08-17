@@ -81,6 +81,108 @@ else
   fi
 fi
 
+sed -E \
+  '/^(RESEARCH_ENTITLEMENT_REFERENCE|RESEARCH_APP_ENV|RESEARCH_FETCH_MODE|RESEARCH_CANDIDATE_ENABLED|BACKTEST_MIN_FREE_BYTES|BACKTEST_MAX_QUEUED_BACKTESTS|BACKTEST_RECONCILE_GRACE_SECS|BACKTEST_RECONCILE_INTERVAL_SECS)=/d' \
+  "$out_dir/.env" >"$out_dir/infrastructure-minimal.env"
+chmod 0600 "$out_dir/infrastructure-minimal.env"
+if LAGRANGE_ENV_FILE="$out_dir/infrastructure-minimal.env" \
+   LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
+   bash "$ops/validate-production-config.sh" --scope infrastructure >"$out_dir/infrastructure-config.out" 2>&1; then
+  echo 'self-test: infrastructure scope unexpectedly passed incomplete fixtures' >&2
+  exit 1
+else
+  grep -Eq '^(INVALID_CONFIG|BLOCKED_EXTERNAL):' "$out_dir/infrastructure-config.out"
+  if grep -Eq 'kis_app_key|kis_app_secret|RECOMMENDATION_DATASET_|AUTH0_DOMAIN|TLS file|RESEARCH_ENTITLEMENT_REFERENCE|RESEARCH_APP_ENV|RESEARCH_FETCH_MODE|RESEARCH_CANDIDATE_ENABLED' \
+     "$out_dir/infrastructure-config.out"; then
+    echo 'self-test: infrastructure scope requested deferred credentials/serving values' >&2
+    cat "$out_dir/infrastructure-config.out" >&2
+    exit 1
+  fi
+fi
+
+# DB role credentials must not be reused. Build a shape-valid fixture with one
+# duplicate pair and verify the validator reports only the filenames, never
+# the shared credential value.
+mkdir -p "$out_dir/db-source-equality"
+for name in postgres_password db_migration_owner_password db_app_password \
+  db_worker_password db_audit_password db_research_password db_admin_password; do
+  case "$name" in
+    postgres_password|db_migration_owner_password) value=same-db-password ;;
+    *) value="unique-$name" ;;
+  esac
+  printf '%s' "$value" >"$out_dir/db-source-equality/$name"
+  chmod 0600 "$out_dir/db-source-equality/$name"
+done
+cp "$out_dir/.env" "$out_dir/db-source-equality.env"
+sed -i \
+  -e "s|^LAGRANGE_SECRET_SOURCE_DIR=.*|LAGRANGE_SECRET_SOURCE_DIR=$out_dir/db-source-equality|" \
+  "$out_dir/db-source-equality.env"
+if LAGRANGE_ENV_FILE="$out_dir/db-source-equality.env" \
+   LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
+   bash "$ops/validate-production-config.sh" --scope infrastructure \
+   >"$out_dir/db-source-equality.out" 2>&1; then
+  echo 'self-test: duplicate DB source secrets unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'INVALID_CONFIG: production configuration is unsafe or inconsistent' \
+  "$out_dir/db-source-equality.out" || {
+  cat "$out_dir/db-source-equality.out" >&2
+  exit 1
+}
+grep -Fq 'postgres_password conflicts with db_migration_owner_password' \
+  "$out_dir/db-source-equality.out" || {
+  cat "$out_dir/db-source-equality.out" >&2
+  exit 1
+}
+if grep -Fq 'same-db-password' "$out_dir/db-source-equality.out"; then
+  echo 'self-test: duplicate DB secret value leaked in validator output' >&2
+  exit 1
+fi
+
+# Compose expands inactive services too. Exercise the actual infrastructure
+# compose() helper with a minimal env that omits every deferred research and
+# backtest setting; a fake Docker client captures the process-local sentinels
+# without contacting a daemon or starting a service.
+mkdir -p "$out_dir/infra/scripts/ops/lib" "$out_dir/infra/bin"
+cp "$ops/compose-release.sh" "$out_dir/infra/scripts/ops/compose-release.sh"
+cp "$ops/lib/dotenv.sh" "$out_dir/infra/scripts/ops/lib-dotenv.tmp"
+mv "$out_dir/infra/scripts/ops/lib-dotenv.tmp" "$out_dir/infra/scripts/ops/lib/dotenv.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$out_dir/infra/scripts/ops/validate-production-config.sh"
+chmod 0755 "$out_dir/infra/scripts/ops/compose-release.sh" \
+  "$out_dir/infra/scripts/ops/validate-production-config.sh"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [ "${1-}" = compose ]; then' \
+  '  printf "%s\n" "RESEARCH_APP_ENV=${RESEARCH_APP_ENV-}" "RESEARCH_ENTITLEMENT_REFERENCE=${RESEARCH_ENTITLEMENT_REFERENCE-}" "BACKTEST_MIN_FREE_BYTES=${BACKTEST_MIN_FREE_BYTES-}" "BACKTEST_MAX_QUEUED_BACKTESTS=${BACKTEST_MAX_QUEUED_BACKTESTS-}" "BACKTEST_RECONCILE_GRACE_SECS=${BACKTEST_RECONCILE_GRACE_SECS-}" "BACKTEST_RECONCILE_INTERVAL_SECS=${BACKTEST_RECONCILE_INTERVAL_SECS-}" >"${CAPTURE_PATH:?}"' \
+  'fi' \
+  'exit 0' >"$out_dir/infra/bin/docker"
+chmod 0755 "$out_dir/infra/bin/docker"
+if PATH="$out_dir/infra/bin:$PATH" \
+   CAPTURE_PATH="$out_dir/infrastructure-compose-env.out" \
+   LAGRANGE_ENV_FILE="$out_dir/infrastructure-minimal.env" \
+   LAGRANGE_COMPOSE_FILE="$root/deploy/compose/compose.yml" \
+   LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
+   bash "$out_dir/infra/scripts/ops/compose-release.sh" --scope infrastructure --plan \
+   >"$out_dir/infrastructure-compose.out" 2>&1; then
+  for expected in \
+    'RESEARCH_APP_ENV=infrastructure-disabled' \
+    'RESEARCH_ENTITLEMENT_REFERENCE=infrastructure-disabled' \
+    'BACKTEST_MIN_FREE_BYTES=0' \
+    'BACKTEST_MAX_QUEUED_BACKTESTS=0' \
+    'BACKTEST_RECONCILE_GRACE_SECS=0' \
+    'BACKTEST_RECONCILE_INTERVAL_SECS=0'; do
+    grep -Fxq "$expected" "$out_dir/infrastructure-compose-env.out" || {
+      echo "self-test: missing infrastructure Compose sentinel: $expected" >&2
+      cat "$out_dir/infrastructure-compose-env.out" >&2
+      exit 1
+    }
+  done
+else
+  echo 'self-test: infrastructure Compose sentinel helper failed' >&2
+  cat "$out_dir/infrastructure-compose.out" >&2
+  exit 1
+fi
+
 # Compose env-file interpolation must not turn an apparently empty profile
 # into live when an unrelated shell variable is exported.
 sed 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=${P:-}/' \

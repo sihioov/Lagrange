@@ -23,19 +23,38 @@ grep -Fq -- '--apply must run as root' "$ops/provision-linux.sh" || die 'provisi
 grep -Fq 'must not traverse a symlink' "$ops/provision-linux.sh" || die 'provision ancestor symlink fence missing'
 grep -Fq 'service user is not a member of service group' "$ops/provision-linux.sh" || die 'service group membership fence missing'
 grep -Fq 'BLOCKED_EXTERNAL' "$ops/validate-production-config.sh" || die 'config blocker contract missing'
-grep -Fq -- '--scope backfill|release' "$ops/validate-production-config.sh" || die 'config scope contract missing'
+grep -Fq -- '--scope infrastructure|backfill|release' "$ops/validate-production-config.sh" || die 'config scope contract missing'
 grep -Fq 'dotenv_validate_shell_overrides' "$ops/validate-production-config.sh" || die 'shell/env-file precedence fence missing'
 grep -Fq 'KIS read-only' "$ops/validate-production-config.sh" || die 'KIS read-only contract missing'
 grep -Fq 'mode 0400 or 0600' "$ops/validate-production-config.sh" || die 'source secret mode contract missing'
 grep -Fq 'runtime secret' "$ops/validate-production-config.sh" || die 'runtime secret validation missing'
+grep -Fq 'db_secret_names=' "$ops/validate-production-config.sh" || die 'DB secret distinctness inventory missing'
+grep -Fq 'DB source secrets must be distinct' "$ops/validate-production-config.sh" || die 'DB secret distinctness blocker missing'
+grep -Fq 'cmp -s' "$ops/validate-production-config.sh" || die 'DB secret equality check missing'
 grep -Fq 'run --rm --no-deps db-role-bootstrap' "$ops/compose-release.sh" || die 'role bootstrap ordering missing'
 grep -Fq 'run --rm --no-deps db-migrate' "$ops/compose-release.sh" || die 'migration ordering missing'
 grep -Fq 'build --pull=false \' "$ops/compose-release.sh" || die 'Compose build gate missing'
 grep -Fq 'db-role-bootstrap db-migrate' "$ops/compose-release.sh" || die 'one-shot images are not built before run'
 grep -Fq 'up --wait --no-deps api-server' "$ops/compose-release.sh" || die 'serving stage must not rerun removed one-shots'
-grep -Fq -- '--scope backfill|release' "$ops/compose-release.sh" || die 'Compose scope contract missing'
+grep -Fq -- '--scope infrastructure|backfill|release' "$ops/compose-release.sh" || die 'Compose scope contract missing'
 grep -Fq 'LAGRANGE_DATA_ROOT="$data_dir"' "$ops/compose-release.sh" || die 'Compose preflight must use env-file data root'
 grep -Fq 'COMPOSE_BACKFILL_BOOTSTRAP_ORDER' "$ops/compose-release.sh" || die 'backfill Compose bootstrap order missing'
+grep -Fq 'COMPOSE_INFRASTRUCTURE_ORDER' "$ops/compose-release.sh" || die 'infrastructure Compose order missing'
+grep -Fq 'compose build --pull=false db-role-bootstrap db-migrate' "$ops/compose-release.sh" \
+  || die 'infrastructure Compose build gate missing'
+grep -Fq 'COMPOSE_INFRASTRUCTURE: PASS' "$ops/compose-release.sh" \
+  || die 'infrastructure Compose apply gate missing'
+grep -Fq 'RESEARCH_APP_ENV=infrastructure-disabled' "$ops/compose-release.sh" \
+  || die 'infrastructure Compose research sentinel missing'
+grep -Fq 'RESEARCH_ENTITLEMENT_REFERENCE=infrastructure-disabled' "$ops/compose-release.sh" \
+  || die 'infrastructure Compose entitlement sentinel missing'
+for key in BACKTEST_MIN_FREE_BYTES BACKTEST_MAX_QUEUED_BACKTESTS \
+  BACKTEST_RECONCILE_GRACE_SECS BACKTEST_RECONCILE_INTERVAL_SECS; do
+  grep -Fq "$key=0" "$ops/compose-release.sh" \
+    || die "infrastructure Compose $key sentinel missing"
+done
+grep -Fq 'process-local, fail-closed sentinels' "$ops/compose-release.sh" \
+  || die 'infrastructure Compose sentinel scope documentation missing'
 grep -Fq 'up --no-deps -d research-worker recommendation-runner candidate-runner' "$ops/compose-release.sh" \
   || die 'data-dependent services must bootstrap without a clean-install health wait'
 grep -Fq 'post-backfill-health.sh --check' "$ops/compose-release.sh" \

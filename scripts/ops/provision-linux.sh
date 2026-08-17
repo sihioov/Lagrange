@@ -18,6 +18,7 @@ data_root=${LAGRANGE_DATA_ROOT:-/var/lib/lagrange/data}
 secret_root=${LAGRANGE_HOST_SECRET_ROOT:-$config_root/secrets}
 worker_uid=${LAGRANGE_WORKER_UID:-10001}
 worker_gid=${LAGRANGE_WORKER_GID:-10001}
+data_group=lagrange-data
 mode=dry-run
 
 usage() {
@@ -32,7 +33,9 @@ Modes:
 The paths may be overridden for an isolated test with:
   LAGRANGE_CONFIG_ROOT, LAGRANGE_DEPLOY_ROOT, LAGRANGE_DATA_ROOT,
   LAGRANGE_HOST_SECRET_ROOT, LAGRANGE_SERVICE_USER, LAGRANGE_SERVICE_GROUP,
-  LAGRANGE_WORKER_UID, LAGRANGE_WORKER_GID.
+  LAGRANGE_WORKER_UID, LAGRANGE_WORKER_GID. The worker UID/GID must remain
+  exactly 10001 to match the Compose and systemd container identity; the host
+  data group is always named lagrange-data with GID 10001.
 EOF
 }
 
@@ -78,8 +81,16 @@ safe_path "$config_root" LAGRANGE_CONFIG_ROOT
 safe_path "$deploy_root" LAGRANGE_DEPLOY_ROOT
 safe_path "$data_root" LAGRANGE_DATA_ROOT
 safe_path "$secret_root" LAGRANGE_HOST_SECRET_ROOT
-case "$worker_uid" in ''|*[!0-9]*) die 'LAGRANGE_WORKER_UID must be numeric' ;; esac
-case "$worker_gid" in ''|*[!0-9]*) die 'LAGRANGE_WORKER_GID must be numeric' ;; esac
+case "$worker_uid" in
+  10001) ;;
+  ''|*[!0-9]*) die 'LAGRANGE_WORKER_UID must be numeric 10001' ;;
+  *) die 'LAGRANGE_WORKER_UID must be exactly 10001' ;;
+esac
+case "$worker_gid" in
+  10001) ;;
+  ''|*[!0-9]*) die 'LAGRANGE_WORKER_GID must be numeric 10001' ;;
+  *) die 'LAGRANGE_WORKER_GID must be exactly 10001' ;;
+esac
 
 if [ "$mode" = apply ] && [ "$(id -u)" -ne 0 ]; then
   die '--apply must run as root; use --dry-run or --preflight for non-root checks'
@@ -105,7 +116,11 @@ done
 
 print_plan() {
   echo "PROVISION_LINUX mode=$mode"
-  echo "  service=$service_user:$service_group worker=$worker_uid:$worker_gid"
+  echo "  service=$service_user:$service_group worker=$worker_uid:$worker_gid data-group=$data_group:$worker_gid"
+  case "$data_group_action" in
+    create) echo "  ensure group $data_group with GID $worker_gid" ;;
+    use) echo "  use existing group $data_group with GID $worker_gid" ;;
+  esac
   echo "  config=$config_root deploy=$deploy_root data=$data_root"
   echo "  no deletion, truncation, secret generation, Docker start, or API call"
   for dir in "${required_dirs[@]}"; do
@@ -119,6 +134,50 @@ service_group_member() {
   local gid=$1
   id -G "$service_user" 2>/dev/null | tr ' ' '\n' | grep -Fxq "$gid"
 }
+group_record_by_gid() {
+  local gid=$1
+  getent group | awk -F: -v expected_gid="$gid" '$3 == expected_gid { print; exit }'
+}
+group_record_by_name() {
+  getent group "$1" | awk -F: 'NR == 1 { print; exit }'
+}
+group_name_from_record() {
+  printf '%s\n' "$1" | awk -F: 'NR == 1 { print $1 }'
+}
+group_gid_from_record() {
+  printf '%s\n' "$1" | awk -F: 'NR == 1 { print $3 }'
+}
+group_members_from_record() {
+  printf '%s\n' "$1" | awk -F: 'NR == 1 { print $4 }'
+}
+
+data_group_action=create
+data_group_record=
+resolve_data_group() {
+  local named_record gid_record members primary_users
+
+  named_record=$(group_record_by_name "$data_group" || true)
+  if [ -n "$named_record" ]; then
+    [ "$(group_gid_from_record "$named_record")" = "$worker_gid" ] ||
+      die "data group name conflict: $data_group has GID $(group_gid_from_record "$named_record"); expected $worker_gid"
+    members=$(group_members_from_record "$named_record")
+    [ -z "$members" ] || [ "$members" = "$service_user" ] ||
+      die "data group $data_group has an unauthorized explicit member list: $members"
+    primary_users=$(getent passwd | awk -F: -v expected_gid="$worker_gid" '$4 == expected_gid { print $1; exit }')
+    [ -z "$primary_users" ] ||
+      die "data group $data_group is a primary group for account: $primary_users"
+    data_group_record=$named_record
+    data_group_action=use
+    return
+  fi
+
+  gid_record=$(group_record_by_gid "$worker_gid" || true)
+  [ -z "$gid_record" ] ||
+    die "data group GID conflict: GID $worker_gid already belongs to $(group_name_from_record "$gid_record"); expected $data_group"
+
+  data_group_record=
+  data_group_action=create
+}
 
 check_mode_owner() {
   local path=$1 expected_uid=$2 expected_gid=$3 expected_mode=$4 label=$5
@@ -130,6 +189,8 @@ check_mode_owner() {
     blocked "$label has $actual; expected $expected_uid:$expected_gid:$expected_mode: $path"
 }
 
+resolve_data_group
+
 if [ "$mode" = dry-run ]; then
   print_plan
   echo "DRY_RUN: no host changes made"
@@ -140,10 +201,17 @@ if [ "$mode" = preflight ]; then
   [ "$(id -u "$service_user" 2>/dev/null || true)" ] ||
     blocked "service user is missing: $service_user"
   [ -n "$(account_gid)" ] || blocked "service group is missing: $service_group"
+  data_group_record=$(group_record_by_name "$data_group" || true)
+  [ -n "$data_group_record" ] ||
+    blocked "data group is missing: $data_group (GID $worker_gid)"
+  [ "$(group_gid_from_record "$data_group_record")" = "$worker_gid" ] ||
+    blocked "data group has GID $(group_gid_from_record "$data_group_record"); expected $worker_gid: $data_group"
   service_uid=$(account_uid)
   service_gid=$(account_gid)
   service_group_member "$service_gid" ||
     blocked "service user is not a member of service group: $service_user:$service_group"
+  service_group_member "$worker_gid" ||
+    blocked "service user is not a member of data group: $service_user:$data_group (GID $worker_gid)"
   check_mode_owner "$config_root" 0 "$service_gid" 750 LAGRANGE_CONFIG_ROOT
   check_mode_owner "$config_root/universes" 0 "$service_gid" 750 universes
   check_mode_owner "$secret_root" 0 "$service_gid" 750 host-secrets
@@ -161,6 +229,14 @@ fi
 
 print_plan
 
+if [ "$data_group_action" = create ]; then
+  groupadd --system --gid "$worker_gid" "$data_group"
+fi
+data_group_record=$(group_record_by_name "$data_group" || true)
+[ -n "$data_group_record" ] || die "data group lookup failed after creation: $data_group"
+[ "$(group_gid_from_record "$data_group_record")" = "$worker_gid" ] ||
+  die "data group GID changed during provisioning: $data_group"
+
 if ! getent group "$service_group" >/dev/null; then
   groupadd --system "$service_group"
 fi
@@ -174,6 +250,11 @@ service_gid=$(account_gid)
 [ -n "$service_uid" ] && [ -n "$service_gid" ] || die 'service account lookup failed after creation'
 service_group_member "$service_gid" ||
   blocked "service user is not a member of service group: $service_user:$service_group"
+if ! service_group_member "$worker_gid"; then
+  usermod --append --groups "$data_group" "$service_user"
+fi
+service_group_member "$worker_gid" ||
+  blocked "service user is not a member of data group: $service_user:$data_group (GID $worker_gid)"
 
 # Existing files are never recursively chowned. Each directory is created or
 # ownership-fenced explicitly, which prevents a typo from rewriting a volume.
@@ -183,9 +264,15 @@ install -d -o root -g "$service_group" -m 0750 -- "$secret_root"
 install -d -o root -g root -m 0755 -- "$deploy_root"
 install -d -o root -g root -m 0755 -- "$deploy_root/bin"
 install -d -o root -g "$service_group" -m 0750 -- "$data_root"
-install -d -o "$worker_uid" -g "$worker_gid" -m 0750 -- "$data_root/raw"
-install -d -o "$worker_uid" -g "$worker_gid" -m 0750 -- "$data_root/curated"
-install -d -o "$worker_uid" -g "$worker_gid" -m 0750 -- "$data_root/nautilus_catalog"
+# GNU install resolves -o/-g operands as account names and rejects a numeric
+# UID that has intentionally not been created on the host. Create the fenced
+# paths first, then use chown's numeric-ID form after the data group exists.
+install -d -m 0750 -- "$data_root/raw"
+chown "$worker_uid:$worker_gid" -- "$data_root/raw"
+install -d -m 0750 -- "$data_root/curated"
+chown "$worker_uid:$worker_gid" -- "$data_root/curated"
+install -d -m 0750 -- "$data_root/nautilus_catalog"
+chown "$worker_uid:$worker_gid" -- "$data_root/nautilus_catalog"
 install -d -o "$service_uid" -g "$service_gid" -m 0750 -- "$data_root/artifacts"
 install -d -o "$service_uid" -g "$service_gid" -m 0750 -- "$data_root/phase0"
 

@@ -7,6 +7,7 @@ compose="$root/deploy/compose/compose.yml"
 env_example="$root/deploy/compose/.env.example"
 unit="$root/deploy/systemd/lagrange-recommendation-runner.service"
 systemd_env_example="$root/deploy/systemd/recommendation-runner.env.example"
+provision="$root/scripts/ops/provision-linux.sh"
 static_only=0
 
 while [ "$#" -gt 0 ]; do
@@ -26,7 +27,7 @@ if [ "$static_only" -eq 0 ]; then
     exit 2
   }
 fi
-for file in "$compose" "$unit" "$systemd_env_example" "$root/crates/job-queue/Dockerfile"; do
+for file in "$compose" "$unit" "$systemd_env_example" "$provision" "$root/crates/job-queue/Dockerfile"; do
   [ -f "$file" ] || { echo "missing required deployment file: $file" >&2; exit 2; }
 done
 grep -Fq '**/.venv' "$root/.dockerignore" || {
@@ -51,6 +52,7 @@ grep -Fxq 'RECOMMENDATION_APP_ENV=production' "$env_example" || {
   exit 2
 }
 for required in \
+  'SupplementaryGroups=10001' \
   'RuntimeDirectory=lagrange-recommendation-runner' \
   'RuntimeDirectory=lagrange-recommendation-runner/tmp' \
   'RECOMMENDATION_HEALTH_STATE_PATH=/run/lagrange-recommendation-runner/health.json' \
@@ -58,6 +60,19 @@ for required in \
   'ReadOnlyPaths=/var/lib/lagrange/data/curated /etc/lagrange/universes'; do
   grep -Fq "$required" "$unit" || { echo "systemd unit missing: $required" >&2; exit 2; }
 done
+for required in \
+  'data_group=lagrange-data' \
+  'LAGRANGE_WORKER_UID must be exactly 10001' \
+  'LAGRANGE_WORKER_GID must be exactly 10001' \
+  'data group GID conflict' \
+  'chown "$worker_uid:$worker_gid"'; do
+  grep -Fq "$required" "$provision" \
+    || { echo "host provisioning contract missing: $required" >&2; exit 2; }
+done
+if grep -Fq 'adopt' "$provision"; then
+  echo 'host provisioning must not adopt a foreign group at GID 10001' >&2
+  exit 2
+fi
 if grep -Eq '^ExecStartPost=' "$unit"; then
   echo 'systemd unit must not race startup health-state creation with ExecStartPost' >&2
   exit 2

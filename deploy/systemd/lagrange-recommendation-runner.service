@@ -8,6 +8,10 @@ ConditionPathExists=/opt/lagrange/bin/recommendation-runner
 Type=simple
 User=lagrange
 Group=lagrange
+# Curated/catalog directories are owned by the container's numeric 10001:10001
+# identity and mode 0750. The supplementary group grants read/execute only;
+# ReadOnlyPaths below keeps this service from writing the shared dataset.
+SupplementaryGroups=10001
 WorkingDirectory=/opt/lagrange
 EnvironmentFile=/etc/lagrange/recommendation-runner.env
 Environment=RECOMMENDATION_HEALTH_STATE_PATH=/run/lagrange-recommendation-runner/health.json

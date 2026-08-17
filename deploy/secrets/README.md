@@ -38,12 +38,13 @@
 # To provision a local development set (gitignored), copy each *.example to
 # its real name and fill it in. For native-Linux Compose, supply the source
 # values through the operator's secret manager and then run
-# `deploy/secrets/provision-runtime-secrets.sh --scope backfill` as root to
-# create only the DB/bootstrap/schema/research-worker UID/mode copies needed
-# before dataset approval. Use `--scope release` after Auth0/TLS and dataset
-# approval to create the full serving inventory. The provisioner copies and
-# validates supplied values; it deliberately does not generate production
-# credentials.
+# `deploy/secrets/provision-runtime-secrets.sh --scope infrastructure` as root
+# to create only the DB/bootstrap/schema UID/mode copies needed before KIS
+# credentials or dataset approval. Use `--scope backfill` after KIS credentials
+# are available to add the research-worker copies, then `--scope release` after
+# Auth0/TLS and dataset approval to create the full serving inventory. The
+# provisioner copies and validates supplied values; it deliberately does not
+# generate production credentials.
 
 ## Database role credentials and cursor key
 
@@ -54,6 +55,13 @@ intentionally separate. Store the administrator password in
 mounts it separately for role bootstrap and the migration one-shot. Never
 reuse `postgres_password` for `db_migration_owner_password`, and never put
 either value in `deploy/compose/.env` or a command argument.
+
+All seven DB source secrets must be distinct: `postgres_password`,
+`db_migration_owner_password`, `db_app_password`, `db_worker_password`,
+`db_audit_password`, `db_research_password`, and `db_admin_password`. The
+production validator compares these files only after regular-file,
+non-empty, single-line checks and fails closed with the conflicting filenames
+if any two values are reused; it never prints secret contents.
 
 Provision both files outside Git by copying their `.example` files, replacing
 the placeholders with independently generated values, and restricting each
@@ -234,15 +242,17 @@ long-running worker remains unprivileged and never needs root.
 Compose uses service-specific copies because file-backed Compose secrets are
 bind mounts on native Linux; a Compose `mode` field alone does not reliably
 change the host file's ownership. After creating the operator source files,
-run the provisioning helper as root. Use backfill scope before dataset approval:
+run the provisioning helper as root. Use infrastructure scope before KIS
+credentials or dataset approval:
 
 ```sh
-sudo deploy/secrets/provision-runtime-secrets.sh --scope backfill
+sudo deploy/secrets/provision-runtime-secrets.sh --scope infrastructure
 ```
 
 It fails closed if a source is missing, symlinked, or (for credential files)
-contains CR/LF. Backfill scope writes only the DB/bootstrap/schema/research
-worker copies. Release scope writes `0440` copies owned by the consuming UID,
+contains CR/LF. Infrastructure scope writes only the DB/bootstrap/schema
+copies and never reads KIS files. Backfill scope adds the research-worker
+copies. Release scope writes `0440` copies owned by the consuming UID,
 including an independent path for `candidate-runner`:
 `10001:10001` for API/workers, `999:999` for PostgreSQL/schema checks and the
 non-root bootstrap/migration one-shots, and `101:101` for the unprivileged

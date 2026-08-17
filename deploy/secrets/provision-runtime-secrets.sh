@@ -5,9 +5,9 @@
 # long-syntax mode fields are not a substitute for host permissions.  This
 # script therefore copies each operator secret into a directory owned by the
 # UID that consumes it.  Run as root (or through the host secret manager).
-# The backfill scope installs only the DB/bootstrap/schema/research-worker
-# copies needed before curated dataset approval; release scope installs the
-# complete serving inventory and remains the default.
+# The infrastructure scope installs only the DB/bootstrap/schema copies needed
+# before KIS credentials or curated dataset approval; backfill adds the
+# research-worker copies, and release installs the complete serving inventory.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -23,10 +23,14 @@ die() {
 
 usage() {
   cat <<'EOF'
-Usage: deploy/secrets/provision-runtime-secrets.sh [--scope backfill|release]
+Usage: deploy/secrets/provision-runtime-secrets.sh
+       [--scope infrastructure|backfill|release]
 
-  --scope backfill  Install only PostgreSQL/bootstrap/schema/research-worker
-                    runtime copies for the pre-approval KIS backfill.
+  --scope infrastructure
+                    Install only PostgreSQL/bootstrap/schema runtime copies;
+                    KIS, Auth0/TLS, and serving dataset inputs are not needed.
+  --scope backfill  Add research-worker runtime copies for the pre-approval
+                    KIS backfill.
   --scope release   Install every Compose service secret (default).
 EOF
 }
@@ -34,7 +38,7 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --scope)
-      [ "$#" -ge 2 ] || die '--scope needs backfill or release'
+      [ "$#" -ge 2 ] || die '--scope needs infrastructure, backfill, or release'
       scope=$2
       shift 2
       ;;
@@ -43,8 +47,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$scope" in
-  backfill|release) ;;
-  *) die '--scope must be backfill or release' ;;
+  infrastructure|backfill|release) ;;
+  *) die '--scope must be infrastructure, backfill, or release' ;;
 esac
 
 [ "$(id -u)" -eq 0 ] || die "must run as root to assign service UID ownership"
@@ -135,9 +139,11 @@ copy_secret db-role-bootstrap     db_admin_password          db_admin_password  
 copy_secret db-migrate             db_migration_owner_password db_migration_owner_password  999   999   0400  yes
 copy_secret postgres               postgres_password         postgres_password              999   999   0440  yes
 copy_secret research-schema-check  postgres_password         postgres_password              999   999   0440  yes
-copy_secret research-worker        db_research_password      db_research_password           10001 10001 0440  yes
-copy_secret research-worker        kis_app_key               kis_app_key                    10001 10001 0440  yes
-copy_secret research-worker        kis_app_secret            kis_app_secret                 10001 10001 0440  yes
+if [ "$scope" != infrastructure ]; then
+  copy_secret research-worker      db_research_password      db_research_password           10001 10001 0440  yes
+  copy_secret research-worker      kis_app_key               kis_app_key                    10001 10001 0440  yes
+  copy_secret research-worker      kis_app_secret            kis_app_secret                 10001 10001 0440  yes
+fi
 if [ "$scope" = release ]; then
   copy_secret recommendation-runner  db_worker_password        db_worker_password             10001 10001 0440  yes
   copy_secret candidate-runner       db_worker_password        db_worker_password             10001 10001 0440  yes

@@ -3,11 +3,13 @@
 # is the explicit operator action after production-config validation succeeds.
 # No command here generates secrets, enables live trading, or calls KIS itself.
 #
-# The `backfill` scope starts only the DB/raw/research path. The `release` scope
-# starts the full serving stack after curation approval. A clean database has
-# no EOD row yet, while research-worker's healthcheck correctly fails closed
-# until the first approved KIS publication exists. The post-backfill-health.sh
-# gate owns that later assertion.
+# The `infrastructure` scope starts only the DB/raw/schema gates and never
+# needs KIS credentials, Auth0/TLS, or future dataset pins. The `backfill`
+# scope additionally builds the research-worker image for later one-shot KIS
+# reads. The `release` scope starts the full serving stack after curation
+# approval. A clean database has no EOD row yet, while research-worker's
+# healthcheck correctly fails closed until the first approved KIS publication
+# exists. The post-backfill-health.sh gate owns that later assertion.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -20,12 +22,16 @@ scope=release
 
 usage() {
   cat <<'EOF'
-Usage: scripts/ops/compose-release.sh [--scope backfill|release]
+Usage: scripts/ops/compose-release.sh
+       [--scope infrastructure|backfill|release]
        [--plan|--preflight|--apply]
 
   --plan       Validate static inputs and print the ordered commands (default).
   --preflight  Validate inputs and Compose expansion without starting services.
   --apply      Build and start the selected scope in dependency order.
+  --scope infrastructure
+                    Bootstrap PostgreSQL/migrations/raw/schema only; it does
+                    not require KIS, Auth0/TLS, or future dataset pins.
   --scope backfill  Bootstrap PostgreSQL/migrations/raw/research-worker only;
                     it does not require serving Auth0/TLS or dataset pins.
   --scope release    Full serving release after the approved dataset pin
@@ -33,11 +39,13 @@ Usage: scripts/ops/compose-release.sh [--scope backfill|release]
 
 The apply order is host/runtime preflight, Compose config, image builds,
 PostgreSQL, role bootstrap, migrations, raw ownership, schema check, and the
-selected scope's services. Release scope adds API/Web, data-dependent workers,
-and reverse-proxy; backfill scope stops after the research-worker image build
-and one-shot infrastructure gates, before any worker daemon starts. One-shot
-failures stop the release. A clean install is not reported data-healthy until
-post-backfill-health.sh --check passes.
+selected scope's services. Infrastructure scope stops after those one-shot
+gates; it performs no provider/API call and starts no worker daemon. Release
+scope adds API/Web, data-dependent workers, and reverse-proxy; backfill scope
+stops after the research-worker image build and one-shot infrastructure gates,
+before any worker daemon starts. One-shot failures stop the release. A clean
+install is not reported data-healthy until post-backfill-health.sh --check
+passes.
 EOF
 }
 
@@ -46,7 +54,7 @@ blocked() { echo "BLOCKED_EXTERNAL: $*" >&2; exit 2; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --scope)
-      [ "$#" -ge 2 ] || die '--scope needs backfill or release'
+      [ "$#" -ge 2 ] || die '--scope needs infrastructure, backfill, or release'
       scope=$2
       shift 2
       ;;
@@ -59,8 +67,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$scope" in
-  backfill|release) ;;
-  *) die '--scope must be backfill or release' ;;
+  infrastructure|backfill|release) ;;
+  *) die '--scope must be infrastructure, backfill, or release' ;;
 esac
 
 [ -f "$compose_file" ] || die "Compose file missing: $compose_file"
@@ -87,12 +95,39 @@ if [ "$mode" != plan ]; then
 fi
 
 compose() {
-  docker compose --env-file "$env_file" -f "$compose_file" "$@"
+  if [ "$scope" = infrastructure ]; then
+    # Compose expands the complete file even when only infrastructure services
+    # are selected. Keep deferred worker settings out of the operator env
+    # contract by supplying process-local, fail-closed sentinels solely for
+    # this scope. They are never written to .env and backfill/release never use
+    # this branch; the infrastructure path does not start any worker.
+    RESEARCH_APP_ENV=infrastructure-disabled \
+    RESEARCH_ENTITLEMENT_REFERENCE=infrastructure-disabled \
+    BACKTEST_MIN_FREE_BYTES=0 \
+    BACKTEST_MAX_QUEUED_BACKTESTS=0 \
+    BACKTEST_RECONCILE_GRACE_SECS=0 \
+    BACKTEST_RECONCILE_INTERVAL_SECS=0 \
+      docker compose --env-file "$env_file" -f "$compose_file" "$@"
+  else
+    docker compose --env-file "$env_file" -f "$compose_file" "$@"
+  fi
 }
 
 compose config --quiet || die 'Compose interpolation/config validation failed'
 
-if [ "$scope" = backfill ]; then
+if [ "$scope" = infrastructure ]; then
+  cat <<'EOF'
+COMPOSE_INFRASTRUCTURE_ORDER:
+  1. build --pull=false db-role-bootstrap db-migrate
+  2. up --wait postgres
+  3. run --rm --no-deps db-role-bootstrap (exit code is the gate)
+  4. run --rm --no-deps db-migrate (exit code is the gate)
+  5. run --rm --no-deps research-raw-init (exit code is the gate)
+  6. run --rm --no-deps research-schema-check (exit code is the gate)
+  7. ps; hand off to the explicit backfill scope only after KIS credentials are available
+No research-worker/API/Web/recommendation/candidate/backtest/Paper/reverse-proxy or live profile is started, and no provider/API call is made.
+EOF
+elif [ "$scope" = backfill ]; then
   cat <<'EOF'
 COMPOSE_BACKFILL_BOOTSTRAP_ORDER:
   1. build --pull=false db-role-bootstrap db-migrate research-worker (worker image only; no worker daemon)
@@ -128,6 +163,18 @@ if [ "$mode" = plan ]; then
 fi
 if [ "$mode" = preflight ]; then
   echo "PREFLIGHT: PASS (scope=$scope)"
+  exit 0
+fi
+
+if [ "$scope" = infrastructure ]; then
+  compose build --pull=false db-role-bootstrap db-migrate
+  compose up --wait postgres
+  compose run --rm --no-deps db-role-bootstrap
+  compose run --rm --no-deps db-migrate
+  compose run --rm --no-deps research-raw-init
+  compose run --rm --no-deps research-schema-check
+  compose ps
+  echo 'COMPOSE_INFRASTRUCTURE: PASS (no worker daemon or provider/API call made; next run backfill after KIS credentials are available)'
   exit 0
 fi
 

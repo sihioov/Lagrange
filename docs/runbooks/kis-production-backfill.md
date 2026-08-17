@@ -44,7 +44,7 @@ scripts/ops/provision-linux.sh --preflight
 
 ```bash
 sudo scripts/ops/provision-linux.sh --apply
-sudo deploy/secrets/provision-runtime-secrets.sh --scope backfill
+sudo deploy/secrets/provision-runtime-secrets.sh --scope infrastructure
 ```
 
 실제 secret 값은 이 저장소나 명령 인자에 넣지 않는다. 다음 검사는 값 자체를
@@ -53,15 +53,35 @@ pin의 shape만 확인한다.
 
 ```bash
 export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
-scripts/ops/validate-production-config.sh --scope backfill --env-file deploy/compose/.env
+scripts/ops/validate-production-config.sh --scope infrastructure --env-file deploy/compose/.env
 ```
 
-backfill scope는 KIS key/secret, DB/bootstrap/runtime copies, 운영 경로,
-entitlement reference와 production/credentialed/live-off 경계만 확인한다.
+infrastructure scope는 KIS key/secret 없이 절대 운영 데이터·runtime 경로,
+PostgreSQL 식별자, 정확한 code commit, DB source secret 7개와 runtime copy
+10개의 shape/권한, 그리고 global live profile off만 확인한다. KIS entitlement,
+production/credentialed fetch 및 candidate 설정은 backfill scope부터 요구한다.
 아직 생성되지 않은 Curated manifest와 recommendation five-pin, Auth0/TLS
-serving 값은 이 단계에서 요구하지 않는다. 검사 결과가 `BLOCKED_EXTERNAL`이면
-정상적인 대기 상태다. `INVALID_CONFIG`는 값을 기다릴 문제가 아니라 설정을
-수정해야 하는 상태다.
+serving 값도 infrastructure 단계에서는 요구하지 않는다. 검사 결과가
+`BLOCKED_EXTERNAL`이면 정상적인 대기 상태다. `INVALID_CONFIG`는 값을 기다릴
+문제가 아니라 설정을 수정해야 하는 상태다.
+
+먼저 DB/raw/schema 인프라만 적용한다. 이 단계는 PostgreSQL, role bootstrap,
+migration, Raw ownership, schema check one-shot만 실행하며 research-worker,
+API/Web 또는 어떤 provider/API call도 시작하지 않는다.
+
+```bash
+scripts/ops/compose-release.sh --scope infrastructure --plan
+scripts/ops/compose-release.sh --scope infrastructure --preflight
+scripts/ops/compose-release.sh --scope infrastructure --apply
+```
+
+이제 KIS 자격증명이 준비된 경우에만 research-worker 런타임 copy를 추가하고
+backfill scope로 worker image를 준비한다.
+
+```bash
+sudo deploy/secrets/provision-runtime-secrets.sh --scope backfill
+scripts/ops/validate-production-config.sh --scope backfill --env-file deploy/compose/.env
+```
 
 ## 2. 고정 ETF 백필
 
@@ -188,7 +208,9 @@ recommendation five-pin을 요구하지 않으며 다음 순서를 보장한다.
 
 `postgres` → `db-role-bootstrap` → `db-migrate` → `research-raw-init` →
 `research-schema-check`, 그리고 `research-worker` image build만 수행한다.
-backfill scope에서는 research-worker daemon을 시작하지 않는다. One-shot 실패는
+앞선 infrastructure scope에서는 이 순서의 one-shot만 수행하며 KIS 자격증명을
+읽지 않는다. backfill scope에서는 research-worker daemon을 시작하지 않는다.
+One-shot 실패는
 후속 단계와 백필 실행을 막고, 완료된 one-shot을 `--rm`으로 제거한다. API/Web/
 recommendation/candidate/backtest/Paper/reverse-proxy는 이 단계에서 시작하지
 않는다.

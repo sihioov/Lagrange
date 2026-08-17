@@ -25,7 +25,7 @@ if git check-ignore -q "$provision"; then
   die 'provisioner is unexpectedly ignored by Git'
 fi
 bash -n "$provision" || die "provisioner has shell syntax errors"
-grep -Fq -- '--scope backfill|release' "$provision" \
+grep -Fq -- '--scope infrastructure|backfill|release' "$provision" \
   || die 'provisioner scope contract is absent'
 grep -Fq 'scope=$scope' "$provision" \
   || die 'provisioner must report the selected scope'
@@ -103,6 +103,31 @@ for service in db-role-bootstrap db-migrate; do
     || die "$service must mount $expected_count secrets with gid 999"
   [ "$mode_count" -eq "$expected_count" ] \
     || die "$service must mount $expected_count secrets with mode 0400"
+done
+
+# Infrastructure scope must be able to complete the DB/raw/schema gates before
+# KIS credentials or serving approval exist. Keep its exact runtime inventory
+# aligned with the validator: seven bootstrap copies, one migration copy, and
+# one PostgreSQL plus one schema-check copy. No research-worker copy belongs to
+# this scope.
+for expected in \
+  'db-role-bootstrap postgres_password postgres_password 999 999 0400 yes' \
+  'db-role-bootstrap db_migration_owner_password db_migration_owner_password 999 999 0400 yes' \
+  'db-role-bootstrap db_app_password db_app_password 999 999 0400 yes' \
+  'db-role-bootstrap db_worker_password db_worker_password 999 999 0400 yes' \
+  'db-role-bootstrap db_audit_password db_audit_password 999 999 0400 yes' \
+  'db-role-bootstrap db_research_password db_research_password 999 999 0400 yes' \
+  'db-role-bootstrap db_admin_password db_admin_password 999 999 0400 yes' \
+  'db-migrate db_migration_owner_password db_migration_owner_password 999 999 0400 yes' \
+  'postgres postgres_password postgres_password 999 999 0440 yes' \
+  'research-schema-check postgres_password postgres_password 999 999 0440 yes'; do
+  read -r service target source uid gid mode single_line <<<"$expected"
+  awk -v s="$service" -v t="$target" -v src="$source" -v u="$uid" \
+    -v g="$gid" -v m="$mode" -v one="$single_line" \
+    '$1 == "copy_secret" && $2 == s && $3 == t && $4 == src &&
+     $5 == u && $6 == g && $7 == m && $8 == one { found=1 }
+     END { exit !found }' "$provision" \
+    || die "infrastructure provisioner inventory missing: $expected"
 done
 
 grep -Fq 'reject_dotdot()' "$provision" \

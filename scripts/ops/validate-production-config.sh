@@ -3,6 +3,11 @@
 # This script reads names and metadata only; it never prints secret contents and
 # never accepts KIS account/order credentials for this release.
 #
+# `--scope infrastructure` is the KIS-free/non-KIS database/filesystem
+# contract: it gates only PostgreSQL, role bootstrap, migrations, Raw ownership,
+# and the research schema check. It deliberately does not require KIS
+# credentials, serving-only Auth0/TLS values, or the curated dataset pin that
+# is produced by the later backfill.
 # `--scope backfill` is the deliberately smaller first-phase contract: it gates
 # the KIS worker/bootstrap DB path without requiring serving-only Auth0/TLS
 # values or the curated dataset pin that is produced by that very backfill.
@@ -23,7 +28,8 @@ warnings=()
 
 usage() {
   cat <<'EOF'
-Usage: scripts/ops/validate-production-config.sh [--scope backfill|release]
+Usage: scripts/ops/validate-production-config.sh
+       [--scope infrastructure|backfill|release]
        [--env-file PATH]
 
 Exit 0: production configuration and required secret files are ready.
@@ -34,8 +40,12 @@ Exit 1: invalid configuration or unsafe file shape.
 The KIS account reference is intentionally optional. Live/order credentials are
 not required and are rejected from this read-only release profile.
 
-backfill scope requires the production KIS worker/bootstrap DB inputs, but does
-not require Auth0/TLS serving inputs or recommendation dataset five-pin values.
+infrastructure scope requires only the production DB/bootstrap inputs and
+runtime copies for PostgreSQL, role bootstrap, migrations, Raw ownership, and
+the research schema check. It does not require KIS credentials, Auth0/TLS
+serving inputs, or recommendation dataset five-pin values.
+backfill scope additionally requires the KIS worker inputs, but does not
+require Auth0/TLS serving inputs or recommendation dataset five-pin values.
 release scope requires every serving value and the approved five-pin dataset.
 EOF
 }
@@ -44,7 +54,7 @@ die() { echo "production-config: $*" >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --scope)
-      [ "$#" -ge 2 ] || die '--scope needs backfill or release'
+      [ "$#" -ge 2 ] || die '--scope needs infrastructure, backfill, or release'
       scope=$2
       shift 2
       ;;
@@ -59,8 +69,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$scope" in
-  backfill|release) ;;
-  *) die "--scope must be backfill or release" ;;
+  infrastructure|backfill|release) ;;
+  *) die "--scope must be infrastructure, backfill, or release" ;;
 esac
 
 if [ ! -f "$env_file" ]; then
@@ -108,11 +118,15 @@ require_value() {
   esac
 }
 
+# Compose parses the complete file even for infrastructure's service subset,
+# so the exact build commit remains a preflight input. Worker/serving settings
+# below begin only at backfill and are intentionally absent from infrastructure.
 required_keys=(
-  LAGRANGE_DATA_DIR LAGRANGE_RUNTIME_SECRET_DIR
-  POSTGRES_USER POSTGRES_DB RESEARCH_APP_ENV RESEARCH_FETCH_MODE
-  RESEARCH_ENTITLEMENT_REFERENCE
+  LAGRANGE_DATA_DIR LAGRANGE_RUNTIME_SECRET_DIR POSTGRES_USER POSTGRES_DB
 )
+if [ "$scope" != infrastructure ]; then
+  required_keys+=(RESEARCH_APP_ENV RESEARCH_FETCH_MODE RESEARCH_ENTITLEMENT_REFERENCE)
+fi
 if [ "$scope" = release ]; then
   required_keys+=(
     LAGRANGE_ARTIFACTS_DIR
@@ -129,10 +143,12 @@ done
 data_dir=$(get LAGRANGE_DATA_DIR)
 artifacts_dir=$(get LAGRANGE_ARTIFACTS_DIR)
 [ -z "$data_dir" ] || [[ "$data_dir" = /* ]] || invalid+=("LAGRANGE_DATA_DIR must be absolute")
-[ "$scope" = backfill ] || { [ -z "$artifacts_dir" ] || [[ "$artifacts_dir" = /* ]] || invalid+=("LAGRANGE_ARTIFACTS_DIR must be absolute"); }
-[ "$(get RESEARCH_APP_ENV)" = production ] || invalid+=("RESEARCH_APP_ENV must be production")
-[ "$(get RESEARCH_FETCH_MODE)" = credentialed ] || invalid+=("RESEARCH_FETCH_MODE must be credentialed")
-[ "$(get RESEARCH_CANDIDATE_ENABLED)" = false ] || invalid+=("RESEARCH_CANDIDATE_ENABLED must be false until the KIS candidate bridge is released")
+[ "$scope" = release ] && { [ -z "$artifacts_dir" ] || [[ "$artifacts_dir" = /* ]] || invalid+=("LAGRANGE_ARTIFACTS_DIR must be absolute"); }
+if [ "$scope" != infrastructure ]; then
+  [ "$(get RESEARCH_APP_ENV)" = production ] || invalid+=("RESEARCH_APP_ENV must be production")
+  [ "$(get RESEARCH_FETCH_MODE)" = credentialed ] || invalid+=("RESEARCH_FETCH_MODE must be credentialed")
+  [ "$(get RESEARCH_CANDIDATE_ENABLED)" = false ] || invalid+=("RESEARCH_CANDIDATE_ENABLED must be false until the KIS candidate bridge is released")
+fi
 case ",$(get COMPOSE_PROFILES)," in *,live,*) invalid+=("Compose live profile must remain disabled") ;; esac
 [ -z "$(get LIVE_NODE_MODE)" ] || [ "$(get LIVE_NODE_MODE)" = disabled ] || invalid+=("LIVE_NODE_MODE must be disabled")
 [ -z "$(get LIVE_NODE_DRY_RUN)" ] || [ "$(get LIVE_NODE_DRY_RUN)" = 1 ] || invalid+=("LIVE_NODE_DRY_RUN must remain 1")
@@ -146,7 +162,12 @@ fi
 manifest_hash=$(get RECOMMENDATION_DATASET_MANIFEST_SHA256)
 [ -z "$manifest_hash" ] || [[ "$manifest_hash" =~ ^[0-9a-f]{64}$ ]] || invalid+=("RECOMMENDATION_DATASET_MANIFEST_SHA256 must be lowercase 64-hex")
 
-if [ "$scope" = backfill ]; then
+if [ "$scope" = infrastructure ]; then
+  secret_files=(
+    postgres_password db_migration_owner_password db_app_password db_worker_password
+    db_audit_password db_research_password db_admin_password
+  )
+elif [ "$scope" = backfill ]; then
   secret_files=(
     postgres_password db_migration_owner_password db_app_password db_worker_password
     db_audit_password db_research_password db_admin_password kis_app_key kis_app_secret
@@ -159,6 +180,11 @@ else
     backup_encryption_key
   )
 fi
+db_secret_names=(
+  postgres_password db_migration_owner_password db_app_password db_worker_password
+  db_audit_password db_research_password db_admin_password
+)
+declare -A db_secret_ready=()
 check_source_mode() {
   local path=$1 label=$2 mode
   mode=$(stat -c '%a' -- "$path") || die "cannot stat $label: $path"
@@ -169,6 +195,10 @@ check_source_mode() {
 }
 for name in "${secret_files[@]}"; do
   path="$source_dir/$name"
+  case "$name" in
+    postgres_password|db_migration_owner_password|db_app_password|db_worker_password|db_audit_password|db_research_password|db_admin_password) is_db_secret=yes ;;
+    *) is_db_secret=no ;;
+  esac
   if [ ! -f "$path" ] || [ -L "$path" ]; then
     missing+=("secret $name (run the approved secret provisioning procedure)")
   elif [ ! -s "$path" ]; then
@@ -179,9 +209,38 @@ for name in "${secret_files[@]}"; do
     check_source_mode "$path" "secret $name"
     if grep -Eiq 'REPLACE_WITH|CHANGE_ME|YOUR_|example|placeholder' "$path"; then
       missing+=("secret $name still contains a template placeholder")
+    elif [ "$is_db_secret" = yes ]; then
+      # Equality checks run only after every DB source is regular,
+      # non-empty, single-line, and free of template placeholders. They never
+      # print or otherwise expose the credential bytes.
+      db_secret_ready["$name"]=1
     fi
   fi
 done
+
+# PostgreSQL role credentials are intentionally independent. Compare only
+# source files that passed the shape gate above and report filenames, never
+# secret values. A missing/malformed DB source is already reported as its own
+# blocker and suppresses this secondary comparison.
+all_db_secrets_ready=yes
+for name in "${db_secret_names[@]}"; do
+  if [ -z "${db_secret_ready[$name]+set}" ]; then
+    all_db_secrets_ready=no
+    break
+  fi
+done
+if [ "$all_db_secrets_ready" = yes ]; then
+  for ((left=0; left<${#db_secret_names[@]}; left++)); do
+    for ((right=left+1; right<${#db_secret_names[@]}; right++)); do
+      left_name=${db_secret_names[$left]}
+      right_name=${db_secret_names[$right]}
+      if ! cmp -s -- "$source_dir/$left_name" "$source_dir/$right_name"; then
+        continue
+      fi
+      invalid+=("DB source secrets must be distinct: $left_name conflicts with $right_name")
+    done
+  done
+fi
 
 if [ "$scope" = release ]; then
   for name in lagrange.crt lagrange.key; do
@@ -202,7 +261,16 @@ fi
 # Runtime copies are separate native-Linux files because Compose file-backed
 # secrets otherwise inherit the operator source ownership. Check the same
 # owner/mode contract as provision-runtime-secrets.sh without printing values.
-if [ "$scope" = backfill ]; then
+if [ "$scope" = infrastructure ]; then
+  runtime_specs=(
+    db-role-bootstrap/postgres_password:999:999:400
+    db-role-bootstrap/db_migration_owner_password:999:999:400
+    db-role-bootstrap/db_app_password:999:999:400 db-role-bootstrap/db_worker_password:999:999:400
+    db-role-bootstrap/db_audit_password:999:999:400 db-role-bootstrap/db_research_password:999:999:400
+    db-role-bootstrap/db_admin_password:999:999:400 db-migrate/db_migration_owner_password:999:999:400
+    postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
+  )
+elif [ "$scope" = backfill ]; then
   runtime_specs=(
     db-role-bootstrap/postgres_password:999:999:400
     db-role-bootstrap/db_migration_owner_password:999:999:400
@@ -250,7 +318,9 @@ for spec in "${runtime_specs[@]}"; do
 done
 
 # The account/order reference is deliberately not part of the required list.
-[ -n "$(get KIS_ACCOUNT_REF)" ] || warnings+=("KIS account/order credentials are intentionally not required for read-only release")
+if [ "$scope" != infrastructure ] && [ -z "$(get KIS_ACCOUNT_REF)" ]; then
+  warnings+=("KIS account/order credentials are intentionally not required for read-only release")
+fi
 
 if [ "${#invalid[@]}" -gt 0 ]; then
   echo "INVALID_CONFIG: production configuration is unsafe or inconsistent" >&2
