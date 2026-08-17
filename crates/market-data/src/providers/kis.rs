@@ -232,6 +232,7 @@ impl<R: KisRead> KisProvider<R> {
                     provider: PROVIDER_KIS,
                     kind,
                     code: error.code(),
+                    retryable: error.is_retryable(kis_client::RequestKind::Read),
                     detail: error.to_string(),
                 })?;
             let file_name = match symbol {
@@ -271,6 +272,7 @@ impl<R: KisRead> KisProvider<R> {
             provider: PROVIDER_KIS,
             kind,
             code: "BROKER_PAGINATION_LIMIT",
+            retryable: false,
             detail: format!("{path} exceeded the {MAX_PAGES}-page safety limit"),
         })
     }

@@ -195,6 +195,8 @@ function Invoke-StaticChecks {
         RESEARCH_MAX_PUBLICATION_AGE_SECS = '345600'; RESEARCH_RAW_ROOT = '/data'
         DB_HOST = 'postgres'; DB_PORT = '5432'; DB_NAME = 'lagrange'; DB_USER = 'research_writer'
         DB_PASSWORD_FILE = '/run/secrets/db_research_password'
+        KIS_APP_KEY_FILE = '/run/secrets/kis_app_key'
+        KIS_APP_SECRET_FILE = '/run/secrets/kis_app_secret'
     }
     foreach ($item in $requiredEnvironment.GetEnumerator()) {
         if ($worker.environment.PSObject.Properties[$item.Key].Value -ne $item.Value) {
@@ -202,7 +204,7 @@ function Invoke-StaticChecks {
         }
     }
     $workerSecrets = @($worker.secrets | ForEach-Object source)
-    foreach ($name in @('db_research_password', 'krx_api_key')) {
+    foreach ($name in @('db_research_password', 'kis_app_key', 'kis_app_secret')) {
         if ($workerSecrets -notcontains $name) { throw "research-worker secret is missing: $name" }
     }
     if ((ConvertTo-Json -Compress -InputObject @($worker.healthcheck.test)) -ne '["CMD","/usr/local/bin/research-worker","healthcheck"]') {
@@ -375,7 +377,8 @@ $runtimeSecretRoot = Join-Path $tempRoot 'runtime-secrets'
 $postgresSecret = Join-Path $runtimeSecretRoot 'postgres/postgres_password'
 $schemaPostgresSecret = Join-Path $runtimeSecretRoot 'research-schema-check/postgres_password'
 $researchSecret = Join-Path $runtimeSecretRoot 'research-worker/db_research_password'
-$krxSecret = Join-Path $runtimeSecretRoot 'research-worker/krx_api_key'
+$kisAppKey = Join-Path $runtimeSecretRoot 'research-worker/kis_app_key'
+$kisAppSecret = Join-Path $runtimeSecretRoot 'research-worker/kis_app_secret'
 $contextAuditTag = "$project-context-audit"
 $created = $false
 
@@ -616,7 +619,8 @@ try {
     [IO.File]::WriteAllText($postgresSecret, $postgresPassword)
     [IO.File]::WriteAllText($schemaPostgresSecret, $postgresPassword)
     [IO.File]::WriteAllText($researchSecret, (New-RandomSecret))
-    [IO.File]::WriteAllText($krxSecret, 'unused-in-synthetic-smoke')
+    [IO.File]::WriteAllText($kisAppKey, 'unused-in-synthetic-smoke')
+    [IO.File]::WriteAllText($kisAppSecret, 'unused-in-synthetic-smoke')
     $env:LAGRANGE_RUNTIME_SECRET_DIR = $runtimeSecretRoot
     $env:LAGRANGE_DATA_DIR = $rawRoot
     $env:LAGRANGE_PGDATA_VOLUME = "$project-pgdata"

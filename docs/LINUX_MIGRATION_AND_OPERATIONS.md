@@ -369,7 +369,6 @@ db_audit_password
 session_secret
 csrf_secret
 auth0_client_secret
-krx_api_key
 kis_app_key
 kis_app_secret
 kis_account_ref

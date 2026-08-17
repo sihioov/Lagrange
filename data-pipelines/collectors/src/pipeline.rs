@@ -192,9 +192,17 @@ impl std::error::Error for PipelineError {
 pub fn provider_failure_class(error: &ProviderError) -> FailureClass {
     match error {
         ProviderError::EndpointTimeout { .. } | ProviderError::Io { .. } => FailureClass::Retryable,
+        ProviderError::Remote { retryable, .. } => {
+            if *retryable {
+                FailureClass::Retryable
+            } else {
+                FailureClass::Permanent
+            }
+        }
         ProviderError::CredentialsUnavailable { .. }
         | ProviderError::UnsafeFileName { .. }
         | ProviderError::UnsupportedKind(_)
+        | ProviderError::InvalidConfiguration { .. }
         | ProviderError::RecordedBundleMissing { .. }
         | ProviderError::RecordedBundleIo { .. }
         | ProviderError::RecordedBundleParse { .. }

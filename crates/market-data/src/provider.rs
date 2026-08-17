@@ -104,6 +104,7 @@ pub enum ProviderError {
         provider: &'static str,
         kind: ResponseKind,
         code: &'static str,
+        retryable: bool,
         detail: String,
     },
     /// Transient endpoint or transport I/O.

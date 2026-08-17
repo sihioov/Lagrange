@@ -63,7 +63,8 @@ pub const WORKER_ENV_KEYS: &[&str] = &[
     "DB_NAME",
     "DB_USER",
     "DB_PASSWORD_FILE",
-    "KRX_CREDENTIAL_FILE",
+    "KIS_APP_KEY_FILE",
+    "KIS_APP_SECRET_FILE",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +109,8 @@ pub struct ResearchWorkerConfig {
     pub curated_root: PathBuf,
     pub entitlement_reference: String,
     pub database: DatabaseConfig,
-    pub provider_credential: Option<SecretValue>,
+    pub kis_app_key_file: Option<PathBuf>,
+    pub kis_app_secret_file: Option<PathBuf>,
     pub synthetic_bundle: PathBuf,
     pub candidate_sources_enabled: bool,
     pub candidate_raw_root: PathBuf,
@@ -2631,15 +2633,17 @@ impl ResearchWorkerConfig {
         let password_file = nonempty(values, "DB_PASSWORD_FILE")?;
         let password =
             read_nonempty_secret(&reader, Path::new(&password_file), "DB_PASSWORD_FILE")?;
-        let provider_credential = if fetch_mode == FetchMode::Credentialed {
-            let path = nonempty(values, "KRX_CREDENTIAL_FILE")?;
-            Some(read_nonempty_secret(
-                &reader,
-                Path::new(&path),
-                "KRX_CREDENTIAL_FILE",
-            )?)
+        let (kis_app_key_file, kis_app_secret_file) = if fetch_mode == FetchMode::Credentialed {
+            let app_key_path = nonempty(values, "KIS_APP_KEY_FILE")?;
+            let app_secret_path = nonempty(values, "KIS_APP_SECRET_FILE")?;
+            read_nonempty_secret(&reader, Path::new(&app_key_path), "KIS_APP_KEY_FILE")?;
+            read_nonempty_secret(&reader, Path::new(&app_secret_path), "KIS_APP_SECRET_FILE")?;
+            (
+                Some(PathBuf::from(app_key_path)),
+                Some(PathBuf::from(app_secret_path)),
+            )
         } else {
-            None
+            (None, None)
         };
         let candidate_sources_enabled = match values
             .get("RESEARCH_CANDIDATE_ENABLED")
@@ -2675,7 +2679,8 @@ impl ResearchWorkerConfig {
                 user,
                 password,
             },
-            provider_credential,
+            kis_app_key_file,
+            kis_app_secret_file,
             synthetic_bundle: values
                 .get("RESEARCH_SYNTHETIC_BUNDLE")
                 .map(PathBuf::from)

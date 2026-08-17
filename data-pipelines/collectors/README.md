@@ -147,7 +147,7 @@ timeout variables.
 | variable | required/default | contract |
 |---|---|---|
 | `APP_ENV` | required | `development`, `qa`, or `production` |
-| `RESEARCH_FETCH_MODE` | required | `synthetic` or `credentialed`; credentialed currently fails permanently because the real provider is not implemented |
+| `RESEARCH_FETCH_MODE` | required | `synthetic` or `credentialed`; production requires `credentialed` |
 | `RESEARCH_RUN_AT_KST` | default `16:30` | exact `HH:MM` daily daemon time in KST |
 | `RESEARCH_MAX_PUBLICATION_AGE_SECS` | default `345600` | positive healthcheck maximum age in seconds |
 | `RESEARCH_ATTEMPT_TIMEOUT_SECS` | default `900`, range `60..=3600` | bound for curation/recovery child attempts; Compose stop grace exceeds it |
@@ -160,14 +160,16 @@ timeout variables.
 | `DB_NAME` | required | PostgreSQL database |
 | `DB_USER` | required | must be the least-privilege `research_writer` in deployment |
 | `DB_PASSWORD_FILE` | required | path to a readable file containing a nonempty DB password |
-| `KRX_CREDENTIAL_FILE` | credentialed mode only | path to a readable file containing a nonempty provider credential; reading it does not make the unimplemented transport available |
+| `KIS_APP_KEY_FILE` | credentialed mode only | path to a readable file containing the KIS app key |
+| `KIS_APP_SECRET_FILE` | credentialed mode only | path to a readable file containing the KIS app secret |
 
-`DB_PASSWORD_FILE` and `KRX_CREDENTIAL_FILE` are paths, not secret values. The
-worker reads the file, trims surrounding whitespace, rejects missing, unreadable,
-or empty files, and never falls back to a plaintext password environment
-variable. It does not accept `DATABASE_URL`. On Windows only, `SYSTEMROOT` is
-validated and passed to contained helper processes as an OS requirement; it is
-not worker configuration.
+`DB_PASSWORD_FILE`, `KIS_APP_KEY_FILE`, and `KIS_APP_SECRET_FILE` are paths, not
+secret values. The worker reads each file during configuration validation,
+trims surrounding whitespace, rejects missing, unreadable, empty, or multiline
+files, and never falls back to a plaintext secret environment variable. It does
+not accept `DATABASE_URL`. On Windows only, `SYSTEMROOT` is validated and passed
+to contained helper processes as an OS requirement; it is not worker
+configuration.
 
 Timeouts are fixed in code: a whole helper attempt is 60 seconds, pool acquire
 is 10 seconds, individual query supervision and PostgreSQL `statement_timeout`
@@ -285,8 +287,8 @@ should alert on manifest-less generations and quarantine them only after
 confirming that no research-worker process is active; automatic deletion is
 deliberately avoided at this trust boundary.
 
-Compose mounts `db_research_password` and `krx_api_key` from external files at
-`/run/secrets/...`; real secret files must remain untracked. See
+Compose mounts `db_research_password`, `kis_app_key`, and `kis_app_secret` from
+external files at `/run/secrets/...`; real secret files must remain untracked. See
 `deploy/secrets/README.md` for role and secret provisioning. Start or repair the
 service with:
 

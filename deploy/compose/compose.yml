@@ -523,15 +523,21 @@ services:
       DB_NAME: ${POSTGRES_DB:-lagrange}
       DB_USER: research_writer
       DB_PASSWORD_FILE: /run/secrets/db_research_password
-      KRX_CREDENTIAL_FILE: /run/secrets/krx_api_key
+      KIS_APP_KEY_FILE: /run/secrets/kis_app_key
+      KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret
     secrets:
       - source: research_db_research_password
         target: db_research_password
         uid: "10001"
         gid: "10001"
         mode: 0440
-      - source: research_krx_api_key
-        target: krx_api_key
+      - source: research_kis_app_key
+        target: kis_app_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_kis_app_secret
+        target: kis_app_secret
         uid: "10001"
         gid: "10001"
         mode: 0440
@@ -1040,8 +1046,10 @@ secrets:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-schema-check/postgres_password
   research_db_research_password:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-worker/db_research_password
-  research_krx_api_key:
-    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-worker/krx_api_key
+  research_kis_app_key:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-worker/kis_app_key
+  research_kis_app_secret:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-worker/kis_app_secret
   recommendation_db_worker_password:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/recommendation-runner/db_worker_password
   candidate_db_worker_password:

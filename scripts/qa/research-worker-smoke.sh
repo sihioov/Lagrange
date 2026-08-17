@@ -186,12 +186,14 @@ expected_env = {
     "DB_HOST": "postgres", "DB_PORT": "5432",
     "DB_NAME": "lagrange", "DB_USER": "research_writer",
     "DB_PASSWORD_FILE": "/run/secrets/db_research_password",
+    "KIS_APP_KEY_FILE": "/run/secrets/kis_app_key",
+    "KIS_APP_SECRET_FILE": "/run/secrets/kis_app_secret",
 }
 environment = worker.get("environment") or {}
 for key, value in expected_env.items():
     require(environment.get(key) == value, f"research-worker environment is incorrect: {key}")
 worker_secrets = {item.get("source") for item in worker.get("secrets", [])}
-require({"research_db_research_password", "research_krx_api_key"}.issubset(worker_secrets), "research-worker secrets are incomplete")
+require({"research_db_research_password", "research_kis_app_key", "research_kis_app_secret"}.issubset(worker_secrets), "research-worker secrets are incomplete")
 require((worker.get("healthcheck") or {}).get("test") == ["CMD", "/usr/local/bin/research-worker", "healthcheck"], "research-worker healthcheck is incorrect")
 require(worker.get("stop_grace_period") in ("16m0s", "16m"), "research-worker stop grace must exceed its 15 minute attempt bound")
 for dependency, condition in {
@@ -336,7 +338,8 @@ postgres_secret="$runtime_secret_root/postgres/postgres_password"
 schema_postgres_secret="$runtime_secret_root/research-schema-check/postgres_password"
 research_secret="$runtime_secret_root/research-worker/db_research_password"
 candidate_secret="$runtime_secret_root/candidate-runner/db_worker_password"
-krx_secret="$runtime_secret_root/research-worker/krx_api_key"
+kis_app_key="$runtime_secret_root/research-worker/kis_app_key"
+kis_app_secret="$runtime_secret_root/research-worker/kis_app_secret"
 created=0
 rc() { dkr compose -p "$project" -f "$(hostpath "$compose_file")" "$@"; }
 context_audit_tag="${project}-context-audit"
@@ -414,7 +417,8 @@ else
 fi
 cp -- "$postgres_secret" "$schema_postgres_secret"
 cp -- "$research_secret" "$candidate_secret"
-printf '%s' 'unused-in-synthetic-smoke' >"$krx_secret"
+printf '%s' 'unused-in-synthetic-smoke' >"$kis_app_key"
+printf '%s' 'unused-in-synthetic-smoke' >"$kis_app_secret"
 find "$runtime_secret_root" -type f -exec chmod 0444 {} +
 
 export LAGRANGE_RUNTIME_SECRET_DIR="$(hostpath "$runtime_secret_root")"

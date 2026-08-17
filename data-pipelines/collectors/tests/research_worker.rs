@@ -955,6 +955,32 @@ fn pipeline_error_classification_matrix_is_structural() {
         ),
         (ProviderError::UnsupportedKind(ResponseKind::Bars), false),
         (
+            ProviderError::InvalidConfiguration {
+                detail: "invalid KIS universe".into(),
+            },
+            false,
+        ),
+        (
+            ProviderError::Remote {
+                provider: market_data::PROVIDER_KIS,
+                kind: ResponseKind::Bars,
+                code: "RATE_LIMITED",
+                retryable: true,
+                detail: "retry later".into(),
+            },
+            true,
+        ),
+        (
+            ProviderError::Remote {
+                provider: market_data::PROVIDER_KIS,
+                kind: ResponseKind::Bars,
+                code: "SCHEMA_DRIFT",
+                retryable: false,
+                detail: "unexpected response".into(),
+            },
+            false,
+        ),
+        (
             ProviderError::RecordedBundleMissing {
                 path: "bundle.json".into(),
             },
@@ -1493,12 +1519,14 @@ fn worker_config_parses_schedule_and_max_age_overrides() {
         ("RESEARCH_RUN_AT_KST", "07:05"),
         ("RESEARCH_MAX_PUBLICATION_AGE_SECS", "42"),
         ("RESEARCH_ATTEMPT_TIMEOUT_SECS", "600"),
-        ("KRX_CREDENTIAL_FILE", "provider-secret"),
+        ("KIS_APP_KEY_FILE", "kis-app-key"),
+        ("KIS_APP_SECRET_FILE", "kis-app-secret"),
     ]);
     let config = ResearchWorkerConfig::from_map_with_reader(&values, |path| {
         Ok(match path.to_string_lossy().as_ref() {
             "db-password" => "db-secret",
-            "provider-secret" => "provider-secret-value",
+            "kis-app-key" => "app-key-value",
+            "kis-app-secret" => "app-secret-value",
             other => panic!("unexpected secret path {other}"),
         }
         .to_owned())
@@ -1510,6 +1538,35 @@ fn worker_config_parses_schedule_and_max_age_overrides() {
     assert_eq!(config.run_at_kst.format("%H:%M").to_string(), "07:05");
     assert_eq!(config.max_publication_age.as_secs(), 42);
     assert_eq!(config.attempt_timeout.as_secs(), 600);
+    assert_eq!(
+        config.kis_app_key_file.as_deref(),
+        Some(std::path::Path::new("kis-app-key"))
+    );
+    assert_eq!(
+        config.kis_app_secret_file.as_deref(),
+        Some(std::path::Path::new("kis-app-secret"))
+    );
+}
+
+#[test]
+fn credentialed_worker_config_requires_both_kis_credentials() {
+    for missing_key in ["KIS_APP_KEY_FILE", "KIS_APP_SECRET_FILE"] {
+        let mut values = worker_config(&[
+            ("APP_ENV", "development"),
+            ("RESEARCH_FETCH_MODE", "credentialed"),
+            ("KIS_APP_KEY_FILE", "kis-app-key"),
+            ("KIS_APP_SECRET_FILE", "kis-app-secret"),
+        ]);
+        values.remove(missing_key);
+
+        let error =
+            ResearchWorkerConfig::from_map_with_reader(&values, |_| Ok("valid-secret".to_owned()))
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            WorkerError::MissingConfig { key } if key == missing_key
+        ));
+    }
 }
 
 #[test]
@@ -1568,18 +1625,21 @@ fn worker_config_rejects_any_line_break_in_secret_files() {
     let values = worker_config(&[
         ("APP_ENV", "development"),
         ("RESEARCH_FETCH_MODE", "credentialed"),
-        ("KRX_CREDENTIAL_FILE", "provider-secret"),
+        ("KIS_APP_KEY_FILE", "kis-app-key"),
+        ("KIS_APP_SECRET_FILE", "kis-app-secret"),
     ]);
-    for value in ["provider\nsecret", "provider\rsecret"] {
-        let error = ResearchWorkerConfig::from_map_with_reader(&values, |path| {
-            Ok(if path.to_string_lossy() == "provider-secret" {
-                value.to_owned()
-            } else {
-                "database-password".to_owned()
+    for secret_path in ["kis-app-key", "kis-app-secret"] {
+        for value in ["provider\nsecret", "provider\rsecret"] {
+            let error = ResearchWorkerConfig::from_map_with_reader(&values, |path| {
+                Ok(if path.to_string_lossy() == secret_path {
+                    value.to_owned()
+                } else {
+                    "valid-secret".to_owned()
+                })
             })
-        })
-        .unwrap_err();
-        assert!(matches!(error, WorkerError::SecretFile { .. }));
+            .unwrap_err();
+            assert!(matches!(error, WorkerError::SecretFile { .. }));
+        }
     }
 }
 
