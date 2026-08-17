@@ -41,6 +41,7 @@
 
 pub mod calendar;
 pub mod candidate;
+pub mod candidate_normalize;
 pub mod contract;
 pub mod curate;
 pub mod entitlement;
@@ -67,10 +68,15 @@ pub use candidate::{
     SectorObservation, StatementScope, latest_flows_as_of, latest_fundamental_as_of, members_as_of,
     parse_candidate_envelope, sectors_as_of, validate_candidate_document,
 };
+pub use candidate_normalize::{
+    CandidateNormalizationOutcome, CandidateNormalizeError,
+    deterministic_kis_candidate_normalized_batch_id, normalize_kis_candidate_batch,
+    normalize_kis_candidate_envelopes,
+};
 pub use contract::{
     ALL_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR,
-    PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, RawEnvelope, RequestMetadata,
-    ResponseKind, StoredFile,
+    PROVIDER_KIS, PROVIDER_KIS_CANDIDATE, PROVIDER_KIS_CANDIDATE_NORMALIZED,
+    PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{CuratedBar, CuratedSchema};
@@ -81,7 +87,7 @@ pub use curate::{
 };
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,
-    ingest_kis_bundle,
+    ingest_kis_bundle, ingest_kis_candidate_bundle, ingest_kis_candidate_bundle_with_kinds,
 };
 pub use instrument_master::{
     AliasNamespace, Instrument, InstrumentAlias, InstrumentMaster, ListingReason, MasterError,
@@ -95,6 +101,9 @@ pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
 };
 pub use providers::kis::{KR_ETF_CORE_SYMBOLS, KisProvider, KisRead};
+pub use providers::kis_candidate::{
+    KIS_CANDIDATE_SUPPORTED_KINDS, KIS_CANDIDATE_UNSUPPORTED_KINDS, KisCandidateProvider,
+};
 pub use publication::{
     CalendarFact, CalendarSessionType, DataBatchKind, PublicationBundle, PublicationError,
     PublicationFile,

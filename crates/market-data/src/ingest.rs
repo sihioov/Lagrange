@@ -15,6 +15,9 @@ use domain::{BatchId, TradingDate, UtcTimestamp};
 use crate::contract::{ResponseKind, StoredFile};
 use crate::provider::{EodProvider, ProviderError};
 use crate::providers::kis::{KisProvider, KisRead, validate_kis_response};
+use crate::providers::kis_candidate::{
+    KIS_CANDIDATE_SUPPORTED_KINDS, KisCandidateProvider, validate_kis_candidate_response,
+};
 use crate::storage::{BatchSpec, ManifestEntry, RawStore, StoreError};
 use crate::validate::{ValidationError, validate_response};
 
@@ -211,6 +214,69 @@ pub async fn ingest_kis_bundle<R: KisRead>(
     validate_returned_kinds(&crate::contract::EOD_RESPONSE_KINDS, &envelopes)?;
     for envelope in &envelopes {
         validate_kis_response(envelope.kind, &envelope.request.endpoint, &envelope.bytes)?;
+    }
+    persist_bundle(
+        store,
+        provider.provider_id(),
+        provider.fetch_mode(),
+        req,
+        entitlement_reference,
+        batch_id,
+        &envelopes,
+    )
+}
+
+/// Fetches one candidate-source delivery through the authenticated KIS REST
+/// adapter and persists the exact broker responses under the dedicated
+/// `provider=kis-candidate` scope.
+///
+/// The provider intentionally supports only the REST-backed investor-flow and
+/// fundamentals classes.  Membership/sector master files and complete market
+/// status are rejected before any request is sent; callers must not treat a
+/// partial candidate delivery as publishable.
+pub async fn ingest_kis_candidate_bundle<R: KisRead>(
+    store: &RawStore,
+    provider: &KisCandidateProvider<R>,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+) -> Result<IngestOutcome, IngestError> {
+    ingest_kis_candidate_bundle_with_kinds(
+        store,
+        provider,
+        req,
+        entitlement_reference,
+        &KIS_CANDIDATE_SUPPORTED_KINDS,
+    )
+    .await
+}
+
+/// Fetches and persists an explicit subset of the REST-backed candidate
+/// classes. Finance responses are intentionally accepted here as immutable
+/// Raw evidence, while candidate normalization fails closed until their
+/// semantics have a reviewed mapping.
+pub async fn ingest_kis_candidate_bundle_with_kinds<R: KisRead>(
+    store: &RawStore,
+    provider: &KisCandidateProvider<R>,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    kinds: &[ResponseKind],
+) -> Result<IngestOutcome, IngestError> {
+    let batch_id = BatchId::generate();
+    let fetch_req = crate::provider::FetchRequest {
+        market: req.market.clone(),
+        date: req.date,
+        kinds: kinds.to_vec(),
+        now: req.now,
+        batch_id,
+    };
+    let envelopes = provider.fetch(&fetch_req).await?;
+    validate_returned_kinds(kinds, &envelopes)?;
+    for envelope in &envelopes {
+        validate_kis_candidate_response(envelope.kind, &envelope.request.endpoint, &envelope.bytes)
+            .map_err(|reason| IngestError::MalformedResponse {
+                kind: envelope.kind,
+                reason,
+            })?;
     }
     persist_bundle(
         store,

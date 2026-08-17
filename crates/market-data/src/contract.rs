@@ -32,6 +32,15 @@ pub const PROVIDER_KIS: &str = "kis";
 /// Provider id for the provider-neutral canonical batch derived from KIS wire
 /// responses. The wire batch remains under [`PROVIDER_KIS`] forever.
 pub const PROVIDER_KIS_NORMALIZED: &str = "kis-normalized";
+/// Provider id for KIS candidate-source wire responses.
+///
+/// Candidate source deliveries are deliberately kept out of `provider=kis`:
+/// the EOD recovery scope owns that manifest and must never attempt to feed a
+/// candidate response into the four-file EOD normalizer.
+pub const PROVIDER_KIS_CANDIDATE: &str = "kis-candidate";
+/// Provider id for canonical candidate documents derived from
+/// [`PROVIDER_KIS_CANDIDATE`] wire responses.
+pub const PROVIDER_KIS_CANDIDATE_NORMALIZED: &str = "kis-candidate-normalized";
 /// Canonical market id of the Korean market.
 pub const MARKET_KR: &str = "kr";
 
