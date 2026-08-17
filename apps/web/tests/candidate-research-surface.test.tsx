@@ -18,7 +18,9 @@ vi.mock("next/headers", () => ({
 }));
 
 const RUN_ID = "00000000-0000-4000-8000-000000000501";
+const KOSDAQ_RUN_ID = "00000000-0000-4000-8000-000000000511";
 const FEED_ID = "00000000-0000-4000-8000-000000000502";
+const KOSDAQ_FEED_ID = "00000000-0000-4000-8000-000000000512";
 const AS_OF = "2026-08-14";
 const SHA = "a".repeat(64);
 const LICENSES = [
@@ -37,11 +39,12 @@ const LICENSES = [
   contract_document_sha256: SHA,
 }));
 
-function analysis(index: number) {
+function analysis(index: number, universe: "kospi200" | "kosdaq150" = "kospi200") {
   const instrument = `${String(5930 + index).padStart(6, "0")}.KRX`;
   return {
-    analysis_id: `00000000-0000-4000-8000-${String(600 + index).padStart(12, "0")}`,
-    run_id: RUN_ID,
+    analysis_id: `00000000-0000-4000-8000-${String((universe === "kospi200" ? 600 : 700) + index).padStart(12, "0")}`,
+    run_id: universe === "kospi200" ? RUN_ID : KOSDAQ_RUN_ID,
+    universe,
     instrument_id: instrument,
     name: `Synthetic ${index + 1}`,
     sector_code: index === 0 ? "G40" : "G25",
@@ -93,6 +96,7 @@ function analysis(index: number) {
 }
 
 const envelope = {
+  universe: "kospi200" as const,
   state: "READY" as const,
   as_of: AS_OF,
   cutoff_at: "2026-08-14T07:00:00Z",
@@ -131,7 +135,22 @@ const feed = {
   items: Array.from({ length: 5 }, (_, index) => analysis(index)),
 };
 
-function api(options: { readonly blocked?: boolean } = {}): {
+const kosdaqFeed = {
+  ...envelope,
+  universe: "kosdaq150" as const,
+  feed_id: KOSDAQ_FEED_ID,
+  published_at: "2026-08-14T07:05:00Z",
+  computation_seq: 1,
+  items: Array.from({ length: 5 }, (_, index) => analysis(index, "kosdaq150")),
+};
+
+function api(
+  options: {
+    readonly blocked?: boolean;
+    readonly stale?: boolean;
+    readonly notFound?: boolean;
+  } = {},
+): {
   readonly calls: Request[];
   readonly fetcher: typeof fetch;
 } {
@@ -153,17 +172,57 @@ function api(options: { readonly blocked?: boolean } = {}): {
           { status: 403 },
         );
       }
-      return Response.json(feed, { headers: { "Cache-Control": "no-store" } });
+      if (options.notFound) {
+        return Response.json(
+          {
+            error: {
+              code: "RESOURCE_NOT_FOUND",
+              message: "candidate feed does not exist",
+              request_id: "request-candidate",
+            },
+          },
+          { status: 404 },
+        );
+      }
+      const universe = new URL(request.url).searchParams.get("universe");
+      const selectedFeed = universe === "kosdaq150" ? kosdaqFeed : feed;
+      return Response.json(options.stale ? { ...selectedFeed, state: "STALE" } : selectedFeed, {
+        headers: { "Cache-Control": "no-store" },
+      });
     }
     if (pathname === `/api/v1/stocks/${feed.items[0]?.instrument_id}/analysis`) {
+      const universe = new URL(request.url).searchParams.get("universe");
+      const selectedFeed = universe === "kosdaq150" ? kosdaqFeed : feed;
       return Response.json(
-        { ...envelope, analysis: feed.items[0] },
+        {
+          ...envelope,
+          universe: selectedFeed.universe,
+          analysis: selectedFeed.items[0],
+        },
         { headers: { "Cache-Control": "no-store" } },
       );
     }
     if (pathname === "/api/v1/screener/query") {
+      const body = (await request.clone().json()) as {
+        readonly criteria?: { readonly universes?: readonly string[] };
+      };
+      const universes = body.criteria?.universes ?? ["kospi200"];
+      const items = universes.flatMap((universe) =>
+        universe === "kosdaq150" ? [kosdaqFeed.items[0]] : [feed.items[0]],
+      );
       return Response.json(
-        { ...envelope, run_id: RUN_ID, items: [feed.items[0]], next_cursor: "signed-next" },
+        {
+          ...envelope,
+          universe: universes.length === 1 ? universes[0] : null,
+          universes,
+          run_id: universes.length === 1 ? RUN_ID : null,
+          run_ids: universes.map((universe) => ({
+            universe,
+            run_id: universe === "kosdaq150" ? KOSDAQ_RUN_ID : RUN_ID,
+          })),
+          items,
+          next_cursor: "signed-next",
+        },
         { headers: { "Cache-Control": "no-store" } },
       );
     }
@@ -181,6 +240,19 @@ function api(options: { readonly blocked?: boolean } = {}): {
               min_flow_score: null,
               min_fundamental_score: null,
               min_technical_score: null,
+            },
+            created_at: "2026-08-14T08:00:00Z",
+            updated_at: "2026-08-14T08:00:00Z",
+          },
+          {
+            id: "00000000-0000-4000-8000-000000000802",
+            name: "KOSDAQ technical screen",
+            criteria_schema_version: 2,
+            criteria: {
+              universes: ["kosdaq150"],
+              sectors: ["G25"],
+              evidence_strength: ["MODERATE"],
+              min_total_score: 60,
             },
             created_at: "2026-08-14T08:00:00Z",
             updated_at: "2026-08-14T08:00:00Z",
@@ -220,10 +292,30 @@ describe("candidate research surfaces", () => {
 
     expect(markup.match(/Synthetic \d/g)).toHaveLength(5);
     expect(markup).toContain("Common daily Top 5");
+    expect(markup).toContain("KOSPI 200");
     expect(markup).toContain(`/stocks/${feed.items[0]?.instrument_id}?date=${AS_OF}`);
+    expect(markup).toContain(`universe=kospi200`);
     expect(markup).toContain("Exact dataset pins");
     expect(markup).toContain("not probabilities or target prices");
     expect(server.calls.every((request) => request.cache === "no-store")).toBe(true);
+  });
+
+  it("uses the selected KOSDAQ tab for the feed and keeps its universe in links", async () => {
+    const server = api();
+    vi.stubGlobal("fetch", server.fetcher);
+
+    const markup = renderToStaticMarkup(
+      await CandidatesPage({ searchParams: Promise.resolve({ universe: "kosdaq150" }) }),
+    );
+
+    expect(markup).toContain("KOSDAQ 150");
+    expect(markup).toContain("Synthetic 1");
+    expect(
+      server.calls.some(
+        (request) => new URL(request.url).searchParams.get("universe") === "kosdaq150",
+      ),
+    ).toBe(true);
+    expect(markup).toContain("universe=kosdaq150");
   });
 
   it("renders financial-profile evidence and three deterministic scenarios", async () => {
@@ -242,7 +334,48 @@ describe("candidate research surfaces", () => {
     expect(markup).toContain("중립 경로");
     expect(markup).toContain("하락 경로");
     expect(markup).toContain("flow_score &gt; 55 AND technical_score &gt; 55");
+    expect(markup).toContain("KOSPI 200");
+    expect(markup).toContain("Rank");
     expect(markup).not.toMatch(/\b\d+(?:\.\d+)?% chance\b/i);
+  });
+
+  it("groups both-universe screener rows and keeps duplicate instruments separate", async () => {
+    const server = api();
+    vi.stubGlobal("fetch", server.fetcher);
+
+    const markup = renderToStaticMarkup(
+      await ScreenerPage({
+        searchParams: Promise.resolve({
+          as_of: AS_OF,
+          universes: ["kospi200", "kosdaq150"],
+        }),
+      }),
+    );
+    const query = server.calls.find(
+      (request) => new URL(request.url).pathname === "/api/v1/screener/query",
+    );
+
+    await expect(query?.clone().json()).resolves.toMatchObject({
+      criteria: { universes: ["kospi200", "kosdaq150"] },
+    });
+    expect(markup).toContain("KOSPI 200");
+    expect(markup).toContain("KOSDAQ 150");
+    expect(markup.match(/Synthetic 1/g)).toHaveLength(2);
+    expect(markup).not.toContain("Global rank");
+  });
+
+  it("restores v1 saved screens as KOSPI and preserves explicit v2 universes", async () => {
+    const server = api();
+    vi.stubGlobal("fetch", server.fetcher);
+
+    const markup = renderToStaticMarkup(
+      await ScreenerPage({ searchParams: Promise.resolve({ as_of: AS_OF }) }),
+    );
+
+    expect(markup).toContain("Strong financial flow");
+    expect(markup).toContain("KOSDAQ technical screen");
+    expect(markup).toContain("universes=kospi200");
+    expect(markup).toContain("universes=kosdaq150");
   });
 
   it("queries the exact published run and preserves private saved screens", async () => {
@@ -281,6 +414,19 @@ describe("candidate research surfaces", () => {
     expect(markup).toContain("Candidate research is blocked");
     expect(markup).not.toContain("Synthetic 1");
     expect(markup).not.toContain(SHA);
+  });
+
+  it("keeps stale and not-found errors distinct from blocked access", async () => {
+    vi.stubGlobal("fetch", api({ stale: true }).fetcher);
+    const stale = renderToStaticMarkup(await CandidatesPage());
+    expect(stale).toContain("Stale research snapshot");
+    expect(stale).not.toContain("Candidate research is blocked");
+    expect(stale).toContain("Synthetic 1");
+
+    vi.stubGlobal("fetch", api({ notFound: true }).fetcher);
+    const notFound = renderToStaticMarkup(await CandidatesPage());
+    expect(notFound).toContain("No candidate snapshot");
+    expect(notFound).not.toContain("Candidate research is blocked");
   });
 
   it("rejects a malicious BLOCKED success payload before any proprietary row can render", () => {

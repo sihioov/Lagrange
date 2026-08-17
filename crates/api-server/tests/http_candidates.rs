@@ -3,6 +3,8 @@ mod candidate_rolling_provider;
 mod common;
 
 use axum::http::{StatusCode, header};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{FixedOffset, TimeZone};
 use collectors::{
     CandidateInstrumentCatalog, CandidatePricePublication, PostgresCandidateSourceSink,
@@ -11,6 +13,7 @@ use collectors::{
 };
 use common::{Harness, status};
 use domain::{DatasetId, TradingDate, UtcTimestamp};
+use hmac::{Hmac, Mac};
 use job_queue::candidate::{
     CandidateOutcome, CandidateRunnerConfig, CandidateRunnerPaths, run_once,
     schedule_latest_candidate_run,
@@ -22,6 +25,7 @@ use market_data::{
     ingest_bundle_with_kinds, price_curation_evidence,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Duration;
 use uuid::Uuid;
@@ -79,6 +83,7 @@ async fn seed_published_candidate_feed(h: &Harness) -> Uuid {
         "krx_investor_flows",
         "krx_fundamentals",
         "krx_kospi200_membership",
+        "krx_kosdaq150_membership",
         "krx_sector_classification"
     ]))
     .bind(entitlement_id)
@@ -296,7 +301,7 @@ async fn seed_published_candidate_feed(h: &Harness) -> Uuid {
     let run_id: Uuid = sqlx::query_scalar(
         "INSERT INTO stock_analysis_runs
          (as_of_date, cutoff_at, computation_seq, status, scoring_config_version,
-          scoring_config_sha256, universe_snapshot_id, universe_entitlement_id,
+          scoring_config_sha256, universe_key, universe_snapshot_id, universe_entitlement_id,
           price_dataset_version_id, price_entitlement_id, price_curated_version,
           price_manifest_sha256, status_dataset_version_id, status_entitlement_id,
           status_manifest_sha256, flow_dataset_version_id, flow_entitlement_id,
@@ -307,7 +312,7 @@ async fn seed_published_candidate_feed(h: &Harness) -> Uuid {
          VALUES (DATE '2026-08-13',TIMESTAMPTZ '2026-08-13 07:00:00Z',1,'SUCCEEDED',
                  'candidate-score-v1',
                  '1cd70f7a79af85896b015f265bea8ae931bbba29aef12a0b95f32c82ee056377',
-                 $1,$2,$3,$4,2,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+                 'kospi200',$1,$2,$3,$4,2,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
                  repeat('6',64),
                  '{\"eligible_count\":5}'::jsonb,TIMESTAMPTZ '2026-08-13 07:01:00Z')
          RETURNING id",
@@ -333,8 +338,8 @@ async fn seed_published_candidate_feed(h: &Harness) -> Uuid {
     .expect("seed successful candidate run");
     let feed_id: Uuid = sqlx::query_scalar(
         "INSERT INTO candidate_feed_snapshots
-         (run_id, as_of_date, computation_seq, status, published_at)
-         VALUES ($1,DATE '2026-08-13',1,'PUBLISHED',TIMESTAMPTZ '2026-08-13 07:01:00Z')
+         (run_id, universe_key, as_of_date, computation_seq, status, published_at)
+         VALUES ($1,'kospi200',DATE '2026-08-13',1,'PUBLISHED',TIMESTAMPTZ '2026-08-13 07:01:00Z')
          RETURNING id",
     )
     .bind(run_id)
@@ -395,6 +400,7 @@ async fn seed_published_candidate_feed(h: &Harness) -> Uuid {
         "krx_investor_flows",
         "krx_fundamentals",
         "krx_kospi200_membership",
+        "krx_kosdaq150_membership",
         "krx_sector_classification"
     ]))
     .bind(json!([
@@ -413,6 +419,236 @@ async fn seed_published_candidate_feed(h: &Harness) -> Uuid {
     .await
     .expect("enable candidate entitlement");
     run_id
+}
+
+/// Clone the fixture's immutable analysis rows into another run/feed. This
+/// keeps the HTTP tests focused on universe identity and cursor behavior while
+/// preserving the exact source lineage that the production gate checks.
+async fn clone_candidate_run(
+    h: &Harness,
+    source_run_id: Uuid,
+    universe: &str,
+    universe_snapshot_id: Uuid,
+    computation_seq: i32,
+) -> Uuid {
+    let run_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO stock_analysis_runs (
+             as_of_date, cutoff_at, computation_seq, status, job_id,
+             scoring_config_version, scoring_config_sha256, universe_key,
+             universe_snapshot_id, universe_entitlement_id,
+             price_dataset_version_id, price_entitlement_id, price_curated_version,
+             price_manifest_sha256, status_dataset_version_id, status_entitlement_id,
+             status_manifest_sha256, flow_dataset_version_id, flow_entitlement_id,
+             flow_manifest_sha256, fundamental_dataset_version_id,
+             fundamental_entitlement_id, fundamental_manifest_sha256,
+             sector_version_id, sector_entitlement_id, input_identity_sha256,
+             summary_json, published_at)
+         SELECT source.as_of_date, source.cutoff_at, $4, 'SUCCEEDED', NULL,
+                source.scoring_config_version, source.scoring_config_sha256, $2,
+                $3, source.universe_entitlement_id,
+                source.price_dataset_version_id, source.price_entitlement_id,
+                source.price_curated_version, source.price_manifest_sha256,
+                source.status_dataset_version_id, source.status_entitlement_id,
+                source.status_manifest_sha256, source.flow_dataset_version_id,
+                source.flow_entitlement_id, source.flow_manifest_sha256,
+                source.fundamental_dataset_version_id,
+                source.fundamental_entitlement_id, source.fundamental_manifest_sha256,
+                source.sector_version_id, source.sector_entitlement_id,
+                repeat(md5(source.id::text || $2 || $4::text), 2),
+                source.summary_json, clock_timestamp()
+           FROM stock_analysis_runs AS source
+          WHERE source.id = $1
+         RETURNING id",
+    )
+    .bind(source_run_id)
+    .bind(universe)
+    .bind(universe_snapshot_id)
+    .bind(computation_seq)
+    .fetch_one(&h.owner_pool)
+    .await
+    .expect("clone candidate run");
+
+    sqlx::query(
+        "INSERT INTO stock_analysis_snapshots (
+             run_id, instrument_id, sector_code, fundamental_profile, eligible,
+             exclusion_codes, flow_score, fundamental_score, technical_score,
+             total_score, flow_coverage, fundamental_coverage, technical_coverage,
+             evidence_strength, rank, normalization_scope, factors_json,
+             scenarios_json, provenance_json, content_sha256)
+         SELECT $2, snapshot.instrument_id, snapshot.sector_code,
+                snapshot.fundamental_profile, snapshot.eligible,
+                snapshot.exclusion_codes, snapshot.flow_score,
+                snapshot.fundamental_score, snapshot.technical_score,
+                snapshot.total_score, snapshot.flow_coverage,
+                snapshot.fundamental_coverage, snapshot.technical_coverage,
+                snapshot.evidence_strength, snapshot.rank,
+                snapshot.normalization_scope, snapshot.factors_json,
+                snapshot.scenarios_json, snapshot.provenance_json,
+                snapshot.content_sha256
+           FROM stock_analysis_snapshots AS snapshot
+          WHERE snapshot.run_id = $1",
+    )
+    .bind(source_run_id)
+    .bind(run_id)
+    .execute(&h.owner_pool)
+    .await
+    .expect("clone candidate snapshots");
+
+    let feed_id = Uuid::new_v4();
+    let mut tx = h.owner_pool.begin().await.expect("candidate clone tx");
+    sqlx::query(
+        "UPDATE candidate_feed_snapshots
+            SET status = 'SUPERSEDED', superseded_by = $1
+          WHERE universe_key = $2
+            AND as_of_date = (SELECT as_of_date FROM stock_analysis_runs WHERE id = $3)
+            AND status = 'PUBLISHED'",
+    )
+    .bind(feed_id)
+    .bind(universe)
+    .bind(run_id)
+    .execute(&mut *tx)
+    .await
+    .expect("supersede candidate feed");
+    sqlx::query(
+        "INSERT INTO candidate_feed_snapshots
+             (id, run_id, universe_key, as_of_date, computation_seq, status, published_at)
+         SELECT $1, run.id, run.universe_key, run.as_of_date,
+                run.computation_seq, 'PUBLISHED', clock_timestamp()
+           FROM stock_analysis_runs AS run
+          WHERE run.id = $2",
+    )
+    .bind(feed_id)
+    .bind(run_id)
+    .execute(&mut *tx)
+    .await
+    .expect("clone candidate feed");
+    sqlx::query(
+        "INSERT INTO candidate_feed_items
+             (feed_id, run_id, stock_analysis_snapshot_id, instrument_id, rank)
+         SELECT $1, $2, snapshot.id, snapshot.instrument_id, snapshot.rank
+           FROM stock_analysis_snapshots AS snapshot
+          WHERE snapshot.run_id = $2",
+    )
+    .bind(feed_id)
+    .bind(run_id)
+    .execute(&mut *tx)
+    .await
+    .expect("clone candidate feed items");
+    tx.commit().await.expect("candidate clone commits");
+    run_id
+}
+
+/// Add a KOSDAQ snapshot and a feed with the same five fixture instruments as
+/// KOSPI. The source rows are intentionally shared: only the immutable
+/// universe snapshot and run/feed identity differ, which is exactly what the
+/// multi-universe API must preserve.
+async fn seed_kosdaq_candidate_feed(h: &Harness, kospi_run_id: Uuid) -> Uuid {
+    sqlx::query(
+        "UPDATE data_entitlements
+            SET covered_datasets = covered_datasets || '[\"krx_kosdaq150_membership\"]'::jsonb,
+                updated_at = clock_timestamp()
+          WHERE status = 'ACTIVE'",
+    )
+    .execute(&h.owner_pool)
+    .await
+    .expect("enable KOSDAQ candidate entitlement");
+
+    let dataset_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO dataset_versions
+             (dataset_id, version, status, manifest_sha256, storage_path)
+         VALUES ('krx_kosdaq150_membership', 'candidate-http-kosdaq-universe',
+                 'READY', repeat('7', 64), 'db://candidate-http/kosdaq150')
+         RETURNING id",
+    )
+    .fetch_one(&h.owner_pool)
+    .await
+    .expect("seed KOSDAQ membership dataset");
+    let entitlement_id: Uuid = sqlx::query_scalar(
+        "SELECT universe_entitlement_id
+           FROM stock_analysis_runs
+          WHERE id = $1",
+    )
+    .bind(kospi_run_id)
+    .fetch_one(&h.owner_pool)
+    .await
+    .expect("read candidate entitlement");
+    let source_snapshot_id: Uuid = sqlx::query_scalar(
+        "SELECT universe_snapshot_id
+           FROM stock_analysis_runs
+          WHERE id = $1",
+    )
+    .bind(kospi_run_id)
+    .fetch_one(&h.owner_pool)
+    .await
+    .expect("read KOSPI snapshot");
+    let mut tx = h.owner_pool.begin().await.expect("KOSDAQ snapshot tx");
+    let kosdaq_snapshot_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO candidate_universe_snapshots (
+             index_id, as_of_date, dataset_version_id, manifest_sha256, provider,
+             entitlement_id, entitlement_date, license_ref, source_revision,
+             available_at, retrieved_at, member_count)
+         SELECT 'kosdaq150', source.as_of_date, $2, repeat('7', 64), source.provider,
+                $3, source.entitlement_date, 'krx-2026-01', 'fixture-kosdaq-universe-1',
+                source.available_at, source.retrieved_at, source.member_count
+           FROM candidate_universe_snapshots AS source
+          WHERE source.id = $1
+         RETURNING id",
+    )
+    .bind(source_snapshot_id)
+    .bind(dataset_id)
+    .bind(entitlement_id)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("seed KOSDAQ snapshot");
+    sqlx::query(
+        "INSERT INTO candidate_universe_members (
+             universe_snapshot_id, instrument_id, announced_at, effective_from,
+             effective_until, available_at, source_revision)
+         SELECT $2, member.instrument_id, member.announced_at, member.effective_from,
+                member.effective_until, member.available_at, 'fixture-kosdaq-universe-1'
+           FROM candidate_universe_members AS member
+          WHERE member.universe_snapshot_id = $1",
+    )
+    .bind(source_snapshot_id)
+    .bind(kosdaq_snapshot_id)
+    .execute(&mut *tx)
+    .await
+    .expect("seed KOSDAQ members");
+    tx.commit().await.expect("KOSDAQ snapshot commits");
+    clone_candidate_run(h, kospi_run_id, "kosdaq150", kosdaq_snapshot_id, 1).await
+}
+
+fn legacy_cursor_from_v2(v2: &str, run_id: Uuid) -> String {
+    let payload = v2.split_once('.').expect("v2 cursor payload").0;
+    let bytes = URL_SAFE_NO_PAD
+        .decode(payload)
+        .expect("decode v2 cursor payload");
+    let v2: serde_json::Value = serde_json::from_slice(&bytes).expect("v2 cursor JSON");
+    let legacy_criteria = json!({
+        "sectors": [],
+        "evidence_strength": [],
+        "min_total_score": null,
+        "min_flow_score": null,
+        "min_fundamental_score": null,
+        "min_technical_score": null,
+    });
+    let mut hasher = Sha256::new();
+    hasher.update(serde_json::to_vec(&legacy_criteria).expect("legacy criteria JSON"));
+    let cursor = json!({
+        "cursor_version": 1,
+        "run_id": run_id,
+        "criteria_sha256": hex::encode(hasher.finalize()),
+        "score": v2["after_score"].as_str().expect("v2 cursor score"),
+        "instrument_id": v2["after_instrument"]
+            .as_str()
+            .expect("v2 cursor instrument"),
+    });
+    let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&cursor).expect("legacy cursor JSON"));
+    let secret = *b"api24-cursor-secret-0123456789ab";
+    let mut mac = Hmac::<Sha256>::new_from_slice(&secret).expect("cursor HMAC key");
+    mac.update(payload.as_bytes());
+    let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+    format!("{payload}.{signature}")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -559,6 +795,7 @@ async fn credentialed_rolling_raw_reaches_real_http_and_exact_entitlement_gate()
         "krx_market_status",
         "krx_fundamentals",
         "krx_kospi200_membership",
+        "krx_kosdaq150_membership",
         "krx_sector_classification"
     ]))
     .bind(h.owner.user_id)
@@ -781,7 +1018,15 @@ async fn candidate_feed_analysis_screener_and_saved_screen_are_one_secure_surfac
     );
     let feed = Harness::body_json(response).await;
     assert_eq!(feed["state"], "READY");
+    assert_eq!(feed["universe"], "kospi200");
     assert_eq!(feed["items"].as_array().unwrap().len(), 5);
+    assert!(
+        feed["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["universe"] == "kospi200")
+    );
     assert!(feed["disclaimer"].as_str().unwrap().contains("확률"));
     assert_eq!(
         feed["dataset_pins"]["input_identity_sha256"],
@@ -816,7 +1061,9 @@ async fn candidate_feed_analysis_screener_and_saved_screen_are_one_secure_surfac
         .await;
     assert_eq!(status(&response), StatusCode::OK);
     let analysis = Harness::body_json(response).await;
+    assert_eq!(analysis["universe"], "kospi200");
     assert_eq!(analysis["analysis"]["instrument_id"], "200001.KRX");
+    assert_eq!(analysis["analysis"]["universe"], "kospi200");
     assert_eq!(
         analysis["analysis"]["fundamental_profile"],
         "candidate-non-financial-v1"
@@ -848,6 +1095,8 @@ async fn candidate_feed_analysis_screener_and_saved_screen_are_one_secure_surfac
     assert_eq!(status(&response), StatusCode::OK);
     let screened = Harness::body_json(response).await;
     assert_eq!(screened["run_id"], run_id.to_string());
+    assert_eq!(screened["universe"], "kospi200");
+    assert_eq!(screened["items"][0]["universe"], "kospi200");
     assert_eq!(screened["items"].as_array().unwrap().len(), 2);
     assert!(screened["next_cursor"].is_string());
 
@@ -920,11 +1169,9 @@ async fn candidate_feed_analysis_screener_and_saved_screen_are_one_secure_surfac
             })),
         )
         .await;
-    assert_eq!(status(&response), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        Harness::error_code(&Harness::body_json(response).await),
-        "INVALID_PARAMETER"
-    );
+    assert_eq!(status(&response), StatusCode::OK);
+    let latest_by_date = Harness::body_json(response).await;
+    assert_eq!(latest_by_date["run_id"], run_id.to_string());
 
     let response = h
         .post(
@@ -946,6 +1193,8 @@ async fn candidate_feed_analysis_screener_and_saved_screen_are_one_secure_surfac
         .await;
     assert_eq!(status(&response), StatusCode::CREATED);
     let saved = Harness::body_json(response).await;
+    assert_eq!(saved["criteria_schema_version"], 2);
+    assert_eq!(saved["criteria"]["universes"], json!(["kospi200"]));
     let screen_id = saved["id"].as_str().expect("screen id");
     let response = h
         .get(
@@ -965,6 +1214,464 @@ async fn candidate_feed_analysis_screener_and_saved_screen_are_one_secure_surfac
     assert_eq!(status(&response), StatusCode::FORBIDDEN);
     let denied = Harness::body_json(response).await;
     assert_eq!(Harness::error_code(&denied), "DATA_ENTITLEMENT_REQUIRED");
+
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn candidate_explicit_kosdaq_feed_is_scoped_without_kospi_fallback() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let kospi_run_id = seed_published_candidate_feed(&h).await;
+
+    // A missing KOSDAQ feed must stay missing even though KOSPI is available.
+    let response = h
+        .get(
+            "/api/v1/candidates/feed/latest?universe=kosdaq150",
+            Some(&h.member),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::NOT_FOUND);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(response).await),
+        "RESOURCE_NOT_FOUND"
+    );
+
+    let kosdaq_run_id = seed_kosdaq_candidate_feed(&h, kospi_run_id).await;
+    let response = h
+        .get(
+            "/api/v1/candidates/feed/latest?universe=kosdaq150",
+            Some(&h.member),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    let feed = Harness::body_json(response).await;
+    assert_eq!(feed["universe"], "kosdaq150");
+    assert_eq!(feed["items"].as_array().unwrap().len(), 5);
+    assert!(feed["items"].as_array().unwrap().iter().all(|item| {
+        item["universe"] == "kosdaq150" && item["run_id"] == kosdaq_run_id.to_string()
+    }));
+
+    let response = h
+        .get(
+            "/api/v1/stocks/200001.KRX/analysis?date=2026-08-13&universe=kosdaq150",
+            Some(&h.member),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    let analysis = Harness::body_json(response).await;
+    assert_eq!(analysis["universe"], "kosdaq150");
+    assert_eq!(analysis["analysis"]["universe"], "kosdaq150");
+    assert_eq!(analysis["analysis"]["run_id"], kosdaq_run_id.to_string());
+
+    let response = h
+        .get("/api/v1/candidates/feed/latest", Some(&h.member))
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    assert_eq!(Harness::body_json(response).await["universe"], "kospi200");
+
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn candidate_both_universe_screener_preserves_duplicates_and_registry_order() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let kospi_run_id = seed_published_candidate_feed(&h).await;
+    let kosdaq_run_id = seed_kosdaq_candidate_feed(&h, kospi_run_id).await;
+    let body = json!({
+        "criteria": {
+            "universes": ["kosdaq150", "kospi200"],
+            "sectors": [],
+            "evidence_strength": [],
+            "min_total_score": null,
+            "min_flow_score": null,
+            "min_fundamental_score": null,
+            "min_technical_score": null
+        },
+        "limit": 20
+    });
+    let response = h
+        .send(
+            "POST",
+            "/api/v1/screener/query",
+            Some(&h.member),
+            false,
+            Some("both-universes-registry-order"),
+            None,
+            Some(body),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    let result = Harness::body_json(response).await;
+    assert_eq!(result["universe"], serde_json::Value::Null);
+    assert_eq!(result["universes"], json!(["kospi200", "kosdaq150"]));
+    assert_eq!(result["run_ids"][0]["run_id"], kospi_run_id.to_string());
+    assert_eq!(result["run_ids"][1]["run_id"], kosdaq_run_id.to_string());
+    let items = result["items"].as_array().expect("screener items");
+    assert_eq!(items.len(), 10);
+    assert!(items[..5].iter().all(|item| item["universe"] == "kospi200"));
+    assert!(
+        items[5..]
+            .iter()
+            .all(|item| item["universe"] == "kosdaq150")
+    );
+    for instrument in INSTRUMENTS {
+        let rows = items
+            .iter()
+            .filter(|item| item["instrument_id"] == instrument)
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 2, "duplicate instrument must remain two rows");
+        assert_eq!(rows[0]["universe"], "kospi200");
+        assert_eq!(rows[1]["universe"], "kosdaq150");
+    }
+
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn screener_v2_cursor_freezes_run_set_across_correction_and_rejects_tampering() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let kospi_run_id = seed_published_candidate_feed(&h).await;
+    let kosdaq_run_id = seed_kosdaq_candidate_feed(&h, kospi_run_id).await;
+    let criteria = json!({
+        "universes": ["kospi200", "kosdaq150"],
+        "sectors": [],
+        "evidence_strength": [],
+        "min_total_score": null,
+        "min_flow_score": null,
+        "min_fundamental_score": null,
+        "min_technical_score": null
+    });
+    let response = h
+        .send(
+            "POST",
+            "/api/v1/screener/query",
+            Some(&h.member),
+            false,
+            Some("v2-cursor-page-1"),
+            None,
+            Some(json!({ "criteria": criteria, "limit": 2 })),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    let first_page = Harness::body_json(response).await;
+    let cursor = first_page["next_cursor"]
+        .as_str()
+        .expect("v2 next cursor")
+        .to_owned();
+    assert_eq!(first_page["run_ids"][0]["run_id"], kospi_run_id.to_string());
+    assert_eq!(
+        first_page["run_ids"][1]["run_id"],
+        kosdaq_run_id.to_string()
+    );
+
+    let mut tampered = cursor.clone();
+    let last = tampered.pop().expect("cursor signature");
+    tampered.push(if last == 'A' { 'B' } else { 'A' });
+    let response = h
+        .send(
+            "POST",
+            "/api/v1/screener/query",
+            Some(&h.member),
+            false,
+            Some("v2-cursor-tampered"),
+            None,
+            Some(json!({
+                "criteria": {
+                    "universes": ["kospi200", "kosdaq150"],
+                    "sectors": [], "evidence_strength": [],
+                    "min_total_score": null, "min_flow_score": null,
+                    "min_fundamental_score": null, "min_technical_score": null
+                },
+                "cursor": tampered,
+                "limit": 2
+            })),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(response).await),
+        "INVALID_CURSOR"
+    );
+
+    let kospi_snapshot_id: Uuid =
+        sqlx::query_scalar("SELECT universe_snapshot_id FROM stock_analysis_runs WHERE id = $1")
+            .bind(kospi_run_id)
+            .fetch_one(&h.owner_pool)
+            .await
+            .expect("read KOSPI snapshot for correction");
+    let corrected_run_id =
+        clone_candidate_run(&h, kospi_run_id, "kospi200", kospi_snapshot_id, 2).await;
+
+    // A fresh query resolves the correction, proving it is the active run.
+    let response = h
+        .send(
+            "POST",
+            "/api/v1/screener/query",
+            Some(&h.member),
+            false,
+            Some("v2-cursor-fresh-after-correction"),
+            None,
+            Some(json!({
+                "criteria": {
+                    "universes": ["kospi200", "kosdaq150"],
+                    "sectors": [], "evidence_strength": [],
+                    "min_total_score": null, "min_flow_score": null,
+                    "min_fundamental_score": null, "min_technical_score": null
+                },
+                "limit": 2
+            })),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    let fresh = Harness::body_json(response).await;
+    assert_eq!(fresh["run_ids"][0]["run_id"], corrected_run_id.to_string());
+
+    // The signed v2 capability still reads the original KOSPI run, even after
+    // its feed has been superseded by the correction.
+    let response = h
+        .send(
+            "POST",
+            "/api/v1/screener/query",
+            Some(&h.member),
+            false,
+            Some("v2-cursor-page-2-frozen"),
+            None,
+            Some(json!({
+                "criteria": {
+                    "universes": ["kospi200", "kosdaq150"],
+                    "sectors": [], "evidence_strength": [],
+                    "min_total_score": null, "min_flow_score": null,
+                    "min_fundamental_score": null, "min_technical_score": null
+                },
+                "cursor": cursor,
+                "limit": 2
+            })),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    let page_two = Harness::body_json(response).await;
+    assert_eq!(page_two["run_ids"][0]["run_id"], kospi_run_id.to_string());
+    assert_eq!(page_two["run_ids"][1]["run_id"], kosdaq_run_id.to_string());
+    assert!(
+        page_two["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["run_id"] != corrected_run_id.to_string())
+    );
+
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn screener_legacy_omitted_universe_and_v1_cursor_remain_compatible() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let kospi_run_id = seed_published_candidate_feed(&h).await;
+    let criteria = json!({
+        "sectors": [],
+        "evidence_strength": [],
+        "min_total_score": null,
+        "min_flow_score": null,
+        "min_fundamental_score": null,
+        "min_technical_score": null
+    });
+    let response = h
+        .send(
+            "POST",
+            "/api/v1/screener/query",
+            Some(&h.member),
+            false,
+            Some("legacy-omitted-universe"),
+            None,
+            Some(json!({ "criteria": criteria, "limit": 1 })),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    let first = Harness::body_json(response).await;
+    assert_eq!(first["universe"], "kospi200");
+    assert_eq!(first["universes"], json!(["kospi200"]));
+    let v2 = first["next_cursor"].as_str().expect("legacy v2 cursor");
+    let v1 = legacy_cursor_from_v2(v2, kospi_run_id);
+
+    let response = h
+        .send(
+            "POST",
+            "/api/v1/screener/query",
+            Some(&h.member),
+            false,
+            Some("legacy-v1-cursor"),
+            None,
+            Some(json!({
+                "criteria": {
+                    "sectors": [], "evidence_strength": [],
+                    "min_total_score": null, "min_flow_score": null,
+                    "min_fundamental_score": null, "min_technical_score": null
+                },
+                "cursor": v1,
+                "limit": 1
+            })),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    let second = Harness::body_json(response).await;
+    assert_eq!(second["universe"], "kospi200");
+    assert_eq!(second["items"][0]["run_id"], kospi_run_id.to_string());
+
+    let response = h
+        .send(
+            "POST",
+            "/api/v1/screener/query",
+            Some(&h.member),
+            false,
+            Some("legacy-v1-explicit-universe-rejected"),
+            None,
+            Some(json!({
+                "criteria": {
+                    "universes": ["kospi200"],
+                    "sectors": [], "evidence_strength": [],
+                    "min_total_score": null, "min_flow_score": null,
+                    "min_fundamental_score": null, "min_technical_score": null
+                },
+                "cursor": v1,
+                "limit": 1
+            })),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(response).await),
+        "INVALID_CURSOR"
+    );
+
+    h.teardown().await;
+}
+
+#[tokio::test]
+async fn screener_rejects_invalid_universe_sets_and_saved_v1_reads_as_kospi() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let kospi_run_id = seed_published_candidate_feed(&h).await;
+    for (label, universes) in [
+        ("empty", json!([])),
+        ("duplicate", json!(["kospi200", "kospi200"])),
+        ("unknown", json!(["nasdaq100"])),
+    ] {
+        let response = h
+            .send(
+                "POST",
+                "/api/v1/screener/query",
+                Some(&h.member),
+                false,
+                Some(&format!("invalid-universes-{label}")),
+                None,
+                Some(json!({
+                    "criteria": {
+                        "universes": universes,
+                        "sectors": [], "evidence_strength": [],
+                        "min_total_score": null, "min_flow_score": null,
+                        "min_fundamental_score": null, "min_technical_score": null
+                    }
+                })),
+            )
+            .await;
+        assert_eq!(status(&response), StatusCode::BAD_REQUEST, "{label}");
+        assert_eq!(
+            Harness::error_code(&Harness::body_json(response).await),
+            "INVALID_PARAMETER",
+            "{label}"
+        );
+    }
+    let response = h
+        .send(
+            "POST",
+            "/api/v1/screener/query",
+            Some(&h.member),
+            false,
+            Some("run-id-with-both-universes"),
+            None,
+            Some(json!({
+                "run_id": kospi_run_id,
+                "criteria": {
+                    "universes": ["kospi200", "kosdaq150"],
+                    "sectors": [], "evidence_strength": [],
+                    "min_total_score": null, "min_flow_score": null,
+                    "min_fundamental_score": null, "min_technical_score": null
+                }
+            })),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(response).await),
+        "INVALID_PARAMETER"
+    );
+
+    let legacy_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO screener_saved_screens
+             (id, owner_user_id, name, criteria_schema_version, criteria_json)
+         VALUES ($1, $2, 'Legacy KOSPI screen', 1,
+                 '{\"sectors\":[],\"evidence_strength\":[],
+                   \"min_total_score\":null,\"min_flow_score\":null,
+                   \"min_fundamental_score\":null,\"min_technical_score\":null}'::jsonb)",
+    )
+    .bind(legacy_id)
+    .bind(h.owner.user_id)
+    .execute(&h.owner_pool)
+    .await
+    .expect("seed saved-screen v1");
+    let response = h
+        .get(
+            &format!("/api/v1/screener/screens/{legacy_id}"),
+            Some(&h.owner),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::OK);
+    let legacy = Harness::body_json(response).await;
+    assert_eq!(legacy["criteria_schema_version"], 1);
+    assert_eq!(legacy["criteria"]["universes"], json!(["kospi200"]));
+    let stored_legacy: serde_json::Value =
+        sqlx::query_scalar("SELECT criteria_json FROM screener_saved_screens WHERE id = $1")
+            .bind(legacy_id)
+            .fetch_one(&h.owner_pool)
+            .await
+            .expect("read saved-screen v1");
+    assert!(stored_legacy.get("universes").is_none());
+
+    let response = h
+        .post(
+            "/api/v1/screener/screens",
+            Some(&h.owner),
+            true,
+            json!({
+                "name": "Explicit KOSDAQ v2 screen",
+                "criteria": {
+                    "universes": ["kosdaq150"],
+                    "sectors": [], "evidence_strength": [],
+                    "min_total_score": null, "min_flow_score": null,
+                    "min_fundamental_score": null, "min_technical_score": null
+                }
+            }),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::CREATED);
+    let saved = Harness::body_json(response).await;
+    assert_eq!(saved["criteria_schema_version"], 2);
+    assert_eq!(saved["criteria"]["universes"], json!(["kosdaq150"]));
 
     h.teardown().await;
 }

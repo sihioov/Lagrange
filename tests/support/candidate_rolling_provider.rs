@@ -219,17 +219,20 @@ impl RollingCandidateProvider {
                 }
                 json!({"fundamentals": fundamentals})
             }
-            ResponseKind::IndexMembership => json!({
-                "memberships": ROLLING_MEMBERS.iter().enumerate().map(|(index, instrument)| json!({
-                    "index_id": "kospi200",
-                    "instrument": instrument,
-                    "announced_at": if index == ROLLING_MEMBERS.len() - 1 { "2026-08-14T00:00:00Z" } else { "2020-01-01T00:00:00Z" },
-                    "effective_from": if index == ROLLING_MEMBERS.len() - 1 { "2026-08-14" } else { "2020-01-02" },
-                    "effective_until": null,
-                    "available_at": if index == ROLLING_MEMBERS.len() - 1 { "2026-08-14T00:05:00Z" } else { "2020-01-01T00:05:00Z" },
-                    "source_revision": "rolling-membership-v1"
-                })).collect::<Vec<_>>()
-            }),
+            ResponseKind::IndexMembership => {
+                let memberships = ["kospi200", "kosdaq150"].into_iter().flat_map(|universe| {
+                    ROLLING_MEMBERS.iter().enumerate().map(move |(index, instrument)| json!({
+                        "index_id": universe,
+                        "instrument": instrument,
+                        "announced_at": if index == ROLLING_MEMBERS.len() - 1 { "2026-08-14T00:00:00Z" } else { "2020-01-01T00:00:00Z" },
+                        "effective_from": if index == ROLLING_MEMBERS.len() - 1 { "2026-08-14" } else { "2020-01-02" },
+                        "effective_until": null,
+                        "available_at": if index == ROLLING_MEMBERS.len() - 1 { "2026-08-14T00:05:00Z" } else { "2020-01-01T00:05:00Z" },
+                        "source_revision": format!("rolling-{universe}-membership-v1")
+                    }))
+                }).collect::<Vec<_>>();
+                json!({ "memberships": memberships })
+            }
             ResponseKind::SectorClassification => json!({
                 "sectors": ROLLING_MEMBERS.iter().enumerate().map(|(index, instrument)| json!({
                     "taxonomy_id": "krx-sector",

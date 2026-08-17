@@ -63,6 +63,7 @@ async fn seed_candidate_entitlement(pool: &PgPool) {
         "krx_market_status",
         "krx_fundamentals",
         "krx_kospi200_membership",
+        "krx_kosdaq150_membership",
         "krx_sector_classification"
     ]))
     .execute(pool)

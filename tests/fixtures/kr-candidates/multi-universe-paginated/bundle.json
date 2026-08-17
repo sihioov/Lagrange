@@ -5,7 +5,7 @@
   "source": "synthetic",
   "date": "2026-08-14",
   "simulate": null,
-  "note": "Fabricated candidate-source contract fixture. It contains no licensed KRX values and cannot satisfy production readiness.",
+  "note": "Synthetic dual-universe candidate contract fixture. It is QA-only and cannot satisfy production readiness.",
   "responses": [
     {
       "kind": "investor_flow",
@@ -30,9 +30,16 @@
     },
     {
       "kind": "index_membership",
-      "file": "index-membership-response.json",
+      "file": "index-membership-kospi200-page-01.json",
       "endpoint": "krx.synthetic.index-membership.v1",
-      "query": [["index", "all"], ["date", "2026-08-14"]],
+      "query": [["index", "kospi200"], ["date", "2026-08-14"], ["page", "1"]],
+      "headers": [["X-Data-License", "redacted"]]
+    },
+    {
+      "kind": "index_membership",
+      "file": "index-membership-kosdaq150-page-01.json",
+      "endpoint": "krx.synthetic.index-membership.v1",
+      "query": [["index", "kosdaq150"], ["date", "2026-08-14"], ["page", "1"]],
       "headers": [["X-Data-License", "redacted"]]
     },
     {

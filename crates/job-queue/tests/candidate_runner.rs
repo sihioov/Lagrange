@@ -17,8 +17,8 @@ use common::ScratchDb;
 use domain::{ContentHash, DatasetId, InstrumentId, TradingDate, UtcTimestamp};
 use job_queue::candidate::{
     CandidateOutcome, CandidateRunnerConfig, CandidateRunnerPaths, CandidateScheduleError,
-    CandidateScheduleRequest, DatasetSchedulePin, run_once, schedule_candidate_run,
-    schedule_latest_candidate_run,
+    CandidateScheduleRequest, CandidateUniverseKey, DatasetSchedulePin, run_once,
+    schedule_candidate_run, schedule_latest_candidate_run, schedule_latest_candidate_runs,
 };
 use job_queue::{JobQueue, QueueConfig};
 use market_data::curate::schema::{read_adjusted_bars, read_bars, write_adjusted_bars, write_bars};
@@ -293,6 +293,7 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
     let flow_hash = "c".repeat(64);
     let fundamental_hash = "d".repeat(64);
     let universe_hash = "e".repeat(64);
+    let kosdaq_universe_hash = "1".repeat(64);
     let sector_hash = "f".repeat(64);
     let status_id = insert_dataset(
         &db.pool,
@@ -324,6 +325,14 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
         "fixture-universe-v1",
         &universe_hash,
         "db://candidate/universe",
+    )
+    .await;
+    let kosdaq_universe_dataset_id = insert_dataset(
+        &db.pool,
+        "krx_kosdaq150_membership",
+        "fixture-kosdaq150-v1",
+        &kosdaq_universe_hash,
+        "db://candidate/kosdaq150-universe",
     )
     .await;
     let sector_dataset_id = insert_dataset(
@@ -360,6 +369,7 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
         "krx_investor_flows",
         "krx_fundamentals",
         "krx_kospi200_membership",
+        "krx_kosdaq150_membership",
         "krx_sector_classification"
     ]))
     .execute(&db.pool)
@@ -449,10 +459,29 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
             })
             .collect(),
     });
+    let kosdaq_memberships = CandidateDocument::IndexMembership(IndexMembershipDocument {
+        memberships: MEMBERS
+            .iter()
+            .map(|member| IndexMembershipObservation {
+                index_id: "kosdaq150".into(),
+                instrument: InstrumentId::parse(member).unwrap(),
+                announced_at: timestamp("2019-12-01T00:00:00Z"),
+                effective_from: date("2020-01-01"),
+                effective_until: None,
+                available_at: timestamp("2019-12-01T00:01:00Z"),
+                source_revision: "fixture-kosdaq-membership-1".into(),
+            })
+            .collect(),
+    });
     let universe_pin = pin(
         "krx_kospi200_membership",
         "fixture-universe-v1",
         &universe_hash,
+    );
+    let kosdaq_universe_pin = pin(
+        "krx_kosdaq150_membership",
+        "fixture-kosdaq150-v1",
+        &kosdaq_universe_hash,
     );
     let sectors = CandidateDocument::SectorClassification(SectorDocument {
         sectors: MEMBERS
@@ -569,6 +598,7 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
         .expect("begin exact source Raw ledger");
     for (kind, dataset_version_id) in [
         ("index_membership", universe_dataset_id),
+        ("index_membership", kosdaq_universe_dataset_id),
         ("sector_classification", sector_dataset_id),
         ("market_status", status_id),
         ("investor_flow", flow_id),
@@ -592,6 +622,16 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
             cutoff_at,
             pin: &universe_pin,
             document: &memberships,
+        },
+        CandidateSourcePublication {
+            raw_batch_id,
+            raw_manifest_sha256: &raw_manifest_sha256,
+            fetch_mode: market_data::FetchMode::Synthetic,
+            dataset_version_id: kosdaq_universe_dataset_id,
+            as_of,
+            cutoff_at,
+            pin: &kosdaq_universe_pin,
+            document: &kosdaq_memberships,
         },
         CandidateSourcePublication {
             raw_batch_id,
@@ -725,6 +765,14 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
     .fetch_one(&db.pool)
     .await
     .expect("universe snapshot id");
+    let kosdaq_universe_snapshot_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM candidate_universe_snapshots
+          WHERE dataset_version_id=$1 AND index_id='kosdaq150'",
+    )
+    .bind(kosdaq_universe_dataset_id)
+    .fetch_one(&db.pool)
+    .await
+    .expect("KOSDAQ universe snapshot id");
     let sector_version_id: Uuid =
         sqlx::query_scalar("SELECT id FROM candidate_sector_versions WHERE dataset_version_id=$1")
             .bind(sector_dataset_id)
@@ -732,6 +780,7 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
             .await
             .expect("sector version id");
     let request = CandidateScheduleRequest {
+        universe_key: CandidateUniverseKey::Kospi200,
         as_of_date: NaiveDate::parse_from_str(AS_OF, "%Y-%m-%d").unwrap(),
         cutoff_at: cutoff(),
         scoring_config_version: scoring.0,
@@ -831,6 +880,54 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
     let scheduled_a = scheduled_a.expect("first concurrent schedule");
     let scheduled_b = scheduled_b.expect("second concurrent schedule");
     assert_eq!(scheduled_a, scheduled_b, "schedule replay must be exact");
+
+    // RED: the universe identity is derived from the snapshot, not trusted
+    // from a caller label.  A KOSPI snapshot relabeled as KOSDAQ must fail.
+    let mut mismatched_request = request.clone();
+    mismatched_request.universe_key = CandidateUniverseKey::Kosdaq150;
+    let mismatched = schedule_candidate_run(&worker_pool, &mismatched_request)
+        .await
+        .expect_err("a KOSPI snapshot cannot be relabeled as KOSDAQ");
+    assert!(matches!(mismatched, CandidateScheduleError::Invalid(_)));
+
+    // RED: before migration 0045/source multi-universe support, the exact
+    // KOSDAQ snapshot below cannot be scheduled independently.
+    let mut kosdaq_request = request.clone();
+    kosdaq_request.universe_key = CandidateUniverseKey::Kosdaq150;
+    kosdaq_request.universe_snapshot_id = kosdaq_universe_snapshot_id;
+    let kosdaq = schedule_candidate_run(&worker_pool, &kosdaq_request)
+        .await
+        .expect("same-date KOSDAQ schedule should be independent");
+    assert_eq!(kosdaq.universe_key, CandidateUniverseKey::Kosdaq150);
+    assert_ne!(
+        scheduled_a.run_id, kosdaq.run_id,
+        "same-date runs must be scoped by universe"
+    );
+    let batch = schedule_latest_candidate_runs(
+        &worker_pool,
+        DateTime::parse_from_rfc3339("2021-01-29T17:00:00+09:00")
+            .expect("batch scheduling clock")
+            .fixed_offset(),
+    )
+    .await
+    .expect("registry-order multi-universe schedule");
+    assert!(
+        batch.failures.is_empty(),
+        "both fixture universes are ready"
+    );
+    assert_eq!(
+        batch
+            .scheduled
+            .iter()
+            .map(|report| report.universe_key)
+            .collect::<Vec<_>>(),
+        vec![
+            CandidateUniverseKey::Kospi200,
+            CandidateUniverseKey::Kosdaq150
+        ]
+    );
+    assert_eq!(batch.scheduled[0].run_id, scheduled_a.run_id);
+    assert_eq!(batch.scheduled[1].run_id, kosdaq.run_id);
 
     let queue_config = QueueConfig {
         lease: Duration::from_secs(30),
@@ -932,6 +1029,34 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
     .expect("unknown run has no attribution");
     assert_eq!(foreign_count, 0);
     app_pool.close().await;
+    let kosdaq_outcome = run_once(
+        &worker_pool,
+        &queue,
+        "candidate-integration-worker",
+        &CandidateRunnerPaths {
+            data_root: dataset.root.clone(),
+        },
+        &runner_config,
+    )
+    .await
+    .expect("KOSDAQ candidate runner completes");
+    assert_eq!(
+        kosdaq_outcome,
+        CandidateOutcome::Succeeded {
+            job_id: kosdaq.job_id,
+            run_id: kosdaq.run_id,
+        }
+    );
+    let kosdaq_feed: (String, String, i64) = sqlx::query_as(
+        "SELECT feed.status, feed.universe_key,
+                (SELECT count(*) FROM candidate_feed_items WHERE feed_id=feed.id)
+           FROM candidate_feed_snapshots AS feed WHERE feed.run_id=$1",
+    )
+    .bind(kosdaq.run_id)
+    .fetch_one(&db.pool)
+    .await
+    .expect("published KOSDAQ feed");
+    assert_eq!(kosdaq_feed, ("PUBLISHED".into(), "kosdaq150".into(), 5));
     assert_eq!(
         run_once(
             &worker_pool,
@@ -976,6 +1101,7 @@ async fn rolling_raw_sources_curate_seal_schedule_run_and_publish_without_source
         "krx_market_status",
         "krx_fundamentals",
         "krx_kospi200_membership",
+        "krx_kosdaq150_membership",
         "krx_sector_classification"
     ]))
     .execute(&db.pool)

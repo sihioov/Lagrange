@@ -23,7 +23,7 @@ test("daily Top 5 links to deterministic deep analysis without forecast copy", a
   await expect(feed).toContainText("Point-in-time provenance");
   await feed.getByRole("link", { name: /Synthetic 1/ }).click();
 
-  await expect(page).toHaveURL(/\/stocks\/005930\.KRX\?date=2026-08-14$/);
+  await expect(page).toHaveURL(/\/stocks\/005930\.KRX\?date=2026-08-14&universe=kospi200$/);
   const analysis = page.getByRole("region", { name: "Synthetic 1" });
   await expect(analysis).toContainText("Financial-company profile");
   await expect(analysis).toContainText("Foreign & institution flow");

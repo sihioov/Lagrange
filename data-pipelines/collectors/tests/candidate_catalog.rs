@@ -4,18 +4,20 @@ mod candidate_rolling_provider;
 #[allow(dead_code)]
 mod common;
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, NaiveTime, Utc};
 use collectors::{
-    CandidateInstrumentCatalog, CandidatePricePublication, HealthFailure,
-    PostgresCandidateSourceSink, PostgresPublicationSink, PublishOutcome, WorkerError,
-    candidate_healthcheck, prepare_candidate_batch, publish_candidate_batch,
-    recover_candidate_batches,
+    CandidateDatasetBinding, CandidateInstrumentCatalog, CandidatePipelineError,
+    CandidatePricePublication, HealthFailure, PostgresCandidateSourceSink, PostgresPublicationSink,
+    PublishOutcome, WorkerError, candidate_healthcheck, prepare_candidate_batch,
+    publish_candidate_batch, recover_candidate_batches,
 };
 use domain::{DatasetId, TradingDate, UtcTimestamp};
 use market_data::{
-    CANDIDATE_RESPONSE_KINDS, CurateRequest, CurateStore, FetchMode, IngestRequest, MARKET_KR,
-    RawStore, curate_batch, curation_inputs_from_raw, ingest_bundle, ingest_bundle_with_kinds,
-    price_curation_evidence,
+    CANDIDATE_RESPONSE_KINDS, CandidateDocument, CurateRequest, CurateStore, FetchMode,
+    IngestRequest, KrxProvider, MARKET_KR, RawStore, RecordedBundle, ResponseKind, curate_batch,
+    curation_inputs_from_raw, ingest_bundle, ingest_bundle_with_kinds, price_curation_evidence,
 };
 use serde_json::json;
 use sqlx::PgPool;
@@ -23,6 +25,141 @@ use uuid::Uuid;
 
 use candidate_rolling_provider::RollingCandidateProvider;
 use common::ScratchDb;
+
+fn candidate_fixture(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures")
+        .join(name)
+}
+
+fn dual_universe_outcome() -> market_data::IngestOutcome {
+    let provider = KrxProvider::synthetic(
+        RecordedBundle::open(candidate_fixture("kr-candidates/multi-universe-paginated"))
+            .expect("dual-universe fixture opens"),
+    );
+    let root = tempfile::tempdir().expect("candidate Raw root");
+    let store = RawStore::new(root.path());
+    ingest_bundle_with_kinds(
+        &store,
+        &provider,
+        &IngestRequest::new(
+            MARKET_KR.to_owned(),
+            TradingDate::parse("2026-08-14").expect("candidate date"),
+            UtcTimestamp::parse_rfc3339("2026-08-14T07:00:00Z").expect("candidate cutoff"),
+        ),
+        Some("synthetic-dual-universe-candidate"),
+        &CANDIDATE_RESPONSE_KINDS,
+    )
+    .expect("dual-universe Raw delivery stores")
+}
+
+fn candidate_binding(
+    kind: ResponseKind,
+    dataset_id: &str,
+    ordinal: u128,
+    dataset_version: &str,
+) -> CandidateDatasetBinding {
+    CandidateDatasetBinding {
+        kind,
+        dataset_version_id: uuid::Uuid::from_u128(ordinal),
+        entitlement_id: uuid::Uuid::from_u128(42),
+        license_ref: "synthetic-dual-universe-candidate".to_owned(),
+        dataset_id: dataset_id.to_owned(),
+        dataset_version: dataset_version.to_owned(),
+        manifest_sha256: format!("{:x}", ordinal).repeat(64),
+        reused_existing: false,
+    }
+}
+
+fn dual_universe_bindings(include_kosdaq: bool) -> Vec<CandidateDatasetBinding> {
+    let mut bindings = vec![
+        candidate_binding(
+            ResponseKind::InvestorFlow,
+            "krx_investor_flows",
+            1,
+            "synthetic-flow-v1",
+        ),
+        candidate_binding(
+            ResponseKind::MarketStatus,
+            "krx_market_status",
+            2,
+            "synthetic-status-v1",
+        ),
+        candidate_binding(
+            ResponseKind::Fundamentals,
+            "krx_fundamentals",
+            3,
+            "synthetic-fundamentals-v1",
+        ),
+        candidate_binding(
+            ResponseKind::IndexMembership,
+            "krx_kospi200_membership",
+            4,
+            "synthetic-kospi-v1",
+        ),
+        candidate_binding(
+            ResponseKind::SectorClassification,
+            "krx_sector_classification",
+            5,
+            "synthetic-sector-v1",
+        ),
+    ];
+    if include_kosdaq {
+        bindings.push(candidate_binding(
+            ResponseKind::IndexMembership,
+            "krx_kosdaq150_membership",
+            6,
+            "synthetic-kosdaq-v1",
+        ));
+    }
+    bindings
+}
+
+#[test]
+fn dual_membership_pages_require_canonical_index_to_dataset_partition_bindings() {
+    let prepared = prepare_candidate_batch(
+        &dual_universe_outcome(),
+        TradingDate::parse("2026-08-14").expect("candidate date"),
+        UtcTimestamp::parse_rfc3339("2026-08-14T07:00:00Z").expect("candidate cutoff"),
+        &dual_universe_bindings(true),
+    )
+    .expect("each canonical membership partition has its own binding identity");
+    assert_eq!(prepared.sources.len(), CANDIDATE_RESPONSE_KINDS.len() + 1);
+
+    let mut partition_datasets = BTreeMap::new();
+    for source in prepared.sources {
+        let CandidateDocument::IndexMembership(document) = source.document else {
+            continue;
+        };
+        for row in document.memberships {
+            partition_datasets.insert(row.index_id, source.pin.dataset_id.clone());
+        }
+    }
+    assert_eq!(
+        partition_datasets,
+        BTreeMap::from([
+            (
+                "kosdaq150".to_owned(),
+                "krx_kosdaq150_membership".to_owned()
+            ),
+            ("kospi200".to_owned(), "krx_kospi200_membership".to_owned()),
+        ])
+    );
+}
+
+#[test]
+fn missing_membership_partition_cannot_prepare_a_candidate_batch() {
+    let result = prepare_candidate_batch(
+        &dual_universe_outcome(),
+        TradingDate::parse("2026-08-14").expect("candidate date"),
+        UtcTimestamp::parse_rfc3339("2026-08-14T07:00:00Z").expect("candidate cutoff"),
+        &dual_universe_bindings(false),
+    );
+    assert!(
+        matches!(result, Err(CandidatePipelineError::InvalidRaw(_))),
+        "every enabled membership partition is required"
+    );
+}
 
 async fn open_status_origin(
     pool: &PgPool,
@@ -124,6 +261,7 @@ async fn typed_status_natural_key_is_serialized_across_datasets() {
         "krx_market_status",
         "krx_fundamentals",
         "krx_kospi200_membership",
+        "krx_kosdaq150_membership",
         "krx_sector_classification"
     ]))
     .execute(&db.supervisor)
@@ -299,6 +437,7 @@ async fn research_writer_catalogs_exact_raw_sources_without_broad_dataset_dml() 
         "krx_market_status",
         "krx_fundamentals",
         "krx_kospi200_membership",
+        "krx_kosdaq150_membership",
         "krx_sector_classification"
     ]))
     .execute(&db.supervisor)
@@ -322,7 +461,7 @@ async fn research_writer_catalogs_exact_raw_sources_without_broad_dataset_dml() 
         .catalog_candidate_batch(&outcome)
         .await
         .expect("narrow source catalog");
-    assert_eq!(bindings.len(), 5);
+    assert_eq!(bindings.len(), 6);
     let logical_paths: Vec<String> = sqlx::query_scalar(
         "SELECT storage_path FROM dataset_versions
           WHERE dataset_id LIKE 'krx_%' AND dataset_id <> 'krx_eod_bars'
@@ -331,7 +470,7 @@ async fn research_writer_catalogs_exact_raw_sources_without_broad_dataset_dml() 
     .fetch_all(&db.supervisor)
     .await
     .expect("logical candidate catalog paths");
-    assert_eq!(logical_paths.len(), 5);
+    assert_eq!(logical_paths.len(), 6);
     assert!(
         logical_paths
             .iter()
@@ -1228,6 +1367,7 @@ async fn research_writer_catalogs_exact_raw_sources_without_broad_dataset_dml() 
         current_missing,
         WorkerError::Unhealthy {
             reason: HealthFailure::NoCandidatePublication
+                | HealthFailure::CandidateUniverseUnavailable
         }
     ));
     let wrong_root = tempfile::tempdir().expect("wrong curated root");

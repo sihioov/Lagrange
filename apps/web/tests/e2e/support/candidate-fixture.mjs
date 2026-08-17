@@ -1,5 +1,7 @@
 const RUN_ID = "00000000-0000-4000-8000-000000000501";
+const KOSDAQ_RUN_ID = "00000000-0000-4000-8000-000000000511";
 const FEED_ID = "00000000-0000-4000-8000-000000000502";
+const KOSDAQ_FEED_ID = "00000000-0000-4000-8000-000000000512";
 const SCREEN_ID = "00000000-0000-4000-8000-000000000801";
 const AS_OF = "2026-08-14";
 const SHA = "a".repeat(64);
@@ -14,11 +16,12 @@ function idFor(scenario, baseId) {
   return index === 1 ? baseId : `${baseId.slice(0, -4)}${index}${baseId.slice(-3)}`;
 }
 
-function analysis(index) {
+function analysis(index, universe = "kospi200") {
   const instrument = `${String(5930 + index).padStart(6, "0")}.KRX`;
   return {
     analysis_id: `00000000-0000-4000-8000-${String(600 + index).padStart(12, "0")}`,
-    run_id: RUN_ID,
+    run_id: universe === "kospi200" ? RUN_ID : KOSDAQ_RUN_ID,
+    universe,
     instrument_id: instrument,
     name: `Synthetic ${index + 1}`,
     sector_code: index === 0 ? "G40" : "G25",
@@ -68,8 +71,9 @@ function analysis(index) {
   };
 }
 
-function envelope(scenario) {
+function envelope(scenario, universe = "kospi200") {
   return {
+    universe,
     state: scenario.candidateState === "stale" ? "STALE" : "READY",
     as_of: AS_OF,
     cutoff_at: "2026-08-14T07:00:00Z",
@@ -98,7 +102,11 @@ function envelope(scenario) {
     },
     license_attributions: [
       ["price", "krx_eod_bars", "00000000-0000-4000-8000-000000000901"],
-      ["universe", "krx_kospi200_membership", "00000000-0000-4000-8000-000000000902"],
+      [
+        "universe",
+        universe === "kospi200" ? "krx_kospi200_membership" : "krx_kosdaq150_membership",
+        "00000000-0000-4000-8000-000000000902",
+      ],
       ["market_status", "krx_market_status", "00000000-0000-4000-8000-000000000903"],
       ["flow", "krx_investor_flows", "00000000-0000-4000-8000-000000000904"],
       ["fundamental", "krx_fundamentals", "00000000-0000-4000-8000-000000000905"],
@@ -115,13 +123,13 @@ function envelope(scenario) {
   };
 }
 
-function feed(scenario) {
+function feed(scenario, universe = "kospi200") {
   return {
-    ...envelope(scenario),
-    feed_id: FEED_ID,
+    ...envelope(scenario, universe),
+    feed_id: universe === "kospi200" ? FEED_ID : KOSDAQ_FEED_ID,
     published_at: "2026-08-14T07:05:00Z",
     computation_seq: 1,
-    items: Array.from({ length: 5 }, (_, index) => analysis(index)),
+    items: Array.from({ length: 5 }, (_, index) => analysis(index, universe)),
   };
 }
 
@@ -182,13 +190,27 @@ export function candidateResponse(request) {
   if (method === "POST" && pathname === "/api/v1/screener/query") {
     const minimum = Number(body?.criteria?.min_total_score ?? 0);
     const sectors = Array.isArray(body?.criteria?.sectors) ? body.criteria.sectors : [];
+    const universes = Array.isArray(body?.criteria?.universes)
+      ? body.criteria.universes
+      : ["kospi200"];
     const items = currentFeed.items.filter(
       (item) =>
         item.scores.total >= minimum &&
         (sectors.length === 0 || sectors.includes(item.sector_code)),
     );
     return {
-      body: { ...envelope(scenario), run_id: RUN_ID, items, next_cursor: null },
+      body: {
+        ...envelope(scenario),
+        universe: universes.length === 1 ? universes[0] : null,
+        universes,
+        run_id: universes.length === 1 ? RUN_ID : null,
+        run_ids: universes.map((universe) => ({
+          universe,
+          run_id: universe === "kosdaq150" ? KOSDAQ_RUN_ID : RUN_ID,
+        })),
+        items,
+        next_cursor: null,
+      },
       status: 200,
     };
   }
