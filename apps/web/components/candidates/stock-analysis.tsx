@@ -1,8 +1,10 @@
 import { ResearchProvenance } from "@/components/candidates/research-provenance";
+import { UniverseBadge } from "@/components/candidates/universe-badge";
 import { StatusPill } from "@/components/states/status-pill";
 import {
   candidateProfileLabel,
   type StockAnalysisResponse,
+  universeLabel,
 } from "@/lib/products/candidate-contracts";
 import { formatDate } from "@/lib/products/format";
 
@@ -98,8 +100,12 @@ export function StockAnalysisReport({ report }: { readonly report: StockAnalysis
             {analysis.instrument_id} · {analysis.sector_code} ·{" "}
             {candidateProfileLabel(analysis.fundamental_profile)}
           </p>
+          <p className="stock-universe-context">
+            Research universe: <UniverseBadge universe={report.universe} />
+          </p>
         </div>
         <div className="status-cluster">
+          <UniverseBadge universe={report.universe} />
           <StatusPill
             label={report.state}
             tone={report.state === "READY" ? "success" : "warning"}
@@ -108,6 +114,11 @@ export function StockAnalysisReport({ report }: { readonly report: StockAnalysis
             label={analysis.evidence_strength}
             tone={analysis.evidence_strength === "WEAK" ? "warning" : "info"}
           />
+          {analysis.rank === null || analysis.rank === undefined ? null : (
+            <span>
+              Rank {analysis.rank} within {universeLabel(report.universe)}
+            </span>
+          )}
           <span>As of {formatDate(report.as_of)}</span>
         </div>
       </header>

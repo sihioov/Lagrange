@@ -12,6 +12,7 @@ import {
 import {
   type CandidateFeed,
   candidateFeedSchema,
+  DEFAULT_UNIVERSE,
   type SavedScreen,
   type ScreenerQuery,
   type ScreenerResult,
@@ -19,6 +20,7 @@ import {
   savedScreenListSchema,
   screenerResultSchema,
   stockAnalysisResponseSchema,
+  type UniverseKey,
 } from "@/lib/products/candidate-contracts";
 import {
   type LicensingStatusModel,
@@ -65,11 +67,12 @@ export type ProductApiClient = {
   readonly getNotifications: () => Promise<PageResult<NotificationModel>>;
   readonly getStrategyConfigs: () => Promise<PageResult<StrategyConfigModel>>;
   readonly getLiveConnections: () => Promise<PageResult<LiveConnectionModel>>;
-  readonly getCandidateFeed: (asOf?: string) => Promise<CandidateFeed>;
+  readonly getCandidateFeed: (asOf?: string, universe?: UniverseKey) => Promise<CandidateFeed>;
   readonly getSavedScreens: () => Promise<{ readonly items: readonly SavedScreen[] }>;
   readonly getStockAnalysis: (
     instrumentId: string,
     asOf?: string,
+    universe?: UniverseKey,
   ) => Promise<StockAnalysisResponse>;
   readonly queryScreener: (query: ScreenerQuery) => Promise<ScreenerResult>;
   readonly getPaperPerformance: (accountId: string) => Promise<PaperPerformanceModel>;
@@ -115,14 +118,14 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
       return { equity, metrics, provenance: backtestProvenance(run), run, trades };
     },
     getBacktestRuns: () => getParsed(client, "/api/v1/backtests", backtestPageSchema),
-    getCandidateFeed: (asOf) =>
-      getParsed(
-        client,
+    getCandidateFeed: (asOf, universe = DEFAULT_UNIVERSE) => {
+      const path =
         asOf === undefined
           ? "/api/v1/candidates/feed/latest"
-          : `/api/v1/candidates/feed/${encodeURIComponent(asOf)}`,
-        candidateFeedSchema,
-      ),
+          : `/api/v1/candidates/feed/${encodeURIComponent(asOf)}`;
+      const params = new URLSearchParams({ universe });
+      return getParsed(client, `${path}?${params.toString()}`, candidateFeedSchema);
+    },
     getLatestRecommendation: () =>
       getParsed(client, "/api/v1/recommendations/latest", latestRecommendationSchema),
     getLicensingStatus: () => getParsed(client, "/api/v1/licensing-status", licensingStatusSchema),
@@ -142,11 +145,12 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
     getLiveConnections: () =>
       getParsed(client, "/api/v1/admin/live/connections", liveConnectionPageSchema),
     getSavedScreens: () => getParsed(client, "/api/v1/screener/screens", savedScreenListSchema),
-    getStockAnalysis: (instrumentId, asOf) => {
-      const date = asOf === undefined ? "" : `?date=${encodeURIComponent(asOf)}`;
+    getStockAnalysis: (instrumentId, asOf, universe = DEFAULT_UNIVERSE) => {
+      const params = new URLSearchParams({ universe });
+      if (asOf !== undefined) params.set("date", asOf);
       return getParsed(
         client,
-        `/api/v1/stocks/${encodeURIComponent(instrumentId)}/analysis${date}`,
+        `/api/v1/stocks/${encodeURIComponent(instrumentId)}/analysis?${params.toString()}`,
         stockAnalysisResponseSchema,
       );
     },

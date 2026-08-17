@@ -6,7 +6,15 @@ import { ScreenerResults } from "@/components/screener/screener-results";
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
-import type { SavedScreen, ScreenCriteria } from "@/lib/products/candidate-contracts";
+import {
+  DEFAULT_UNIVERSE,
+  defaultUniverses,
+  isUniverseKey,
+  type SavedScreen,
+  type ScreenCriteria,
+  UNIVERSE_KEYS,
+  type UniverseKey,
+} from "@/lib/products/candidate-contracts";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -32,6 +40,20 @@ function first(value: SearchValue): string | undefined {
   return values(value)[0];
 }
 
+function universesFrom(params: Readonly<Record<string, SearchValue>>): readonly UniverseKey[] {
+  const raw = values(params["universes"]);
+  const legacy = values(params["universe"]);
+  const selected = raw.length > 0 ? raw : legacy;
+  if (selected.length === 0) return [DEFAULT_UNIVERSE];
+  if (
+    selected.some((value) => !isUniverseKey(value)) ||
+    new Set(selected).size !== selected.length
+  ) {
+    throw new InvalidScreenFilters("Choose one or both supported universes without duplicates.");
+  }
+  return UNIVERSE_KEYS.filter((universe) => selected.includes(universe));
+}
+
 function score(value: SearchValue, name: string): number | undefined {
   const raw = first(value);
   if (raw === undefined || raw === "") return undefined;
@@ -55,6 +77,7 @@ function criteriaFrom(params: Readonly<Record<string, SearchValue>>): ScreenCrit
     throw new InvalidScreenFilters("Evidence strength is invalid.");
   }
   return {
+    universes: [...universesFrom(params)],
     sectors,
     evidence_strength: evidence as ScreenCriteria["evidence_strength"],
     min_total_score: score(params["min_total_score"], "Minimum total score"),
@@ -66,6 +89,9 @@ function criteriaFrom(params: Readonly<Record<string, SearchValue>>): ScreenCrit
 
 function href(asOf: string, criteria: ScreenCriteria, cursor?: string): string {
   const params = new URLSearchParams({ as_of: asOf });
+  for (const universe of defaultUniverses(criteria).universes ?? [DEFAULT_UNIVERSE]) {
+    params.append("universes", universe);
+  }
   if ((criteria.sectors ?? []).length > 0) params.set("sectors", criteria.sectors?.join(",") ?? "");
   for (const evidence of criteria.evidence_strength ?? []) params.append("evidence", evidence);
   for (const [name, value] of [
@@ -84,13 +110,17 @@ function withHref(
   screens: readonly SavedScreen[],
   asOf: string,
 ): readonly (SavedScreen & { readonly href: string })[] {
-  return screens.map((screen) => ({ ...screen, href: href(asOf, screen.criteria) }));
+  return screens.map((screen) => ({
+    ...screen,
+    criteria: defaultUniverses(screen.criteria),
+    href: href(asOf, defaultUniverses(screen.criteria)),
+  }));
 }
 
 function frame(children: React.ReactNode) {
   return (
     <RoutePage
-      description="Filter one immutable candidate run without changing its ranking, evidence, or source lineage."
+      description="Filter one or both immutable universe runs without changing their ranking, evidence, or source lineage."
       title="Stock screener"
     >
       {children}
@@ -102,14 +132,19 @@ export default async function ScreenerPage({ searchParams }: ScreenerPageProps =
   try {
     const params = (await searchParams) ?? {};
     const criteria = criteriaFrom(params);
+    const selectedUniverses = criteria.universes ?? [DEFAULT_UNIVERSE];
+    const primaryUniverse = selectedUniverses[0] ?? DEFAULT_UNIVERSE;
     const api = await getProductApi();
     const requestedAsOf = first(params["as_of"]);
-    const feed = await api.getCandidateFeed(requestedAsOf);
+    const feed = await api.getCandidateFeed(requestedAsOf, primaryUniverse);
     const runId = feed.items[0]?.run_id;
-    if (runId === undefined) throw new Error("Candidate feed did not identify its run.");
+    if (selectedUniverses.length === 1 && runId === undefined) {
+      throw new Error("Candidate feed did not identify its run.");
+    }
     const [result, saved] = await Promise.all([
       api.queryScreener({
-        run_id: runId,
+        run_id: selectedUniverses.length === 1 ? (runId ?? null) : null,
+        as_of: feed.as_of,
         criteria,
         cursor: first(params["cursor"]) ?? null,
         limit: 25,
@@ -143,6 +178,15 @@ export default async function ScreenerPage({ searchParams }: ScreenerPageProps =
           kind="blocked"
           message="One or more exact source datasets are not licensed for candidate screening. Proprietary rows are not rendered."
           title="Stock screener is blocked"
+        />,
+      );
+    }
+    if (error instanceof ApiProblem && error.code === "DATA_STALE") {
+      return frame(
+        <StatePanel
+          kind="error"
+          message="One or more selected universes has no fresh governed screener snapshot yet."
+          title="Stock screener is stale"
         />,
       );
     }

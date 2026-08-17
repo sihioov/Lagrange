@@ -9,6 +9,23 @@ export type SavedScreenContract = components["schemas"]["SavedScreen"];
 export type CandidateLicenseAttributionContract =
   components["schemas"]["CandidateLicenseAttribution"];
 
+export type UniverseKey = components["schemas"]["UniverseKey"];
+
+export const UNIVERSE_KEYS = ["kospi200", "kosdaq150"] as const satisfies readonly UniverseKey[];
+export const DEFAULT_UNIVERSE: UniverseKey = "kospi200";
+export const UNIVERSE_LABELS: Readonly<Record<UniverseKey, string>> = {
+  kospi200: "KOSPI 200",
+  kosdaq150: "KOSDAQ 150",
+};
+
+export function universeLabel(universe: UniverseKey): string {
+  return UNIVERSE_LABELS[universe];
+}
+
+export function isUniverseKey(value: string | undefined): value is UniverseKey {
+  return value !== undefined && (UNIVERSE_KEYS as readonly string[]).includes(value);
+}
+
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
 const candidateSourcePinSchema = z
   .object({
@@ -69,6 +86,7 @@ export const candidateAnalysisSchema = z
   .object({
     analysis_id: z.uuid(),
     run_id: z.uuid(),
+    universe: z.enum(["kospi200", "kosdaq150"]),
     instrument_id: z.string().regex(/^\d{6}\.KRX$/),
     name: z.string().nullable().optional(),
     sector_code: z.string().min(1),
@@ -96,6 +114,7 @@ export type CandidateAnalysis = z.infer<typeof candidateAnalysisSchema>;
 const candidateEnvelopeFields = {
   // Row-bearing success payloads never carry BLOCKED. Blocked entitlement
   // responses are parsed as ApiProblem before a product contract is touched.
+  universe: z.enum(["kospi200", "kosdaq150"]).nullable().optional(),
   state: z.enum(["READY", "STALE"]),
   as_of: z.iso.date(),
   cutoff_at: z.iso.datetime(),
@@ -114,6 +133,7 @@ export const candidateFeedSchema = z
   .object({
     ...candidateEnvelopeFields,
     feed_id: z.uuid(),
+    universe: z.enum(["kospi200", "kosdaq150"]),
     published_at: z.iso.datetime(),
     computation_seq: z.number().int().min(1),
     items: z.array(candidateAnalysisSchema).length(5),
@@ -125,6 +145,7 @@ export type CandidateFeed = z.infer<typeof candidateFeedSchema>;
 export const stockAnalysisResponseSchema = z
   .object({
     ...candidateEnvelopeFields,
+    universe: z.enum(["kospi200", "kosdaq150"]),
     analysis: candidateAnalysisSchema,
   })
   .strict();
@@ -133,6 +154,7 @@ export type StockAnalysisResponse = z.infer<typeof stockAnalysisResponseSchema>;
 
 export const screenCriteriaSchema = z
   .object({
+    universes: z.array(z.enum(["kospi200", "kosdaq150"])).optional(),
     sectors: z.array(z.string().min(1).max(32)).max(64).optional(),
     evidence_strength: z.array(z.enum(["STRONG", "MODERATE", "WEAK"])).optional(),
     min_total_score: z.number().min(0).max(100).nullable().optional(),
@@ -144,8 +166,18 @@ export const screenCriteriaSchema = z
 
 export type ScreenCriteria = z.infer<typeof screenCriteriaSchema>;
 
+export function defaultUniverses(criteria: ScreenCriteria): ScreenCriteria {
+  return {
+    ...criteria,
+    universes:
+      criteria.universes === undefined || criteria.universes.length === 0
+        ? [DEFAULT_UNIVERSE]
+        : criteria.universes,
+  };
+}
+
 export type ScreenerQuery = {
-  readonly run_id: string;
+  readonly run_id?: string | null;
   readonly as_of?: string;
   readonly criteria: ScreenCriteria;
   readonly cursor?: string | null;
@@ -155,7 +187,12 @@ export type ScreenerQuery = {
 export const screenerResultSchema = z
   .object({
     ...candidateEnvelopeFields,
-    run_id: z.uuid(),
+    universe: z.enum(["kospi200", "kosdaq150"]).nullable().optional(),
+    universes: z.array(z.enum(["kospi200", "kosdaq150"])).min(1),
+    run_id: z.uuid().nullable().optional(),
+    run_ids: z
+      .array(z.object({ universe: z.enum(["kospi200", "kosdaq150"]), run_id: z.uuid() }).strict())
+      .min(1),
     items: z.array(candidateAnalysisSchema),
     next_cursor: z.string().nullable(),
   })
@@ -167,7 +204,7 @@ export const savedScreenSchema = z
   .object({
     id: z.uuid(),
     name: z.string().min(1).max(80),
-    criteria_schema_version: z.literal(1),
+    criteria_schema_version: z.union([z.literal(1), z.literal(2)]),
     criteria: screenCriteriaSchema,
     created_at: z.iso.datetime(),
     updated_at: z.iso.datetime(),

@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { ResearchProvenance } from "@/components/candidates/research-provenance";
+import { UniverseBadge } from "@/components/candidates/universe-badge";
 import { StatusPill } from "@/components/states/status-pill";
 import type { CandidateAnalysis, CandidateFeed } from "@/lib/products/candidate-contracts";
+import { universeLabel } from "@/lib/products/candidate-contracts";
 import { formatDate, formatTimestamp } from "@/lib/products/format";
 
 function score(value: number | null): string {
@@ -19,11 +21,12 @@ export function CandidateFeedReport({ feed }: { readonly feed: CandidateFeed }) 
     <section aria-labelledby="candidate-feed-title" className="data-report">
       <header className="report-heading">
         <div>
-          <p className="eyebrow">Common daily Top 5</p>
+          <p className="eyebrow">Common daily Top 5 · {universeLabel(feed.universe)}</p>
           <h2 id="candidate-feed-title">Evidence-ranked stock candidates</h2>
-          <p>A common post-close research feed across the point-in-time KOSPI 200 universe.</p>
+          <p>Post-close research within the selected point-in-time universe.</p>
         </div>
         <div className="status-cluster">
+          <UniverseBadge universe={feed.universe} />
           <StatusPill label={feed.state} tone={feed.state === "READY" ? "success" : "warning"} />
           <span>As of {formatDate(feed.as_of)}</span>
         </div>
@@ -38,7 +41,9 @@ export function CandidateFeedReport({ feed }: { readonly feed: CandidateFeed }) 
 
       <div className="data-table-wrap">
         <table>
-          <caption>Daily candidates ranked by the governed composite score</caption>
+          <caption>
+            Daily candidates ranked by the governed composite score within this universe
+          </caption>
           <thead>
             <tr>
               <th scope="col">Rank</th>
@@ -57,7 +62,7 @@ export function CandidateFeedReport({ feed }: { readonly feed: CandidateFeed }) 
                 <th scope="row">
                   <Link
                     className="data-link"
-                    href={`/stocks/${encodeURIComponent(item.instrument_id)}?date=${encodeURIComponent(feed.as_of)}`}
+                    href={`/stocks/${encodeURIComponent(item.instrument_id)}?date=${encodeURIComponent(feed.as_of)}&universe=${encodeURIComponent(feed.universe)}`}
                   >
                     {item.name ?? item.instrument_id}
                     {item.name === null || item.name === undefined ? null : (
@@ -82,7 +87,10 @@ export function CandidateFeedReport({ feed }: { readonly feed: CandidateFeed }) 
       </div>
 
       <div className="candidate-actions">
-        <Link className="secondary-action" href={`/screener?as_of=${feed.as_of}`}>
+        <Link
+          className="secondary-action"
+          href={`/screener?as_of=${encodeURIComponent(feed.as_of)}&universes=${encodeURIComponent(feed.universe)}`}
+        >
           Screen the full universe
         </Link>
         <span>

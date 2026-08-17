@@ -1,4 +1,9 @@
-import type { ScreenCriteria } from "@/lib/products/candidate-contracts";
+import {
+  DEFAULT_UNIVERSE,
+  type ScreenCriteria,
+  UNIVERSE_KEYS,
+  universeLabel,
+} from "@/lib/products/candidate-contracts";
 
 function threshold(value: number | null | undefined): string | number {
   return value ?? "";
@@ -12,6 +17,7 @@ export function ScreenerControls({
   readonly criteria: ScreenCriteria;
 }) {
   const evidence = new Set(criteria.evidence_strength ?? []);
+  const universes = new Set(criteria.universes ?? [DEFAULT_UNIVERSE]);
   return (
     <section aria-labelledby="screener-controls-title" className="workflow-panel">
       <div className="section-heading">
@@ -22,6 +28,23 @@ export function ScreenerControls({
         <p>Filters only narrow an already published run; they never recompute or re-rank it.</p>
       </div>
       <form className="workflow-form" method="get">
+        <fieldset>
+          <legend>Candidate universes</legend>
+          <div className="choice-row">
+            {UNIVERSE_KEYS.map((universe) => (
+              <label key={universe}>
+                <input
+                  defaultChecked={universes.has(universe)}
+                  name="universes"
+                  type="checkbox"
+                  value={universe}
+                />
+                <span>{universeLabel(universe)}</span>
+              </label>
+            ))}
+          </div>
+          <small>Select one universe or both; each result stays in its own ranking context.</small>
+        </fieldset>
         <div className="field-grid">
           <label className="form-field">
             <span>As-of date</span>

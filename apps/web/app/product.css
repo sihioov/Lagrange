@@ -307,7 +307,8 @@ thead th {
 .candidate-actions,
 .context-navigation,
 .choice-row,
-.inline-form {
+.inline-form,
+.universe-tabs {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -331,6 +332,71 @@ thead th {
   color: var(--accent-primary);
   font-size: 0.875rem;
   font-weight: 560;
+}
+
+.universe-tabs {
+  padding: var(--space-2);
+  border: 0.0625rem solid var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel);
+}
+
+.universe-tabs a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 560;
+}
+
+.universe-tabs a:hover,
+.universe-tabs a.is-selected {
+  background: var(--accent-soft);
+  color: var(--accent-primary);
+}
+
+.universe-badge {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 1.75rem;
+  padding: var(--space-1) var(--space-2);
+  border: 0.0625rem solid var(--border-default);
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 560;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.stock-universe-context {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.screener-universe-blocks {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.screener-universe-block {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+  padding: var(--space-4);
+  border: 0.0625rem solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.screener-universe-block .data-table-wrap {
+  background: var(--surface-panel);
 }
 
 .choice-row label {

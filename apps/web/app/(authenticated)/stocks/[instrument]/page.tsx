@@ -5,6 +5,12 @@ import { RoutePage } from "@/components/pages/route-page";
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
+import {
+  DEFAULT_UNIVERSE,
+  isUniverseKey,
+  type UniverseKey,
+  universeLabel,
+} from "@/lib/products/candidate-contracts";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -16,8 +22,23 @@ export const metadata: Metadata = {
 
 type StockPageProps = {
   readonly params: Promise<{ readonly instrument: string }>;
-  readonly searchParams?: Promise<{ readonly date?: string }>;
+  readonly searchParams?: Promise<{
+    readonly date?: string;
+    readonly universe?: string | readonly string[];
+  }>;
 };
+
+class InvalidStockUniverse extends Error {}
+
+function selectedUniverse(value: string | readonly string[] | undefined): UniverseKey {
+  if (Array.isArray(value) && value.length > 1) {
+    throw new InvalidStockUniverse("Stock universe must be selected once.");
+  }
+  const raw = typeof value === "string" ? value : value?.[0];
+  if (raw === undefined) return DEFAULT_UNIVERSE;
+  if (!isUniverseKey(raw)) throw new InvalidStockUniverse("Stock universe is invalid.");
+  return raw;
+}
 
 function frame(instrument: string, children: React.ReactNode) {
   return (
@@ -32,20 +53,40 @@ function frame(instrument: string, children: React.ReactNode) {
 
 export default async function StockPage({ params, searchParams }: StockPageProps) {
   const { instrument } = await params;
-  const date = (await searchParams)?.date;
+  const search = (await searchParams) ?? {};
+  const date = search.date;
   try {
-    const report = await (await getProductApi()).getStockAnalysis(instrument, date);
+    const universe = selectedUniverse(search.universe);
+    const report = await (await getProductApi()).getStockAnalysis(instrument, date, universe);
     return frame(
       instrument,
       <>
         <nav aria-label="Research context" className="context-navigation">
-          <Link href={`/candidates?date=${report.as_of}`}>Daily Top 5</Link>
-          <Link href={`/screener?as_of=${report.as_of}`}>Screen this run</Link>
+          <Link
+            href={`/candidates?date=${encodeURIComponent(report.as_of)}&universe=${encodeURIComponent(report.universe)}`}
+          >
+            Daily Top 5 · {universeLabel(report.universe)}
+          </Link>
+          <Link
+            href={`/screener?as_of=${encodeURIComponent(report.as_of)}&universes=${encodeURIComponent(report.universe)}`}
+          >
+            Screen this run · {universeLabel(report.universe)}
+          </Link>
         </nav>
         <StockAnalysisReport report={report} />
       </>,
     );
   } catch (error) {
+    if (error instanceof InvalidStockUniverse) {
+      return frame(
+        instrument,
+        <StatePanel
+          kind="error"
+          message="Choose either the KOSPI 200 or KOSDAQ 150 stock-analysis universe."
+          title="Stock universe is invalid"
+        />,
+      );
+    }
     if (
       error instanceof ApiProblem &&
       ["DATASET_BLOCKED", "DATA_ENTITLEMENT_REQUIRED", "FORBIDDEN"].includes(error.code)
@@ -59,12 +100,25 @@ export default async function StockPage({ params, searchParams }: StockPageProps
         />,
       );
     }
+    if (error instanceof ApiProblem && error.code === "DATA_STALE") {
+      return frame(
+        instrument,
+        <StatePanel
+          kind="error"
+          message="The selected universe has no fresh governed analysis snapshot yet."
+          title="Stock analysis is stale"
+        />,
+      );
+    }
     if (error instanceof ApiProblem && error.code === "RESOURCE_NOT_FOUND") {
       return frame(
         instrument,
         <StatePanel
           action={
-            <Link className="secondary-action" href="/candidates">
+            <Link
+              className="secondary-action"
+              href={`/candidates?universe=${encodeURIComponent(selectedUniverse(search.universe))}`}
+            >
               Return to daily candidates
             </Link>
           }
