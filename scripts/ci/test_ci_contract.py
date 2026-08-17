@@ -210,6 +210,13 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn(fixture, script)
         self.assertIn("provision-runtime-secrets.sh|runtime-static-check.sh", script)
         self.assertNotIn("README.md|.gitignore|*.example|*.sh", script)
+        self.assertIn("rc build research-worker candidate-runner", script)
+        self.assertIn("candidate-runner --once", script)
+        self.assertIn("candidate_feed_evidence", script)
+        self.assertIn(
+            "2|2|kospi200,kosdaq150|2|10|kospi200:5,kosdaq150:5",
+            script,
+        )
         function = script.split("schema_gate_must_pass() {", 1)[1].split("}", 1)[0]
         self.assertIn("schema_output=", function)
         self.assertNotIn(">/dev/null 2>&1", function)
@@ -227,7 +234,11 @@ class WorkflowContractTests(unittest.TestCase):
             script,
         )
         self.assertIn("ledger_state=", script)
-        self.assertIn('if [ "$ledger_state" != "8" ]', script)
+        self.assertIn('if [ "$ledger_state" != "9" ]', script)
+        self.assertIn("candidate_source_evidence()", script)
+        self.assertIn("krx_kosdaq150_membership", script)
+        self.assertIn("candidate_before=", script)
+        self.assertIn("candidate_after=", script)
         self.assertIn("rc up -d --no-deps research-worker", script)
 
         migration_loop = script.split("while IFS= read -r migration; do", 1)[1].split(
