@@ -67,6 +67,7 @@ copy_secret research-schema-check  postgres_password         postgres_password  
 copy_secret research-worker        db_research_password      db_research_password           10001 10001 0440  yes
 copy_secret research-worker        krx_api_key               krx_api_key                    10001 10001 0440  yes
 copy_secret recommendation-runner  db_worker_password        db_worker_password             10001 10001 0440  yes
+copy_secret candidate-runner       db_worker_password        db_worker_password             10001 10001 0440  yes
 copy_secret nt-backtest-worker-1   db_worker_password        db_worker_password             10001 10001 0440  yes
 copy_secret nt-backtest-worker-2   db_worker_password        db_worker_password             10001 10001 0440  yes
 copy_secret paper-scheduler        db_app_password           db_app_password                10001 10001 0440  yes

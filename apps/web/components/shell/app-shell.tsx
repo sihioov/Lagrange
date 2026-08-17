@@ -16,6 +16,8 @@ const MEMBER_NAVIGATION = [
   { href: "/", label: "Dashboard" },
   { href: "/strategies", label: "Strategies" },
   { href: "/recommendations", label: "Recommendations" },
+  { href: "/candidates", label: "Daily candidates" },
+  { href: "/screener", label: "Stock screener" },
   { href: "/backtests", label: "Backtests" },
   { href: "/paper", label: "Paper account" },
 ] as const satisfies readonly PrimaryNavigationItem[];

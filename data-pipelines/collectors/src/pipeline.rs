@@ -230,7 +230,7 @@ fn ingest_error_is_retryable(error: &IngestError) -> bool {
         IngestError::Readback { source, .. } => {
             store_failure_class(source) == FailureClass::Retryable
         }
-        IngestError::MalformedResponse { .. } => false,
+        IngestError::MalformedResponse { .. } | IngestError::ResponseShape { .. } => false,
     }
 }
 

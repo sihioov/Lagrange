@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use serde::Deserialize;
 
-use crate::contract::{ALL_RESPONSE_KINDS, FetchMode, RawEnvelope, RequestMetadata, ResponseKind};
+use crate::contract::{EOD_RESPONSE_KINDS, FetchMode, RawEnvelope, RequestMetadata, ResponseKind};
 
 /// What a provider needs to produce a delivery.
 #[derive(Debug, Clone)]
@@ -45,10 +45,17 @@ impl FetchRequest {
         Self {
             market,
             date,
-            kinds: ALL_RESPONSE_KINDS.to_vec(),
+            kinds: EOD_RESPONSE_KINDS.to_vec(),
             now,
             batch_id: BatchId::generate(),
         }
+    }
+
+    /// Replaces the default EOD classes with an explicit provider capability
+    /// set. Candidate sources use this rather than changing legacy ingestion.
+    pub fn with_kinds(mut self, kinds: impl IntoIterator<Item = ResponseKind>) -> Self {
+        self.kinds = kinds.into_iter().collect();
+        self
     }
 }
 

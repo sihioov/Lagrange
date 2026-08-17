@@ -24,6 +24,18 @@
       "description": "Recommendation runs (entitlement-gated)"
     },
     {
+      "name": "candidates",
+      "description": "Common point-in-time stock research feed"
+    },
+    {
+      "name": "stocks",
+      "description": "Point-in-time deep stock analysis"
+    },
+    {
+      "name": "screener",
+      "description": "Candidate screening and actor-owned saved criteria"
+    },
+    {
       "name": "backtests",
       "description": "Backtest orchestration and results"
     },
@@ -1169,6 +1181,895 @@
             "INTERNAL",
             "DATA_ENTITLEMENT_REQUIRED",
             "INVALID_DATE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/candidates/feed/latest": {
+      "get": {
+        "operationId": "get__api_v1_candidates_feed_latest",
+        "summary": "GET /api/v1/candidates/feed/latest",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "universe",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/UniverseKey"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Immutable daily stock-research Top-5 feed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateFeed"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "candidate",
+            "fail_closed": true,
+            "dataset": "every exact pinned candidate source dataset"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "INVALID_PARAMETER"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/candidates/feed/{date}": {
+      "get": {
+        "operationId": "get__api_v1_candidates_feed__date_",
+        "summary": "GET /api/v1/candidates/feed/{date}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "date",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "universe",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/UniverseKey"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Immutable daily stock-research Top-5 feed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateFeed"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "candidate",
+            "fail_closed": true,
+            "dataset": "every exact pinned candidate source dataset"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "INVALID_PARAMETER"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/stocks/{instrument_id}/analysis": {
+      "get": {
+        "operationId": "get__api_v1_stocks__instrument_id__analysis",
+        "summary": "GET /api/v1/stocks/{instrument_id}/analysis",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "instrument_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "example": "2026-01-31"
+            },
+            "required": false
+          },
+          {
+            "name": "universe",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/UniverseKey"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Point-in-time deep stock analysis",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockAnalysisResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "candidate",
+            "fail_closed": true,
+            "dataset": "every exact pinned candidate source dataset"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "INVALID_PARAMETER"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/screener/query": {
+      "post": {
+        "operationId": "post__api_v1_screener_query",
+        "summary": "POST /api/v1/screener/query",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Point-in-time candidate screen result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScreenerResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": "candidate",
+            "fail_closed": true,
+            "dataset": "every exact pinned candidate source dataset"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "INVALID_PARAMETER",
+            "INVALID_CURSOR"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScreenerQueryBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screener/screens": {
+      "get": {
+        "operationId": "get__api_v1_screener_screens",
+        "summary": "GET /api/v1/screener/screens",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Actor-owned saved screens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedScreenList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        }
+      },
+      "post": {
+        "operationId": "post__api_v1_screener_screens",
+        "summary": "POST /api/v1/screener/screens",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Saved screen created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedScreen"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedScreenBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screener/screens/{id}": {
+      "get": {
+        "operationId": "get__api_v1_screener_screens__id_",
+        "summary": "GET /api/v1/screener/screens/{id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Actor-owned saved screen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedScreen"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        }
+      },
+      "put": {
+        "operationId": "put__api_v1_screener_screens__id_",
+        "summary": "PUT /api/v1/screener/screens/{id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Actor-owned saved screen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedScreen"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedScreenBody"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete__api_v1_screener_screens__id_",
+        "summary": "DELETE /api/v1/screener/screens/{id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved screen deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteSavedScreenResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE"
           ],
           "phase": "current"
         }
@@ -5816,6 +6717,714 @@
             "type": "string",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "example": "2026-01-31"
+          }
+        }
+      },
+      "CandidateDatasetPins": {
+        "type": "object",
+        "required": [
+          "universe_snapshot_id",
+          "price",
+          "market_status",
+          "flow",
+          "fundamental",
+          "sector_version_id",
+          "input_identity_sha256"
+        ],
+        "properties": {
+          "universe_snapshot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "price": {
+            "type": "object",
+            "required": [
+              "dataset_version_id",
+              "curated_version",
+              "manifest_sha256"
+            ],
+            "properties": {
+              "dataset_version_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "curated_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "manifest_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "market_status": {
+            "$ref": "#/components/schemas/CandidateSourcePin"
+          },
+          "flow": {
+            "$ref": "#/components/schemas/CandidateSourcePin"
+          },
+          "fundamental": {
+            "$ref": "#/components/schemas/CandidateSourcePin"
+          },
+          "sector_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "input_identity_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "UniverseKey": {
+        "type": "string",
+        "enum": [
+          "kospi200",
+          "kosdaq150"
+        ],
+        "description": "Point-in-time candidate universe; omitted API queries default to kospi200."
+      },
+      "CandidateSourcePin": {
+        "type": "object",
+        "required": [
+          "dataset_version_id",
+          "manifest_sha256"
+        ],
+        "properties": {
+          "dataset_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "manifest_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "CandidateScores": {
+        "type": "object",
+        "required": [
+          "flow",
+          "fundamental",
+          "technical",
+          "total"
+        ],
+        "properties": {
+          "flow": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "fundamental": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "technical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "total": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          }
+        }
+      },
+      "CandidateCoverage": {
+        "type": "object",
+        "required": [
+          "flow",
+          "fundamental",
+          "technical"
+        ],
+        "properties": {
+          "flow": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "fundamental": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "technical": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      },
+      "CandidateAnalysis": {
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "run_id",
+          "universe",
+          "instrument_id",
+          "sector_code",
+          "fundamental_profile",
+          "eligible",
+          "exclusion_codes",
+          "scores",
+          "coverage",
+          "evidence_strength",
+          "normalization_scope",
+          "factors",
+          "scenarios",
+          "provenance",
+          "content_sha256"
+        ],
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "universe": {
+            "$ref": "#/components/schemas/UniverseKey"
+          },
+          "instrument_id": {
+            "type": "string",
+            "example": "005930.KRX"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sector_code": {
+            "type": "string"
+          },
+          "fundamental_profile": {
+            "type": "string",
+            "enum": [
+              "candidate-non-financial-v1",
+              "candidate-financial-v1",
+              "unsupported"
+            ],
+            "description": "Versioned fundamental scoring profile selected for the instrument."
+          },
+          "eligible": {
+            "type": "boolean"
+          },
+          "exclusion_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scores": {
+            "$ref": "#/components/schemas/CandidateScores"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/CandidateCoverage"
+          },
+          "evidence_strength": {
+            "type": "string",
+            "enum": [
+              "STRONG",
+              "MODERATE",
+              "WEAK"
+            ]
+          },
+          "rank": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "normalization_scope": {
+            "type": "string",
+            "enum": [
+              "SECTOR",
+              "UNIVERSE_FALLBACK",
+              "UNAVAILABLE"
+            ]
+          },
+          "factors": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "scenarios": {
+            "type": "object",
+            "description": "Deterministic upside/neutral/downside trigger records; never probabilities or target prices.",
+            "additionalProperties": true
+          },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "content_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "CandidateResearchEnvelope": {
+        "type": "object",
+        "required": [
+          "state",
+          "as_of",
+          "cutoff_at",
+          "scoring_config",
+          "dataset_pins",
+          "license_attributions",
+          "disclaimer"
+        ],
+        "properties": {
+          "universe": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UniverseKey"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "READY",
+              "STALE"
+            ]
+          },
+          "as_of": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "cutoff_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scoring_config": {
+            "type": "object",
+            "required": [
+              "version",
+              "sha256"
+            ],
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "dataset_pins": {
+            "$ref": "#/components/schemas/CandidateDatasetPins"
+          },
+          "license_attributions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/CandidateLicenseAttribution"
+            }
+          },
+          "disclaimer": {
+            "type": "string"
+          }
+        }
+      },
+      "CandidateLicenseAttribution": {
+        "type": "object",
+        "required": [
+          "source",
+          "dataset_id",
+          "license_ref",
+          "entitlement_id",
+          "contract_reference",
+          "contract_document_sha256"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "price",
+              "universe",
+              "market_status",
+              "flow",
+              "fundamental",
+              "sector"
+            ]
+          },
+          "dataset_id": {
+            "type": "string",
+            "pattern": "^krx_[a-z0-9_]+$"
+          },
+          "license_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "entitlement_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contract_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "contract_document_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "CandidateFeed": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CandidateResearchEnvelope"
+          },
+          {
+            "type": "object",
+            "required": [
+              "feed_id",
+              "universe",
+              "published_at",
+              "computation_seq",
+              "items"
+            ],
+            "properties": {
+              "feed_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "universe": {
+                "$ref": "#/components/schemas/UniverseKey"
+              },
+              "published_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "computation_seq": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "items": {
+                "type": "array",
+                "minItems": 5,
+                "maxItems": 5,
+                "items": {
+                  "$ref": "#/components/schemas/CandidateAnalysis"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "StockAnalysisResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CandidateResearchEnvelope"
+          },
+          {
+            "type": "object",
+            "required": [
+              "universe",
+              "analysis"
+            ],
+            "properties": {
+              "universe": {
+                "$ref": "#/components/schemas/UniverseKey"
+              },
+              "analysis": {
+                "$ref": "#/components/schemas/CandidateAnalysis"
+              }
+            }
+          }
+        ]
+      },
+      "ScreenCriteria": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "universes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/UniverseKey"
+            },
+            "description": "One or both universes; omitted defaults to kospi200."
+          },
+          "sectors": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 32
+            }
+          },
+          "evidence_strength": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "STRONG",
+                "MODERATE",
+                "WEAK"
+              ]
+            }
+          },
+          "min_total_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "min_flow_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "min_fundamental_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "min_technical_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          }
+        }
+      },
+      "ScreenerQueryBody": {
+        "type": "object",
+        "required": [
+          "criteria"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Legacy exact single-universe run pin; incompatible with both universes."
+          },
+          "as_of": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "criteria": {
+            "$ref": "#/components/schemas/ScreenCriteria"
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "opaque HMAC-signed frozen run-set/universe/decimal-score/instrument cursor (v2; legacy v1 is KOSPI-only)"
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 100,
+            "default": 25
+          }
+        }
+      },
+      "ScreenerResult": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CandidateResearchEnvelope"
+          },
+          {
+            "type": "object",
+            "required": [
+              "universes",
+              "run_ids",
+              "items",
+              "next_cursor"
+            ],
+            "properties": {
+              "universe": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/UniverseKey"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "universes": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/components/schemas/UniverseKey"
+                }
+              },
+              "run_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
+              "run_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "universe",
+                    "run_id"
+                  ],
+                  "properties": {
+                    "universe": {
+                      "$ref": "#/components/schemas/UniverseKey"
+                    },
+                    "run_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CandidateAnalysis"
+                }
+              },
+              "next_cursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "SavedScreenBody": {
+        "type": "object",
+        "required": [
+          "name",
+          "criteria"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "criteria": {
+            "$ref": "#/components/schemas/ScreenCriteria"
+          }
+        }
+      },
+      "SavedScreen": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "criteria_schema_version",
+          "criteria",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "criteria_schema_version": {
+            "type": "integer",
+            "enum": [
+              1,
+              2
+            ]
+          },
+          "criteria": {
+            "$ref": "#/components/schemas/ScreenCriteria"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SavedScreenList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedScreen"
+            }
+          }
+        }
+      },
+      "DeleteSavedScreenResult": {
+        "type": "object",
+        "required": [
+          "id",
+          "deleted"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "deleted": {
+            "type": "boolean",
+            "const": true
           }
         }
       },

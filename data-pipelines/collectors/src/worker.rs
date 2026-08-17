@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::fmt;
 use std::future::Future;
@@ -9,28 +9,37 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::{DateTime, FixedOffset, NaiveTime, TimeZone, Utc};
-use domain::{BatchId, TradingDate, UtcTimestamp};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveTime, TimeZone, Utc};
+use domain::{BatchId, DatasetId, TradingDate, UtcTimestamp};
 use market_data::contract::{FetchMode, MARKET_KR};
 use market_data::ingest::IngestRequest;
 use market_data::provider::{EodProvider, KrxProvider, ProviderError, RecordedBundle};
 use market_data::storage::RawStore;
+use market_data::{
+    CANDIDATE_RESPONSE_KINDS, CurateError, CurateRequest, CurateStore, curate_batch,
+    curation_inputs_from_raw, ingest_bundle_with_kinds, price_curation_evidence,
+};
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::{
-    FailureClass, PipelineError, PostgresPublicationSink, PublicationSink, RECOVERY_PAGE_SIZE,
+    CandidateInstrumentCatalog, CandidatePipelineError, CandidatePricePublication, FailureClass,
+    PipelineError, PostgresCandidateSourceSink, PostgresPublicationSink, RECOVERY_PAGE_SIZE,
     RecoveryBatchOutcome, RecoveryError, RecoveryPage, RecoveryPosition, SinkError,
-    ingest_and_publish, provider_failure_class, recover_unpublished_page_with,
-    recover_unpublished_with,
+    ingest_and_publish, prepare_candidate_batch, provider_failure_class, publish_candidate_batch,
+    recover_candidate_batches, recover_unpublished_page_with, recover_unpublished_with,
+    store_failure_class,
 };
 
 const DEFAULT_RUN_AT_KST: &str = "16:30";
+const CANDIDATE_CONFIRMED_CLOSE_KST: NaiveTime =
+    NaiveTime::from_hms_opt(16, 30, 0).expect("valid candidate close threshold");
 const DEFAULT_MAX_PUBLICATION_AGE_SECS: u64 = 4 * 24 * 60 * 60;
 const KST_OFFSET_SECS: i32 = 9 * 60 * 60;
-const WHOLE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(60);
+const DEFAULT_ATTEMPT_TIMEOUT_SECS: u64 = 15 * 60;
+const MAX_ATTEMPT_TIMEOUT_SECS: u64 = 60 * 60;
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(15);
 const CHILD_OUTPUT_LIMIT: u64 = 4096;
@@ -41,8 +50,14 @@ pub const WORKER_ENV_KEYS: &[&str] = &[
     "RESEARCH_FETCH_MODE",
     "RESEARCH_RUN_AT_KST",
     "RESEARCH_MAX_PUBLICATION_AGE_SECS",
+    "RESEARCH_ATTEMPT_TIMEOUT_SECS",
     "RESEARCH_RAW_ROOT",
+    "RESEARCH_CURATED_ROOT",
+    "RESEARCH_ENTITLEMENT_REFERENCE",
     "RESEARCH_SYNTHETIC_BUNDLE",
+    "RESEARCH_CANDIDATE_ENABLED",
+    "RESEARCH_CANDIDATE_RAW_ROOT",
+    "RESEARCH_CANDIDATE_SYNTHETIC_BUNDLE",
     "DB_HOST",
     "DB_PORT",
     "DB_NAME",
@@ -88,16 +103,26 @@ pub struct ResearchWorkerConfig {
     pub fetch_mode: FetchMode,
     pub run_at_kst: NaiveTime,
     pub max_publication_age: Duration,
+    pub attempt_timeout: Duration,
     pub raw_root: PathBuf,
+    pub curated_root: PathBuf,
+    pub entitlement_reference: String,
     pub database: DatabaseConfig,
     pub provider_credential: Option<SecretValue>,
     pub synthetic_bundle: PathBuf,
+    pub candidate_sources_enabled: bool,
+    pub candidate_raw_root: PathBuf,
+    pub candidate_synthetic_bundle: PathBuf,
 }
 
 #[derive(Debug, Clone)]
 pub struct HealthcheckConfig {
     pub max_publication_age: Duration,
     pub database: DatabaseConfig,
+    pub candidate_sources_enabled: bool,
+    pub curated_root: PathBuf,
+    pub expected_fetch_mode: FetchMode,
+    pub run_at_kst: NaiveTime,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -148,6 +173,10 @@ pub enum WorkerError {
     },
     #[error("research pipeline failed")]
     Pipeline(#[source] PipelineError),
+    #[error("candidate source pipeline failed")]
+    CandidatePipeline(#[source] CandidatePipelineError),
+    #[error("price curation failed")]
+    Curation(#[source] CurateError),
 }
 
 impl WorkerError {
@@ -157,6 +186,24 @@ impl WorkerError {
                 FailureClass::Retryable
             }
             Self::Pipeline(source) => source.failure_class(),
+            Self::CandidatePipeline(CandidatePipelineError::Publish(source)) => {
+                if source.is_retryable() {
+                    FailureClass::Retryable
+                } else {
+                    FailureClass::Permanent
+                }
+            }
+            Self::CandidatePipeline(
+                CandidatePipelineError::InvalidRaw(_) | CandidatePipelineError::InvalidDocument(_),
+            ) => FailureClass::Permanent,
+            Self::CandidatePipeline(CandidatePipelineError::Ingest(source)) => match source {
+                market_data::IngestError::Provider(source) => provider_failure_class(source),
+                market_data::IngestError::Store(source)
+                | market_data::IngestError::Readback { source, .. } => store_failure_class(source),
+                market_data::IngestError::MalformedResponse { .. }
+                | market_data::IngestError::ResponseShape { .. } => FailureClass::Permanent,
+            },
+            Self::Curation(_) => FailureClass::Permanent,
             Self::Provider(source) => provider_failure_class(source),
             Self::Database { source, .. } => {
                 if source.is_retryable() {
@@ -202,6 +249,7 @@ impl WorkerError {
                 | crate::PipelineStage::Publish => WorkerPhase::Publication,
                 crate::PipelineStage::Ingest => WorkerPhase::Ingest,
             },
+            Self::CandidatePipeline(_) | Self::Curation(_) => WorkerPhase::Publication,
         }
     }
 
@@ -239,6 +287,14 @@ pub enum HealthFailure {
     NoEodPublication,
     StaleEodPublication,
     FutureEodPublication,
+    NoCandidatePublication,
+    CandidateUniverseUnavailable,
+    StaleCandidatePublication,
+    FutureCandidatePublication,
+    NoPricePublication,
+    StalePricePublication,
+    FuturePricePublication,
+    PriceManifestMismatch,
 }
 
 impl fmt::Display for HealthFailure {
@@ -247,6 +303,20 @@ impl fmt::Display for HealthFailure {
             Self::NoEodPublication => "no KRX/KR EOD publication",
             Self::StaleEodPublication => "latest KRX/KR EOD publication is stale",
             Self::FutureEodPublication => "latest KRX/KR EOD publication is in the future",
+            Self::NoCandidatePublication => "no complete candidate source publication",
+            Self::CandidateUniverseUnavailable => {
+                "one or more enabled candidate universes are not ready"
+            }
+            Self::StaleCandidatePublication => "latest candidate source publication is stale",
+            Self::FutureCandidatePublication => {
+                "latest candidate source publication is in the future"
+            }
+            Self::NoPricePublication => "no candidate price publication",
+            Self::StalePricePublication => "latest candidate price publication is stale",
+            Self::FuturePricePublication => "latest candidate price publication is in the future",
+            Self::PriceManifestMismatch => {
+                "candidate price publication does not match its on-disk manifest"
+            }
         })
     }
 }
@@ -465,6 +535,8 @@ where
         store,
         provider,
         sink: PostgresPublicationSink::new(pool),
+        entitlement_reference: config.entitlement_reference.clone(),
+        expected_fetch_mode: config.fetch_mode,
     });
     Ok(ResearchWorker::new(config, backend))
 }
@@ -482,7 +554,11 @@ pub fn bootstrap_worker(values: &HashMap<String, String>) -> Result<ResearchWork
     let backend = Arc::new(ProcessResearchBackend {
         executable,
         env: helper_environment(values, system_root.as_deref()),
-        sink: PostgresPublicationSink::new(pool),
+        sink: PostgresPublicationSink::new(pool.clone()),
+        candidate_sink: PostgresCandidateSourceSink::new(pool),
+        candidate_sources_enabled: config.candidate_sources_enabled,
+        expected_fetch_mode: config.fetch_mode,
+        attempt_timeout: config.attempt_timeout,
         recovery_position: Mutex::new(RecoveryPosition::default()),
     });
     Ok(ResearchWorker::new(config, backend))
@@ -492,6 +568,8 @@ struct PipelineResearchBackend {
     store: RawStore,
     provider: Arc<dyn EodProvider>,
     sink: PostgresPublicationSink,
+    entitlement_reference: String,
+    expected_fetch_mode: FetchMode,
 }
 
 #[async_trait]
@@ -515,7 +593,7 @@ impl ResearchBackend for PipelineResearchBackend {
 
     async fn has_eod(&self, date: TradingDate) -> Result<bool, WorkerError> {
         self.sink
-            .has_eod(date)
+            .has_eod_for_mode(date, self.expected_fetch_mode)
             .await
             .map_err(|source| WorkerError::Database {
                 phase: WorkerPhase::DuplicateCheck,
@@ -534,7 +612,7 @@ impl ResearchBackend for PipelineResearchBackend {
             &self.store,
             self.provider.as_ref(),
             &request,
-            None,
+            Some(&self.entitlement_reference),
             &self.sink,
         )
         .await
@@ -547,6 +625,10 @@ struct ProcessResearchBackend {
     executable: PathBuf,
     env: HashMap<OsString, OsString>,
     sink: PostgresPublicationSink,
+    candidate_sink: PostgresCandidateSourceSink,
+    candidate_sources_enabled: bool,
+    expected_fetch_mode: FetchMode,
+    attempt_timeout: Duration,
     recovery_position: Mutex<RecoveryPosition>,
 }
 
@@ -564,7 +646,7 @@ impl ProcessResearchBackend {
                 args,
                 env: self.env.clone(),
             },
-            WHOLE_ATTEMPT_TIMEOUT,
+            self.attempt_timeout,
             phase,
             control,
         )
@@ -618,7 +700,7 @@ impl ResearchBackend for ProcessResearchBackend {
                     args,
                     env: self.env.clone(),
                 },
-                WHOLE_ATTEMPT_TIMEOUT,
+                self.attempt_timeout,
                 control,
                 observer,
                 position,
@@ -651,13 +733,34 @@ impl ResearchBackend for ProcessResearchBackend {
     }
 
     async fn has_eod(&self, date: TradingDate) -> Result<bool, WorkerError> {
-        self.sink
-            .has_eod(date)
+        let eod = self
+            .sink
+            .has_eod_for_mode(date, self.expected_fetch_mode)
             .await
             .map_err(|source| WorkerError::Database {
                 phase: WorkerPhase::DuplicateCheck,
                 source,
-            })
+            })?;
+        if !eod || !self.candidate_sources_enabled {
+            return Ok(eod);
+        }
+        let sources = self
+            .candidate_sink
+            .has_complete_sources(date, self.expected_fetch_mode)
+            .await
+            .map_err(|source| WorkerError::Database {
+                phase: WorkerPhase::DuplicateCheck,
+                source,
+            })?;
+        let price = self
+            .candidate_sink
+            .has_price(date)
+            .await
+            .map_err(|source| WorkerError::Database {
+                phase: WorkerPhase::DuplicateCheck,
+                source,
+            })?;
+        Ok(sources && price)
     }
 
     async fn ingest(
@@ -711,8 +814,8 @@ where
     let factory = ProductionWorkerComponentFactory;
     let store = factory.build_store(&config)?;
     let pool = factory.build_pool(&config)?;
-    let sink = PostgresPublicationSink::new(pool);
-    recover_unpublished_page_with(
+    let sink = PostgresPublicationSink::new(pool.clone());
+    let page = recover_unpublished_page_with(
         &store,
         &sink,
         position,
@@ -744,7 +847,12 @@ where
         RecoveryError::Observer { .. } => WorkerError::Io {
             phase: WorkerPhase::Recovery,
         },
-    })
+    })?;
+    if !page.has_more {
+        let price_sink = PostgresCandidateSourceSink::new(pool);
+        recover_price_publications(&config, &store, &price_sink).await?;
+    }
+    Ok(page)
 }
 
 pub async fn run_internal_ingest(
@@ -757,18 +865,300 @@ pub async fn run_internal_ingest(
     let provider = factory.build_provider(&config)?;
     let store = factory.build_store(&config)?;
     let pool = factory.build_pool(&config)?;
-    let sink = PostgresPublicationSink::new(pool);
-    let request = IngestRequest::new(MARKET_KR.to_owned(), date, now);
-    ingest_and_publish(&store, provider.as_ref(), &request, None, &sink)
+    let sink = PostgresPublicationSink::new(pool.clone());
+    let price_sink = PostgresCandidateSourceSink::new(pool.clone());
+    let recovered_price_batch = recover_price_publications(&config, &store, &price_sink).await?;
+    let eod_batch_id = if sink
+        .has_eod_for_mode(date, config.fetch_mode)
         .await
-        .map(|outcome| outcome.manifest.batch_id)
-        .map_err(WorkerError::Pipeline)
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::DuplicateCheck,
+            source,
+        })? {
+        None
+    } else {
+        let request = IngestRequest::new(MARKET_KR.to_owned(), date, now);
+        Some(
+            ingest_and_publish(
+                &store,
+                provider.as_ref(),
+                &request,
+                Some(&config.entitlement_reference),
+                &sink,
+            )
+            .await
+            .map(|outcome| outcome.manifest.batch_id)
+            .map_err(WorkerError::Pipeline)?,
+        )
+    };
+    let published_price_batch = recover_price_publications(&config, &store, &price_sink).await?;
+    let candidate_batch_id = if config.candidate_sources_enabled {
+        run_candidate_source_ingest(&config, pool, date, now).await?
+    } else {
+        None
+    };
+    candidate_batch_id
+        .or(eod_batch_id)
+        .or(published_price_batch)
+        .or(recovered_price_batch)
+        .ok_or(WorkerError::ChildOutput {
+            phase: WorkerPhase::Ingest,
+        })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+async fn run_candidate_source_ingest(
+    config: &ResearchWorkerConfig,
+    pool: PgPool,
+    date: TradingDate,
+    now: UtcTimestamp,
+) -> Result<Option<BatchId>, WorkerError> {
+    let sink = PostgresCandidateSourceSink::new(pool);
+    let store = RawStore::new(&config.candidate_raw_root);
+    recover_candidate_batches(&store, &sink)
+        .await
+        .map_err(WorkerError::CandidatePipeline)?;
+    let missing_by_universe = sink
+        .missing_source_kinds_by_universe(date, now.as_datetime(), config.fetch_mode)
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::DuplicateCheck,
+            source,
+        })?;
+    if missing_by_universe.is_empty() || missing_by_universe.values().all(Vec::is_empty) {
+        return Ok(None);
+    }
+    let provider: Arc<dyn EodProvider> = match config.fetch_mode {
+        FetchMode::Synthetic => Arc::new(KrxProvider::synthetic(
+            RecordedBundle::open(&config.candidate_synthetic_bundle)
+                .map_err(WorkerError::Provider)?,
+        )),
+        FetchMode::Credentialed => return Err(WorkerError::ProviderNotConfigured),
+    };
+    let request = IngestRequest::new(MARKET_KR.to_owned(), date, now);
+    let outcome = ingest_bundle_with_kinds(
+        &store,
+        provider.as_ref(),
+        &request,
+        Some(&config.entitlement_reference),
+        &CANDIDATE_RESPONSE_KINDS,
+    )
+    .map_err(|error| WorkerError::CandidatePipeline(CandidatePipelineError::Ingest(error)))?;
+    let bindings = sink
+        .catalog_candidate_batch(&outcome)
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::Publication,
+            source,
+        })?;
+    let batch = prepare_candidate_batch(&outcome, date, now, &bindings)
+        .map_err(WorkerError::CandidatePipeline)?;
+    publish_candidate_batch(&sink, &batch)
+        .await
+        .map_err(WorkerError::CandidatePipeline)?;
+    Ok(Some(outcome.batch_id))
+}
+
+async fn recover_price_publications(
+    config: &ResearchWorkerConfig,
+    raw: &RawStore,
+    sink: &PostgresCandidateSourceSink,
+) -> Result<Option<BatchId>, WorkerError> {
+    let dataset_id = DatasetId::parse("krx_eod_bars").map_err(|_| WorkerError::InvalidConfig {
+        key: "RESEARCH_CURATED_ROOT",
+    })?;
+    let curated = CurateStore::new(&config.curated_root);
+    let storage_path = config
+        .curated_root
+        .to_str()
+        .ok_or(WorkerError::InvalidConfig {
+            key: "RESEARCH_CURATED_ROOT",
+        })?;
+    let entries = raw
+        .read_reconciled_manifest(market_data::PROVIDER_KRX, MARKET_KR)
+        .map_err(|source| WorkerError::Pipeline(PipelineError::Manifest { source }))?;
+    let mut published_batch = None;
+    for entry in entries {
+        if !raw_batch_has_target_bars(raw, &entry)? {
+            continue;
+        }
+        if sink
+            .raw_batch_is_terminal(&entry, "price")
+            .await
+            .map_err(|source| WorkerError::Database {
+                phase: WorkerPhase::Recovery,
+                source,
+            })?
+        {
+            continue;
+        }
+        let contract_reference = entry
+            .entitlement_reference
+            .as_deref()
+            .filter(|reference| !reference.trim().is_empty())
+            .ok_or_else(|| {
+                WorkerError::Curation(CurateError::MalformedManifest {
+                    context: "candidate price entitlement".to_owned(),
+                    detail: "Raw EOD batch has no governing contract reference".to_owned(),
+                })
+            })?;
+        let (calendar, master) =
+            curation_inputs_from_raw(raw, &entry).map_err(WorkerError::Curation)?;
+        let manifest = match curated
+            .manifest_for_source_batch(&dataset_id, entry.batch_id)
+            .map_err(WorkerError::Curation)?
+        {
+            Some(manifest) => manifest,
+            None => {
+                curate_batch(
+                    raw,
+                    &entry,
+                    &calendar,
+                    &master,
+                    &curated,
+                    &CurateRequest {
+                        dataset_id: &dataset_id,
+                        market: MARKET_KR,
+                        source: &entry.provider,
+                        now: entry.retrieved_at,
+                    },
+                )
+                .map_err(WorkerError::Curation)?
+                .manifest
+            }
+        };
+        let evidence =
+            price_curation_evidence(raw, &entry, &manifest).map_err(WorkerError::Curation)?;
+        if evidence.last_session != entry.date {
+            return Err(WorkerError::Curation(CurateError::MalformedManifest {
+                context: "candidate price publication".to_owned(),
+                detail: "Raw EOD batch contains a future session or omits its target session"
+                    .to_owned(),
+            }));
+        }
+        let entitlement_id = match sink
+            .resolve_contract_entitlement(
+                contract_reference,
+                evidence.first_session,
+                evidence.last_session,
+            )
+            .await
+        {
+            Ok(entitlement_id) => entitlement_id,
+            Err(original) => {
+                if sink
+                    .block_raw_batch_for_inactive_rights(
+                        &entry,
+                        "price",
+                        evidence.first_session,
+                        evidence.last_session,
+                    )
+                    .await
+                    .is_ok()
+                {
+                    continue;
+                }
+                return Err(WorkerError::Database {
+                    phase: WorkerPhase::Publication,
+                    source: original,
+                });
+            }
+        };
+        let reference_sha256 = entry
+            .files
+            .iter()
+            .find(|file| file.kind == market_data::ResponseKind::Reference)
+            .and_then(|file| file.content_hash.as_str().strip_prefix("sha256:"))
+            .ok_or_else(|| {
+                WorkerError::Curation(CurateError::MalformedManifest {
+                    context: "candidate instrument catalog".to_owned(),
+                    detail: "Raw EOD batch has no exact reference hash".to_owned(),
+                })
+            })?;
+        let source_revision = entry.batch_id.to_string();
+        sink.register_candidate_instruments(&CandidateInstrumentCatalog {
+            master: &master,
+            entitlement_id,
+            contract_reference,
+            entitlement_date: entry.date,
+            reference_sha256,
+            source_revision: &source_revision,
+            retrieved_at: entry.retrieved_at,
+        })
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::Publication,
+            source,
+        })?;
+        let raw_manifest_sha256 = crate::candidate_sink::candidate_raw_manifest_sha256(&entry)
+            .map_err(|source| WorkerError::Database {
+                phase: WorkerPhase::Publication,
+                source,
+            })?;
+        let (_, outcome) = sink
+            .publish_price(&CandidatePricePublication {
+                raw_batch_id: entry.batch_id.as_uuid(),
+                raw_manifest_sha256: &raw_manifest_sha256,
+                fetch_mode: entry.mode,
+                entitlement_date: entry.date,
+                evidence: &evidence,
+                dataset_version: &manifest.version.to_string(),
+                storage_path,
+                provider: &entry.provider,
+                entitlement_id,
+                license_ref: contract_reference,
+                available_at: entry.retrieved_at,
+                retrieved_at: entry.retrieved_at,
+            })
+            .await
+            .map_err(|source| WorkerError::Database {
+                phase: WorkerPhase::Publication,
+                source,
+            })?;
+        if outcome == crate::PublishOutcome::Published {
+            published_batch = Some(entry.batch_id);
+        }
+    }
+    Ok(published_batch)
+}
+
+fn raw_batch_has_target_bars(
+    raw: &RawStore,
+    entry: &market_data::storage::ManifestEntry,
+) -> Result<bool, WorkerError> {
+    let metadata = entry
+        .files
+        .iter()
+        .find(|file| file.kind == market_data::ResponseKind::Bars)
+        .ok_or(WorkerError::Curation(CurateError::MissingFile {
+            kind: market_data::ResponseKind::Bars,
+        }))?;
+    let files = raw
+        .read_batch_bytes(&entry.provider, &entry.market, entry)
+        .map_err(|error| {
+            WorkerError::Curation(CurateError::RawIo {
+                context: "read price recovery batch".to_owned(),
+                detail: error.to_string(),
+            })
+        })?;
+    let bytes = files
+        .iter()
+        .find(|file| file.file_name == metadata.file_name)
+        .ok_or(WorkerError::Curation(CurateError::MissingFile {
+            kind: market_data::ResponseKind::Bars,
+        }))?;
+    let document =
+        market_data::curate::parse::parse_bars(&bytes.bytes).map_err(WorkerError::Curation)?;
+    Ok(document
+        .bars
+        .iter()
+        .any(|bar| bar.date == entry.date.to_iso()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HealthStatus {
     pub newest_eod_at: DateTime<Utc>,
     pub age: Duration,
+    pub per_universe: BTreeMap<String, Vec<String>>,
 }
 
 pub async fn healthcheck(
@@ -801,7 +1191,445 @@ pub async fn healthcheck(
     let (newest_eod_at, age) =
         publication_freshness_for_batch(now_utc, batch_date, newest_eod_at, max_age)
             .map_err(|reason| WorkerError::Unhealthy { reason })?;
-    Ok(HealthStatus { newest_eod_at, age })
+    Ok(HealthStatus {
+        newest_eod_at,
+        age,
+        per_universe: BTreeMap::new(),
+    })
+}
+
+pub async fn candidate_healthcheck(
+    pool: &PgPool,
+    curated_root: &Path,
+    now_utc: DateTime<Utc>,
+    max_age: Duration,
+    expected_fetch_mode: FetchMode,
+    _run_at_kst: NaiveTime,
+) -> Result<HealthStatus, WorkerError> {
+    let kst = FixedOffset::east_opt(KST_OFFSET_SECS).expect("KST offset is valid");
+    let now_kst = now_utc.with_timezone(&kst);
+    let current_date = now_kst.date_naive();
+    // Daemon wake-up time is operator configurable, but market-data
+    // confirmation is a shared product contract with the API: 16:30 KST.
+    let include_current_session = now_kst.time() >= CANDIDATE_CONFIRMED_CLOSE_KST;
+    let expected_session: Option<chrono::NaiveDate> = timeout_query(
+        WorkerPhase::Health,
+        sqlx::query_scalar(
+            "SELECT calendar.session_date FROM trading_calendars AS calendar
+              WHERE calendar.exchange='KRX' AND calendar.session_type='TRADING'
+                AND calendar.timezone='Asia/Seoul' AND calendar.session_date <= $1
+                AND (calendar.session_date < $1 OR $2)
+                AND calendar.source_batch_id IS NOT NULL
+                AND calendar.content_sha256 IS NOT NULL AND calendar.retrieved_at IS NOT NULL
+              ORDER BY calendar.session_date DESC LIMIT 1",
+        )
+        .bind(current_date)
+        .bind(include_current_session)
+        .fetch_optional(pool),
+    )
+    .await?;
+    let expected_session = expected_session.ok_or(WorkerError::Unhealthy {
+        reason: HealthFailure::NoEodPublication,
+    })?;
+    let expected_eod: Option<(chrono::NaiveDate, DateTime<Utc>)> = timeout_query(
+        WorkerPhase::Health,
+        sqlx::query_as(
+            "SELECT batch.batch_date, batch.retrieved_at
+               FROM data_batches AS batch
+              WHERE batch.provider = 'KRX' AND batch.market = 'KR' AND batch.kind = 'EOD'
+                AND batch.fetch_mode = $3
+                AND batch.batch_date = $1 AND batch.retrieved_at <= $2
+              ORDER BY batch.retrieved_at DESC LIMIT 1",
+        )
+        .bind(expected_session)
+        .bind(now_utc)
+        .bind(expected_fetch_mode.as_str())
+        .fetch_optional(pool),
+    )
+    .await?;
+    let (source_date, _) = expected_eod.ok_or(WorkerError::Unhealthy {
+        reason: HealthFailure::NoEodPublication,
+    })?;
+    let expected_trading_date = TradingDate::new(
+        expected_session.year(),
+        expected_session.month(),
+        expected_session.day(),
+    )
+    .map_err(|_| WorkerError::Unhealthy {
+        reason: HealthFailure::NoCandidatePublication,
+    })?;
+    let candidate_source_sink = PostgresCandidateSourceSink::new(pool.clone());
+    let missing_by_universe = candidate_source_sink
+        .missing_source_kinds_by_universe(expected_trading_date, now_utc, expected_fetch_mode)
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::Health,
+            source,
+        })?;
+    if missing_by_universe.is_empty()
+        || missing_by_universe
+            .values()
+            .any(|missing| !missing.is_empty())
+    {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::CandidateUniverseUnavailable,
+        });
+    }
+    let per_universe = missing_by_universe
+        .into_iter()
+        .map(|(universe, missing)| {
+            (
+                universe.to_string(),
+                missing.into_iter().map(|kind| kind.to_string()).collect(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    #[derive(sqlx::FromRow)]
+    struct CandidateSourceHealthRow {
+        universe_key: String,
+        universe_id: uuid::Uuid,
+        flow_dataset_version_id: uuid::Uuid,
+        status_dataset_version_id: uuid::Uuid,
+        fundamental_dataset_version_id: uuid::Uuid,
+        sector_version_id: uuid::Uuid,
+        flow_entitlement_id: uuid::Uuid,
+        flow_license_ref: String,
+        retrieved_at: DateTime<Utc>,
+    }
+    let source: Vec<CandidateSourceHealthRow> = timeout_query(
+        WorkerPhase::Health,
+        sqlx::query_as(
+            "SELECT registry.universe_key,
+                    universe.id AS universe_id,
+                    flow.dataset_version_id AS flow_dataset_version_id,
+                    status.dataset_version_id AS status_dataset_version_id,
+                    fact.dataset_version_id AS fundamental_dataset_version_id,
+                    sector.id AS sector_version_id,
+                    flow.entitlement_id AS flow_entitlement_id,
+                    flow.license_ref AS flow_license_ref,
+                    LEAST(flow.retrieved_at, status.retrieved_at) AS retrieved_at
+               FROM candidate_universe_registry AS registry
+               CROSS JOIN LATERAL (
+                    SELECT id, retrieved_at FROM candidate_universe_snapshots
+                     WHERE index_id = registry.universe_key
+                       AND as_of_date <= $1 AND available_at <= $2
+                       AND member_count = (
+                           SELECT count(*) FROM candidate_universe_members AS member
+                            WHERE member.universe_snapshot_id = candidate_universe_snapshots.id
+                              AND member.effective_from <= $1
+                              AND (member.effective_until IS NULL OR member.effective_until >= $1))
+                       AND public.candidate_source_entitlement_is_valid(
+                           entitlement_id, license_ref, registry.membership_dataset_id, $1, $1)
+                       AND EXISTS (
+                           SELECT 1 FROM candidate_raw_batch_datasets AS binding
+                           JOIN candidate_raw_batch_publications AS batch
+                             ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
+                          WHERE binding.dataset_version_id=candidate_universe_snapshots.dataset_version_id
+                            AND binding.response_kind='index_membership'
+                            AND binding.dataset_id=registry.membership_dataset_id
+                            AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
+                     ORDER BY as_of_date DESC, available_at DESC, id LIMIT 1
+               ) AS universe
+               CROSS JOIN LATERAL (
+                    SELECT member.dataset_version_id, member.entitlement_id,
+                           member.license_ref, member.retrieved_at
+                      FROM candidate_investor_flows AS flow
+                      JOIN candidate_investor_flow_snapshot_rows AS member
+                        ON member.flow_observation_id=flow.id
+                     WHERE flow.trade_date = $1 AND member.entitlement_date = $1
+                       AND flow.available_at <= $2
+                       AND public.candidate_source_entitlement_is_valid(
+                           member.entitlement_id, member.license_ref, 'krx_investor_flows', $1, $1)
+                       AND EXISTS (
+                           SELECT 1 FROM candidate_raw_batch_datasets AS binding
+                           JOIN candidate_raw_batch_publications AS batch
+                             ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
+                          WHERE binding.dataset_version_id=member.dataset_version_id
+                            AND binding.response_kind='investor_flow'
+                            AND binding.dataset_id='krx_investor_flows'
+                            AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
+                     ORDER BY flow.available_at DESC, flow.id LIMIT 1
+               ) AS flow
+               CROSS JOIN LATERAL (
+                    SELECT dataset_version_id, retrieved_at FROM candidate_market_status_observations
+                     WHERE trade_date = $1 AND entitlement_date = $1 AND available_at <= $2
+                       AND public.candidate_source_entitlement_is_valid(
+                           entitlement_id, license_ref, 'krx_market_status', $1, $1)
+                       AND EXISTS (
+                           SELECT 1 FROM candidate_raw_batch_datasets AS binding
+                           JOIN candidate_raw_batch_publications AS batch
+                             ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
+                          WHERE binding.dataset_version_id=candidate_market_status_observations.dataset_version_id
+                            AND binding.response_kind='market_status'
+                            AND binding.dataset_id='krx_market_status'
+                            AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
+                     ORDER BY available_at DESC, id LIMIT 1
+               ) AS status
+               CROSS JOIN LATERAL (
+                    SELECT dataset_version_id, retrieved_at FROM candidate_fundamental_observations
+                     WHERE fiscal_period_end <= $1 AND available_at <= $2
+                       AND public.candidate_source_entitlement_is_valid(
+                           entitlement_id, license_ref, 'krx_fundamentals', $1, $1)
+                       AND EXISTS (
+                           SELECT 1 FROM candidate_raw_batch_datasets AS binding
+                           JOIN candidate_raw_batch_publications AS batch
+                             ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
+                          WHERE binding.dataset_version_id=candidate_fundamental_observations.dataset_version_id
+                            AND binding.response_kind='fundamentals'
+                            AND binding.dataset_id='krx_fundamentals'
+                            AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
+                     ORDER BY available_at DESC, id LIMIT 1
+               ) AS fact
+               CROSS JOIN LATERAL (
+                    SELECT id, retrieved_at FROM candidate_sector_versions
+                     WHERE effective_from <= $1 AND available_at <= $2
+                       AND public.candidate_source_entitlement_is_valid(
+                           entitlement_id, license_ref, 'krx_sector_classification', $1, $1)
+                       AND EXISTS (
+                           SELECT 1 FROM candidate_raw_batch_datasets AS binding
+                           JOIN candidate_raw_batch_publications AS batch
+                             ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
+                          WHERE binding.dataset_version_id=candidate_sector_versions.dataset_version_id
+                            AND binding.response_kind='sector_classification'
+                            AND binding.dataset_id='krx_sector_classification'
+                            AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
+                     ORDER BY effective_from DESC, available_at DESC, id LIMIT 1
+               ) AS sector
+              WHERE registry.enabled",
+        )
+        .bind(source_date)
+        .bind(now_utc)
+        .bind(expected_fetch_mode.as_str())
+        .fetch_all(pool),
+    )
+    .await?;
+    if source.is_empty() {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::NoCandidatePublication,
+        });
+    }
+    if source.len() != per_universe.len() {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::CandidateUniverseUnavailable,
+        });
+    }
+    let source_universes = source
+        .iter()
+        .map(|row| row.universe_key.as_str())
+        .collect::<BTreeSet<_>>();
+    if source_universes.len() != per_universe.len()
+        || source_universes
+            .iter()
+            .any(|universe| !per_universe.contains_key(*universe))
+    {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::CandidateUniverseUnavailable,
+        });
+    }
+    let source_retrieved_at = source
+        .iter()
+        .map(|row| row.retrieved_at)
+        .min()
+        .expect("nonempty source health rows");
+    let (newest_eod_at, age) =
+        market_data::freshness::applicable_eod_freshness(now_utc, source_date, source_retrieved_at)
+            .ok_or(WorkerError::Unhealthy {
+                reason: HealthFailure::FutureCandidatePublication,
+            })?;
+    if age > max_age {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::StaleCandidatePublication,
+        });
+    }
+    #[derive(sqlx::FromRow)]
+    struct PriceHealthRow {
+        dataset_version: String,
+        manifest_sha256: String,
+        curated_generation: i64,
+        storage_path: String,
+        retrieved_at: DateTime<Utc>,
+        available_at: DateTime<Utc>,
+    }
+    const PRICE_HEALTH_QUERY: &str = "WITH required_sessions AS MATERIALIZED (
+             SELECT calendar.session_date
+               FROM trading_calendars AS calendar
+              WHERE calendar.exchange = 'KRX'
+                AND calendar.session_type = 'TRADING'
+                AND calendar.timezone = 'Asia/Seoul'
+                AND calendar.session_date <= $1
+                AND calendar.source_batch_id IS NOT NULL
+                AND calendar.content_sha256 IS NOT NULL
+                AND calendar.retrieved_at IS NOT NULL
+              ORDER BY calendar.session_date DESC LIMIT 60
+         )
+         SELECT price.dataset_version, price.manifest_sha256,
+                price.curated_generation, dataset.storage_path,
+                price.retrieved_at, price.available_at
+           FROM candidate_price_publications AS price
+           JOIN dataset_versions AS dataset ON dataset.id = price.dataset_version_id
+          WHERE dataset.dataset_id = 'krx_eod_bars'
+            AND dataset.status IN ('READY', 'WARNING')
+            AND price.first_session <= $1 AND price.last_session >= $1
+            AND (SELECT count(*) FROM required_sessions) = 60
+            AND (
+                SELECT count(*) FROM candidate_universe_members AS member
+                 WHERE member.universe_snapshot_id = $2
+                   AND member.effective_from <= $1
+                   AND (member.effective_until IS NULL OR member.effective_until >= $1)
+                   AND NOT EXISTS (
+                       SELECT 1 FROM required_sessions AS required
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM candidate_price_instrument_sessions AS coverage_session
+                             WHERE coverage_session.dataset_version_id = price.dataset_version_id
+                               AND coverage_session.instrument_id = member.instrument_id
+                               AND coverage_session.session_date = required.session_date))
+                   AND NOT EXISTS (
+                       SELECT 1 FROM required_sessions AS required
+                       CROSS JOIN (VALUES ('FOREIGN'),('INSTITUTION')) AS class(investor_class)
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM candidate_investor_flows AS history
+                            JOIN candidate_investor_flow_snapshot_rows AS flow_member
+                              ON flow_member.flow_observation_id=history.id
+                             WHERE flow_member.dataset_version_id = $3
+                               AND history.instrument_id = member.instrument_id
+                               AND history.trade_date = required.session_date
+                               AND history.investor_class = class.investor_class
+                               AND history.available_at <= $4))
+                   AND EXISTS (
+                       SELECT 1 FROM candidate_market_status_observations AS member_status
+                        WHERE member_status.dataset_version_id = $5
+                          AND member_status.instrument_id = member.instrument_id
+                          AND member_status.trade_date = $1
+                          AND member_status.available_at <= $4)
+                   AND EXISTS (
+                       SELECT 1 FROM candidate_fundamental_observations AS member_fact
+                        WHERE member_fact.dataset_version_id = $6
+                          AND member_fact.instrument_id = member.instrument_id
+                          AND member_fact.fiscal_period_end <= $1
+                          AND member_fact.available_at <= $4)
+                   AND EXISTS (
+                       SELECT 1 FROM candidate_sector_entries AS member_sector
+                        WHERE member_sector.sector_version_id = $7
+                          AND member_sector.instrument_id = member.instrument_id
+                          AND member_sector.effective_from <= $1
+                          AND member_sector.available_at <= $4
+                          AND (member_sector.effective_until IS NULL
+                               OR member_sector.effective_until >= $1))
+            ) >= 5
+            AND public.candidate_source_entitlement_is_valid(
+                price.entitlement_id, price.license_ref, 'krx_eod_bars',
+                price.first_session, price.last_session)
+            AND public.candidate_source_entitlement_is_valid(
+                $9, $10, 'krx_investor_flows',
+                (SELECT min(session_date) FROM required_sessions), $1)
+            AND EXISTS (
+                SELECT 1 FROM candidate_raw_batch_datasets AS binding
+                JOIN candidate_raw_batch_publications AS batch
+                  ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
+               WHERE binding.dataset_version_id=price.dataset_version_id
+                 AND binding.dataset_id='krx_eod_bars'
+                 AND binding.response_kind='bars'
+                 AND batch.state='PUBLISHED' AND batch.fetch_mode=$8)
+          ORDER BY price.available_at DESC, dataset.id LIMIT 1";
+    let mut prices = Vec::with_capacity(source.len());
+    let mut price_age = Duration::ZERO;
+    for source in &source {
+        let price: Option<PriceHealthRow> = timeout_query(
+            WorkerPhase::Health,
+            sqlx::query_as(PRICE_HEALTH_QUERY)
+                .bind(source_date)
+                .bind(source.universe_id)
+                .bind(source.flow_dataset_version_id)
+                .bind(now_utc)
+                .bind(source.status_dataset_version_id)
+                .bind(source.fundamental_dataset_version_id)
+                .bind(source.sector_version_id)
+                .bind(expected_fetch_mode.as_str())
+                .bind(source.flow_entitlement_id)
+                .bind(&source.flow_license_ref)
+                .fetch_optional(pool),
+        )
+        .await?;
+        let Some(price) = price else {
+            return Err(WorkerError::Unhealthy {
+                reason: HealthFailure::CandidateUniverseUnavailable,
+            });
+        };
+        if price.available_at > now_utc {
+            return Err(WorkerError::Unhealthy {
+                reason: HealthFailure::FuturePricePublication,
+            });
+        }
+        let (_, age) = market_data::freshness::applicable_eod_freshness(
+            now_utc,
+            source_date,
+            price.retrieved_at,
+        )
+        .ok_or(WorkerError::Unhealthy {
+            reason: HealthFailure::FuturePricePublication,
+        })?;
+        if age > max_age {
+            return Err(WorkerError::Unhealthy {
+                reason: HealthFailure::StalePricePublication,
+            });
+        }
+        price_age = price_age.max(age);
+        prices.push(price);
+    }
+    let price = prices
+        .first()
+        .expect("every enabled universe has a price health row");
+    if prices.iter().skip(1).any(|candidate| {
+        candidate.dataset_version != price.dataset_version
+            || candidate.manifest_sha256 != price.manifest_sha256
+            || candidate.curated_generation != price.curated_generation
+            || candidate.storage_path != price.storage_path
+            || candidate.retrieved_at != price.retrieved_at
+            || candidate.available_at != price.available_at
+    }) {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::CandidateUniverseUnavailable,
+        });
+    }
+    let generation =
+        u32::try_from(price.curated_generation).map_err(|_| WorkerError::Unhealthy {
+            reason: HealthFailure::PriceManifestMismatch,
+        })?;
+    let configured_root = curated_root.to_str().ok_or(WorkerError::Unhealthy {
+        reason: HealthFailure::PriceManifestMismatch,
+    })?;
+    let dataset_id = DatasetId::parse("krx_eod_bars").map_err(|_| WorkerError::Unhealthy {
+        reason: HealthFailure::PriceManifestMismatch,
+    })?;
+    let manifest = CurateStore::new(curated_root)
+        .read_dataset_manifest(&dataset_id, generation)
+        .map_err(|_| WorkerError::Unhealthy {
+            reason: HealthFailure::PriceManifestMismatch,
+        })?
+        .ok_or(WorkerError::Unhealthy {
+            reason: HealthFailure::PriceManifestMismatch,
+        })?;
+    let computed =
+        market_data::dataset_manifest_hash(&manifest).map_err(|_| WorkerError::Unhealthy {
+            reason: HealthFailure::PriceManifestMismatch,
+        })?;
+    if price.storage_path != configured_root
+        || price.dataset_version != generation.to_string()
+        || manifest.version != generation
+        || manifest.dataset_id != dataset_id
+        || manifest.bar_count == 0
+        || manifest.content_hash != computed
+        || computed.as_str().strip_prefix("sha256:") != Some(price.manifest_sha256.as_str())
+    {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::PriceManifestMismatch,
+        });
+    }
+    Ok(HealthStatus {
+        newest_eod_at,
+        age: age.max(price_age),
+        per_universe,
+    })
 }
 
 fn publication_freshness_for_batch(
@@ -1122,7 +1950,7 @@ impl ResearchWorker {
         F: Future<Output = Result<T, WorkerError>> + Send,
     {
         tokio::select! {
-            result = tokio::time::timeout(WHOLE_ATTEMPT_TIMEOUT, future) => {
+            result = tokio::time::timeout(self.config.attempt_timeout, future) => {
                 AttemptOutcome::Completed(result.unwrap_or_else(|_| Err(WorkerError::Timeout { phase })))
             }
             _ = control.wait(None) => AttemptOutcome::Shutdown,
@@ -1786,8 +2614,16 @@ impl ResearchWorkerConfig {
         }
 
         let max_age = parse_max_age(values)?;
+        let attempt_timeout = parse_attempt_timeout(values)?;
 
         let raw_root = nonempty(values, "RESEARCH_RAW_ROOT")?;
+        let curated_root = nonempty(values, "RESEARCH_CURATED_ROOT")?;
+        let entitlement_reference = nonempty(values, "RESEARCH_ENTITLEMENT_REFERENCE")?;
+        if entitlement_reference.len() > 256 {
+            return Err(WorkerError::InvalidConfig {
+                key: "RESEARCH_ENTITLEMENT_REFERENCE",
+            });
+        }
         let host = nonempty(values, "DB_HOST")?;
         let port = parse_port(values)?;
         let name = nonempty(values, "DB_NAME")?;
@@ -1805,13 +2641,33 @@ impl ResearchWorkerConfig {
         } else {
             None
         };
+        let candidate_sources_enabled = match values
+            .get("RESEARCH_CANDIDATE_ENABLED")
+            .map(String::as_str)
+            .unwrap_or("false")
+        {
+            "true" => true,
+            "false" => false,
+            _ => {
+                return Err(WorkerError::InvalidConfig {
+                    key: "RESEARCH_CANDIDATE_ENABLED",
+                });
+            }
+        };
+        let candidate_raw_root = values
+            .get("RESEARCH_CANDIDATE_RAW_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(&raw_root).join("candidate"));
 
         Ok(Self {
             app_env,
             fetch_mode,
             run_at_kst,
             max_publication_age: max_age,
+            attempt_timeout,
             raw_root: PathBuf::from(raw_root),
+            curated_root: PathBuf::from(curated_root),
+            entitlement_reference,
             database: DatabaseConfig {
                 host,
                 port,
@@ -1824,6 +2680,12 @@ impl ResearchWorkerConfig {
                 .get("RESEARCH_SYNTHETIC_BUNDLE")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("tests/fixtures/kr-etf/contract")),
+            candidate_sources_enabled,
+            candidate_raw_root,
+            candidate_synthetic_bundle: values
+                .get("RESEARCH_CANDIDATE_SYNTHETIC_BUNDLE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("tests/fixtures/kr-candidates/contract")),
         })
     }
 }
@@ -1840,6 +2702,30 @@ impl HealthcheckConfig {
     where
         F: Fn(&Path) -> io::Result<String>,
     {
+        let app_env = match required(values, "APP_ENV")? {
+            "development" => AppEnvironment::Development,
+            "qa" => AppEnvironment::Qa,
+            "production" => AppEnvironment::Production,
+            _ => return Err(WorkerError::InvalidConfig { key: "APP_ENV" }),
+        };
+        let expected_fetch_mode = match required(values, "RESEARCH_FETCH_MODE")? {
+            "synthetic" => FetchMode::Synthetic,
+            "credentialed" => FetchMode::Credentialed,
+            _ => {
+                return Err(WorkerError::InvalidConfig {
+                    key: "RESEARCH_FETCH_MODE",
+                });
+            }
+        };
+        validate_synthetic_policy(app_env, expected_fetch_mode)?;
+        let run_at = values
+            .get("RESEARCH_RUN_AT_KST")
+            .map(String::as_str)
+            .unwrap_or(DEFAULT_RUN_AT_KST);
+        let run_at_kst =
+            NaiveTime::parse_from_str(run_at, "%H:%M").map_err(|_| WorkerError::InvalidConfig {
+                key: "RESEARCH_RUN_AT_KST",
+            })?;
         let max_publication_age = parse_max_age(values)?;
         let host = nonempty(values, "DB_HOST")?;
         let port = parse_port(values)?;
@@ -1848,8 +2734,26 @@ impl HealthcheckConfig {
         let password_file = nonempty(values, "DB_PASSWORD_FILE")?;
         let password =
             read_nonempty_secret(&reader, Path::new(&password_file), "DB_PASSWORD_FILE")?;
+        let candidate_sources_enabled = match values
+            .get("RESEARCH_CANDIDATE_ENABLED")
+            .map(String::as_str)
+            .unwrap_or("false")
+        {
+            "true" => true,
+            "false" => false,
+            _ => {
+                return Err(WorkerError::InvalidConfig {
+                    key: "RESEARCH_CANDIDATE_ENABLED",
+                });
+            }
+        };
+        let curated_root = PathBuf::from(nonempty(values, "RESEARCH_CURATED_ROOT")?);
         Ok(Self {
             max_publication_age,
+            candidate_sources_enabled,
+            curated_root,
+            expected_fetch_mode,
+            run_at_kst,
             database: DatabaseConfig {
                 host,
                 port,
@@ -1943,6 +2847,19 @@ fn parse_max_age(values: &HashMap<String, String>) -> Result<Duration, WorkerErr
         .map(Duration::from_secs)
         .ok_or(WorkerError::InvalidConfig {
             key: "RESEARCH_MAX_PUBLICATION_AGE_SECS",
+        })
+}
+
+fn parse_attempt_timeout(values: &HashMap<String, String>) -> Result<Duration, WorkerError> {
+    values
+        .get("RESEARCH_ATTEMPT_TIMEOUT_SECS")
+        .map_or(Some(DEFAULT_ATTEMPT_TIMEOUT_SECS), |value| {
+            value.parse::<u64>().ok()
+        })
+        .filter(|seconds| (60..=MAX_ATTEMPT_TIMEOUT_SECS).contains(seconds))
+        .map(Duration::from_secs)
+        .ok_or(WorkerError::InvalidConfig {
+            key: "RESEARCH_ATTEMPT_TIMEOUT_SECS",
         })
 }
 

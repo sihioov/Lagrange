@@ -33,6 +33,9 @@
 !tests/fixtures/kr-etf/
 !tests/fixtures/kr-etf/contract/
 !tests/fixtures/kr-etf/contract/**
+!tests/fixtures/kr-candidates/
+!tests/fixtures/kr-candidates/contract/
+!tests/fixtures/kr-candidates/contract/**
 !deploy/
 deploy/*
 !deploy/runtime/

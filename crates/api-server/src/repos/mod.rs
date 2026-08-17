@@ -7,6 +7,7 @@ pub mod admin;
 pub mod artifacts;
 pub mod audit;
 pub mod backtest_runs;
+pub mod candidates;
 pub mod entitlements;
 pub mod live;
 pub mod metrics;

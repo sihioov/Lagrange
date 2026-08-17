@@ -22,6 +22,7 @@
 //! Every factor value is finite or typed NULL — never NaN/Inf.
 
 pub mod bars;
+pub mod candidate;
 pub mod contract;
 pub mod factors;
 pub mod fundamentals;
@@ -30,6 +31,12 @@ pub mod months;
 pub mod normalize;
 pub mod snapshot;
 
+pub use candidate::{
+    CandidateAnalysis, CandidateAxis, CandidateAxisScore, CandidateExclusion, CandidateFactorValue,
+    CandidateFlags, CandidateInstrumentInput, CandidateScenario, CandidateScoreError,
+    CandidateScoringConfig, CandidateSession, EvidenceStrength, NormalizationScope,
+    score_candidates, top_five,
+};
 pub use contract::{Factor, FactorContext, FactorError, FactorFrame, FactorValue, Field};
 pub use normalize::{NormalizePolicy, PercentilePolicy, WinsorizePolicy, ZScorePolicy};
 pub use snapshot::{FactorRow, FactorSnapshot, FactorSnapshotBuilder, FrozenUniverse};

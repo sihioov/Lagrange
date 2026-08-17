@@ -9,6 +9,7 @@
 //! Package name is `job-queue` (underscore form `job_queue` in `use` paths).
 
 pub mod batch;
+pub mod candidate;
 pub mod error;
 pub mod factor_series;
 pub mod paper_execution;

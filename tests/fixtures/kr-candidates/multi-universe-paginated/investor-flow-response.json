@@ -1,0 +1,15 @@
+{
+  "flows": [
+    {
+      "instrument": "069500.KRX",
+      "trade_date": "2026-08-14",
+      "investor_class": "FOREIGN",
+      "net_amount": 1250000000.0,
+      "net_volume": 15600.0,
+      "currency": "KRW",
+      "volume_unit": "SHARE",
+      "source_revision": "synthetic-r1",
+      "available_at": "2026-08-14T06:50:00Z"
+    }
+  ]
+}

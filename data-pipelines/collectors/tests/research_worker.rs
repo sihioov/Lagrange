@@ -17,7 +17,7 @@ use collectors::{
     retry_delay, run_internal_recovery_stream, store_failure_class, validate_synthetic_policy,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
-use market_data::contract::{MARKET_KR, PROVIDER_KRX, ResponseKind};
+use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KRX, ResponseKind};
 use market_data::ingest::{IngestError, IngestRequest, ingest_bundle};
 use market_data::provider::{
     CredentialRef, EodProvider, FetchRequest, KrxProvider, ProviderError, RecordedBundle,
@@ -46,6 +46,29 @@ fn request(at: &str) -> IngestRequest {
         TradingDate::parse("2020-01-31").unwrap(),
         UtcTimestamp::parse_rfc3339(at).unwrap(),
     )
+}
+
+async fn seed_candidate_entitlement(pool: &PgPool) {
+    sqlx::query(
+        "INSERT INTO data_entitlements
+         (contract_document_sha256,contract_reference,status,covered_datasets,
+          covered_uses,effective_from,effective_until,managed_by)
+         VALUES (repeat('8',64),'fixture://candidate-license','ACTIVE',$1,
+                 '[\"candidate\"]'::jsonb,DATE '2000-01-01',DATE '2030-12-31',
+                 '00000000-0000-4000-8000-000000000042'::uuid)",
+    )
+    .bind(serde_json::json!([
+        "krx_eod_bars",
+        "krx_investor_flows",
+        "krx_market_status",
+        "krx_fundamentals",
+        "krx_kospi200_membership",
+        "krx_kosdaq150_membership",
+        "krx_sector_classification"
+    ]))
+    .execute(pool)
+    .await
+    .expect("candidate-use fixture entitlement");
 }
 
 struct AlwaysFailWriter;
@@ -1394,6 +1417,14 @@ fn worker_config(overrides: &[(&str, &str)]) -> HashMap<String, String> {
         ("APP_ENV".to_owned(), "qa".to_owned()),
         ("RESEARCH_FETCH_MODE".to_owned(), "synthetic".to_owned()),
         ("RESEARCH_RAW_ROOT".to_owned(), "var/research".to_owned()),
+        (
+            "RESEARCH_CURATED_ROOT".to_owned(),
+            "var/research".to_owned(),
+        ),
+        (
+            "RESEARCH_ENTITLEMENT_REFERENCE".to_owned(),
+            "fixture://candidate-license".to_owned(),
+        ),
         ("DB_HOST".to_owned(), "127.0.0.1".to_owned()),
         ("DB_PORT".to_owned(), "55432".to_owned()),
         ("DB_NAME".to_owned(), "lagrange".to_owned()),
@@ -1419,13 +1450,39 @@ fn worker_config_parses_defaults_and_trims_spaces_from_file_secret() {
     assert_eq!(config.fetch_mode, market_data::FetchMode::Synthetic);
     assert_eq!(config.run_at_kst.format("%H:%M").to_string(), "16:30");
     assert_eq!(config.max_publication_age.as_secs(), 345_600);
+    assert_eq!(config.attempt_timeout.as_secs(), 900);
     assert_eq!(config.raw_root.to_string_lossy(), "var/research");
     assert_eq!(config.database.host, "127.0.0.1");
     assert_eq!(config.database.port, 55432);
     assert_eq!(config.database.name, "lagrange");
     assert_eq!(config.database.user, "research_writer");
     assert_eq!(config.database.password.expose(), "password from file");
+    assert!(!config.candidate_sources_enabled);
+    assert_eq!(
+        config.candidate_raw_root.to_string_lossy(),
+        "var/research/candidate"
+    );
     assert!(!format!("{config:?}").contains("password from file"));
+}
+
+#[test]
+fn worker_config_enables_separate_candidate_raw_and_fixture_paths() {
+    let values = worker_config(&[
+        ("RESEARCH_CANDIDATE_ENABLED", "true"),
+        ("RESEARCH_CANDIDATE_RAW_ROOT", "var/candidate-raw"),
+        ("RESEARCH_CANDIDATE_SYNTHETIC_BUNDLE", "fixtures/candidates"),
+    ]);
+    let config =
+        ResearchWorkerConfig::from_map_with_reader(&values, |_| Ok("password".to_owned())).unwrap();
+    assert!(config.candidate_sources_enabled);
+    assert_eq!(
+        config.candidate_raw_root.to_string_lossy(),
+        "var/candidate-raw"
+    );
+    assert_eq!(
+        config.candidate_synthetic_bundle.to_string_lossy(),
+        "fixtures/candidates"
+    );
 }
 
 #[test]
@@ -1435,6 +1492,7 @@ fn worker_config_parses_schedule_and_max_age_overrides() {
         ("RESEARCH_FETCH_MODE", "credentialed"),
         ("RESEARCH_RUN_AT_KST", "07:05"),
         ("RESEARCH_MAX_PUBLICATION_AGE_SECS", "42"),
+        ("RESEARCH_ATTEMPT_TIMEOUT_SECS", "600"),
         ("KRX_CREDENTIAL_FILE", "provider-secret"),
     ]);
     let config = ResearchWorkerConfig::from_map_with_reader(&values, |path| {
@@ -1451,6 +1509,7 @@ fn worker_config_parses_schedule_and_max_age_overrides() {
     assert_eq!(config.fetch_mode, market_data::FetchMode::Credentialed);
     assert_eq!(config.run_at_kst.format("%H:%M").to_string(), "07:05");
     assert_eq!(config.max_publication_age.as_secs(), 42);
+    assert_eq!(config.attempt_timeout.as_secs(), 600);
 }
 
 #[test]
@@ -1458,10 +1517,14 @@ fn worker_config_rejects_invalid_and_missing_values_without_secret_contents() {
     for (key, value) in [
         ("APP_ENV", "staging"),
         ("RESEARCH_FETCH_MODE", "auto"),
+        ("RESEARCH_CANDIDATE_ENABLED", "yes"),
         ("RESEARCH_RUN_AT_KST", "25:00"),
         ("RESEARCH_MAX_PUBLICATION_AGE_SECS", "0"),
+        ("RESEARCH_ATTEMPT_TIMEOUT_SECS", "59"),
         ("DB_PORT", "70000"),
         ("RESEARCH_RAW_ROOT", "  "),
+        ("RESEARCH_CURATED_ROOT", "  "),
+        ("RESEARCH_ENTITLEMENT_REFERENCE", "  "),
     ] {
         let values = worker_config(&[(key, value)]);
         let error = ResearchWorkerConfig::from_map_with_reader(&values, |_| {
@@ -1721,6 +1784,7 @@ async fn worker_cli_once_runs_collection_in_the_bounded_hidden_helper() {
     let db = ScratchDb::create()
         .await
         .expect("required QA PostgreSQL must be reachable");
+    seed_candidate_entitlement(&db.supervisor).await;
     let workspace = tempfile::tempdir().unwrap();
     let raw_root = workspace.path().join("raw");
     let password_file = workspace.path().join("db-password");
@@ -1738,6 +1802,11 @@ async fn worker_cli_once_runs_collection_in_the_bounded_hidden_helper() {
         .env("APP_ENV", "development")
         .env("RESEARCH_FETCH_MODE", "synthetic")
         .env("RESEARCH_RAW_ROOT", &raw_root)
+        .env("RESEARCH_CURATED_ROOT", &raw_root)
+        .env(
+            "RESEARCH_ENTITLEMENT_REFERENCE",
+            "fixture://candidate-license",
+        )
         .env("RESEARCH_SYNTHETIC_BUNDLE", fixture)
         .env("DB_HOST", "127.0.0.1")
         .env("DB_PORT", "55432")
@@ -1808,6 +1877,7 @@ async fn worker_cli_permanent_ingest_failure_streams_failed_then_contextual_erro
     let db = ScratchDb::create()
         .await
         .expect("required QA PostgreSQL must be reachable");
+    seed_candidate_entitlement(&db.supervisor).await;
     let workspace = tempfile::tempdir().unwrap();
     let raw_root = workspace.path().join("raw");
     let password_file = workspace.path().join("db-password");
@@ -1823,6 +1893,11 @@ async fn worker_cli_permanent_ingest_failure_streams_failed_then_contextual_erro
         .env("APP_ENV", "development")
         .env("RESEARCH_FETCH_MODE", "synthetic")
         .env("RESEARCH_RAW_ROOT", &raw_root)
+        .env("RESEARCH_CURATED_ROOT", &raw_root)
+        .env(
+            "RESEARCH_ENTITLEMENT_REFERENCE",
+            "fixture://candidate-license",
+        )
         .env("RESEARCH_SYNTHETIC_BUNDLE", malformed_fixture)
         .env("DB_HOST", "127.0.0.1")
         .env("DB_PORT", "55432")
@@ -1868,6 +1943,7 @@ async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() 
     let db = ScratchDb::create()
         .await
         .expect("required QA PostgreSQL must be reachable");
+    seed_candidate_entitlement(&db.supervisor).await;
     let workspace = tempfile::tempdir().unwrap();
     let raw_root = workspace.path().join("raw");
     let password_file = workspace.path().join("db-password");
@@ -1877,19 +1953,26 @@ async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() 
         .canonicalize()
         .unwrap();
     let store = RawStore::new(&raw_root);
-    let orphan_date = TradingDate::parse("2020-01-30").unwrap();
+    let orphan_date = TradingDate::parse("2020-01-31").unwrap();
     let orphan_request = IngestRequest::new(
         MARKET_KR.to_owned(),
         orphan_date,
         UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00Z").unwrap(),
     );
-    let orphan = ingest_bundle(&store, &provider(), &orphan_request, None)
-        .unwrap()
-        .entry;
+    let orphan = ingest_bundle(
+        &store,
+        &provider(),
+        &orphan_request,
+        Some("fixture://candidate-license"),
+    )
+    .unwrap()
+    .entry;
     sqlx::query(
-        "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
-         content_sha256, bytes_size, retrieved_at) VALUES \
-         ('KRX','KR','2020-01-31','EOD','raw/already-published',repeat('a',64),1,$1)",
+        "INSERT INTO data_batches
+         (provider, market, batch_date, kind, fetch_mode, storage_path,
+          content_sha256, bytes_size, retrieved_at, source_batch_id, source_file_name) VALUES
+         ('KRX','KR','2020-02-03','EOD','synthetic','raw/already-published',
+          repeat('a',64),1,$1,gen_random_uuid(),'already-published.json')",
     )
     .bind(Utc::now())
     .execute(&db.supervisor)
@@ -1909,13 +1992,18 @@ async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() 
             .env("APP_ENV", "development")
             .env("RESEARCH_FETCH_MODE", "synthetic")
             .env("RESEARCH_RAW_ROOT", &raw_root)
+            .env("RESEARCH_CURATED_ROOT", &raw_root)
+            .env(
+                "RESEARCH_ENTITLEMENT_REFERENCE",
+                "fixture://candidate-license",
+            )
             .env("RESEARCH_SYNTHETIC_BUNDLE", &fixture)
             .env("DB_HOST", "127.0.0.1")
             .env("DB_PORT", "55432")
             .env("DB_NAME", db.database_name())
             .env("DB_USER", "research_writer")
             .env("DB_PASSWORD_FILE", &password_file)
-            .args(["--once", "--date", "2020-01-31"])
+            .args(["--once", "--date", "2020-02-03"])
             .stdout(std::fs::File::create(&stdout_file).unwrap())
             .stderr(std::fs::File::create(&stderr_file).unwrap());
         #[cfg(windows)]
@@ -1933,7 +2021,12 @@ async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() 
             }
             std::thread::sleep(Duration::from_millis(25));
         };
-        assert!(status.success());
+        assert!(
+            status.success(),
+            "worker failed: stdout={} stderr={}",
+            std::fs::read_to_string(&stdout_file).unwrap(),
+            std::fs::read_to_string(&stderr_file).unwrap()
+        );
         assert!(std::fs::read(&stderr_file).unwrap().is_empty());
         let stdout = std::fs::read_to_string(&stdout_file).unwrap();
         let records = stdout
@@ -1947,7 +2040,7 @@ async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() 
         assert_eq!(records[0]["target_date"], orphan_date.to_iso());
         assert_eq!(records[0]["batch_id"], orphan.batch_id.to_string());
         assert_eq!(records[1]["event"], "skipped");
-        assert_eq!(records[1]["target_date"], "2020-01-31");
+        assert_eq!(records[1]["target_date"], "2020-02-03");
         assert!(records[1]["batch_id"].is_null());
         assert_eq!(records[2]["outcome"], "already_published");
     }
@@ -1966,17 +2059,27 @@ async fn worker_recovery_write_failure_is_retryable_and_exact_replay_is_skipped(
     let db = ScratchDb::create()
         .await
         .expect("required QA PostgreSQL must be reachable");
+    seed_candidate_entitlement(&db.supervisor).await;
     let workspace = tempfile::tempdir().unwrap();
     let raw_root = workspace.path().join("raw");
     let password_file = workspace.path().join("db-password");
     std::fs::write(&password_file, "lagrange").unwrap();
     let store = RawStore::new(&raw_root);
-    let orphan = ingest_bundle(&store, &provider(), &request("2026-08-05T07:00:00Z"), None)
-        .unwrap()
-        .entry;
+    let orphan = ingest_bundle(
+        &store,
+        &provider(),
+        &request("2026-08-05T07:00:00Z"),
+        Some("fixture://candidate-license"),
+    )
+    .unwrap()
+    .entry;
     let mut values = worker_config(&[("APP_ENV", "development")]);
     values.insert(
         "RESEARCH_RAW_ROOT".to_owned(),
+        raw_root.to_string_lossy().into_owned(),
+    );
+    values.insert(
+        "RESEARCH_CURATED_ROOT".to_owned(),
         raw_root.to_string_lossy().into_owned(),
     );
     values.insert("DB_HOST".to_owned(), "127.0.0.1".to_owned());
@@ -2003,6 +2106,66 @@ async fn worker_recovery_write_failure_is_retryable_and_exact_replay_is_skipped(
     assert_eq!(replay["batch_id"], orphan.batch_id.to_string());
     assert_eq!(replay["target_date"], orphan.date.to_iso());
 
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn worker_price_recovery_rejects_future_sessions_before_catalog_publication() {
+    let qa_url = std::env::var("DATABASE_URL")
+        .expect("required QA DATABASE_URL must be provided for no-lookahead verification");
+    assert_eq!(
+        qa_url,
+        "postgres://postgres:lagrange@127.0.0.1:55432/postgres"
+    );
+    let db = ScratchDb::create()
+        .await
+        .expect("required QA PostgreSQL must be reachable");
+    seed_candidate_entitlement(&db.supervisor).await;
+    let workspace = tempfile::tempdir().unwrap();
+    let raw_root = workspace.path().join("raw");
+    let password_file = workspace.path().join("db-password");
+    std::fs::write(&password_file, "lagrange").unwrap();
+    let store = RawStore::new(&raw_root);
+    let future_batch = ingest_bundle(
+        &store,
+        &provider(),
+        &IngestRequest::new(
+            MARKET_KR.to_owned(),
+            TradingDate::parse("2020-01-30").unwrap(),
+            UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00Z").unwrap(),
+        ),
+        Some("fixture://candidate-license"),
+    )
+    .unwrap()
+    .entry;
+    let mut values = worker_config(&[("APP_ENV", "development")]);
+    values.insert(
+        "RESEARCH_RAW_ROOT".to_owned(),
+        raw_root.to_string_lossy().into_owned(),
+    );
+    values.insert(
+        "RESEARCH_CURATED_ROOT".to_owned(),
+        raw_root.to_string_lossy().into_owned(),
+    );
+    values.insert("DB_NAME".to_owned(), db.database_name().to_owned());
+    values.insert(
+        "DB_PASSWORD_FILE".to_owned(),
+        password_file.to_string_lossy().into_owned(),
+    );
+
+    let error = run_internal_recovery_stream(&values, &mut Vec::new())
+        .await
+        .expect_err("a target-date batch must not publish a future price session");
+    assert_eq!(error.failure_class(), FailureClass::Permanent);
+    let price_ledger: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM candidate_raw_batch_publications
+          WHERE batch_id=$1 AND surface='price'",
+    )
+    .bind(future_batch.batch_id.as_uuid())
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("no-lookahead price ledger check");
+    assert_eq!(price_ledger, 0);
     db.drop_db().await;
 }
 
@@ -3081,14 +3244,21 @@ async fn worker_production_pool_uses_discrete_fields_role_limits_and_timeouts() 
         .await
         .expect("required QA PostgreSQL must be reachable");
     let values = HashMap::from([
+        ("APP_ENV".to_owned(), "qa".to_owned()),
+        ("RESEARCH_FETCH_MODE".to_owned(), "synthetic".to_owned()),
         ("DB_HOST".to_owned(), "127.0.0.1".to_owned()),
         ("DB_PORT".to_owned(), "55432".to_owned()),
         ("DB_NAME".to_owned(), db.database_name().to_owned()),
         ("DB_USER".to_owned(), "research_writer".to_owned()),
         ("DB_PASSWORD_FILE".to_owned(), "qa-password".to_owned()),
+        (
+            "RESEARCH_CURATED_ROOT".to_owned(),
+            "var/research".to_owned(),
+        ),
     ]);
     let config =
         HealthcheckConfig::from_map_with_reader(&values, |_| Ok("lagrange".to_owned())).unwrap();
+    assert_eq!(config.expected_fetch_mode, FetchMode::Synthetic);
     let pool = build_postgres_pool(&config.database);
 
     let (one, current_user): (i32, String) = sqlx::query_as("SELECT 1, current_user::text")

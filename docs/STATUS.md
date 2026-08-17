@@ -1,6 +1,6 @@
 # Lagrange Station — 상태 종합
 
-**기준일: 2026년 8월 13일 (2026-08-13)** · **2026-08-14 갱신분은 §2.6에 별도로 기록한다 — 저장소가 Windows/WSL에서 Linux 호스트로 이관됐고, 그 결과 아래 §2.1~§2.3의 판정과 증거가 현재 호스트에 존재하지 않는다.** · **2026-08-17 갱신분은 §2.8~§2.9에 기록한다 — 서비스가 실행되는 호스트는 이제 native Linux 하나이고, Auth0 vendor 검증이 실 테넌트를 상대로 통과했으며, phase1 게이트가 이식되어 이 호스트 최초의 판정을 발행했다.** 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다는 것이 이 프로젝트가 이미 한 번 배운 교훈이다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지다. Auth0 confidential client 배선은 main의 `8c22f79`~`a03d8fc`(08-12), 고정 ETF 추천 파이프라인과 Paper 리밸런싱 미리보기는 `554834c`~`dc4dd0e`(53커밋)이며, **08-13 15:02에 `feat/recommendation-pipeline`이 fast-forward로 main에 병합됐다** — 이 문서 이전 판의 "아직 main 미병합" 서술은 작성 시점(08-13 21:19)에 이미 틀린 것이었다. 병합 이후 게이트는 아직 한 번도 재실행되지 않았다.
+**기준일: 2026년 8월 17일 (2026-08-17).** 08-14 Linux 호스트 이관은 §2.6~2.7, Auth0 실 테넌트 검증은 §2.8, KOSPI200/KOSDAQ150 개별주식 후보 연구 vertical 완료는 §2.9, phase1 게이트 Linux 이식과 이 호스트 최초 판정은 §2.10에 기록한다. 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지, 고정 ETF 추천 파이프라인과 Paper 리밸런싱 미리보기는 `554834c`~`dc4dd0e`, multi-universe 후보 연구 구현은 `ac97970`~`8c5ef9d`다.
 
 ---
 
@@ -30,7 +30,7 @@
 
 ## 2. 어디까지 왔나
 
-**한 줄 요약: 고정 11-ETF 추천 파이프라인이 제출→계산→발행→화면→Paper 연계까지 동작하고(§3.10), Auth0 confidential client 배선도 끝났다(§3.9). 릴리스는 여전히 외부 조달(E1 KRX 권리, X1/X2 KIS)과 실제 KRX provider에 막혀 있으며, 그 차단은 fail-closed 설계의 정상 상태다. E2(Auth0)는 08-17에 해소됐다 — 실 테넌트 vendor 스위트 5/5 통과(§2.8)에 이어 이식된 phase1 게이트가 E2 PASS를 발행했다(§2.9).**
+**한 줄 요약: 고정 11-ETF 추천→Paper 경로에 더해 KOSPI200/KOSDAQ150 개별주식 후보의 수집→계산→API→Web vertical이 universe별 격리 계약으로 완료됐다(§2.9). E2(Auth0)는 해소됐다 — 실 테넌트 vendor 스위트 5/5 통과(§2.8)에 이어 native Linux로 이식된 phase1 게이트가 이 호스트 최초의 판정에서 E2 PASS를 발행했다(§2.10). 릴리스는 여전히 E1 KRX 권리·실제 provider/credential과 X1/X2 KIS 실계좌에 막혀 있으며, 실제 원천이 없을 때 닫히는 것이 의도된 정상 상태다.**
 
 ### 2.1 게이트 판정 (2026-08-10 재실행, `--include-failure --include-restore` 포함)
 
@@ -57,6 +57,7 @@
 | Web (vitest + tsc) | **48개 통과**, `openapi:check` 클린, `tsc --noEmit` 클린 — 08-13 Windows 호스트 기록. 08-14 Linux 호스트 재실행 결과는 §2.6 |
 | clippy (workspace, all-targets, all-features) | `-D warnings` 클린 (08-11 재실행) |
 | rustfmt (workspace) | **PASS** — 08-11 GitHub Actions 도입 시 기존 drift를 pinned rustfmt로 기계 정규화 |
+| Multi-universe vertical (08-17) | live PostgreSQL migration contract **25/25**, full workspace fmt/check/strict Clippy/tests, OpenAPI drift, Web lint/typecheck/**69 unit**/build/**Playwright 3**, CI contract **6/6**, Docker functional smoke **PASS** (§2.9) |
 
 ### 2.3 최종 판정 아티팩트 (`.omo/evidence/`)
 
@@ -130,19 +131,31 @@ CI(`.github/workflows/ci.yml` `workspace-tests`)의 순서를 그대로 재현�
 
 **서비스가 실행되는 호스트는 native Ubuntu Linux 하나다.** Windows/WSL은 개발 이력이며 운영 경로가 아니다. 이 확정이 만드는 실질적 결과가 하나 있다 — WSL 전용 스크립트(`scripts/qa/phase1-gate.sh`의 `/root/.cargo/bin/cargo` 가드, `research-worker-smoke.sh`의 `wsl`/`wslpath` 분기)에 대해 §3.3과 §5가 남겨둔 "Windows에서는 `.ps1` 쌍둥이로 우회한다"는 선택지는 **더 이상 대체 경로가 아니다.** 해당 스크립트는 native Linux용으로 이식하거나, GitHub Actions 결과를 증거로 삼는 결정을 해야 한다(§2.6-1, 런북 §8.2).
 
-**`phase1-gate.sh`는 native Linux로 이식됐다(같은 날, 아래 §2.9).** WSL 잔재는 46행 가드 하나가 아니라 넷이었다 — PATH 교체, `CARGO_TARGET_DIR=/root/lagrange-target` 강제, `WSL_DATABASE_URL` 기본값 `:5432`(이 호스트 QA DB는 `:55432`). 이제 phase2/phase3 게이트와 같은 관례(호출자의 cargo, `$root/target`, `LAGRANGE_QA_DB_PORT`)를 쓴다. `research-worker-smoke.sh`의 `wsl`/`wslpath` 분기는 아직 남아 있다.
+**`phase1-gate.sh`는 native Linux로 이식됐다(같은 날, 아래 §2.10).** WSL 잔재는 46행 가드 하나가 아니라 넷이었다 — PATH 교체, `CARGO_TARGET_DIR=/root/lagrange-target` 강제, `WSL_DATABASE_URL` 기본값 `:5432`(이 호스트 QA DB는 `:55432`). 이제 phase2/phase3 게이트와 같은 관례(호출자의 cargo, `$root/target`, `LAGRANGE_QA_DB_PORT`)를 쓴다. `research-worker-smoke.sh`의 `wsl`/`wslpath` 분기는 아직 남아 있다.
 
 **Auth0 vendor 스위트가 실 테넌트를 상대로 통과했다.** `lagrange-station.jp.auth0.com` / client `YZ4T7g575IohtS1HsltlFAiU7AlyUUuI` 조합으로 `cargo test -p auth --test vendor_auth0 -- --include-ignored` 실행, commit `41e8005`에서 **5개 전부 통과**(vendor 3개 + 비-vendor 2개, 실패 0). 개별 확인은 JWKS가 RS256 키 2개를 게시하고, `/authorize`가 등록된 콜백으로 302를 반환하며, 설정된 credential이 `403 invalid_grant`(클라이언트 인증 통과 후 의도적 무효 code만 거부)를, 음성 대조군이 `401 access_denied`를 받는 것이다.
 
 `auth0_client_secret` 실파일은 이 Linux 호스트의 `deploy/secrets/`에 배치됐다(mode 0600, 개행 없는 단일 행, symlink 아님 — `ClientSecret::from_file`의 거부 조건 전부 회피). §3.9가 기록한 "secret 파일은 이 호스트에 provisioning되어 있음"은 Windows 호스트 기준 서술이었고, 이번 배치로 Linux에서 처음 충족됐다.
 
-**E2 게이트 증거는 §2.9의 게이트 실행으로 발행됐다.** 스위트 통과와 게이트 판정 발행은 다른 사건이며, 이 저장소에서 체크가 존재한다는 것은 후자를 뜻한다. 게이트 밖에서 증거 파일을 손으로 만들지 않는다는 원칙(5·6)은 그대로다.
+**E2 게이트 증거는 §2.10의 게이트 실행으로 발행됐다.** 스위트 통과와 게이트 판정 발행은 다른 사건이며, 이 저장소에서 체크가 존재한다는 것은 후자를 뜻한다. 게이트 밖에서 증거 파일을 손으로 만들지 않는다는 원칙(5·6)은 그대로다.
 
 게이트 실행 시 잊기 쉬운 전제: `LAGRANGE_AUTH0_DOMAIN`, `LAGRANGE_AUTH0_CLIENT_ID`, `LAGRANGE_AUTH0_CLIENT_SECRET` 세 환경변수를 미리 export해야 한다. 게이트는 부모 환경을 상속하지만 이 값들을 설정해 주는 코드는 저장소 어디에도 없고, 게이트가 secret 파일을 직접 읽지도 않는다 — 자격증명 주입은 운영자의 명시적 행위로 남긴다. secret은 `"$(cat deploy/secrets/auth0_client_secret)"`로 주입하고 인자나 로그에 남기지 않는다.
 
 배포 대상 앱은 JP 테넌트의 `YZ4T7g575IohtS1HsltlFAiU7AlyUUuI` **하나**다. 검증 과정에서 다른 테넌트의 앱(`kwaoPWGvfvRQWlAIwUQd3LtiYr67UlAI`)이 후보로 등장했으나 이 저장소와 무관하며, 그 앱의 secret으로는 pin된 client가 인증되지 않는다.
 
-### 2.9 phase1 게이트 Linux 이식과 이 호스트 최초 증거 (2026-08-17, `5b3f832`)
+### 2.9 KOSPI200/KOSDAQ150 후보 연구 vertical (2026-08-17)
+
+개별주식 후보 연구 경로가 KOSPI200 단일 기본값에서 **KOSPI200 + KOSDAQ150 두 universe**로 확장됐다. Migration `0045`가 universe registry와 source snapshot/run/feed/sequence의 universe-scoped identity를 추가하고, 동일 종목이 두 지수에 속해도 두 ranking context를 보존한다. 기존 `0042`~`0044`는 수정하지 않았고 up/down checksum이 기준선과 일치한다. `0045` down은 KOSDAQ row·binding뿐 아니라 registry 생성 이후 발행된 publication-only source 이력도 감지해 데이터 손실 가능성이 있으면 거부한다.
+
+수집은 fundamentals, investor flows, market status, sector classification 공통 4종과 KOSPI200/KOSDAQ150 membership 2종을 하나의 immutable source batch로 seal한다. entitlement·dataset binding·canonical partition·PIT effective/available/cutoff 조건을 검증하며, credential/transport가 없는 production 실행은 READY를 가장하지 않는다. 계산기는 registry 순서대로 universe를 독립 스케줄링하고 universe별 score normalization, run, sequence, feed, Top 5를 발행한다. 한 universe가 source 부족으로 막혀도 다른 universe의 성공 feed는 유지되고 replay는 멱등이다.
+
+API는 universe 생략 시 기존 KOSPI200 동작을 유지하면서 명시적 KOSDAQ150과 screener one/both 조회를 지원한다. signed cursor v2는 전체 immutable run-set과 universe 위치를 고정하고, v1은 universe를 생략한 KOSPI200 호환 요청에서만 수용한다. Web candidate feed, screener, 종목 분석에는 universe 선택과 badge가 추가됐고 양쪽 지수의 동일 종목을 dedupe하지 않는다. OpenAPI JSON/TypeScript 생성물도 함께 갱신됐다.
+
+검증은 migration contract 25/25, source/compute/API live tests, full workspace fmt/check/strict Clippy/tests, Web 69 unit + Playwright 3, CI contract 6/6을 통과했다. Docker smoke는 실제 research-worker와 candidate-runner를 사용해 공통 4 + membership 2 sealing, 두 universe별 Top 5, runner 2회 replay idempotency를 no-SKIP으로 확인했다. 독립 reviewer 최종 판정은 `P0=0`, `P1=0`, `core P2=0`, `P3=1`, `OK`다. 남은 P3는 source-missing readiness 메시지의 universe별 세분화로, correctness/release gate를 막지 않는 observability 항목이다.
+
+이 완료 판정은 synthetic fixture를 사용한 코드·QA vertical에 대한 것이다. **실제 라이선스 KRX provider, production endpoint/credential, 서면 데이터 권리와 운영 backfill은 여전히 미완료**이며 실제 feed가 live라는 뜻이 아니다.
+
+### 2.10 phase1 게이트 Linux 이식과 이 호스트 최초 증거 (2026-08-17, `5b3f832`)
 
 게이트를 Linux에서 실행 가능하게 만들자 **이 게이트가 실행되지 않은 테스트에 PASS를 줄 수 있는 경로 3개**가 드러났다. §3.3("검사 도구 자체의 결함")의 연장이며, 게이트가 검사하는 내용을 바꾸는 일이므로 전부 커밋 메시지에 선언했다.
 
@@ -173,7 +186,7 @@ CI(`.github/workflows/ci.yml` `workspace-tests`)의 순서를 그대로 재현�
 
 ---
 
-## 3. 최근에 고쳐진 것 (2026-08-08 ~ 08-13)
+## 3. 최근에 고쳐진 것 (2026-08-08 ~ 08-17)
 
 ### 3.1 관통하는 패턴 — 결함은 이음매에 산다
 
@@ -257,7 +270,7 @@ CI(`.github/workflows/ci.yml` `workspace-tests`)의 순서를 그대로 재현�
 
 ### 3.10 고정 ETF 추천 파이프라인 (2026-08-12 ~ 08-13, `feat/recommendation-pipeline`)
 
-큐에만 쌓이고 소비자가 없던 추천 표면(설계 문서의 "queue-only shell")을 실제 제품 흐름으로 만들었다. 범위는 의도적으로 `kr-etf-core-v1.yaml`의 **고정 11개 한국 ETF**로 한정 — 개별주식 동적 유니버스는 Phase 4 그대로다. 설계·계획은 `docs/superpowers/{specs,plans}/2026-08-12-recommendation-pipeline*`.
+큐에만 쌓이고 소비자가 없던 추천 표면(설계 문서의 "queue-only shell")을 실제 제품 흐름으로 만들었다. 이 경로는 의도적으로 `kr-etf-core-v1.yaml`의 **고정 11개 한국 ETF**로 한정된다. 별도 후보 연구 경로의 KOSPI200/KOSDAQ150 확장은 §2.9에서 완료됐지만, 임의로 구성 가능한 범용 동적 universe는 후속 범위다. 설계·계획은 `docs/superpowers/{specs,plans}/2026-08-12-recommendation-pipeline*`.
 
 | 항목 | 내용 | 커밋 |
 |---|---|---|
@@ -294,21 +307,22 @@ CI(`.github/workflows/ci.yml` `workspace-tests`)의 순서를 그대로 재현�
 | 4 | 추천→Paper 자동화(scheduled opt-in) + 리밸런싱 미리보기 백엔드 | **코드 작업** | ✅ **완료** (`fd3fc5b`, §2.5) |
 | 5 | Auth0 confidential client 배선 | **코드 작업** | ✅ **완료** (§3.9, main) |
 | 6 | `feat/recommendation-pipeline` → main 병합 | **코드 작업** | ✅ **완료** (08-13 fast-forward, §2.6) |
-| 6b | 전체 게이트 재실행(E7 포함) → Linux 호스트 최초 증거 발행 | **코드/운영** | ◐ **phase1 발행 완료** (`BLOCKED_EXTERNAL_DATA_RIGHTS`, §2.9). 남은 것: E7 web 의존성 설치, phase2·phase3·종합 게이트 |
+| 6b | 전체 게이트 재실행(E7 포함) → Linux 호스트 최초 증거 발행 | **코드/운영** | ◐ **phase1 발행 완료** (`BLOCKED_EXTERNAL_DATA_RIGHTS`, §2.10). 남은 것: E7 web 의존성 설치, phase2·phase3·종합 게이트 |
 | 7 | 리밸런싱 미리보기 UI (백엔드만 완료, UI 미포함) | **코드 작업** | ▶️ 착수 가능 |
 | 8 | paper-runner·recommendation-runner 배포 서비스 활성화 | **운영자** | ▶️ 착수 가능 |
-| 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ✅ **완료** — 스위트 5/5 통과(§2.8), phase1 게이트가 **E2 PASS**를 발행(§2.9) |
+| 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ✅ **완료** — 스위트 5/5 통과(§2.8), phase1 게이트가 **E2 PASS**를 발행(§2.10) |
 | 10 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
 | 11 | KRX 계약·실제 provider/credential/endpoint / KIS 실계좌 | **외부 구현·사장님 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
+| 12 | KOSPI200/KOSDAQ150 개별주식 후보 연구 vertical | **코드 작업** | ✅ **완료·독립 리뷰 OK** (§2.9, `ac97970`~`8c5ef9d`) |
 
-Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가는 각각 `8da6548`·`cf8704a`에 있다. 저장소 안의 synthetic Raw→PostgreSQL 경로, 리스크 소비 이음매, 추천 파이프라인, Paper 연계까지 코드 이음매는 완료됐지만, 실제 KRX provider 구현과 production credential/endpoint/운영자 provisioning은 외부 잔여 작업이다. **당장의 다음 걸음은 6번**이다 — 53커밋이 브랜치에만 있는 동안 게이트 증거는 계속 낡는다.
+Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연구의 저장소 내부 이음매는 완료됐다. 실제 KRX provider 구현과 production credential/endpoint/권리/운영 backfill은 외부 잔여 작업이다. **당장의 코드 순서는 `phase1-gate.sh` Linux 이식 후 E7 포함 전체 게이트를 재실행해 현재 main 기준 증거를 발행하는 것**이다.
 
 ### 4.1 소유자만 할 수 있는 것 — 외부 조달
 
 | 항목 | 구체적으로 |
 |---|---|
 | **E1** KRX 서면 데이터 권리 + 실제 공급자 | 초대 사용자 5명 + 파생 분석물을 포괄하는 계약 아티팩트, 라이선스·entitlement-aware KRX HTTP transport 구현, 실제 endpoint/credential, `research_writer` role·secret·Raw volume 운영자 provisioning. 현재 저장소에는 synthetic fixture와 발행 이음매만 있고 real feed는 live가 아님. `configs/data-rights/`는 여전히 placeholder뿐 |
-| **E2** Auth0 테넌트 | **해소(08-17):** 테넌트 선택·confidential client 배선(08-12, §3.9), Linux 호스트 secret 배치와 실 테넌트 vendor 스위트 5/5 통과(§2.8)에 이어, phase1 게이트가 **E2 = PASS**를 발행했다(§2.9). 이 항목은 더 이상 외부 조달 대기가 아니다 |
+| **E2** Auth0 테넌트 | **해소(08-17):** 테넌트 선택·confidential client 배선(08-12, §3.9), Linux 호스트 secret 배치와 실 테넌트 vendor 스위트 5/5 통과(§2.8)에 이어, phase1 게이트가 **E2 = PASS**를 발행했다(§2.10). 이 항목은 더 이상 외부 조달 대기가 아니다 |
 | **X1/X2** KIS 실계좌 | 실거래 자격증명 + 소액 실주문 증거 (변동 없음) |
 
 이 3건이 없는 동안 게이트는 `BLOCKED_EXTERNAL`이며 **그것이 합격 조건이다. 위조해서 APPROVED에 도달하는 것은 금지** — 닫히는 쪽으로 실패하는 것 자체가 게이트의 존재 이유다. 한국 데이터 권리가 끝내 안 오면 계획의 답은 Member 접근 연기다, 시장 변경이 아니라.
@@ -320,12 +334,11 @@ Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가�
 
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
-1. **`feat/recommendation-pipeline` 병합.** 53커밋(추천 파이프라인 + 리밸런싱 미리보기)이 브랜치에만 있다. 병합 전 리뷰 대상이며, 병합 후에만 게이트 재실행이 의미를 가진다.
-2. **E7 Playwright 포함 전체 게이트 재실행** — 증거 신선화. **phase1은 08-17에 발행됐다(§2.9).** 남은 것은 E7의 `apps/web` 의존성 설치(`npm ci` + `npx playwright install`), phase2·phase3·종합 게이트 재실행이다. F1/F2/F4 판정문은 여전히 ~120커밋 뒤처져 사람 재검토가 필요하다.
-3. **리밸런싱 미리보기 UI.** §2.5의 백엔드 계약(생성/조회/적용 3개 라우트, OpenAPI 반영됨)은 완료됐지만 화면이 없다. Live 주문도 의도적으로 범위 밖.
-4. **배포 서비스 활성화.** `deploy/systemd/paper-runner.service`와 recommendation-runner의 Compose/systemd 단위(§3.11)를 설치·시작하고, 실제 role-scoped DB URL과 curated dataset 마운트를 호스트 Secret Manager에서 주입해야 한다. 저장소에는 비밀값을 넣지 않는다.
-5. ~~**Auth0 vendor 스위트 실행(운영자).**~~ **완료 (2026-08-17, §2.8)** — 실 테넌트 상대 5/5 통과. E2를 닫는 것은 게이트 재실행(2번)이며, 그때 `LAGRANGE_AUTH0_*` 세 변수를 export해야 한다.
-6. **실제 KRX provider와 운영 원천 활성화.** 코드의 synthetic 수집·발행·복구 배선은 완료됐지만, 라이선스·credential·entitlement-aware HTTP transport와 실제 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning해야 한다. 그 뒤 운영 PostgreSQL에 실제 KRX 캘린더와 EOD batch 메타데이터를 공급하고 라이브 계정의 intent 상태를 정상적으로 유지해야 한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
+1. ~~**`phase1-gate.sh` native Linux 이식.**~~ **완료 (2026-08-17, `5b3f832`, §2.10)** — WSL 가드·PATH·`CARGO_TARGET_DIR`·DB 포트를 정리했고, 이식 과정에서 드러난 거짓 PASS 3건도 함께 닫았다. pyarrow 전제는 이 게이트에는 해당하지 않는다(추천 계산 경로의 문제이며 phase1 검사는 `prepare_phase0.py`를 부르지 않는다).
+2. **E7 Playwright 포함 전체 게이트 재실행** — Auth0, 추천 파이프라인, 리밸런싱 미리보기, multi-universe 후보 연구가 반영된 main 기준 증거를 새로 발행한다. **phase1은 08-17에 발행됐지만(§2.10) 그 실행은 multi-universe 병합 이전 트리 기준이다.** 남은 것은 E7의 `apps/web` 의존성 설치(`npm ci` + `npx playwright install`), phase2·phase3·종합 게이트, 그리고 병합된 main 기준의 phase1 재실행이다. F1/F2/F4도 사람 재검토가 필요하다.
+3. **리밸런싱 미리보기 UI.** §2.5의 백엔드 계약은 완료됐지만 화면과 Live 주문은 범위 밖이다.
+4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
+5. **실제 KRX provider와 운영 원천 활성화.** 라이선스·credential·entitlement-aware HTTP transport와 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning한 뒤 실제 KRX calendar/EOD/fundamental/membership 원천을 공급한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 
 **작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다.
 
@@ -334,7 +347,8 @@ Paper **엔진**(체결 로직)은 커밋 `ec81d73`에, 러너와 종가 평가�
 | 항목 | 상태 | 선행 조건 |
 |---|---|---|
 | PIT 재무 팩터 | **골격 완료** — 채우기만 남음 | 한국 재무 데이터 공급원 + 계약 |
-| 개별주식 동적 유니버스 | 미착수 | KRX 개별종목 데이터 권리 (E1보다 큰 요구) |
+| KOSPI200/KOSDAQ150 후보 universe | **코드·QA vertical 완료** (§2.9), 실제 feed 미활성 | KRX 개별종목 데이터 권리 + 실제 provider/credential |
+| 임의 구성 범용 동적 universe | 미착수 | universe registry 운영 정책 + 데이터 권리 |
 | 분봉·틱·호가 | 미착수 (`Cadence::parse("intraday")`는 현재 타입 오류로 거부 — 의도) | 시세 권리 + 신규 수집 파이프라인 |
 | LEAN 연구 워커 | 평가 대상, **트리거 미충족** | 설계 §1263: 미국 Fundamental·LEAN Universe 확보 시에만. 현재 조건 0/2 |
 | 순수 Rust NT 경로 확대 | 미착수 | 없음 — 지금 가능하나 사용자 가시 기능 아님 |

@@ -20,7 +20,7 @@
 #   db_migration_owner_password
 #                            separate migration_owner role password
 #   db_app_password          non-owner application role (RLS) password
-#   db_worker_password       worker role password (backtest workers)
+#   db_worker_password       worker role password (candidate/recommendation/backtest workers)
 #   db_research_password     research_writer role password (research-worker)
 #   db_audit_password        audit-writer role password
 #   db_admin_password        admin read-only worker/ops role password
@@ -236,7 +236,8 @@ sudo deploy/secrets/provision-runtime-secrets.sh
 ```
 
 It fails closed if a source is missing, symlinked, or (for credential files)
-contains CR/LF. It writes only `0440` copies owned by the consuming UID:
+contains CR/LF. It writes only `0440` copies owned by the consuming UID,
+including an independent path for `candidate-runner`:
 `10001:10001` for API/workers, `999:999` for PostgreSQL/schema checks and the
 non-root bootstrap/migration one-shots, and `101:101` for the unprivileged
 Nginx image. The bootstrap/migration copies are stricter `0400` files owned by

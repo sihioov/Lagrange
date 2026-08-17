@@ -99,6 +99,25 @@ impl PostgresPublicationSink {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+
+    pub async fn has_eod_for_mode(
+        &self,
+        date: TradingDate,
+        mode: market_data::FetchMode,
+    ) -> Result<bool, SinkError> {
+        sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM data_batches
+              WHERE provider=$1 AND market=$2 AND batch_date=$3 AND kind='EOD'
+                AND fetch_mode=$4)",
+        )
+        .bind(DB_PROVIDER)
+        .bind(DB_MARKET)
+        .bind(date.as_naive_date())
+        .bind(mode.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(SinkError::from_sqlx)
+    }
 }
 
 #[derive(FromRow)]

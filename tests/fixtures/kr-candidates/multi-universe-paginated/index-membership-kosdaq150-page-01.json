@@ -1,0 +1,22 @@
+{
+  "memberships": [
+    {
+      "index_id": "kosdaq150",
+      "instrument": "247540.KRX",
+      "announced_at": "2026-06-01T00:00:00Z",
+      "effective_from": "2026-06-12",
+      "effective_until": null,
+      "available_at": "2026-06-01T00:06:00Z",
+      "source_revision": "synthetic-kosdaq-r1"
+    },
+    {
+      "index_id": "kosdaq150",
+      "instrument": "069500.KRX",
+      "announced_at": "2026-06-01T00:00:00Z",
+      "effective_from": "2026-06-12",
+      "effective_until": null,
+      "available_at": "2026-06-01T00:06:00Z",
+      "source_revision": "synthetic-kosdaq-r1"
+    }
+  ]
+}

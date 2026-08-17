@@ -57,7 +57,7 @@
       }
     },
     "covered_datasets": {
-      "description": "KR-derived datasets the entitlement covers (e.g. krx_eod_bars, krx_instruments, krx_calendar).",
+      "description": "KR-derived datasets the entitlement covers (e.g. krx_eod_bars, krx_instruments, krx_calendar, krx_kospi200_membership, krx_kosdaq150_membership).",
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
@@ -76,6 +76,7 @@
           "dataset",
           "factor",
           "recommendation",
+          "candidate",
           "backtest",
           "report",
           "benchmark",

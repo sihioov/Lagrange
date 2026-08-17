@@ -10,10 +10,12 @@ export type ProductMutationPath =
   | "/api/v1/backtests"
   | "/api/v1/backtests/compare"
   | "/api/v1/recommendations/runs"
+  | "/api/v1/screener/screens"
   | `/api/v1/backtests/${string}/cancel`
   | `/api/v1/backtests/${string}/robustness`
   | `/api/v1/admin/live/kill-switch/${string}`
   | `/api/v1/paper/accounts/${string}/bind-strategy`
+  | `/api/v1/screener/screens/${string}`
   | `/api/v1/strategies/${string}/configs`;
 
 export const AUTH_API_PATHS = {

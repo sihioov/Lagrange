@@ -1,0 +1,16 @@
+{
+  "statuses": [
+    {
+      "instrument": "069500.KRX",
+      "trade_date": "2026-08-14",
+      "suspended": false,
+      "administrative": false,
+      "liquidation": false,
+      "inactive": false,
+      "disqualifying_audit_opinion": false,
+      "complete_capital_impairment": false,
+      "source_revision": "synthetic-r1",
+      "available_at": "2026-08-14T06:45:00Z"
+    }
+  ]
+}

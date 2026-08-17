@@ -9,6 +9,7 @@ COPY data-pipelines/collectors ./data-pipelines/collectors
 COPY apps/api-server/auth ./apps/api-server/auth
 COPY tests/integration/migration-contract ./tests/integration/migration-contract
 COPY tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
+COPY tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contract
 
 RUN cargo build --locked --release --package collectors --bin research-worker
 
@@ -21,6 +22,7 @@ RUN apk add --no-cache ca-certificates libgcc libpq libssl3 \
 WORKDIR /opt/lagrange
 COPY --from=builder /build/target/release/research-worker /usr/local/bin/research-worker
 COPY --from=builder /build/tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
+COPY --from=builder /build/tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contract
 
 USER 10001:10001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

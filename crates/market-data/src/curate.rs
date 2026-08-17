@@ -45,15 +45,15 @@ use std::path::{Path, PathBuf};
 
 use chrono::Datelike;
 use domain::{
-    BatchId, ContentHash, Currency, DatasetId, FixedPoint, InstrumentId, Price, TradingDate,
-    UtcTimestamp,
+    AssetClass, BatchId, ContentHash, Currency, DatasetId, FixedPoint, InstrumentId,
+    InstrumentStatus, Price, Quantity, TradingDate, UtcTimestamp, Venue, Zone,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::calendar::KrCalendar;
+use crate::calendar::{Holiday, KrCalendar, KrCalendarSpec, SessionTimes};
 use crate::contract::ResponseKind;
-use crate::instrument_master::{InstrumentMaster, MasterError};
+use crate::instrument_master::{Instrument, InstrumentMaster, MasterError};
 use crate::storage::{ManifestEntry, RawStore};
 
 use self::actions::{CorporateAction, CorporateActionType, dataset_capability};
@@ -368,6 +368,36 @@ impl CurateStore {
         self.read_dataset_manifest(dataset_id, next - 1)
     }
 
+    /// Locate the unique immutable generation produced from a Raw batch.
+    /// Duplicate provenance is treated as corruption rather than selecting a
+    /// convenient generation.
+    pub fn manifest_for_source_batch(
+        &self,
+        dataset_id: &DatasetId,
+        batch_id: BatchId,
+    ) -> Result<Option<DatasetManifest>, CurateError> {
+        let mut found = None;
+        for version in 1..self.next_version(dataset_id)? {
+            let Some(manifest) = self.read_dataset_manifest(dataset_id, version)? else {
+                continue;
+            };
+            if manifest
+                .source_batches
+                .iter()
+                .any(|source| source.batch_id == batch_id)
+            {
+                if found.is_some() {
+                    return Err(CurateError::MalformedManifest {
+                        context: "source batch lookup".to_owned(),
+                        detail: format!("batch {batch_id} appears in multiple generations"),
+                    });
+                }
+                found = Some(manifest);
+            }
+        }
+        Ok(found)
+    }
+
     fn curated_dir(&self) -> PathBuf {
         self.root.join("curated")
     }
@@ -420,7 +450,359 @@ pub struct CurateOutcome {
     pub capability: Capability,
     pub bars_written: u64,
     pub actions_written: u64,
+    pub first_session: TradingDate,
+    pub last_session: TradingDate,
     pub manifest: DatasetManifest,
+}
+
+/// Exact, replayable evidence required to publish a curated price generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriceCurationEvidence {
+    pub curated_generation: u32,
+    pub manifest_sha256: String,
+    pub first_session: TradingDate,
+    pub last_session: TradingDate,
+    pub source_revision: String,
+    pub instrument_coverage: Vec<PriceInstrumentCoverage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PriceInstrumentCoverage {
+    pub instrument_id: String,
+    pub first_session: TradingDate,
+    pub last_session: TradingDate,
+    pub session_count: u32,
+    pub sessions: Vec<TradingDate>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawReferenceDocument {
+    source: String,
+    instruments: Vec<RawReferenceInstrument>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawReferenceInstrument {
+    symbol: String,
+    name: String,
+    lot_size: Value,
+    currency: Currency,
+    kind: String,
+    #[serde(default)]
+    listed_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCalendarDocument {
+    calendar_id: String,
+    schema_version: u32,
+    source: String,
+    timezone: String,
+    session_times_local: RawSessionTimes,
+    sessions: Vec<RawCalendarSession>,
+    #[serde(default)]
+    holidays: Vec<RawCalendarHoliday>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawSessionTimes {
+    open: String,
+    close: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCalendarSession {
+    date: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCalendarHoliday {
+    date: String,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// Rebuild the typed calendar and instrument master from one verified Raw
+/// four-response delivery. This keeps the operating worker provider-neutral:
+/// fixture and licensed transports must satisfy the same bytes contract.
+pub fn curation_inputs_from_raw(
+    raw: &RawStore,
+    entry: &ManifestEntry,
+) -> Result<(KrCalendar, InstrumentMaster), CurateError> {
+    let files = raw
+        .read_batch_bytes(&entry.provider, &entry.market, entry)
+        .map_err(|error| CurateError::RawIo {
+            context: "read curation inputs".to_owned(),
+            detail: error.to_string(),
+        })?;
+    let bytes_for = |kind: ResponseKind| -> Result<&[u8], CurateError> {
+        let metadata = entry
+            .files
+            .iter()
+            .find(|file| file.kind == kind)
+            .ok_or(CurateError::MissingFile { kind })?;
+        files
+            .iter()
+            .find(|file| file.file_name == metadata.file_name)
+            .map(|file| file.bytes.as_slice())
+            .ok_or(CurateError::MissingFile { kind })
+    };
+    let reference: RawReferenceDocument =
+        serde_json::from_slice(bytes_for(ResponseKind::Reference)?).map_err(|error| {
+            CurateError::MalformedBars {
+                reason: format!("invalid reference document: {error}"),
+            }
+        })?;
+    let calendar: RawCalendarDocument = serde_json::from_slice(bytes_for(ResponseKind::Calendar)?)
+        .map_err(|error| CurateError::MalformedBars {
+            reason: format!("invalid calendar document: {error}"),
+        })?;
+    if reference.source.trim().is_empty()
+        || calendar.calendar_id.trim().is_empty()
+        || calendar.source.trim().is_empty()
+        || calendar.schema_version == 0
+        || calendar.timezone != "Asia/Seoul"
+        || calendar.session_times_local.open != "09:00:00"
+        || calendar.session_times_local.close != "15:30:00"
+    {
+        return Err(CurateError::MalformedBars {
+            reason: "reference/calendar provenance is not the canonical KRX contract".to_owned(),
+        });
+    }
+    let sessions = calendar
+        .sessions
+        .iter()
+        .map(|session| {
+            TradingDate::parse(&session.date).map_err(|error| CurateError::MalformedBars {
+                reason: format!("invalid calendar session {}: {error}", session.date),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let calendar_first_session =
+        sessions
+            .iter()
+            .copied()
+            .min()
+            .ok_or_else(|| CurateError::MalformedBars {
+                reason: "calendar must contain at least one session".to_owned(),
+            })?;
+    let holidays = calendar
+        .holidays
+        .into_iter()
+        .map(|holiday| {
+            Ok(Holiday {
+                date: TradingDate::parse(&holiday.date).map_err(|error| {
+                    CurateError::MalformedBars {
+                        reason: format!("invalid calendar holiday {}: {error}", holiday.date),
+                    }
+                })?,
+                reason: holiday
+                    .reason
+                    .filter(|reason| !reason.trim().is_empty())
+                    .unwrap_or_else(|| "provider-declared closure".to_owned()),
+            })
+        })
+        .collect::<Result<Vec<_>, CurateError>>()?;
+    let calendar = KrCalendar::build(KrCalendarSpec {
+        calendar_id: calendar.calendar_id,
+        timezone: Zone::SEOUL,
+        session_times: SessionTimes::krx_default(),
+        sessions,
+        holidays,
+        source: calendar.source,
+        version: calendar.schema_version,
+        published_at: entry.retrieved_at,
+        notes: vec!["rebuilt from immutable Raw calendar response".to_owned()],
+    })
+    .map_err(|error| CurateError::MalformedBars {
+        reason: format!("invalid calendar: {error}"),
+    })?;
+    if reference.instruments.is_empty() {
+        return Err(CurateError::MalformedBars {
+            reason: "reference document must contain instruments".to_owned(),
+        });
+    }
+    let mut master = InstrumentMaster::new();
+    for instrument in reference.instruments {
+        let listed_at = instrument
+            .listed_at
+            .as_deref()
+            .map(TradingDate::parse)
+            .transpose()
+            .map_err(|error| CurateError::MalformedBars {
+                reason: format!("invalid listed_at for {}: {error}", instrument.symbol),
+            })?
+            .unwrap_or(calendar_first_session);
+        let instrument_id = InstrumentId::parse(&instrument.symbol).map_err(|error| {
+            CurateError::MalformedBars {
+                reason: format!("invalid reference symbol {}: {error}", instrument.symbol),
+            }
+        })?;
+        if instrument_id.venue() != Venue::Krx || instrument.currency != Currency::KRW {
+            return Err(CurateError::MalformedBars {
+                reason: format!("unsupported reference instrument {}", instrument.symbol),
+            });
+        }
+        let asset_class = match instrument.kind.as_str() {
+            "equity-etf" | "etf" => AssetClass::Etf,
+            "equity" => AssetClass::Equity,
+            _ => {
+                return Err(CurateError::MalformedBars {
+                    reason: format!("unsupported instrument kind {}", instrument.kind),
+                });
+            }
+        };
+        let lot_size = match instrument.lot_size {
+            Value::Number(number) => Quantity::parse(&number.to_string()),
+            Value::String(value) => Quantity::parse(&value),
+            value => {
+                return Err(CurateError::MalformedBars {
+                    reason: format!("invalid lot size {value}"),
+                });
+            }
+        }
+        .map_err(|error| CurateError::MalformedBars {
+            reason: format!("invalid lot size for {}: {error}", instrument.symbol),
+        })?;
+        master
+            .register_instrument(Instrument {
+                instrument_id,
+                name: instrument.name,
+                asset_class,
+                currency: instrument.currency,
+                venue: Venue::Krx,
+                listed_at,
+                delisted_at: None,
+                price_increment: Price::parse("1").expect("one KRW is valid"),
+                size_increment: Quantity::parse("1").expect("one unit is valid"),
+                lot_size,
+                status: InstrumentStatus::Listed,
+                reference_source: reference.source.clone(),
+            })
+            .map_err(map_master_error)?;
+    }
+    Ok((calendar, master))
+}
+
+/// Reconstruct price publication evidence from a verified Raw batch and its
+/// immutable curated manifest. Used both after curation and after a crash
+/// between filesystem publication and database publication.
+pub fn price_curation_evidence(
+    raw: &RawStore,
+    entry: &ManifestEntry,
+    manifest: &DatasetManifest,
+) -> Result<PriceCurationEvidence, CurateError> {
+    if manifest.version == 0 || dataset_manifest_hash(manifest)? != manifest.content_hash {
+        return Err(CurateError::MalformedManifest {
+            context: "price publication evidence".to_owned(),
+            detail: "manifest hash or generation is invalid".to_owned(),
+        });
+    }
+    let source = manifest
+        .source_batches
+        .iter()
+        .find(|source| source.batch_id == entry.batch_id)
+        .ok_or_else(|| CurateError::MalformedManifest {
+            context: "price publication evidence".to_owned(),
+            detail: "manifest does not reference the Raw batch".to_owned(),
+        })?;
+    let bars_meta = entry
+        .files
+        .iter()
+        .find(|file| file.kind == ResponseKind::Bars)
+        .ok_or(CurateError::MissingFile {
+            kind: ResponseKind::Bars,
+        })?;
+    if source.bars_file != bars_meta.file_name || source.bars_hash != bars_meta.content_hash {
+        return Err(CurateError::MalformedManifest {
+            context: "price publication evidence".to_owned(),
+            detail: "manifest does not match the Raw bars file".to_owned(),
+        });
+    }
+    let files = raw
+        .read_batch_bytes(&entry.provider, &entry.market, entry)
+        .map_err(|error| CurateError::RawIo {
+            context: "read price publication evidence".to_owned(),
+            detail: error.to_string(),
+        })?;
+    let bars = files
+        .iter()
+        .find(|file| file.file_name == bars_meta.file_name)
+        .ok_or(CurateError::MissingFile {
+            kind: ResponseKind::Bars,
+        })?;
+    let document = parse_bars(&bars.bytes)?;
+    if u64::try_from(document.bars.len()).ok() != Some(manifest.bar_count) {
+        return Err(CurateError::MalformedManifest {
+            context: "price publication evidence".to_owned(),
+            detail: "manifest bar count does not match the verified Raw bars".to_owned(),
+        });
+    }
+    let mut by_instrument = BTreeMap::<String, BTreeSet<TradingDate>>::new();
+    let mut sessions = Vec::with_capacity(document.bars.len());
+    for bar in &document.bars {
+        let instrument =
+            InstrumentId::parse(&bar.instrument).map_err(|error| CurateError::MalformedBars {
+                reason: format!("invalid bar instrument {}: {error}", bar.instrument),
+            })?;
+        let session =
+            TradingDate::parse(&bar.date).map_err(|error| CurateError::MalformedBars {
+                reason: format!("invalid bar date {}: {error}", bar.date),
+            })?;
+        if !by_instrument
+            .entry(instrument.to_string())
+            .or_default()
+            .insert(session)
+        {
+            return Err(CurateError::DuplicateBar {
+                instrument: instrument.to_string(),
+                date: session.to_iso(),
+            });
+        }
+        sessions.push(session);
+    }
+    sessions.sort_unstable();
+    let first_session = sessions.first().copied().ok_or(CurateError::EmptyBars {
+        dataset_id: manifest.dataset_id.to_string(),
+    })?;
+    let last_session = sessions.last().copied().expect("nonempty sessions");
+    let manifest_sha256 = manifest
+        .content_hash
+        .as_str()
+        .strip_prefix("sha256:")
+        .filter(|hash| hash.len() == 64)
+        .ok_or_else(|| CurateError::MalformedManifest {
+            context: "price publication evidence".to_owned(),
+            detail: "manifest hash is not canonical sha256".to_owned(),
+        })?
+        .to_owned();
+    let instrument_coverage = by_instrument
+        .into_iter()
+        .map(|(instrument_id, sessions)| {
+            let first_session = sessions.first().copied().expect("coverage is nonempty");
+            let last_session = sessions.last().copied().expect("coverage is nonempty");
+            let session_count =
+                u32::try_from(sessions.len()).map_err(|_| CurateError::MalformedBars {
+                    reason: format!("coverage count exceeds u32 for {instrument_id}"),
+                })?;
+            let sessions = sessions.into_iter().collect();
+            Ok(PriceInstrumentCoverage {
+                instrument_id,
+                first_session,
+                last_session,
+                session_count,
+                sessions,
+            })
+        })
+        .collect::<Result<Vec<_>, CurateError>>()?;
+    Ok(PriceCurationEvidence {
+        curated_generation: manifest.version,
+        manifest_sha256,
+        first_session,
+        last_session,
+        source_revision: entry.batch_id.to_string(),
+        instrument_coverage,
+    })
 }
 
 /// Curates one immutable Raw batch into a NEW versioned Curated dataset.
@@ -497,6 +879,16 @@ pub fn curate_batch(
 
     // ---- adjusted series (signals; execution keeps the raw table) ----
     let adjusted = adjusted_series(&bars, &actions)?;
+    let first_session = bars
+        .iter()
+        .map(|bar| bar.trading_date)
+        .min()
+        .expect("nonempty bars were checked");
+    let last_session = bars
+        .iter()
+        .map(|bar| bar.trading_date)
+        .max()
+        .expect("nonempty bars were checked");
 
     // ---- partition writes (all-or-nothing per version) ----
     let version = curated.next_version(dataset_id)?;
@@ -606,6 +998,8 @@ pub fn curate_batch(
         capability,
         bars_written: bars.len() as u64,
         actions_written: actions.len() as u64,
+        first_session,
+        last_session,
         manifest,
     })
 }

@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { backtestResponse } from "./backtest-fixture.mjs";
+import { candidateResponse } from "./candidate-fixture.mjs";
 import { liveResponse } from "./live-fixture.mjs";
 import { paperResponse, paperStrategyConfigs } from "./paper-fixture.mjs";
 import { recommendationConfig, recommendationResponse } from "./recommendation-fixture.mjs";
@@ -7,6 +8,7 @@ import { recommendationConfig, recommendationResponse } from "./recommendation-f
 const port = Number.parseInt(process.env.SYNTHETIC_API_PORT ?? "38180", 10);
 const defaultScenario = Object.freeze({
   backtest: "running",
+  candidateState: "ready",
   entitlement: "active",
   exclusions: "present",
   notification: "delivered",
@@ -112,6 +114,17 @@ const server = createServer(async (request, response) => {
   });
   if (backtest !== null) {
     json(response, backtest.status, backtest.body);
+    return;
+  }
+  const candidate = candidateResponse({
+    body,
+    headers: request.headers,
+    method: request.method ?? "GET",
+    pathname: url.pathname,
+    scenario,
+  });
+  if (candidate !== null) {
+    json(response, candidate.status, candidate.body);
     return;
   }
   const live = liveResponse({

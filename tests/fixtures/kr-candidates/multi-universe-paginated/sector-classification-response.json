@@ -1,0 +1,16 @@
+{
+  "sectors": [
+    {
+      "taxonomy_id": "krx-sector",
+      "taxonomy_version": "synthetic-2026-h2",
+      "instrument": "069500.KRX",
+      "sector_code": "G25",
+      "sector_name": "Synthetic technology",
+      "fundamental_profile": "NON_FINANCIAL",
+      "effective_from": "2026-06-12",
+      "effective_until": null,
+      "available_at": "2026-06-01T00:05:00Z",
+      "source_revision": "synthetic-r1"
+    }
+  ]
+}

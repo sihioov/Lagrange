@@ -1,8 +1,9 @@
 //! Registry of KR-derived uses and the Member-visible surfaces that consume them.
 //!
 //! Every Member-visible KR-derived surface (dataset, factor, recommendation,
-//! backtest, report, benchmark, Paper view, payload, download) is declared here and
-//! gates through the **same** [`crate::entitlement::service::EntitlementService`].
+//! stock candidates, backtest, report, benchmark, Paper view, payload, download) is
+//! declared here and gates through the **same**
+//! [`crate::entitlement::service::EntitlementService`].
 //! Owner-only development paths are also enumerated so the service can allow them
 //! for the Owner without any entitlement.
 
@@ -16,6 +17,8 @@ pub enum KrUse {
     Factor,
     /// Strategy recommendation.
     Recommendation,
+    /// Daily stock candidates, screener results, and deep stock analysis.
+    Candidate,
     /// Backtest run and results.
     Backtest,
     /// Research/performance report.
@@ -48,6 +51,7 @@ impl KrUse {
             Self::Dataset => "dataset",
             Self::Factor => "factor",
             Self::Recommendation => "recommendation",
+            Self::Candidate => "candidate",
             Self::Backtest => "backtest",
             Self::Report => "report",
             Self::Benchmark => "benchmark",
@@ -69,6 +73,7 @@ impl KrUse {
             Self::Dataset
                 | Self::Factor
                 | Self::Recommendation
+                | Self::Candidate
                 | Self::Backtest
                 | Self::Report
                 | Self::Benchmark
@@ -124,6 +129,7 @@ pub enum KrMemberSurface {
     DatasetQuery,
     FactorView,
     Recommendation,
+    CandidateResearch,
     BacktestRun,
     ReportView,
     BenchmarkView,
@@ -133,11 +139,12 @@ pub enum KrMemberSurface {
 }
 
 impl KrMemberSurface {
-    /// The nine Member-visible surfaces, in registry order.
-    pub const ALL: [KrMemberSurface; 9] = [
+    /// The ten Member-visible surfaces, in registry order.
+    pub const ALL: [KrMemberSurface; 10] = [
         Self::DatasetQuery,
         Self::FactorView,
         Self::Recommendation,
+        Self::CandidateResearch,
         Self::BacktestRun,
         Self::ReportView,
         Self::BenchmarkView,
@@ -151,6 +158,7 @@ impl KrMemberSurface {
             Self::DatasetQuery => KrUse::Dataset,
             Self::FactorView => KrUse::Factor,
             Self::Recommendation => KrUse::Recommendation,
+            Self::CandidateResearch => KrUse::Candidate,
             Self::BacktestRun => KrUse::Backtest,
             Self::ReportView => KrUse::Report,
             Self::BenchmarkView => KrUse::Benchmark,
@@ -165,7 +173,7 @@ impl KrMemberSurface {
             Self::DatasetQuery | Self::FactorView | Self::PaperView | Self::ApiPayload => {
                 Layer::Api
             }
-            Self::Recommendation | Self::BacktestRun => Layer::Scheduler,
+            Self::Recommendation | Self::CandidateResearch | Self::BacktestRun => Layer::Scheduler,
             Self::ReportView | Self::BenchmarkView => Layer::Report,
             Self::ArtifactDownload => Layer::Artifact,
         }
@@ -176,7 +184,7 @@ impl KrMemberSurface {
 /// routes must resolve through [`KrMemberSurface`] so they share this gate.
 #[derive(Debug, Clone, Copy)]
 pub struct KrUseRegistry {
-    member_visible: [KrUse; 9],
+    member_visible: [KrUse; 10],
     owner_development: [KrUse; 5],
 }
 
@@ -188,6 +196,7 @@ impl KrUseRegistry {
                 KrUse::Dataset,
                 KrUse::Factor,
                 KrUse::Recommendation,
+                KrUse::Candidate,
                 KrUse::Backtest,
                 KrUse::Report,
                 KrUse::Benchmark,
@@ -205,7 +214,7 @@ impl KrUseRegistry {
         }
     }
 
-    pub const fn member_visible(&self) -> &[KrUse; 9] {
+    pub const fn member_visible(&self) -> &[KrUse; 10] {
         &self.member_visible
     }
 
@@ -234,7 +243,7 @@ mod tests {
     #[test]
     fn standard_registry_is_complete() {
         let r = KrUseRegistry::standard();
-        assert_eq!(r.member_visible().len(), 9);
+        assert_eq!(r.member_visible().len(), 10);
         assert_eq!(r.owner_development().len(), 5);
         for use_kind in r.member_visible() {
             assert!(use_kind.is_member_visible());
@@ -260,12 +269,13 @@ mod tests {
             assert!(r.contains(use_kind), "{surface:?} must be registered");
             assert_eq!(r.surface_for(use_kind), Some(surface));
         }
-        assert_eq!(KrMemberSurface::ALL.len(), 9);
+        assert_eq!(KrMemberSurface::ALL.len(), 10);
     }
 
     #[test]
     fn stable_use_tags() {
         assert_eq!(KrUse::PaperView.as_str(), "paper_view");
+        assert_eq!(KrUse::Candidate.as_str(), "candidate");
         assert_eq!(KrUse::Download.as_str(), "download");
         assert_eq!(KrUse::DevBacktest.as_str(), "dev_backtest");
         assert_eq!(Layer::Scheduler.as_str(), "scheduler");

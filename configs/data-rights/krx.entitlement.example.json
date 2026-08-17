@@ -9,11 +9,22 @@
     },
     "document_reference": "vault://krx-entitlements/ent_krx_2026_0001.pdf"
   },
-  "covered_datasets": ["krx_eod_bars", "krx_instruments", "krx_calendar"],
+  "covered_datasets": [
+    "krx_eod_bars",
+    "krx_instruments",
+    "krx_calendar",
+    "krx_market_status",
+    "krx_investor_flows",
+    "krx_fundamentals",
+    "krx_kospi200_membership",
+    "krx_kosdaq150_membership",
+    "krx_sector_classification"
+  ],
   "covered_uses": [
     "dataset",
     "factor",
     "recommendation",
+    "candidate",
     "backtest",
     "report",
     "benchmark",

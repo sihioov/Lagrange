@@ -126,6 +126,1362 @@ const PAPER_PARITY_REPO_RS: &str =
     include_str!("../../../../crates/api-server/src/repos/parity.rs");
 const PAPER_PENDING_TARGET_REPO_RS: &str =
     include_str!("../../../../crates/api-server/src/repos/pending_targets.rs");
+const CANDIDATE_SOURCE_UP_SQL: &str =
+    include_str!("../../../../migrations/0042_candidate_source_contracts.up.sql");
+const CANDIDATE_SOURCE_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0042_candidate_source_contracts.down.sql");
+const CANDIDATE_ANALYSIS_UP_SQL: &str =
+    include_str!("../../../../migrations/0043_candidate_analysis_surfaces.up.sql");
+const CANDIDATE_ANALYSIS_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0043_candidate_analysis_surfaces.down.sql");
+const CANDIDATE_PIPELINE_UP_SQL: &str =
+    include_str!("../../../../migrations/0044_candidate_pipeline.up.sql");
+const CANDIDATE_PIPELINE_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0044_candidate_pipeline.down.sql");
+const CANDIDATE_MULTI_UNIVERSE_UP_SQL: &str =
+    include_str!("../../../../migrations/0045_candidate_multi_universe.up.sql");
+const CANDIDATE_MULTI_UNIVERSE_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0045_candidate_multi_universe.down.sql");
+const CANDIDATE_SCHEDULE_RS: &str =
+    include_str!("../../../../crates/job-queue/src/candidate/schedule.rs");
+const CANDIDATE_RUNNER_RS: &str =
+    include_str!("../../../../crates/job-queue/src/candidate/runner.rs");
+const RESEARCH_WORKER_RS: &str =
+    include_str!("../../../../data-pipelines/collectors/src/worker.rs");
+
+#[test]
+fn candidate_vertical_contract_is_separate_pit_and_fail_closed() {
+    for token in [
+        "candidate_universe_snapshots",
+        "candidate_universe_members",
+        "candidate_investor_flows",
+        "candidate_investor_flow_snapshot_rows",
+        "candidate_market_status_observations",
+        "candidate_fundamental_observations",
+        "candidate_sector_versions",
+        "candidate_sector_entries",
+        "fundamental_profile",
+        "available_at",
+        "source_revision",
+        "license_ref",
+        "entitlement_id",
+        "entitlement_date",
+        "candidate_price_publications",
+        "candidate_price_instrument_coverage",
+        "candidate_price_instrument_sessions",
+        "candidate_raw_batch_publications",
+        "candidate_raw_batch_datasets",
+        "candidate_raw_dataset_single_origin_idx",
+        "begin_candidate_raw_batch",
+        "bind_candidate_raw_dataset",
+        "seal_candidate_raw_batch",
+        "block_candidate_raw_batch_for_inactive_rights",
+        "ENTITLEMENT_INACTIVE",
+        "candidate_instrument_registrations",
+        "curated_generation",
+        "candidate_source_entitlement_is_valid",
+        "resolve_candidate_contract_entitlement",
+        "register_candidate_instrument",
+        "register_candidate_source_dataset",
+        "publish_candidate_price_publication",
+        "p_instrument_coverage jsonb",
+        "candidate price coverage conflicts with immutable generation",
+        "v_expected_storage_path := 'db://candidate/'",
+        "candidate source catalog requires exact active candidate-use rights",
+        "covered_uses @> '[\"candidate\"]'::jsonb",
+        "candidate_source_validate_dataset_pin",
+        "SECURITY DEFINER",
+        "candidate_universe_validate_members",
+        "DEFERRABLE INITIALLY DEFERRED",
+        "FORCE ROW LEVEL SECURITY",
+        "GRANT SELECT ON TABLE public.dataset_versions TO research_writer",
+        "candidate_dataset_versions_select_research_writer",
+        "insert_candidate_investor_flow",
+        "insert_candidate_market_status",
+        "insert_candidate_fundamental",
+        "pg_catalog.pg_advisory_xact_lock",
+        "candidate universe-member natural identity is occupied by different content",
+        "candidate fundamental restatement lineage is invalid",
+        "p_entitlement_date <> p_last_session",
+    ] {
+        assert!(
+            CANDIDATE_SOURCE_UP_SQL.contains(token),
+            "0042 candidate source contract is missing {token}"
+        );
+    }
+    assert!(
+        !CANDIDATE_SOURCE_UP_SQL
+            .contains("GRANT INSERT ON TABLE public.dataset_versions TO research_writer"),
+        "research_writer must only catalog through narrow definer procedures"
+    );
+    assert!(
+        !CANDIDATE_SOURCE_UP_SQL.contains("GRANT INSERT ON TABLE public.%I TO research_writer"),
+        "research_writer must publish typed source rows only through narrow definers"
+    );
+    for token in [
+        "published candidate source observations",
+        "candidate_instrument_registrations",
+        "candidate_price_instrument_coverage",
+        "candidate_price_instrument_sessions",
+        "candidate_investor_flow_snapshot_rows",
+        "candidate_raw_batch_publications",
+        "candidate_raw_batch_datasets",
+        "DROP FUNCTION public.seal_candidate_raw_batch",
+        "candidate_source_validate_dataset_pin",
+        "candidate_universe_validate_members",
+        "REVOKE SELECT ON TABLE public.dataset_versions FROM research_writer",
+        "DROP POLICY candidate_dataset_versions_select_research_writer",
+    ] {
+        assert!(
+            CANDIDATE_SOURCE_DOWN_SQL.contains(token),
+            "0042 rollback is missing {token}"
+        );
+    }
+
+    for token in [
+        "candidate_scoring_configs",
+        "stock_analysis_runs",
+        "stock_analysis_snapshots",
+        "candidate_feed_snapshots",
+        "candidate_feed_items",
+        "screener_saved_screens",
+        "CREATE POLICY screener_saved_screens_owner",
+        "candidate-score-v1",
+        "1cd70f7a79af85896b015f265bea8ae931bbba29aef12a0b95f32c82ee056377",
+        "min_average_trading_value_20",
+        "price_curated_version",
+        "price_entitlement_id",
+        "universe_entitlement_id",
+        "status_dataset_version_id",
+        "status_entitlement_id",
+        "status_manifest_sha256",
+        "flow_entitlement_id",
+        "fundamental_entitlement_id",
+        "sector_entitlement_id",
+        "UNIVERSE_FALLBACK",
+        "STRONG', 'MODERATE', 'WEAK",
+        "published candidate feed must contain exactly five items",
+        "screener_saved_screens_app",
+        "NULLIF(current_setting('app.actor_user_id', true), '')::uuid",
+    ] {
+        assert!(
+            CANDIDATE_ANALYSIS_UP_SQL.contains(token),
+            "0043 candidate analysis contract is missing {token}"
+        );
+    }
+    assert!(
+        !CANDIDATE_ANALYSIS_UP_SQL.contains("GRANT INSERT ON TABLE public.stock_analysis")
+            && !CANDIDATE_ANALYSIS_UP_SQL.contains("GRANT UPDATE ON TABLE public.stock_analysis"),
+        "serving roles must not receive candidate publication DML"
+    );
+    assert!(
+        CANDIDATE_ANALYSIS_DOWN_SQL
+            .contains("rollback blocked by candidate analysis or saved screens"),
+        "0043 rollback must preserve published/user data"
+    );
+
+    for token in [
+        "candidate-scheduler@system.invalid",
+        "candidate_scheduler_control",
+        "required_fetch_mode",
+        "jobs_reject_candidate_scheduled_mutation",
+        "candidate:scheduled:",
+        "candidate_compute",
+        "schedule_candidate_run",
+        "candidate source pins are not sealed under the required fetch mode",
+        "candidate cutoff does not match exact pinned source availability",
+        "candidate run requires 60 confirmed KRX sessions",
+        "v_required_first_session, p_as_of_date",
+        "candidate_published_source_attributions",
+        "refs.first_use_date, refs.last_use_date",
+        "'app.actor_user_id', v_service_user_id::text, true",
+        "publish_candidate_analysis",
+        "fail_candidate_analysis_run",
+        "assert_candidate_publication_settlement",
+        "candidate publication and queue settlement must commit atomically",
+        "p_summary IS DISTINCT FROM v_run.summary_json",
+        "jsonb_path_query",
+        "content_sha256",
+        "count(DISTINCT supplied.value ->> 'instrument_id')",
+        "GRANT EXECUTE ON FUNCTION public.schedule_candidate_run",
+        "GRANT EXECUTE ON FUNCTION public.publish_candidate_analysis",
+        "TO worker",
+    ] {
+        assert!(
+            CANDIDATE_PIPELINE_UP_SQL.contains(token),
+            "0044 candidate pipeline contract is missing {token}"
+        );
+    }
+    assert!(
+        !CANDIDATE_PIPELINE_UP_SQL.contains("INSERT INTO public.recommendation_runs")
+            && !CANDIDATE_PIPELINE_UP_SQL.contains("INSERT INTO public.recommendation_items")
+            && !CANDIDATE_PIPELINE_UP_SQL.contains("INSERT INTO public.target_portfolios")
+            && !CANDIDATE_PIPELINE_UP_SQL.contains("recommendation:scheduled:"),
+        "candidate publication must remain separate from ETF recommendations"
+    );
+    assert_eq!(
+        CANDIDATE_PIPELINE_UP_SQL
+            .matches("entitlement became inactive before publication")
+            .count(),
+        6,
+        "publication must re-attest all six exact entitlements"
+    );
+    assert!(
+        CANDIDATE_PIPELINE_UP_SQL.contains("supplied.value ? 'content_sha256'")
+            && CANDIDATE_PIPELINE_UP_SQL
+                .contains("pg_catalog.sha256(pg_catalog.jsonb_send(value))"),
+        "PostgreSQL must own snapshot hashes and reject worker-supplied hashes"
+    );
+    assert!(
+        CANDIDATE_SCHEDULE_RS.contains("canonical_cutoff")
+            && CANDIDATE_SCHEDULE_RS.contains("candidate_price_publications")
+            && CANDIDATE_SCHEDULE_RS.contains("candidate_price_instrument_sessions")
+            && CANDIDATE_SCHEDULE_RS.contains("MIN_PRICE_CONTEXT_SESSIONS")
+            && CANDIDATE_SCHEDULE_RS.contains("required_sessions AS MATERIALIZED")
+            && CANDIDATE_SCHEDULE_RS.contains("price_session.session_date=required.session_date")
+            && !CANDIDATE_SCHEDULE_RS.contains("CANDIDATE_PRICE_CURATED_VERSION"),
+        "scheduler identity must be derived from exact publications, not poll time or env"
+    );
+    assert!(
+        CANDIDATE_RUNNER_RS.contains("read_dataset_manifest")
+            && CANDIDATE_RUNNER_RS.contains("dataset_manifest_hash"),
+        "candidate computation must attest the on-disk price manifest"
+    );
+    assert!(
+        CANDIDATE_PIPELINE_UP_SQL.contains("candidate_price_instrument_sessions")
+            && CANDIDATE_PIPELINE_UP_SQL.contains("LIMIT 60")
+            && CANDIDATE_PIPELINE_UP_SQL
+                .contains("price_session.session_date=required.session_date")
+            && CANDIDATE_PIPELINE_UP_SQL
+                .contains("fewer than five candidate members have complete 60-session inputs"),
+        "direct candidate scheduling must require five viable 60-session members"
+    );
+    assert!(
+        RESEARCH_WORKER_RS.contains("run_candidate_source_ingest")
+            && RESEARCH_WORKER_RS.contains("RESEARCH_CANDIDATE_ENABLED")
+            && RESEARCH_WORKER_RS.contains("batch.fetch_mode = $3")
+            && RESEARCH_WORKER_RS.contains("trade_date = $1 AND entitlement_date = $1")
+            && RESEARCH_WORKER_RS.contains("fiscal_period_end <= $1")
+            && RESEARCH_WORKER_RS.contains("effective_from <= $1")
+            && RESEARCH_WORKER_RS.contains("FROM trading_calendars AS calendar")
+            && RESEARCH_WORKER_RS.contains("calendar.session_type = 'TRADING'")
+            && RESEARCH_WORKER_RS.contains("candidate_price_instrument_sessions")
+            && RESEARCH_WORKER_RS
+                .contains("price.first_session <= $1 AND price.last_session >= $1"),
+        "candidate Raw-to-publication path must be wired into the production worker"
+    );
+    for token in [
+        "pg_advisory_xact_lock(1815099521, 44)",
+        "rollback blocked by candidate job or run lineage",
+        "reserved service principal dependencies",
+        "FROM public.screener_saved_screens",
+        "DROP FUNCTION public.assert_candidate_publication_settlement",
+    ] {
+        assert!(
+            CANDIDATE_PIPELINE_DOWN_SQL.contains(token),
+            "0044 rollback is missing {token}"
+        );
+    }
+
+    for sql in [
+        CANDIDATE_SOURCE_UP_SQL,
+        CANDIDATE_ANALYSIS_UP_SQL,
+        CANDIDATE_PIPELINE_UP_SQL,
+    ] {
+        assert!(!sql.contains("pg_catalog.nullif"));
+        assert!(!sql.contains("pg_catalog.coalesce"));
+        assert!(!sql.contains("pg_catalog.extract"));
+    }
+}
+
+/// Live boundary proof for the three candidate migrations. CI supplies the
+/// disposable PostgreSQL supervisor; developer machines without one retain
+/// the static contract above and skip this probe explicitly.
+#[tokio::test]
+async fn candidate_vertical_roles_rls_and_rollback_are_fail_closed() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = async {
+        MIGRATOR.run(&owner).await?;
+
+        let privileges: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT
+                has_table_privilege('research_writer', 'public.dataset_versions', 'SELECT'),
+                has_table_privilege('research_writer', 'public.candidate_investor_flows', 'INSERT'),
+                has_table_privilege('research_writer', 'public.candidate_investor_flows', 'UPDATE'),
+                has_table_privilege('app', 'public.stock_analysis_runs', 'INSERT'),
+                has_function_privilege('worker',
+                  'public.publish_candidate_analysis(uuid,uuid,integer,text,jsonb,jsonb)', 'EXECUTE'),
+                has_function_privilege('app',
+                  'public.publish_candidate_analysis(uuid,uuid,integer,text,jsonb,jsonb)', 'EXECUTE')",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(privileges, (true, false, false, false, true, false));
+
+        let app = role_pool(&super_url, &db, "app").await?;
+        let worker = role_pool(&super_url, &db, "worker").await?;
+        let research_writer = role_pool(&super_url, &db, "research_writer").await?;
+        let app_insert = sqlx::query("INSERT INTO stock_analysis_runs DEFAULT VALUES")
+            .execute(&app)
+            .await
+            .unwrap_err();
+        assert_eq!(pg_code(&app_insert).as_deref(), Some("42501"));
+        let worker_insert = sqlx::query("INSERT INTO candidate_feed_snapshots DEFAULT VALUES")
+            .execute(&worker)
+            .await
+            .unwrap_err();
+        assert_eq!(pg_code(&worker_insert).as_deref(), Some("42501"));
+        let source_update = sqlx::query("UPDATE candidate_investor_flows SET net_amount = 0")
+            .execute(&research_writer)
+            .await
+            .unwrap_err();
+        assert_eq!(pg_code(&source_update).as_deref(), Some("42501"));
+        drop(app);
+        drop(worker);
+        drop(research_writer);
+
+        let service_user = "00000000-0000-4000-8000-000000000099";
+        let other_user = "00000000-0000-4000-8000-000000000043";
+        sqlx::query(
+            "INSERT INTO users (id,issuer,subject,email,display_name)
+             VALUES ($1,'urn:lagrange:test','candidate-rollback-owner',
+                     'candidate-rollback-owner@example.invalid','Candidate rollback owner')",
+        )
+        .bind(Uuid::parse_str(service_user)?)
+        .execute(&owner)
+        .await?;
+        let service_actor = actor_pool(&super_url, &db, "app", service_user).await?;
+        let screen_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO screener_saved_screens
+                (owner_user_id, name, criteria_schema_version, criteria_json)
+             VALUES ($1, 'rollback-boundary', 1, '{}'::jsonb)
+             RETURNING id",
+        )
+        .bind(Uuid::parse_str(service_user)?)
+        .fetch_one(&service_actor)
+        .await?;
+        let other_actor = actor_pool(&super_url, &db, "app", other_user).await?;
+        let leaked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM screener_saved_screens WHERE id = $1",
+        )
+        .bind(screen_id)
+        .fetch_one(&other_actor)
+        .await?;
+        assert_eq!(leaked, 0, "saved screens must remain actor-private");
+        drop(other_actor);
+
+        MIGRATOR.undo(&owner, 43).await?;
+        // A failed SQLx migration retains its session advisory lock. Keep the
+        // guarded rollback on one acquired connection and release that lock
+        // explicitly before the successful retry below.
+        let mut guarded = owner.acquire().await?;
+        let blocked = MIGRATOR.undo(&mut *guarded, 42).await.unwrap_err();
+        sqlx::query("SELECT pg_advisory_unlock_all()")
+            .execute(&mut *guarded)
+            .await?;
+        drop(guarded);
+        assert_eq!(migrate_pg_code(&blocked).as_deref(), Some("55000"));
+        let retained: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM screener_saved_screens WHERE id = $1)",
+        )
+        .bind(screen_id)
+        .fetch_one(&service_actor)
+        .await?;
+        assert!(retained, "blocked rollback must not cascade-delete a saved screen");
+        sqlx::query("DELETE FROM screener_saved_screens WHERE id = $1")
+            .bind(screen_id)
+            .execute(&service_actor)
+            .await?;
+        drop(service_actor);
+
+        MIGRATOR.undo(&owner, 41).await?;
+        let removed: (bool, bool, bool) = sqlx::query_as(
+            "SELECT
+                to_regclass('public.candidate_universe_snapshots') IS NULL,
+                to_regclass('public.stock_analysis_runs') IS NULL,
+                to_regclass('public.candidate_scheduler_control') IS NULL",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(removed, (true, true, true));
+        Ok::<(), Box<dyn Error>>(())
+    }
+    .await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("candidate migration boundaries FAILED: {error}");
+    }
+}
+
+#[test]
+fn candidate_multi_universe_contract_is_registry_and_identity_scoped() {
+    for token in [
+        "candidate_universe_registry",
+        "kospi200",
+        "kosdaq150",
+        "krx_kospi200_membership",
+        "krx_kosdaq150_membership",
+        "FORCE ROW LEVEL SECURITY",
+        "candidate_raw_batch_datasets",
+        "dataset_id",
+        "candidate_raw_dataset_id_matches",
+        "UNIQUE (universe_key, as_of_date, computation_seq)",
+        "candidate_feed_active_date_uq",
+        "candidate_feed_latest_idx",
+        "candidate source batch is incomplete and cannot be sealed",
+        "candidate source pins are not sealed under the required fetch mode",
+        "candidate publication replay payload mismatch",
+        "previous.universe_key = v_run.universe_key",
+        "candidate|' || v_universe_key || '|' || p_as_of_date::text",
+        "candidate_published_source_attributions",
+        "feed.status IN ('PUBLISHED','SUPERSEDED')",
+    ] {
+        assert!(
+            CANDIDATE_MULTI_UNIVERSE_UP_SQL.contains(token),
+            "0045 up is missing multi-universe contract token {token}"
+        );
+    }
+    for token in [
+        "0045 rollback blocked by KOSDAQ candidate identity or history",
+        "candidate_0045_scheduler_state",
+        "SELECT min(registry.created_at)",
+        "CREATE OR REPLACE FUNCTION public.schedule_candidate_run",
+        "CREATE OR REPLACE FUNCTION public.publish_candidate_analysis",
+        "CREATE OR REPLACE FUNCTION public.candidate_published_source_attributions",
+        "original PUBLISHED-only serving contract",
+        "candidate_raw_batch_datasets_pkey",
+        "DROP TABLE public.candidate_universe_registry",
+    ] {
+        assert!(
+            CANDIDATE_MULTI_UNIVERSE_DOWN_SQL.contains(token),
+            "0045 down is missing guarded rollback token {token}"
+        );
+    }
+    assert!(
+        !CANDIDATE_MULTI_UNIVERSE_UP_SQL.contains("candidate_0045_function_backup")
+            && !CANDIDATE_MULTI_UNIVERSE_DOWN_SQL.contains("candidate_0045_function_backup"),
+        "0045 rollback must be self-contained and must not depend on a persistent backup table"
+    );
+}
+
+/// Live PostgreSQL 18 proof for the new registry, denormalized Raw binding
+/// identity, guarded KOSDAQ rollback, and clean down/up replay.  The fixture
+/// is intentionally tiny: it exercises the database boundary without
+/// manufacturing a full 60-session candidate publication.
+#[tokio::test]
+async fn candidate_multi_universe_registry_and_guard_are_fail_closed() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = async {
+        MIGRATOR.run(&owner).await?;
+        let registry: Vec<(String, String, String, i32, bool)> = sqlx::query_as(
+            "SELECT universe_key, membership_dataset_id, display_name, sort_order, enabled
+               FROM public.candidate_universe_registry
+              ORDER BY sort_order",
+        )
+        .fetch_all(&owner)
+        .await?;
+        assert_eq!(
+            registry,
+            vec![
+                (
+                    "kospi200".to_owned(),
+                    "krx_kospi200_membership".to_owned(),
+                    "KOSPI 200".to_owned(),
+                    10,
+                    true,
+                ),
+                (
+                    "kosdaq150".to_owned(),
+                    "krx_kosdaq150_membership".to_owned(),
+                    "KOSDAQ 150".to_owned(),
+                    20,
+                    true,
+                ),
+            ]
+        );
+        let registry_rls: (bool, bool) = sqlx::query_as(
+            "SELECT relrowsecurity, relforcerowsecurity
+               FROM pg_class
+              WHERE oid = 'public.candidate_universe_registry'::regclass",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(registry_rls, (true, true));
+        let registry_policy_count: i64 = sqlx::query_scalar(
+            "SELECT count(*)
+               FROM pg_policies
+              WHERE schemaname = 'public'
+                AND tablename = 'candidate_universe_registry'",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(registry_policy_count, 5);
+
+        let binding_columns: Vec<String> = sqlx::query_scalar(
+            "SELECT column_name
+               FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'candidate_raw_batch_datasets'
+              ORDER BY ordinal_position",
+        )
+        .fetch_all(&owner)
+        .await?;
+        assert!(binding_columns.iter().any(|column| column == "dataset_id"));
+        let raw_pk: String = sqlx::query_scalar(
+            "SELECT pg_get_constraintdef(oid)
+               FROM pg_constraint
+              WHERE conrelid = 'public.candidate_raw_batch_datasets'::regclass
+                AND contype = 'p'",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert!(raw_pk.contains("batch_id") && raw_pk.contains("dataset_id"));
+
+        let run_date_key: String = sqlx::query_scalar(
+            "SELECT pg_get_constraintdef(oid)
+               FROM pg_constraint
+              WHERE conrelid = 'public.stock_analysis_runs'::regclass
+                AND conname = 'stock_analysis_run_date_seq_key'",
+        )
+        .fetch_one(&owner)
+        .await?;
+        let feed_date_key: String = sqlx::query_scalar(
+            "SELECT pg_get_constraintdef(oid)
+               FROM pg_constraint
+              WHERE conrelid = 'public.candidate_feed_snapshots'::regclass
+                AND conname = 'candidate_feed_date_seq_key'",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert!(run_date_key.contains("universe_key") && run_date_key.contains("as_of_date"));
+        assert!(feed_date_key.contains("universe_key") && feed_date_key.contains("as_of_date"));
+        let latest_run_index: String = sqlx::query_scalar(
+            "SELECT pg_get_indexdef(indexrelid)
+               FROM pg_index
+              WHERE indexrelid = 'public.stock_analysis_runs_latest_idx'::regclass",
+        )
+        .fetch_one(&owner)
+        .await?;
+        let active_feed_index: String = sqlx::query_scalar(
+            "SELECT pg_get_indexdef(indexrelid)
+               FROM pg_index
+              WHERE indexrelid = 'public.candidate_feed_active_date_uq'::regclass",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert!(latest_run_index.contains("universe_key"));
+        assert!(active_feed_index.contains("universe_key"));
+
+        let grants: (bool, bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT
+                has_table_privilege('app', 'public.candidate_universe_registry', 'SELECT'),
+                has_table_privilege('app', 'public.candidate_universe_registry', 'INSERT'),
+                has_table_privilege('worker', 'public.candidate_universe_registry', 'UPDATE'),
+                has_table_privilege('research_writer', 'public.candidate_universe_registry', 'DELETE'),
+                has_function_privilege('worker',
+                  'public.schedule_candidate_run(date,timestamptz,text,text,uuid,uuid,integer,text,uuid,text,uuid,text,uuid,text,uuid)',
+                  'EXECUTE')",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(grants, (true, false, false, false, true));
+
+        let app = role_pool(&super_url, &db, "app").await?;
+        let direct_registry_insert = sqlx::query(
+            "INSERT INTO public.candidate_universe_registry
+                (universe_key, membership_dataset_id, display_name, market, sort_order, enabled)
+             VALUES ('squat', 'krx_squat_membership', 'Squat', 'kr', 99, true)",
+        )
+        .execute(&app)
+        .await
+        .unwrap_err();
+        assert_eq!(pg_code(&direct_registry_insert).as_deref(), Some("42501"));
+        drop(app);
+
+        let service_user_id: Uuid = sqlx::query_scalar(
+            "SELECT service_user_id FROM public.candidate_scheduler_control
+              WHERE control_key = 'scheduler'",
+        )
+        .fetch_one(&owner)
+        .await?;
+        let entitlement_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO public.data_entitlements
+                (contract_document_sha256, contract_reference, status,
+                 covered_datasets, covered_uses, effective_from, effective_until, managed_by)
+             VALUES ($1, 'candidate-0045-test', 'ACTIVE',
+                     '[\"krx_kosdaq150_membership\"]'::jsonb,
+                     '[\"candidate\"]'::jsonb,
+                     DATE '2026-01-01', DATE '2026-12-31', $2)
+             RETURNING id",
+        )
+        .bind("a".repeat(64))
+        .bind(service_user_id)
+        .fetch_one(&owner)
+        .await?;
+        let dataset_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO public.dataset_versions
+                (dataset_id, version, status, manifest_sha256, storage_path)
+             VALUES ('krx_kosdaq150_membership', 'contract-test', 'READY', $1,
+                     'db://candidate/krx_kosdaq150_membership/contract-test')
+             RETURNING id",
+        )
+        .bind("b".repeat(64))
+        .fetch_one(&owner)
+        .await?;
+        let instrument_id = format!("900{:0>8}.KRX", 45);
+        sqlx::query(
+            "INSERT INTO public.instruments
+                (id, symbol, venue, currency, name, asset_class, status, listed_at)
+             VALUES ($1, $2, 'KRX', 'KRW', '0045 contract', 'EQUITY', 'ACTIVE', DATE '2020-01-01')",
+        )
+        .bind(&instrument_id)
+        .bind(instrument_id.trim_end_matches(".KRX"))
+        .execute(&owner)
+        .await?;
+        let mut universe_tx = owner.begin().await?;
+        let snapshot_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO public.candidate_universe_snapshots
+                (index_id, as_of_date, dataset_version_id, manifest_sha256, provider,
+                 entitlement_id, entitlement_date, license_ref, source_revision,
+                 available_at, retrieved_at, member_count)
+             VALUES ('kosdaq150', DATE '2026-08-14', $1, $2, 'krx', $3, DATE '2026-08-14',
+                     'candidate-0045-test', 'contract-test',
+                     TIMESTAMPTZ '2026-08-14 08:00:00+00',
+                     TIMESTAMPTZ '2026-08-14 08:01:00+00', 1)
+             RETURNING id",
+        )
+        .bind(dataset_id)
+        .bind("b".repeat(64))
+        .bind(entitlement_id)
+        .fetch_one(&mut *universe_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.candidate_universe_members
+                (universe_snapshot_id, instrument_id, announced_at, effective_from,
+                 effective_until, available_at, source_revision)
+             VALUES ($1, $2, TIMESTAMPTZ '2026-08-01 08:00:00+00', DATE '2026-08-14',
+                     NULL, TIMESTAMPTZ '2026-08-14 08:00:00+00', 'contract-test')",
+        )
+        .bind(snapshot_id)
+        .bind(&instrument_id)
+        .execute(&mut *universe_tx)
+        .await?;
+        universe_tx.commit().await?;
+
+        let mut guarded = owner.acquire().await?;
+        let blocked = MIGRATOR.undo(&mut *guarded, 44).await.unwrap_err();
+        sqlx::query("SELECT pg_advisory_unlock_all()")
+            .execute(&mut *guarded)
+            .await?;
+        drop(guarded);
+        assert_eq!(migrate_pg_code(&blocked).as_deref(), Some("55000"));
+        let scheduler_after_guard: bool = sqlx::query_scalar(
+            "SELECT active FROM public.candidate_scheduler_control
+              WHERE control_key = 'scheduler'",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert!(scheduler_after_guard);
+        let retained: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM public.candidate_universe_snapshots
+              WHERE id = $1 AND index_id = 'kosdaq150'",
+        )
+        .bind(snapshot_id)
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(retained, 1);
+
+        sqlx::query("DELETE FROM public.candidate_universe_snapshots WHERE id = $1")
+            .bind(snapshot_id)
+            .execute(&owner)
+            .await?;
+        sqlx::query("DELETE FROM public.instruments WHERE id = $1")
+            .bind(&instrument_id)
+            .execute(&owner)
+            .await?;
+        sqlx::query("DELETE FROM public.dataset_versions WHERE id = $1")
+            .bind(dataset_id)
+            .execute(&owner)
+            .await?;
+        sqlx::query("DELETE FROM public.data_entitlements WHERE id = $1")
+            .bind(entitlement_id)
+            .execute(&owner)
+            .await?;
+
+        // A source publication sealed under 0045 proves that both enabled
+        // universe memberships passed the completeness gate.  Simulate a
+        // privileged repair that removed every binding row and ensure that
+        // durable publication history still blocks the lossy rollback.
+        let publication_only_batch = Uuid::parse_str("00000000-0000-4000-8000-000000000045")?;
+        sqlx::query(
+            "INSERT INTO public.candidate_raw_batch_publications
+                (batch_id, surface, raw_manifest_sha256, fetch_mode,
+                 entitlement_reference, entitlement_date, state, published_at)
+             VALUES ($1, 'source', $2, 'synthetic', 'candidate-0045-test',
+                     DATE '2026-08-14', 'PUBLISHED', clock_timestamp())",
+        )
+        .bind(publication_only_batch)
+        .bind("c".repeat(64))
+        .execute(&owner)
+        .await?;
+
+        let mut publication_guarded = owner.acquire().await?;
+        let publication_blocked = MIGRATOR
+            .undo(&mut *publication_guarded, 44)
+            .await
+            .unwrap_err();
+        sqlx::query("SELECT pg_advisory_unlock_all()")
+            .execute(&mut *publication_guarded)
+            .await?;
+        drop(publication_guarded);
+        assert_eq!(
+            migrate_pg_code(&publication_blocked).as_deref(),
+            Some("55000")
+        );
+        let retained_publication: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM public.candidate_raw_batch_publications
+              WHERE batch_id = $1 AND surface = 'source' AND state = 'PUBLISHED'",
+        )
+        .bind(publication_only_batch)
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(retained_publication, 1);
+        sqlx::query(
+            "DELETE FROM public.candidate_raw_batch_publications
+              WHERE batch_id = $1 AND surface = 'source'",
+        )
+        .bind(publication_only_batch)
+        .execute(&owner)
+        .await?;
+
+        sqlx::query(
+            "UPDATE public.candidate_scheduler_control
+                SET active = false, updated_at = clock_timestamp()
+              WHERE control_key = 'scheduler'",
+        )
+        .execute(&owner)
+        .await?;
+        MIGRATOR.undo(&owner, 44).await?;
+        let removed: bool = sqlx::query_scalar(
+            "SELECT to_regclass('public.candidate_universe_registry') IS NULL",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert!(removed);
+        let scheduler_after_down: bool = sqlx::query_scalar(
+            "SELECT active FROM public.candidate_scheduler_control
+              WHERE control_key = 'scheduler'",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert!(!scheduler_after_down);
+        MIGRATOR.run(&owner).await?;
+        MIGRATOR.run(&owner).await?;
+        let reapplied: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM public.candidate_universe_registry",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(reapplied, 2);
+        Ok::<(), Box<dyn Error>>(())
+    }
+    .await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("candidate multi-universe contract FAILED: {error}");
+    }
+}
+
+/// A correction supersedes the old feed row, but the old succeeded run is
+/// still a frozen run-set member and must retain its six exact attributions.
+#[tokio::test]
+async fn candidate_attributions_survive_same_universe_correction() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = async {
+        MIGRATOR.run(&owner).await?;
+        let service_user_id: Uuid = sqlx::query_scalar(
+            "SELECT service_user_id FROM public.candidate_scheduler_control
+              WHERE control_key = 'scheduler'",
+        )
+        .fetch_one(&owner)
+        .await?;
+        let scoring_sha256: String = sqlx::query_scalar(
+            "SELECT content_sha256 FROM public.candidate_scoring_configs
+              WHERE version = 'candidate-score-v1'",
+        )
+        .fetch_one(&owner)
+        .await?;
+        let contract_reference = "candidate-0045-attribution";
+        let available_at = "2026-08-14 08:00:00+00";
+        let retrieved_at = "2026-08-14 08:01:00+00";
+        let cutoff_at = "2026-08-14 10:00:00+00";
+        let source_revision = "attribution-test";
+        let license_hash = "a".repeat(64);
+        let instrument_ids = [
+            "910000045.KRX",
+            "910000046.KRX",
+            "910000047.KRX",
+            "910000048.KRX",
+            "910000049.KRX",
+        ];
+        let instrument_id = instrument_ids[0];
+        let price_dataset_id = Uuid::new_v4();
+        let universe_dataset_id = Uuid::new_v4();
+        let status_dataset_id = Uuid::new_v4();
+        let flow_dataset_id = Uuid::new_v4();
+        let fundamental_dataset_id = Uuid::new_v4();
+        let sector_dataset_id = Uuid::new_v4();
+        let price_manifest = "1".repeat(64);
+        let universe_manifest = "2".repeat(64);
+        let status_manifest = "3".repeat(64);
+        let flow_manifest = "4".repeat(64);
+        let fundamental_manifest = "5".repeat(64);
+        let sector_manifest = "6".repeat(64);
+        let entitlement_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO public.data_entitlements
+                (contract_document_sha256, contract_reference, status,
+                 covered_datasets, covered_uses, effective_from, effective_until, managed_by)
+             VALUES ($1, $2, 'ACTIVE',
+                     '[\"krx_eod_bars\",\"krx_kospi200_membership\",\
+                       \"krx_market_status\",\"krx_investor_flows\",\
+                       \"krx_fundamentals\",\"krx_sector_classification\"]'::jsonb,
+                     '[\"candidate\"]'::jsonb, DATE '2026-01-01', DATE '2026-12-31', $3)
+             RETURNING id",
+        )
+        .bind(&license_hash)
+        .bind(contract_reference)
+        .bind(service_user_id)
+        .fetch_one(&owner)
+        .await?;
+        let dataset_versions = [
+            (
+                price_dataset_id,
+                "krx_eod_bars",
+                "attribution-price",
+                price_manifest.as_str(),
+            ),
+            (
+                universe_dataset_id,
+                "krx_kospi200_membership",
+                "attribution-universe",
+                universe_manifest.as_str(),
+            ),
+            (
+                status_dataset_id,
+                "krx_market_status",
+                "attribution-status",
+                status_manifest.as_str(),
+            ),
+            (
+                flow_dataset_id,
+                "krx_investor_flows",
+                "attribution-flow",
+                flow_manifest.as_str(),
+            ),
+            (
+                fundamental_dataset_id,
+                "krx_fundamentals",
+                "attribution-fundamental",
+                fundamental_manifest.as_str(),
+            ),
+            (
+                sector_dataset_id,
+                "krx_sector_classification",
+                "attribution-sector",
+                sector_manifest.as_str(),
+            ),
+        ];
+        for (id, dataset_id, version, manifest_sha256) in dataset_versions {
+            sqlx::query(
+                "INSERT INTO public.dataset_versions
+                    (id, dataset_id, version, status, manifest_sha256, storage_path)
+                 VALUES ($1, $2, $3, 'READY', $4, $5)",
+            )
+            .bind(id)
+            .bind(dataset_id)
+            .bind(version)
+            .bind(manifest_sha256)
+            .bind(format!("db://candidate/{dataset_id}/{version}"))
+            .execute(&owner)
+            .await?;
+        }
+        for candidate_instrument_id in instrument_ids {
+            sqlx::query(
+                "INSERT INTO public.instruments
+                    (id, symbol, venue, currency, name, asset_class, status, listed_at)
+                 VALUES ($1, $2, 'KRX', 'KRW', '0045 attribution',
+                         'EQUITY', 'ACTIVE', DATE '2020-01-01')",
+            )
+            .bind(candidate_instrument_id)
+            .bind(candidate_instrument_id.trim_end_matches(".KRX"))
+            .execute(&owner)
+            .await?;
+        }
+
+        let mut source_tx = owner.begin().await?;
+        let universe_snapshot_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO public.candidate_universe_snapshots
+                (index_id, as_of_date, dataset_version_id, manifest_sha256, provider,
+                 entitlement_id, entitlement_date, license_ref, source_revision,
+                 available_at, retrieved_at, member_count)
+             VALUES ('kospi200', DATE '2026-08-14', $1, $2, 'krx', $3, DATE '2026-08-14',
+                     $4, $5, $6::timestamptz, $7::timestamptz, 1)
+             RETURNING id",
+        )
+        .bind(universe_dataset_id)
+        .bind(&universe_manifest)
+        .bind(entitlement_id)
+        .bind(contract_reference)
+        .bind(source_revision)
+        .bind(available_at)
+        .bind(retrieved_at)
+        .fetch_one(&mut *source_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.candidate_universe_members
+                (universe_snapshot_id, instrument_id, announced_at, effective_from,
+                 effective_until, available_at, source_revision)
+             VALUES ($1, $2, TIMESTAMPTZ '2026-08-01 08:00:00+00', DATE '2026-08-14',
+                     NULL, $3::timestamptz, $4)",
+        )
+        .bind(universe_snapshot_id)
+        .bind(instrument_id)
+        .bind(available_at)
+        .bind(source_revision)
+        .execute(&mut *source_tx)
+        .await?;
+        let flow_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO public.candidate_investor_flows
+                (instrument_id, trade_date, investor_class, net_amount, net_volume,
+                 provider, source_revision, available_at)
+             VALUES ($1, DATE '2026-08-14', 'FOREIGN', 1, 1, 'krx', $2, $3::timestamptz)
+             RETURNING id",
+        )
+        .bind(instrument_id)
+        .bind(source_revision)
+        .bind(available_at)
+        .fetch_one(&mut *source_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.candidate_investor_flow_snapshot_rows
+                (dataset_version_id, flow_observation_id, entitlement_id,
+                 entitlement_date, license_ref, retrieved_at, manifest_sha256)
+             VALUES ($1, $2, $3, DATE '2026-08-14', $4, $5::timestamptz, $6)",
+        )
+        .bind(flow_dataset_id)
+        .bind(flow_id)
+        .bind(entitlement_id)
+        .bind(contract_reference)
+        .bind(retrieved_at)
+        .bind(&flow_manifest)
+        .execute(&mut *source_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.candidate_market_status_observations
+                (instrument_id, trade_date, provider, entitlement_id, entitlement_date,
+                 license_ref, source_revision, available_at, retrieved_at,
+                 dataset_version_id, manifest_sha256)
+             VALUES ($1, DATE '2026-08-14', 'krx', $2, DATE '2026-08-14', $3, $4,
+                     $5::timestamptz, $6::timestamptz, $7, $8)",
+        )
+        .bind(instrument_id)
+        .bind(entitlement_id)
+        .bind(contract_reference)
+        .bind(source_revision)
+        .bind(available_at)
+        .bind(retrieved_at)
+        .bind(status_dataset_id)
+        .bind(&status_manifest)
+        .execute(&mut *source_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.candidate_fundamental_observations
+                (instrument_id, fiscal_period_start, fiscal_period_end, period_kind,
+                 statement_scope, metric, value, disclosed_at, available_at, retrieved_at,
+                 provider, entitlement_id, entitlement_date, license_ref, source_revision,
+                 dataset_version_id, manifest_sha256)
+             VALUES ($1, DATE '2024-01-01', DATE '2024-06-30', 'HALF', 'CONSOLIDATED',
+                     'revenue', 1, TIMESTAMPTZ '2024-08-01 00:00:00+00',
+                     $2::timestamptz, $3::timestamptz, 'krx', $4, DATE '2026-08-14',
+                     $5, $6, $7, $8)",
+        )
+        .bind(instrument_id)
+        .bind(available_at)
+        .bind(retrieved_at)
+        .bind(entitlement_id)
+        .bind(contract_reference)
+        .bind(source_revision)
+        .bind(fundamental_dataset_id)
+        .bind(&fundamental_manifest)
+        .execute(&mut *source_tx)
+        .await?;
+        let sector_version_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO public.candidate_sector_versions
+                (taxonomy_id, taxonomy_version, effective_from, available_at, retrieved_at,
+                 provider, entitlement_id, entitlement_date, license_ref, source_revision,
+                 dataset_version_id, manifest_sha256)
+             VALUES ('krx-sector', 'attribution-v1', DATE '2026-01-01', $1::timestamptz,
+                     $2::timestamptz, 'krx', $3, DATE '2026-08-14', $4, $5, $6, $7)
+             RETURNING id",
+        )
+        .bind(available_at)
+        .bind(retrieved_at)
+        .bind(entitlement_id)
+        .bind(contract_reference)
+        .bind(source_revision)
+        .bind(sector_dataset_id)
+        .bind(&sector_manifest)
+        .fetch_one(&mut *source_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.candidate_price_publications
+                (dataset_version_id, dataset_version, manifest_sha256, market,
+                 curated_generation, first_session, last_session, provider,
+                 entitlement_id, license_ref, source_revision, available_at, retrieved_at)
+             VALUES ($1, 'attribution-price', $2, 'kr', 1, DATE '2026-08-14',
+                     DATE '2026-08-14', 'krx', $3, $4, $5, $6::timestamptz, $7::timestamptz)",
+        )
+        .bind(price_dataset_id)
+        .bind(&price_manifest)
+        .bind(entitlement_id)
+        .bind(contract_reference)
+        .bind(source_revision)
+        .bind(available_at)
+        .bind(retrieved_at)
+        .execute(&mut *source_tx)
+        .await?;
+
+        let old_job_id = Uuid::new_v4();
+        let old_run_id = Uuid::new_v4();
+        let old_feed_id = Uuid::new_v4();
+        sqlx::query("SELECT pg_catalog.set_config('app.actor_user_id', $1, true)")
+            .bind(service_user_id.to_string())
+            .execute(&mut *source_tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO public.jobs
+                (id, owner_user_id, job_type, status, idempotency_key, payload_json,
+                 max_attempts, attempt_count, finished_at)
+             VALUES ($1, $2, 'candidate_compute', 'SUCCEEDED',
+                     'candidate:scheduled:attribution-old', '{}'::jsonb, 3, 1, $3::timestamptz)",
+        )
+        .bind(old_job_id)
+        .bind(service_user_id)
+        .bind(cutoff_at)
+        .execute(&mut *source_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.job_attempts
+                (job_id, attempt_no, outcome, claimed_by, started_at, finished_at)
+             VALUES ($1, 1, 'SUCCEEDED', 'attribution-worker', $2::timestamptz, $3::timestamptz)",
+        )
+        .bind(old_job_id)
+        .bind(available_at)
+        .bind(cutoff_at)
+        .execute(&mut *source_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.stock_analysis_runs
+                (id, as_of_date, cutoff_at, computation_seq, status, job_id,
+                 scoring_config_version, scoring_config_sha256, universe_snapshot_id,
+                 universe_key, universe_entitlement_id, price_dataset_version_id,
+                 price_entitlement_id, price_curated_version, price_manifest_sha256,
+                 status_dataset_version_id, status_entitlement_id, status_manifest_sha256,
+                 flow_dataset_version_id, flow_entitlement_id, flow_manifest_sha256,
+                 fundamental_dataset_version_id, fundamental_entitlement_id,
+                 fundamental_manifest_sha256, sector_version_id, sector_entitlement_id,
+                 input_identity_sha256, summary_json, published_at)
+             VALUES ($1, DATE '2026-08-14', $2::timestamptz, 1, 'SUCCEEDED', $3,
+                     'candidate-score-v1', $4, $5, 'kospi200', $6, $7, $6, 1, $8,
+                     $9, $6, $10, $11, $6, $12, $13, $6, $14, $15, $6, $16,
+                     '{}'::jsonb, $2::timestamptz)",
+        )
+        .bind(old_run_id)
+        .bind(cutoff_at)
+        .bind(old_job_id)
+        .bind(&scoring_sha256)
+        .bind(universe_snapshot_id)
+        .bind(entitlement_id)
+        .bind(price_dataset_id)
+        .bind(&price_manifest)
+        .bind(status_dataset_id)
+        .bind(&status_manifest)
+        .bind(flow_dataset_id)
+        .bind(&flow_manifest)
+        .bind(fundamental_dataset_id)
+        .bind(&fundamental_manifest)
+        .bind(sector_version_id)
+        .bind("a".repeat(64))
+        .execute(&mut *source_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.candidate_feed_snapshots
+                (id, run_id, universe_key, as_of_date, computation_seq, status, published_at)
+             VALUES ($1, $2, 'kospi200', DATE '2026-08-14', 1, 'PUBLISHED', $3::timestamptz)",
+        )
+        .bind(old_feed_id)
+        .bind(old_run_id)
+        .bind(cutoff_at)
+        .execute(&mut *source_tx)
+        .await?;
+        for (rank, candidate_instrument_id) in instrument_ids.iter().enumerate() {
+            let snapshot_id = Uuid::new_v4();
+            let rank = i32::try_from(rank + 1).expect("small attribution rank");
+            sqlx::query(
+                "INSERT INTO public.stock_analysis_snapshots
+                    (id, run_id, instrument_id, sector_code, fundamental_profile,
+                     eligible, exclusion_codes, flow_score, fundamental_score,
+                     technical_score, total_score, flow_coverage, fundamental_coverage,
+                     technical_coverage, evidence_strength, rank, normalization_scope,
+                     factors_json, scenarios_json, provenance_json, content_sha256)
+                 VALUES ($1, $2, $3, 'TECH', 'non_financial', true, '[]'::jsonb,
+                         1, 1, 1, $4, 1, 1, 1, 'STRONG', $5, 'SECTOR',
+                         '{}'::jsonb,
+                         '{\"bullish\":{},\"neutral\":{},\"bearish\":{}}'::jsonb,
+                         '{\"input_identity_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"as_of_date\":\"2026-08-14\"}'::jsonb,
+                         $6)",
+            )
+            .bind(snapshot_id)
+            .bind(old_run_id)
+            .bind(*candidate_instrument_id)
+            .bind(rank)
+            .bind(rank)
+            .bind("a".repeat(64))
+            .execute(&mut *source_tx)
+            .await?;
+            sqlx::query(
+                "INSERT INTO public.candidate_feed_items
+                    (feed_id, run_id, stock_analysis_snapshot_id, instrument_id, rank)
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(old_feed_id)
+            .bind(old_run_id)
+            .bind(snapshot_id)
+            .bind(*candidate_instrument_id)
+            .bind(rank)
+            .execute(&mut *source_tx)
+            .await?;
+        }
+        source_tx.commit().await?;
+
+        let app = role_pool(&super_url, &db, "app").await?;
+        let old_before_correction: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM public.candidate_published_source_attributions($1)",
+        )
+        .bind(old_run_id)
+        .fetch_one(&app)
+        .await?;
+        assert_eq!(old_before_correction, 6);
+        drop(app);
+
+        let mut correction_tx = owner.begin().await?;
+        let correction_job_id = Uuid::new_v4();
+        let correction_run_id = Uuid::new_v4();
+        let correction_feed_id = Uuid::new_v4();
+        sqlx::query("SELECT pg_catalog.set_config('app.actor_user_id', $1, true)")
+            .bind(service_user_id.to_string())
+            .execute(&mut *correction_tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO public.jobs
+                (id, owner_user_id, job_type, status, idempotency_key, payload_json,
+                 max_attempts, attempt_count, finished_at)
+             VALUES ($1, $2, 'candidate_compute', 'SUCCEEDED',
+                     'candidate:scheduled:attribution-correction', '{}'::jsonb,
+                     3, 1, $3::timestamptz)",
+        )
+        .bind(correction_job_id)
+        .bind(service_user_id)
+        .bind(cutoff_at)
+        .execute(&mut *correction_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.job_attempts
+                (job_id, attempt_no, outcome, claimed_by, started_at, finished_at)
+             VALUES ($1, 1, 'SUCCEEDED', 'attribution-worker', $2::timestamptz, $3::timestamptz)",
+        )
+        .bind(correction_job_id)
+        .bind(available_at)
+        .bind(cutoff_at)
+        .execute(&mut *correction_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.stock_analysis_runs
+                (id, as_of_date, cutoff_at, computation_seq, status, job_id,
+                 scoring_config_version, scoring_config_sha256, universe_snapshot_id,
+                 universe_key, universe_entitlement_id, price_dataset_version_id,
+                 price_entitlement_id, price_curated_version, price_manifest_sha256,
+                 status_dataset_version_id, status_entitlement_id, status_manifest_sha256,
+                 flow_dataset_version_id, flow_entitlement_id, flow_manifest_sha256,
+                 fundamental_dataset_version_id, fundamental_entitlement_id,
+                 fundamental_manifest_sha256, sector_version_id, sector_entitlement_id,
+                 input_identity_sha256, summary_json, published_at)
+             VALUES ($1, DATE '2026-08-14', $2::timestamptz, 2, 'SUCCEEDED', $3,
+                     'candidate-score-v1', $4, $5, 'kospi200', $6, $7, $6, 1, $8,
+                     $9, $6, $10, $11, $6, $12, $13, $6, $14, $15, $6, $16,
+                     '{}'::jsonb, $2::timestamptz)",
+        )
+        .bind(correction_run_id)
+        .bind(cutoff_at)
+        .bind(correction_job_id)
+        .bind(&scoring_sha256)
+        .bind(universe_snapshot_id)
+        .bind(entitlement_id)
+        .bind(price_dataset_id)
+        .bind(&price_manifest)
+        .bind(status_dataset_id)
+        .bind(&status_manifest)
+        .bind(flow_dataset_id)
+        .bind(&flow_manifest)
+        .bind(fundamental_dataset_id)
+        .bind(&fundamental_manifest)
+        .bind(sector_version_id)
+        .bind("b".repeat(64))
+        .execute(&mut *correction_tx)
+        .await?;
+        sqlx::query(
+            "UPDATE public.candidate_feed_snapshots
+                SET status = 'SUPERSEDED', superseded_by = $1
+              WHERE id = $2",
+        )
+        .bind(correction_feed_id)
+        .bind(old_feed_id)
+        .execute(&mut *correction_tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO public.candidate_feed_snapshots
+                (id, run_id, universe_key, as_of_date, computation_seq, status, published_at)
+             VALUES ($1, $2, 'kospi200', DATE '2026-08-14', 2, 'PUBLISHED', $3::timestamptz)",
+        )
+        .bind(correction_feed_id)
+        .bind(correction_run_id)
+        .bind(cutoff_at)
+        .execute(&mut *correction_tx)
+        .await?;
+        for (rank, candidate_instrument_id) in instrument_ids.iter().enumerate() {
+            let snapshot_id = Uuid::new_v4();
+            let rank = i32::try_from(rank + 1).expect("small attribution rank");
+            sqlx::query(
+                "INSERT INTO public.stock_analysis_snapshots
+                    (id, run_id, instrument_id, sector_code, fundamental_profile,
+                     eligible, exclusion_codes, flow_score, fundamental_score,
+                     technical_score, total_score, flow_coverage, fundamental_coverage,
+                     technical_coverage, evidence_strength, rank, normalization_scope,
+                     factors_json, scenarios_json, provenance_json, content_sha256)
+                 VALUES ($1, $2, $3, 'TECH', 'non_financial', true, '[]'::jsonb,
+                         1, 1, 1, $4, 1, 1, 1, 'STRONG', $5, 'SECTOR',
+                         '{}'::jsonb,
+                         '{\"bullish\":{},\"neutral\":{},\"bearish\":{}}'::jsonb,
+                         '{\"input_identity_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"as_of_date\":\"2026-08-14\"}'::jsonb,
+                         $6)",
+            )
+            .bind(snapshot_id)
+            .bind(correction_run_id)
+            .bind(*candidate_instrument_id)
+            .bind(rank)
+            .bind(rank)
+            .bind("b".repeat(64))
+            .execute(&mut *correction_tx)
+            .await?;
+            sqlx::query(
+                "INSERT INTO public.candidate_feed_items
+                    (feed_id, run_id, stock_analysis_snapshot_id, instrument_id, rank)
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(correction_feed_id)
+            .bind(correction_run_id)
+            .bind(snapshot_id)
+            .bind(*candidate_instrument_id)
+            .bind(rank)
+            .execute(&mut *correction_tx)
+            .await?;
+        }
+        let pending_run_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO public.stock_analysis_runs
+                (id, as_of_date, cutoff_at, computation_seq, status,
+                 scoring_config_version, scoring_config_sha256, universe_snapshot_id,
+                 universe_key, universe_entitlement_id, price_dataset_version_id,
+                 price_entitlement_id, price_curated_version, price_manifest_sha256,
+                 status_dataset_version_id, status_entitlement_id, status_manifest_sha256,
+                 flow_dataset_version_id, flow_entitlement_id, flow_manifest_sha256,
+                 fundamental_dataset_version_id, fundamental_entitlement_id,
+                 fundamental_manifest_sha256, sector_version_id, sector_entitlement_id,
+                 input_identity_sha256)
+             VALUES ($1, DATE '2026-08-14', $2::timestamptz, 3, 'PENDING',
+                     'candidate-score-v1', $3, $4, 'kospi200', $5, $6, $5, 1, $7,
+                     $8, $5, $9, $10, $5, $11, $12, $5, $13, $14, $5, $15)",
+        )
+        .bind(pending_run_id)
+        .bind(cutoff_at)
+        .bind(&scoring_sha256)
+        .bind(universe_snapshot_id)
+        .bind(entitlement_id)
+        .bind(price_dataset_id)
+        .bind(&price_manifest)
+        .bind(status_dataset_id)
+        .bind(&status_manifest)
+        .bind(flow_dataset_id)
+        .bind(&flow_manifest)
+        .bind(fundamental_dataset_id)
+        .bind(&fundamental_manifest)
+        .bind(sector_version_id)
+        .bind("c".repeat(64))
+        .execute(&mut *correction_tx)
+        .await?;
+        correction_tx.commit().await?;
+
+        let app = role_pool(&super_url, &db, "app").await?;
+        let attribution_counts: (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT
+                (SELECT count(*) FROM public.candidate_published_source_attributions($1)),
+                (SELECT count(*) FROM public.candidate_published_source_attributions($2)),
+                (SELECT count(*) FROM public.candidate_published_source_attributions($3)),
+                (SELECT count(*) FROM public.candidate_published_source_attributions($4))",
+        )
+        .bind(old_run_id)
+        .bind(correction_run_id)
+        .bind(pending_run_id)
+        .bind(Uuid::new_v4())
+        .fetch_one(&app)
+        .await?;
+        assert_eq!(attribution_counts, (6, 6, 0, 0));
+        let feed_status: String =
+            sqlx::query_scalar("SELECT status FROM public.candidate_feed_snapshots WHERE id = $1")
+                .bind(old_feed_id)
+                .fetch_one(&owner)
+                .await?;
+        assert_eq!(feed_status, "SUPERSEDED");
+        drop(app);
+        Ok::<(), Box<dyn Error>>(())
+    }
+    .await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("candidate attribution correction contract FAILED: {error}");
+    }
+}
 
 #[test]
 fn paper_settlement_outbox_contract_is_deferred_and_fail_closed() {
@@ -2293,7 +3649,7 @@ fn recommendation_pipeline_migration_is_tracked() {
 #[test]
 fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
     for token in [
-        "version IN (22, 23, 24, 25, 33, 34, 35)",
+        "version IN (22, 23, 24, 25, 33, 34, 35, 42, 45)",
         "convalidated",
         "pg_get_constraintdef",
         "format_type",
@@ -2376,7 +3732,7 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         assert!(
             missing_required
                 .to_string()
-                .contains("successful SQLx migrations 22-25 and 33-35 are required")
+                .contains("successful SQLx migrations 22-25, 33-35, 42, and 45 are required")
         );
         sqlx::query("UPDATE _sqlx_migrations SET success = true WHERE version = 33")
             .execute(&owner)
@@ -3569,45 +4925,128 @@ async fn full_contract_body(
     )
     .fetch_all(owner)
     .await?;
+    let expected_writer_policies = [
+        (
+            "candidate_fundamental_observations",
+            "candidate_source_select_candidate_fundamental_observations",
+            "SELECT",
+        ),
+        (
+            "candidate_instrument_registrations",
+            "candidate_instrument_registrations_select",
+            "SELECT",
+        ),
+        (
+            "candidate_investor_flow_snapshot_rows",
+            "candidate_source_select_candidate_investor_flow_snapshot_rows",
+            "SELECT",
+        ),
+        (
+            "candidate_investor_flows",
+            "candidate_source_select_candidate_investor_flows",
+            "SELECT",
+        ),
+        (
+            "candidate_market_status_observations",
+            "candidate_source_select_candidate_market_status_observations",
+            "SELECT",
+        ),
+        (
+            "candidate_price_instrument_coverage",
+            "candidate_source_select_candidate_price_instrument_coverage",
+            "SELECT",
+        ),
+        (
+            "candidate_price_instrument_sessions",
+            "candidate_source_select_candidate_price_instrument_sessions",
+            "SELECT",
+        ),
+        (
+            "candidate_price_publications",
+            "candidate_source_select_candidate_price_publications",
+            "SELECT",
+        ),
+        (
+            "candidate_raw_batch_datasets",
+            "candidate_source_select_candidate_raw_batch_datasets",
+            "SELECT",
+        ),
+        (
+            "candidate_raw_batch_publications",
+            "candidate_source_select_candidate_raw_batch_publications",
+            "SELECT",
+        ),
+        (
+            "candidate_sector_entries",
+            "candidate_source_select_candidate_sector_entries",
+            "SELECT",
+        ),
+        (
+            "candidate_sector_versions",
+            "candidate_source_select_candidate_sector_versions",
+            "SELECT",
+        ),
+        (
+            "candidate_universe_members",
+            "candidate_source_select_candidate_universe_members",
+            "SELECT",
+        ),
+        (
+            "candidate_universe_registry",
+            "candidate_universe_registry_select_research_writer",
+            "SELECT",
+        ),
+        (
+            "candidate_universe_snapshots",
+            "candidate_source_select_candidate_universe_snapshots",
+            "SELECT",
+        ),
+        (
+            "data_batches",
+            "data_batches_insert_research_writer",
+            "INSERT",
+        ),
+        (
+            "data_batches",
+            "data_batches_select_research_writer",
+            "SELECT",
+        ),
+        (
+            "dataset_versions",
+            "candidate_dataset_versions_select_research_writer",
+            "SELECT",
+        ),
+        (
+            "trading_calendar_versions",
+            "trading_calendar_versions_insert_research_writer",
+            "INSERT",
+        ),
+        (
+            "trading_calendar_versions",
+            "trading_calendar_versions_select_research_writer",
+            "SELECT",
+        ),
+        (
+            "trading_calendars",
+            "trading_calendars_insert_research_writer",
+            "INSERT",
+        ),
+        (
+            "trading_calendars",
+            "trading_calendars_select_research_writer",
+            "SELECT",
+        ),
+        (
+            "trading_calendars",
+            "trading_calendars_update_research_writer",
+            "UPDATE",
+        ),
+    ]
+    .into_iter()
+    .map(|(table, policy, command)| (table.into(), policy.into(), command.into()))
+    .collect::<Vec<(String, String, String)>>();
     assert_eq!(
-        writer_policies,
-        vec![
-            (
-                "data_batches".into(),
-                "data_batches_insert_research_writer".into(),
-                "INSERT".into()
-            ),
-            (
-                "data_batches".into(),
-                "data_batches_select_research_writer".into(),
-                "SELECT".into()
-            ),
-            (
-                "trading_calendar_versions".into(),
-                "trading_calendar_versions_insert_research_writer".into(),
-                "INSERT".into()
-            ),
-            (
-                "trading_calendar_versions".into(),
-                "trading_calendar_versions_select_research_writer".into(),
-                "SELECT".into()
-            ),
-            (
-                "trading_calendars".into(),
-                "trading_calendars_insert_research_writer".into(),
-                "INSERT".into()
-            ),
-            (
-                "trading_calendars".into(),
-                "trading_calendars_select_research_writer".into(),
-                "SELECT".into()
-            ),
-            (
-                "trading_calendars".into(),
-                "trading_calendars_update_research_writer".into(),
-                "UPDATE".into()
-            ),
-        ],
+        writer_policies, expected_writer_policies,
         "research_writer must have only the requested publication RLS policies"
     );
     let sequence_privileges: (bool, bool, bool) = sqlx::query_as(

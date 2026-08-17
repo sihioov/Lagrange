@@ -13,6 +13,46 @@
 //! every mutating route.
 
 use axum::http::StatusCode;
+use serde::{Deserialize, Serialize};
+
+/// The finite candidate universe vocabulary exposed by the API.
+///
+/// This is deliberately an enum rather than an arbitrary string: accepting a
+/// value here is part of the public contract, and unknown values must fail
+/// closed before a repository query can accidentally select another feed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UniverseKey {
+    #[default]
+    Kospi200,
+    Kosdaq150,
+}
+
+impl UniverseKey {
+    pub const ALL: [Self; 2] = [Self::Kospi200, Self::Kosdaq150];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Kospi200 => "kospi200",
+            Self::Kosdaq150 => "kosdaq150",
+        }
+    }
+
+    pub const fn sort_order(self) -> i32 {
+        match self {
+            Self::Kospi200 => 10,
+            Self::Kosdaq150 => 20,
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, &'static str> {
+        match value {
+            "kospi200" => Ok(Self::Kospi200),
+            "kosdaq150" => Ok(Self::Kosdaq150),
+            _ => Err("unrecognized candidate universe"),
+        }
+    }
+}
 
 /// Whether a route is part of the current product surface or a Phase 3
 /// (Owner-only KIS Live) surface that must never be exposed to Members.
@@ -457,6 +497,106 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
         false,
         Some("recommendation"),
         false,
+    ),
+    // --- common individual-stock research -----------------------------------
+    route(
+        "GET",
+        "/api/v1/candidates/feed/latest",
+        Phase::Current,
+        false,
+        false,
+        false,
+        false,
+        Some("candidate"),
+        false,
+    ),
+    route(
+        "GET",
+        "/api/v1/candidates/feed/{date}",
+        Phase::Current,
+        false,
+        false,
+        false,
+        false,
+        Some("candidate"),
+        false,
+    ),
+    route(
+        "GET",
+        "/api/v1/stocks/{instrument_id}/analysis",
+        Phase::Current,
+        false,
+        false,
+        false,
+        false,
+        Some("candidate"),
+        false,
+    ),
+    route(
+        "POST",
+        "/api/v1/screener/query",
+        Phase::Current,
+        false,
+        false,
+        false,
+        false,
+        Some("candidate"),
+        false,
+    ),
+    route(
+        "GET",
+        "/api/v1/screener/screens",
+        Phase::Current,
+        false,
+        false,
+        false,
+        false,
+        None,
+        false,
+    ),
+    route(
+        "POST",
+        "/api/v1/screener/screens",
+        Phase::Current,
+        true,
+        true,
+        false,
+        false,
+        None,
+        true,
+    ),
+    route(
+        "GET",
+        "/api/v1/screener/screens/{id}",
+        Phase::Current,
+        false,
+        false,
+        false,
+        false,
+        None,
+        false,
+    ),
+    route(
+        "PUT",
+        "/api/v1/screener/screens/{id}",
+        Phase::Current,
+        true,
+        true,
+        false,
+        false,
+        None,
+        true,
+    ),
+    route(
+        "DELETE",
+        "/api/v1/screener/screens/{id}",
+        Phase::Current,
+        true,
+        true,
+        false,
+        false,
+        None,
+        true,
     ),
     // --- backtests -----------------------------------------------------------
     route(

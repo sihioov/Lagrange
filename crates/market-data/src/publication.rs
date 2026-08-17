@@ -17,6 +17,11 @@ pub enum DataBatchKind {
     Reference,
     Calendar,
     CorporateActions,
+    InvestorFlow,
+    MarketStatus,
+    Fundamentals,
+    IndexMembership,
+    SectorClassification,
 }
 
 impl DataBatchKind {
@@ -27,6 +32,11 @@ impl DataBatchKind {
             Self::Reference => "REFERENCE",
             Self::Calendar => "CALENDAR",
             Self::CorporateActions => "CORPORATE_ACTIONS",
+            Self::InvestorFlow => "INVESTOR_FLOW",
+            Self::MarketStatus => "MARKET_STATUS",
+            Self::Fundamentals => "FUNDAMENTALS",
+            Self::IndexMembership => "INDEX_MEMBERSHIP",
+            Self::SectorClassification => "SECTOR_CLASSIFICATION",
         }
     }
 }
@@ -270,6 +280,11 @@ impl PublicationBundle {
                     DataBatchKind::Calendar
                 }
                 ResponseKind::CorporateActions => DataBatchKind::CorporateActions,
+                ResponseKind::InvestorFlow => DataBatchKind::InvestorFlow,
+                ResponseKind::MarketStatus => DataBatchKind::MarketStatus,
+                ResponseKind::Fundamentals => DataBatchKind::Fundamentals,
+                ResponseKind::IndexMembership => DataBatchKind::IndexMembership,
+                ResponseKind::SectorClassification => DataBatchKind::SectorClassification,
             };
             files.push(PublicationFile {
                 file_name: verified.entry.file_name.clone(),

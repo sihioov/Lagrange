@@ -462,6 +462,7 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
             step_up_max_auth_age_secs: 900,
             artifact_root: repo_root.join("artifacts"),
             seoul_today: api_server::http::state::system_seoul_today,
+            candidate_eod_ready: || true,
             code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         },
         app_pool,

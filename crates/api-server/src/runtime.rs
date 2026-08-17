@@ -110,6 +110,7 @@ impl RuntimeConfig {
             step_up_max_auth_age_secs: self.step_up_max_auth_age_secs,
             artifact_root: self.artifact_root.clone(),
             seoul_today: system_seoul_today,
+            candidate_eod_ready: crate::http::state::system_candidate_eod_ready,
             code_commit: self.code_commit.clone(),
         }
     }

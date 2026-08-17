@@ -11,6 +11,7 @@ use crate::repos::admin::AdminRepo;
 use crate::repos::artifacts::ArtifactRepo;
 use crate::repos::audit::AuditWriter;
 use crate::repos::backtest_runs::BacktestRunRepo;
+use crate::repos::candidates::CandidateRepo;
 use crate::repos::entitlements::EntitlementRepo;
 use crate::repos::metrics::MetricsRepo;
 use crate::repos::ops::OpsRepo;
@@ -58,6 +59,9 @@ pub struct ApiConfig {
     /// Production supplies [`system_seoul_today`]; tests can pin a date so
     /// calendar fixtures do not expire as wall time advances.
     pub seoul_today: fn() -> chrono::NaiveDate,
+    /// Whether the configured Seoul session has crossed the candidate EOD
+    /// readiness threshold. Tests pin this independently from the date.
+    pub candidate_eod_ready: fn() -> bool,
     /// Immutable API image revision copied to newly-created backtest runs.
     pub code_commit: String,
 }
@@ -65,6 +69,14 @@ pub struct ApiConfig {
 pub fn system_seoul_today() -> chrono::NaiveDate {
     let offset = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
     chrono::Utc::now().with_timezone(&offset).date_naive()
+}
+
+/// Shared candidate confirmed-close contract. Daemon wake-up configuration
+/// must not change whether the API considers today's KRX EOD publishable.
+pub fn system_candidate_eod_ready() -> bool {
+    let offset = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
+    chrono::Utc::now().with_timezone(&offset).time()
+        >= chrono::NaiveTime::from_hms_opt(16, 30, 0).expect("valid candidate close threshold")
 }
 
 /// The assembled router state.
@@ -146,6 +158,13 @@ impl ApiState {
     }
     pub fn recommendations(&self) -> RecommendationRepo {
         RecommendationRepo::new(self.app_pool.clone())
+    }
+    pub fn candidates(&self) -> CandidateRepo {
+        CandidateRepo::with_close_clock(
+            self.app_pool.clone(),
+            self.cfg.seoul_today,
+            self.cfg.candidate_eod_ready,
+        )
     }
     pub fn rebalance_previews(&self) -> RebalancePreviewRepo {
         RebalancePreviewRepo::new(self.app_pool.clone())

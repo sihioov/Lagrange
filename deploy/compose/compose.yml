@@ -396,7 +396,7 @@ services:
       start_period: 30s
 
   # ------------------------------------------------------------------
-  # research-raw-init — one-shot ownership fence for the Raw bind root.
+  # research-raw-init — one-shot ownership fence for Raw and Curated roots.
   # Root is used only for this chown/chmod; the filesystem root is read-only,
   # the service has no network or secrets, and it cannot restart.
   # ------------------------------------------------------------------
@@ -419,13 +419,19 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
+        mkdir -p /data/raw /data/curated
         find /data/raw -xdev -type d -exec chown 10001:10001 {} +
         find /data/raw -xdev -type d -exec chmod 0750 {} +
         find /data/raw -xdev -type f -exec chown 10001:10001 {} +
         find /data/raw -xdev -type f \( -name manifest.jsonl -o -name commit.lock \) -exec chmod 0640 {} +
         find /data/raw -xdev -type f ! \( -name manifest.jsonl -o -name commit.lock \) -exec chmod 0440 {} +
+        find /data/curated -xdev -type d -exec chown 10001:10001 {} +
+        find /data/curated -xdev -type d -exec chmod 0750 {} +
+        find /data/curated -xdev -type f -exec chown 10001:10001 {} +
+        find /data/curated -xdev -type f -exec chmod 0440 {} +
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
+      - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated
 
   # ------------------------------------------------------------------
   # research-schema-check — fail-closed migration/role contract gate.
@@ -477,8 +483,9 @@ services:
   # research-worker — KRX ingestion/curation/catalog.
   # The ONLY data-collection worker; it needs internet egress for the
   # licensed KRX source, so it sits on `backend` (not internal).
-  # Writes Raw evidence only. Publication metadata is written through the
-  # dedicated least-privilege research_writer database role.
+  # Writes immutable Raw and Curated evidence. Catalog metadata is published
+  # through narrow SECURITY DEFINER procedures by the least-privilege
+  # research_writer role; that role has no broad dataset_versions DML.
   # ------------------------------------------------------------------
   research-worker:
     build:
@@ -487,6 +494,7 @@ services:
     entrypoint: ["/usr/local/bin/research-worker"]
     init: true
     restart: unless-stopped
+    stop_grace_period: 16m
     read_only: true
     tmpfs:
       - /tmp
@@ -502,8 +510,14 @@ services:
       RESEARCH_FETCH_MODE: ${RESEARCH_FETCH_MODE:-credentialed}
       RESEARCH_RUN_AT_KST: ${RESEARCH_RUN_AT_KST:-16:30}
       RESEARCH_MAX_PUBLICATION_AGE_SECS: ${RESEARCH_MAX_PUBLICATION_AGE_SECS:-345600}
+      RESEARCH_ATTEMPT_TIMEOUT_SECS: ${RESEARCH_ATTEMPT_TIMEOUT_SECS:-900}
       RESEARCH_RAW_ROOT: /data
+      RESEARCH_CURATED_ROOT: /data
+      RESEARCH_ENTITLEMENT_REFERENCE: ${RESEARCH_ENTITLEMENT_REFERENCE:?RESEARCH_ENTITLEMENT_REFERENCE must identify the exact active candidate-use contract}
       RESEARCH_SYNTHETIC_BUNDLE: /opt/lagrange/tests/fixtures/kr-etf/contract
+      RESEARCH_CANDIDATE_ENABLED: "true"
+      RESEARCH_CANDIDATE_RAW_ROOT: /data/raw/candidate
+      RESEARCH_CANDIDATE_SYNTHETIC_BUNDLE: /opt/lagrange/tests/fixtures/kr-candidates/contract
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB:-lagrange}
@@ -523,6 +537,7 @@ services:
         mode: 0440
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
+      - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated
     networks:
       - backend
     healthcheck:
@@ -610,6 +625,64 @@ services:
       - backend
     healthcheck:
       test: ["CMD", "/usr/local/bin/recommendation-runner", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+
+  # ------------------------------------------------------------------
+  # candidate-runner — common KOSPI-200 research feed, screener snapshots,
+  # and deep-analysis publication. It never creates orders or target weights.
+  # Every run is bound to six exact source pins and candidate-use rights.
+  # ------------------------------------------------------------------
+  candidate-runner:
+    build:
+      context: ../..
+      dockerfile: crates/job-queue/Dockerfile
+    entrypoint: ["/usr/local/bin/candidate-runner"]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 5m
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/candidate-health:uid=10001,gid=10001,mode=0750
+    logging: *default-logging
+    cpus: "2"
+    mem_limit: 4g
+    environment:
+      APP_ENV: ${CANDIDATE_APP_ENV:-production}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-lagrange}
+      DB_USER: worker
+      DB_PASSWORD_FILE: /run/secrets/db_worker_password
+      CANDIDATE_DATA_ROOT: /data
+      CANDIDATE_HEALTH_STATE_PATH: /run/candidate-health/health.json
+      CANDIDATE_HEALTH_MAX_AGE_SECS: ${CANDIDATE_HEALTH_MAX_AGE_SECS:-180}
+      CANDIDATE_POLL_MS: ${CANDIDATE_POLL_MS:-2000}
+      CANDIDATE_SCHEDULE_POLL_SECS: ${CANDIDATE_SCHEDULE_POLL_SECS:-60}
+      CANDIDATE_SWEEP_MS: ${CANDIDATE_SWEEP_MS:-30000}
+      CANDIDATE_HEARTBEAT_MS: ${CANDIDATE_HEARTBEAT_MS:-10000}
+      CANDIDATE_LEASE_MS: ${CANDIDATE_LEASE_MS:-60000}
+      CANDIDATE_BACKOFF_MS: ${CANDIDATE_BACKOFF_MS:-30000}
+    secrets:
+      - source: candidate_db_worker_password
+        target: db_worker_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated:ro
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/candidate-runner", "healthcheck"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -971,6 +1044,8 @@ secrets:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-worker/krx_api_key
   recommendation_db_worker_password:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/recommendation-runner/db_worker_password
+  candidate_db_worker_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/candidate-runner/db_worker_password
   backtest_1_db_worker_password:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/nt-backtest-worker-1/db_worker_password
   backtest_2_db_worker_password:
