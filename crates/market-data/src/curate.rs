@@ -100,7 +100,7 @@ pub enum CurateError {
     RawStore {
         context: String,
         #[source]
-        source: crate::storage::StoreError,
+        source: Box<crate::storage::StoreError>,
     },
     /// Legacy string-only raw read error retained for downstream API
     /// compatibility. New RawStore reads must use [`Self::RawStore`] so the
@@ -618,7 +618,7 @@ fn validate_normalized_raw(raw: &RawStore, entry: &ManifestEntry) -> Result<(), 
             |error| match error {
                 crate::publication::PublicationError::Store(source) => CurateError::RawStore {
                     context: "validate normalized raw".to_owned(),
-                    source,
+                    source: Box::new(source),
                 },
                 other => CurateError::NonCanonicalNormalizedBatch {
                     reason: other.to_string(),
@@ -642,7 +642,7 @@ pub fn curation_inputs_from_raw(
         .read_batch_bytes(&entry.provider, &entry.market, entry)
         .map_err(|source| CurateError::RawStore {
             context: "read curation inputs".to_owned(),
-            source,
+            source: Box::new(source),
         })?;
     let bytes_for = |kind: ResponseKind| -> Result<&[u8], CurateError> {
         let metadata = entry
@@ -853,7 +853,7 @@ pub fn price_curation_evidence(
         .read_batch_bytes(&entry.provider, &entry.market, entry)
         .map_err(|source| CurateError::RawStore {
             context: "read price publication evidence".to_owned(),
-            source,
+            source: Box::new(source),
         })?;
     let bars = files
         .iter()
@@ -988,7 +988,7 @@ pub fn curate_batch(
         .read_batch_bytes(&entry.provider, &entry.market, entry)
         .map_err(|source| CurateError::RawStore {
             context: "read raw batch".to_owned(),
-            source,
+            source: Box::new(source),
         })?;
     let meta = |kind: ResponseKind| -> Result<&crate::storage::FileEntry, CurateError> {
         entry

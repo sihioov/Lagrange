@@ -1361,7 +1361,7 @@ fn raw_batch_has_target_bars(
         .map_err(|source| {
             WorkerError::Curation(CurateError::RawStore {
                 context: "read price recovery batch".to_owned(),
-                source,
+                source: Box::new(source),
             })
         })?;
     let bytes = files
@@ -1997,33 +1997,33 @@ mod production_kis_tests {
     fn curation_raw_store_errors_keep_store_retryability() {
         let retryable = WorkerError::Curation(CurateError::RawStore {
             context: "read normalized raw".to_owned(),
-            source: StoreError::Io {
+            source: Box::new(StoreError::Io {
                 context: "read".to_owned(),
                 source: std::io::Error::other("temporary"),
-            },
+            }),
         });
         assert_eq!(retryable.failure_class(), FailureClass::Retryable);
 
         let permanent = WorkerError::Curation(CurateError::RawStore {
             context: "read normalized raw".to_owned(),
-            source: StoreError::ContentHashMismatch {
+            source: Box::new(StoreError::ContentHashMismatch {
                 path: "bars.json".to_owned(),
                 recorded: "a".repeat(64),
                 actual: "b".repeat(64),
-            },
+            }),
         });
         assert_eq!(permanent.failure_class(), FailureClass::Permanent);
 
         let nested_retryable = WorkerError::Curation(CurateError::RawStore {
             context: "read normalized raw".to_owned(),
-            source: StoreError::CleanupFailed {
+            source: Box::new(StoreError::CleanupFailed {
                 path: "batch".to_owned(),
                 original: Box::new(StoreError::Io {
                     context: "sync".to_owned(),
                     source: std::io::Error::other("temporary"),
                 }),
                 cleanup: std::io::Error::other("cleanup failed"),
-            },
+            }),
         });
         assert_eq!(nested_retryable.failure_class(), FailureClass::Retryable);
     }
