@@ -20,6 +20,7 @@ export LAGRANGE_CODE_COMMIT="$static_commit"
 export RESEARCH_APP_ENV=qa
 export CANDIDATE_APP_ENV=qa
 export RESEARCH_FETCH_MODE=synthetic
+export RESEARCH_CANDIDATE_ENABLED=true
 export RESEARCH_ENTITLEMENT_REFERENCE="${RESEARCH_ENTITLEMENT_REFERENCE:-REPLACE_WITH_EXACT_CONTRACT_REFERENCE}"
 # The research smoke resolves the complete production Compose model even
 # though it starts only research services. Supply deterministic QA values for
@@ -181,6 +182,7 @@ expected_env = {
     "APP_ENV": "qa", "RESEARCH_FETCH_MODE": "synthetic",
     "RESEARCH_RUN_AT_KST": "16:30", "RESEARCH_MAX_PUBLICATION_AGE_SECS": "345600",
     "RESEARCH_ATTEMPT_TIMEOUT_SECS": "900",
+    "RESEARCH_CANDIDATE_ENABLED": "true",
     "RESEARCH_RAW_ROOT": "/data", "RESEARCH_CURATED_ROOT": "/data",
     "RESEARCH_ENTITLEMENT_REFERENCE": "REPLACE_WITH_EXACT_CONTRACT_REFERENCE",
     "DB_HOST": "postgres", "DB_PORT": "5432",
@@ -976,6 +978,7 @@ candidate_one_shot() {
   rc run --rm --no-deps \
     --volume "$(hostpath "$candidate_smoke_bundle"):/qa/candidate:ro" \
     --volume "$(hostpath "$eod_smoke_bundle"):/qa/eod:ro" \
+    -e RESEARCH_CANDIDATE_ENABLED=true \
     -e RESEARCH_CANDIDATE_SYNTHETIC_BUNDLE=/qa/candidate \
     -e RESEARCH_SYNTHETIC_BUNDLE=/qa/eod \
     research-worker --once --date 2020-01-31

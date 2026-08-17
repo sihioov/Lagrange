@@ -22,6 +22,7 @@ if ([string]::IsNullOrWhiteSpace($env:LAGRANGE_CODE_COMMIT)) {
 }
 $env:RESEARCH_APP_ENV = 'qa'
 $env:RESEARCH_FETCH_MODE = 'synthetic'
+$env:RESEARCH_CANDIDATE_ENABLED = 'true'
 if ([string]::IsNullOrWhiteSpace($env:BACKTEST_MIN_FREE_BYTES)) { $env:BACKTEST_MIN_FREE_BYTES = '1073741824' }
 if ([string]::IsNullOrWhiteSpace($env:BACKTEST_MAX_QUEUED_BACKTESTS)) { $env:BACKTEST_MAX_QUEUED_BACKTESTS = '1000' }
 if ([string]::IsNullOrWhiteSpace($env:BACKTEST_RECONCILE_GRACE_SECS)) { $env:BACKTEST_RECONCILE_GRACE_SECS = '900' }
@@ -193,6 +194,7 @@ function Invoke-StaticChecks {
     $requiredEnvironment = [ordered]@{
         APP_ENV = 'qa'; RESEARCH_FETCH_MODE = 'synthetic'; RESEARCH_RUN_AT_KST = '16:30'
         RESEARCH_MAX_PUBLICATION_AGE_SECS = '345600'; RESEARCH_RAW_ROOT = '/data'
+        RESEARCH_CANDIDATE_ENABLED = 'true'
         DB_HOST = 'postgres'; DB_PORT = '5432'; DB_NAME = 'lagrange'; DB_USER = 'research_writer'
         DB_PASSWORD_FILE = '/run/secrets/db_research_password'
         KIS_APP_KEY_FILE = '/run/secrets/kis_app_key'

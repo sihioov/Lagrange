@@ -294,7 +294,13 @@ async fn run_daemon(values: &HashMap<String, String>) -> Result<SuccessRecord, W
 async fn run_healthcheck(values: &HashMap<String, String>) -> Result<SuccessRecord, WorkerError> {
     let config = HealthcheckConfig::from_map(values)?;
     let pool = build_postgres_pool(&config.database);
-    let status = healthcheck(&pool, Utc::now(), config.max_publication_age).await?;
+    let status = healthcheck(
+        &pool,
+        Utc::now(),
+        config.max_publication_age,
+        config.expected_fetch_mode,
+    )
+    .await?;
     let per_universe = if config.candidate_sources_enabled {
         Some(
             candidate_healthcheck(
@@ -395,10 +401,14 @@ fn run_record(outcome: WorkerRunOutcome, date: Option<TradingDate>) -> SuccessRe
 }
 
 fn report_error(error: &WorkerError, target_date: Option<TradingDate>) -> ExitCode {
+    let provider = match std::env::var("RESEARCH_FETCH_MODE").as_deref() {
+        Ok("credentialed") => "KIS-NORMALIZED",
+        _ => "KRX",
+    };
     let record = ErrorRecord {
         status: "error",
         error_code: error_code(error),
-        provider: "KRX",
+        provider,
         market: "KR",
         target_date: target_date.map(|date| date.to_iso()),
         phase: error.phase().as_str(),

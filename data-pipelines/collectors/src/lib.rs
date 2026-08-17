@@ -16,8 +16,9 @@ pub use candidate_sink::{
 pub use pipeline::{
     FailureClass, KisNormalizationRecoveryReport, PipelineError, PipelineStage, RECOVERY_PAGE_SIZE,
     RecoveryBatchOutcome, RecoveryError, RecoveryPage, RecoveryPosition, RecoveryReport,
-    RecoveryScope, RunOutcome, ingest_and_publish, normalize_failure_class, provider_failure_class,
-    recover_kis_normalization, recover_unpublished, recover_unpublished_page_with,
+    RecoveryScope, RunOutcome, ingest_and_publish, ingest_normalize_publish_kis,
+    normalize_failure_class, provider_failure_class, recover_kis_normalization,
+    recover_unpublished, recover_unpublished_normalized_for_date, recover_unpublished_page_with,
     recover_unpublished_page_with_scope, recover_unpublished_scope, recover_unpublished_with,
     recover_unpublished_with_scope, store_failure_class,
 };

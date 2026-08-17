@@ -36,10 +36,11 @@ use tokio::process::Command;
 use crate::{
     CandidateInstrumentCatalog, CandidatePipelineError, CandidatePricePublication, FailureClass,
     PipelineError, PostgresCandidateSourceSink, PostgresPublicationSink, RECOVERY_PAGE_SIZE,
-    RecoveryBatchOutcome, RecoveryError, RecoveryPage, RecoveryPosition, SinkError,
-    ingest_and_publish, prepare_candidate_batch, provider_failure_class, publish_candidate_batch,
-    recover_candidate_batches, recover_unpublished_page_with, recover_unpublished_with,
-    store_failure_class,
+    RecoveryBatchOutcome, RecoveryError, RecoveryPage, RecoveryPosition, RecoveryScope, SinkError,
+    ingest_and_publish, ingest_normalize_publish_kis, prepare_candidate_batch,
+    provider_failure_class, publish_candidate_batch, recover_candidate_batches,
+    recover_kis_normalization, recover_unpublished_normalized_for_date,
+    recover_unpublished_page_with_scope, recover_unpublished_with, store_failure_class,
 };
 
 const DEFAULT_RUN_AT_KST: &str = "16:30";
@@ -53,17 +54,11 @@ const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(15);
 const CHILD_OUTPUT_LIMIT: u64 = 4096;
 const CHILD_REAP_TIMEOUT: Duration = Duration::from_secs(5);
-// The provider is intentionally constructed in this slice before the
-// credentialed orchestration branch consumes it. Keep the strict lint clean
-// while that branch remains a separate follow-up.
-#[allow(dead_code)]
 const KIS_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-#[allow(dead_code)]
 const KIS_READ_QUOTA: Quota = Quota {
     capacity: 1,
     refill_per_sec: 1,
 };
-#[allow(dead_code)]
 const KIS_READ_CHANNELS: [(&str, &str); 9] = [
     (
         "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
@@ -93,6 +88,14 @@ const KIS_READ_CHANNELS: [(&str, &str); 9] = [
     ("/uapi/domestic-stock/v1/ksdinfo/rev-split", "HHKDB669105C0"),
     ("/uapi/domestic-stock/v1/ksdinfo/cap-dcrs", "HHKDB669106C0"),
 ];
+const WORKER_PROVIDER_KIS_NORMALIZED: &str = "KIS-NORMALIZED";
+
+fn worker_event_provider(mode: FetchMode) -> &'static str {
+    match mode {
+        FetchMode::Synthetic => "KRX",
+        FetchMode::Credentialed => WORKER_PROVIDER_KIS_NORMALIZED,
+    }
+}
 
 pub const WORKER_ENV_KEYS: &[&str] = &[
     "APP_ENV",
@@ -498,6 +501,7 @@ fn notify_recovery_observer(observer: &dyn RecoveryObserver, outcome: RecoveryBa
 
 struct ContextRecoveryObserver<'a> {
     observer: &'a dyn WorkerObserver,
+    provider: &'static str,
 }
 
 impl RecoveryObserver for ContextRecoveryObserver<'_> {
@@ -514,7 +518,7 @@ impl ContextRecoveryObserver<'_> {
     fn emit(&self, kind: WorkerEventKind, batch_id: BatchId, date: TradingDate) {
         self.observer.emit(WorkerEvent {
             kind,
-            provider: "KRX",
+            provider: self.provider,
             market: "KR",
             target_date: Some(date),
             phase: WorkerPhase::Recovery,
@@ -547,12 +551,9 @@ pub trait WorkerComponentFactory: Send + Sync {
 
 pub struct ProductionWorkerComponentFactory;
 
-#[allow(dead_code)]
 type LiveKisClient = KisMarketDataClient<LiveTransport, TokioSleeper, SystemCredentialSource>;
-#[allow(dead_code)]
 type LiveKisProvider = KisProvider<LiveKisClient>;
 
-#[allow(dead_code)]
 fn kis_system_now_ms() -> i64 {
     SystemClock.now_ms()
 }
@@ -561,7 +562,6 @@ fn kis_system_now_ms() -> i64 {
 /// into the worker configuration.  `SystemCredentialSource` resolves both
 /// files at token issue/read time, so a mounted-secret rotation takes effect
 /// without rebuilding this client.
-#[allow(dead_code)]
 pub(crate) fn build_production_kis_provider(
     config: &ResearchWorkerConfig,
 ) -> Result<LiveKisProvider, WorkerError> {
@@ -624,9 +624,9 @@ impl WorkerComponentFactory for ProductionWorkerComponentFactory {
                     .map_err(WorkerError::Provider)?;
                 Ok(Arc::new(KrxProvider::synthetic(bundle)))
             }
-            // This is deliberately a permanent, honest failure. The
-            // credentialed async orchestration is wired in a later slice and
-            // must never be simulated through the sync fixture seam.
+            // The injected synchronous factory is a fixture/test seam. The
+            // production process backend routes credentialed work through the
+            // async KIS orchestration instead of erasing it into EodProvider.
             FetchMode::Credentialed => Err(WorkerError::ProviderNotConfigured),
         }
     }
@@ -666,9 +666,6 @@ where
 
 pub fn bootstrap_worker(values: &HashMap<String, String>) -> Result<ResearchWorker, WorkerError> {
     let config = ResearchWorkerConfig::from_map(values)?;
-    if config.fetch_mode == FetchMode::Credentialed {
-        return Err(WorkerError::ProviderNotConfigured);
-    }
     let executable = std::env::current_exe().map_err(|_| WorkerError::ChildIo {
         phase: WorkerPhase::Config,
     })?;
@@ -778,7 +775,12 @@ impl ProcessResearchBackend {
             SupervisedChildOutcome::TimedOut => Err(WorkerError::Timeout { phase }),
             SupervisedChildOutcome::Shutdown => Err(WorkerError::Shutdown),
             SupervisedChildOutcome::Completed { success, stdout } => {
-                let decoded = decode_helper_output(&stdout, phase, expected_date);
+                let decoded = decode_helper_output_with_provider(
+                    &stdout,
+                    phase,
+                    expected_date,
+                    worker_event_provider(self.expected_fetch_mode),
+                );
                 match (success, decoded) {
                     (true, Ok(batch_id)) => Ok(batch_id),
                     (false, Err(error @ WorkerError::ChildFailure { .. })) => Err(error),
@@ -817,7 +819,7 @@ impl ResearchBackend for ProcessResearchBackend {
                 args.push(OsString::from("--after"));
                 args.push(OsString::from(cursor.to_string()));
             }
-            let page = supervise_recovery_child(
+            let page = supervise_recovery_child_with_provider(
                 ChildSpec {
                     executable: self.executable.clone(),
                     args,
@@ -828,6 +830,7 @@ impl ResearchBackend for ProcessResearchBackend {
                 observer,
                 position,
                 &self.recovery_position,
+                worker_event_provider(self.expected_fetch_mode),
             )
             .await?;
             if page.has_more {
@@ -938,9 +941,20 @@ where
     let store = factory.build_store(&config)?;
     let pool = factory.build_pool(&config)?;
     let sink = PostgresPublicationSink::new(pool.clone());
-    let page = recover_unpublished_page_with(
+    let scope = match config.fetch_mode {
+        FetchMode::Synthetic => RecoveryScope::Krx,
+        FetchMode::Credentialed => {
+            // Normalize every durable wire batch before taking the canonical
+            // publication snapshot. This is repeated on each child page so a
+            // raw append racing recovery is consumed on the next page.
+            recover_kis_normalization(&store).map_err(WorkerError::Pipeline)?;
+            RecoveryScope::KisNormalized
+        }
+    };
+    let page = recover_unpublished_page_with_scope(
         &store,
         &sink,
+        scope,
         position,
         RECOVERY_PAGE_SIZE,
         |outcome, snapshot_high_water| {
@@ -971,7 +985,7 @@ where
             phase: WorkerPhase::Recovery,
         },
     })?;
-    if !page.has_more {
+    if !page.has_more && config.fetch_mode == FetchMode::Synthetic {
         let price_sink = PostgresCandidateSourceSink::new(pool);
         recover_price_publications(&config, &store, &price_sink).await?;
     }
@@ -985,10 +999,13 @@ pub async fn run_internal_ingest(
 ) -> Result<BatchId, WorkerError> {
     let config = ResearchWorkerConfig::from_map(values)?;
     let factory = ProductionWorkerComponentFactory;
-    let provider = factory.build_provider(&config)?;
     let store = factory.build_store(&config)?;
     let pool = factory.build_pool(&config)?;
     let sink = PostgresPublicationSink::new(pool.clone());
+    if config.fetch_mode == FetchMode::Credentialed {
+        return run_credentialed_internal_ingest(&config, &store, &sink, date, now).await;
+    }
+    let provider = factory.build_provider(&config)?;
     let price_sink = PostgresCandidateSourceSink::new(pool.clone());
     let recovered_price_batch = recover_price_publications(&config, &store, &price_sink).await?;
     let eod_batch_id = if sink
@@ -1027,6 +1044,54 @@ pub async fn run_internal_ingest(
         .ok_or(WorkerError::ChildOutput {
             phase: WorkerPhase::Ingest,
         })
+}
+
+async fn run_credentialed_internal_ingest(
+    config: &ResearchWorkerConfig,
+    store: &RawStore,
+    sink: &PostgresPublicationSink,
+    date: TradingDate,
+    now: UtcTimestamp,
+) -> Result<BatchId, WorkerError> {
+    let normalized = recover_kis_normalization(store).map_err(WorkerError::Pipeline)?;
+    // The parent recovery child owns full-scope paging. An ingest retry only
+    // repairs this target date's durable normalized entries before checking
+    // the authoritative EOD row; unrelated backlog must remain for recovery.
+    recover_unpublished_normalized_for_date(store, sink, &normalized, date)
+        .await
+        .map_err(WorkerError::Pipeline)?;
+
+    let has_eod = sink
+        .has_eod_for_mode(date, FetchMode::Credentialed)
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::DuplicateCheck,
+            source,
+        })?;
+    if has_eod {
+        return normalized
+            .outcomes
+            .iter()
+            .rev()
+            .find(|outcome| outcome.entry.date == date)
+            .map(|outcome| outcome.entry.batch_id)
+            .ok_or(WorkerError::ChildOutput {
+                phase: WorkerPhase::DuplicateCheck,
+            });
+    }
+
+    let provider = build_production_kis_provider(config)?;
+    let request = IngestRequest::new(MARKET_KR.to_owned(), date, now);
+    let outcome = ingest_normalize_publish_kis(
+        store,
+        &provider,
+        &request,
+        Some(&config.entitlement_reference),
+        sink,
+    )
+    .await
+    .map_err(WorkerError::Pipeline)?;
+    Ok(outcome.manifest.batch_id)
 }
 
 async fn run_candidate_source_ingest(
@@ -1288,6 +1353,7 @@ pub async fn healthcheck(
     pool: &PgPool,
     now_utc: DateTime<Utc>,
     max_age: Duration,
+    expected_fetch_mode: FetchMode,
 ) -> Result<HealthStatus, WorkerError> {
     timeout_query(
         WorkerPhase::Health,
@@ -1296,15 +1362,20 @@ pub async fn healthcheck(
     .await?;
     let kst = FixedOffset::east_opt(KST_OFFSET_SECS).expect("KST offset is valid");
     let current_kst_date = now_utc.with_timezone(&kst).date_naive();
+    // Legacy synthetic rows predate the nullable provenance columns. They may
+    // satisfy the synthetic compatibility path, but never the credentialed
+    // path, which must see an explicitly credentialed EOD publication.
     let newest: Option<(chrono::NaiveDate, DateTime<Utc>)> = timeout_query(
         WorkerPhase::Health,
         sqlx::query_as(
             "SELECT batch_date, retrieved_at FROM data_batches \
              WHERE provider='KRX' AND market='KR' AND kind='EOD' \
+               AND (fetch_mode = $2 OR ($2 = 'synthetic' AND fetch_mode IS NULL)) \
                AND batch_date <= $1 \
              ORDER BY batch_date DESC, retrieved_at DESC LIMIT 1",
         )
         .bind(current_kst_date)
+        .bind(expected_fetch_mode.as_str())
         .fetch_optional(pool),
     )
     .await?;
@@ -1969,6 +2040,7 @@ impl ResearchWorker {
         let mut failures = 0;
         let recovery_observer = ContextRecoveryObserver {
             observer: self.observer.as_ref(),
+            provider: worker_event_provider(self.config.fetch_mode),
         };
         loop {
             match self.backend.recover(control, &recovery_observer).await {
@@ -1998,6 +2070,7 @@ impl ResearchWorker {
         let mut needs_recovery = false;
         let recovery_observer = ContextRecoveryObserver {
             observer: self.observer.as_ref(),
+            provider: worker_event_provider(self.config.fetch_mode),
         };
         loop {
             if needs_recovery {
@@ -2034,7 +2107,7 @@ impl ResearchWorker {
                 AttemptOutcome::Completed(Ok(true)) => {
                     self.observer.emit(WorkerEvent {
                         kind: WorkerEventKind::Skipped,
-                        provider: "KRX",
+                        provider: worker_event_provider(self.config.fetch_mode),
                         market: "KR",
                         target_date: Some(date),
                         phase: WorkerPhase::DuplicateCheck,
@@ -2073,7 +2146,7 @@ impl ResearchWorker {
                 Ok(batch_id) => {
                     self.observer.emit(WorkerEvent {
                         kind: WorkerEventKind::Completed,
-                        provider: "KRX",
+                        provider: worker_event_provider(self.config.fetch_mode),
                         market: "KR",
                         target_date: Some(date),
                         phase: WorkerPhase::Publication,
@@ -2102,7 +2175,7 @@ impl ResearchWorker {
     fn emit_retry(&self, target_date: Option<TradingDate>, error: &WorkerError) {
         self.observer.emit(WorkerEvent {
             kind: WorkerEventKind::Retrying,
-            provider: "KRX",
+            provider: worker_event_provider(self.config.fetch_mode),
             market: "KR",
             target_date,
             phase: error.phase(),
@@ -2114,7 +2187,7 @@ impl ResearchWorker {
     fn emit_failure(&self, target_date: Option<TradingDate>, error: &WorkerError) {
         self.observer.emit(WorkerEvent {
             kind: WorkerEventKind::Failed,
-            provider: "KRX",
+            provider: worker_event_provider(self.config.fetch_mode),
             market: "KR",
             target_date,
             phase: error.phase(),
@@ -2260,10 +2333,20 @@ fn validate_system_root(path: PathBuf) -> Result<PathBuf, WorkerError> {
         .map_err(|_| WorkerError::InvalidConfig { key: "SYSTEMROOT" })
 }
 
+#[cfg(test)]
 fn decode_helper_output(
     output: &[u8],
     default_phase: WorkerPhase,
     expected_date: Option<TradingDate>,
+) -> Result<Option<BatchId>, WorkerError> {
+    decode_helper_output_with_provider(output, default_phase, expected_date, "KRX")
+}
+
+fn decode_helper_output_with_provider(
+    output: &[u8],
+    default_phase: WorkerPhase,
+    expected_date: Option<TradingDate>,
+    expected_provider: &str,
 ) -> Result<Option<BatchId>, WorkerError> {
     if output.len() as u64 > CHILD_OUTPUT_LIMIT {
         return Err(WorkerError::ChildOutput {
@@ -2343,7 +2426,7 @@ fn decode_helper_output(
                 || record.cursor.is_some()
                 || record.snapshot_high_water.is_some()
                 || record.has_more.is_some()
-                || record.provider.as_deref() != Some("KRX")
+                || record.provider.as_deref() != Some(expected_provider)
                 || record.market.as_deref() != Some("KR")
                 || record
                     .target_date
@@ -2407,7 +2490,15 @@ enum RecoveryLine {
     Terminal(Result<RecoveryPage, WorkerError>),
 }
 
+#[cfg(test)]
 fn decode_recovery_line(line: &[u8]) -> Result<RecoveryLine, WorkerError> {
+    decode_recovery_line_with_provider(line, "KRX")
+}
+
+fn decode_recovery_line_with_provider(
+    line: &[u8],
+    expected_provider: &str,
+) -> Result<RecoveryLine, WorkerError> {
     #[derive(serde::Deserialize)]
     struct Status<'a> {
         status: &'a str,
@@ -2501,7 +2592,7 @@ fn decode_recovery_line(line: &[u8]) -> Result<RecoveryLine, WorkerError> {
             {
                 return Err(WorkerError::ChildOutput { phase });
             }
-            match decode_helper_output(line, phase, None) {
+            match decode_helper_output_with_provider(line, phase, None, expected_provider) {
                 Err(error @ WorkerError::ChildFailure { .. }) => {
                     Ok(RecoveryLine::Terminal(Err(error)))
                 }
@@ -2535,6 +2626,7 @@ where
     Ok(Some(line))
 }
 
+#[cfg(test)]
 async fn supervise_recovery_child(
     spec: ChildSpec,
     timeout: Duration,
@@ -2542,6 +2634,21 @@ async fn supervise_recovery_child(
     observer: &dyn RecoveryObserver,
     position: RecoveryPosition,
     progress: &Mutex<RecoveryPosition>,
+) -> Result<RecoveryPage, WorkerError> {
+    supervise_recovery_child_with_provider(
+        spec, timeout, control, observer, position, progress, "KRX",
+    )
+    .await
+}
+
+async fn supervise_recovery_child_with_provider(
+    spec: ChildSpec,
+    timeout: Duration,
+    control: &dyn WorkerControl,
+    observer: &dyn RecoveryObserver,
+    position: RecoveryPosition,
+    progress: &Mutex<RecoveryPosition>,
+    expected_provider: &str,
 ) -> Result<RecoveryPage, WorkerError> {
     let phase = WorkerPhase::Recovery;
     if *progress
@@ -2591,7 +2698,7 @@ async fn supervise_recovery_child(
                             terminate_and_reap(&mut child, phase).await?;
                             return Err(WorkerError::ChildOutput { phase });
                         }
-                        match decode_recovery_line(&line) {
+                        match decode_recovery_line_with_provider(&line, expected_provider) {
                             Ok(RecoveryLine::Batch { outcome, snapshot_high_water }) => {
                                 let batch_id = outcome.batch_id();
                                 if seen.len() >= RECOVERY_PAGE_SIZE
@@ -3104,8 +3211,8 @@ mod process_tests {
 
     use super::{
         ChildSpec, RecoveryObserver, SupervisedChildOutcome, WaitOutcome, WorkerControl,
-        WorkerPhase, decode_helper_output, decode_recovery_line, helper_environment,
-        supervise_child, supervise_recovery_child,
+        WorkerPhase, decode_helper_output, decode_helper_output_with_provider,
+        decode_recovery_line, helper_environment, supervise_child, supervise_recovery_child,
     };
 
     #[derive(Default)]
@@ -3490,6 +3597,35 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
             ),
             Err(super::WorkerError::ChildOutput {
                 phase: WorkerPhase::Recovery
+            })
+        ));
+    }
+
+    #[test]
+    fn helper_output_validates_the_credentialed_provider_scope() {
+        let batch_id = domain::BatchId::generate();
+        let output = format!(
+            "{{\"status\":\"error\",\"error_code\":\"PIPELINE_FAILED\",\"provider\":\"KIS-NORMALIZED\",\"market\":\"KR\",\"target_date\":null,\"phase\":\"publication\",\"class\":\"permanent\",\"batch_id\":\"{batch_id}\",\"message\":\"research pipeline failed\"}}"
+        );
+        let error = decode_helper_output_with_provider(
+            output.as_bytes(),
+            WorkerPhase::Ingest,
+            None,
+            "KIS-NORMALIZED",
+        )
+        .expect_err("credentialed child failure");
+        assert!(matches!(
+            error,
+            super::WorkerError::ChildFailure {
+                phase: WorkerPhase::Publication,
+                class: crate::FailureClass::Permanent,
+                batch_id: Some(id),
+            } if id == batch_id
+        ));
+        assert!(matches!(
+            decode_helper_output_with_provider(output.as_bytes(), WorkerPhase::Ingest, None, "KRX"),
+            Err(super::WorkerError::ChildOutput {
+                phase: WorkerPhase::Ingest
             })
         ));
     }

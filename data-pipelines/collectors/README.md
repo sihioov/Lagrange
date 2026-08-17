@@ -8,11 +8,11 @@ synthetic fixtures for development and QA.
 > **Production boundary:** synthetic data is for development and QA only.
 > `APP_ENV=production` with `RESEARCH_FETCH_MODE=synthetic` is rejected before
 > the worker reads a secret, constructs a provider, touches Raw storage, or
-> creates a database pool. A licensed, credentialed, entitlement-aware real KRX
-> HTTP transport is **not implemented**. Real credentials, a licensed endpoint,
-> entitlement enforcement in that transport, and operator provisioning remain
-> external production work; this repository does not claim that a real KRX feed
-> is live.
+> creates a database pool. The credentialed KIS market-data path now captures
+> immutable wire responses and publishes only deterministic normalized batches;
+> real credentials, endpoint/entitlement approval, and operator provisioning
+> remain external production work. This repository does not claim that a live
+> broker feed or production account has been verified.
 
 ## Provider contract and immutable Raw
 
@@ -59,8 +59,9 @@ instead of fetching a replacement.
 
 ## Manual commands
 
-Run commands from the repository root. Synthetic mode is shown because it is
-the only implemented transport.
+Run commands from the repository root. Synthetic mode is shown for deterministic
+development and QA; the scheduled worker also accepts credentialed KIS mode
+when its file-backed credentials and database configuration are provisioned.
 
 Raw-only collection (no database configuration or write):
 
@@ -151,6 +152,7 @@ timeout variables.
 | `RESEARCH_RUN_AT_KST` | default `16:30` | exact `HH:MM` daily daemon time in KST |
 | `RESEARCH_MAX_PUBLICATION_AGE_SECS` | default `345600` | positive healthcheck maximum age in seconds |
 | `RESEARCH_ATTEMPT_TIMEOUT_SECS` | default `900`, range `60..=3600` | bound for curation/recovery child attempts; Compose stop grace exceeds it |
+| `RESEARCH_CANDIDATE_ENABLED` | default `false` | credentialed KIS EOD keeps candidate source/price curation disabled; synthetic QA may explicitly set `true` |
 | `RESEARCH_RAW_ROOT` | required | writable data root; `RawStore` appends `/raw` |
 | `RESEARCH_CURATED_ROOT` | required | writable immutable curation root; `CurateStore` appends `/curated` |
 | `RESEARCH_ENTITLEMENT_REFERENCE` | required | non-secret exact contract id pinned into Raw and resolved to one active six-dataset candidate entitlement |

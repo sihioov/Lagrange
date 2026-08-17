@@ -515,7 +515,9 @@ services:
       RESEARCH_CURATED_ROOT: /data
       RESEARCH_ENTITLEMENT_REFERENCE: ${RESEARCH_ENTITLEMENT_REFERENCE:?RESEARCH_ENTITLEMENT_REFERENCE must identify the exact active candidate-use contract}
       RESEARCH_SYNTHETIC_BUNDLE: /opt/lagrange/tests/fixtures/kr-etf/contract
-      RESEARCH_CANDIDATE_ENABLED: "true"
+      # Candidate source/price curation is outside the credentialed KIS EOD
+      # minimum release. Synthetic QA may explicitly override this to true.
+      RESEARCH_CANDIDATE_ENABLED: ${RESEARCH_CANDIDATE_ENABLED:-false}
       RESEARCH_CANDIDATE_RAW_ROOT: /data/raw/candidate
       RESEARCH_CANDIDATE_SYNTHETIC_BUNDLE: /opt/lagrange/tests/fixtures/kr-candidates/contract
       DB_HOST: postgres

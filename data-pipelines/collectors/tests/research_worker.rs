@@ -12,9 +12,10 @@ use collectors::{
     RecoveryObserver, RecoveryPosition, ResearchBackend, ResearchWorker, ResearchWorkerConfig,
     SinkError, WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent,
     WorkerEventClass, WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome,
-    bootstrap_worker_with, build_postgres_pool, healthcheck, ingest_and_publish, next_run_delay,
-    publication_age, recover_unpublished, recover_unpublished_page_with, recover_unpublished_with,
-    retry_delay, run_internal_recovery_stream, store_failure_class, validate_synthetic_policy,
+    bootstrap_worker, bootstrap_worker_with, build_postgres_pool, healthcheck, ingest_and_publish,
+    next_run_delay, publication_age, recover_unpublished, recover_unpublished_page_with,
+    recover_unpublished_with, retry_delay, run_internal_recovery_stream, store_failure_class,
+    validate_synthetic_policy,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KRX, ResponseKind};
@@ -1530,6 +1531,36 @@ fn credentialed_candidate_sources_are_rejected_until_their_provider_exists() {
         }
     ));
     assert!(!error.to_string().contains("valid-secret"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn credentialed_bootstrap_builds_the_process_backend_without_provider_gate() {
+    let root = tempfile::tempdir().expect("bootstrap tempdir");
+    let db_password = root.path().join("db-password");
+    let app_key = root.path().join("kis-app-key");
+    let app_secret = root.path().join("kis-app-secret");
+    std::fs::write(&db_password, "db-secret").expect("db secret");
+    std::fs::write(&app_key, "app-key").expect("KIS app key");
+    std::fs::write(&app_secret, "app-secret").expect("KIS app secret");
+    let mut values = worker_config(&[
+        ("APP_ENV", "development"),
+        ("RESEARCH_FETCH_MODE", "credentialed"),
+    ]);
+    values.insert(
+        "DB_PASSWORD_FILE".to_owned(),
+        db_password.to_string_lossy().into_owned(),
+    );
+    values.insert(
+        "KIS_APP_KEY_FILE".to_owned(),
+        app_key.to_string_lossy().into_owned(),
+    );
+    values.insert(
+        "KIS_APP_SECRET_FILE".to_owned(),
+        app_secret.to_string_lossy().into_owned(),
+    );
+
+    let worker = bootstrap_worker(&values).expect("credentialed process backend bootstrap");
+    assert_eq!(worker.config().fetch_mode, FetchMode::Credentialed);
 }
 
 #[test]
@@ -3207,7 +3238,9 @@ async fn worker_health_requires_db_round_trip_and_fresh_real_eod() {
     let now = Utc.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap();
     let max_age = Duration::from_secs(345_600);
 
-    let missing = healthcheck(&db.writer, now, max_age).await.unwrap_err();
+    let missing = healthcheck(&db.writer, now, max_age, FetchMode::Synthetic)
+        .await
+        .unwrap_err();
     assert_eq!(missing.phase(), WorkerPhase::Health);
 
     sqlx::query(
@@ -3219,7 +3252,11 @@ async fn worker_health_requires_db_round_trip_and_fresh_real_eod() {
     .execute(&db.supervisor)
     .await
     .unwrap();
-    assert!(healthcheck(&db.writer, now, max_age).await.is_err());
+    assert!(
+        healthcheck(&db.writer, now, max_age, FetchMode::Synthetic)
+            .await
+            .is_err()
+    );
 
     sqlx::query(
         "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
@@ -3230,7 +3267,11 @@ async fn worker_health_requires_db_round_trip_and_fresh_real_eod() {
     .execute(&db.supervisor)
     .await
     .unwrap();
-    assert!(healthcheck(&db.writer, now, max_age).await.is_err());
+    assert!(
+        healthcheck(&db.writer, now, max_age, FetchMode::Synthetic)
+            .await
+            .is_err()
+    );
 
     sqlx::query(
         "INSERT INTO data_batches (provider, market, batch_date, kind, storage_path, \
@@ -3241,11 +3282,17 @@ async fn worker_health_requires_db_round_trip_and_fresh_real_eod() {
     .execute(&db.supervisor)
     .await
     .unwrap();
-    let healthy = healthcheck(&db.writer, now, max_age).await.unwrap();
+    let healthy = healthcheck(&db.writer, now, max_age, FetchMode::Synthetic)
+        .await
+        .unwrap();
     assert_eq!(healthy.age.as_secs(), 12 * 60 * 60);
 
     db.writer.close().await;
-    assert!(healthcheck(&db.writer, now, max_age).await.is_err());
+    assert!(
+        healthcheck(&db.writer, now, max_age, FetchMode::Synthetic)
+            .await
+            .is_err()
+    );
     db.drop_db().await;
 }
 
@@ -3266,17 +3313,23 @@ async fn worker_health_uses_batch_date_and_ignores_future_batches() {
     .execute(&db.supervisor)
     .await
     .unwrap();
-    let historical = healthcheck(&db.writer, now, max_age).await.unwrap_err();
+    let historical = healthcheck(&db.writer, now, max_age, FetchMode::Synthetic)
+        .await
+        .unwrap_err();
     assert!(matches!(
         historical,
         WorkerError::Unhealthy {
             reason: collectors::HealthFailure::StaleEodPublication
         }
     ));
-    let historical_with_large_limit =
-        healthcheck(&db.writer, now, Duration::from_secs(500_000_000))
-            .await
-            .unwrap();
+    let historical_with_large_limit = healthcheck(
+        &db.writer,
+        now,
+        Duration::from_secs(500_000_000),
+        FetchMode::Synthetic,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         historical_with_large_limit.newest_eod_at,
         Utc.with_ymd_and_hms(2020, 1, 31, 15, 0, 0).unwrap(),
@@ -3294,7 +3347,9 @@ async fn worker_health_uses_batch_date_and_ignores_future_batches() {
     .execute(&db.supervisor)
     .await
     .unwrap();
-    let healthy = healthcheck(&db.writer, now, max_age).await.unwrap();
+    let healthy = healthcheck(&db.writer, now, max_age, FetchMode::Synthetic)
+        .await
+        .unwrap();
     assert_eq!(healthy.age, Duration::from_secs(12 * 60 * 60));
 
     sqlx::query(
@@ -3306,10 +3361,46 @@ async fn worker_health_uses_batch_date_and_ignores_future_batches() {
     .execute(&db.supervisor)
     .await
     .unwrap();
-    let current = healthcheck(&db.writer, now, max_age).await.unwrap();
+    let current = healthcheck(&db.writer, now, max_age, FetchMode::Synthetic)
+        .await
+        .unwrap();
     assert_eq!(current.age, Duration::from_secs(60));
     assert_eq!(current.newest_eod_at, now - chrono::Duration::seconds(60));
 
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn credentialed_health_ignores_synthetic_eod_publications() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let now = Utc.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap();
+    let max_age = Duration::from_secs(345_600);
+    sqlx::query(
+        "INSERT INTO data_batches
+         (provider, market, batch_date, kind, storage_path, content_sha256,
+          bytes_size, retrieved_at, source_batch_id, source_file_name, fetch_mode)
+         VALUES
+         ('KRX','KR','2026-08-10','EOD','raw/synthetic',repeat('e',64),1,$1,
+          '00000000-0000-4000-8000-000000000051'::uuid,'bars.json','synthetic')",
+    )
+    .bind(now - chrono::Duration::hours(1))
+    .execute(&db.supervisor)
+    .await
+    .unwrap();
+
+    assert!(
+        healthcheck(&db.writer, now, max_age, FetchMode::Synthetic)
+            .await
+            .is_ok()
+    );
+    assert!(matches!(
+        healthcheck(&db.writer, now, max_age, FetchMode::Credentialed).await,
+        Err(WorkerError::Unhealthy {
+            reason: collectors::HealthFailure::NoEodPublication
+        })
+    ));
     db.drop_db().await;
 }
 

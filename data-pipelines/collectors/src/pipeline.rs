@@ -1,8 +1,9 @@
 use domain::{BatchId, TradingDate};
 use market_data::contract::{MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX};
-use market_data::ingest::{IngestError, IngestRequest, ingest_bundle};
+use market_data::ingest::{IngestError, IngestRequest, ingest_bundle, ingest_kis_bundle};
 use market_data::normalize::{NormalizationOutcome, NormalizeError, normalize_kis_batch};
 use market_data::provider::{EodProvider, ProviderError};
+use market_data::providers::kis::{KisProvider, KisRead};
 use market_data::publication::{PublicationBundle, PublicationError};
 use market_data::storage::{ManifestEntry, RawStore, StoreError};
 
@@ -413,6 +414,76 @@ pub fn recover_kis_normalization(
     Ok(KisNormalizationRecoveryReport { outcomes })
 }
 
+/// Replays only the normalized KIS entries for one target date.
+///
+/// The process worker already drains the full normalized scope through its
+/// bounded recovery child.  An ingest retry still needs to repair a crash
+/// after normalization and before publication, so it may replay the durable
+/// target-date entries here without walking unrelated backlog.  Entries stay
+/// in the append order returned by [`recover_kis_normalization`].
+pub async fn recover_unpublished_normalized_for_date(
+    store: &RawStore,
+    sink: &dyn PublicationSink,
+    normalized: &KisNormalizationRecoveryReport,
+    target_date: TradingDate,
+) -> Result<RecoveryReport, PipelineError> {
+    let mut report = RecoveryReport::default();
+    for outcome in normalized
+        .outcomes
+        .iter()
+        .filter(|outcome| outcome.entry.date == target_date)
+    {
+        let manifest = &outcome.entry;
+        let batch_id = manifest.batch_id;
+        let state =
+            sink.publication_state(batch_id)
+                .await
+                .map_err(|source| PipelineError::Sink {
+                    batch_id,
+                    stage: PipelineStage::PublicationState,
+                    source,
+                })?;
+        match state {
+            PublicationState::Missing => {
+                let bundle = PublicationBundle::from_raw(store, manifest)
+                    .map_err(|source| PipelineError::Publication { batch_id, source })?;
+                sink.publish(&bundle)
+                    .await
+                    .map_err(|source| PipelineError::Sink {
+                        batch_id,
+                        stage: PipelineStage::Publish,
+                        source,
+                    })?;
+                report.recovered.push(batch_id);
+            }
+            PublicationState::Complete => {
+                let bundle = PublicationBundle::from_raw(store, manifest)
+                    .map_err(|source| PipelineError::Publication { batch_id, source })?;
+                let outcome =
+                    sink.publish(&bundle)
+                        .await
+                        .map_err(|source| PipelineError::Sink {
+                            batch_id,
+                            stage: PipelineStage::Publish,
+                            source,
+                        })?;
+                if outcome != PublishOutcome::AlreadyPublished {
+                    return Err(PipelineError::UnexpectedPublishOutcome {
+                        batch_id,
+                        state,
+                        outcome,
+                    });
+                }
+                report.skipped.push(batch_id);
+            }
+            PublicationState::Partial => {
+                return Err(PipelineError::PartialPublication { batch_id });
+            }
+        }
+    }
+    Ok(report)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunOutcome {
     pub manifest: ManifestEntry,
@@ -489,6 +560,49 @@ pub async fn ingest_and_publish(
     let ingested = ingest_bundle(store, provider, request, entitlement_reference)
         .map_err(|source| PipelineError::Ingest { source })?;
     let manifest = ingested.entry;
+    let batch_id = manifest.batch_id;
+    let bundle = PublicationBundle::from_raw(store, &manifest)
+        .map_err(|source| PipelineError::Publication { batch_id, source })?;
+    let published = sink
+        .publish(&bundle)
+        .await
+        .map_err(|source| PipelineError::Sink {
+            batch_id,
+            stage: PipelineStage::Publish,
+            source,
+        })?;
+    Ok(RunOutcome {
+        manifest,
+        published,
+    })
+}
+
+/// Fetches one credentialed KIS delivery, durably commits its wire responses,
+/// materializes the deterministic canonical batch, and publishes only that
+/// canonical scope.
+///
+/// The wire `kis/kr` batch is always committed by `ingest_kis_bundle` before
+/// normalization or publication begins.  The `Normalize` error keeps the
+/// source batch id so a retry can reconcile the exact durable wire evidence;
+/// publication and sink errors use the canonical batch id that downstream
+/// idempotency keys on.
+pub async fn ingest_normalize_publish_kis<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    request: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    sink: &dyn PublicationSink,
+) -> Result<RunOutcome, PipelineError> {
+    let ingested = ingest_kis_bundle(store, provider, request, entitlement_reference)
+        .await
+        .map_err(|source| PipelineError::Ingest { source })?;
+    let source_batch_id = ingested.entry.batch_id;
+    let normalized =
+        normalize_kis_batch(store, &ingested.entry).map_err(|source| PipelineError::Normalize {
+            batch_id: source_batch_id,
+            source: Box::new(source),
+        })?;
+    let manifest = normalized.entry;
     let batch_id = manifest.batch_id;
     let bundle = PublicationBundle::from_raw(store, &manifest)
         .map_err(|source| PipelineError::Publication { batch_id, source })?;
