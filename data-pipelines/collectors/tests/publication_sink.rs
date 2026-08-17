@@ -11,7 +11,7 @@ use market_data::contract::FetchMode;
 use market_data::publication::{CalendarSessionType, DataBatchKind};
 use sqlx::Row;
 
-use common::{ScratchDb, synthetic_bundle};
+use common::{ScratchDb, credentialed_normalized_bundle, synthetic_bundle};
 
 fn assert_conflict(error: SinkError) {
     assert!(matches!(error, SinkError::Conflict(_)), "{error:?}");
@@ -219,6 +219,38 @@ async fn publishes_verified_bundle_with_exact_lineage_and_reports_state_and_eod(
         assert_eq!(persisted.7, fact.content_sha256);
         assert_eq!(persisted.8, fixture.bundle.retrieved_at.as_datetime());
     }
+
+    let before = counts(&db).await;
+    assert_eq!(
+        sink.publish(&fixture.bundle).await.unwrap(),
+        PublishOutcome::AlreadyPublished
+    );
+    assert_eq!(counts(&db).await, before);
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn publishes_credentialed_kis_normalized_scope_and_replays_idempotently() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let fixture = credentialed_normalized_bundle("2026-08-05T07:00:00Z");
+    let sink = PostgresPublicationSink::new(db.writer.clone());
+
+    assert_eq!(
+        sink.publish(&fixture.bundle).await.unwrap(),
+        PublishOutcome::Published
+    );
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT provider, market, fetch_mode FROM data_batches ORDER BY source_file_name",
+    )
+    .fetch_all(&db.supervisor)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 4);
+    assert!(rows.iter().all(|(provider, market, mode)| {
+        provider == "KRX" && market == "KR" && mode == "credentialed"
+    }));
 
     let before = counts(&db).await;
     assert_eq!(

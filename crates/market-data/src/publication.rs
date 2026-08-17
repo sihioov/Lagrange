@@ -5,9 +5,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{FixedOffset, TimeZone, Utc};
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use serde::Deserialize;
+use serde_json::Value;
 
-use crate::contract::{FetchMode, MARKET_KR, PROVIDER_KRX, ResponseKind, StoredFile};
+use crate::contract::{
+    FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, ResponseKind,
+    StoredFile,
+};
+use crate::normalize::{NormalizationLineage, deterministic_kis_normalized_batch_id};
 use crate::storage::{FileEntry, ManifestEntry, RawStore, StoreError};
+use crate::validate::validate_response;
 
 /// Stable batch kind stored by downstream publication sinks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -93,15 +99,29 @@ pub struct CalendarFact {
 pub enum PublicationError {
     #[error("verified Raw read failed: {0}")]
     Store(#[from] StoreError),
-    #[error(
-        "publication supports only {expected_provider}/{expected_market}, got {provider}/{market}"
-    )]
+    #[error("publication supports only {expected_scopes}, got {provider}/{market}")]
     UnsupportedManifestScope {
-        expected_provider: &'static str,
-        expected_market: &'static str,
+        expected_scopes: &'static str,
         provider: String,
         market: String,
     },
+    #[error("publication scope {provider}/{market} requires {expected} fetch mode, got {actual}")]
+    UnsupportedManifestMode {
+        provider: String,
+        market: String,
+        expected: FetchMode,
+        actual: FetchMode,
+    },
+    #[error("noncanonical normalized publication manifest: {reason}")]
+    NonCanonicalNormalizedManifest { reason: String },
+    #[error("canonical {kind} file {file_name} failed validation: {reason}")]
+    InvalidCanonicalFile {
+        kind: ResponseKind,
+        file_name: String,
+        reason: String,
+    },
+    #[error("canonical provenance invalid for {file_name}: {reason}")]
+    InvalidCanonicalProvenance { file_name: String, reason: String },
     #[error("manifest size mismatch for {file_name}: manifest={manifest_size}, read={read_size}")]
     SizeMismatch {
         file_name: String,
@@ -231,15 +251,29 @@ struct ParsedCalendar {
 impl PublicationBundle {
     /// Reads every file back through Raw verification before producing any facts.
     pub fn from_raw(store: &RawStore, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
-        if manifest.provider != PROVIDER_KRX || manifest.market != MARKET_KR {
-            return Err(PublicationError::UnsupportedManifestScope {
-                expected_provider: PROVIDER_KRX,
-                expected_market: MARKET_KR,
-                provider: manifest.provider.clone(),
-                market: manifest.market.clone(),
-            });
-        }
-        let stored = store.read_batch_bytes(PROVIDER_KRX, MARKET_KR, manifest)?;
+        let normalized = match (manifest.provider.as_str(), manifest.market.as_str()) {
+            (PROVIDER_KRX, MARKET_KR) => false,
+            (PROVIDER_KIS_NORMALIZED, MARKET_KR) => {
+                if manifest.mode != FetchMode::Credentialed {
+                    return Err(PublicationError::UnsupportedManifestMode {
+                        provider: manifest.provider.clone(),
+                        market: manifest.market.clone(),
+                        expected: FetchMode::Credentialed,
+                        actual: manifest.mode,
+                    });
+                }
+                validate_normalized_manifest(manifest)?;
+                true
+            }
+            _ => {
+                return Err(PublicationError::UnsupportedManifestScope {
+                    expected_scopes: "krx/kr or kis-normalized/kr",
+                    provider: manifest.provider.clone(),
+                    market: manifest.market.clone(),
+                });
+            }
+        };
+        let stored = store.read_batch_bytes(&manifest.provider, &manifest.market, manifest)?;
         if stored.len() != manifest.files.len() {
             return Err(PublicationError::ReadbackFileCountMismatch {
                 manifest_count: manifest.files.len(),
@@ -253,11 +287,23 @@ impl PublicationBundle {
             .zip(&stored)
             .map(|(entry, stored_file)| validate_file_metadata(entry, stored_file))
             .collect::<Result<_, _>>()?;
+        if normalized {
+            validate_normalized_provenance(manifest, &verified_files)?;
+        }
 
         let mut files = Vec::with_capacity(verified_files.len());
         let mut calendar_facts = BTreeMap::new();
         let mut calendar_provenance = BTreeMap::new();
         for verified in verified_files {
+            if normalized {
+                validate_response(verified.entry.kind, verified.bytes).map_err(|error| {
+                    PublicationError::InvalidCanonicalFile {
+                        kind: verified.entry.kind,
+                        file_name: verified.entry.file_name.clone(),
+                        reason: error.to_string(),
+                    }
+                })?;
+            }
             let kind = match verified.entry.kind {
                 ResponseKind::Bars => {
                     classify_bars(&verified.entry.file_name, verified.bytes, manifest.date)?
@@ -305,6 +351,290 @@ impl PublicationBundle {
             calendar_facts: calendar_facts.into_values().collect(),
         })
     }
+}
+
+const NORMALIZED_PUBLICATION_FILES: [(ResponseKind, &str); 4] = [
+    (ResponseKind::Bars, "bars.json"),
+    (ResponseKind::Reference, "reference.json"),
+    (ResponseKind::Calendar, "calendar.json"),
+    (ResponseKind::CorporateActions, "corporate-actions.json"),
+];
+
+fn validate_normalized_manifest(manifest: &ManifestEntry) -> Result<(), PublicationError> {
+    if manifest.files.len() != NORMALIZED_PUBLICATION_FILES.len() {
+        return Err(PublicationError::NonCanonicalNormalizedManifest {
+            reason: format!(
+                "expected exactly {} files, got {}",
+                NORMALIZED_PUBLICATION_FILES.len(),
+                manifest.files.len()
+            ),
+        });
+    }
+    for (kind, file_name) in NORMALIZED_PUBLICATION_FILES {
+        let matches = manifest
+            .files
+            .iter()
+            .filter(|file| file.kind == kind && file.file_name == file_name)
+            .count();
+        if matches != 1 {
+            return Err(PublicationError::NonCanonicalNormalizedManifest {
+                reason: format!(
+                    "expected exactly one {kind} file named {file_name}, got {matches}"
+                ),
+            });
+        }
+    }
+    if manifest
+        .files
+        .iter()
+        .any(|file| file.request.mode != FetchMode::Credentialed)
+    {
+        return Err(PublicationError::NonCanonicalNormalizedManifest {
+            reason: "all normalized file requests must be credentialed".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+const NORMALIZER: &str = "kis-wire-to-canonical-v1";
+const NORMALIZER_SCHEMA_VERSION: u32 = 1;
+
+fn invalid_provenance(file_name: &str, reason: impl Into<String>) -> PublicationError {
+    PublicationError::InvalidCanonicalProvenance {
+        file_name: file_name.to_owned(),
+        reason: reason.into(),
+    }
+}
+
+fn parse_normalization_lineage(
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<NormalizationLineage, PublicationError> {
+    let document: Value = serde_json::from_slice(bytes)
+        .map_err(|error| invalid_provenance(file_name, format!("invalid JSON: {error}")))?;
+    let lineage_value = document
+        .get("_lineage")
+        .ok_or_else(|| invalid_provenance(file_name, "missing _lineage"))?;
+    let lineage: NormalizationLineage =
+        serde_json::from_value(lineage_value.clone()).map_err(|error| {
+            invalid_provenance(file_name, format!("invalid _lineage shape: {error}"))
+        })?;
+    let canonical_lineage = serde_json::to_value(&lineage).map_err(|error| {
+        invalid_provenance(file_name, format!("cannot serialize _lineage: {error}"))
+    })?;
+    if lineage_value != &canonical_lineage {
+        return Err(invalid_provenance(
+            file_name,
+            "_lineage contains noncanonical or unknown fields",
+        ));
+    }
+    Ok(lineage)
+}
+
+fn validate_lineage_fields(
+    file_name: &str,
+    manifest: &ManifestEntry,
+    lineage: &NormalizationLineage,
+) -> Result<(), PublicationError> {
+    if lineage.schema_version != NORMALIZER_SCHEMA_VERSION {
+        return Err(invalid_provenance(
+            file_name,
+            format!(
+                "unsupported normalizer schema version {}",
+                lineage.schema_version
+            ),
+        ));
+    }
+    if lineage.normalizer != NORMALIZER {
+        return Err(invalid_provenance(
+            file_name,
+            format!("unexpected normalizer {}", lineage.normalizer),
+        ));
+    }
+    if lineage.upstream_provider != PROVIDER_KIS || lineage.upstream_market != MARKET_KR {
+        return Err(invalid_provenance(
+            file_name,
+            format!(
+                "unexpected upstream scope {}/{}",
+                lineage.upstream_provider, lineage.upstream_market
+            ),
+        ));
+    }
+    if deterministic_kis_normalized_batch_id(lineage.upstream_batch_id) != manifest.batch_id {
+        return Err(invalid_provenance(
+            file_name,
+            "normalized batch id does not match upstream batch lineage",
+        ));
+    }
+    if lineage.upstream_batch_id.as_uuid().is_nil() {
+        return Err(invalid_provenance(
+            file_name,
+            "upstream_batch_id must not be nil",
+        ));
+    }
+    if lineage.upstream_files.is_empty() {
+        return Err(invalid_provenance(
+            file_name,
+            "upstream_files must be nonempty",
+        ));
+    }
+
+    let mut file_names = BTreeSet::new();
+    let mut tuples = BTreeSet::new();
+    for source_file in &lineage.upstream_files {
+        if source_file.file_name.trim().is_empty() {
+            return Err(invalid_provenance(
+                file_name,
+                "upstream file names must be nonempty",
+            ));
+        }
+        if !file_names.insert(source_file.file_name.as_str()) {
+            return Err(invalid_provenance(
+                file_name,
+                format!("duplicate upstream file {}", source_file.file_name),
+            ));
+        }
+        if !tuples.insert((
+            source_file.kind,
+            source_file.file_name.clone(),
+            source_file.content_hash.clone(),
+        )) {
+            return Err(invalid_provenance(
+                file_name,
+                format!(
+                    "duplicate upstream evidence tuple for {}",
+                    source_file.file_name
+                ),
+            ));
+        }
+    }
+
+    let mut sorted = lineage.upstream_files.clone();
+    sorted.sort_by(|left, right| (left.kind, &left.file_name).cmp(&(right.kind, &right.file_name)));
+    if sorted != lineage.upstream_files {
+        return Err(invalid_provenance(
+            file_name,
+            "upstream_files are not in canonical kind/name order",
+        ));
+    }
+
+    let kinds: BTreeSet<_> = lineage
+        .upstream_files
+        .iter()
+        .map(|source_file| source_file.kind)
+        .collect();
+    let expected_kinds = [
+        ResponseKind::Bars,
+        ResponseKind::Reference,
+        ResponseKind::Calendar,
+        ResponseKind::CorporateActions,
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    if !expected_kinds.is_subset(&kinds) {
+        return Err(invalid_provenance(
+            file_name,
+            "upstream_files must contain all four EOD response kinds",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_normalized_request(
+    file: &FileEntry,
+    lineage: &NormalizationLineage,
+) -> Result<(), PublicationError> {
+    if file.request.mode != FetchMode::Credentialed {
+        return Err(invalid_provenance(
+            &file.file_name,
+            "normalized request must be credentialed",
+        ));
+    }
+    let expected_endpoint = format!("kis.normalized/{NORMALIZER}/{}", file.kind);
+    if file.request.endpoint != expected_endpoint {
+        return Err(invalid_provenance(
+            &file.file_name,
+            format!(
+                "unexpected normalized endpoint {}, expected {expected_endpoint}",
+                file.request.endpoint
+            ),
+        ));
+    }
+
+    let mut upstream_batch_id = None;
+    let mut upstream_lineage = None;
+    if file.request.query.len() != 2 {
+        return Err(invalid_provenance(
+            &file.file_name,
+            "normalized request query must contain exactly upstream_batch_id and upstream_lineage",
+        ));
+    }
+    for (key, value) in &file.request.query {
+        match key.as_str() {
+            "upstream_batch_id" if upstream_batch_id.is_none() => upstream_batch_id = Some(value),
+            "upstream_lineage" if upstream_lineage.is_none() => upstream_lineage = Some(value),
+            "upstream_batch_id" | "upstream_lineage" => {
+                return Err(invalid_provenance(
+                    &file.file_name,
+                    format!("duplicate normalized query key {key}"),
+                ));
+            }
+            _ => {
+                return Err(invalid_provenance(
+                    &file.file_name,
+                    format!("unexpected normalized query key {key}"),
+                ));
+            }
+        }
+    }
+    let expected_batch_id = lineage.upstream_batch_id.to_string();
+    if upstream_batch_id != Some(&expected_batch_id) {
+        return Err(invalid_provenance(
+            &file.file_name,
+            "upstream_batch_id query does not match document lineage",
+        ));
+    }
+    let expected_lineage = serde_json::to_string(lineage).map_err(|error| {
+        invalid_provenance(
+            &file.file_name,
+            format!("cannot serialize expected lineage: {error}"),
+        )
+    })?;
+    if upstream_lineage != Some(&expected_lineage) {
+        return Err(invalid_provenance(
+            &file.file_name,
+            "upstream_lineage query does not match document lineage",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_normalized_provenance(
+    manifest: &ManifestEntry,
+    verified_files: &[VerifiedRawFile<'_>],
+) -> Result<(), PublicationError> {
+    let mut lineages = Vec::with_capacity(verified_files.len());
+    for verified in verified_files {
+        let lineage = parse_normalization_lineage(&verified.entry.file_name, verified.bytes)?;
+        validate_lineage_fields(&verified.entry.file_name, manifest, &lineage)?;
+        validate_normalized_request(verified.entry, &lineage)?;
+        lineages.push((verified.entry.file_name.as_str(), lineage));
+    }
+    let Some((first_file, first_lineage)) = lineages.first() else {
+        return Err(invalid_provenance(
+            "<manifest>",
+            "normalized publication has no files",
+        ));
+    };
+    for (file_name, lineage) in &lineages[1..] {
+        if lineage != first_lineage {
+            return Err(invalid_provenance(
+                file_name,
+                format!("lineage differs from canonical file {first_file}"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_file_metadata<'a>(

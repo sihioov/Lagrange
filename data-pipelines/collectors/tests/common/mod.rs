@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use domain::{TradingDate, UtcTimestamp};
-use market_data::contract::MARKET_KR;
+use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED};
 use market_data::ingest::{IngestRequest, ingest_bundle};
 use market_data::provider::{KrxProvider, RecordedBundle};
 use market_data::publication::PublicationBundle;
@@ -251,4 +251,22 @@ pub fn synthetic_bundle(retrieved_at: &str) -> FixtureBundle {
         bundle,
         _root: root,
     }
+}
+
+pub fn credentialed_normalized_bundle(retrieved_at: &str) -> FixtureBundle {
+    let mut fixture = synthetic_bundle(retrieved_at);
+    fixture.bundle.provider = PROVIDER_KIS_NORMALIZED.to_owned();
+    fixture.bundle.fetch_mode = FetchMode::Credentialed;
+    for file in &mut fixture.bundle.files {
+        file.file_name = match file.kind {
+            market_data::publication::DataBatchKind::Eod
+            | market_data::publication::DataBatchKind::EodUnavailable => "bars.json",
+            market_data::publication::DataBatchKind::Reference => "reference.json",
+            market_data::publication::DataBatchKind::Calendar => "calendar.json",
+            market_data::publication::DataBatchKind::CorporateActions => "corporate-actions.json",
+            _ => file.file_name.as_str(),
+        }
+        .to_owned();
+    }
+    fixture
 }

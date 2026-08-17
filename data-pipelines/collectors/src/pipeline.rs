@@ -246,6 +246,10 @@ fn publication_error_is_retryable(error: &PublicationError) -> bool {
     match error {
         PublicationError::Store(source) => store_failure_class(source) == FailureClass::Retryable,
         PublicationError::UnsupportedManifestScope { .. }
+        | PublicationError::UnsupportedManifestMode { .. }
+        | PublicationError::NonCanonicalNormalizedManifest { .. }
+        | PublicationError::InvalidCanonicalFile { .. }
+        | PublicationError::InvalidCanonicalProvenance { .. }
         | PublicationError::SizeMismatch { .. }
         | PublicationError::SizeExceedsPostgresBigint { .. }
         | PublicationError::UnexpectedContentHash { .. }

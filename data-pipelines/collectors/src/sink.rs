@@ -3,13 +3,51 @@ use std::collections::{BTreeMap, BTreeSet};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use domain::{BatchId, TradingDate, UtcTimestamp};
+use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX};
 use market_data::publication::{CalendarFact, DataBatchKind, PublicationBundle, PublicationFile};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
-const DB_PROVIDER: &str = "KRX";
-const DB_MARKET: &str = "KR";
-const RAW_PROVIDER: &str = "krx";
-const RAW_MARKET: &str = "kr";
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DatabaseScope {
+    provider: &'static str,
+    market: &'static str,
+}
+
+const DB_SCOPE: DatabaseScope = DatabaseScope {
+    provider: "KRX",
+    market: "KR",
+};
+const DB_PROVIDER: &str = DB_SCOPE.provider;
+const DB_MARKET: &str = DB_SCOPE.market;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PublicationScope {
+    Krx,
+    KisNormalized,
+}
+
+impl PublicationScope {
+    const fn database_scope(self) -> DatabaseScope {
+        match self {
+            Self::Krx | Self::KisNormalized => DB_SCOPE,
+        }
+    }
+
+    const fn required_mode(self) -> Option<FetchMode> {
+        match self {
+            Self::Krx => None,
+            Self::KisNormalized => Some(FetchMode::Credentialed),
+        }
+    }
+}
+
+fn publication_scope(provider: &str, market: &str) -> Option<PublicationScope> {
+    match (provider, market) {
+        (PROVIDER_KRX, MARKET_KR) => Some(PublicationScope::Krx),
+        (PROVIDER_KIS_NORMALIZED, MARKET_KR) => Some(PublicationScope::KisNormalized),
+        _ => None,
+    }
+}
 
 fn sqlstate_is_retryable(code: &str) -> bool {
     code.starts_with("08")
@@ -183,16 +221,64 @@ fn exact_file_shape(files: &[PublicationFile]) -> bool {
             == 1
 }
 
+const NORMALIZED_FILE_SHAPE: [(DataBatchKind, &str); 4] = [
+    (DataBatchKind::Eod, "bars.json"),
+    (DataBatchKind::Reference, "reference.json"),
+    (DataBatchKind::Calendar, "calendar.json"),
+    (DataBatchKind::CorporateActions, "corporate-actions.json"),
+];
+
+fn exact_normalized_file_shape(files: &[PublicationFile]) -> bool {
+    if files.len() != NORMALIZED_FILE_SHAPE.len() {
+        return false;
+    }
+    let bars = files
+        .iter()
+        .filter(|file| {
+            file.file_name == "bars.json"
+                && matches!(
+                    file.kind,
+                    DataBatchKind::Eod | DataBatchKind::EodUnavailable
+                )
+        })
+        .count();
+    bars == 1
+        && NORMALIZED_FILE_SHAPE[1..].iter().all(|(kind, file_name)| {
+            files
+                .iter()
+                .filter(|file| file.kind == *kind && file.file_name == *file_name)
+                .count()
+                == 1
+        })
+}
+
 fn validate_bundle(bundle: &PublicationBundle) -> Result<(), SinkError> {
-    if bundle.provider != RAW_PROVIDER || bundle.market != RAW_MARKET {
-        return Err(SinkError::Invariant(format!(
+    let scope = publication_scope(&bundle.provider, &bundle.market).ok_or_else(|| {
+        SinkError::Invariant(format!(
             "unsupported Raw scope {}/{}",
+            bundle.provider, bundle.market
+        ))
+    })?;
+    let database_scope = scope.database_scope();
+    debug_assert_eq!(database_scope.provider, DB_PROVIDER);
+    debug_assert_eq!(database_scope.market, DB_MARKET);
+    if scope
+        .required_mode()
+        .is_some_and(|expected| bundle.fetch_mode != expected)
+    {
+        return Err(SinkError::Invariant(format!(
+            "Raw scope {}/{} requires credentialed fetch mode",
             bundle.provider, bundle.market
         )));
     }
     if !exact_file_shape(&bundle.files) {
         return Err(SinkError::Conflict(
-            "bundle is not the exact KRX four-response shape".to_owned(),
+            "bundle is not the exact four-response shape".to_owned(),
+        ));
+    }
+    if scope == PublicationScope::KisNormalized && !exact_normalized_file_shape(&bundle.files) {
+        return Err(SinkError::Conflict(
+            "normalized bundle does not have the canonical four-file shape".to_owned(),
         ));
     }
     for file in &bundle.files {
@@ -740,7 +826,14 @@ impl PublicationSink for PostgresPublicationSink {
 mod tests {
     use std::error::Error as _;
 
-    use super::{SinkError, sqlstate_is_retryable};
+    use market_data::contract::{
+        FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX,
+    };
+
+    use super::{
+        DB_MARKET, DB_PROVIDER, PublicationScope, SinkError, exact_normalized_file_shape,
+        publication_scope, sqlstate_is_retryable,
+    };
 
     #[test]
     fn sqlstate_retry_classification_is_structural_and_stable() {
@@ -765,5 +858,66 @@ mod tests {
         assert!(!permanent.is_retryable());
         assert!(permanent.source().is_some());
         assert_eq!(permanent.to_string(), "permanent database failure");
+    }
+
+    #[test]
+    fn raw_publication_scopes_map_to_the_legacy_database_scope() {
+        let legacy = publication_scope(PROVIDER_KRX, MARKET_KR).expect("legacy scope");
+        let normalized =
+            publication_scope(PROVIDER_KIS_NORMALIZED, MARKET_KR).expect("normalized scope");
+
+        assert_eq!(legacy, PublicationScope::Krx);
+        assert_eq!(normalized, PublicationScope::KisNormalized);
+        assert_eq!(legacy.database_scope().provider, DB_PROVIDER);
+        assert_eq!(legacy.database_scope().market, DB_MARKET);
+        assert_eq!(normalized.database_scope().provider, DB_PROVIDER);
+        assert_eq!(normalized.database_scope().market, DB_MARKET);
+        assert_eq!(legacy.required_mode(), None);
+        assert_eq!(normalized.required_mode(), Some(FetchMode::Credentialed));
+        assert!(publication_scope(PROVIDER_KIS, MARKET_KR).is_none());
+        assert!(publication_scope(PROVIDER_KRX, "other").is_none());
+    }
+
+    #[test]
+    fn normalized_file_shape_requires_canonical_names_and_kinds() {
+        let files = [
+            super::PublicationFile {
+                file_name: "bars.json".to_owned(),
+                kind: super::DataBatchKind::Eod,
+                content_sha256: "a".repeat(64),
+                storage_path: "bars".to_owned(),
+                bytes_size: 1,
+            },
+            super::PublicationFile {
+                file_name: "reference.json".to_owned(),
+                kind: super::DataBatchKind::Reference,
+                content_sha256: "b".repeat(64),
+                storage_path: "reference".to_owned(),
+                bytes_size: 1,
+            },
+            super::PublicationFile {
+                file_name: "calendar.json".to_owned(),
+                kind: super::DataBatchKind::Calendar,
+                content_sha256: "c".repeat(64),
+                storage_path: "calendar".to_owned(),
+                bytes_size: 1,
+            },
+            super::PublicationFile {
+                file_name: "corporate-actions.json".to_owned(),
+                kind: super::DataBatchKind::CorporateActions,
+                content_sha256: "d".repeat(64),
+                storage_path: "actions".to_owned(),
+                bytes_size: 1,
+            },
+        ];
+        assert!(exact_normalized_file_shape(&files));
+
+        let mut holiday = files.to_vec();
+        holiday[0].kind = super::DataBatchKind::EodUnavailable;
+        assert!(exact_normalized_file_shape(&holiday));
+
+        let mut noncanonical = files.to_vec();
+        noncanonical[0].file_name = "bars-response.json".to_owned();
+        assert!(!exact_normalized_file_shape(&noncanonical));
     }
 }
