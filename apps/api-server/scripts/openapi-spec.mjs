@@ -211,6 +211,10 @@ function operation(route) {
   }
   if (path === "/api/v1/stocks/{instrument_id}/analysis") {
     op.parameters.push(param("date", "query", dateStr, false));
+    op.parameters.push(param("universe", "query", { $ref: "#/components/schemas/UniverseKey" }, false));
+  }
+  if (path === "/api/v1/candidates/feed/latest" || path === "/api/v1/candidates/feed/{date}") {
+    op.parameters.push(param("universe", "query", { $ref: "#/components/schemas/UniverseKey" }, false));
   }
   if (path.endsWith("/runs") && method === "get" || path === "/api/v1/backtests" && method === "get") {
     op.parameters.push(param("cursor", "query", { type: "string" }, false));
@@ -311,6 +315,9 @@ function errorCodesFor(route) {
   if (flags.idem) codes.push("IDEMPOTENCY_KEY_REQUIRED", "IDEMPOTENCY_KEY_MISMATCH");
   if (flags.mutating) codes.push("CSRF_DENIED", "INVALID_PARAMETER", "PAYLOAD_TOO_LARGE");
   if (path === "/api/v1/screener/query") codes.push("INVALID_PARAMETER", "INVALID_DATE", "INVALID_CURSOR");
+  if (path === "/api/v1/candidates/feed/latest" || path === "/api/v1/candidates/feed/{date}" || path === "/api/v1/stocks/{instrument_id}/analysis") {
+    codes.push("INVALID_PARAMETER");
+  }
   if (flags.phase === PHASE3) codes.push("NOT_IMPLEMENTED", "FORBIDDEN");
   if (path.includes("/backtests")) {
     codes.push("DATASET_BLOCKED", "DATA_STALE", "BACKTEST_CAPACITY_EXCEEDED", "RESULT_INTEGRITY_FAILED", "UNSUPPORTED_MARKET_CURRENCY", "INVALID_DECIMAL", "DUPLICATE_RESOURCE");
@@ -491,6 +498,11 @@ const SCHEMAS = {
       input_identity_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
     },
   },
+  UniverseKey: {
+    type: "string",
+    enum: ["kospi200", "kosdaq150"],
+    description: "Point-in-time candidate universe; omitted API queries default to kospi200.",
+  },
   CandidateSourcePin: {
     type: "object",
     required: ["dataset_version_id", "manifest_sha256"],
@@ -520,10 +532,11 @@ const SCHEMAS = {
   },
   CandidateAnalysis: {
     type: "object",
-    required: ["analysis_id", "run_id", "instrument_id", "sector_code", "fundamental_profile", "eligible", "exclusion_codes", "scores", "coverage", "evidence_strength", "normalization_scope", "factors", "scenarios", "provenance", "content_sha256"],
+    required: ["analysis_id", "run_id", "universe", "instrument_id", "sector_code", "fundamental_profile", "eligible", "exclusion_codes", "scores", "coverage", "evidence_strength", "normalization_scope", "factors", "scenarios", "provenance", "content_sha256"],
     properties: {
       analysis_id: uuid,
       run_id: uuid,
+      universe: { $ref: "#/components/schemas/UniverseKey" },
       instrument_id: { type: "string", example: "005930.KRX" },
       name: { type: ["string", "null"] },
       sector_code: { type: "string" },
@@ -556,6 +569,7 @@ const SCHEMAS = {
     type: "object",
     required: ["state", "as_of", "cutoff_at", "scoring_config", "dataset_pins", "license_attributions", "disclaimer"],
     properties: {
+      universe: { anyOf: [{ $ref: "#/components/schemas/UniverseKey" }, { type: "null" }] },
       // Candidate success payloads are row-bearing. A blocked source is an
       // entitlement error, never a BLOCKED+rows success variant.
       state: { type: "string", enum: ["READY", "STALE"] },
@@ -596,9 +610,10 @@ const SCHEMAS = {
       { $ref: "#/components/schemas/CandidateResearchEnvelope" },
       {
         type: "object",
-        required: ["feed_id", "published_at", "computation_seq", "items"],
+        required: ["feed_id", "universe", "published_at", "computation_seq", "items"],
         properties: {
           feed_id: uuid,
+          universe: { $ref: "#/components/schemas/UniverseKey" },
           published_at: ts,
           computation_seq: { type: "integer", minimum: 1 },
           items: { type: "array", minItems: 5, maxItems: 5, items: { $ref: "#/components/schemas/CandidateAnalysis" } },
@@ -611,8 +626,11 @@ const SCHEMAS = {
       { $ref: "#/components/schemas/CandidateResearchEnvelope" },
       {
         type: "object",
-        required: ["analysis"],
-        properties: { analysis: { $ref: "#/components/schemas/CandidateAnalysis" } },
+        required: ["universe", "analysis"],
+        properties: {
+          universe: { $ref: "#/components/schemas/UniverseKey" },
+          analysis: { $ref: "#/components/schemas/CandidateAnalysis" },
+        },
       },
     ],
   },
@@ -620,6 +638,7 @@ const SCHEMAS = {
     type: "object",
     additionalProperties: false,
     properties: {
+      universes: { type: "array", minItems: 1, maxItems: 2, uniqueItems: true, items: { $ref: "#/components/schemas/UniverseKey" }, description: "One or both universes; omitted defaults to kospi200." },
       sectors: { type: "array", maxItems: 64, items: { type: "string", maxLength: 32 } },
       evidence_strength: { type: "array", items: { type: "string", enum: ["STRONG", "MODERATE", "WEAK"] } },
       min_total_score: { type: ["number", "null"], minimum: 0, maximum: 100 },
@@ -630,13 +649,13 @@ const SCHEMAS = {
   },
   ScreenerQueryBody: {
     type: "object",
-    required: ["run_id", "criteria"],
+    required: ["criteria"],
     additionalProperties: false,
     properties: {
-      run_id: uuid,
+      run_id: { type: ["string", "null"], format: "uuid", description: "Legacy exact single-universe run pin; incompatible with both universes." },
       as_of: dateStr,
       criteria: { $ref: "#/components/schemas/ScreenCriteria" },
-      cursor: { type: ["string", "null"], description: "opaque HMAC-signed run/filter/decimal-score/instrument cursor" },
+      cursor: { type: ["string", "null"], description: "opaque HMAC-signed frozen run-set/universe/decimal-score/instrument cursor (v2; legacy v1 is KOSPI-only)" },
       limit: { type: ["integer", "null"], minimum: 1, maximum: 100, default: 25 },
     },
   },
@@ -645,9 +664,12 @@ const SCHEMAS = {
       { $ref: "#/components/schemas/CandidateResearchEnvelope" },
       {
         type: "object",
-        required: ["run_id", "items", "next_cursor"],
+        required: ["universes", "run_ids", "items", "next_cursor"],
         properties: {
-          run_id: uuid,
+          universe: { anyOf: [{ $ref: "#/components/schemas/UniverseKey" }, { type: "null" }] },
+          universes: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/UniverseKey" } },
+          run_id: { type: ["string", "null"], format: "uuid" },
+          run_ids: { type: "array", minItems: 1, items: { type: "object", required: ["universe", "run_id"], properties: { universe: { $ref: "#/components/schemas/UniverseKey" }, run_id: uuid } } },
           items: { type: "array", items: { $ref: "#/components/schemas/CandidateAnalysis" } },
           next_cursor: { type: ["string", "null"] },
         },
@@ -669,7 +691,7 @@ const SCHEMAS = {
     properties: {
       id: uuid,
       name: { type: "string" },
-      criteria_schema_version: { type: "integer", const: 1 },
+      criteria_schema_version: { type: "integer", enum: [1, 2] },
       criteria: { $ref: "#/components/schemas/ScreenCriteria" },
       created_at: ts,
       updated_at: ts,

@@ -1170,6 +1170,11 @@ export interface components {
             sector_version_id: string;
             input_identity_sha256: string;
         };
+        /**
+         * @description Point-in-time candidate universe; omitted API queries default to kospi200.
+         * @enum {string}
+         */
+        UniverseKey: "kospi200" | "kosdaq150";
         CandidateSourcePin: {
             /** Format: uuid */
             dataset_version_id: string;
@@ -1191,6 +1196,7 @@ export interface components {
             analysis_id: string;
             /** Format: uuid */
             run_id: string;
+            universe: components["schemas"]["UniverseKey"];
             /** @example 005930.KRX */
             instrument_id: string;
             name?: string | null;
@@ -1222,6 +1228,7 @@ export interface components {
             content_sha256: string;
         };
         CandidateResearchEnvelope: {
+            universe?: components["schemas"]["UniverseKey"] | null;
             /** @enum {string} */
             state: "READY" | "STALE";
             /** @example 2026-01-31 */
@@ -1249,15 +1256,19 @@ export interface components {
         CandidateFeed: components["schemas"]["CandidateResearchEnvelope"] & {
             /** Format: uuid */
             feed_id: string;
+            universe: components["schemas"]["UniverseKey"];
             /** Format: date-time */
             published_at: string;
             computation_seq: number;
             items: components["schemas"]["CandidateAnalysis"][];
         };
         StockAnalysisResponse: components["schemas"]["CandidateResearchEnvelope"] & {
+            universe: components["schemas"]["UniverseKey"];
             analysis: components["schemas"]["CandidateAnalysis"];
         };
         ScreenCriteria: {
+            /** @description One or both universes; omitted defaults to kospi200. */
+            universes?: components["schemas"]["UniverseKey"][];
             sectors?: string[];
             evidence_strength?: ("STRONG" | "MODERATE" | "WEAK")[];
             min_total_score?: number | null;
@@ -1266,19 +1277,29 @@ export interface components {
             min_technical_score?: number | null;
         };
         ScreenerQueryBody: {
-            /** Format: uuid */
-            run_id: string;
+            /**
+             * Format: uuid
+             * @description Legacy exact single-universe run pin; incompatible with both universes.
+             */
+            run_id?: string | null;
             /** @example 2026-01-31 */
             as_of?: string;
             criteria: components["schemas"]["ScreenCriteria"];
-            /** @description opaque HMAC-signed run/filter/decimal-score/instrument cursor */
+            /** @description opaque HMAC-signed frozen run-set/universe/decimal-score/instrument cursor (v2; legacy v1 is KOSPI-only) */
             cursor?: string | null;
             /** @default 25 */
             limit: number | null;
         };
         ScreenerResult: components["schemas"]["CandidateResearchEnvelope"] & {
+            universe?: components["schemas"]["UniverseKey"] | null;
+            universes: components["schemas"]["UniverseKey"][];
             /** Format: uuid */
-            run_id: string;
+            run_id?: string | null;
+            run_ids: {
+                universe: components["schemas"]["UniverseKey"];
+                /** Format: uuid */
+                run_id: string;
+            }[];
             items: components["schemas"]["CandidateAnalysis"][];
             next_cursor: string | null;
         };
@@ -1290,8 +1311,8 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
-            /** @constant */
-            criteria_schema_version: 1;
+            /** @enum {integer} */
+            criteria_schema_version: 1 | 2;
             criteria: components["schemas"]["ScreenCriteria"];
             /** Format: date-time */
             created_at: string;
@@ -2316,7 +2337,9 @@ export interface operations {
     };
     get__api_v1_candidates_feed_latest: {
         parameters: {
-            query?: never;
+            query?: {
+                universe?: components["schemas"]["UniverseKey"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2346,7 +2369,9 @@ export interface operations {
     };
     get__api_v1_candidates_feed__date_: {
         parameters: {
-            query?: never;
+            query?: {
+                universe?: components["schemas"]["UniverseKey"];
+            };
             header?: never;
             path: {
                 date: string;
@@ -2380,6 +2405,7 @@ export interface operations {
         parameters: {
             query?: {
                 date?: string;
+                universe?: components["schemas"]["UniverseKey"];
             };
             header?: never;
             path: {

@@ -12,8 +12,7 @@ COPY apps/api-server/auth ./apps/api-server/auth
 COPY tests/integration/migration-contract ./tests/integration/migration-contract
 
 RUN cargo build --locked --release --package job-queue --bin recommendation-runner \
-    && cargo build --locked --release --package job-queue --bin candidate-runner \
-    && cargo build --locked --release --package job-queue --bin backtest-runner
+    && cargo build --locked --release --package job-queue --bin candidate-runner
 
 FROM python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db
 
@@ -24,7 +23,6 @@ RUN pip install --no-cache-dir uv==0.9.17 \
 WORKDIR /opt/lagrange
 COPY --from=builder /build/target/release/recommendation-runner /usr/local/bin/recommendation-runner
 COPY --from=builder /build/target/release/candidate-runner /usr/local/bin/candidate-runner
-COPY --from=builder /build/target/release/backtest-runner /usr/local/bin/backtest-runner
 COPY --from=builder /build/nt ./nt
 RUN uv sync --project /opt/lagrange/nt --locked \
     && chown -R lagrange:lagrange /opt/lagrange

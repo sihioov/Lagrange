@@ -1193,7 +1193,16 @@
         "tags": [
           "v1"
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "universe",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/UniverseKey"
+            },
+            "required": false
+          }
+        ],
         "responses": {
           "200": {
             "description": "Immutable daily stock-research Top-5 feed",
@@ -1266,7 +1275,8 @@
             "SESSION_EXPIRED",
             "INTERNAL",
             "DATA_ENTITLEMENT_REQUIRED",
-            "INVALID_DATE"
+            "INVALID_DATE",
+            "INVALID_PARAMETER"
           ],
           "phase": "current"
         }
@@ -1287,6 +1297,14 @@
               "type": "string"
             },
             "required": true
+          },
+          {
+            "name": "universe",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/UniverseKey"
+            },
+            "required": false
           }
         ],
         "responses": {
@@ -1361,7 +1379,8 @@
             "SESSION_EXPIRED",
             "INTERNAL",
             "DATA_ENTITLEMENT_REQUIRED",
-            "INVALID_DATE"
+            "INVALID_DATE",
+            "INVALID_PARAMETER"
           ],
           "phase": "current"
         }
@@ -1390,6 +1409,14 @@
               "type": "string",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-01-31"
+            },
+            "required": false
+          },
+          {
+            "name": "universe",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/UniverseKey"
             },
             "required": false
           }
@@ -1466,7 +1493,8 @@
             "SESSION_EXPIRED",
             "INTERNAL",
             "DATA_ENTITLEMENT_REQUIRED",
-            "INVALID_DATE"
+            "INVALID_DATE",
+            "INVALID_PARAMETER"
           ],
           "phase": "current"
         }
@@ -6749,6 +6777,14 @@
           }
         }
       },
+      "UniverseKey": {
+        "type": "string",
+        "enum": [
+          "kospi200",
+          "kosdaq150"
+        ],
+        "description": "Point-in-time candidate universe; omitted API queries default to kospi200."
+      },
       "CandidateSourcePin": {
         "type": "object",
         "required": [
@@ -6839,6 +6875,7 @@
         "required": [
           "analysis_id",
           "run_id",
+          "universe",
           "instrument_id",
           "sector_code",
           "fundamental_profile",
@@ -6861,6 +6898,9 @@
           "run_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "universe": {
+            "$ref": "#/components/schemas/UniverseKey"
           },
           "instrument_id": {
             "type": "string",
@@ -6953,6 +6993,16 @@
           "disclaimer"
         ],
         "properties": {
+          "universe": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UniverseKey"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "state": {
             "type": "string",
             "enum": [
@@ -7054,6 +7104,7 @@
             "type": "object",
             "required": [
               "feed_id",
+              "universe",
               "published_at",
               "computation_seq",
               "items"
@@ -7062,6 +7113,9 @@
               "feed_id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "universe": {
+                "$ref": "#/components/schemas/UniverseKey"
               },
               "published_at": {
                 "type": "string",
@@ -7091,9 +7145,13 @@
           {
             "type": "object",
             "required": [
+              "universe",
               "analysis"
             ],
             "properties": {
+              "universe": {
+                "$ref": "#/components/schemas/UniverseKey"
+              },
               "analysis": {
                 "$ref": "#/components/schemas/CandidateAnalysis"
               }
@@ -7105,6 +7163,16 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "universes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/UniverseKey"
+            },
+            "description": "One or both universes; omitted defaults to kospi200."
+          },
           "sectors": {
             "type": "array",
             "maxItems": 64,
@@ -7161,14 +7229,17 @@
       "ScreenerQueryBody": {
         "type": "object",
         "required": [
-          "run_id",
           "criteria"
         ],
         "additionalProperties": false,
         "properties": {
           "run_id": {
-            "type": "string",
-            "format": "uuid"
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Legacy exact single-universe run pin; incompatible with both universes."
           },
           "as_of": {
             "type": "string",
@@ -7183,7 +7254,7 @@
               "string",
               "null"
             ],
-            "description": "opaque HMAC-signed run/filter/decimal-score/instrument cursor"
+            "description": "opaque HMAC-signed frozen run-set/universe/decimal-score/instrument cursor (v2; legacy v1 is KOSPI-only)"
           },
           "limit": {
             "type": [
@@ -7204,14 +7275,55 @@
           {
             "type": "object",
             "required": [
-              "run_id",
+              "universes",
+              "run_ids",
               "items",
               "next_cursor"
             ],
             "properties": {
+              "universe": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/UniverseKey"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "universes": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/components/schemas/UniverseKey"
+                }
+              },
               "run_id": {
-                "type": "string",
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "format": "uuid"
+              },
+              "run_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "universe",
+                    "run_id"
+                  ],
+                  "properties": {
+                    "universe": {
+                      "$ref": "#/components/schemas/UniverseKey"
+                    },
+                    "run_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
               },
               "items": {
                 "type": "array",
@@ -7267,7 +7379,10 @@
           },
           "criteria_schema_version": {
             "type": "integer",
-            "const": 1
+            "enum": [
+              1,
+              2
+            ]
           },
           "criteria": {
             "$ref": "#/components/schemas/ScreenCriteria"

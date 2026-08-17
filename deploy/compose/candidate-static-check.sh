@@ -13,6 +13,7 @@ candidate_sink="$root/data-pipelines/collectors/src/candidate_sink.rs"
 source_up="$root/migrations/0042_candidate_source_contracts.up.sql"
 analysis_up="$root/migrations/0043_candidate_analysis_surfaces.up.sql"
 pipeline_up="$root/migrations/0044_candidate_pipeline.up.sql"
+multi_universe_up="$root/migrations/0045_candidate_multi_universe.up.sql"
 entitlement="$root/configs/data-rights/krx.entitlement.example.json"
 env_file="$root/deploy/compose/.env.example"
 
@@ -23,7 +24,7 @@ die() {
 
 for file in "$compose" "$dockerfile" "$runner" "$candidate_input" "$candidate_compute" \
   "$candidate_pipeline" "$candidate_sink" \
-  "$source_up" "$analysis_up" "$pipeline_up" "$entitlement"; do
+  "$source_up" "$analysis_up" "$pipeline_up" "$multi_universe_up" "$entitlement"; do
   [ -f "$file" ] || die "missing $file"
 done
 
@@ -65,6 +66,14 @@ for dataset in krx_eod_bars krx_market_status krx_investor_flows krx_fundamental
   grep -Fq "'$dataset'" "$pipeline_up" || die "pipeline does not pin $dataset"
   grep -Fq "\"$dataset\"" "$entitlement" || die "entitlement example omits $dataset"
 done
+grep -Fq "'krx_kosdaq150_membership'" "$multi_universe_up" \
+  || die 'multi-universe migration does not register the KOSDAQ150 membership dataset'
+grep -Fq '"krx_kosdaq150_membership"' "$entitlement" \
+  || die 'entitlement example omits krx_kosdaq150_membership'
+grep -Fq 'candidate_universe_registry' "$multi_universe_up" \
+  || die 'multi-universe registry is absent'
+grep -Fq 'pub enum CandidateUniverseKey' "$root/crates/market-data/src/candidate.rs" \
+  || die 'canonical candidate universe type is absent'
 grep -Fq 'candidate_source_validate_dataset_pin' "$source_up" || die 'source pin trigger absent'
 grep -Fq 'candidate_price_publications' "$source_up" \
   || die 'price readiness and curated generation publication contract absent'

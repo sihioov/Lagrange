@@ -8,8 +8,8 @@ DECLARE
 BEGIN
   IF to_regclass('public._sqlx_migrations') IS NULL
      OR (SELECT count(*) FROM _sqlx_migrations
-         WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42) AND success) <> 8 THEN
-    RAISE EXCEPTION 'successful SQLx migrations 22-25, 33-35, and 42 are required';
+         WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42, 45) AND success) <> 9 THEN
+    RAISE EXCEPTION 'successful SQLx migrations 22-25, 33-35, 42, and 45 are required';
   END IF;
 
   IF to_regclass('public.data_batches') IS NULL
@@ -20,6 +20,7 @@ BEGIN
      OR to_regclass('public.candidate_price_instrument_sessions') IS NULL
      OR to_regclass('public.candidate_raw_batch_publications') IS NULL
      OR to_regclass('public.candidate_raw_batch_datasets') IS NULL
+     OR to_regclass('public.candidate_universe_registry') IS NULL
      OR to_regclass('public.candidate_investor_flow_snapshot_rows') IS NULL THEN
     RAISE EXCEPTION 'research publication tables are missing';
   END IF;
@@ -33,6 +34,7 @@ BEGIN
             'data_entitlements','dataset_versions','instruments','data_batches',
             'trading_calendars','trading_calendar_versions',
             'candidate_raw_batch_publications','candidate_raw_batch_datasets',
+            'candidate_universe_registry',
             'candidate_instrument_registrations','candidate_price_publications',
             'candidate_price_instrument_coverage','candidate_price_instrument_sessions'
           ])
@@ -281,7 +283,7 @@ BEGIN
     RAISE EXCEPTION 'research_writer has unexpected role memberships';
   END IF;
 
-  IF (SELECT count(*) FROM pg_policy WHERE research_role = ANY(polroles)) <> 22
+  IF (SELECT count(*) FROM pg_policy WHERE research_role = ANY(polroles)) <> 23
      OR (SELECT count(*)
          FROM pg_policy p
          JOIN pg_class c ON c.oid = p.polrelid
@@ -332,6 +334,20 @@ BEGIN
           AND p.polwithcheck IS NULL
      ) THEN
     RAISE EXCEPTION 'candidate dataset catalog SELECT policy is missing or drifted';
+  END IF;
+
+  IF NOT EXISTS (
+       SELECT 1
+         FROM pg_policy p
+        WHERE p.polrelid = 'public.candidate_universe_registry'::regclass
+          AND p.polname = 'candidate_universe_registry_select_research_writer'
+          AND p.polcmd = 'r'
+          AND p.polpermissive
+          AND p.polroles = ARRAY[research_role]::oid[]
+          AND pg_get_expr(p.polqual, p.polrelid) = 'true'
+          AND p.polwithcheck IS NULL
+     ) THEN
+    RAISE EXCEPTION 'candidate universe registry SELECT policy is missing or drifted';
   END IF;
 
   IF (SELECT count(*)
@@ -420,6 +436,7 @@ BEGIN
       ('trading_calendars', 'UPDATE'),
       ('dataset_versions', 'SELECT'),
       ('candidate_instrument_registrations', 'SELECT'),
+      ('candidate_universe_registry', 'SELECT'),
       ('candidate_universe_snapshots', 'SELECT'),
       ('candidate_universe_members', 'SELECT'),
       ('candidate_investor_flows', 'SELECT'),
@@ -452,6 +469,7 @@ BEGIN
          AND c.relname NOT IN (
            'data_batches','trading_calendar_versions','trading_calendars','dataset_versions',
            'candidate_instrument_registrations',
+           'candidate_universe_registry',
            'candidate_universe_snapshots','candidate_universe_members',
            'candidate_investor_flows','candidate_investor_flow_snapshot_rows',
            'candidate_market_status_observations',

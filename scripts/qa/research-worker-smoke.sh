@@ -18,6 +18,7 @@ self_test=0
 static_commit="${LAGRANGE_CODE_COMMIT:-0123456789abcdef0123456789abcdef01234567}"
 export LAGRANGE_CODE_COMMIT="$static_commit"
 export RESEARCH_APP_ENV=qa
+export CANDIDATE_APP_ENV=qa
 export RESEARCH_FETCH_MODE=synthetic
 export RESEARCH_ENTITLEMENT_REFERENCE="${RESEARCH_ENTITLEMENT_REFERENCE:-REPLACE_WITH_EXACT_CONTRACT_REFERENCE}"
 # The research smoke resolves the complete production Compose model even
@@ -273,10 +274,10 @@ done
 if grep -Eq '^!scripts(/|$)' "$dockerignore"; then fail 'QA fsync probe must remain outside the worker build context'; fi
 grep -Eq '^scripts/qa/\*\.sh[[:space:]]+text[[:space:]]+eol=lf[[:space:]]*$' "$gitattributes" || fail 'scripts/qa shell scripts must be forced to LF by .gitattributes'
 schema_text="$(<"$schema_sql")"
-for token in _sqlx_migrations 'version IN (22, 23, 24, 25, 33, 34, 35, 42)' convalidated \
+for token in _sqlx_migrations 'version IN (22, 23, 24, 25, 33, 34, 35, 42, 45)' convalidated \
   pg_get_constraintdef format_type attnotnull attidentity pg_get_expr storage_path EXCEPT \
   data_batches_source_file_uq trading_calendar_versions_source_lookup_idx \
-  indisunique indisvalid indisready indislive relrowsecurity research_writer \
+  indisunique indisvalid indisready indislive relrowsecurity research_writer candidate_universe_registry \
   rolcanlogin rolsuper rolbypassrls rolcreatedb rolcreaterole pg_auth_members \
   pg_policy polcmd polpermissive trading_calendar_versions_append_only \
   tgenabled tgtype prosecdef pg_get_functiondef regexp_replace actual_function expected_function \
@@ -334,15 +335,18 @@ runtime_secret_root="$temp_root/runtime-secrets"
 postgres_secret="$runtime_secret_root/postgres/postgres_password"
 schema_postgres_secret="$runtime_secret_root/research-schema-check/postgres_password"
 research_secret="$runtime_secret_root/research-worker/db_research_password"
+candidate_secret="$runtime_secret_root/candidate-runner/db_worker_password"
 krx_secret="$runtime_secret_root/research-worker/krx_api_key"
 created=0
 rc() { dkr compose -p "$project" -f "$(hostpath "$compose_file")" "$@"; }
 context_audit_tag="${project}-context-audit"
 cleanup() {
   if [ "$created" -eq 1 ]; then
+    rc stop research-worker >/dev/null 2>&1 || true
     rc run --rm --no-deps --entrypoint /bin/sh --user 0:0 research-raw-init \
       -ec 'for path in /data/raw /data/curated; do find "$path" -mindepth 1 -delete; done' >/dev/null 2>&1 || true
     rc down -v --remove-orphans --rmi local >/dev/null 2>&1 || true
+    rmdir "$raw_root/raw" "$raw_root/curated" >/dev/null 2>&1 || true
   fi
   dkr image rm -f "$context_audit_tag" >/dev/null 2>&1 || true
   rm -rf -- "$temp_root"
@@ -396,6 +400,7 @@ raw_init_ownership_probe() (
 install -d -m 0700 \
   "$raw_root/raw" \
   "$runtime_secret_root/postgres" \
+  "$runtime_secret_root/candidate-runner" \
   "$runtime_secret_root/research-schema-check" \
   "$runtime_secret_root/research-worker"
 [ -d "$raw_root/raw" ] && [ -w "$raw_root/raw" ] || fail 'disposable Raw directory is not writable'
@@ -408,6 +413,7 @@ else
   head -c 32 /dev/urandom | base64 | tr -d '\r\n' >"$research_secret"
 fi
 cp -- "$postgres_secret" "$schema_postgres_secret"
+cp -- "$research_secret" "$candidate_secret"
 printf '%s' 'unused-in-synthetic-smoke' >"$krx_secret"
 find "$runtime_secret_root" -type f -exec chmod 0444 {} +
 
@@ -513,9 +519,9 @@ done < <(find "$root/migrations" -maxdepth 1 -type f -name '*.up.sql' | sort)
 ledger_state="$(
   dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
     psql -X -qAt -v ON_ERROR_STOP=1 -U lagrange -d lagrange \
-    -c "SELECT count(*) FILTER (WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42) AND success) FROM public._sqlx_migrations"
+    -c "SELECT count(*) FILTER (WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42, 45) AND success) FROM public._sqlx_migrations"
 )" || fail 'migration ledger verification query failed'
-if [ "$ledger_state" != "8" ]; then
+if [ "$ledger_state" != "9" ]; then
   fail "migration ledger mismatch after applying migrations: $ledger_state"
 fi
 
@@ -570,7 +576,8 @@ psql_admin 'ALTER TABLE data_entitlements OWNER TO migration_owner' 'restore ent
 schema_gate_must_pass 'the restored source-table ownership'
 
 # The production worker now requires one exact entitlement covering the EOD
-# price pin and all five candidate sources. Seed that narrow synthetic contract
+# price pin, four common candidate sources, and both universe memberships. Seed
+# that narrow synthetic contract
 # in the disposable database; no production credential or licensed payload is
 # involved.
 dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
@@ -590,12 +597,26 @@ VALUES (
   repeat('8', 64),
   :'entitlement_ref',
   'ACTIVE',
-  '["krx_eod_bars","krx_investor_flows","krx_market_status","krx_fundamentals","krx_kospi200_membership","krx_sector_classification"]'::jsonb,
+  '["krx_eod_bars","krx_investor_flows","krx_market_status","krx_fundamentals","krx_kospi200_membership","krx_kosdaq150_membership","krx_sector_classification"]'::jsonb,
   '["candidate"]'::jsonb,
   DATE '2019-01-01',
   DATE '2030-12-31',
   '00000000-0000-4000-8000-000000000042'::uuid
 );
+UPDATE candidate_scheduler_control
+   SET active = true,
+       required_fetch_mode = 'synthetic',
+       updated_at = clock_timestamp()
+ WHERE control_key = 'scheduler';
+-- The committed scoring config is installed at migration time. Re-date only
+-- this disposable historical QA fixture so its canonical cutoff remains
+-- inside the 2020-01-31 bounded as-of window.
+BEGIN;
+SET LOCAL ROLE migration_owner;
+UPDATE candidate_scoring_configs
+   SET created_at = TIMESTAMPTZ '2020-01-31 07:00:00+00'
+ WHERE version = 'candidate-score-v1';
+COMMIT;
 SQL
 
 role_preflight="$(
@@ -718,6 +739,7 @@ symbols = [
     ("005930.KRX", "SYNTHETIC-SAMSUNG", "G45"),
     ("000660.KRX", "SYNTHETIC-SKHYNIX", "G45"),
     ("035420.KRX", "SYNTHETIC-NAVER", "G50"),
+    ("068270.KRX", "SYNTHETIC-CELLTRION", "G35"),
 ]
 end = datetime.date(2020, 1, 31)
 sessions = []
@@ -731,14 +753,15 @@ sessions.reverse()
 membership = json.loads((target / "index-membership-response.json").read_text())
 membership["memberships"] = [
     {
-        "index_id": "kospi200",
+        "index_id": universe,
         "instrument": symbol,
         "announced_at": "2019-10-01T00:00:00Z",
         "effective_from": "2019-10-15",
         "effective_until": None,
         "available_at": "2019-10-01T00:05:00Z",
-        "source_revision": "synthetic-membership-r1",
+        "source_revision": f"synthetic-{universe}-membership-r1",
     }
+    for universe in ("kospi200", "kosdaq150")
     for symbol, _, _ in symbols
 ]
 (target / "index-membership-response.json").write_text(
@@ -787,6 +810,14 @@ statuses["statuses"] = [
 )
 
 fundamentals = json.loads((target / "fundamentals-response.json").read_text())
+fundamental_metrics = (
+    ("revenue_growth", 0.05, 0.01),
+    ("operating_margin", 0.10, 0.01),
+    ("roe", 0.10, 0.01),
+    ("debt_ratio", 0.40, -0.02),
+    ("cash_conversion", 0.80, 0.02),
+    ("earnings_yield", 0.05, 0.005),
+)
 fundamentals["fundamentals"] = [
     {
         "instrument": symbol,
@@ -794,8 +825,8 @@ fundamentals["fundamentals"] = [
         "fiscal_period_end": "2019-12-31",
         "period_kind": "ANNUAL",
         "statement_scope": "CONSOLIDATED",
-        "metric": "roe",
-        "value": 0.10 + instrument_index * 0.01,
+        "metric": metric,
+        "value": base + instrument_index * step,
         "currency": None,
         "unit_scale": 1,
         "audited": True,
@@ -805,6 +836,7 @@ fundamentals["fundamentals"] = [
         "restates_source_revision": None,
     }
     for instrument_index, (symbol, _, _) in enumerate(symbols)
+    for metric, base, step in fundamental_metrics
 ]
 (target / "fundamentals-response.json").write_text(
     json.dumps(fundamentals, indent=2) + "\n", encoding="utf-8"
@@ -898,7 +930,8 @@ for fixture_root in (target, eod_target):
     fixture_root.chmod(0o755)
 PY
 
-rc build research-worker || fail 'research-worker image build failed'
+rc build research-worker candidate-runner \
+  || fail 'research-worker and candidate-runner image build failed'
 command -v cargo >/dev/null 2>&1 || fail 'cargo is required to prove the manual --root Raw contract'
 manual_output="$(cargo run --quiet --locked -p collectors --bin collectors -- ingest-krx \
   --root "$raw_root" --date 2020-01-31 --mode synthetic \
@@ -945,6 +978,102 @@ candidate_one_shot() {
 }
 candidate_one_shot || fail 'candidate source and price publication one-shot failed'
 
+candidate_source_evidence() {
+  local value
+  value="$(dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
+    psql -X -qAt -v ON_ERROR_STOP=1 -U lagrange -d lagrange <<'SQL'
+WITH published AS (
+  SELECT batch_id, surface
+    FROM candidate_raw_batch_publications
+   WHERE surface = 'source' AND state = 'PUBLISHED'
+), bindings AS (
+  SELECT binding.*
+    FROM candidate_raw_batch_datasets AS binding
+    JOIN published
+      ON published.batch_id = binding.batch_id
+     AND published.surface = binding.surface
+)
+SELECT concat_ws('|',
+  (SELECT count(*) FROM published),
+  (SELECT count(*) FROM bindings),
+  (SELECT count(*) FROM candidate_universe_snapshots),
+  (SELECT count(*) FROM candidate_universe_members),
+  (SELECT string_agg(dataset_id, ',' ORDER BY dataset_id) FROM bindings),
+  (SELECT string_agg(index_id, ',' ORDER BY index_id) FROM candidate_universe_snapshots)
+);
+SQL
+)" || fail 'candidate multi-universe source evidence query failed'
+  expected='1|6|2|12|krx_fundamentals,krx_investor_flows,krx_kosdaq150_membership,krx_kospi200_membership,krx_market_status,krx_sector_classification|kosdaq150,kospi200'
+  [ "$value" = "$expected" ] || fail "candidate source evidence mismatch: $value"
+  printf '%s' "$value"
+}
+
+candidate_before="$(candidate_source_evidence)"
+
+candidate_run_once() {
+  rc run --rm --no-deps candidate-runner --once
+}
+
+candidate_feed_evidence() {
+  local value
+  value="$(dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
+    psql -X -qAt -v ON_ERROR_STOP=1 -U lagrange -d lagrange <<'SQL'
+WITH runs AS (
+  SELECT run.id, run.universe_key, run.status
+    FROM stock_analysis_runs AS run
+   WHERE run.as_of_date = DATE '2020-01-31'
+), feeds AS (
+  SELECT feed.id, feed.universe_key, feed.status
+    FROM candidate_feed_snapshots AS feed
+   WHERE feed.as_of_date = DATE '2020-01-31'
+), item_counts AS (
+  SELECT feed.universe_key, count(item.feed_id) AS item_count
+    FROM feeds AS feed
+    LEFT JOIN candidate_feed_items AS item
+      ON item.feed_id = feed.id
+   GROUP BY feed.universe_key
+)
+SELECT concat_ws('|',
+  (SELECT count(*) FROM runs),
+  (SELECT count(*) FROM runs WHERE status = 'SUCCEEDED'),
+  (SELECT string_agg(run.universe_key, ',' ORDER BY registry.sort_order)
+     FROM runs AS run
+     JOIN candidate_universe_registry AS registry
+       ON registry.universe_key = run.universe_key),
+  (SELECT count(*) FROM feeds WHERE status = 'PUBLISHED'),
+  (SELECT coalesce(sum(item_count), 0) FROM item_counts),
+  (SELECT string_agg(item_counts.universe_key || ':' || item_counts.item_count,
+                     ',' ORDER BY registry.sort_order)
+     FROM item_counts
+     JOIN candidate_universe_registry AS registry
+       ON registry.universe_key = item_counts.universe_key)
+);
+SQL
+)" || fail 'candidate multi-universe feed evidence query failed'
+  expected='2|2|kospi200,kosdaq150|2|10|kospi200:5,kosdaq150:5'
+  if [ "$value" != "$expected" ]; then
+    dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
+      psql -X -q -v ON_ERROR_STOP=1 -U lagrange -d lagrange \
+      -c "SELECT universe_key, status, error_code, error_message
+            FROM stock_analysis_runs
+           WHERE as_of_date = DATE '2020-01-31'
+           ORDER BY universe_key" >&2 || true
+    fail "candidate feed evidence mismatch: $value"
+  fi
+  printf '%s' "$value"
+}
+
+candidate_run_once || fail 'candidate-runner did not publish both universe feeds'
+candidate_feed_before="$(candidate_feed_evidence)"
+candidate_run_once || fail 'second candidate-runner one-shot failed'
+candidate_feed_after="$(candidate_feed_evidence)"
+[ "$candidate_feed_before" = "$candidate_feed_after" ] \
+  || fail "candidate feed idempotency failed: counts changed from $candidate_feed_before to $candidate_feed_after"
+
+# Recompute after image builds and one-shot work. A cold release build can
+# outlive the schedule chosen near script startup and would otherwise trigger
+# an unrelated current-date cycle before the daemon health probe.
+export RESEARCH_RUN_AT_KST="$(TZ=Asia/Seoul date -d '+2 minutes' +%H:%M 2>/dev/null || TZ=Asia/Seoul date +%H:%M)"
 if ! rc up -d --no-deps research-worker >/dev/null; then
   rc ps >&2 || true
   rc logs --no-color db-role-bootstrap db-migrate research-schema-check research-worker >&2 || true
@@ -956,7 +1085,10 @@ for _ in $(seq 1 30); do
   if dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T research-worker /usr/local/bin/research-worker healthcheck >/dev/null 2>&1; then healthy=1; break; fi
   sleep 1
 done
-[ "$healthy" -eq 1 ] || fail 'research-worker did not become functionally healthy'
+if [ "$healthy" -ne 1 ]; then
+  rc logs --no-color research-worker >&2 || true
+  fail 'research-worker did not become functionally healthy'
+fi
 
 publication_evidence() {
   local value
@@ -974,7 +1106,8 @@ SELECT concat_ws('|',
   (SELECT count(*) FROM trading_calendar_versions WHERE exchange = 'KRX'),
   (SELECT count(*) FROM trading_calendars WHERE exchange = 'KRX'),
   (SELECT string_agg(DISTINCT kind, ',' ORDER BY kind) FROM data_batches WHERE provider = 'KRX' AND market = 'KR' AND batch_date = DATE '2020-01-31'),
-  (SELECT bool_and(v.source_batch_id = source.id) FROM trading_calendar_versions v CROSS JOIN source WHERE v.exchange = 'KRX'),
+  (SELECT count(*) FROM trading_calendar_versions v CROSS JOIN source
+    WHERE v.exchange = 'KRX' AND v.source_batch_id = source.id),
   (SELECT bool_and(
       c.source_batch_id IS NOT NULL
       AND c.content_sha256 IS NOT NULL
@@ -997,8 +1130,14 @@ SELECT concat_ws('|',
 ) FROM source;
 SQL
 )"
-  expected='1|4|4|t|60|60|CALENDAR,CORPORATE_ACTIONS,EOD,REFERENCE|t|t'
-  [ "$value" = "$expected" ] || fail "publication evidence mismatch: $value"
+  local batch_count data_count source_count same_source history_count projection_count kinds source_history_count projection_ok
+  IFS='|' read -r batch_count data_count source_count same_source history_count projection_count kinds source_history_count projection_ok <<<"$value"
+  [ "$batch_count|$data_count|$source_count|$same_source" = '1|4|4|t' ] \
+    || fail "publication source evidence mismatch: $value"
+  [ "$history_count" -ge 60 ] && [ "$projection_count" = '60' ] \
+    || fail "publication calendar counts mismatch: $value"
+  [ "$kinds|$source_history_count|$projection_ok" = 'CALENDAR,CORPORATE_ACTIONS,EOD,REFERENCE|60|t' ] \
+    || fail "publication lineage evidence mismatch: $value"
   printf '%s' "$value"
 }
 
@@ -1006,4 +1145,7 @@ before="$(publication_evidence)"
 candidate_one_shot || fail 'second research-worker one-shot failed'
 after="$(publication_evidence)"
 [ "$before" = "$after" ] || fail "idempotency failed: counts changed from $before to $after"
-echo "RESEARCH_WORKER_SMOKE: functional PASS ($after)"
+candidate_after="$(candidate_source_evidence)"
+[ "$candidate_before" = "$candidate_after" ] \
+  || fail "candidate idempotency failed: counts changed from $candidate_before to $candidate_after"
+echo "RESEARCH_WORKER_SMOKE: functional PASS ($after; $candidate_after; $candidate_feed_after)"
