@@ -177,7 +177,7 @@ API는 universe 생략 시 기존 KOSPI200 동작을 유지하면서 명시적 K
 | E4 auth0-invite-mfa | **PASS** (52) | 이전 게이트에서는 4개만 돌았다 |
 | E5 phase1-five-user | **PASS** (5) | DB-gated, 실제 실행 확인 |
 | E6 restore-policy | **PASS** | |
-| E7 playwright-phase1 | `BLOCKED_EXTERNAL` | `apps/web/node_modules` 미설치 — 외부 차단이 아니라 **환경 미비**, `npm ci` + `npx playwright install`로 해소 가능 |
+| E7 playwright-phase1 | `BLOCKED_EXTERNAL` | `apps/web/node_modules` 미설치 — 외부 차단이 아니라 **환경 미비**, 저장소 루트에서 `npm ci`(apps/* 는 npm workspaces라 루트에만 lockfile이 있다) 후 `npx playwright install`로 해소 가능 |
 | **VERDICT** | **`BLOCKED_EXTERNAL_DATA_RIGHTS`** | E1 때문이며 이것이 Phase 1의 정상 결과다 |
 
 증거는 `.omo/evidence/task-28-lagrange-station-implementation.json`에 있다. **`.omo/`는 gitignore 대상이므로 이 판정도 이 호스트에만 존재한다** — §2.6이 지적한 성질은 변하지 않았다.
@@ -335,7 +335,7 @@ Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연�
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
 1. ~~**`phase1-gate.sh` native Linux 이식.**~~ **완료 (2026-08-17, `5b3f832`, §2.10)** — WSL 가드·PATH·`CARGO_TARGET_DIR`·DB 포트를 정리했고, 이식 과정에서 드러난 거짓 PASS 3건도 함께 닫았다. pyarrow 전제는 이 게이트에는 해당하지 않는다(추천 계산 경로의 문제이며 phase1 검사는 `prepare_phase0.py`를 부르지 않는다).
-2. **E7 Playwright 포함 전체 게이트 재실행** — Auth0, 추천 파이프라인, 리밸런싱 미리보기, multi-universe 후보 연구가 반영된 main 기준 증거를 새로 발행한다. **phase1은 08-17에 발행됐지만(§2.10) 그 실행은 multi-universe 병합 이전 트리 기준이다.** 남은 것은 E7의 `apps/web` 의존성 설치(`npm ci` + `npx playwright install`), phase2·phase3·종합 게이트, 그리고 병합된 main 기준의 phase1 재실행이다. F1/F2/F4도 사람 재검토가 필요하다.
+2. **E7 Playwright 포함 전체 게이트 재실행** — Auth0, 추천 파이프라인, 리밸런싱 미리보기, multi-universe 후보 연구가 반영된 main 기준 증거를 새로 발행한다. **phase1은 08-17에 발행됐지만(§2.10) 그 실행은 multi-universe 병합 이전 트리 기준이다.** 남은 것은 E7의 web 의존성 설치(저장소 루트에서 `npm ci` 후 `npx playwright install`), phase2·phase3·종합 게이트, 그리고 병합된 main 기준의 phase1 재실행이다. F1/F2/F4도 사람 재검토가 필요하다.
 3. **리밸런싱 미리보기 UI.** §2.5의 백엔드 계약은 완료됐지만 화면과 Live 주문은 범위 밖이다.
 4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
 5. **실제 KRX provider와 운영 원천 활성화.** 라이선스·credential·entitlement-aware HTTP transport와 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning한 뒤 실제 KRX calendar/EOD/fundamental/membership 원천을 공급한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.

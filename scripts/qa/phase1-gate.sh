@@ -275,7 +275,9 @@ test_playwright_phase1() {
   # Without installed dependencies neither child can start, and the lane would
   # otherwise discover that only after binding ports and shelling out.
   if [ ! -d "$web_dir/node_modules/@playwright" ]; then
-    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "EVIDENCE_MISSING: apps/web dependencies not installed (run npm ci in apps/web, then npx playwright install)"
+    # `npm ci` belongs at the repository root: apps/* are npm workspaces and the
+    # only package-lock.json is the root one, so running it inside apps/web fails.
+    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "EVIDENCE_MISSING: apps/web dependencies not installed (run npm ci at the repository root, then npx playwright install)"
     return 0
   fi
   # Ports are overridable because this host runs several worktrees at once and
