@@ -36,6 +36,10 @@ pub struct HttpRequest {
     pub headers: BTreeMap<String, String>,
     /// Headers whose values must never be rendered (authorization, appkey).
     pub secret_headers: BTreeMap<String, Secret<String>>,
+    /// Non-sensitive URL query parameters (market, symbol, dates, ...).
+    pub query: Vec<(String, String)>,
+    /// Query parameters containing account or other private identifiers.
+    pub secret_query: Vec<(String, Secret<String>)>,
     pub body: Option<String>,
 }
 
@@ -47,6 +51,8 @@ impl HttpRequest {
             tr_id: tr_id.into(),
             headers: BTreeMap::new(),
             secret_headers: BTreeMap::new(),
+            query: Vec::new(),
+            secret_query: Vec::new(),
             body: None,
         }
     }
@@ -62,6 +68,8 @@ impl HttpRequest {
             tr_id: tr_id.into(),
             headers: BTreeMap::new(),
             secret_headers: BTreeMap::new(),
+            query: Vec::new(),
+            secret_query: Vec::new(),
             body: Some(body.into()),
         }
     }
@@ -73,6 +81,16 @@ impl HttpRequest {
 
     pub fn with_secret_header(mut self, k: impl Into<String>, v: Secret<String>) -> Self {
         self.secret_headers.insert(k.into(), v);
+        self
+    }
+
+    pub fn with_query(mut self, k: impl Into<String>, v: impl Into<String>) -> Self {
+        self.query.push((k.into(), v.into()));
+        self
+    }
+
+    pub fn with_secret_query(mut self, k: impl Into<String>, v: Secret<String>) -> Self {
+        self.secret_query.push((k.into(), v));
         self
     }
 }
@@ -89,6 +107,15 @@ impl std::fmt::Debug for HttpRequest {
             .field(
                 "secret_headers",
                 &self.secret_headers.keys().collect::<Vec<_>>(),
+            )
+            .field("query", &self.query)
+            .field(
+                "secret_query",
+                &self
+                    .secret_query
+                    .iter()
+                    .map(|(key, _)| key)
+                    .collect::<Vec<_>>(),
             )
             .field(
                 "body",
@@ -167,6 +194,18 @@ mod tests {
         assert!(rendered.contains("authorization"));
         assert!(rendered.contains("appkey"));
         assert!(rendered.contains("FHKST01010100"));
+    }
+
+    #[test]
+    fn a_request_debug_keeps_private_query_values_redacted() {
+        let req = HttpRequest::get("/balance", "TTTC8434R")
+            .with_query("FID_INPUT_ISCD", "069500")
+            .with_secret_query("CANO", Secret::new("50123456".to_string()));
+
+        let rendered = format!("{req:?}");
+        assert!(rendered.contains("069500"), "{rendered}");
+        assert!(rendered.contains("CANO"), "{rendered}");
+        assert!(!rendered.contains("50123456"), "{rendered}");
     }
 
     #[test]

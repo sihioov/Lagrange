@@ -105,7 +105,10 @@ impl<T: Transport, S: Sleeper> RestClient<T, S> {
     /// `secret_headers` and cannot be rendered by a request dump.
     async fn authorize(&self, req: HttpRequest) -> Result<HttpRequest, KisError> {
         let token = self.tokens.token().await?;
-        Ok(req.with_secret_header("authorization", token.value))
+        Ok(req.with_secret_header(
+            "authorization",
+            crate::secret::Secret::new(format!("Bearer {}", token.value.expose())),
+        ))
     }
 
     fn check_limit(&self, path: &str, tr_id: &str) -> Result<(), KisError> {
@@ -228,8 +231,20 @@ impl<T: Transport, S: Sleeper> RestClient<T, S> {
             |_attempt| async move {
                 self.check_limit(paths::INQUIRE_BALANCE, tr_id)?;
                 let req = HttpRequest::get(paths::INQUIRE_BALANCE, tr_id)
-                    .with_header("tr_id", tr_id)
-                    .with_header("CANO", self.account.masked());
+                    .with_secret_query(
+                        "CANO",
+                        crate::secret::Secret::new(self.account.expose().to_owned()),
+                    )
+                    .with_query("ACNT_PRDT_CD", self.product_code.clone())
+                    .with_query("AFHR_FLPR_YN", "N")
+                    .with_query("OFL_YN", "")
+                    .with_query("INQR_DVSN", "02")
+                    .with_query("UNPR_DVSN", "01")
+                    .with_query("FUND_STTL_ICLD_YN", "N")
+                    .with_query("FNCG_AMT_AUTO_RDPT_YN", "N")
+                    .with_query("PRCS_DVSN", "00")
+                    .with_query("CTX_AREA_FK100", "")
+                    .with_query("CTX_AREA_NK100", "");
                 let req = self.authorize(req).await?;
                 self.transport.send(req).await.map(|r| r.body)
             },

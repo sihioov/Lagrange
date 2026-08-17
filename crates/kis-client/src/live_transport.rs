@@ -150,10 +150,8 @@ impl LiveTransport {
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
-}
 
-impl Transport for LiveTransport {
-    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, KisError> {
+    fn build_request(&self, request: &HttpRequest) -> Result<reqwest::Request, KisError> {
         let url = format!("{}{}", self.base_url, request.path);
         let mut builder = match request.method {
             "GET" => self.client.get(&url),
@@ -168,20 +166,32 @@ impl Transport for LiveTransport {
         for (k, v) in &request.headers {
             builder = builder.header(k, v);
         }
-        // Secret headers are applied through the same API but never rendered:
-        // `Secret`'s Debug and Display are redacted, so a logged request or a
-        // derived Debug on this transport cannot leak a token.
         for (k, v) in &request.secret_headers {
             builder = builder.header(k, v.expose());
         }
         builder = builder.header("tr_id", &request.tr_id);
+        for (key, value) in &request.query {
+            builder = builder.query(&[(key, value)]);
+        }
+        for (key, value) in &request.secret_query {
+            builder = builder.query(&[(key, value.expose())]);
+        }
         if let Some(body) = &request.body {
             builder = builder
                 .header("content-type", "application/json; charset=utf-8")
                 .body(body.clone());
         }
+        builder.build().map_err(|error| KisError::Connect {
+            reason: format!("HTTP request could not be built: {error}"),
+        })
+    }
+}
 
-        let response = match builder.send().await {
+impl Transport for LiveTransport {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, KisError> {
+        let outbound = self.build_request(&request)?;
+
+        let response = match self.client.execute(outbound).await {
             Ok(r) => r,
             Err(e) => {
                 // `is_connect()` is the only reqwest signal that proves the
@@ -315,5 +325,18 @@ mod tests {
         assert_eq!(t.base_url(), SANDBOX_BASE_URL);
         let live = LiveTransport::live(Duration::from_secs(5)).expect("builds");
         assert_eq!(live.base_url(), LIVE_BASE_URL);
+    }
+
+    #[test]
+    fn a_get_request_encodes_public_and_private_query_parameters() {
+        let transport = LiveTransport::sandbox(Duration::from_secs(5)).expect("builds");
+        let request = HttpRequest::get("/quote", "TR")
+            .with_query("FID_INPUT_ISCD", "069500")
+            .with_secret_query("CANO", crate::secret::Secret::new("50123456".to_string()));
+        let built = transport.build_request(&request).expect("request");
+        let url = built.url().as_str();
+        assert!(url.contains("FID_INPUT_ISCD=069500"), "{url}");
+        assert!(url.contains("CANO=50123456"), "{url}");
+        assert!(!format!("{request:?}").contains("50123456"));
     }
 }
