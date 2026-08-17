@@ -11,14 +11,15 @@
 //!            adjusted_bars.parquet     split-adjusted (signals, price return)
 //!            total_return_bars.parquet split+dividend (signals, total return)
 //!        corporate_actions/market={m}/symbol={instrument}/year={yyyy}/version={v}/
-//!            corporate_actions.parquet announced_at/ex_date/pay_date records
+//!            corporate_actions.parquet available_at/announced_at/ex_date/pay_date records
 //!        datasets/{dataset_id}/version={v}/manifest.json
 //! ```
 //!
 //! Invariants enforced here:
-//! - **No look-ahead**: an action with `announced_at > now` is rejected at
-//!   curation; the versioned files only ever embed announcements made by
-//!   curation time; `visible_actions(as_of)` gates every later query.
+//! - **No look-ahead**: an action with `available_at > now` (or a supplied
+//!   `announced_at > now`) is rejected at curation; source feeds without an
+//!   announcement timestamp retain that absence and use their verified
+//!   retrieval instant only as `available_at`.
 //! - **Correction = new version**: a corrected batch curates under
 //!   `version={v+1}`; an existing version directory is never touched, so the
 //!   old version's bytes/hash are immutable (requirements §8.3).
@@ -174,6 +175,14 @@ pub enum CurateError {
     FutureAnnouncedAction {
         instrument: String,
         announced_at: String,
+        now: String,
+    },
+    #[error(
+        "action became available in the future: {instrument} available_at {available_at}, now {now}"
+    )]
+    FutureAvailableAction {
+        instrument: String,
+        available_at: String,
         now: String,
     },
     #[error("invalid split for {instrument}: {detail}")]
@@ -1200,26 +1209,51 @@ fn build_actions(
         let record = master
             .instrument_on(&instrument_id, ex_date)
             .map_err(map_master_error)?;
-        let announced_at = parse_timestamp(row.announced_at.as_ref(), "announced_at", true)?
-            .expect("announced_at required");
-        if announced_at > req.now {
-            return Err(CurateError::FutureAnnouncedAction {
+        let announced_at = parse_timestamp(row.announced_at.as_ref(), "announced_at", false)?;
+        let declared_available_at =
+            parse_timestamp(row.available_at.as_ref(), "available_at", false)?;
+        let available_at = declared_available_at
+            .or(announced_at)
+            .ok_or_else(|| CurateError::MalformedAction {
+                reason: format!("actions[{i}]: missing required field \"available_at\" (or legacy \"announced_at\")"),
+            })?;
+        if let Some(available_at) =
+            declared_available_at.filter(|available_at| *available_at > req.now)
+        {
+            return Err(CurateError::FutureAvailableAction {
                 instrument: instrument_id.to_string(),
-                announced_at: announced_at.to_rfc3339(),
+                available_at: available_at.to_rfc3339(),
                 now: req.now.to_rfc3339(),
             });
         }
-        if announced_at.as_datetime().date_naive() > ex_date.as_naive_date() {
-            return Err(match row.event_type.as_str() {
-                "split" => CurateError::InvalidSplit {
+        if let Some(announced_at) = announced_at {
+            if announced_at > req.now {
+                return Err(CurateError::FutureAnnouncedAction {
                     instrument: instrument_id.to_string(),
-                    detail: format!("announced_at {} after ex_date {}", announced_at, ex_date),
-                },
-                _ => CurateError::InvalidDividend {
-                    instrument: instrument_id.to_string(),
-                    detail: format!("announced_at {} after ex_date {}", announced_at, ex_date),
-                },
-            });
+                    announced_at: announced_at.to_rfc3339(),
+                    now: req.now.to_rfc3339(),
+                });
+            }
+            if announced_at > available_at {
+                return Err(CurateError::MalformedAction {
+                    reason: format!(
+                        "actions[{i}]: announced_at {} is after available_at {}",
+                        announced_at, available_at
+                    ),
+                });
+            }
+            if announced_at.as_datetime().date_naive() > ex_date.as_naive_date() {
+                return Err(match row.event_type.as_str() {
+                    "split" => CurateError::InvalidSplit {
+                        instrument: instrument_id.to_string(),
+                        detail: format!("announced_at {} after ex_date {}", announced_at, ex_date),
+                    },
+                    _ => CurateError::InvalidDividend {
+                        instrument: instrument_id.to_string(),
+                        detail: format!("announced_at {} after ex_date {}", announced_at, ex_date),
+                    },
+                });
+            }
         }
         let record_date = parse_date(row.record_date.as_ref(), "record_date", false)?;
         let pay_date = parse_date(row.pay_date.as_ref(), "pay_date", false)?;
@@ -1254,6 +1288,7 @@ fn build_actions(
             tax_withholding_pct: None,
             currency,
             announced_at,
+            available_at,
             source: req.source.to_owned(),
             batch_id: entry.batch_id,
             raw_hash: actions_meta.content_hash.clone(),

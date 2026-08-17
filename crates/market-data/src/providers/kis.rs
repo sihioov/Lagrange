@@ -405,6 +405,9 @@ pub(crate) fn validate_kis_response(
         (ResponseKind::Calendar, CALENDAR_PATH) => object
             .get("output")
             .is_some_and(|value| value.is_object() || value.is_array()),
+        (ResponseKind::CorporateActions, "/uapi/domestic-stock/v1/ksdinfo/paidin-capin") => object
+            .get("output")
+            .is_some_and(|value| value.is_object() || value.is_array()),
         (ResponseKind::CorporateActions, path)
             if path.starts_with("/uapi/domestic-stock/v1/ksdinfo/") =>
         {
@@ -481,6 +484,9 @@ mod tests {
                 CALENDAR_PATH => {
                     br#"{"rt_cd":"0","ctx_area_fk":"next-fk","ctx_area_nk":"next-nk","output":[]}"#
                         .to_vec()
+                }
+                "/uapi/domestic-stock/v1/ksdinfo/paidin-capin" => {
+                    br#"{"rt_cd":"0","output":[]}"#.to_vec()
                 }
                 _ => br#"{"rt_cd":"0","output1":[]}"#.to_vec(),
             };
@@ -714,6 +720,11 @@ mod tests {
                 ResponseKind::CorporateActions,
                 "/uapi/domestic-stock/v1/ksdinfo/dividend",
                 br#"{"rt_cd":"0","output1":[]}"#.as_slice(),
+            ),
+            (
+                ResponseKind::CorporateActions,
+                "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
+                br#"{"rt_cd":"0","output":[]}"#.as_slice(),
             ),
         ] {
             validate_kis_response(kind, endpoint, body).expect("official KIS wire shape");

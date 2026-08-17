@@ -2,8 +2,11 @@
 //!
 //! Requirements §8.2 기업행사 fields: `instrument_id, event_type, ex_date,
 //! record_date, pay_date, ratio_or_amount, currency, announced_at, source`.
-//! Point-in-time rule (§8.3): an action is visible to a query only once
-//! `as_of >= announced_at` — nothing is exposed before its announcement.
+//! Point-in-time rule (§8.3): an action is visible to a query only once its
+//! source observation is available.  Some primary feeds (including KIS KSD)
+//! publish event dates without an announcement timestamp; those rows carry
+//! `available_at` and deliberately leave `announced_at` absent rather than
+//! manufacturing an announcement instant from ingestion time.
 //! Price policy (§9.2): splits adjust holdings on the ex-date preserving
 //! total value; dividends credit cash on the configured pay-date (never the
 //! ex-date). A dataset version is `TOTAL_RETURN_CAPABLE` only when every
@@ -75,8 +78,13 @@ pub struct CorporateAction {
     pub tax_withholding_pct: Option<FixedPoint>,
     /// The dividend/settlement currency.
     pub currency: Currency,
-    /// The announcement instant — the point-in-time visibility gate.
-    pub announced_at: UtcTimestamp,
+    /// The announcement instant, when the source actually supplies one.
+    /// This is never inferred from `available_at`.
+    pub announced_at: Option<UtcTimestamp>,
+    /// The first instant at which this source observation was available to the
+    /// curation pipeline.  For KIS KSD rows this is the verified raw response
+    /// retrieval instant.
+    pub available_at: UtcTimestamp,
     /// Provenance source label (e.g. `krx`).
     pub source: String,
     pub batch_id: domain::BatchId,
@@ -85,15 +93,26 @@ pub struct CorporateAction {
     pub ingested_at: UtcTimestamp,
 }
 
-/// The actions of a dataset visible as-of `as_of`: only records announced on
-/// or before `as_of` (requirements §8.3 point-in-time; no look-ahead).
+/// The actions of a dataset visible as-of `as_of`: only records available on
+/// or before `as_of`, and (when supplied) announced on or before `as_of`
+/// (requirements §8.3 point-in-time; no look-ahead).
 pub fn visible_actions(actions: &[CorporateAction], as_of: UtcTimestamp) -> Vec<CorporateAction> {
     let mut visible: Vec<CorporateAction> = actions
         .iter()
-        .filter(|a| a.announced_at <= as_of)
+        .filter(|a| {
+            a.available_at <= as_of
+                && a.announced_at
+                    .is_none_or(|announced_at| announced_at <= as_of)
+        })
         .cloned()
         .collect();
-    visible.sort_by_key(|a| (a.ex_date, a.announced_at, a.instrument_id.clone()));
+    visible.sort_by_key(|a| {
+        (
+            a.ex_date,
+            a.announced_at.unwrap_or(a.available_at),
+            a.instrument_id.clone(),
+        )
+    });
     visible
 }
 

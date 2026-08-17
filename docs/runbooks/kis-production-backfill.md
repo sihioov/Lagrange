@@ -80,9 +80,13 @@ BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS \
 ```
 
 실행기는 날짜별로 `research-worker --once --date`를 호출하고, 성공한 날짜만
-state file에 `PUBLISHED`로 append한다. 실패한 날짜에서 중지하며, 재실행 시
-이미 `PUBLISHED`인 날짜는 건너뛴다. worker 자체의 deterministic normalized
-ID와 exact manifest/evidence 비교가 재시도·crash recovery·동시 실행의 기준이다.
+state file에 `PUBLISHED`로 append한다. 상태 파일은 현재 실행의 code commit,
+entitlement reference, dataset five-pin, source scope를 해시한 V2 identity에
+바인딩되며, 다른 실행의 상태나 구버전 형식은 fail-closed로 거부한다. 실행 중
+동시 백필은 `flock`으로 직렬화한다. 실패한 날짜에서 중지하며, 재실행 시
+같은 identity에서 이미 `PUBLISHED`인 날짜만 건너뛴다. worker 자체의
+deterministic normalized ID와 exact manifest/evidence 비교가 재시도·crash
+recovery의 기준이며, pin을 바꾸려면 새 state path를 사용한다.
 
 각 날짜의 승인 조건은 다음 네 단계가 모두 확인되는 것이다.
 
@@ -139,6 +143,33 @@ Compose API/recommendation/backtest/Paper 설정에 주입한다.
 - approval evidence에는 실제 manifest hash와 operator/time만 기록하고 secret,
   API token, 계좌번호는 기록하지 않는다.
 
+### 4.1 기업행사 Parquet schema rollout
+
+기업행사 Curated Parquet은 현재 `CORPORATE_ACTIONS_SCHEMA_VERSION=2`다. v2는
+`announced_at`을 nullable로 바꾸고, 원천 관측이 실제로 사용 가능해진 시각을
+non-null `available_at`으로 별도 저장한다. 이 버전은
+`lagrange.corporate_actions.schema_version=2` Parquet schema metadata와
+`QualityGate`의 exact-schema 검사로 검증된다.
+
+기존 `version={v}` 디렉터리와 그 안의 Parquet은 절대 덮어쓰거나 in-place
+마이그레이션하지 않는다. v2 기업행사를 포함한 산출물은 curation이 할당한
+새 `dataset version`으로 생성하고, 새 per-version manifest의 SHA-256을
+재계산해 `RECOMMENDATION_DATASET_MANIFEST_SHA256`를 새 값으로 pin한다. 기존
+manifest/pin을 유지한 채 파일만 교체하거나 schema metadata를 삭제하면
+quality gate가 `SCHEMA_MISMATCH`/`BLOCKED`로 거부해야 한다.
+
+구버전 파일은 직접 `read_corporate_actions`할 때만 legacy 호환으로 읽을 수
+있다. `available_at`이 없는 legacy row에서는 당시 유일한 시각인
+`announced_at`을 읽기 호환 fallback으로 사용할 뿐이며, 이것은 v2 dataset
+승인이나 새 KIS 관측의 announcement를 의미하지 않는다. 새 KIS KSD 응답은
+공시 시각을 제공하지 않으므로 `announced_at`을 추정하지 않고
+`available_at=verified retrieval time`만 기록한다.
+
+현재 KSD 기업행사 매핑에서 자동 지원하는 것은 `bonus-issue`의 확정배정율과
+권리락일을 split factor로 변환하는 경우뿐이다. 유상증자 권리청약, 배당,
+합병/분할, 액면병합, 감자 응답은 필드를 검증한 뒤 typed blocker로 중단한다.
+이 blocker를 우회하거나 빈 값으로 Curated에 기록해 dataset을 승인하지 않는다.
+
 ## 5. Compose 기동과 사후 확인
 
 기동은 계획/검증을 먼저 수행한다.
@@ -151,8 +182,10 @@ scripts/ops/compose-release.sh --preflight
 운영자가 외부 blocker를 해소한 뒤 `--apply`를 실행하면 다음 순서를 보장한다.
 
 `postgres` → `db-role-bootstrap` → `db-migrate` → `research-raw-init` →
-`research-schema-check` → API/Web/KIS research/recommendation/candidate/backtest/
-Paper/reverse-proxy. One-shot 실패는 후속 서비스 기동을 막는다. `report-worker`는
+`research-schema-check` → API → Web/KIS research/recommendation/candidate/backtest
+→ Paper → reverse-proxy. One-shot 실패는 후속 서비스 기동을 막고, 완료된
+one-shot을 `--rm`으로 제거한 뒤 serving `up` 단계가 다시 실행하지 않도록
+serving 단계는 명시적으로 `--no-deps`로 실행한다. `report-worker`는
 아직 producer/settlement contract가 없어 fake healthy service로 만들지 않는다.
 
 ```bash

@@ -3,6 +3,7 @@ use market_data::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, RawEnvelope, RequestMetadata,
     ResponseKind,
 };
+use market_data::curate::read_corporate_actions;
 use market_data::normalize::{
     NormalizeError, deterministic_kis_normalized_batch_id, normalize_kis_batch,
     normalize_kis_envelopes,
@@ -168,6 +169,11 @@ fn valid_wires() -> Vec<Wire> {
             "/uapi/domestic-stock/v1/ksdinfo/cap-dcrs",
         ),
     ] {
+        let bytes = if endpoint.ends_with("/paidin-capin") {
+            br#"{"rt_cd":"0","output":[]}"#.to_vec()
+        } else {
+            br#"{"rt_cd":"0","output1":[]}"#.to_vec()
+        };
         wires.push(Wire {
             kind: ResponseKind::CorporateActions,
             file_name: format!("corporate-actions-{label}-page-01.json"),
@@ -176,7 +182,7 @@ fn valid_wires() -> Vec<Wire> {
                 ("F_DT".into(), "20260814".into()),
                 ("T_DT".into(), "20260814".into()),
             ],
-            bytes: br#"{"rt_cd":"0","output1":[]}"#.to_vec(),
+            bytes,
         });
     }
     wires
@@ -650,12 +656,164 @@ fn nonempty_corporate_actions_fail_closed_without_inventing_dates_or_values() {
             .expect("dividend wire");
         wire.bytes = serde_json::to_vec(&json!({
             "rt_cd": "0",
-            "output1": [{"sht_cd": "069500", "ex_date": "20260814", "divi_amt": "100"}]
+            "output1": [{
+                "sht_cd": "069500",
+                "record_date": "20260814",
+                "per_sto_divi_amt": "100",
+                "divi_pay_dt": "20260828"
+            }]
         }))
         .expect("action bytes");
     });
     let error = normalize_kis_envelopes(&source, &stored).expect_err("unsupported action");
     assert!(matches!(error, NormalizeError::UnsupportedAction { .. }));
+}
+
+#[test]
+fn bonus_issue_filters_by_record_date_and_preserves_later_right_date() {
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.file_name.contains("corporate-actions-bonus"))
+            .expect("bonus wire");
+        wire.bytes = serde_json::to_vec(&json!({
+            "rt_cd": "0",
+            "output1": [{
+                "record_date": "20260814",
+                "sht_cd": "069500",
+                "isin_name": "KODEX 200",
+                "fix_rate": "0.05",
+                "right_dt": "20260818",
+                "odd_pay_dt": "20260828",
+                "list_date": "20260818",
+                "tot_issue_stk_qty": "105000000",
+                "issue_stk_qty": "5000000",
+                "stk_kind": "보통주"
+            }]
+        }))
+        .expect("bonus bytes");
+    });
+    let envelopes = normalize_kis_envelopes(&source, &stored).expect("bonus normalization");
+    let document = envelopes
+        .iter()
+        .find(|envelope| envelope.kind == ResponseKind::CorporateActions)
+        .expect("canonical actions");
+    let document: Value = serde_json::from_slice(&document.bytes).expect("canonical json");
+    let action = &document["actions"][0];
+    assert_eq!(action["instrument"], "069500.KRX");
+    assert_eq!(action["type"], "split");
+    assert_eq!(action["ex_date"], "2026-08-18");
+    assert_eq!(action["record_date"], "2026-08-14");
+    assert_eq!(action["split_factor"], "1.05");
+    assert_eq!(action["ratio"], "1.05:1");
+    assert_eq!(action["available_at"], RETRIEVED_AT);
+    assert!(action.get("announced_at").is_none());
+    assert_eq!(
+        document["_lineage"]["upstream_batch_id"],
+        source.batch_id.to_string()
+    );
+}
+
+#[test]
+fn reverse_split_uses_official_list_dt_and_remains_typed_unsupported() {
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.file_name.contains("reverse-split"))
+            .expect("reverse split wire");
+        wire.bytes = serde_json::to_vec(&json!({
+            "rt_cd": "0",
+            "output1": [{
+                "sht_cd": "069500",
+                "record_date": "20260814",
+                "list_dt": "20260818",
+                "inter_bf_face_amt": "100",
+                "inter_af_face_amt": "1000"
+            }]
+        }))
+        .expect("reverse split bytes");
+    });
+    let error = normalize_kis_envelopes(&source, &stored).expect_err("unsupported action");
+    assert!(matches!(error, NormalizeError::UnsupportedAction { .. }));
+}
+
+#[test]
+fn normalized_bonus_action_curates_with_retrieval_availability_only() {
+    let (temp, store, source, _stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.file_name.contains("corporate-actions-bonus"))
+            .expect("bonus wire");
+        wire.bytes = serde_json::to_vec(&json!({
+            "rt_cd": "0",
+            "output1": [{
+                "record_date": "20260814",
+                "sht_cd": "069500",
+                "fix_rate": "0.05",
+                "right_dt": "20260814"
+            }]
+        }))
+        .expect("bonus bytes");
+    });
+    let normalized = normalize_kis_batch(&store, &source).expect("normalize bonus");
+    let (calendar, master) =
+        curation_inputs_from_raw(&store, &normalized.entry).expect("canonical inputs");
+    let curated = CurateStore::new(temp.path().join("data"));
+    let dataset_id = DatasetId::parse("kis-normalized-bonus").expect("dataset id");
+    let outcome = curate_batch(
+        &store,
+        &normalized.entry,
+        &calendar,
+        &master,
+        &curated,
+        &CurateRequest {
+            dataset_id: &dataset_id,
+            market: MARKET_KR,
+            source: PROVIDER_KIS_NORMALIZED,
+            now: UtcTimestamp::parse_rfc3339("2026-08-14T09:00:00Z").expect("now"),
+        },
+    )
+    .expect("bonus action is curation-compatible");
+    assert_eq!(outcome.actions_written, 1);
+    let actions = read_corporate_actions(&curated.corporate_actions_path(
+        MARKET_KR,
+        "069500.KRX",
+        2026,
+        outcome.dataset_version,
+    ))
+    .expect("read curated action");
+    assert_eq!(actions.len(), 1);
+    assert!(actions[0].announced_at.is_none());
+    assert_eq!(actions[0].available_at, source.retrieved_at);
+}
+
+#[test]
+fn malformed_bonus_row_is_not_dropped_by_universe_filter() {
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.file_name.contains("corporate-actions-bonus"))
+            .expect("bonus wire");
+        wire.bytes = serde_json::to_vec(&json!({
+            "rt_cd": "0",
+            "output1": [{
+                "record_date": "not-a-date",
+                "sht_cd": "000001",
+                "fix_rate": "0.05",
+                "right_dt": "20260814"
+            }]
+        }))
+        .expect("bonus bytes");
+    });
+    let error = normalize_kis_envelopes(&source, &stored).expect_err("malformed row");
+    assert!(matches!(
+        error,
+        NormalizeError::InvalidField {
+            kind: ResponseKind::CorporateActions,
+            field,
+            ..
+        } if field == "record_date"
+    ));
 }
 
 #[test]

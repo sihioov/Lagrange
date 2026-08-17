@@ -324,7 +324,12 @@ Lagrange Station은 “엔진이 알아서 좋은 종목을 추천하는 서비�
 
 ### 기업행사
 
-`instrument_id`, `event_type`, `ex_date`, `record_date`, `pay_date`, `ratio_or_amount`, `currency`, `announced_at`, `source`
+`instrument_id`, `event_type`, `ex_date`, `record_date`, `pay_date`, `ratio_or_amount`, `currency`, `available_at`, `announced_at`, `source`
+
+`available_at`은 원천 관측이 처음 사용 가능해진 시각으로 필수이며,
+원천이 공시 시각을 제공하지 않는 경우 `announced_at`은 nullable이다. 이
+변경은 기존 Curated 파일을 in-place 수정하지 않고 새 schema/dataset
+version으로 생성한다.
 
 ### 재무 데이터 확장
 

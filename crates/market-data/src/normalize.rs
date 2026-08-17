@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::time::Duration;
 
-use domain::{BatchId, ContentHash, TradingDate};
+use domain::{BatchId, ContentHash, FixedPoint, TradingDate};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use uuid::Uuid;
@@ -813,6 +813,7 @@ fn normalize_actions(
     batch_id: BatchId,
 ) -> Result<RawEnvelope, NormalizeError> {
     let files = source_files(source, stored, ResponseKind::CorporateActions)?;
+    let mut actions = BTreeMap::<String, Value>::new();
     for (metadata, file) in files {
         if !KSD_ENDPOINTS.contains(&metadata.request.endpoint.as_str()) {
             return Err(NormalizeError::UnexpectedEndpoint {
@@ -822,28 +823,61 @@ fn normalize_actions(
         }
         let document = parse_object(ResponseKind::CorporateActions, &file.file_name, &file.bytes)?;
         require_rt_ok(ResponseKind::CorporateActions, &file.file_name, &document)?;
+        // KIS documents the paid-in capital endpoint with `output`; the
+        // remaining KSD endpoints use `output1`.  Keep this distinction at the
+        // wire boundary instead of accepting an undocumented fallback.
+        let output_field = if metadata.request.endpoint.ends_with("/paidin-capin") {
+            "output"
+        } else {
+            "output1"
+        };
         let output = required_array_or_object(
             ResponseKind::CorporateActions,
             &file.file_name,
             &document,
-            "output1",
+            output_field,
         )?;
-        if !output.is_empty() {
-            return Err(NormalizeError::UnsupportedAction {
-                file_name: file.file_name.clone(),
-                reason:
-                    "non-empty KIS corporate-action rows require an explicit reviewed field mapping"
-                        .to_owned(),
-            });
+        for (row_index, row) in output.iter().enumerate() {
+            let object = row.as_object().ok_or_else(|| {
+                malformed(
+                    ResponseKind::CorporateActions,
+                    &file.file_name,
+                    format!("{output_field}[{row_index}] must be an object"),
+                )
+            })?;
+            let Some((key, canonical)) = normalize_kis_action_row(
+                &metadata.request.endpoint,
+                &file.file_name,
+                object,
+                source.date,
+                source.retrieved_at,
+            )?
+            else {
+                continue;
+            };
+            if let Some(previous) = actions.get(&key) {
+                if previous == &canonical {
+                    return Err(NormalizeError::DuplicateRow {
+                        kind: ResponseKind::CorporateActions,
+                        key,
+                    });
+                }
+                return Err(NormalizeError::ConflictingRow {
+                    kind: ResponseKind::CorporateActions,
+                    key,
+                });
+            }
+            actions.insert(key, canonical);
         }
     }
+    let actions = actions.into_values().collect::<Vec<_>>();
     let mut document = json_object([
         (
             "dataset_id",
             Value::String(format!("kr-etf-daily-{}", source.date)),
         ),
         ("schema_version", Value::Number(Number::from(1))),
-        ("actions", Value::Array(Vec::new())),
+        ("actions", Value::Array(actions)),
     ]);
     add_lineage(&mut document, lineage);
     canonical_envelope(
@@ -854,6 +888,162 @@ fn normalize_actions(
         lineage,
         batch_id,
     )
+}
+
+/// Maps one documented KSD row into the existing canonical action contract.
+///
+/// The KSD endpoints are queried for a single target date, but KIS may return
+/// rows keyed by more than one event date.  Every documented field needed to
+/// identify a row is validated before the fixed ETF/date filter is applied;
+/// malformed data therefore cannot disappear merely because it is out of
+/// scope.  Only the bonus-issue event has a documented `권리락일` and a
+/// documented allocation rate that can be represented as the existing split
+/// action.  The other KSD event classes deliberately remain typed blockers.
+fn normalize_kis_action_row(
+    endpoint: &str,
+    file_name: &str,
+    row: &Map<String, Value>,
+    target_date: TradingDate,
+    retrieved_at: domain::UtcTimestamp,
+) -> Result<Option<(String, Value)>, NormalizeError> {
+    let kind = ResponseKind::CorporateActions;
+    let symbol = required_string(kind, file_name, row, "sht_cd")?;
+    if symbol.len() != 6 || !symbol.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(NormalizeError::InvalidField {
+            kind,
+            file_name: file_name.to_owned(),
+            field: "sht_cd".to_owned(),
+            value: symbol.to_owned(),
+        });
+    }
+
+    let (event_dates, supported) = if endpoint.ends_with("/bonus-issue") {
+        let record_date = required_kis_date(kind, file_name, row, "record_date")?;
+        let right_date = required_kis_date(kind, file_name, row, "right_dt")?;
+        let (_, rate) = required_kis_decimal(kind, file_name, row, "fix_rate")?;
+        if rate <= FixedPoint::ZERO {
+            return Err(NormalizeError::InvalidField {
+                kind,
+                file_name: file_name.to_owned(),
+                field: "fix_rate".to_owned(),
+                value: rate.to_string(),
+            });
+        }
+        // The fixed daily publication is keyed by the documented 기준일
+        // (record_date).  The 권리락일 is retained as the canonical ex-date
+        // and may legitimately be a later session; filtering by right_dt
+        // would silently lose an event on the record-date delivery.
+        (vec![record_date], Some((record_date, right_date, rate)))
+    } else if endpoint.ends_with("/paidin-capin") {
+        let record_date = required_kis_date(kind, file_name, row, "record_date")?;
+        let right_date = required_kis_date(kind, file_name, row, "right_dt")?;
+        let _ = required_kis_decimal(kind, file_name, row, "fix_rate")?;
+        (vec![record_date, right_date], None)
+    } else if endpoint.ends_with("/dividend") {
+        let record_date = required_kis_date(kind, file_name, row, "record_date")?;
+        let pay_date = required_kis_date(kind, file_name, row, "divi_pay_dt")?;
+        let _ = required_kis_decimal(kind, file_name, row, "per_sto_divi_amt")?;
+        (vec![record_date, pay_date], None)
+    } else if endpoint.ends_with("/merger-split") {
+        let record_date = required_kis_date(kind, file_name, row, "record_date")?;
+        let list_date = required_kis_date(kind, file_name, row, "list_dt")?;
+        let _ = required_kis_decimal(kind, file_name, row, "merge_rate")?;
+        (vec![record_date, list_date], None)
+    } else if endpoint.ends_with("/rev-split") {
+        let record_date = required_kis_date(kind, file_name, row, "record_date")?;
+        let list_date = required_kis_date(kind, file_name, row, "list_dt")?;
+        let _ = required_kis_decimal(kind, file_name, row, "inter_bf_face_amt")?;
+        let _ = required_kis_decimal(kind, file_name, row, "inter_af_face_amt")?;
+        (vec![record_date, list_date], None)
+    } else if endpoint.ends_with("/cap-dcrs") {
+        let record_date = required_kis_date(kind, file_name, row, "record_date")?;
+        let list_date = required_kis_date(kind, file_name, row, "list_dt")?;
+        let _ = required_kis_decimal(kind, file_name, row, "reduce_cap_rate")?;
+        (vec![record_date, list_date], None)
+    } else {
+        return Err(NormalizeError::UnexpectedEndpoint {
+            file_name: file_name.to_owned(),
+            endpoint: endpoint.to_owned(),
+        });
+    };
+
+    // A valid, non-target KIS security is intentionally outside this fixed
+    // dataset.  It is not treated as an unknown/malformed row: all required
+    // fields above were validated before this filter.
+    if !KR_ETF_CORE_SYMBOLS.contains(&symbol) || !event_dates.contains(&target_date) {
+        return Ok(None);
+    }
+
+    let Some((record_date, right_date, rate)) = supported else {
+        let reason = if endpoint.ends_with("/dividend") {
+            "dividend output supplies record/pay dates but no documented ex-date or announcement timestamp"
+        } else if endpoint.ends_with("/paidin-capin") {
+            "paid-in output describes a rights subscription, not a canonical split or cash dividend"
+        } else if endpoint.ends_with("/merger-split") {
+            "merger/split output is a security relationship, not a one-instrument split ratio"
+        } else if endpoint.ends_with("/rev-split") {
+            "par-value change output does not document a share-count ratio or ex-date"
+        } else {
+            "capital-reduction output does not document a canonical split ratio or ex-date"
+        };
+        return Err(NormalizeError::UnsupportedAction {
+            file_name: file_name.to_owned(),
+            reason: reason.to_owned(),
+        });
+    };
+
+    // KIS documents `fix_rate` as the confirmed bonus allocation rate.  The
+    // canonical split factor is the old share plus the newly allocated share
+    // rate: 5% bonus => 1.05 new shares per old share.  Keep the decimal exact
+    // through FixedPoint; no floating-point conversion is used.
+    let split_factor = rate
+        .checked_add(&FixedPoint::parse("1").expect("one"))
+        .map_err(|error| NormalizeError::InvalidField {
+            kind,
+            file_name: file_name.to_owned(),
+            field: "fix_rate".to_owned(),
+            value: error.to_string(),
+        })?;
+    let split_factor_string = split_factor.to_string();
+    let instrument = canonical_instrument(symbol);
+    let key = format!("{instrument}|split|{}", right_date.to_iso());
+    let canonical = Value::Object(json_object([
+        ("instrument", Value::String(instrument)),
+        ("type", Value::String("split".to_owned())),
+        ("ex_date", Value::String(right_date.to_iso())),
+        ("record_date", Value::String(record_date.to_iso())),
+        ("ratio", Value::String(format!("{split_factor_string}:1"))),
+        ("split_factor", Value::String(split_factor_string)),
+        ("currency", Value::String("KRW".to_owned())),
+        ("available_at", Value::String(retrieved_at.to_rfc3339())),
+    ]));
+    Ok(Some((key, canonical)))
+}
+
+fn required_kis_date(
+    kind: ResponseKind,
+    file_name: &str,
+    row: &Map<String, Value>,
+    field: &str,
+) -> Result<TradingDate, NormalizeError> {
+    let value = required_string(kind, file_name, row, field)?;
+    parse_kis_date(kind, file_name, field, value)
+}
+
+fn required_kis_decimal(
+    kind: ResponseKind,
+    file_name: &str,
+    row: &Map<String, Value>,
+    field: &str,
+) -> Result<(String, FixedPoint), NormalizeError> {
+    let value = required_string(kind, file_name, row, field)?;
+    let parsed = FixedPoint::parse(value).map_err(|error| NormalizeError::InvalidField {
+        kind,
+        file_name: file_name.to_owned(),
+        field: field.to_owned(),
+        value: error.to_string(),
+    })?;
+    Ok((parsed.to_string(), parsed))
 }
 
 fn validate_target_bar_coverage(

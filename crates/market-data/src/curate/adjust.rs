@@ -13,9 +13,9 @@
 //!
 //! Point-in-time: [`adjusted_series`] applies EXACTLY the actions it is
 //! given — the caller passes `visible_actions(as_of)` so an announcement is
-//! never used before `announced_at`. The versioned files on disk are built
-//! with the actions announced by curation time (future-announced actions are
-//! rejected at curation).
+//! never used before `available_at` (and an optional `announced_at`). The
+//! versioned files on disk are built with the actions available by curation
+//! time (future observations are rejected at curation).
 //!
 //! Determinism: all arithmetic is fixed-point. Cumulative factors are rounded
 //! to [`FACTOR_SCALE`] (8 dp, half-even) after each multiplication; adjusted
@@ -120,7 +120,7 @@ pub fn adjusted_series(
             .push(action);
     }
     for list in by_instrument.values_mut() {
-        list.sort_by_key(|a| (a.ex_date, a.announced_at));
+        list.sort_by_key(|a| (a.ex_date, a.announced_at.unwrap_or(a.available_at)));
     }
 
     // Raw close on each ex-date (post-split basis) for dividend factors.

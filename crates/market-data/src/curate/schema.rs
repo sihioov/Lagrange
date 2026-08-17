@@ -28,6 +28,7 @@
 //! A corrected value NEVER touches an existing `version={v}` directory — it
 //! is written under `version={v+1}` (immutability by construction).
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -55,6 +56,16 @@ pub const PRICE_SCALE: u8 = 4;
 pub const FACTOR_SCALE: u8 = 8;
 /// Decimal scale of tax withholding percentages.
 pub const TAX_SCALE: u8 = 6;
+
+/// Version of the on-disk corporate-actions Parquet contract.
+///
+/// Version 2 separates source availability from an optional announcement:
+/// `announced_at` is nullable and the non-null `available_at` is the
+/// point-in-time curation gate.  The version is embedded in Arrow/Parquet
+/// schema metadata so the quality gate rejects a legacy partition instead of
+/// silently treating it as a v2 dataset.
+pub const CORPORATE_ACTIONS_SCHEMA_VERSION: u32 = 2;
+pub const CORPORATE_ACTIONS_SCHEMA_VERSION_KEY: &str = "lagrange.corporate_actions.schema_version";
 
 fn price_type() -> DataType {
     DataType::Decimal128(PRICE_PRECISION, PRICE_SCALE as i8)
@@ -141,29 +152,40 @@ impl CuratedSchema {
 
     /// The corporate-actions table (requirements §8.2 기업행사: `instrument_id,
     /// event_type, ex_date, record_date, pay_date, ratio_or_amount, currency,
-    /// announced_at, source`) + split factor + provenance columns.
+    /// announced_at, source`) + availability, split factor, and provenance
+    /// columns. `announced_at` is nullable because some primary KSD feeds do
+    /// not publish an announcement instant.
     pub fn corporate_actions() -> Schema {
-        Schema::new(vec![
-            Field::new("instrument_id", DataType::Utf8, false),
-            Field::new("event_type", DataType::Utf8, false),
-            Field::new("ex_date", DataType::Date32, false),
-            Field::new("record_date", DataType::Date32, true),
-            Field::new("pay_date", DataType::Date32, true),
-            Field::new("ratio", DataType::Utf8, true),
-            Field::new("split_factor", factor_type(), true),
-            Field::new("amount_per_share", price_type(), true),
-            Field::new(
-                "tax_withholding_pct",
-                DataType::Decimal128(PRICE_PRECISION, TAX_SCALE as i8),
-                true,
-            ),
-            Field::new("currency", DataType::Utf8, false),
-            Field::new("announced_at", timestamp_type(), false),
-            Field::new("source", DataType::Utf8, false),
-            Field::new("batch_id", DataType::Utf8, false),
-            Field::new("raw_hash", DataType::Utf8, false),
-            Field::new("ingested_at", timestamp_type(), false),
-        ])
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            CORPORATE_ACTIONS_SCHEMA_VERSION_KEY.to_owned(),
+            CORPORATE_ACTIONS_SCHEMA_VERSION.to_string(),
+        );
+        Schema::new_with_metadata(
+            vec![
+                Field::new("instrument_id", DataType::Utf8, false),
+                Field::new("event_type", DataType::Utf8, false),
+                Field::new("ex_date", DataType::Date32, false),
+                Field::new("record_date", DataType::Date32, true),
+                Field::new("pay_date", DataType::Date32, true),
+                Field::new("ratio", DataType::Utf8, true),
+                Field::new("split_factor", factor_type(), true),
+                Field::new("amount_per_share", price_type(), true),
+                Field::new(
+                    "tax_withholding_pct",
+                    DataType::Decimal128(PRICE_PRECISION, TAX_SCALE as i8),
+                    true,
+                ),
+                Field::new("currency", DataType::Utf8, false),
+                Field::new("announced_at", timestamp_type(), true),
+                Field::new("available_at", timestamp_type(), false),
+                Field::new("source", DataType::Utf8, false),
+                Field::new("batch_id", DataType::Utf8, false),
+                Field::new("raw_hash", DataType::Utf8, false),
+                Field::new("ingested_at", timestamp_type(), false),
+            ],
+            metadata,
+        )
     }
 }
 
@@ -211,6 +233,30 @@ fn ts_at_checked(
         }
     })?;
     Ok(UtcTimestamp::from_datetime(dt))
+}
+
+fn ts_opt_at_checked(
+    batch: &arrow::record_batch::RecordBatch,
+    col: &str,
+    i: usize,
+) -> Result<Option<UtcTimestamp>, CurateError> {
+    let array = batch
+        .column_by_name(col)
+        .expect("schema column present")
+        .as_any()
+        .downcast_ref::<TimestampMicrosecondArray>()
+        .expect("timestamp(us) column");
+    if array.is_null(i) {
+        return Ok(None);
+    }
+    let micros = array.value(i);
+    let dt = chrono::DateTime::from_timestamp_micros(micros).ok_or_else(|| {
+        CurateError::MalformedParquet {
+            context: format!("{col} parse"),
+            detail: format!("timestamp {micros} is out of range"),
+        }
+    })?;
+    Ok(Some(UtcTimestamp::from_datetime(dt)))
 }
 
 fn fixed_to_decimal(value: &FixedPoint, scale: u8) -> i128 {
@@ -388,6 +434,7 @@ pub fn write_corporate_actions(path: &Path, rows: &[CorporateAction]) -> Result<
         .expect("valid decimal params");
     let mut currency = StringBuilder::new();
     let mut announced_at = TimestampMicrosecondBuilder::new();
+    let mut available_at = TimestampMicrosecondBuilder::new();
     let mut source = StringBuilder::new();
     let mut batch_id = StringBuilder::new();
     let mut raw_hash = StringBuilder::new();
@@ -422,7 +469,11 @@ pub fn write_corporate_actions(path: &Path, rows: &[CorporateAction]) -> Result<
             None => tax_withholding_pct.append_null(),
         }
         currency.append_value(row.currency.code());
-        announced_at.append_value(ts_to_micros(row.announced_at));
+        match row.announced_at {
+            Some(ts) => announced_at.append_value(ts_to_micros(ts)),
+            None => announced_at.append_null(),
+        }
+        available_at.append_value(ts_to_micros(row.available_at));
         source.append_value(&row.source);
         batch_id.append_value(row.batch_id.to_string());
         raw_hash.append_value(row.raw_hash.as_str());
@@ -441,6 +492,7 @@ pub fn write_corporate_actions(path: &Path, rows: &[CorporateAction]) -> Result<
         Arc::new(tax_withholding_pct.finish()),
         Arc::new(currency.finish()),
         Arc::new(announced_at.finish()),
+        Arc::new(available_at.finish()),
         Arc::new(source.finish()),
         Arc::new(batch_id.finish()),
         Arc::new(raw_hash.finish()),
@@ -828,6 +880,19 @@ pub fn read_corporate_actions(path: &Path) -> Result<Vec<CorporateAction>, Curat
                 })?),
                 None => None,
             };
+            let announced_at = ts_opt_at_checked(&batch, "announced_at", i)?;
+            // Files written by the pre-availability schema are still readable
+            // for downstream compatibility: their mandatory announcement was
+            // the only known availability instant.  New files always carry
+            // the explicit non-null `available_at` column.
+            let available_at = match batch.column_by_name("available_at") {
+                Some(_) => ts_at_checked(&batch, "available_at", i)?,
+                None => announced_at.ok_or_else(|| CurateError::MalformedParquet {
+                    context: "available_at parse".to_owned(),
+                    detail: "legacy action row has neither available_at nor announced_at"
+                        .to_owned(),
+                })?,
+            };
             rows.push(CorporateAction {
                 instrument_id,
                 event_type,
@@ -839,7 +904,8 @@ pub fn read_corporate_actions(path: &Path) -> Result<Vec<CorporateAction>, Curat
                 amount_per_share,
                 tax_withholding_pct: fixed_opt_at(&batch, "tax_withholding_pct", i, TAX_SCALE),
                 currency,
-                announced_at: ts_at_checked(&batch, "announced_at", i)?,
+                announced_at,
+                available_at,
                 source: str_at(&batch, "source", i).to_owned(),
                 batch_id: str_at(&batch, "batch_id", i)
                     .parse::<BatchId>()

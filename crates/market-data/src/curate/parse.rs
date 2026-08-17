@@ -92,6 +92,11 @@ pub struct RawActionRow {
     pub currency: Option<Currency>,
     #[serde(default)]
     pub announced_at: Option<String>,
+    /// Availability is distinct from announcement.  Primary feeds may expose
+    /// an event after it is published without carrying the original
+    /// announcement timestamp.
+    #[serde(default)]
+    pub available_at: Option<String>,
 }
 
 /// Parses the raw bars response bytes.

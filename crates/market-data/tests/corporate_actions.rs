@@ -9,12 +9,19 @@
 //! Red phase: `market_data::curate` does not exist yet, so this file fails to
 //! compile; the failing transcript is captured in the Todo 10 evidence bundle.
 
+use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 
+use arrow::array::{Date32Builder, Decimal128Builder, StringBuilder, TimestampMicrosecondBuilder};
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::record_batch::RecordBatch;
+use chrono::NaiveDate;
 use domain::{
-    BatchId, ContentHash, Currency, DatasetId, FixedPoint, Money, Price, Quantity, TradingDate,
-    UtcTimestamp,
+    BatchId, ContentHash, Currency, DataState, DatasetId, FixedPoint, Money, Price, Quantity,
+    TradingDate, UtcTimestamp,
 };
+use parquet::arrow::ArrowWriter;
 use serde_json::{Value, json};
 
 use market_data::contract::{FetchMode, RawEnvelope, RequestMetadata, ResponseKind};
@@ -22,10 +29,14 @@ use market_data::curate::actions::{
     CorporateActionType, DividendCredit, SplitAdjustment, visible_actions,
 };
 use market_data::curate::adjust::{AdjustmentKind, adjusted_series};
+use market_data::curate::schema::{
+    CORPORATE_ACTIONS_SCHEMA_VERSION, CORPORATE_ACTIONS_SCHEMA_VERSION_KEY, CuratedSchema,
+};
 use market_data::curate::{
     Capability, CurateError, CurateRequest, CurateStore, curate_batch, read_bars,
     read_corporate_actions,
 };
+use market_data::quality::{FreshnessPolicy, IssueCode, QualityGate, QualityPolicy, Severity};
 use market_data::{BatchSpec, ManifestEntry, RawStore, krx_2020, seed_universe};
 
 /// Pre-split bars for 069500.KRX (2020-01-20..2020-01-31) plus the post-split
@@ -95,6 +106,115 @@ fn bars_path(curated: &CurateStore, version: u32) -> std::path::PathBuf {
 
 fn actions_path(curated: &CurateStore, version: u32) -> std::path::PathBuf {
     curated.corporate_actions_path("kr", "069500.KRX", 2020, version)
+}
+
+/// Writes the pre-v2 action schema used by the direct-read compatibility test.
+/// This helper intentionally lives only in the test: production curation must
+/// never emit or mutate this legacy layout.
+fn write_legacy_actions(path: &Path, action: &market_data::CorporateAction) {
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch");
+    let days = |date: TradingDate| (date.as_naive_date() - epoch).num_days() as i32;
+    let micros = |timestamp: UtcTimestamp| timestamp.as_datetime().timestamp_micros();
+
+    let mut instrument = StringBuilder::new();
+    instrument.append_value(action.instrument_id.to_string());
+    let mut event_type = StringBuilder::new();
+    event_type.append_value(action.event_type.as_str());
+    let mut ex_date = Date32Builder::new();
+    ex_date.append_value(days(action.ex_date));
+    let mut record_date = Date32Builder::new();
+    record_date.append_null();
+    let mut pay_date = Date32Builder::new();
+    pay_date.append_null();
+    let mut ratio = StringBuilder::new();
+    ratio.append_value(action.ratio.as_deref().unwrap_or("2:1"));
+    let mut split_factor = Decimal128Builder::new()
+        .with_precision_and_scale(18, 8)
+        .expect("decimal params");
+    split_factor.append_value(
+        action
+            .split_factor
+            .expect("legacy fixture has split factor")
+            .with_scale(8)
+            .expect("split scale")
+            .bits(),
+    );
+    let mut amount_per_share = Decimal128Builder::new()
+        .with_precision_and_scale(18, 4)
+        .expect("decimal params");
+    amount_per_share.append_null();
+    let mut tax_withholding_pct = Decimal128Builder::new()
+        .with_precision_and_scale(18, 6)
+        .expect("decimal params");
+    tax_withholding_pct.append_null();
+    let mut currency = StringBuilder::new();
+    currency.append_value(action.currency.code());
+    let mut announced_at = TimestampMicrosecondBuilder::new();
+    let announced = action
+        .announced_at
+        .expect("legacy fixture has announcement");
+    announced_at.append_value(micros(announced));
+    let mut source = StringBuilder::new();
+    source.append_value(&action.source);
+    let mut batch_id = StringBuilder::new();
+    batch_id.append_value(action.batch_id.to_string());
+    let mut raw_hash = StringBuilder::new();
+    raw_hash.append_value(action.raw_hash.as_str());
+    let mut ingested_at = TimestampMicrosecondBuilder::new();
+    ingested_at.append_value(micros(action.ingested_at));
+
+    // This is exactly the v1 field set: announced_at was mandatory and there
+    // was no available_at column or schema metadata.
+    let schema = Schema::new(vec![
+        Field::new("instrument_id", DataType::Utf8, false),
+        Field::new("event_type", DataType::Utf8, false),
+        Field::new("ex_date", DataType::Date32, false),
+        Field::new("record_date", DataType::Date32, true),
+        Field::new("pay_date", DataType::Date32, true),
+        Field::new("ratio", DataType::Utf8, true),
+        Field::new("split_factor", DataType::Decimal128(18, 8), true),
+        Field::new("amount_per_share", DataType::Decimal128(18, 4), true),
+        Field::new("tax_withholding_pct", DataType::Decimal128(18, 6), true),
+        Field::new("currency", DataType::Utf8, false),
+        Field::new(
+            "announced_at",
+            DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
+            false,
+        ),
+        Field::new("source", DataType::Utf8, false),
+        Field::new("batch_id", DataType::Utf8, false),
+        Field::new("raw_hash", DataType::Utf8, false),
+        Field::new(
+            "ingested_at",
+            DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
+            false,
+        ),
+    ]);
+    let batch = RecordBatch::try_new(
+        Arc::new(schema.clone()),
+        vec![
+            Arc::new(instrument.finish()),
+            Arc::new(event_type.finish()),
+            Arc::new(ex_date.finish()),
+            Arc::new(record_date.finish()),
+            Arc::new(pay_date.finish()),
+            Arc::new(ratio.finish()),
+            Arc::new(split_factor.finish()),
+            Arc::new(amount_per_share.finish()),
+            Arc::new(tax_withholding_pct.finish()),
+            Arc::new(currency.finish()),
+            Arc::new(announced_at.finish()),
+            Arc::new(source.finish()),
+            Arc::new(batch_id.finish()),
+            Arc::new(raw_hash.finish()),
+            Arc::new(ingested_at.finish()),
+        ],
+    )
+    .expect("legacy record batch");
+    let file = File::create(path).expect("legacy parquet path");
+    let mut writer = ArrowWriter::try_new(file, Arc::new(schema), None).expect("legacy writer");
+    writer.write(&batch).expect("legacy write");
+    writer.close().expect("legacy close");
 }
 
 /// Curates the split+dividend fixture at version 1.
@@ -343,6 +463,70 @@ fn future_announced_action_rejected_at_curation() {
         matches!(err, CurateError::FutureAnnouncedAction { .. }),
         "{err}"
     );
+}
+
+#[test]
+fn legacy_action_readback_is_compatible_but_quality_gate_requires_schema_v2() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (curated, outcome, _) = curate_split_fixture(temp.path(), SPLIT_ACTIONS, now());
+    let current_path = actions_path(&curated, outcome.dataset_version);
+    let current = read_corporate_actions(&current_path).expect("current actions");
+    let split = current
+        .iter()
+        .find(|action| action.event_type == CorporateActionType::Split)
+        .expect("split action");
+    let legacy_path = temp.path().join("legacy-corporate-actions.parquet");
+    write_legacy_actions(&legacy_path, split);
+
+    // Direct consumers retain a deliberately narrow compatibility path: the
+    // old mandatory announcement is used as availability when no explicit
+    // available_at column exists.
+    let legacy = read_corporate_actions(&legacy_path).expect("legacy readback");
+    assert_eq!(legacy.len(), 1);
+    assert_eq!(legacy[0].announced_at, split.announced_at);
+    assert_eq!(legacy[0].available_at, split.announced_at.unwrap());
+
+    // Put the legacy bytes in a disposable test version only. The production
+    // writer never overwrites an existing generation; this simulates an old
+    // installed partition being inspected by the new quality gate.
+    write_legacy_actions(&current_path, split);
+    let report = QualityGate::new(
+        curated.clone(),
+        krx_2020(),
+        seed_universe(),
+        "kr",
+        QualityPolicy {
+            required_universe: ["069500.KRX".parse().expect("instrument")]
+                .into_iter()
+                .collect(),
+            optional_exclusion: None,
+            freshness: FreshnessPolicy {
+                reference_date: TradingDate::parse("2020-02-03").expect("date"),
+                max_stale_sessions: 0,
+            },
+            outlier_threshold_pct: 0.20,
+        },
+    )
+    .validate_dataset(&dataset(), outcome.dataset_version)
+    .expect("quality gate runs");
+    assert_eq!(report.state, DataState::Blocked);
+    assert!(report.issues.iter().any(
+        |issue| issue.code == IssueCode::SchemaMismatch && issue.severity == Severity::Blocking
+    ));
+    assert_eq!(
+        CuratedSchema::corporate_actions()
+            .metadata()
+            .get(CORPORATE_ACTIONS_SCHEMA_VERSION_KEY)
+            .map(String::as_str),
+        Some("2")
+    );
+    assert_eq!(CORPORATE_ACTIONS_SCHEMA_VERSION, 2);
+    assert_ne!(CuratedSchema::corporate_actions(), {
+        // A legacy schema has no availability column and no v2 metadata.
+        let mut fields = CuratedSchema::corporate_actions().fields().to_vec();
+        fields.retain(|field| field.name() != "available_at");
+        Schema::new(fields)
+    });
 }
 
 // ---------------------------------------------------------------------------

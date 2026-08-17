@@ -730,6 +730,12 @@ adjustment_factor
 - 현금 배당: pay-date 또는 명시된 정책에 따라 cash ledger 반영
 - 상장폐지: 마지막 거래·청산 정책과 데이터 품질 경고
 
+Curated 기업행사는 원천 관측의 사용 가능 시각인 `available_at`을 필수
+point-in-time 경계로 저장한다. 원천이 공시 시각을 제공하지 않으면
+`announced_at`은 nullable이며, retrieval 시각을 공시 시각으로 추정하지
+않는다. 이 필드 변경은 기존 version을 덮어쓰지 않는 새 schema/dataset
+version과 manifest pin으로 배포한다.
+
 MVP ETF 데이터에서 기업행사 원천이 불완전하면 전략별로 “가격수익률 기준” 또는 “총수익률 기준”을 명시하고 비교 결과에 표시한다.
 
 ## 9.4 비용 모델 인터페이스

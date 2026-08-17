@@ -35,8 +35,8 @@
 //!   all-or-nothing, one dataset version per curation;
 //! - raw OHLCV bars (execution) plus split-adjusted and total-return series
 //!   (signals); a correction produces a NEW dataset version (old immutable);
-//! - corporate actions with `announced_at` point-in-time visibility (nothing
-//!   exposed before announcement; future-announced actions rejected);
+//! - corporate actions with `available_at` point-in-time visibility (and an
+//!   optional source-provided `announced_at`; future observations rejected);
 //! - `PRICE_RETURN_ONLY | TOTAL_RETURN_CAPABLE` capability per version.
 
 pub mod calendar;
@@ -79,7 +79,10 @@ pub use contract::{
     PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
-pub use curate::schema::{CuratedBar, CuratedSchema};
+pub use curate::schema::{
+    CORPORATE_ACTIONS_SCHEMA_VERSION, CORPORATE_ACTIONS_SCHEMA_VERSION_KEY, CuratedBar,
+    CuratedSchema,
+};
 pub use curate::{
     Capability, CurateError, CurateOutcome, CurateRequest, CurateStore, DatasetManifest,
     PriceCurationEvidence, PriceInstrumentCoverage, SourceBatchRef, curate_batch,
