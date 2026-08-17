@@ -1,6 +1,7 @@
 use domain::{BatchId, TradingDate};
-use market_data::contract::{MARKET_KR, PROVIDER_KRX};
+use market_data::contract::{MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX};
 use market_data::ingest::{IngestError, IngestRequest, ingest_bundle};
+use market_data::normalize::{NormalizationOutcome, NormalizeError, normalize_kis_batch};
 use market_data::provider::{EodProvider, ProviderError};
 use market_data::publication::{PublicationBundle, PublicationError};
 use market_data::storage::{ManifestEntry, RawStore, StoreError};
@@ -39,6 +40,10 @@ pub enum PipelineError {
     Manifest {
         source: StoreError,
     },
+    Normalize {
+        batch_id: BatchId,
+        source: Box<NormalizeError>,
+    },
     InvalidRecoveryCursor {
         cursor: BatchId,
     },
@@ -75,7 +80,8 @@ impl PipelineError {
             | Self::InvalidRecoverySnapshotBoundary { .. }
             | Self::InvalidRecoverySnapshotPosition
             | Self::InvalidRecoveryPageSize => None,
-            Self::Publication { batch_id, .. }
+            Self::Normalize { batch_id, .. }
+            | Self::Publication { batch_id, .. }
             | Self::Sink { batch_id, .. }
             | Self::PartialPublication { batch_id }
             | Self::UnexpectedPublishOutcome { batch_id, .. } => Some(*batch_id),
@@ -90,6 +96,12 @@ impl PipelineError {
             | Self::InvalidRecoverySnapshotBoundary { .. }
             | Self::InvalidRecoverySnapshotPosition
             | Self::InvalidRecoveryPageSize => PipelineStage::ReadManifest,
+            // Normalization verifies immutable Raw before publication.  Keep
+            // the existing public stage vocabulary stable; the typed
+            // `PipelineError::Normalize` variant carries the distinct stage
+            // and source without forcing worker/main exhaustive matches to
+            // change in this recovery slice.
+            Self::Normalize { .. } => PipelineStage::VerifyRaw,
             Self::Publication { .. } => PipelineStage::VerifyRaw,
             Self::Sink { stage, .. } => *stage,
             Self::PartialPublication { .. } => PipelineStage::PublicationState,
@@ -101,6 +113,9 @@ impl PipelineError {
         let retryable = match self {
             Self::Ingest { source } => ingest_error_is_retryable(source),
             Self::Manifest { source } => store_failure_class(source) == FailureClass::Retryable,
+            Self::Normalize { source, .. } => {
+                normalize_failure_class(source) == FailureClass::Retryable
+            }
             Self::InvalidRecoveryCursor { .. }
             | Self::InvalidRecoverySnapshotBoundary { .. }
             | Self::InvalidRecoverySnapshotPosition
@@ -127,6 +142,9 @@ impl std::fmt::Display for PipelineError {
         match self {
             Self::Ingest { source } => write!(formatter, "{source}"),
             Self::Manifest { source } => write!(formatter, "read Raw manifest failed: {source}"),
+            Self::Normalize { batch_id, source } => {
+                write!(formatter, "normalize KIS batch {batch_id} failed: {source}")
+            }
             Self::InvalidRecoveryCursor { cursor } => {
                 write!(
                     formatter,
@@ -177,6 +195,7 @@ impl std::error::Error for PipelineError {
         match self {
             Self::Ingest { source } => Some(source),
             Self::Manifest { source } => Some(source),
+            Self::Normalize { source, .. } => Some(source.as_ref()),
             Self::InvalidRecoveryCursor { .. }
             | Self::InvalidRecoverySnapshotBoundary { .. }
             | Self::InvalidRecoverySnapshotPosition
@@ -231,6 +250,61 @@ pub fn store_failure_class(error: &StoreError) -> FailureClass {
     }
 }
 
+/// Classifies a normalization failure at the pipeline boundary.
+///
+/// Normalization is deterministic, so schema, scope, evidence, and canonical
+/// shape errors stop recovery permanently.  Filesystem failures remain
+/// retryable, including a deterministic batch-directory collision: another
+/// normalizer may have made the immutable batch visible but not yet appended
+/// its manifest line.  The normalizer itself performs the bounded convergence
+/// read before returning that collision.
+pub fn normalize_failure_class(error: &NormalizeError) -> FailureClass {
+    match error {
+        NormalizeError::Store(source) => normalize_store_failure_class(source),
+        NormalizeError::UnsupportedScope { .. }
+        | NormalizeError::UnsupportedMode
+        | NormalizeError::ExistingBatchConflict { .. }
+        | NormalizeError::EvidenceCountMismatch { .. }
+        | NormalizeError::EvidenceMissing { .. }
+        | NormalizeError::EvidenceUnexpected { .. }
+        | NormalizeError::EvidenceHashMismatch { .. }
+        | NormalizeError::EvidenceSizeMismatch { .. }
+        | NormalizeError::MissingKind { .. }
+        | NormalizeError::UnexpectedEndpoint { .. }
+        | NormalizeError::Malformed { .. }
+        | NormalizeError::MissingField { .. }
+        | NormalizeError::InvalidField { .. }
+        | NormalizeError::DuplicateRow { .. }
+        | NormalizeError::ConflictingRow { .. }
+        | NormalizeError::UnsupportedAction { .. }
+        | NormalizeError::CanonicalValidation { .. }
+        | NormalizeError::Serialization { .. }
+        | NormalizeError::MissingTargetObservation { .. }
+        | NormalizeError::TargetBarCoverage { .. } => FailureClass::Permanent,
+    }
+}
+
+fn normalize_store_failure_class(error: &StoreError) -> FailureClass {
+    match error {
+        StoreError::Io { .. } | StoreError::FileExists { .. } => FailureClass::Retryable,
+        StoreError::CleanupFailed { original, .. }
+        | StoreError::IndeterminateBatchCommit {
+            source: original, ..
+        } => normalize_store_failure_class(original),
+        StoreError::UnsafeFileName { .. }
+        | StoreError::UnsafeScope { .. }
+        | StoreError::ScopeMismatch { .. }
+        | StoreError::UnsafePath { .. }
+        | StoreError::ContentHashMismatch { .. }
+        | StoreError::CorruptManifest { .. }
+        | StoreError::CorruptBatchMetadata { .. }
+        | StoreError::InvalidBatchMetadata { .. }
+        | StoreError::MissingEvidence { .. }
+        | StoreError::Serialization { .. }
+        | StoreError::ManifestConflict { .. } => FailureClass::Permanent,
+    }
+}
+
 fn ingest_error_is_retryable(error: &IngestError) -> bool {
     match error {
         IngestError::Provider(source) => provider_failure_class(source) == FailureClass::Retryable,
@@ -268,6 +342,75 @@ fn publication_error_is_retryable(error: &PublicationError) -> bool {
         | PublicationError::ConflictingCalendarFact { .. }
         | PublicationError::ConflictingCalendarProvenance { .. } => false,
     }
+}
+
+/// The only immutable Raw scopes that are eligible for publication recovery.
+///
+/// Wire KIS (`kis/kr`) deliberately has no variant: it must be normalized into
+/// [`Self::KisNormalized`] before it can reach `PublicationBundle` or a sink.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RecoveryScope {
+    Krx,
+    KisNormalized,
+}
+
+impl RecoveryScope {
+    pub const fn provider(self) -> &'static str {
+        match self {
+            Self::Krx => PROVIDER_KRX,
+            Self::KisNormalized => PROVIDER_KIS_NORMALIZED,
+        }
+    }
+
+    pub const fn market(self) -> &'static str {
+        MARKET_KR
+    }
+
+    pub const fn is_kis_normalized(self) -> bool {
+        matches!(self, Self::KisNormalized)
+    }
+}
+
+/// Result of reconciling and normalizing every durable KIS wire source batch.
+///
+/// Entries are returned in the same append order as
+/// `read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)`.  A repeated call
+/// returns the same deterministic normalized entries; it never re-fetches or
+/// removes the wire batches.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct KisNormalizationRecoveryReport {
+    pub outcomes: Vec<NormalizationOutcome>,
+}
+
+impl KisNormalizationRecoveryReport {
+    pub fn entries(&self) -> impl ExactSizeIterator<Item = &ManifestEntry> {
+        self.outcomes.iter().map(|outcome| &outcome.entry)
+    }
+
+    pub fn normalized_batch_ids(&self) -> impl ExactSizeIterator<Item = BatchId> + '_ {
+        self.outcomes.iter().map(|outcome| outcome.entry.batch_id)
+    }
+}
+
+/// Reconciles durable KIS wire batches and deterministically materializes their
+/// canonical `kis-normalized/kr` counterparts.
+pub fn recover_kis_normalization(
+    store: &RawStore,
+) -> Result<KisNormalizationRecoveryReport, PipelineError> {
+    let sources = store
+        .read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)
+        .map_err(|source| PipelineError::Manifest { source })?;
+    let mut outcomes = Vec::with_capacity(sources.len());
+    for source in sources {
+        let source_batch_id = source.batch_id;
+        let outcome =
+            normalize_kis_batch(store, &source).map_err(|source| PipelineError::Normalize {
+                batch_id: source_batch_id,
+                source: Box::new(source),
+            })?;
+        outcomes.push(outcome);
+    }
+    Ok(KisNormalizationRecoveryReport { outcomes })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -386,6 +529,22 @@ pub async fn recover_unpublished(
 pub async fn recover_unpublished_with<E, F>(
     store: &RawStore,
     sink: &dyn PublicationSink,
+    observer: F,
+) -> Result<(), RecoveryError<E>>
+where
+    F: FnMut(RecoveryBatchOutcome) -> Result<(), E>,
+{
+    recover_unpublished_with_scope(store, sink, RecoveryScope::Krx, observer).await
+}
+
+/// Replays every unpublished batch in one explicit publication scope.
+///
+/// The scope is part of the function contract rather than a caller-provided
+/// provider string, so `kis/kr` cannot accidentally be sent to publication.
+pub async fn recover_unpublished_with_scope<E, F>(
+    store: &RawStore,
+    sink: &dyn PublicationSink,
+    scope: RecoveryScope,
     mut observer: F,
 ) -> Result<(), RecoveryError<E>>
 where
@@ -393,9 +552,10 @@ where
 {
     let mut position = RecoveryPosition::default();
     loop {
-        let page = recover_unpublished_page_with(
+        let page = recover_unpublished_page_with_scope(
             store,
             sink,
+            scope,
             position,
             RECOVERY_PAGE_SIZE,
             |outcome, _snapshot_high_water| observer(outcome),
@@ -417,9 +577,55 @@ where
     }
 }
 
+/// Returns a report after replaying every unpublished batch in one explicit
+/// publication scope.
+pub async fn recover_unpublished_scope(
+    store: &RawStore,
+    sink: &dyn PublicationSink,
+    scope: RecoveryScope,
+) -> Result<RecoveryReport, PipelineError> {
+    let mut report = RecoveryReport::default();
+    recover_unpublished_with_scope(store, sink, scope, |outcome| {
+        match outcome {
+            RecoveryBatchOutcome::Recovered { batch_id, .. } => report.recovered.push(batch_id),
+            RecoveryBatchOutcome::Skipped { batch_id, .. } => report.skipped.push(batch_id),
+        }
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .await
+    .map_err(|error| match error {
+        RecoveryError::Pipeline(error) => error,
+        RecoveryError::Observer { source, .. } => match source {},
+    })?;
+    Ok(report)
+}
+
 pub async fn recover_unpublished_page_with<E, F>(
     store: &RawStore,
     sink: &dyn PublicationSink,
+    position: RecoveryPosition,
+    page_size: usize,
+    observer: F,
+) -> Result<RecoveryPage, RecoveryError<E>>
+where
+    F: FnMut(RecoveryBatchOutcome, BatchId) -> Result<(), E>,
+{
+    recover_unpublished_page_with_scope(
+        store,
+        sink,
+        RecoveryScope::Krx,
+        position,
+        page_size,
+        observer,
+    )
+    .await
+}
+
+/// Replays one bounded page from an explicit publication scope.
+pub async fn recover_unpublished_page_with_scope<E, F>(
+    store: &RawStore,
+    sink: &dyn PublicationSink,
+    scope: RecoveryScope,
     position: RecoveryPosition,
     page_size: usize,
     mut observer: F,
@@ -438,7 +644,7 @@ where
         ));
     }
     let mut entries = store
-        .read_reconciled_manifest(PROVIDER_KRX, MARKET_KR)
+        .read_reconciled_manifest(scope.provider(), scope.market())
         .map_err(|source| RecoveryError::Pipeline(PipelineError::Manifest { source }))?;
     let boundary_index = position
         .snapshot_after

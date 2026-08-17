@@ -14,10 +14,12 @@ pub use candidate_sink::{
     PostgresCandidateSourceSink, candidate_raw_manifest_sha256,
 };
 pub use pipeline::{
-    FailureClass, PipelineError, PipelineStage, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome,
-    RecoveryError, RecoveryPage, RecoveryPosition, RecoveryReport, RunOutcome, ingest_and_publish,
-    provider_failure_class, recover_unpublished, recover_unpublished_page_with,
-    recover_unpublished_with, store_failure_class,
+    FailureClass, KisNormalizationRecoveryReport, PipelineError, PipelineStage, RECOVERY_PAGE_SIZE,
+    RecoveryBatchOutcome, RecoveryError, RecoveryPage, RecoveryPosition, RecoveryReport,
+    RecoveryScope, RunOutcome, ingest_and_publish, normalize_failure_class, provider_failure_class,
+    recover_kis_normalization, recover_unpublished, recover_unpublished_page_with,
+    recover_unpublished_page_with_scope, recover_unpublished_scope, recover_unpublished_with,
+    recover_unpublished_with_scope, store_failure_class,
 };
 pub use sink::{
     PostgresPublicationSink, PublicationSink, PublicationState, PublishOutcome, SinkError,
