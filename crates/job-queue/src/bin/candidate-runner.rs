@@ -10,7 +10,9 @@ use chrono::{DateTime, FixedOffset, Utc};
 use job_queue::candidate::runner::{
     CandidateOutcome, CandidateRunnerConfig, CandidateRunnerPaths, run_once,
 };
-use job_queue::candidate::schedule::{CandidateScheduleError, schedule_latest_candidate_run};
+use job_queue::candidate::schedule::{
+    CandidateScheduleBatchReport, CandidateScheduleError, schedule_latest_candidate_runs,
+};
 use job_queue::{JobQueue, QueueConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -29,7 +31,7 @@ const DEFAULT_HEALTH_MAX_AGE: Duration = Duration::from_secs(180);
 const HELP: &str = "candidate-runner [--once]\n\
 candidate-runner healthcheck\n\
 candidate-runner readiness\n\n\
-Schedules fully pinned KOSPI-200 candidate runs and drains only candidate_compute jobs.\n\n\
+Schedules fully pinned KOSPI-200/KOSDAQ-150 candidate runs and drains only candidate_compute jobs.\n\n\
 Production environment:\n  \
 APP_ENV=production\n  \
 DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD_FILE\n  \
@@ -387,36 +389,52 @@ async fn probe(pool: &sqlx::PgPool, config: &Config, readiness: bool) -> Result<
         .as_deref()
         .ok_or_else(|| "candidate health state is unconfigured".to_owned())?;
     let progress = read_health(path, config.health_max_age)?;
-    let (active, latest_feed, expected_feed, queued, oldest_age): (
+    let (active, latest_feed, expected_feed, all_feeds_current, queued, oldest_age): (
         bool,
         Option<chrono::NaiveDate>,
         Option<chrono::NaiveDate>,
+        bool,
         i64,
         Option<i64>,
     ) = sqlx::query_as(
-            "SELECT
+            "WITH expected AS (
+                    SELECT max(calendar.session_date) AS session_date
+                      FROM trading_calendars AS calendar
+                      JOIN candidate_scheduler_control AS control
+                        ON control.control_key = 'scheduler'
+                     WHERE calendar.exchange = 'KRX'
+                       AND calendar.session_type = 'TRADING'
+                       AND calendar.timezone = 'Asia/Seoul'
+                       AND calendar.source_batch_id IS NOT NULL
+                       AND calendar.content_sha256 IS NOT NULL
+                       AND calendar.retrieved_at IS NOT NULL
+                       AND (
+                         calendar.session_date <
+                           (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date
+                         OR (
+                           calendar.session_date =
+                             (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date
+                           AND (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::time
+                             >= control.wake_at_kst
+                         )
+                       )
+                ), per_universe AS (
+                    SELECT registry.universe_key,
+                           expected.session_date,
+                           max(feed.as_of_date) AS latest_feed
+                      FROM candidate_universe_registry AS registry
+                      CROSS JOIN expected
+                      LEFT JOIN candidate_feed_snapshots AS feed
+                        ON feed.universe_key = registry.universe_key
+                       AND feed.status = 'PUBLISHED'
+                     WHERE registry.enabled
+                     GROUP BY registry.universe_key, expected.session_date
+                )
+                SELECT
                 COALESCE((SELECT active FROM candidate_scheduler_control WHERE control_key='scheduler'), false),
                 (SELECT max(as_of_date) FROM candidate_feed_snapshots WHERE status='PUBLISHED'),
-                (SELECT max(calendar.session_date)
-                   FROM trading_calendars AS calendar
-                   JOIN candidate_scheduler_control AS control
-                     ON control.control_key = 'scheduler'
-                  WHERE calendar.exchange = 'KRX'
-                    AND calendar.session_type = 'TRADING'
-                    AND calendar.timezone = 'Asia/Seoul'
-                    AND calendar.source_batch_id IS NOT NULL
-                    AND calendar.content_sha256 IS NOT NULL
-                    AND calendar.retrieved_at IS NOT NULL
-                    AND (
-                      calendar.session_date <
-                        (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date
-                      OR (
-                        calendar.session_date =
-                          (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date
-                        AND (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::time
-                          >= control.wake_at_kst
-                      )
-                    )),
+                (SELECT session_date FROM expected),
+                COALESCE((SELECT bool_and(latest_feed = session_date) FROM per_universe), false),
                 (SELECT count(*) FROM jobs WHERE job_type='candidate_compute' AND status IN ('QUEUED','RUNNING')),
                 (SELECT EXTRACT(EPOCH FROM clock_timestamp() - min(created_at))::bigint
                    FROM jobs WHERE job_type='candidate_compute' AND status IN ('QUEUED','RUNNING'))",
@@ -433,7 +451,7 @@ async fn probe(pool: &sqlx::PgPool, config: &Config, readiness: bool) -> Result<
     if readiness && !active {
         return Err("candidate scheduler is disabled".into());
     }
-    if readiness && (expected_feed.is_none() || latest_feed != expected_feed) {
+    if readiness && !all_feeds_current {
         return Err("candidate feed is not current for the latest closed KRX session".into());
     }
     println!(
@@ -448,6 +466,7 @@ async fn probe(pool: &sqlx::PgPool, config: &Config, readiness: bool) -> Result<
             "scheduler_active": active,
             "latest_feed_as_of": latest_feed,
             "expected_feed_as_of": expected_feed,
+            "all_feeds_current": all_feeds_current,
             "queued_or_running": queued,
             "oldest_queue_age_seconds": oldest_age,
         })
@@ -455,14 +474,37 @@ async fn probe(pool: &sqlx::PgPool, config: &Config, readiness: bool) -> Result<
     Ok(())
 }
 
-fn schedule_label(
-    result: &Result<
-        job_queue::candidate::schedule::CandidateScheduleReport,
-        CandidateScheduleError,
-    >,
+fn schedule_batch_label(
+    result: &Result<CandidateScheduleBatchReport, CandidateScheduleError>,
 ) -> String {
     match result {
-        Ok(report) => format!("SCHEDULED:{}", report.run_id),
+        Ok(batch)
+            if batch.scheduled.is_empty()
+                && batch.failures.iter().all(|failure| {
+                    matches!(failure.error, CandidateScheduleError::SourceUnavailable)
+                }) =>
+        {
+            "WAITING_FOR_SOURCES".into()
+        }
+        Ok(batch) if batch.scheduled.is_empty() => "SCHEDULE_FAILED".into(),
+        Ok(batch) if batch.failures.is_empty() => {
+            let ids = batch
+                .scheduled
+                .iter()
+                .map(|report| report.run_id.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("SCHEDULED:{ids}")
+        }
+        Ok(batch) => {
+            let ids = batch
+                .scheduled
+                .iter()
+                .map(|report| report.run_id.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("SCHEDULED_PARTIAL:{ids}")
+        }
         Err(CandidateScheduleError::SourceUnavailable) => "WAITING_FOR_SOURCES".into(),
         Err(CandidateScheduleError::Invalid(_)) => "INVALID_SOURCE_CONFIG".into(),
         Err(CandidateScheduleError::Database(_)) => "DATABASE_UNAVAILABLE".into(),
@@ -594,15 +636,30 @@ async fn main() -> ExitCode {
         let mut progress = progress_tx.borrow().clone();
         if now >= next_schedule {
             let schedule =
-                schedule_latest_candidate_run(&pool, Utc::now().with_timezone(&seoul)).await;
-            progress.last_schedule_outcome = schedule_label(&schedule);
-            if let Err(error) = &schedule
-                && !matches!(error, CandidateScheduleError::SourceUnavailable)
-            {
-                eprintln!(
-                    "{}",
-                    json!({ "event": "candidate_schedule_failed", "message": error.to_string() })
-                );
+                schedule_latest_candidate_runs(&pool, Utc::now().with_timezone(&seoul)).await;
+            progress.last_schedule_outcome = schedule_batch_label(&schedule);
+            match &schedule {
+                Ok(batch) => {
+                    for failure in &batch.failures {
+                        if !matches!(failure.error, CandidateScheduleError::SourceUnavailable) {
+                            eprintln!(
+                                "{}",
+                                json!({
+                                    "event": "candidate_schedule_failed",
+                                    "universe": failure.universe_key.as_str(),
+                                    "message": failure.error.to_string()
+                                })
+                            );
+                        }
+                    }
+                }
+                Err(error) if !matches!(error, CandidateScheduleError::SourceUnavailable) => {
+                    eprintln!(
+                        "{}",
+                        json!({ "event": "candidate_schedule_failed", "message": error.to_string() })
+                    );
+                }
+                Err(_) => {}
             }
             next_schedule = now + config.schedule_poll;
         }
@@ -615,26 +672,33 @@ async fn main() -> ExitCode {
             }
             next_sweep = now + config.sweep;
         }
-        match run_once(
-            &pool,
-            &queue,
-            &config.worker_id,
-            &runner_paths,
-            &runner_config,
-        )
-        .await
-        {
-            Ok(outcome) => {
-                progress.last_run_outcome = outcome_label(&outcome);
-            }
-            Err(error) => {
-                progress.last_run_outcome = "RUNNER_UNAVAILABLE".into();
-                eprintln!(
-                    "{}",
-                    json!({ "event": "candidate_runner_failed", "message": error.to_string() })
-                );
-                if config.mode == Mode::Once {
-                    exit = ExitCode::FAILURE;
+        // Drain the queue in one process, one leased job at a time. A single
+        // schedule tick can enqueue both universes; no parallel compute path
+        // is introduced and one blocked job cannot erase the other feed.
+        loop {
+            match run_once(
+                &pool,
+                &queue,
+                &config.worker_id,
+                &runner_paths,
+                &runner_config,
+            )
+            .await
+            {
+                Ok(CandidateOutcome::Idle) => break,
+                Ok(outcome) => {
+                    progress.last_run_outcome = outcome_label(&outcome);
+                }
+                Err(error) => {
+                    progress.last_run_outcome = "RUNNER_UNAVAILABLE".into();
+                    eprintln!(
+                        "{}",
+                        json!({ "event": "candidate_runner_failed", "message": error.to_string() })
+                    );
+                    if config.mode == Mode::Once {
+                        exit = ExitCode::FAILURE;
+                    }
+                    break;
                 }
             }
         }
@@ -673,7 +737,7 @@ mod tests {
 
     #[test]
     fn schedule_labels_do_not_treat_missing_sources_as_success() {
-        let value = schedule_label(&Err(CandidateScheduleError::SourceUnavailable));
+        let value = schedule_batch_label(&Err(CandidateScheduleError::SourceUnavailable));
         assert_eq!(value, "WAITING_FOR_SOURCES");
     }
 }

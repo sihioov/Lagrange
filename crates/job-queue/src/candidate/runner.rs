@@ -407,6 +407,7 @@ fn build_publication(
     let provenance = json!({
         "as_of_date": input.payload.as_of_date.format("%Y-%m-%d").to_string(),
         "cutoff_at": input.payload.cutoff_at,
+        "universe_key": input.payload.universe_key,
         "input_identity_sha256": input.payload.input_identity_sha256,
         "scoring_config_version": input.payload.scoring_config_version,
         "scoring_config_sha256": input.payload.scoring_config_sha256,
@@ -475,6 +476,7 @@ fn build_publication(
     }
     let ranked = top_five(analyses);
     let summary = json!({
+        "universe_key": input.payload.universe_key,
         "universe_count": analyses.len(),
         "eligible_count": analyses.iter().filter(|row| row.is_top_five_eligible()).count(),
         "top_five": ranked.iter().map(|row| row.instrument.to_string()).collect::<Vec<_>>(),

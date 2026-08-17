@@ -5,6 +5,8 @@ use sqlx::{FromRow, PgPool};
 use thiserror::Error;
 use uuid::Uuid;
 
+use super::CandidateUniverseKey;
+
 const KST_CLOSE_HOUR: u32 = 16;
 const KST_CLOSE_MINUTE: u32 = 30;
 const MIN_PRICE_CONTEXT_SESSIONS: i32 = 60;
@@ -17,6 +19,7 @@ pub struct DatasetSchedulePin {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateScheduleRequest {
+    pub universe_key: CandidateUniverseKey,
     pub as_of_date: NaiveDate,
     pub cutoff_at: DateTime<Utc>,
     pub scoring_config_version: String,
@@ -32,10 +35,23 @@ pub struct CandidateScheduleRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateScheduleReport {
+    pub universe_key: CandidateUniverseKey,
     pub run_id: Uuid,
     pub job_id: Uuid,
     pub computation_seq: i32,
     pub as_of_date: NaiveDate,
+}
+
+#[derive(Debug)]
+pub struct CandidateScheduleFailure {
+    pub universe_key: CandidateUniverseKey,
+    pub error: CandidateScheduleError,
+}
+
+#[derive(Debug)]
+pub struct CandidateScheduleBatchReport {
+    pub scheduled: Vec<CandidateScheduleReport>,
+    pub failures: Vec<CandidateScheduleFailure>,
 }
 
 #[derive(Debug, Error)]
@@ -103,6 +119,26 @@ pub async fn schedule_candidate_run(
     let curated_version = i32::try_from(request.price_curated_version).map_err(|_| {
         CandidateScheduleError::Invalid("price curated version exceeds PostgreSQL integer".into())
     })?;
+    // 0045 deliberately keeps the SQL function signature stable and derives
+    // the authoritative universe from the pinned snapshot.  Validate the
+    // caller's additive label before invoking it so a KOSPI snapshot can never
+    // be relabeled as KOSDAQ in the returned report.
+    let snapshot_key: Option<String> =
+        sqlx::query_scalar("SELECT index_id FROM candidate_universe_snapshots WHERE id = $1")
+            .bind(request.universe_snapshot_id)
+            .fetch_optional(pool)
+            .await?;
+    let snapshot_key = snapshot_key.ok_or(CandidateScheduleError::SourceUnavailable)?;
+    let snapshot_universe = CandidateUniverseKey::parse(&snapshot_key).ok_or_else(|| {
+        CandidateScheduleError::Invalid(format!(
+            "unknown candidate snapshot universe {snapshot_key}"
+        ))
+    })?;
+    if snapshot_universe != request.universe_key {
+        return Err(CandidateScheduleError::Invalid(
+            "candidate schedule universe does not match its snapshot".to_owned(),
+        ));
+    }
     let (run_id, job_id, computation_seq): (Uuid, Uuid, i32) = sqlx::query_as(
         "SELECT run_id, job_id, computation_seq
            FROM public.schedule_candidate_run(
@@ -127,6 +163,7 @@ pub async fn schedule_candidate_run(
     .fetch_one(pool)
     .await?;
     Ok(CandidateScheduleReport {
+        universe_key: request.universe_key,
         run_id,
         job_id,
         computation_seq,
@@ -134,12 +171,60 @@ pub async fn schedule_candidate_run(
     })
 }
 
-/// Discover the newest coherent post-close source set and schedule it. The
-/// exact curated Parquet generation comes from the immutable price-publication
-/// row; deployment configuration cannot substitute a different generation.
+/// Discover the newest coherent KOSPI200 source set and schedule it. This is
+/// retained as the backwards-compatible single-universe helper.
 pub async fn schedule_latest_candidate_run(
     pool: &PgPool,
     now_kst: DateTime<FixedOffset>,
+) -> Result<CandidateScheduleReport, CandidateScheduleError> {
+    schedule_latest_candidate_run_for_universe(pool, now_kst, CandidateUniverseKey::Kospi200).await
+}
+
+/// Discover and schedule every enabled universe in registry sort order. A
+/// missing source set blocks only that universe; successful earlier universes
+/// remain scheduled and are never superseded by a later failure.
+pub async fn schedule_latest_candidate_runs(
+    pool: &PgPool,
+    now_kst: DateTime<FixedOffset>,
+) -> Result<CandidateScheduleBatchReport, CandidateScheduleError> {
+    let registry: Vec<String> = sqlx::query_scalar(
+        "SELECT universe_key
+           FROM candidate_universe_registry
+          WHERE enabled
+          ORDER BY sort_order, universe_key",
+    )
+    .fetch_all(pool)
+    .await?;
+    if registry.is_empty() {
+        return Err(CandidateScheduleError::SourceUnavailable);
+    }
+    let mut scheduled = Vec::with_capacity(registry.len());
+    let mut failures = Vec::new();
+    for value in registry {
+        let universe = CandidateUniverseKey::parse(&value).ok_or_else(|| {
+            CandidateScheduleError::Invalid(format!("unknown enabled candidate universe {value}"))
+        })?;
+        match schedule_latest_candidate_run_for_universe(pool, now_kst, universe).await {
+            Ok(report) => scheduled.push(report),
+            Err(error) => failures.push(CandidateScheduleFailure {
+                universe_key: universe,
+                error,
+            }),
+        }
+    }
+    Ok(CandidateScheduleBatchReport {
+        scheduled,
+        failures,
+    })
+}
+
+/// Discover the newest coherent post-close source set for one universe. The
+/// exact curated Parquet generation comes from immutable publication rows;
+/// deployment configuration cannot substitute a different generation.
+async fn schedule_latest_candidate_run_for_universe(
+    pool: &PgPool,
+    now_kst: DateTime<FixedOffset>,
+    universe_key: CandidateUniverseKey,
 ) -> Result<CandidateScheduleReport, CandidateScheduleError> {
     let latest_date = if (now_kst.hour(), now_kst.minute()) < (KST_CLOSE_HOUR, KST_CLOSE_MINUTE) {
         now_kst
@@ -186,24 +271,30 @@ pub async fn schedule_latest_candidate_run(
     .await?
     .ok_or(CandidateScheduleError::SourceUnavailable)?;
     let universe: IdentityRow = sqlx::query_as(
-        "SELECT id, available_at FROM candidate_universe_snapshots
-          WHERE index_id = 'kospi200' AND as_of_date <= $1 AND available_at <= $2
-            AND member_count = (
+        "SELECT snapshot.id, snapshot.available_at
+           FROM candidate_universe_snapshots AS snapshot
+           JOIN candidate_universe_registry AS registry
+             ON registry.universe_key = snapshot.index_id
+            AND registry.enabled
+          WHERE snapshot.index_id = $3 AND snapshot.as_of_date <= $1
+            AND snapshot.available_at <= $2
+            AND snapshot.member_count = (
                 SELECT count(*) FROM candidate_universe_members AS member
-                 WHERE member.universe_snapshot_id = candidate_universe_snapshots.id
+                 WHERE member.universe_snapshot_id = snapshot.id
                    AND member.effective_from <= $1
                    AND (member.effective_until IS NULL OR member.effective_until >= $1))
             AND EXISTS (
                 SELECT 1 FROM candidate_raw_batch_datasets AS binding
                 JOIN candidate_raw_batch_publications AS batch
                   ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
-               WHERE binding.dataset_version_id=candidate_universe_snapshots.dataset_version_id
+               WHERE binding.dataset_version_id=snapshot.dataset_version_id
                  AND binding.response_kind='index_membership'
-                 AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
-          ORDER BY as_of_date DESC, available_at DESC, id LIMIT 1",
+                 AND batch.state='PUBLISHED' AND batch.fetch_mode=$4)
+          ORDER BY snapshot.as_of_date DESC, snapshot.available_at DESC, snapshot.id LIMIT 1",
     )
     .bind(as_of_date)
     .bind(discovery_at)
+    .bind(universe_key.as_str())
     .bind(&required_fetch_mode)
     .fetch_optional(pool)
     .await?
@@ -406,6 +497,7 @@ pub async fn schedule_latest_candidate_run(
         &CandidateScheduleRequest {
             as_of_date,
             cutoff_at,
+            universe_key,
             scoring_config_version: config.version,
             scoring_config_sha256: config.content_sha256,
             universe_snapshot_id: universe.id,

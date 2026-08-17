@@ -10,10 +10,19 @@ use sqlx::{FromRow, PgPool};
 use thiserror::Error;
 use uuid::Uuid;
 
+use super::CandidateUniverseKey;
+
+fn default_universe_key() -> CandidateUniverseKey {
+    CandidateUniverseKey::Kospi200
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CandidatePayload {
     pub run_id: Uuid,
+    /// Omitted legacy payloads retain the documented KOSPI200 meaning.
+    #[serde(default = "default_universe_key")]
+    pub universe_key: CandidateUniverseKey,
     #[serde(deserialize_with = "deserialize_date")]
     pub as_of_date: NaiveDate,
     pub cutoff_at: DateTime<Utc>,
@@ -135,6 +144,7 @@ struct RunRow {
     scoring_config_version: String,
     scoring_config_sha256: String,
     universe_snapshot_id: Uuid,
+    universe_key: String,
     universe_entitlement_id: Uuid,
     price_dataset_version_id: Uuid,
     price_entitlement_id: Uuid,
@@ -267,7 +277,7 @@ pub(crate) async fn attest_candidate_input(
     let run: RunRow = sqlx::query_as(
         "SELECT job_id, as_of_date, cutoff_at, status,
                 scoring_config_version, scoring_config_sha256,
-                universe_snapshot_id, universe_entitlement_id,
+                universe_snapshot_id, universe_key, universe_entitlement_id,
                 price_dataset_version_id, price_entitlement_id,
                 price_curated_version, price_manifest_sha256,
                 status_dataset_version_id, status_entitlement_id, status_manifest_sha256,
@@ -719,6 +729,15 @@ fn attest_run(
             && run.universe_entitlement_id == payload.universe_entitlement_id,
         "run universe mismatch",
     )?;
+    let run_universe = CandidateUniverseKey::parse(&run.universe_key).ok_or_else(|| {
+        CandidateInputError::Integrity {
+            detail: format!("run has unknown universe {}", run.universe_key),
+        }
+    })?;
+    require(
+        run_universe == payload.universe_key,
+        "run universe key mismatch",
+    )?;
     require(
         run.price_dataset_version_id == payload.price_dataset_version_id
             && run.price_entitlement_id == payload.price_entitlement_id
@@ -987,5 +1006,41 @@ mod tests {
             "input_identity_sha256": "a".repeat(64)
         });
         assert!(CandidatePayload::try_from(payload).is_err());
+    }
+
+    #[test]
+    fn payload_preserves_explicit_universe_key_and_legacy_default() {
+        let mut payload = json!({
+            "run_id": Uuid::nil(),
+            "as_of_date": "2026-08-14",
+            "cutoff_at": "2026-08-14T08:00:00Z",
+            "scoring_config_version": "candidate-score-v1",
+            "scoring_config_sha256": "a".repeat(64),
+            "universe_snapshot_id": Uuid::nil(),
+            "universe_entitlement_id": Uuid::nil(),
+            "price_dataset_version_id": Uuid::nil(),
+            "price_entitlement_id": Uuid::nil(),
+            "price_curated_version": 1,
+            "price_manifest_sha256": "a".repeat(64),
+            "status_dataset_version_id": Uuid::nil(),
+            "status_entitlement_id": Uuid::nil(),
+            "status_manifest_sha256": "a".repeat(64),
+            "flow_dataset_version_id": Uuid::nil(),
+            "flow_entitlement_id": Uuid::nil(),
+            "flow_manifest_sha256": "a".repeat(64),
+            "fundamental_dataset_version_id": Uuid::nil(),
+            "fundamental_entitlement_id": Uuid::nil(),
+            "fundamental_manifest_sha256": "a".repeat(64),
+            "sector_version_id": Uuid::nil(),
+            "sector_entitlement_id": Uuid::nil(),
+            "input_identity_sha256": "a".repeat(64)
+        });
+
+        let legacy = CandidatePayload::try_from(payload.clone()).expect("legacy KOSPI payload");
+        assert_eq!(legacy.universe_key, CandidateUniverseKey::Kospi200);
+
+        payload["universe_key"] = json!("kosdaq150");
+        let explicit = CandidatePayload::try_from(payload).expect("explicit KOSDAQ payload");
+        assert_eq!(explicit.universe_key, CandidateUniverseKey::Kosdaq150);
     }
 }
