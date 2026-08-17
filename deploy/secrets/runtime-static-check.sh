@@ -25,6 +25,12 @@ if git check-ignore -q "$provision"; then
   die 'provisioner is unexpectedly ignored by Git'
 fi
 bash -n "$provision" || die "provisioner has shell syntax errors"
+grep -Fq -- '--scope backfill|release' "$provision" \
+  || die 'provisioner scope contract is absent'
+grep -Fq 'scope=$scope' "$provision" \
+  || die 'provisioner must report the selected scope'
+grep -Fq 'if [ "$scope" = release ]; then' "$provision" \
+  || die 'provisioner must fence serving-only copies to release scope'
 [ -f "$db_dockerfile" ] || die 'missing database one-shot Dockerfile'
 [ -f "$paper_wrapper" ] || die 'missing Paper runtime wrapper'
 bash -n "$paper_wrapper" || die 'Paper runtime wrapper has shell syntax errors'
@@ -99,9 +105,81 @@ for service in db-role-bootstrap db-migrate; do
     || die "$service must mount $expected_count secrets with mode 0400"
 done
 
-grep -Fq '[ ! -L "$input" ]' "$provision" \
-  || die 'provisioner must reject symlinked source secrets'
+grep -Fq 'reject_dotdot()' "$provision" \
+  || die 'provisioner must reject .. path aliases'
+grep -Fq 'check_path "$source_dir" source-directory' "$provision" \
+  || die 'provisioner must fence source directory ancestors'
+grep -Fq 'check_path "$runtime_dir" runtime-directory' "$provision" \
+  || die 'provisioner must fence runtime directory ancestors'
+grep -Fq 'check_path "$input"' "$provision" \
+  || die 'provisioner must fence source-file ancestors'
+grep -Fq 'check_path "$output_dir"' "$provision" \
+  || die 'provisioner must fence runtime service-directory ancestors'
+grep -Fq 'check_path "$output"' "$provision" \
+  || die 'provisioner must fence runtime secret-file ancestors'
+grep -Fq 'must not traverse a symlink' "$provision" \
+  || die 'provisioner must reject symlinked ancestors'
 grep -Fq "\\r'" "$provision" \
   || die 'provisioner must reject CR-containing credential secrets'
+
+# Exercise the path fence without requiring real root or any secret copy. A
+# fake id(1) satisfies the early root guard; every fixture exits before mkdir/
+# install, so this remains a no-root static test of symlink and `..` rejection.
+fixture=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-secret-path-test.XXXXXX")
+trap 'rm -rf -- "$fixture"' EXIT
+fake_bin="$fixture/bin"
+mkdir -p "$fake_bin"
+printf '%s\n' '#!/usr/bin/env bash' 'if [ "$1" = -u ]; then echo 0; else exec /usr/bin/id "$@"; fi' >"$fake_bin/id"
+chmod 0755 "$fake_bin/id"
+mkdir -p "$fixture/source-real" "$fixture/runtime-real" "$fixture/source" "$fixture/runtime"
+ln -s "$fixture/source-real" "$fixture/source-link"
+ln -s "$fixture/runtime-real" "$fixture/runtime-link"
+
+expect_path_rejection() {
+  local label=$1 output=$2
+  shift 2
+  if PATH="$fake_bin:$PATH" "$@" >"$output" 2>&1; then
+    die "provisioner accepted unsafe $label path"
+  fi
+  grep -Eq "must not (traverse a symlink|contain '\.\.')" "$output" \
+    || die "provisioner did not report unsafe $label path"
+}
+
+expect_path_rejection source-ancestor "$fixture/source-ancestor.out" \
+  env LAGRANGE_SECRET_SOURCE_DIR="$fixture/source-link/child" \
+      LAGRANGE_RUNTIME_SECRET_DIR="$fixture/runtime" \
+      bash "$provision" --scope backfill
+expect_path_rejection runtime-ancestor "$fixture/runtime-ancestor.out" \
+  env LAGRANGE_SECRET_SOURCE_DIR="$fixture/source" \
+      LAGRANGE_RUNTIME_SECRET_DIR="$fixture/runtime-link/child" \
+      bash "$provision" --scope backfill
+expect_path_rejection dotdot-alias "$fixture/dotdot.out" \
+  env LAGRANGE_SECRET_SOURCE_DIR="$fixture/source/../source" \
+      LAGRANGE_RUNTIME_SECRET_DIR="$fixture/runtime" \
+      bash "$provision" --scope backfill
+
+printf 'fixture-secret' >"$fixture/source/postgres_password.real"
+ln -s "$fixture/source/postgres_password.real" "$fixture/source/postgres_password"
+expect_path_rejection input-ancestor "$fixture/input.out" \
+  env LAGRANGE_SECRET_SOURCE_DIR="$fixture/source" \
+      LAGRANGE_RUNTIME_SECRET_DIR="$fixture/runtime" \
+      bash "$provision" --scope backfill
+
+rm -f "$fixture/source/postgres_password"
+printf 'fixture-secret' >"$fixture/source/postgres_password"
+ln -s "$fixture/runtime-real" "$fixture/runtime/db-role-bootstrap"
+expect_path_rejection output-directory "$fixture/output-dir.out" \
+  env LAGRANGE_SECRET_SOURCE_DIR="$fixture/source" \
+      LAGRANGE_RUNTIME_SECRET_DIR="$fixture/runtime" \
+      bash "$provision" --scope backfill
+
+rm -f "$fixture/runtime/db-role-bootstrap"
+mkdir -p "$fixture/runtime/db-role-bootstrap"
+ln -s "$fixture/runtime-real/postgres_password" \
+  "$fixture/runtime/db-role-bootstrap/postgres_password"
+expect_path_rejection output-file "$fixture/output-file.out" \
+  env LAGRANGE_SECRET_SOURCE_DIR="$fixture/source" \
+      LAGRANGE_RUNTIME_SECRET_DIR="$fixture/runtime" \
+      bash "$provision" --scope backfill
 
 echo 'SECRETS_RUNTIME_STATIC: PASS'

@@ -6,8 +6,9 @@ set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
+source "$script_dir/lib/dotenv.sh"
 env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
-state_file=${LAGRANGE_BACKFILL_STATE:-/var/lib/lagrange/data/backfill/state.tsv}
+state_file=${LAGRANGE_BACKFILL_STATE:-}
 start_date=
 end_date=
 universes=etf
@@ -24,10 +25,11 @@ candidate bridge is released; this command never pretends that KIS EOD bars
 are candidate source data.
 
 --execute requires BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS
-and a valid production config. It uses the existing idempotent worker path;
+and a valid backfill-scope production config. It uses the existing idempotent worker path;
 no order/account endpoint is called. The state file is append-only and each
 worker run must complete Raw -> normalized -> DB publication before progress
-is recorded.
+is recorded. The state identity binds only pre-run inputs; the curated dataset
+pin is produced and approved after this command, so it is never required here.
 EOF
 }
 
@@ -84,6 +86,23 @@ case "$universes" in
   *) die 'universe must be etf, candidate, or all' ;;
 esac
 
+# Read the same strict, non-evaluating dotenv contract used by the validator.
+# This is needed even for --plan so the default state path follows the
+# effective absolute LAGRANGE_DATA_DIR rather than a host-specific fallback.
+[ -f "$env_file" ] || blocked "production env file missing: $env_file"
+if ! dotenv_load "$env_file"; then
+  echo 'INVALID_CONFIG: production env file is malformed' >&2
+  printf '  - %s\n' "${DOTENV_ERRORS[@]}" >&2
+  exit 1
+fi
+data_dir=$(dotenv_get LAGRANGE_DATA_DIR)
+[ -n "$data_dir" ] || die 'production env is missing LAGRANGE_DATA_DIR'
+[[ "$data_dir" = /* ]] || die 'LAGRANGE_DATA_DIR must be absolute'
+case "$data_dir" in
+  */../*|*/..) die 'LAGRANGE_DATA_DIR must not contain ..' ;;
+esac
+[ -n "$state_file" ] || state_file="$data_dir/backfill/state.tsv"
+
 date_list() {
   python3 - "$start_date" "$end_date" <<'PY'
 import datetime as dt
@@ -97,17 +116,6 @@ while day <= end:
     print(day.isoformat())
     day += dt.timedelta(days=1)
 PY
-}
-
-env_value() {
-  local wanted=$1 line
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%$'\r'}
-    case "$line" in
-      "$wanted="*) printf '%s' "${line#*=}"; return 0 ;;
-    esac
-  done <"$env_file"
-  return 1
 }
 
 check_state_path() {
@@ -131,7 +139,7 @@ check_state_path() {
 }
 
 validate_state() {
-  local expected_header=$'LAGRANGE_BACKFILL_STATE_V2\t'"$run_identity"
+  local expected_header=$'LAGRANGE_BACKFILL_STATE_V3\t'"$run_identity"
   local line number=0 state_date state_status state_id extra
   while IFS= read -r line || [ -n "$line" ]; do
     number=$((number + 1))
@@ -157,7 +165,15 @@ validate_state() {
 if [ "$mode" = execute ]; then
   [ "${BACKFILL_CONFIRM_EXTERNAL:-}" = I_UNDERSTAND_READ_ONLY_KIS_CALLS ] ||
     blocked 'execution is disabled until BACKFILL_CONFIRM_EXTERNAL is explicitly set'
-  bash "$script_dir/validate-production-config.sh" --env-file "$env_file"
+  bash "$script_dir/validate-production-config.sh" --scope backfill --env-file "$env_file"
+  # The validator is the first effective-environment gate on an external run;
+  # repeat the shared parser check here before deriving identity or writing
+  # state, so this path cannot drift from Compose's interpolation semantics.
+  if ! dotenv_validate_shell_overrides; then
+    echo 'INVALID_CONFIG: shell environment would override production env values' >&2
+    printf '  - %s\n' "${DOTENV_SHELL_ERRORS[@]}" >&2
+    exit 1
+  fi
   command -v docker >/dev/null 2>&1 || blocked 'docker is not installed'
   docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavailable'
   command -v flock >/dev/null 2>&1 || blocked 'flock is required to serialize backfill executions'
@@ -175,37 +191,32 @@ if [ "$mode" = execute ]; then
   : >>"$state_file"
   check_state_path "$state_file" backfill-state
 
-  code_commit=${LAGRANGE_CODE_COMMIT:-}
-  entitlement_reference=$(env_value RESEARCH_ENTITLEMENT_REFERENCE) ||
+  code_commit=$(dotenv_effective_get LAGRANGE_CODE_COMMIT)
+  entitlement_reference=$(dotenv_get RESEARCH_ENTITLEMENT_REFERENCE)
+  [ -n "$entitlement_reference" ] ||
     die 'production env is missing RESEARCH_ENTITLEMENT_REFERENCE'
-  dataset_version_id=$(env_value RECOMMENDATION_DATASET_VERSION_ID) ||
-    die 'production env is missing RECOMMENDATION_DATASET_VERSION_ID'
-  dataset_id=$(env_value RECOMMENDATION_DATASET_ID) ||
-    die 'production env is missing RECOMMENDATION_DATASET_ID'
-  dataset_version=$(env_value RECOMMENDATION_DATASET_VERSION) ||
-    die 'production env is missing RECOMMENDATION_DATASET_VERSION'
-  curated_version=$(env_value RECOMMENDATION_CURATED_VERSION) ||
-    die 'production env is missing RECOMMENDATION_CURATED_VERSION'
-  manifest_hash=$(env_value RECOMMENDATION_DATASET_MANIFEST_SHA256) ||
-    die 'production env is missing RECOMMENDATION_DATASET_MANIFEST_SHA256'
   identity_payload=$(cat <<EOF
-schema=2
+schema=3
+start_date=$start_date
+end_date=$end_date
+universe=$universes
 code_commit=$code_commit
 entitlement_reference=$entitlement_reference
-dataset_id=$dataset_id
-dataset_version_id=$dataset_version_id
-dataset_version=$dataset_version
-curated_version=$curated_version
-manifest_sha256=$manifest_hash
 source_scope=kis/kr|kis-normalized/kr|KRX/KR|etf
 EOF
 )
   run_identity=$(printf '%s' "$identity_payload" | sha256sum | awk '{print $1}')
   [[ "$run_identity" =~ ^[0-9a-f]{64}$ ]] || die 'could not derive backfill run identity'
   if [ ! -s "$state_file" ]; then
-    printf 'LAGRANGE_BACKFILL_STATE_V2\t%s\n' "$run_identity" >>"$state_file"
+    printf 'LAGRANGE_BACKFILL_STATE_V3\t%s\n' "$run_identity" >>"$state_file"
   fi
   validate_state
+fi
+
+if [ "$mode" = plan ] && ! dotenv_validate_shell_overrides; then
+  echo 'INVALID_CONFIG: shell environment would override production env values' >&2
+  printf '  - %s\n' "${DOTENV_SHELL_ERRORS[@]}" >&2
+  exit 1
 fi
 
 if [ "$mode" = plan ]; then
@@ -214,6 +225,7 @@ BACKFILL_PLAN: KIS read-only fixed ETF EOD
   source dates: $start_date..$end_date (provider decides trading-day/holiday response)
   raw scope: kis/kr; normalized scope: kis-normalized/kr; DB logical provider: KRX
   idempotency: deterministic normalized batch/source_batch_id and exact manifest replay
+  state identity: V3 pre-run inputs only (date range, universe, code, entitlement, source scope)
   verification: raw manifest+hashes -> normalize -> four canonical docs -> DB publication
   approval: operator reviews manifest/hash/counts, then pins one dataset version for recommendation/backtest/Paper
   state: $state_file (created only by --execute)

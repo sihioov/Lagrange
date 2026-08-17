@@ -44,7 +44,7 @@ scripts/ops/provision-linux.sh --preflight
 
 ```bash
 sudo scripts/ops/provision-linux.sh --apply
-sudo deploy/secrets/provision-runtime-secrets.sh
+sudo deploy/secrets/provision-runtime-secrets.sh --scope backfill
 ```
 
 실제 secret 값은 이 저장소나 명령 인자에 넣지 않는다. 다음 검사는 값 자체를
@@ -53,13 +53,15 @@ pin의 shape만 확인한다.
 
 ```bash
 export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
-scripts/ops/validate-production-config.sh --env-file deploy/compose/.env
+scripts/ops/validate-production-config.sh --scope backfill --env-file deploy/compose/.env
 ```
 
-검사 결과가 `BLOCKED_EXTERNAL`이면 정상적인 대기 상태다. 누락된 KIS key/secret,
-TLS/Auth0/DB secret, 운영 DB, entitlement reference, 또는 dataset pin을 전용
-운영 절차로 주입한 뒤 다시 실행한다. `INVALID_CONFIG`는 값을 기다릴 문제가
-아니라 설정을 수정해야 하는 상태다.
+backfill scope는 KIS key/secret, DB/bootstrap/runtime copies, 운영 경로,
+entitlement reference와 production/credentialed/live-off 경계만 확인한다.
+아직 생성되지 않은 Curated manifest와 recommendation five-pin, Auth0/TLS
+serving 값은 이 단계에서 요구하지 않는다. 검사 결과가 `BLOCKED_EXTERNAL`이면
+정상적인 대기 상태다. `INVALID_CONFIG`는 값을 기다릴 문제가 아니라 설정을
+수정해야 하는 상태다.
 
 ## 2. 고정 ETF 백필
 
@@ -80,13 +82,15 @@ BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS \
 ```
 
 실행기는 날짜별로 `research-worker --once --date`를 호출하고, 성공한 날짜만
-state file에 `PUBLISHED`로 append한다. 상태 파일은 현재 실행의 code commit,
-entitlement reference, dataset five-pin, source scope를 해시한 V2 identity에
-바인딩되며, 다른 실행의 상태나 구버전 형식은 fail-closed로 거부한다. 실행 중
-동시 백필은 `flock`으로 직렬화한다. 실패한 날짜에서 중지하며, 재실행 시
-같은 identity에서 이미 `PUBLISHED`인 날짜만 건너뛴다. worker 자체의
+state file에 `PUBLISHED`로 append한다. 상태 파일은 현재 실행의 date range,
+universe, code commit, entitlement reference와 source scope만 해시한 V3
+pre-run identity에 바인딩된다. 아직 생성되지 않은 curated manifest/five-pin은
+identity에 들어가지 않으므로, 백필 후 승인 pin을 `.env`에 입력해도 재개 state가
+무효화되지 않는다. 다른 실행의 상태나 구버전 형식은 fail-closed로 거부한다.
+실행 중 동시 백필은 `flock`으로 직렬화한다. 실패한 날짜에서 중지하며, 재실행
+시 같은 identity에서 이미 `PUBLISHED`인 날짜만 건너뛴다. worker 자체의
 deterministic normalized ID와 exact manifest/evidence 비교가 재시도·crash
-recovery의 기준이며, pin을 바꾸려면 새 state path를 사용한다.
+recovery의 기준이다.
 
 각 날짜의 승인 조건은 다음 네 단계가 모두 확인되는 것이다.
 
@@ -175,31 +179,72 @@ quality gate가 `SCHEMA_MISMATCH`/`BLOCKED`로 거부해야 한다.
 기동은 계획/검증을 먼저 수행한다.
 
 ```bash
-scripts/ops/compose-release.sh --plan
-scripts/ops/compose-release.sh --preflight
+scripts/ops/compose-release.sh --scope backfill --plan
+scripts/ops/compose-release.sh --scope backfill --preflight
 ```
 
-운영자가 외부 blocker를 해소한 뒤 `--apply`를 실행하면 다음 순서를 보장한다.
+먼저 backfill scope를 적용한다. 이 단계는 Auth0/TLS와 아직 생성되지 않은
+recommendation five-pin을 요구하지 않으며 다음 순서를 보장한다.
 
 `postgres` → `db-role-bootstrap` → `db-migrate` → `research-raw-init` →
-`research-schema-check` → API → Web/KIS research/recommendation/candidate/backtest
-→ Paper → reverse-proxy. One-shot 실패는 후속 서비스 기동을 막고, 완료된
-one-shot을 `--rm`으로 제거한 뒤 serving `up` 단계가 다시 실행하지 않도록
-serving 단계는 명시적으로 `--no-deps`로 실행한다. `report-worker`는
-아직 producer/settlement contract가 없어 fake healthy service로 만들지 않는다.
+`research-schema-check`, 그리고 `research-worker` image build만 수행한다.
+backfill scope에서는 research-worker daemon을 시작하지 않는다. One-shot 실패는
+후속 단계와 백필 실행을 막고, 완료된 one-shot을 `--rm`으로 제거한다. API/Web/
+recommendation/candidate/backtest/Paper/reverse-proxy는 이 단계에서 시작하지
+않는다.
 
 ```bash
-scripts/ops/compose-release.sh --apply
+scripts/ops/compose-release.sh --scope backfill --apply
+```
+
+bootstrap이 성공한 뒤에만 날짜별 one-shot 백필을 실행한다. daemon을 먼저
+기동하면 기본 16:30 스케줄러가 승인된 범위 밖의 날짜를 가져올 수 있으므로,
+각 날짜는 `docker compose run --rm --no-deps research-worker --once`로만
+실행한다.
+
+신규 DB에는 백필 전 EOD 행이 없으므로 backfill bootstrap의
+`COMPOSE_BACKFILL_BOOTSTRAP: PASS`는 PostgreSQL/one-shot 인프라 gate만 의미하며,
+KIS 데이터가 준비됐거나 worker health가 healthy라는 뜻이 아니다.
+
+```bash
+scripts/ops/post-backfill-health.sh --scope backfill --check
+```
+
+이 검사는 실행 중 worker daemon을 요구하지 않고 동일한 worker image의
+`healthcheck` subcommand를 `run --rm --no-deps`로 실행한다. 따라서 백필 날짜
+범위 밖의 추가 수집 없이 publication freshness만 확인한다. 검사를 통과한 뒤
+Raw/normalized/DB/Curated 증거를 검토하고 immutable
+dataset version과 five-pin을 승인한다. 이어서 Auth0/TLS와 serving runtime
+secret을 provision하고 full release validator/Compose를 실행한다.
+
+```bash
+scripts/ops/validate-production-config.sh --scope release --env-file deploy/compose/.env
+scripts/ops/compose-release.sh --scope release --apply
 docker compose --env-file deploy/compose/.env \
   -f deploy/compose/compose.yml ps
 docker compose --env-file deploy/compose/.env \
   -f deploy/compose/compose.yml logs --tail=200 research-worker recommendation-runner
 ```
 
-헬스체크는 DB readiness, migration/schema gate, Raw/Curated root, dataset pin,
-worker heartbeat와 latest EOD freshness를 모두 확인해야 한다. 재시작은 health
-원인을 확인한 뒤에만 수행하며, `down -v`는 disposable QA project 밖에서 실행하지
-않는다. `live` profile은 명령에 포함하지 않는다.
+full serving 기동 뒤에는 release scope readiness gate를 다시 실행한다.
+
+```bash
+scripts/ops/post-backfill-health.sh --scope release --check
+```
+
+이 gate는 worker daemon의 running 여부를 확인하지 않는다. Compose에 정의된
+동일 image/binary의 `research-worker healthcheck` subcommand를
+`run --rm --no-deps` one-shot으로 직접 실행한다. 따라서
+`data_batches`의 credentialed `KRX/KR` EOD 행과 batch-date-aware
+freshness가 실제로 충족되어야 PASS한다. 이 healthcheck의 실제 범위는 DB
+round-trip, logical `KRX/KR` EOD publication, fetch mode, 미래 날짜 차단,
+freshness이다(`data-pipelines/collectors/src/worker.rs:1388-1429`). Raw/Curated
+root·manifest hash·dataset five-pin·migration/schema는 각각
+`validate-production-config.sh`, publication/curation, API/runner startup 및
+one-shot schema gate에서 검증되며 worker healthcheck가 모두 대리한다고
+해석하지 않는다. 재시작은 health 원인을 확인한 뒤에만 수행하며, `down -v`는
+disposable QA project 밖에서 실행하지 않는다. `live` profile은 명령에
+포함하지 않는다.
 
 ## 6. 권리 증거와 release gate
 

@@ -38,9 +38,12 @@
 # To provision a local development set (gitignored), copy each *.example to
 # its real name and fill it in. For native-Linux Compose, supply the source
 # values through the operator's secret manager and then run
-# `deploy/secrets/provision-runtime-secrets.sh` as root to create the
-# service-specific UID/mode copies. The provisioner copies and validates
-# supplied values; it deliberately does not generate production credentials.
+# `deploy/secrets/provision-runtime-secrets.sh --scope backfill` as root to
+# create only the DB/bootstrap/schema/research-worker UID/mode copies needed
+# before dataset approval. Use `--scope release` after Auth0/TLS and dataset
+# approval to create the full serving inventory. The provisioner copies and
+# validates supplied values; it deliberately does not generate production
+# credentials.
 
 ## Database role credentials and cursor key
 
@@ -231,14 +234,15 @@ long-running worker remains unprivileged and never needs root.
 Compose uses service-specific copies because file-backed Compose secrets are
 bind mounts on native Linux; a Compose `mode` field alone does not reliably
 change the host file's ownership. After creating the operator source files,
-run the provisioning helper as root:
+run the provisioning helper as root. Use backfill scope before dataset approval:
 
 ```sh
-sudo deploy/secrets/provision-runtime-secrets.sh
+sudo deploy/secrets/provision-runtime-secrets.sh --scope backfill
 ```
 
 It fails closed if a source is missing, symlinked, or (for credential files)
-contains CR/LF. It writes only `0440` copies owned by the consuming UID,
+contains CR/LF. Backfill scope writes only the DB/bootstrap/schema/research
+worker copies. Release scope writes `0440` copies owned by the consuming UID,
 including an independent path for `candidate-runner`:
 `10001:10001` for API/workers, `999:999` for PostgreSQL/schema checks and the
 non-root bootstrap/migration one-shots, and `101:101` for the unprivileged
@@ -248,3 +252,11 @@ one-shot to root would violate the deployment contract. Compose refuses to
 start until these copies exist under `LAGRANGE_RUNTIME_SECRET_DIR` (default
 `deploy/secrets/runtime`). The runtime directory is gitignored and must be
 re-provisioned after rotating a source secret.
+
+After the ETF Raw→Curated dataset is approved, provision the remaining serving
+copies and validate the full release contract:
+
+```sh
+sudo deploy/secrets/provision-runtime-secrets.sh --scope release
+scripts/ops/validate-production-config.sh --scope release --env-file deploy/compose/.env
+```
