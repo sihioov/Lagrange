@@ -425,6 +425,7 @@ fn error_code(error: &WorkerError) -> &'static str {
         WorkerError::Timeout { .. } => "WORKER_TIMEOUT",
         WorkerError::ProviderNotConfigured => "PROVIDER_NOT_CONFIGURED",
         WorkerError::Provider(_) => "PROVIDER_UNAVAILABLE",
+        WorkerError::KisClient(_) => "KIS_CLIENT_UNAVAILABLE",
         WorkerError::Database { .. } => "DATABASE_UNAVAILABLE",
         WorkerError::Unhealthy { .. } => "UNHEALTHY",
         WorkerError::Pipeline(_) => "PIPELINE_FAILED",

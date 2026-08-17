@@ -727,6 +727,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "domain",
+ "kis-client",
  "market-data",
  "serde",
  "serde_json",

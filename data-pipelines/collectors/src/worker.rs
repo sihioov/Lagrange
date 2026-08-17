@@ -11,9 +11,18 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, Datelike, FixedOffset, NaiveTime, TimeZone, Utc};
 use domain::{BatchId, DatasetId, TradingDate, UtcTimestamp};
+use kis_client::clock::Clock;
+use kis_client::live_transport::LiveTransport;
+use kis_client::secret::SystemCredentialSource;
+use kis_client::token_issuer::KisTokenIssuer;
+use kis_client::{
+    BucketKey, CredentialRef, KisError, KisMarketDataClient, Quota, RateLimiter, SystemClock,
+    TokenManager, TokioSleeper,
+};
 use market_data::contract::{FetchMode, MARKET_KR};
 use market_data::ingest::IngestRequest;
 use market_data::provider::{EodProvider, KrxProvider, ProviderError, RecordedBundle};
+use market_data::providers::kis::KisProvider;
 use market_data::storage::RawStore;
 use market_data::{
     CANDIDATE_RESPONSE_KINDS, CurateError, CurateRequest, CurateStore, curate_batch,
@@ -44,6 +53,46 @@ const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(15);
 const CHILD_OUTPUT_LIMIT: u64 = 4096;
 const CHILD_REAP_TIMEOUT: Duration = Duration::from_secs(5);
+// The provider is intentionally constructed in this slice before the
+// credentialed orchestration branch consumes it. Keep the strict lint clean
+// while that branch remains a separate follow-up.
+#[allow(dead_code)]
+const KIS_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+#[allow(dead_code)]
+const KIS_READ_QUOTA: Quota = Quota {
+    capacity: 1,
+    refill_per_sec: 1,
+};
+#[allow(dead_code)]
+const KIS_READ_CHANNELS: [(&str, &str); 9] = [
+    (
+        "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+        "FHKST03010100",
+    ),
+    (
+        "/uapi/domestic-stock/v1/quotations/inquire-price",
+        "FHKST01010100",
+    ),
+    (
+        "/uapi/domestic-stock/v1/quotations/chk-holiday",
+        "CTCA0903R",
+    ),
+    (
+        "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
+        "HHKDB669100C0",
+    ),
+    (
+        "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
+        "HHKDB669101C0",
+    ),
+    ("/uapi/domestic-stock/v1/ksdinfo/dividend", "HHKDB669102C0"),
+    (
+        "/uapi/domestic-stock/v1/ksdinfo/merger-split",
+        "HHKDB669104C0",
+    ),
+    ("/uapi/domestic-stock/v1/ksdinfo/rev-split", "HHKDB669105C0"),
+    ("/uapi/domestic-stock/v1/ksdinfo/cap-dcrs", "HHKDB669106C0"),
+];
 
 pub const WORKER_ENV_KEYS: &[&str] = &[
     "APP_ENV",
@@ -143,6 +192,8 @@ pub enum WorkerError {
     Timeout { phase: WorkerPhase },
     #[error("research provider is not configured")]
     ProviderNotConfigured,
+    #[error("KIS client construction failed")]
+    KisClient(#[source] KisError),
     #[error("research provider construction failed")]
     Provider(#[source] ProviderError),
     #[error("database operation failed during {phase:?}")]
@@ -221,6 +272,7 @@ impl WorkerError {
             | Self::SyntheticForbidden { .. }
             | Self::SecretFile { .. }
             | Self::ProviderNotConfigured
+            | Self::KisClient(_)
             | Self::Unhealthy { .. }
             | Self::ChildContainment { .. }
             | Self::ChildOutput { .. }
@@ -234,7 +286,9 @@ impl WorkerError {
             | Self::InvalidConfig { .. }
             | Self::SyntheticForbidden { .. }
             | Self::SecretFile { .. } => WorkerPhase::Config,
-            Self::ProviderNotConfigured | Self::Provider(_) => WorkerPhase::Provider,
+            Self::ProviderNotConfigured | Self::Provider(_) | Self::KisClient(_) => {
+                WorkerPhase::Provider
+            }
             Self::Database { phase, .. } => *phase,
             Self::Unhealthy { .. } => WorkerPhase::Health,
             Self::ChildIo { phase }
@@ -493,6 +547,72 @@ pub trait WorkerComponentFactory: Send + Sync {
 
 pub struct ProductionWorkerComponentFactory;
 
+#[allow(dead_code)]
+type LiveKisClient = KisMarketDataClient<LiveTransport, TokioSleeper, SystemCredentialSource>;
+#[allow(dead_code)]
+type LiveKisProvider = KisProvider<LiveKisClient>;
+
+#[allow(dead_code)]
+fn kis_system_now_ms() -> i64 {
+    SystemClock.now_ms()
+}
+
+/// Build the credentialed KIS read path without ever copying a secret value
+/// into the worker configuration.  `SystemCredentialSource` resolves both
+/// files at token issue/read time, so a mounted-secret rotation takes effect
+/// without rebuilding this client.
+#[allow(dead_code)]
+pub(crate) fn build_production_kis_provider(
+    config: &ResearchWorkerConfig,
+) -> Result<LiveKisProvider, WorkerError> {
+    let app_key_path = config
+        .kis_app_key_file
+        .as_ref()
+        .ok_or(WorkerError::InvalidConfig {
+            key: "KIS_APP_KEY_FILE",
+        })?;
+    let app_secret_path =
+        config
+            .kis_app_secret_file
+            .as_ref()
+            .ok_or(WorkerError::InvalidConfig {
+                key: "KIS_APP_SECRET_FILE",
+            })?;
+    let app_key_ref = CredentialRef::file(app_key_path.to_string_lossy().into_owned());
+    let app_secret_ref = CredentialRef::file(app_secret_path.to_string_lossy().into_owned());
+
+    // Token issuance and market reads own separate transports because the
+    // live transport is intentionally not Clone.  Both use the same explicit
+    // timeout and the same live host selected by `LiveTransport::live`.
+    let token_transport = LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(WorkerError::KisClient)?;
+    let read_transport = LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(WorkerError::KisClient)?;
+    let clock = Arc::new(SystemClock);
+    let token_issuer = KisTokenIssuer::new(
+        token_transport,
+        SystemCredentialSource,
+        app_key_ref.clone(),
+        app_secret_ref.clone(),
+        kis_system_now_ms,
+    );
+    let tokens = Arc::new(TokenManager::new(clock.clone(), Arc::new(token_issuer)));
+    let limiter = KIS_READ_CHANNELS.iter().fold(
+        RateLimiter::new(clock, KIS_READ_QUOTA),
+        |limiter, (endpoint, tr_id)| {
+            limiter.with_quota(BucketKey::new(*endpoint, *tr_id), KIS_READ_QUOTA)
+        },
+    );
+    let client = KisMarketDataClient::new(
+        read_transport,
+        TokioSleeper,
+        tokens,
+        Arc::new(limiter),
+        SystemCredentialSource,
+        app_key_ref,
+        app_secret_ref,
+    );
+    Ok(KisProvider::kr_etf_core(client))
+}
+
 impl WorkerComponentFactory for ProductionWorkerComponentFactory {
     fn build_provider(
         &self,
@@ -504,8 +624,9 @@ impl WorkerComponentFactory for ProductionWorkerComponentFactory {
                     .map_err(WorkerError::Provider)?;
                 Ok(Arc::new(KrxProvider::synthetic(bundle)))
             }
-            // This is deliberately a permanent, honest failure. The licensed
-            // transport has not been implemented and must never be simulated.
+            // This is deliberately a permanent, honest failure. The
+            // credentialed async orchestration is wired in a later slice and
+            // must never be simulated through the sync fixture seam.
             FetchMode::Credentialed => Err(WorkerError::ProviderNotConfigured),
         }
     }
@@ -1701,6 +1822,70 @@ where
         })
 }
 
+#[cfg(test)]
+mod production_kis_tests {
+    use super::*;
+
+    fn config() -> ResearchWorkerConfig {
+        ResearchWorkerConfig {
+            app_env: AppEnvironment::Development,
+            fetch_mode: FetchMode::Credentialed,
+            run_at_kst: NaiveTime::from_hms_opt(16, 30, 0).expect("valid time"),
+            max_publication_age: Duration::from_secs(60),
+            attempt_timeout: Duration::from_secs(60),
+            raw_root: PathBuf::from("var/research"),
+            curated_root: PathBuf::from("var/curated"),
+            entitlement_reference: "fixture://kis".to_owned(),
+            database: DatabaseConfig {
+                host: "localhost".to_owned(),
+                port: 5432,
+                name: "research".to_owned(),
+                user: "writer".to_owned(),
+                password: SecretValue("db-secret".to_owned()),
+            },
+            kis_app_key_file: Some(PathBuf::from("/run/secrets/kis-app-key")),
+            kis_app_secret_file: Some(PathBuf::from("/run/secrets/kis-app-secret")),
+            synthetic_bundle: PathBuf::from("fixtures/krx"),
+            candidate_sources_enabled: false,
+            candidate_raw_root: PathBuf::from("var/research/candidate"),
+            candidate_synthetic_bundle: PathBuf::from("fixtures/candidates"),
+        }
+    }
+
+    #[test]
+    fn production_kis_provider_builds_without_network_or_secret_values() {
+        let provider = build_production_kis_provider(&config()).expect("live client construction");
+        let rendered = format!("{provider:?}");
+        assert!(rendered.contains("KisProvider"));
+        assert!(rendered.contains("kis-app-key"));
+        assert!(rendered.contains("kis-app-secret"));
+        assert!(!rendered.contains("db-secret"));
+        assert!(!rendered.contains("app-key-value"));
+        assert!(!rendered.contains("app-secret-value"));
+    }
+
+    #[test]
+    fn production_kis_provider_requires_both_file_references() {
+        let mut missing_key = config();
+        missing_key.kis_app_key_file = None;
+        assert!(matches!(
+            build_production_kis_provider(&missing_key),
+            Err(WorkerError::InvalidConfig {
+                key: "KIS_APP_KEY_FILE"
+            })
+        ));
+
+        let mut missing_secret = config();
+        missing_secret.kis_app_secret_file = None;
+        assert!(matches!(
+            build_production_kis_provider(&missing_secret),
+            Err(WorkerError::InvalidConfig {
+                key: "KIS_APP_SECRET_FILE"
+            })
+        ));
+    }
+}
+
 impl ResearchWorker {
     pub fn new(config: ResearchWorkerConfig, backend: Arc<dyn ResearchBackend>) -> Self {
         Self {
@@ -2658,6 +2843,11 @@ impl ResearchWorkerConfig {
                 });
             }
         };
+        if fetch_mode == FetchMode::Credentialed && candidate_sources_enabled {
+            return Err(WorkerError::InvalidConfig {
+                key: "RESEARCH_CANDIDATE_ENABLED",
+            });
+        }
         let candidate_raw_root = values
             .get("RESEARCH_CANDIDATE_RAW_ROOT")
             .map(PathBuf::from)
@@ -2752,6 +2942,11 @@ impl HealthcheckConfig {
                 });
             }
         };
+        if expected_fetch_mode == FetchMode::Credentialed && candidate_sources_enabled {
+            return Err(WorkerError::InvalidConfig {
+                key: "RESEARCH_CANDIDATE_ENABLED",
+            });
+        }
         let curated_root = PathBuf::from(nonempty(values, "RESEARCH_CURATED_ROOT")?);
         Ok(Self {
             max_publication_age,

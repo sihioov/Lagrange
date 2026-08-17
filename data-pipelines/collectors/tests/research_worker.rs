@@ -1512,6 +1512,27 @@ fn worker_config_enables_separate_candidate_raw_and_fixture_paths() {
 }
 
 #[test]
+fn credentialed_candidate_sources_are_rejected_until_their_provider_exists() {
+    let values = worker_config(&[
+        ("APP_ENV", "development"),
+        ("RESEARCH_FETCH_MODE", "credentialed"),
+        ("RESEARCH_CANDIDATE_ENABLED", "true"),
+        ("KIS_APP_KEY_FILE", "kis-app-key"),
+        ("KIS_APP_SECRET_FILE", "kis-app-secret"),
+    ]);
+    let error =
+        ResearchWorkerConfig::from_map_with_reader(&values, |_| Ok("valid-secret".to_owned()))
+            .expect_err("credentialed candidate mode must fail closed");
+    assert!(matches!(
+        error,
+        WorkerError::InvalidConfig {
+            key: "RESEARCH_CANDIDATE_ENABLED"
+        }
+    ));
+    assert!(!error.to_string().contains("valid-secret"));
+}
+
+#[test]
 fn worker_config_parses_schedule_and_max_age_overrides() {
     let values = worker_config(&[
         ("APP_ENV", "development"),
