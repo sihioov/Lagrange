@@ -895,22 +895,22 @@ membership binding, two feed, second idempotent run, cleanup까지 확인한다.
 
 ## 12. Definition of Done
 
-- [ ] `0045`만 추가되고 0042~0044 pre-task checksums가 동일하다.
-- [ ] live PostgreSQL에서 apply/rerun/down guard/clean down-up, RLS, grants, concurrency가
+- [x] `0045`만 추가되고 0042~0044 pre-task checksums가 동일하다.
+- [x] live PostgreSQL에서 apply/rerun/down guard/clean down-up, RLS, grants, concurrency가
   no-SKIP PASS다.
-- [ ] source batch가 공통 4 + KOSPI/KOSDAQ membership 2를 immutable하게 seal한다.
-- [ ] KOSPI-only 기존 경로의 응답/identity가 universe default 아래 유지된다.
-- [ ] 두 universe가 같은 session에 각각 독립 run/feed/Top 5를 발행한다.
-- [ ] scores/ranks/normalization/correction이 universe를 넘지 않는다.
-- [ ] 60-session 미만 종목이 typed exclusion snapshot으로 남는다.
-- [ ] feed/stock API universe default·explicit behavior가 통과한다.
-- [ ] screener one/both, duplicate row, saved v1/v2, cursor v1/v2/tamper가 통과한다.
-- [ ] Web lint/typecheck/65+ regression tests/build/Playwright가 통과한다.
-- [ ] Docker functional smoke가 두 universe와 idempotent replay를 no-SKIP 통과한다.
-- [ ] 실제 credential/transport 부재 production이 READY를 가장하지 않는다.
-- [ ] 새 Compose service가 없다.
-- [ ] full workspace fmt/check/strict Clippy/tests와 CI contract가 통과한다.
-- [ ] 독립 reviewer가 `P0=0`, `P1=0`, `core-flow P2=0`으로 `OK`를 준다.
+- [x] source batch가 공통 4 + KOSPI/KOSDAQ membership 2를 immutable하게 seal한다.
+- [x] KOSPI-only 기존 경로의 응답/identity가 universe default 아래 유지된다.
+- [x] 두 universe가 같은 session에 각각 독립 run/feed/Top 5를 발행한다.
+- [x] scores/ranks/normalization/correction이 universe를 넘지 않는다.
+- [x] 60-session 미만 종목이 typed exclusion snapshot으로 남는다.
+- [x] feed/stock API universe default·explicit behavior가 통과한다.
+- [x] screener one/both, duplicate row, saved v1/v2, cursor v1/v2/tamper가 통과한다.
+- [x] Web lint/typecheck/65+ regression tests/build/Playwright가 통과한다.
+- [x] Docker functional smoke가 두 universe와 idempotent replay를 no-SKIP 통과한다.
+- [x] 실제 credential/transport 부재 production이 READY를 가장하지 않는다.
+- [x] 새 Compose service가 없다.
+- [x] full workspace fmt/check/strict Clippy/tests와 CI contract가 통과한다.
+- [x] 독립 reviewer가 `P0=0`, `P1=0`, `core-flow P2=0`으로 `OK`를 준다.
 
 하나라도 미충족이면 구현 완료 또는 production-ready로 보고하지 않는다.
 
@@ -997,3 +997,20 @@ cargo fmt --all -- --check
 를 기본 실행하고, 소유 agent의 focused command를 추가한다. 최종 commit 이후에만 push/CI를
 실행하며 CI가 실패하면 해당 owner의 새 fix commit으로 고친다. 이미 검증된 commit을
 amend/rewrite하지 않는다.
+
+---
+
+## 16. 구현 검증 기록 (2026-08-17)
+
+- PostgreSQL migration contract: 25/25 PASS. `0045` apply/rerun/down guard/clean
+  down-up, RLS, grants, concurrency와 publication-only KOSDAQ rollback guard를 포함한다.
+- source/compute/API focused live tests와 full workspace fmt/check/strict Clippy/tests가
+  PASS했다.
+- OpenAPI JSON/TypeScript 생성물 drift check, Web lint/typecheck/unit 69 tests/build,
+  Playwright 3 tests가 PASS했다.
+- Docker functional smoke가 공통 4 + membership 2 source sealing, 두 universe별 Top 5,
+  candidate-runner 2회 replay idempotency를 no-SKIP으로 확인했다.
+- `0042`~`0044` up/down checksum은 pre-task baseline과 일치한다.
+- 독립 reviewer 최종 판정: `P0=0`, `P1=0`, `core P2=0`, `P3=1`, `OK`.
+  남은 P3는 source-missing readiness 진단의 universe별 세분화로, core correctness나
+  release gate를 차단하지 않는 observability 개선 항목이다.
