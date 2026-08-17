@@ -53,13 +53,13 @@ impl RollingCandidateProvider {
         }
     }
 
-    fn body(kind: ResponseKind, request: &FetchRequest) -> Value {
+    fn body(kind: ResponseKind, request: &FetchRequest) -> Result<Value, ProviderError> {
         let sessions = Self::sessions(request.date);
         let price_sessions = Self::price_sessions(request.date);
         let as_of = request.date.to_iso();
         let available_at = request.now.as_datetime().to_rfc3339();
         let full_members = &ROLLING_MEMBERS[..ROLLING_MEMBERS.len() - 1];
-        match kind {
+        Ok(match kind {
             ResponseKind::Bars => {
                 let mut bars = Vec::new();
                 for (instrument_index, instrument) in ROLLING_MEMBERS.iter().enumerate() {
@@ -247,7 +247,8 @@ impl RollingCandidateProvider {
                     "source_revision": "rolling-sector-v1"
                 })).collect::<Vec<_>>()
             }),
-        }
+            ResponseKind::CandidateMaster => return Err(ProviderError::UnsupportedKind(kind)),
+        })
     }
 }
 
@@ -261,14 +262,14 @@ impl EodProvider for RollingCandidateProvider {
     }
 
     fn fetch(&self, request: &FetchRequest) -> Result<Vec<RawEnvelope>, ProviderError> {
-        Ok(request
+        request
             .kinds
             .iter()
             .copied()
-            .map(|kind| {
-                let bytes = serde_json::to_vec(&Self::body(kind, request))
+            .map(|kind| -> Result<RawEnvelope, ProviderError> {
+                let bytes = serde_json::to_vec(&Self::body(kind, request)?)
                     .expect("rolling candidate fixture serializes");
-                RawEnvelope::new(
+                Ok(RawEnvelope::new(
                     request.batch_id,
                     kind,
                     format!("{}-response.json", kind.as_str()),
@@ -280,9 +281,9 @@ impl EodProvider for RollingCandidateProvider {
                         headers: vec![("X-Data-License".to_owned(), "redacted".to_owned())],
                         mode: FetchMode::Synthetic,
                     },
-                )
+                ))
             })
-            .collect())
+            .collect()
     }
 }
 
@@ -296,14 +297,14 @@ impl EodProvider for CredentialedRollingCandidateProvider {
     }
 
     fn fetch(&self, request: &FetchRequest) -> Result<Vec<RawEnvelope>, ProviderError> {
-        Ok(request
+        request
             .kinds
             .iter()
             .copied()
-            .map(|kind| {
-                let bytes = serde_json::to_vec(&RollingCandidateProvider::body(kind, request))
+            .map(|kind| -> Result<RawEnvelope, ProviderError> {
+                let bytes = serde_json::to_vec(&RollingCandidateProvider::body(kind, request)?)
                     .expect("rolling candidate fixture serializes");
-                RawEnvelope::new(
+                Ok(RawEnvelope::new(
                     request.batch_id,
                     kind,
                     format!("{}-response.json", kind.as_str()),
@@ -315,9 +316,9 @@ impl EodProvider for CredentialedRollingCandidateProvider {
                         headers: vec![("X-Data-License".to_owned(), "redacted".to_owned())],
                         mode: FetchMode::Credentialed,
                     },
-                )
+                ))
             })
-            .collect())
+            .collect()
     }
 }
 
