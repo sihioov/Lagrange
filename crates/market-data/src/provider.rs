@@ -95,6 +95,17 @@ pub enum ProviderError {
     /// A requested response class is not supported by this provider.
     #[error("provider does not support {0}")]
     UnsupportedKind(ResponseKind),
+    /// Provider configuration is invalid before any request is sent.
+    #[error("invalid provider configuration: {detail}")]
+    InvalidConfiguration { detail: String },
+    /// A credentialed provider call failed with a typed, redacted error.
+    #[error("{provider} request failed for {kind} ({code}): {detail}")]
+    Remote {
+        provider: &'static str,
+        kind: ResponseKind,
+        code: &'static str,
+        detail: String,
+    },
     /// Transient endpoint or transport I/O.
     #[error("provider io failure ({context})")]
     Io {

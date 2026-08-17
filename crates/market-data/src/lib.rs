@@ -48,6 +48,7 @@ pub mod freshness;
 pub mod ingest;
 pub mod instrument_master;
 pub mod provider;
+pub mod providers;
 pub mod publication;
 pub mod quality;
 pub mod redact;
@@ -67,7 +68,7 @@ pub use candidate::{
 };
 pub use contract::{
     ALL_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR,
-    PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
+    PROVIDER_KIS, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{CuratedBar, CuratedSchema};
@@ -86,6 +87,7 @@ pub use instrument_master::{
 pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
 };
+pub use providers::kis::{KR_ETF_CORE_SYMBOLS, KisProvider, KisRead};
 pub use publication::{
     CalendarFact, CalendarSessionType, DataBatchKind, PublicationBundle, PublicationError,
     PublicationFile,
