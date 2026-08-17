@@ -901,6 +901,14 @@ fn validate_target_bar_coverage(
     } else {
         BTreeSet::new()
     };
+    // A provider may legitimately answer before the requested session's EOD
+    // is published.  Preserve that delivery as an empty canonical bars file;
+    // PublicationBundle will classify it as EOD_UNAVAILABLE.  Partial target
+    // coverage remains a hard integrity failure: trading-day publication is
+    // all-or-nothing for the fixed ETF universe.
+    if target_bars.is_empty() {
+        return Ok(());
+    }
     if target_bars != expected_symbols {
         return Err(NormalizeError::TargetBarCoverage {
             target_date: target,

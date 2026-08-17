@@ -52,8 +52,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::calendar::{Holiday, KrCalendar, KrCalendarSpec, SessionTimes};
-use crate::contract::ResponseKind;
+use crate::contract::{FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, ResponseKind};
 use crate::instrument_master::{Instrument, InstrumentMaster, MasterError};
+use crate::providers::kis::KR_ETF_CORE_SYMBOLS;
 use crate::storage::{ManifestEntry, RawStore};
 
 use self::actions::{CorporateAction, CorporateActionType, dataset_capability};
@@ -84,7 +85,7 @@ impl std::fmt::Display for Capability {
 }
 
 /// A typed curation failure.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum CurateError {
     #[error("curated store failure ({context}): {detail}")]
     StoreIo { context: String, detail: String },
@@ -94,8 +95,32 @@ pub enum CurateError {
     MalformedParquet { context: String, detail: String },
     #[error("missing curated component: {path}")]
     MissingCuratedComponent { path: String },
+    #[error("raw store failure ({context}): {source}")]
+    RawStore {
+        context: String,
+        #[source]
+        source: crate::storage::StoreError,
+    },
+    /// Legacy string-only raw read error retained for downstream API
+    /// compatibility. New RawStore reads must use [`Self::RawStore`] so the
+    /// worker can classify filesystem failures without guessing from text.
     #[error("raw read failure ({context}): {detail}")]
     RawIo { context: String, detail: String },
+    #[error("curation supports only {expected_scopes}, got {provider}/{market}")]
+    UnsupportedScope {
+        expected_scopes: &'static str,
+        provider: String,
+        market: String,
+    },
+    #[error("curation scope {provider}/{market} requires {expected} fetch mode, got {actual}")]
+    UnsupportedMode {
+        provider: String,
+        market: String,
+        expected: FetchMode,
+        actual: FetchMode,
+    },
+    #[error("normalized curation batch has noncanonical shape: {reason}")]
+    NonCanonicalNormalizedBatch { reason: String },
     #[error("batch is missing its {kind} file")]
     MissingFile { kind: ResponseKind },
     #[error("malformed bars response: {reason}")]
@@ -163,6 +188,11 @@ pub enum CurateError {
     },
     #[error("no bars in the batch (dataset {dataset_id})")]
     EmptyBars { dataset_id: String },
+    #[error("no price for target date {target_date} (dataset {dataset_id})")]
+    EodUnavailable {
+        dataset_id: String,
+        target_date: TradingDate,
+    },
     #[error("domain arithmetic failure: {0}")]
     Domain(#[from] domain::DomainError),
 }
@@ -522,6 +552,74 @@ struct RawCalendarHoliday {
     reason: Option<String>,
 }
 
+/// Curation consumes either the legacy synthetic KRX scope or the immutable
+/// canonical KIS scope.  The broker wire scope is intentionally rejected here
+/// even when a caller happens to provide a subset that looks parseable: wire
+/// responses are not provider-neutral evidence until normalization has
+/// produced the exact four canonical documents.
+fn validate_curation_scope(entry: &ManifestEntry) -> Result<(), CurateError> {
+    match (entry.provider.as_str(), entry.market.as_str()) {
+        (PROVIDER_KRX, MARKET_KR) => Ok(()),
+        (PROVIDER_KIS_NORMALIZED, MARKET_KR) => {
+            if entry.mode != FetchMode::Credentialed {
+                return Err(CurateError::UnsupportedMode {
+                    provider: entry.provider.clone(),
+                    market: entry.market.clone(),
+                    expected: FetchMode::Credentialed,
+                    actual: entry.mode,
+                });
+            }
+            const EXPECTED: [(ResponseKind, &str); 4] = [
+                (ResponseKind::Bars, "bars.json"),
+                (ResponseKind::Reference, "reference.json"),
+                (ResponseKind::Calendar, "calendar.json"),
+                (ResponseKind::CorporateActions, "corporate-actions.json"),
+            ];
+            if entry.files.len() != EXPECTED.len()
+                || EXPECTED.iter().any(|(kind, file_name)| {
+                    entry
+                        .files
+                        .iter()
+                        .filter(|file| {
+                            file.kind == *kind
+                                && file.file_name == *file_name
+                                && file.request.mode == FetchMode::Credentialed
+                        })
+                        .count()
+                        != 1
+                })
+            {
+                return Err(CurateError::NonCanonicalNormalizedBatch {
+                    reason: "expected exactly one credentialed canonical bars/reference/calendar/corporate-actions file".to_owned(),
+                });
+            }
+            Ok(())
+        }
+        _ => Err(CurateError::UnsupportedScope {
+            expected_scopes: "krx/kr or kis-normalized/kr",
+            provider: entry.provider.clone(),
+            market: entry.market.clone(),
+        }),
+    }
+}
+
+fn validate_normalized_raw(raw: &RawStore, entry: &ManifestEntry) -> Result<(), CurateError> {
+    if entry.provider == PROVIDER_KIS_NORMALIZED {
+        crate::publication::PublicationBundle::from_raw(raw, entry).map_err(
+            |error| match error {
+                crate::publication::PublicationError::Store(source) => CurateError::RawStore {
+                    context: "validate normalized raw".to_owned(),
+                    source,
+                },
+                other => CurateError::NonCanonicalNormalizedBatch {
+                    reason: other.to_string(),
+                },
+            },
+        )?;
+    }
+    Ok(())
+}
+
 /// Rebuild the typed calendar and instrument master from one verified Raw
 /// four-response delivery. This keeps the operating worker provider-neutral:
 /// fixture and licensed transports must satisfy the same bytes contract.
@@ -529,11 +627,13 @@ pub fn curation_inputs_from_raw(
     raw: &RawStore,
     entry: &ManifestEntry,
 ) -> Result<(KrCalendar, InstrumentMaster), CurateError> {
+    validate_curation_scope(entry)?;
+    validate_normalized_raw(raw, entry)?;
     let files = raw
         .read_batch_bytes(&entry.provider, &entry.market, entry)
-        .map_err(|error| CurateError::RawIo {
+        .map_err(|source| CurateError::RawStore {
             context: "read curation inputs".to_owned(),
-            detail: error.to_string(),
+            source,
         })?;
     let bytes_for = |kind: ResponseKind| -> Result<&[u8], CurateError> {
         let metadata = entry
@@ -566,7 +666,7 @@ pub fn curation_inputs_from_raw(
         || calendar.session_times_local.close != "15:30:00"
     {
         return Err(CurateError::MalformedBars {
-            reason: "reference/calendar provenance is not the canonical KRX contract".to_owned(),
+            reason: "reference/calendar provenance is not the canonical market contract".to_owned(),
         });
     }
     let sessions = calendar
@@ -578,14 +678,11 @@ pub fn curation_inputs_from_raw(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let calendar_first_session =
-        sessions
-            .iter()
-            .copied()
-            .min()
-            .ok_or_else(|| CurateError::MalformedBars {
-                reason: "calendar must contain at least one session".to_owned(),
-            })?;
+    // A canonical KIS holiday delivery deliberately contains zero sessions
+    // and one explicit holiday for the target date.  The calendar is still a
+    // valid curation input; the target date is only used as a safe listing
+    // fallback because no bars will be materialized for a closed session.
+    let calendar_first_session = sessions.iter().copied().min().unwrap_or(entry.date);
     let holidays = calendar
         .holidays
         .into_iter()
@@ -681,6 +778,28 @@ pub fn curation_inputs_from_raw(
             })
             .map_err(map_master_error)?;
     }
+    if entry.provider == PROVIDER_KIS_NORMALIZED {
+        let expected = KR_ETF_CORE_SYMBOLS
+            .iter()
+            .map(|symbol| format!("{symbol}.KRX"))
+            .collect::<BTreeSet<_>>();
+        let actual = master
+            .instruments()
+            .map(|instrument| instrument.instrument_id.to_string())
+            .collect::<BTreeSet<_>>();
+        let all_etfs = master
+            .instruments()
+            .all(|instrument| instrument.asset_class == AssetClass::Etf);
+        if actual != expected || !all_etfs {
+            return Err(CurateError::NonCanonicalNormalizedBatch {
+                reason: format!(
+                    "normalized reference must contain exactly the fixed ETF universe (expected {} ETFs, got {} instruments; all_etfs={all_etfs})",
+                    expected.len(),
+                    actual.len(),
+                ),
+            });
+        }
+    }
     Ok((calendar, master))
 }
 
@@ -692,6 +811,8 @@ pub fn price_curation_evidence(
     entry: &ManifestEntry,
     manifest: &DatasetManifest,
 ) -> Result<PriceCurationEvidence, CurateError> {
+    validate_curation_scope(entry)?;
+    validate_normalized_raw(raw, entry)?;
     if manifest.version == 0 || dataset_manifest_hash(manifest)? != manifest.content_hash {
         return Err(CurateError::MalformedManifest {
             context: "price publication evidence".to_owned(),
@@ -721,9 +842,9 @@ pub fn price_curation_evidence(
     }
     let files = raw
         .read_batch_bytes(&entry.provider, &entry.market, entry)
-        .map_err(|error| CurateError::RawIo {
+        .map_err(|source| CurateError::RawStore {
             context: "read price publication evidence".to_owned(),
-            detail: error.to_string(),
+            source,
         })?;
     let bars = files
         .iter()
@@ -762,9 +883,20 @@ pub fn price_curation_evidence(
         sessions.push(session);
     }
     sessions.sort_unstable();
-    let first_session = sessions.first().copied().ok_or(CurateError::EmptyBars {
-        dataset_id: manifest.dataset_id.to_string(),
-    })?;
+    let first_session = match sessions.first().copied() {
+        Some(session) => session,
+        None if entry.provider == PROVIDER_KIS_NORMALIZED => {
+            return Err(CurateError::EodUnavailable {
+                dataset_id: manifest.dataset_id.to_string(),
+                target_date: entry.date,
+            });
+        }
+        None => {
+            return Err(CurateError::EmptyBars {
+                dataset_id: manifest.dataset_id.to_string(),
+            });
+        }
+    };
     let last_session = sessions.last().copied().expect("nonempty sessions");
     let manifest_sha256 = manifest
         .content_hash
@@ -817,6 +949,16 @@ pub fn curate_batch(
     curated: &CurateStore,
     req: &CurateRequest<'_>,
 ) -> Result<CurateOutcome, CurateError> {
+    validate_curation_scope(entry)?;
+    validate_normalized_raw(raw, entry)?;
+    if entry.provider == PROVIDER_KIS_NORMALIZED && req.source != PROVIDER_KIS_NORMALIZED {
+        return Err(CurateError::NonCanonicalNormalizedBatch {
+            reason: format!(
+                "CurateRequest source must remain {PROVIDER_KIS_NORMALIZED}, got {}",
+                req.source
+            ),
+        });
+    }
     let dataset_id = req.dataset_id;
 
     // Re-curating an already-curated batch must never duplicate/overwrite.
@@ -835,9 +977,9 @@ pub fn curate_batch(
 
     let files = raw
         .read_batch_bytes(&entry.provider, &entry.market, entry)
-        .map_err(|e| CurateError::RawIo {
+        .map_err(|source| CurateError::RawStore {
             context: "read raw batch".to_owned(),
-            detail: e.to_string(),
+            source,
         })?;
     let meta = |kind: ResponseKind| -> Result<&crate::storage::FileEntry, CurateError> {
         entry
@@ -872,6 +1014,12 @@ pub fn curate_batch(
     // ---- validate + normalize bars ----
     let bars = build_bars(&bars_doc, master, calendar, req, entry, bars_meta)?;
     if bars.is_empty() {
+        if entry.provider == PROVIDER_KIS_NORMALIZED || !calendar.is_session(entry.date) {
+            return Err(CurateError::EodUnavailable {
+                dataset_id: dataset_id.to_string(),
+                target_date: entry.date,
+            });
+        }
         return Err(CurateError::EmptyBars {
             dataset_id: dataset_id.to_string(),
         });

@@ -10,7 +10,9 @@ use market_data::normalize::{
 use market_data::providers::kis::KR_ETF_CORE_SYMBOLS;
 use market_data::storage::{BatchSpec, RawStore};
 use market_data::validate::validate_response;
-use market_data::{CurateRequest, CurateStore, curate_batch, curation_inputs_from_raw};
+use market_data::{
+    CurateError, CurateRequest, CurateStore, curate_batch, curation_inputs_from_raw,
+};
 use serde_json::{Value, json};
 use std::sync::{Arc, Barrier};
 use tempfile::TempDir;
@@ -296,6 +298,203 @@ fn successful_normalization_is_four_canonical_documents_and_preserves_wire_bytes
     )
     .expect("canonical batch is curation-compatible");
     assert_eq!(curated_outcome.bars_written, 11);
+}
+
+#[test]
+fn normalized_reference_must_be_exact_fixed_etf_universe_at_curation_boundary() {
+    let (_source_temp, source_store, source, _stored) = fixture(|_| {});
+    let normalized = normalize_kis_batch(&source_store, &source).expect("normalize source");
+
+    for mutation in ["extra", "missing", "non-etf"] {
+        let temp = tempfile::tempdir().expect("normalized fixture root");
+        let store = RawStore::new(temp.path().join("data"));
+        let envelopes = normalized
+            .entry
+            .files
+            .iter()
+            .map(|metadata| {
+                let stored = normalized
+                    .files
+                    .iter()
+                    .find(|file| file.file_name == metadata.file_name)
+                    .expect("normalized evidence");
+                let bytes = if metadata.kind == ResponseKind::Reference {
+                    let mut document: Value =
+                        serde_json::from_slice(&stored.bytes).expect("reference document");
+                    let instruments = document["instruments"]
+                        .as_array_mut()
+                        .expect("reference instruments");
+                    match mutation {
+                        "extra" => instruments.push(json!({
+                            "symbol": "000001.KRX",
+                            "name": "extra ETF",
+                            "lot_size": 1,
+                            "currency": "KRW",
+                            "kind": "equity-etf"
+                        })),
+                        "missing" => {
+                            instruments.pop();
+                        }
+                        "non-etf" => instruments[0]["kind"] = Value::String("equity".into()),
+                        _ => unreachable!("mutation is fixed above"),
+                    }
+                    serde_json::to_vec(&document).expect("mutated reference")
+                } else {
+                    stored.bytes.clone()
+                };
+                RawEnvelope::new(
+                    normalized.entry.batch_id,
+                    metadata.kind,
+                    metadata.file_name.clone(),
+                    bytes,
+                    normalized.entry.retrieved_at,
+                    metadata.request.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let entry = store
+            .store_batch(
+                &BatchSpec {
+                    provider: PROVIDER_KIS_NORMALIZED,
+                    market: MARKET_KR,
+                    date: &normalized.entry.date,
+                    batch_id: normalized.entry.batch_id,
+                    entitlement_reference: normalized.entry.entitlement_reference.as_deref(),
+                    mode: FetchMode::Credentialed,
+                },
+                &envelopes,
+            )
+            .expect("handcrafted canonical normalized batch");
+        let error = curation_inputs_from_raw(&store, &entry)
+            .expect_err("curation must enforce exact fixed ETF reference universe");
+        assert!(
+            matches!(error, CurateError::NonCanonicalNormalizedBatch { .. }),
+            "{mutation}: {error}"
+        );
+    }
+}
+
+#[test]
+fn wire_kis_scope_cannot_enter_curation_directly() {
+    let (_temp, store, source, _stored) = fixture(|_| {});
+    let error = curation_inputs_from_raw(&store, &source)
+        .expect_err("provider wire bytes must be normalized before curation");
+    assert!(matches!(
+        error,
+        market_data::CurateError::UnsupportedScope {
+            provider,
+            market,
+            ..
+        } if provider == PROVIDER_KIS && market == MARKET_KR
+    ));
+}
+
+#[test]
+fn normalized_holiday_is_an_explicit_no_price_result() {
+    let (temp, store, source, _stored) = fixture(|wires| {
+        for wire in wires
+            .iter_mut()
+            .filter(|wire| wire.kind == ResponseKind::Bars)
+        {
+            let mut document: Value = serde_json::from_slice(&wire.bytes).expect("bars json");
+            document["output2"] = Value::Array(
+                document["output2"]
+                    .as_array()
+                    .expect("bars rows")
+                    .iter()
+                    .filter(|row| row["stck_bsop_date"] != TARGET_DATE.replace('-', ""))
+                    .cloned()
+                    .collect(),
+            );
+            wire.bytes = serde_json::to_vec(&document).expect("holiday bars");
+        }
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.kind == ResponseKind::Calendar)
+            .expect("calendar wire");
+        let mut document: Value = serde_json::from_slice(&wire.bytes).expect("calendar json");
+        let rows = document["output"].as_array_mut().expect("calendar rows");
+        rows.iter_mut()
+            .find(|row| row["bass_dt"] == TARGET_DATE.replace('-', ""))
+            .expect("target calendar row")["opnd_yn"] = Value::String("N".to_owned());
+        wire.bytes = serde_json::to_vec(&document).expect("holiday calendar");
+    });
+    let normalized = normalize_kis_batch(&store, &source).expect("holiday normalization");
+    let (calendar, master) =
+        curation_inputs_from_raw(&store, &normalized.entry).expect("holiday canonical inputs");
+    assert!(!calendar.is_session(source.date));
+    assert_eq!(master.instruments().count(), KR_ETF_CORE_SYMBOLS.len());
+    let dataset_id = DatasetId::parse("kis-normalized-holiday").expect("dataset id");
+    let error = curate_batch(
+        &store,
+        &normalized.entry,
+        &calendar,
+        &master,
+        &CurateStore::new(temp.path().join("data")),
+        &CurateRequest {
+            dataset_id: &dataset_id,
+            market: MARKET_KR,
+            source: PROVIDER_KIS_NORMALIZED,
+            now: normalized.entry.retrieved_at,
+        },
+    )
+    .expect_err("holiday must not create a price dataset");
+    assert!(matches!(
+        error,
+        market_data::CurateError::EodUnavailable {
+            dataset_id: id,
+            target_date,
+        } if id == "kis-normalized-holiday" && target_date == source.date
+    ));
+}
+
+#[test]
+fn normalized_missing_open_session_is_eod_unavailable_not_malformed() {
+    let (temp, store, source, _stored) = fixture(|wires| {
+        for wire in wires
+            .iter_mut()
+            .filter(|wire| wire.kind == ResponseKind::Bars)
+        {
+            let mut document: Value = serde_json::from_slice(&wire.bytes).expect("bars json");
+            document["output2"] = Value::Array(
+                document["output2"]
+                    .as_array()
+                    .expect("bars rows")
+                    .iter()
+                    .filter(|row| row["stck_bsop_date"] != TARGET_DATE.replace('-', ""))
+                    .cloned()
+                    .collect(),
+            );
+            wire.bytes = serde_json::to_vec(&document).expect("unavailable bars");
+        }
+    });
+    let normalized = normalize_kis_batch(&store, &source)
+        .expect("empty target bars are a valid unavailable delivery");
+    let (calendar, master) = curation_inputs_from_raw(&store, &normalized.entry)
+        .expect("open unavailable canonical inputs");
+    assert!(calendar.is_session(source.date));
+    let dataset_id = DatasetId::parse("kis-normalized-open-unavailable").expect("dataset id");
+    let error = curate_batch(
+        &store,
+        &normalized.entry,
+        &calendar,
+        &master,
+        &CurateStore::new(temp.path().join("data")),
+        &CurateRequest {
+            dataset_id: &dataset_id,
+            market: MARKET_KR,
+            source: PROVIDER_KIS_NORMALIZED,
+            now: normalized.entry.retrieved_at,
+        },
+    )
+    .expect_err("open no-price delivery must not create a price dataset");
+    assert!(matches!(
+        error,
+        market_data::CurateError::EodUnavailable {
+            dataset_id: id,
+            target_date,
+        } if id == "kis-normalized-open-unavailable" && target_date == source.date
+    ));
 }
 
 #[test]

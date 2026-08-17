@@ -19,7 +19,7 @@ use kis_client::{
     BucketKey, CredentialRef, KisError, KisMarketDataClient, Quota, RateLimiter, SystemClock,
     TokenManager, TokioSleeper,
 };
-use market_data::contract::{FetchMode, MARKET_KR};
+use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX};
 use market_data::ingest::IngestRequest;
 use market_data::provider::{EodProvider, KrxProvider, ProviderError, RecordedBundle};
 use market_data::providers::kis::KisProvider;
@@ -259,7 +259,11 @@ impl WorkerError {
                 market_data::IngestError::MalformedResponse { .. }
                 | market_data::IngestError::ResponseShape { .. } => FailureClass::Permanent,
             },
-            Self::Curation(_) => FailureClass::Permanent,
+            Self::Curation(source) => match source {
+                CurateError::StoreIo { .. } => FailureClass::Retryable,
+                CurateError::RawStore { source, .. } => store_failure_class(source),
+                _ => FailureClass::Permanent,
+            },
             Self::Provider(source) => provider_failure_class(source),
             Self::Database { source, .. } => {
                 if source.is_retryable() {
@@ -985,7 +989,11 @@ where
             phase: WorkerPhase::Recovery,
         },
     })?;
-    if !page.has_more && config.fetch_mode == FetchMode::Synthetic {
+    if !page.has_more {
+        // KRX synthetic and KIS normalized are both eligible for the
+        // provider-neutral Curated price surface.  Candidate source (flow,
+        // fundamentals, membership, sector, status) ingestion remains behind
+        // its separate feature gate and is not needed for this price replay.
         let price_sink = PostgresCandidateSourceSink::new(pool);
         recover_price_publications(&config, &store, &price_sink).await?;
     }
@@ -1002,11 +1010,12 @@ pub async fn run_internal_ingest(
     let store = factory.build_store(&config)?;
     let pool = factory.build_pool(&config)?;
     let sink = PostgresPublicationSink::new(pool.clone());
+    let price_sink = PostgresCandidateSourceSink::new(pool.clone());
     if config.fetch_mode == FetchMode::Credentialed {
-        return run_credentialed_internal_ingest(&config, &store, &sink, date, now).await;
+        return run_credentialed_internal_ingest(&config, &store, &sink, &price_sink, date, now)
+            .await;
     }
     let provider = factory.build_provider(&config)?;
-    let price_sink = PostgresCandidateSourceSink::new(pool.clone());
     let recovered_price_batch = recover_price_publications(&config, &store, &price_sink).await?;
     let eod_batch_id = if sink
         .has_eod_for_mode(date, config.fetch_mode)
@@ -1050,6 +1059,7 @@ async fn run_credentialed_internal_ingest(
     config: &ResearchWorkerConfig,
     store: &RawStore,
     sink: &PostgresPublicationSink,
+    price_sink: &PostgresCandidateSourceSink,
     date: TradingDate,
     now: UtcTimestamp,
 ) -> Result<BatchId, WorkerError> {
@@ -1060,6 +1070,7 @@ async fn run_credentialed_internal_ingest(
     recover_unpublished_normalized_for_date(store, sink, &normalized, date)
         .await
         .map_err(WorkerError::Pipeline)?;
+    recover_price_publications(config, store, price_sink).await?;
 
     let has_eod = sink
         .has_eod_for_mode(date, FetchMode::Credentialed)
@@ -1080,6 +1091,22 @@ async fn run_credentialed_internal_ingest(
             });
     }
 
+    // A KIS calendar-confirmed closure is a durable no-price result, not a
+    // transient provider miss.  Keep the normalized batch as the idempotency
+    // key and do not fetch the same holiday again on every worker wake-up.
+    if let Some(outcome) = normalized
+        .outcomes
+        .iter()
+        .rev()
+        .find(|outcome| outcome.entry.date == date)
+    {
+        let (calendar, _) =
+            curation_inputs_from_raw(store, &outcome.entry).map_err(WorkerError::Curation)?;
+        if !calendar.is_session(date) {
+            return Ok(outcome.entry.batch_id);
+        }
+    }
+
     let provider = build_production_kis_provider(config)?;
     let request = IngestRequest::new(MARKET_KR.to_owned(), date, now);
     let outcome = ingest_normalize_publish_kis(
@@ -1091,6 +1118,11 @@ async fn run_credentialed_internal_ingest(
     )
     .await
     .map_err(WorkerError::Pipeline)?;
+    // Price curation is deliberately after canonical EOD publication.  A
+    // crash between these two steps leaves the immutable normalized batch for
+    // the next recovery pass, which will replay the exact Curated generation
+    // and candidate-price publication without fetching KIS again.
+    recover_price_publications(config, store, price_sink).await?;
     Ok(outcome.manifest.batch_id)
 }
 
@@ -1161,8 +1193,12 @@ async fn recover_price_publications(
         .ok_or(WorkerError::InvalidConfig {
             key: "RESEARCH_CURATED_ROOT",
         })?;
+    let provider = match config.fetch_mode {
+        FetchMode::Synthetic => PROVIDER_KRX,
+        FetchMode::Credentialed => PROVIDER_KIS_NORMALIZED,
+    };
     let entries = raw
-        .read_reconciled_manifest(market_data::PROVIDER_KRX, MARKET_KR)
+        .read_reconciled_manifest(provider, MARKET_KR)
         .map_err(|source| WorkerError::Pipeline(PipelineError::Manifest { source }))?;
     let mut published_batch = None;
     for entry in entries {
@@ -1322,10 +1358,10 @@ fn raw_batch_has_target_bars(
         }))?;
     let files = raw
         .read_batch_bytes(&entry.provider, &entry.market, entry)
-        .map_err(|error| {
-            WorkerError::Curation(CurateError::RawIo {
+        .map_err(|source| {
+            WorkerError::Curation(CurateError::RawStore {
                 context: "read price recovery batch".to_owned(),
-                detail: error.to_string(),
+                source,
             })
         })?;
     let bytes = files
@@ -1896,6 +1932,7 @@ where
 #[cfg(test)]
 mod production_kis_tests {
     use super::*;
+    use market_data::storage::StoreError;
 
     fn config() -> ResearchWorkerConfig {
         ResearchWorkerConfig {
@@ -1954,6 +1991,41 @@ mod production_kis_tests {
                 key: "KIS_APP_SECRET_FILE"
             })
         ));
+    }
+
+    #[test]
+    fn curation_raw_store_errors_keep_store_retryability() {
+        let retryable = WorkerError::Curation(CurateError::RawStore {
+            context: "read normalized raw".to_owned(),
+            source: StoreError::Io {
+                context: "read".to_owned(),
+                source: std::io::Error::other("temporary"),
+            },
+        });
+        assert_eq!(retryable.failure_class(), FailureClass::Retryable);
+
+        let permanent = WorkerError::Curation(CurateError::RawStore {
+            context: "read normalized raw".to_owned(),
+            source: StoreError::ContentHashMismatch {
+                path: "bars.json".to_owned(),
+                recorded: "a".repeat(64),
+                actual: "b".repeat(64),
+            },
+        });
+        assert_eq!(permanent.failure_class(), FailureClass::Permanent);
+
+        let nested_retryable = WorkerError::Curation(CurateError::RawStore {
+            context: "read normalized raw".to_owned(),
+            source: StoreError::CleanupFailed {
+                path: "batch".to_owned(),
+                original: Box::new(StoreError::Io {
+                    context: "sync".to_owned(),
+                    source: std::io::Error::other("temporary"),
+                }),
+                cleanup: std::io::Error::other("cleanup failed"),
+            },
+        });
+        assert_eq!(nested_retryable.failure_class(), FailureClass::Retryable);
     }
 }
 
