@@ -150,29 +150,37 @@ run_cargo() {
 
 # --- E1 written-rights artifact ---------------------------------------------
 test_written_rights() {
-  local found=""
+  local found="" first_why=""
   local f
   for f in "$data_rights_dir"/*.json; do
     [ -f "$f" ] || continue
     case "$f" in *.schema.json) continue ;; esac
-    local hex ref lifecycle
+    local provider hex ref lifecycle
+    provider="$(python3 -c "import json,sys;d=json.load(open('$f'));print(d.get('provider',''))" 2>/dev/null)"
     hex="$(python3 -c "import json,sys;d=json.load(open('$f'));print(d.get('contract_document',{}).get('document_hash',{}).get('hex',''))" 2>/dev/null)"
     ref="$(python3 -c "import json,sys;d=json.load(open('$f'));print(d.get('contract_document',{}).get('document_reference',''))" 2>/dev/null)"
     lifecycle="$(python3 -c "import json,sys;d=json.load(open('$f'));print(d.get('lifecycle',''))" 2>/dev/null)"
     if [ -z "$hex" ] && [ -z "$ref" ] && [ -z "$lifecycle" ]; then continue; fi
     found="$(basename "$f")"
     local zeros="0000000000000000000000000000000000000000000000000000000000000000"
-    if [ "$lifecycle" = "ACTIVE" ] && [ "$hex" != "$zeros" ] && [ "${ref#vault://}" = "$ref" ]; then
-      add_check E1 written-rights PASS "$found ACTIVE with real document hash ${hex:0:12}... and reference $ref"
+    if { [ "$provider" = kis ] || [ "$provider" = krx ]; } \
+      && [ "$lifecycle" = "ACTIVE" ] && [[ "$hex" =~ ^[0-9a-f]{64}$ ]] \
+      && [ "$hex" != "$zeros" ] \
+      && [ "${ref#vault://}" = "$ref" ]; then
+      add_check E1 written-rights PASS "$found provider=$provider ACTIVE with real document hash ${hex:0:12}... and reference $ref"
       return 0
     fi
     local why="lifecycle=$lifecycle"
+    [ "$provider" != kis ] && [ "$provider" != krx ] && why="unsupported provider=$provider"
     [ "$hex" = "$zeros" ] && why="placeholder zeroed document hash"
     [ "${ref#vault://}" != "$ref" ] && why="unresolvable vault reference"
-    add_check E1 written-rights BLOCKED_EXTERNAL "$found is NOT an ACTIVE written-rights artifact ($why)"
-    return 0
+    [ -z "$first_why" ] && first_why="$found is NOT an ACTIVE KIS/legacy-KRX rights artifact ($why)"
   done
-  add_check E1 written-rights BLOCKED_EXTERNAL "no entitlement metadata artifact in $data_rights_dir"
+  if [ -n "$first_why" ]; then
+    add_check E1 written-rights BLOCKED_EXTERNAL "$first_why"
+  else
+    add_check E1 written-rights BLOCKED_EXTERNAL "no KIS entitlement metadata artifact in $data_rights_dir"
+  fi
 }
 
 # --- E2 vendor Auth0 --------------------------------------------------------

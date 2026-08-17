@@ -480,9 +480,9 @@ services:
         condition: service_completed_successfully
 
   # ------------------------------------------------------------------
-  # research-worker — KRX ingestion/curation/catalog.
+  # research-worker — KIS ingestion/normalization/catalog.
   # The ONLY data-collection worker; it needs internet egress for the
-  # licensed KRX source, so it sits on `backend` (not internal).
+  # credentialed KIS read-only source, so it sits on `backend` (not internal).
   # Writes immutable Raw and Curated evidence. Catalog metadata is published
   # through narrow SECURITY DEFINER procedures by the least-privilege
   # research_writer role; that role has no broad dataset_versions DML.
@@ -1072,7 +1072,7 @@ secrets:
 # ----------------------------------------------------------------------
 # Networks (design §13.3).
 #   edge        internal:true — reverse-proxy/web/api-server only.
-#   backend     has egress — api-server (Auth0), research-worker (KRX),
+#   backend     has egress — api-server (Auth0), research-worker (KIS),
 #               paper-scheduler (queue). The profile-gated live-node-owner
 #               uses network_mode:none and has no external dependency.
 #   backtest-iso internal:true — nt-backtest-worker-1/2 + postgres ONLY.

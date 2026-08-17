@@ -13,7 +13,7 @@
 # APPROVED is emitted ONLY when EVERY check passes AND the written-rights
 # metadata artifact is ACTIVE (real document hash + resolvable reference) AND
 # the vendor Auth0 suite passes against a real tenant. Any missing evidence,
-# any failing suite, or a documented BLOCKED_EXTERNAL condition for written
+# any failing suite, or a documented BLOCKED_EXTERNAL condition for KIS broker
 # rights / vendor Auth0 yields BLOCKED_EXTERNAL_DATA_RIGHTS - NEVER a false
 # success. Member KR-derived surfaces stay denied; Owner-only continues.
 #
@@ -111,23 +111,25 @@ function Test-WrittenRights {
         Add-Check "E1" "written-rights" "BLOCKED_EXTERNAL" "no entitlement metadata artifact in configs/data-rights"
         return
     }
+    $firstWhy = $null
     foreach ($f in $files) {
         try { $doc = Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { continue }
         $hex = "$($doc.contract_document.document_hash.hex)"
         $ref = "$($doc.contract_document.document_reference)"
         $placeholder = ($hex -eq "0000000000000000000000000000000000000000000000000000000000000000")
         $vault = $ref.StartsWith("vault://")
-        if ($doc.lifecycle -eq "ACTIVE" -and -not $placeholder -and -not $vault) {
-            Add-Check "E1" "written-rights" "PASS" "$($f.Name) ACTIVE with real document hash $($hex.Substring(0,12))... and reference $ref"
+        $provider = "$($doc.provider)"
+        if (($provider -eq 'kis' -or $provider -eq 'krx') -and $doc.lifecycle -eq "ACTIVE" -and -not $placeholder -and -not $vault -and $hex -match '^[0-9a-f]{64}$') {
+            Add-Check "E1" "written-rights" "PASS" "$($f.Name) provider=$provider ACTIVE with real document hash $($hex.Substring(0,12))... and reference $ref"
             return
         }
         $why = if ($doc.lifecycle -ne "ACTIVE") { "lifecycle=$($doc.lifecycle)" }
                elseif ($placeholder) { "placeholder zeroed document hash" }
                else { "unresolvable vault reference" }
-        Add-Check "E1" "written-rights" "BLOCKED_EXTERNAL" "$($f.Name) is NOT an ACTIVE written-rights artifact ($why)"
-        return
+        if (-not $firstWhy) { $firstWhy = "$($f.Name) is NOT an ACTIVE KIS/legacy-KRX rights artifact ($why)" }
     }
-    Add-Check "E1" "written-rights" "BLOCKED_EXTERNAL" "no parseable entitlement metadata artifact"
+    if ($firstWhy) { Add-Check "E1" "written-rights" "BLOCKED_EXTERNAL" $firstWhy }
+    else { Add-Check "E1" "written-rights" "BLOCKED_EXTERNAL" "no parseable KIS entitlement metadata artifact" }
 }
 
 # --------------------------------------------------------------------------- #

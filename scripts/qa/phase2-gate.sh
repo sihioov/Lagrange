@@ -9,7 +9,7 @@
 #
 # APPROVED requires EVERY Phase 2 check to pass AND an active data entitlement
 # AND five-user Phase 1 evidence. Phase 2 can be proven Owner-only while Phase 1
-# is externally blocked (the KRX written-rights contract and the Auth0 tenant),
+# is externally blocked (the KIS broker entitlement and the Auth0 tenant),
 # but that state is NOT a release: Member production stays disabled and the gate
 # says so in its verdict rather than in a footnote. There is deliberately no
 # flag, override, or environment variable that turns a blocked run into an
@@ -156,16 +156,22 @@ else
 fi
 
 # --- E1 data entitlement (external) ---------------------------------------------
-# Phase 1's blocker, re-checked here because APPROVED depends on it. The written
-# rights artifact must exist AND be ACTIVE with a real document hash; a
-# placeholder with a zeroed hash is not an entitlement.
+# Phase 1's blocker, re-checked here because APPROVED depends on it. A KIS
+# entitlement (or legacy KRX-compatible metadata) must be ACTIVE with a real
+# document hash; a placeholder with a zeroed hash is not an entitlement.
 e1_state="BLOCKED_EXTERNAL"
-e1_detail="no ACTIVE written-rights artifact in configs/data-rights/"
+e1_detail="no ACTIVE KIS entitlement artifact in configs/data-rights/"
 for f in "$data_rights_dir"/*.json; do
   [ -f "$f" ] || continue
-  if grep -q '"status" *: *"ACTIVE"' "$f" && ! grep -qE '"document_sha256" *: *"0{64}"' "$f"; then
+  case "$f" in *.schema.json) continue ;; esac
+  rights_fields="$(python3 -c "import json,sys;d=json.load(open('$f'));print(d.get('provider','')+'|'+d.get('lifecycle','')+'|'+d.get('contract_document',{}).get('document_hash',{}).get('hex',''))" 2>/dev/null || true)"
+  IFS='|' read -r rights_provider rights_lifecycle rights_hash <<<"$rights_fields"
+  if { [ "$rights_provider" = kis ] || [ "$rights_provider" = krx ]; } \
+    && [ "$rights_lifecycle" = ACTIVE ] \
+    && [[ "$rights_hash" =~ ^[0-9a-f]{64}$ ]] \
+    && [ "$rights_hash" != "0000000000000000000000000000000000000000000000000000000000000000" ]; then
     e1_state="PASS"
-    e1_detail="ACTIVE written rights: $(basename "$f")"
+    e1_detail="ACTIVE provider=$rights_provider rights: $(basename "$f")"
     break
   fi
 done

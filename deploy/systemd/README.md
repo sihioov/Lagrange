@@ -99,6 +99,8 @@ read-only DB reachability, last schedule attempt (including empty/blocked
 cycles), oldest active queue age, and current blocked-run count. The runtime
 state file is non-secret and intentionally resets on service restart.
 
-The QA smoke uses a labeled synthetic 11-ETF dataset only. Real production
-recommendations remain blocked until licensed KRX provider implementation,
-credentials, entitlement evidence, and operator provisioning are available.
+The QA smoke uses a labeled synthetic 11-ETF dataset only. The production
+read-only path uses the KIS provider and remains blocked until real KIS
+credentials, entitlement evidence, an approved immutable dataset pin, and
+operator provisioning are available. KIS account/order credentials are not
+required for this EOD path; the Live profile remains disabled.

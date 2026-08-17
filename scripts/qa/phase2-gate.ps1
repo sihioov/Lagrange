@@ -9,7 +9,7 @@
 
   APPROVED requires EVERY Phase 2 check to pass AND an active data entitlement
   AND five-user Phase 1 evidence. Phase 2 can be proven Owner-only while Phase 1
-  is externally blocked (the KRX written-rights contract and the Auth0 tenant),
+  is externally blocked (the KIS broker entitlement and the Auth0 tenant),
   but that state is NOT a release: Member production stays disabled and the gate
   says so in the verdict rather than in a footnote. There is deliberately no
   flag, override, or environment variable that turns a blocked run into an
@@ -112,14 +112,20 @@ try {
     elseif ($p7pass) { Add-Check P7 'fault-suite' 'PASS' 'all Phase 2 faults fail closed' }
     else { Add-Check P7 'fault-suite' 'MISSING_EVIDENCE' 'fault suite incomplete (see p7-fault-suite.txt)' }
 
-    # E1: the written rights artifact must exist AND be ACTIVE with a real
-    # document hash. A placeholder with a zeroed hash is not an entitlement.
-    $e1 = 'BLOCKED_EXTERNAL'; $e1d = 'no ACTIVE written-rights artifact in configs/data-rights/'
+    # E1: KIS (or legacy KRX-compatible) rights metadata must be ACTIVE with a
+    # real document hash. A placeholder with a zeroed hash is not entitlement.
+    $e1 = 'BLOCKED_EXTERNAL'; $e1d = 'no ACTIVE KIS entitlement artifact in configs/data-rights/'
     if (Test-Path $dataRightsDir) {
         foreach ($f in Get-ChildItem -File -Filter '*.json' $dataRightsDir) {
-            $raw = Get-Content -Raw $f.FullName
-            if ($raw -match '"status"\s*:\s*"ACTIVE"' -and $raw -notmatch '"document_sha256"\s*:\s*"0{64}"') {
-                $e1 = 'PASS'; $e1d = "ACTIVE written rights: $($f.Name)"; break
+            if ($f.Name -like '*.schema.json') { continue }
+            try { $doc = Get-Content -Raw $f.FullName | ConvertFrom-Json } catch { continue }
+            $provider = "$($doc.provider)"
+            $lifecycle = "$($doc.lifecycle)"
+            $hash = "$($doc.contract_document.document_hash.hex)"
+            if (($provider -eq 'kis' -or $provider -eq 'krx') -and
+                $lifecycle -eq 'ACTIVE' -and $hash -match '^[0-9a-f]{64}$' -and
+                $hash -ne ('0' * 64)) {
+                $e1 = 'PASS'; $e1d = "ACTIVE provider=$provider rights: $($f.Name)"; break
             }
         }
     }

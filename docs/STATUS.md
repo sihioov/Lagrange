@@ -30,13 +30,13 @@
 
 ## 2. 어디까지 왔나
 
-**한 줄 요약: 2026-08-17 출시 구현 기준 커밋 `61af2bb`에서 Phase 1 E2~E7, Phase 2 P1~P7, Phase 3 L1~L11, 양 단계 장애 주입 30개 시나리오와 실제 PITR 복구가 모두 통과했다. 종합 F3는 코드 결함 없이 `BLOCKED_EXTERNAL`이며, 출시를 막는 것은 E1 KRX 서면 권리·실제 provider/credential과 X1/X2 KIS 실계좌/소액 주문 증거다. 배포 preflight도 Linux 기준으로 보강했지만 운영 secret·데이터 volume·systemd 설치는 아직 수행하지 않았다(§2.12).**
+**한 줄 요약: 2026-08-18 출시 후보 기준으로 Phase 1 E2~E7, Phase 2 P1~P7, Phase 3 L1~L11, 양 단계 장애 주입 30개 시나리오와 실제 PITR 복구가 모두 통과했다. 종합 F3는 코드 결함 없이 `BLOCKED_EXTERNAL`이며, 출시를 막는 것은 E1 KIS broker data-rights/실제 entitlement·credential·초기 dataset과 X1/X2 KIS 실계좌/소액 주문 증거다. KIS read-only provider wiring과 Linux 운영 preflight는 저장소에 있지만, 운영 secret·데이터 volume·systemd 설치·실제 endpoint 검증은 아직 수행하지 않았다(§2.12, `docs/runbooks/kis-production-backfill.md`).**
 
 ### 2.1 게이트 판정 (2026-08-17 재실행, `61af2bb`, `--include-failure --include-restore` 포함)
 
 | 게이트 | 코드 검사 | 판정 | 막고 있는 것 |
 |---|---|---|---|
-| Phase 1 | E2~E7 **전부 PASS** | `BLOCKED_EXTERNAL_DATA_RIGHTS` | E1 KRX 서면 데이터 권리 단독 |
+| Phase 1 | E2~E7 **전부 PASS** | `BLOCKED_EXTERNAL_DATA_RIGHTS` | E1 KIS broker data-rights/entitlement 단독 |
 | Phase 2 | P1~P7 **전부 PASS** | `OWNER_ONLY_BLOCKED_EXTERNAL` | E1 및 Phase 1이 외부 권리 때문에 `APPROVED`가 아닌 상태 |
 | Phase 3 | L1~L11 15개 **전부 PASS** | `BLOCKED_EXTERNAL_CREDENTIALS` | X1/X2 실제 KIS 계좌 |
 | 장애 주입 (failures) | Phase 2 15개 + Phase 3 15개, **30개 전부 PASS** | **`PASS`** | — |
@@ -71,7 +71,7 @@ F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단
 ### 2.4 단계별 실질 상태
 
 - **Phase 0** — 완료. 가격 스케일을 바로잡은 v2 증거 기준선을 재승인했다. Phase 0의 6개와 robustness 5전략의 30개 비-provenance 경제 아티팩트는 이전 승인본과 byte-identical하여 전략 경제 결과가 유지됐고, provenance와 identity는 v2 계약으로 갱신됐다.
-- **Phase 1** — Raw→PostgreSQL 연구 메타데이터 발행 경로 완료. 각 수집은 먼저 불변 Raw batch와 append-only manifest로 내구화되고, 검증한 **같은 batch**의 `data_batches` 4행과 캘린더를 한 트랜잭션으로 발행한다. `trading_calendar_versions`는 정정 이력을 append-only로 보존하고 `trading_calendars`는 더 최신 `retrieved_at`만 현재 projection으로 전진시킨다. 복구는 exclusive commit lock 아래 orphan evidence를 재동기화하고 실제 JSONL line으로 먼저 내구화한 뒤 append-order immutable high-water snapshot을 16건씩 재생하며, timeout 뒤 마지막 검증 cursor에서 재개한다. Linux에서는 UID 10001이 `0440` evidence/`batch.json`을 read-only handle로 `fsync`하고, `0640` manifest/lock만 변경한다. 따라서 orphan 뒤에 대기하던 정상 append도 실제 line 순서의 다음 suffix가 되고, snapshot 종료 후 high-water 불변을 재확인하므로 backdated concurrent append도 누락되지 않는다. daemon은 catch-up/매 scheduled cycle 직전에 다시 복구한다. `research-worker`는 16:30 KST 기본 일정과 지각 시작 즉시 catch-up, one-shot/daemon, 구조화 이벤트, batch-date-aware 4일 신선도 healthcheck, synthetic-production 선차단을 제공한다. Compose는 host `<data>/raw`↔container `/data/raw` 직접 Raw 경로, secret 파일, `cap_drop: ALL` 뒤 `CHOWN`/`FOWNER`/`DAC_OVERRIDE`만 복원하는 no-follow recursive UID 10001 Raw 초기화, exact constraint/column/index와 append-only function body까지 검사하는 migration/schema/role drift gate, 최소권한 `research_writer`를 연결했다. Risk Gateway와 worker health는 미래 batch를 제외하고 `min(retrieved_at, KST batch-date 종점)`을 동일하게 사용하므로 새로 발행한 역사 backfill도 stale이다. 단, 이는 synthetic fixture 기반 개발/QA 경로의 완료다. **라이선스·credential·entitlement를 실제 HTTP 요청에 적용하는 KRX provider는 아직 구현되지 않았고 실제 feed는 live가 아니다.** E1의 서면 권리와 E2뿐 아니라 실제 endpoint/credential 및 운영자 provisioning이 남아 있다. 한편 Phase 1의 사용자 기능 축인 **추천 조회는 08-12~13에 고정 11-ETF 파이프라인으로 구현 완료**됐다(제출→계산→발행→최신/이력 화면, §3.10).
+- **Phase 1** — Raw→PostgreSQL 연구 메타데이터 발행 경로와 KIS read-only provider wiring을 연결했다. 각 수집은 먼저 불변 Raw batch와 append-only manifest로 내구화되고, 검증한 **같은 batch**의 `data_batches` 4행과 캘린더를 한 트랜잭션으로 발행한다. `trading_calendar_versions`는 정정 이력을 append-only로 보존하고 `trading_calendars`는 더 최신 `retrieved_at`만 현재 projection으로 전진시킨다. 복구는 exclusive commit lock 아래 orphan evidence를 재동기화하고 실제 JSONL line으로 먼저 내구화한 뒤 append-order immutable high-water snapshot을 16건씩 재생하며, timeout 뒤 마지막 검증 cursor에서 재개한다. Linux에서는 UID 10001이 `0440` evidence/`batch.json`을 read-only handle로 `fsync`하고, `0640` manifest/lock만 변경한다. 따라서 orphan 뒤에 대기하던 정상 append도 실제 line 순서의 다음 suffix가 되고, snapshot 종료 후 high-water 불변을 재확인하므로 backdated concurrent append도 누락되지 않는다. daemon은 catch-up/매 scheduled cycle 직전에 다시 복구한다. `research-worker`는 16:30 KST 기본 일정과 지각 시작 즉시 catch-up, one-shot/daemon, 구조화 이벤트, batch-date-aware 4일 신선도 healthcheck, synthetic-production 선차단을 제공한다. Compose는 host `<data>/raw`↔container `/data/raw` 직접 Raw 경로, secret 파일, `cap_drop: ALL` 뒤 `CHOWN`/`FOWNER`/`DAC_OVERRIDE`만 복원하는 no-follow recursive UID 10001 Raw 초기화, exact constraint/column/index와 append-only function body까지 검사하는 migration/schema/role drift gate, 최소권한 `research_writer`를 연결했다. Risk Gateway와 worker health는 미래 batch를 제외하고 `min(retrieved_at, KST batch-date 종점)`을 동일하게 사용하므로 새로 발행한 역사 backfill도 stale이다. 단, 이는 synthetic fixture와 KIS wiring 기반 개발/QA 경로의 완료다. **실제 KIS endpoint/credential, broker data-rights/entitlement를 적용한 production feed는 아직 live가 아니다.** 초기 백필·dataset pin과 운영자 provisioning도 남아 있다. 한편 Phase 1의 사용자 기능 축인 **추천 조회는 08-12~13에 고정 11-ETF 파이프라인으로 구현 완료**됐다(제출→계산→발행→최신/이력 화면, §3.10).
 - **Phase 2** — **실행 엔진·러너·종가 평가 경로 구현 완료** (`ecef4b2`, `cf8704a`, `8da6548`). `job_queue::paper_execution::execute_session`이 큐잉된 target을 실제로 체결해 `orders`/`fills`/`positions`/`cash_ledger`에 기록하고, `api_server::paper_session::run_and_settle`이 정산·패리티·통지를 수행한다. 새 `api_server::paper_runner::run_cycle`은 worker 역할의 전체 due target을 소유자 Actor로 재진입시켜 실행하고, 활성 PAPER 계좌를 스캔해 `job_queue::paper_valuation::value_account`를 호출한다. 종가 평가는 원장 현금 자기대조·보유 포지션별 curated close·미래 close 차단·cost profile 검증을 거쳐 `daily_equity`를 계좌/날짜별 불변·멱등으로 기록한다. `crates/api-server/src/bin/paper-runner.rs`가 `--once`/`--date`, 환경별 풀, 2초 polling/10초 backoff, Ctrl-C 종료를 제공한다. 실제 QA DB 이음매 테스트로 두 소유자 스캔, 실행·통지 중복 방지, 정확한 equity/cash/positions_value, missing/future/conflicting close, LIVE·교차 테넌트 거부를 검증했고, Python/Web/외부 데이터 권리 차단은 그대로다. 호스트 배포 단위와 운영 credential 주입은 `deploy/systemd/paper-runner.service` 및 `paper-runner.env.example`로 등록했고, `scripts/qa/paper-runner-smoke.ps1`가 해당 유닛 정적 계약·QA DB 테스트·CLI smoke를 묶는다. 08-12~13에 **추천→Paper 연계**가 추가됐다: 16:30 KST 스케줄러가 `auto_apply_recommendations=true`로 opt-in한 활성 바인딩에만 scheduled run의 target을 자동 발행하고(§3.10), 수동 run은 리밸런싱 미리보기 + 명시적 적용 경로(§2.5)로만 pending target이 된다 — 두 lineage는 섞이지 않는다.
 - **Phase 3** — 안전 불변식 검증 완료(L1~L11) + 이번 감사로 치명 결함 수정. 게이트 입력 5개 모두 코드 수준에서 실제 원천에 연결됐다(`85f1902`: `strategy_promotion`/`instrument_allowed`, `d7d75c7`: KRX 세션·EOD batch freshness·actor-scoped intent conflict). 원천 행이 없거나 읽을 수 없으면 여전히 `Unknown`으로 닫히며, 운영 캘린더·데이터 수집 메타데이터가 준비되기 전까지 **라이브 주문은 승인되지 않는다** — 의도된 fail-closed 상태.
 - **Phase 4** — PIT 재무 팩터의 **골격 완료** (`cda7182`): 이중 시간축(기간 + 공시일), 바 날짜별 as-of 해석, 정정 공시 처리. 실제 재무 데이터가 오면 채우기만 하면 된다. 나머지 항목은 미착수 (§4.4).
@@ -151,7 +151,7 @@ API는 universe 생략 시 기존 KOSPI200 동작을 유지하면서 명시적 K
 
 검증은 migration contract 25/25, source/compute/API live tests, full workspace fmt/check/strict Clippy/tests, Web 69 unit + Playwright 3, CI contract 6/6을 통과했다. Docker smoke는 실제 research-worker와 candidate-runner를 사용해 공통 4 + membership 2 sealing, 두 universe별 Top 5, runner 2회 replay idempotency를 no-SKIP으로 확인했다. 독립 reviewer 최종 판정은 `P0=0`, `P1=0`, `core P2=0`, `P3=1`, `OK`다. 남은 P3는 source-missing readiness 메시지의 universe별 세분화로, correctness/release gate를 막지 않는 observability 항목이다.
 
-이 완료 판정은 synthetic fixture를 사용한 코드·QA vertical에 대한 것이다. **실제 라이선스 KRX provider, production endpoint/credential, 서면 데이터 권리와 운영 backfill은 여전히 미완료**이며 실제 feed가 live라는 뜻이 아니다.
+이 완료 판정은 synthetic fixture를 사용한 코드·QA vertical과 KIS wiring에 대한 것이다. **실제 KIS production endpoint/credential, broker data-rights/entitlement, 운영 backfill과 dataset pin은 여전히 미완료**이며 실제 feed가 live라는 뜻이 아니다.
 
 ### 2.10 phase1 게이트 Linux 이식과 이 호스트 최초 증거 (2026-08-17, `5b3f832`)
 
@@ -212,7 +212,7 @@ web 의존성을 설치하자(`npm ci` 저장소 루트 → `npx playwright inst
 
 이 실행의 트리는 `c362216`, 즉 **multi-universe 후보 연구가 병합된 현재 main**이다(§2.10의 08:32 실행은 병합 이전 트리였다). 따라서 이것이 현재 main 기준의 phase1 증거다.
 
-**이 호스트에서 phase1의 코드·환경 요인이 전부 소진됐다.** 남은 `BLOCKED_EXTERNAL_DATA_RIGHTS`는 KRX 서면 권리라는 외부 조달 항목 하나이며, 그것이 없을 때 닫히는 것이 이 게이트의 존재 이유다.
+**이 호스트에서 phase1의 코드·환경 요인이 전부 소진됐다.** 남은 `BLOCKED_EXTERNAL_DATA_RIGHTS`는 KIS broker data-rights/entitlement라는 외부 조달 항목 하나이며, 그것이 없을 때 닫히는 것이 이 게이트의 존재 이유다.
 
 ### 2.12 오늘 출시 감사 — 전체 게이트와 Linux 배포 preflight (2026-08-17, `61af2bb`)
 
@@ -300,7 +300,7 @@ DB의 FORCE RLS 소유권 정책은 완화하지 않았다. 공유 GET/조회성
 | **worker·관측성** | `--once --date`, 16:30 KST daemon과 at/after-schedule 즉시 catch-up, startup 및 매 daemon cycle 직전 paged recovery, 10초~600초 retry, stable JSON events/errors, batch-date-aware 345600초 healthcheck, synthetic-production 선차단을 구현했다 | `125eac1`~현재 |
 | **Compose·Risk 이음매** | direct host `<data>/raw` 계약, `research_writer` 최소권한, secret 파일, no-follow recursive Raw UID init, exact constraint 정의/column/index/normalized append-only function body까지 닫는 non-root schema gate와 mutation smoke를 연결했다. Risk Gateway와 health는 적용 가능한 최신 `EOD` 및 역사 backfill을 stale로 유지하는 동일 effective instant를 사용하며 `EOD_UNAVAILABLE`은 제외한다 | `30e2679`~현재 |
 
-이 완료 판정은 저장·발행·복구·배포 **이음매**에 대한 것이다. 실제 라이선스 KRX HTTP transport, production credential/endpoint, entitlement-aware provider 동작, 외부 role/secret/data-volume provisioning은 구현·조달되지 않았다. 따라서 실제 KRX feed가 운영 중이라는 뜻이 아니다.
+이 완료 판정은 저장·발행·복구·배포 **이음매**에 대한 것이다. KIS HTTP/token/provider wiring은 저장소에 있으나 production credential/endpoint, broker entitlement-aware evidence, 외부 role/secret/data-volume provisioning과 초기 backfill은 구현·조달·검증되지 않았다. 따라서 실제 KIS feed가 운영 중이라는 뜻이 아니다.
 
 ### 3.8 GitHub Actions CI (2026-08-11)
 
@@ -336,14 +336,14 @@ DB의 FORCE RLS 소유권 정책은 완화하지 않았다. 공유 GET/조회성
 | **scheduled→Paper** | 16:30 KST 스케줄 run만, opt-in 바인딩만 자동 발행 — 수동 run과 lineage 분리 | `fd3fc5b` |
 | **Web 워크플로** | 첫 실행 제출(latest가 404여도), polling, 최신 성공 결과 contract 렌더링, 실패 이력 보존, active config로 실행 제한 | `e08a30f`, `217b578`, `a8c4e6b`, `fcc812a` |
 
-이 위에 §2.5의 리밸런싱 미리보기(08-13, `58150dd`~`dc4dd0e`)가 얹혔다. 실제 KRX 데이터·라이선스 없이는 production 추천이 fail-closed로 차단되는 원칙은 이 경로에도 동일하게 적용된다.
+이 위에 §2.5의 리밸런싱 미리보기(08-13, `58150dd`~`dc4dd0e`)가 얹혔다. 실제 KIS 데이터·broker entitlement 없이는 production 추천이 fail-closed로 차단되는 원칙은 이 경로에도 동일하게 적용된다.
 
 ### 3.11 추천 러너 운영 (2026-08-13)
 
 - `recommendation-runner`는 16:30 KST 기본 스케줄과 시작 시 최신 적격 종가 catch-up을 사용한다. 활성 Paper 계좌 바인딩 중 `auto_apply_recommendations=true`인 경우만 자동 요청하며, 수동 요청과 lineage를 섞지 않는다.
 - Compose/systemd는 curated 데이터와 고정 11-ETF universe를 읽기 전용으로 마운트하고 worker DB password를 `_FILE`로만 받는다. broker credential은 이 서비스에 주입하지 않는다.
 - healthcheck는 non-secret runtime state(재시작 시 초기화), process heartbeat, read-only DB reachability, 마지막 schedule 결과(빈 cycle 포함), queue age, BLOCKED run 수를 보고한다. synthetic 11-ETF QA smoke는 실제 배포/큐 경로 검증용일 뿐 production data가 아니다.
-- 실 KRX provider, 라이선스/credential/entitlement 증거 및 운영 provisioning은 여전히 외부 blocker다. 이들이 없으면 production recommendation은 fail-closed로 차단되어야 한다.
+- 실 KIS endpoint/credential, broker data-rights/entitlement 증거, 초기 backfill/dataset pin 및 운영 provisioning은 여전히 외부 blocker다. 이들이 없으면 production recommendation은 fail-closed로 차단되어야 한다.
 
 ---
 
@@ -364,16 +364,16 @@ DB의 FORCE RLS 소유권 정책은 완화하지 않았다. 공유 GET/조회성
 | 8 | paper-runner·recommendation-runner 배포 서비스 활성화 | **운영자** | ◐ 배포 계약/preflight 완료, 운영 secret·volume·systemd 설치 대기(§2.12) |
 | 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ✅ **완료** — 스위트 5/5 통과(§2.8), phase1 게이트가 **E2 PASS**를 발행(§2.10) |
 | 10 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
-| 11 | KRX 계약·실제 provider/credential/endpoint / KIS 실계좌 | **외부 구현·사장님 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
+| 11 | KIS broker entitlement·실제 provider endpoint/credential / KIS 실계좌 | **외부 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
 | 12 | KOSPI200/KOSDAQ150 개별주식 후보 연구 vertical | **코드 작업** | ✅ **완료·독립 리뷰 OK** (§2.9, `ac97970`~`8c5ef9d`) |
 
-Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연구의 저장소 내부 이음매는 완료됐다. 실제 KRX provider 구현과 production credential/endpoint/권리/운영 backfill은 외부 잔여 작업이다. **전체 게이트 재실행도 완료됐으므로(§2.12), 다음 순서는 외부 조달과 운영 호스트 provisioning이다. 권리·자격증명 없이 Member/Live를 활성화하지 않는다.**
+Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연구의 저장소 내부 이음매는 완료됐다. KIS provider wiring은 완료됐지만 production credential/endpoint/권리/운영 backfill/dataset pin은 외부 잔여 작업이다. **전체 게이트 재실행도 완료됐으므로(§2.12), 다음 순서는 외부 조달과 운영 호스트 provisioning이다. 권리·자격증명 없이 Member/Live를 활성화하지 않는다.**
 
 ### 4.1 소유자만 할 수 있는 것 — 외부 조달
 
 | 항목 | 구체적으로 |
 |---|---|
-| **E1** KRX 서면 데이터 권리 + 실제 공급자 | 초대 사용자 5명 + 파생 분석물을 포괄하는 계약 아티팩트, 라이선스·entitlement-aware KRX HTTP transport 구현, 실제 endpoint/credential, `research_writer` role·secret·Raw volume 운영자 provisioning. 현재 저장소에는 synthetic fixture와 발행 이음매만 있고 real feed는 live가 아님. `configs/data-rights/`는 여전히 placeholder뿐 |
+| **E1** KIS broker data-rights/entitlement + 실제 공급자 | 초대 사용자 5명 + 파생 분석물을 포괄하는 실제 계약/사용허가 metadata, KIS HTTP/token/provider wiring, 실제 endpoint/credential, `research_writer` role·secret·Raw volume 운영자 provisioning과 초기 backfill/dataset pin. 현재 저장소에는 synthetic fixture와 wiring/발행 이음매만 있고 real feed는 live가 아님. `configs/data-rights/`는 여전히 placeholder뿐 |
 | **E2** Auth0 테넌트 | **해소(08-17):** 테넌트 선택·confidential client 배선(08-12, §3.9), Linux 호스트 secret 배치와 실 테넌트 vendor 스위트 5/5 통과(§2.8)에 이어, phase1 게이트가 **E2 = PASS**를 발행했다(§2.10). 이 항목은 더 이상 외부 조달 대기가 아니다 |
 | **X1/X2** KIS 실계좌 | 실거래 자격증명 + 소액 실주문 증거 (변동 없음) |
 
@@ -390,7 +390,7 @@ Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연�
 2. ~~**전체 게이트 재실행.**~~ **완료 (2026-08-17, `61af2bb`, §2.12)** — Phase 1/2/3, 양 단계 failures, 실제 PITR, 종합 F3를 재실행했다. 내부 검사는 모두 통과했고 최종 판정은 외부 권리·실계좌 때문에 `BLOCKED_EXTERNAL`이다. F1/F2/F4 판정문은 여전히 사람 재검토가 필요하다.
 3. **리밸런싱 미리보기 UI.** §2.5의 백엔드 계약은 완료됐지만 화면과 Live 주문은 범위 밖이다.
 4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
-5. **실제 KRX provider와 운영 원천 활성화.** 라이선스·credential·entitlement-aware HTTP transport와 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning한 뒤 실제 KRX calendar/EOD/fundamental/membership 원천을 공급한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
+5. **실제 KIS provider와 운영 원천 활성화.** KIS credential/token/endpoint를 운영 secret으로 provisioning하고 broker entitlement metadata, `research_writer`, migration, Raw volume을 검증한 뒤 KIS calendar/EOD/instrument/corporate-action 원천을 공급한다. 고정 ETF 백필 후 후보 bridge와 KOSPI200/KOSDAQ150 source set은 별도 승인한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 
 **작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다.
 

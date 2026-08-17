@@ -285,15 +285,14 @@ fi
 ~~~
 
 ~~~bash
-sudo install -d -m 0755 /opt/lagrange
-sudo install -d -m 0750 /etc/lagrange /etc/lagrange/universes /etc/lagrange/secrets
-sudo install -d -m 0750 -o 10001 -g 10001 \
-  /var/lib/lagrange/data/raw \
-  /var/lib/lagrange/data/curated \
-  /var/lib/lagrange/data/nautilus_catalog \
-  /var/lib/lagrange/data/artifacts
-sudo install -d -m 0750 -o lagrange -g lagrange \
-  /var/lib/lagrange/data/phase0
+# First inspect the idempotent plan. No host mutation happens in this mode.
+scripts/ops/provision-linux.sh --dry-run
+
+# After reviewing the exact paths, apply only the account/directory ownership
+# fence. The script never deletes, truncates, recursively copies, or generates
+# secrets. Run this explicitly as root, then verify without mutation.
+sudo scripts/ops/provision-linux.sh --apply
+scripts/ops/provision-linux.sh --preflight
 ~~~
 
 계정을 먼저 만든 뒤 `phase0` 디렉터리를 다시 소유시킨다.
@@ -356,7 +355,7 @@ AUTH0_DOMAIN=lagrange-station.jp.auth0.com
 AUTH0_CLIENT_ID=<deployment-config>
 ~~~
 
-`RECOMMENDATION_DATASET_VERSION_ID`, `RECOMMENDATION_DATASET_VERSION`, `RECOMMENDATION_CURATED_VERSION`, `RECOMMENDATION_DATASET_MANIFEST_SHA256`는 승인된 immutable curated dataset을 실제로 설치한 뒤에만 채운다. 값이 없거나 dataset과 다르면 production recommendation은 거부되어야 한다.
+`RECOMMENDATION_DATASET_VERSION_ID`, `RECOMMENDATION_DATASET_VERSION`, `RECOMMENDATION_CURATED_VERSION`, `RECOMMENDATION_DATASET_MANIFEST_SHA256`는 승인된 immutable curated dataset을 실제로 설치한 뒤에만 채운다. 값이 없거나 dataset과 다르면 production recommendation은 거부되어야 한다. 운영에서는 `scripts/ops/validate-production-config.sh`가 이 pin, KIS entitlement reference, TLS/Auth0/DB/KIS read-only secret 파일과 live-off 조건을 함께 검사한다.
 
 Compose 경로는 `deploy/secrets/`를 참조한다. 다음 이름은 파일명 inventory일 뿐 실제 값을 문서에 복사하지 않는다.
 
@@ -393,7 +392,9 @@ Compose를 사용할 때는 `deploy/secrets/<name>`의 실제 파일도 별도�
 
 ### 6.1 새 PostgreSQL을 격리해 시작
 
-먼저 대상 PostgreSQL만 시작하고, 외부 서비스·runner는 시작하지 않는다.
+먼저 대상 PostgreSQL만 시작하고, 외부 서비스·runner는 시작하지 않는다. 전체
+운영 Compose의 build/migration/health 순서는 `scripts/ops/compose-release.sh`가
+계획·preflight 후 동일하게 수행한다.
 
 ~~~bash
 cd "$HOME/src/lagrange"
@@ -457,11 +458,12 @@ bash scripts/qa/research-worker-smoke.sh --static-only
 ### 7.2 Compose의 현재 범위를 이해한다
 
 현재 `deploy/compose/compose.yml`은 reverse proxy, Web, API, PostgreSQL,
-migration/role bootstrap, research/recommendation/candidate/backtest/Paper worker의
+migration/role bootstrap, KIS research/recommendation/candidate/backtest/Paper worker의
 실제 production entrypoint와 healthcheck를 정의한다. `report-worker`는 처리 계약과
 producer가 없어 sleeping placeholder 대신 의도적으로 배포하지 않으며, Live profile은
 credential-free simulator라 실주문 readiness를 제공하지 않는다. Compose가 올라갔다는
-사실만으로 실제 데이터 권리나 KIS 실거래가 준비됐다고 판단하지 않는다.
+사실만으로 실제 KIS entitlement, 초기 dataset 승인, 또는 KIS 실거래가 준비됐다고
+판단하지 않는다. 계좌·주문 secret은 이 read-only EOD 경로의 필수 조건이 아니다.
 
 실제 runner 운영은 아래 systemd unit을 단일 owner로 사용한다. 같은 queue에 Compose recommendation runner와 systemd recommendation runner를 동시에 띄우지 않는다. Paper runner도 동일하다.
 
@@ -707,7 +709,7 @@ Linux 이관 직후에는 아래 순서로 진행한다.
 7. 리밸런싱 미리보기 UI를 구현
 8. KRX 권리·provider·credential·endpoint와 KIS 실계좌는 별도 운영자/소유자 승인 후 진행
 
-현재 코드의 고정 11-ETF recommendation pipeline과 Paper rebalance preview는 `main`에 들어가 있지만, production KRX feed·실제 데이터 권리·KIS 실계좌는 여전히 외부 blocker다. Linux로 옮겼다는 이유만으로 이 경계가 사라지지 않는다.
+현재 코드의 고정 11-ETF recommendation pipeline과 Paper rebalance preview는 `main`에 들어가 있지만, production KIS feed의 실제 credential·entitlement·초기 백필/승인 dataset과 KIS 실계좌는 여전히 외부 blocker다. read-only EOD release에는 실계좌가 필요하지 않으며, Linux로 옮겼다는 이유만으로 이 경계가 사라지지 않는다. 고정 ETF 백필 계획은 `docs/runbooks/kis-production-backfill.md`를 따른다.
 
 ## 12. 완료 체크리스트
 
