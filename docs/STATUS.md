@@ -1,6 +1,6 @@
 # Lagrange Station — 상태 종합
 
-**기준일: 2026년 8월 17일 (2026-08-17).** 08-14 Linux 호스트 이관은 §2.6~2.7, Auth0 실 테넌트 검증은 §2.8, KOSPI200/KOSDAQ150 개별주식 후보 연구 vertical 완료는 §2.9, phase1 게이트 Linux 이식과 이 호스트 최초 판정은 §2.10에 기록한다. 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지, 고정 ETF 추천 파이프라인과 Paper 리밸런싱 미리보기는 `554834c`~`dc4dd0e`, multi-universe 후보 연구 구현은 `ac97970`~`8c5ef9d`다.
+**기준일: 2026년 8월 17일 (2026-08-17).** 08-14 Linux 호스트 이관은 §2.6~2.7, Auth0 실 테넌트 검증은 §2.8, KOSPI200/KOSDAQ150 개별주식 후보 연구 vertical 완료는 §2.9, phase1 게이트 Linux 이식은 §2.10~2.11, 오늘의 전체 출시 게이트와 Linux 배포 preflight는 §2.12에 기록한다. 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지, 고정 ETF 추천 파이프라인과 Paper 리밸런싱 미리보기는 `554834c`~`dc4dd0e`, multi-universe 후보 연구 구현은 `ac97970`~`8c5ef9d`다.
 
 ---
 
@@ -30,22 +30,20 @@
 
 ## 2. 어디까지 왔나
 
-**한 줄 요약: 고정 11-ETF 추천→Paper 경로에 더해 KOSPI200/KOSDAQ150 개별주식 후보의 수집→계산→API→Web vertical이 universe별 격리 계약으로 완료됐다(§2.9). E2(Auth0)는 해소됐다 — 실 테넌트 vendor 스위트 5/5 통과(§2.8)에 이어 native Linux로 이식된 phase1 게이트가 이 호스트 최초의 판정에서 E2 PASS를 발행했다(§2.10). 릴리스는 여전히 E1 KRX 권리·실제 provider/credential과 X1/X2 KIS 실계좌에 막혀 있으며, 실제 원천이 없을 때 닫히는 것이 의도된 정상 상태다.**
+**한 줄 요약: 2026-08-17 출시 구현 기준 커밋 `61af2bb`에서 Phase 1 E2~E7, Phase 2 P1~P7, Phase 3 L1~L11, 양 단계 장애 주입 30개 시나리오와 실제 PITR 복구가 모두 통과했다. 종합 F3는 코드 결함 없이 `BLOCKED_EXTERNAL`이며, 출시를 막는 것은 E1 KRX 서면 권리·실제 provider/credential과 X1/X2 KIS 실계좌/소액 주문 증거다. 배포 preflight도 Linux 기준으로 보강했지만 운영 secret·데이터 volume·systemd 설치는 아직 수행하지 않았다(§2.12).**
 
-### 2.1 게이트 판정 (2026-08-10 재실행, `--include-failure --include-restore` 포함)
+### 2.1 게이트 판정 (2026-08-17 재실행, `61af2bb`, `--include-failure --include-restore` 포함)
 
 | 게이트 | 코드 검사 | 판정 | 막고 있는 것 |
 |---|---|---|---|
-| Phase 1 | E3~E6 **전부 PASS** | `BLOCKED_EXTERNAL_DATA_RIGHTS` | E1 KRX 서면 데이터 권리, E2 Auth0 테넌트 (E7 Playwright는 이번 실행에서 스킵) |
-| Phase 2 | P1~P5 9개 **전부 PASS** | `OWNER_ONLY_BLOCKED_EXTERNAL` | E1/E2 뿐 — **P6/P7 증거는 복원됨** (아래) |
+| Phase 1 | E2~E7 **전부 PASS** | `BLOCKED_EXTERNAL_DATA_RIGHTS` | E1 KRX 서면 데이터 권리 단독 |
+| Phase 2 | P1~P7 **전부 PASS** | `OWNER_ONLY_BLOCKED_EXTERNAL` | E1 및 Phase 1이 외부 권리 때문에 `APPROVED`가 아닌 상태 |
 | Phase 3 | L1~L11 15개 **전부 PASS** | `BLOCKED_EXTERNAL_CREDENTIALS` | X1/X2 실제 KIS 계좌 |
-| 장애 주입 (failures) | 15개 시나리오(Phase 2: 11, Phase 3: 4 대표) | **`PASS`** | — (복원 완료) |
+| 장애 주입 (failures) | Phase 2 15개 + Phase 3 15개, **30개 전부 PASS** | **`PASS`** | — |
 | PITR 복구 (restore) | 실제 백업 생성 → 격리 타깃 복구 → 검증 | **`PASS`** (`verdict: SUCCESS`) | — (복원 완료) |
-| **종합 (F3)** | — | **`BLOCKED_EXTERNAL`** | E1/E2/X1/X2 (외부 조달만 남음) |
+| **종합 (F3)** | — | **`BLOCKED_EXTERNAL`** | E1/X1/X2 (외부 조달만 남음; E2 Auth0는 해소) |
 
-**이 08-10 게이트 범위에서 코드 때문에 막힌 항목은 하나도 없다.** P6/P7은 08-08에 이미 통과했던 것이 08-09 증거 갱신 때 누락 옵션으로 덮어써졌던 것뿐이며, 08-10에 **진짜 백업 생성 → 진짜 격리 복구 → 진짜 장애 주입 15개 시나리오**로 재검증해 복원했다(조작 없음, 외부 판정 불변). 08-11에 추가된 연구 발행 경로의 완료 범위와 실제 KRX provider 잔여 작업은 §2.4·§3.7에 별도로 기록한다.
-
-**위 판정은 전부 08-10 코드에 대한 것이다.** 08-12의 Auth0 배선(§3.9), 08-12~13의 추천 파이프라인(§3.10~3.11)과 리밸런싱 미리보기(§2.5)는 아직 어떤 게이트 재실행으로도 검증되지 않았다 — 브랜치 병합 후 E7 Playwright 포함 전체 게이트 재실행이 필요하다(§4.3).
+**이 08-17 게이트 범위에서 코드나 로컬 실행 환경 때문에 막힌 항목은 없다.** 실제 `pg_basebackup`, WAL 7개, 목표 LSN `0/5000028`을 사용한 격리 복구에서 목표 시점 80행, 이후 행 0, provenance 3행, secret marker 0건, 파일 해시 불일치 0건을 확인했다. Phase 2 복원 실패 드릴 6개를 포함한 장애 주입은 양 단계 모두 15/15다. 판정 아티팩트는 `.omo/evidence/`의 10:22~10:25 UTC 실행본이며 gitignore 대상이므로 이 호스트에만 존재한다.
 
 ### 2.2 테스트 (기준일 최종 실행)
 
@@ -65,7 +63,7 @@
 |---|---|---|---|
 | F1 계획 준수 | `REQUEST_CHANGES_RESOLVED` (42/42 완료) | 08-08 | ⚠️ 이후 커밋 ~100개(Auth0·추천 파이프라인 포함) — **사람의 재검토가 필요한 문서** |
 | F2 코드 품질 | `APPROVE` | 08-08 | ⚠️ 동일 |
-| F3 운영 E2E | `BLOCKED_EXTERNAL` | 08-10 | P6/P7 포함 재검증, 최신 |
+| F3 운영 E2E | `BLOCKED_EXTERNAL` | 08-17 | `61af2bb`, Phase 1/2/3 + failures + restore 재검증, 최신 |
 | F4 범위 충실도 | `APPROVE` (LEAN·미국·분봉·파생 부재 확인) | 08-08 | ⚠️ F1과 동일 |
 
 F1/F2/F4는 스크립트가 아니라 **사람이 코드를 읽고 내린 판단문**이므로, 갱신하려면 재검토를 해야 한다. 이번 세션의 Paper 실행 경로 구현이 Phase 2 관련 재검토의 실질적 근거가 됐다.
@@ -216,6 +214,20 @@ web 의존성을 설치하자(`npm ci` 저장소 루트 → `npx playwright inst
 
 **이 호스트에서 phase1의 코드·환경 요인이 전부 소진됐다.** 남은 `BLOCKED_EXTERNAL_DATA_RIGHTS`는 KRX 서면 권리라는 외부 조달 항목 하나이며, 그것이 없을 때 닫히는 것이 이 게이트의 존재 이유다.
 
+### 2.12 오늘 출시 감사 — 전체 게이트와 Linux 배포 preflight (2026-08-17, `61af2bb`)
+
+`review-work-progress`에서 Linux 운영 배포 경계를 다시 점검하고 `61af2bb`(`fix(release): harden Linux deployment preflight`)를 로컬 커밋했다. 이 커밋은 아직 원격에 push하지 않았다. 변경 범위는 다음과 같다.
+
+- recommendation runner의 production env 예제를 추가하고 DB password file, dataset pin 5종, health state, 로그 설정을 명시했다.
+- Paper Rust 바이너리와 shell entrypoint가 같은 경로를 덮어쓰던 런북을 고쳐 바이너리는 `paper-runner-bin`, wrapper는 `/opt/lagrange/bin/paper-runner`로 분리했다.
+- Linux runbook의 오래된 WSL·Compose·migration·secret provisioning 설명을 현재 구현과 migration `0045`에 맞췄다.
+- Phase 2/3/F3와 Paper/recommendation smoke가 Docker socket 권한 부족을 QA DB 장애로 오진하지 않고 exit 2 환경 오류로 거부하도록 했다.
+- recommendation smoke에 `--static-only`를 추가했고 systemd env 예제와 Paper wrapper 설치 경로를 정적 회귀 검사로 잠갔다.
+
+정적 배포·DB·Compose·secret·systemd 검사, CI contract 6/6, release binary 두 개 빌드와 `--help`, GitHub required CI, research-worker smoke를 확인했다. Phase 1은 E2~E7 통과/E1 단독 차단, Phase 2는 P1~P7 통과/외부 차단, Phase 3는 L1~L11 통과/X1~X2 차단, F3는 failures·restore `PASS`를 포함해 `BLOCKED_EXTERNAL`을 발행했다. Playwright Chromium은 호스트에서 `libasound.so.2` 하나가 빠져 있어 Ubuntu `libasound2t64` 패키지를 `/tmp`에 비권한 추출하고 이번 프로세스의 `LD_LIBRARY_PATH`로만 주입해 E7 4개를 실행했다. 시스템 패키지는 변경하지 않았다.
+
+아직 `/etc/lagrange`, `/opt/lagrange`, `/var/lib/lagrange/data`와 production systemd 유닛은 설치되지 않았고, runtime DB/session/CSRF/cursor/TLS/KRX/KIS secret 및 실제 production dataset도 없다. 따라서 오늘 가능한 결과는 **코드·게이트 기준 release candidate + Owner-only 준비**까지다. Member KR-derived surface와 Live trading은 외부 증거가 생길 때까지 계속 비활성화해야 한다.
+
 ---
 
 ## 3. 최근에 고쳐진 것 (2026-08-08 ~ 08-17)
@@ -339,15 +351,15 @@ web 의존성을 설치하자(`npm ci` 저장소 루트 → `npx playwright inst
 | 4 | 추천→Paper 자동화(scheduled opt-in) + 리밸런싱 미리보기 백엔드 | **코드 작업** | ✅ **완료** (`fd3fc5b`, §2.5) |
 | 5 | Auth0 confidential client 배선 | **코드 작업** | ✅ **완료** (§3.9, main) |
 | 6 | `feat/recommendation-pipeline` → main 병합 | **코드 작업** | ✅ **완료** (08-13 fast-forward, §2.6) |
-| 6b | 전체 게이트 재실행(E7 포함) → Linux 호스트 최초 증거 발행 | **코드/운영** | ◐ **phase1 완료** — E7 포함 전 검사 통과, E1만 차단 (`BLOCKED_EXTERNAL_DATA_RIGHTS`, §2.11). 남은 것: phase2·phase3·종합 게이트 |
+| 6b | 전체 게이트 재실행(E7 포함) → Linux 호스트 최초 증거 발행 | **코드/운영** | ✅ **완료** — Phase 1/2/3, failures 30개, 실제 PITR, 종합 F3 재실행(§2.12) |
 | 7 | 리밸런싱 미리보기 UI (백엔드만 완료, UI 미포함) | **코드 작업** | ▶️ 착수 가능 |
-| 8 | paper-runner·recommendation-runner 배포 서비스 활성화 | **운영자** | ▶️ 착수 가능 |
+| 8 | paper-runner·recommendation-runner 배포 서비스 활성화 | **운영자** | ◐ 배포 계약/preflight 완료, 운영 secret·volume·systemd 설치 대기(§2.12) |
 | 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ✅ **완료** — 스위트 5/5 통과(§2.8), phase1 게이트가 **E2 PASS**를 발행(§2.10) |
 | 10 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
 | 11 | KRX 계약·실제 provider/credential/endpoint / KIS 실계좌 | **외부 구현·사장님 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
 | 12 | KOSPI200/KOSDAQ150 개별주식 후보 연구 vertical | **코드 작업** | ✅ **완료·독립 리뷰 OK** (§2.9, `ac97970`~`8c5ef9d`) |
 
-Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연구의 저장소 내부 이음매는 완료됐다. 실제 KRX provider 구현과 production credential/endpoint/권리/운영 backfill은 외부 잔여 작업이다. **phase1은 현재 main 기준으로 E7까지 통과한 증거를 발행했고(§2.11), 당장의 코드 순서는 phase2·phase3·종합 게이트 재실행이다.**
+Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연구의 저장소 내부 이음매는 완료됐다. 실제 KRX provider 구현과 production credential/endpoint/권리/운영 backfill은 외부 잔여 작업이다. **전체 게이트 재실행도 완료됐으므로(§2.12), 다음 순서는 외부 조달과 운영 호스트 provisioning이다. 권리·자격증명 없이 Member/Live를 활성화하지 않는다.**
 
 ### 4.1 소유자만 할 수 있는 것 — 외부 조달
 
@@ -367,7 +379,7 @@ Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연�
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
 1. ~~**`phase1-gate.sh` native Linux 이식.**~~ **완료 (2026-08-17, `5b3f832`, §2.10)** — WSL 가드·PATH·`CARGO_TARGET_DIR`·DB 포트를 정리했고, 이식 과정에서 드러난 거짓 PASS 3건도 함께 닫았다. pyarrow 전제는 이 게이트에는 해당하지 않는다(추천 계산 경로의 문제이며 phase1 검사는 `prepare_phase0.py`를 부르지 않는다).
-2. **전체 게이트 재실행** — **phase1은 완료됐다**: E7 web 의존성 설치와 게이트의 hoisting 가정 수정을 거쳐, multi-universe가 병합된 현재 main 트리 기준으로 E2~E7 전 검사가 통과하고 E1만 차단으로 남은 판정을 발행했다(§2.11). 남은 것은 phase2·phase3·종합 게이트다. F1/F2/F4 판정문은 여전히 사람 재검토가 필요하다.
+2. ~~**전체 게이트 재실행.**~~ **완료 (2026-08-17, `61af2bb`, §2.12)** — Phase 1/2/3, 양 단계 failures, 실제 PITR, 종합 F3를 재실행했다. 내부 검사는 모두 통과했고 최종 판정은 외부 권리·실계좌 때문에 `BLOCKED_EXTERNAL`이다. F1/F2/F4 판정문은 여전히 사람 재검토가 필요하다.
 3. **리밸런싱 미리보기 UI.** §2.5의 백엔드 계약은 완료됐지만 화면과 Live 주문은 범위 밖이다.
 4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
 5. **실제 KRX provider와 운영 원천 활성화.** 라이선스·credential·entitlement-aware HTTP transport와 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning한 뒤 실제 KRX calendar/EOD/fundamental/membership 원천을 공급한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
