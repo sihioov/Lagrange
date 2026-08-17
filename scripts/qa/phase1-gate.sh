@@ -274,10 +274,27 @@ test_playwright_phase1() {
   local web_dir="$root/apps/web"
   # Without installed dependencies neither child can start, and the lane would
   # otherwise discover that only after binding ports and shelling out.
-  if [ ! -d "$web_dir/node_modules/@playwright" ]; then
+  #
+  # Resolve the package the way the children will instead of testing a path.
+  # apps/* are npm workspaces, so `npm ci` at the root hoists @playwright/test
+  # into $root/node_modules and apps/web/node_modules is never created at all.
+  # A directory test there reported "dependencies not installed" against a tree
+  # that had just installed them -- and the remedy it printed was the very
+  # command that had already been run, so the check could never clear.
+  if ! "$node_bin" -e 'require.resolve("@playwright/test",{paths:[process.argv[1]]})' "$web_dir" >/dev/null 2>&1; then
     # `npm ci` belongs at the repository root: apps/* are npm workspaces and the
     # only package-lock.json is the root one, so running it inside apps/web fails.
-    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "EVIDENCE_MISSING: apps/web dependencies not installed (run npm ci at the repository root, then npx playwright install)"
+    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "EVIDENCE_MISSING: @playwright/test does not resolve from apps/web (run npm ci at the repository root, then npx playwright install)"
+    return 0
+  fi
+  # Same hoisting rule applies to the app binary this lane executes directly:
+  # apps/web/node_modules/next/... does not exist under npm workspaces. Resolve
+  # it once here so a missing install is reported as such, rather than as the
+  # "next dev exited immediately / port taken" symptom it produces downstream.
+  local next_bin
+  next_bin="$("$node_bin" -e 'process.stdout.write(require.resolve("next/dist/bin/next",{paths:[process.argv[1]]}))' "$web_dir" 2>/dev/null || true)"
+  if [ -z "$next_bin" ] || [ ! -f "$next_bin" ]; then
+    add_check E7 playwright-phase1 BLOCKED_EXTERNAL "EVIDENCE_MISSING: next does not resolve from apps/web (run npm ci at the repository root)"
     return 0
   fi
   # Ports are overridable because this host runs several worktrees at once and
@@ -327,7 +344,7 @@ test_playwright_phase1() {
   ( cd "$web_dir" && PORT="$app_port" \
       SYNTHETIC_API_ORIGIN="http://127.0.0.1:$mock_port" \
       API_INTERNAL_URL="http://127.0.0.1:$mock_port" \
-      exec "$node_bin" node_modules/next/dist/bin/next dev -p "$app_port" ) \
+      exec "$node_bin" "$next_bin" dev -p "$app_port" ) \
     >"$transcript_dir/app.stdout.txt" 2>&1 &
   app_pid=$!
   sleep 1

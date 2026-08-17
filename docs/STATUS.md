@@ -182,7 +182,39 @@ API는 universe 생략 시 기존 KOSPI200 동작을 유지하면서 명시적 K
 
 증거는 `.omo/evidence/task-28-lagrange-station-implementation.json`에 있다. **`.omo/`는 gitignore 대상이므로 이 판정도 이 호스트에만 존재한다** — §2.6이 지적한 성질은 변하지 않았다.
 
-남은 것은 E7의 web 의존성 설치와, phase2/phase3/종합 게이트 재실행이다(6b는 아직 부분 완료다).
+E7은 §2.11에서 닫혔다. 남은 것은 phase2/phase3/종합 게이트 재실행이다(6b는 아직 부분 완료다).
+
+### 2.11 E7 해소 — 게이트의 npm workspaces 가정 오류 2건 (2026-08-17)
+
+web 의존성을 설치하자(`npm ci` 저장소 루트 → `npx playwright install`) E7이 여전히 열리지 않았다. 원인은 환경이 아니라 게이트였다. **`apps/*`는 npm workspaces라 의존성이 전부 루트 `node_modules`로 hoist되고 `apps/web/node_modules`는 아예 생성되지 않는데, 게이트가 그 경로를 두 곳에서 직접 참조하고 있었다.**
+
+| 위치 | 증상 | 수정 |
+|---|---|---|
+| 사전조건 | `[ -d apps/web/node_modules/@playwright ]`가 거짓 → "dependencies not installed"를 기록하고, **그 해결책으로 방금 실행한 바로 그 `npm ci`를 안내**했다. 검사가 영원히 못 풀린다 | `require.resolve("@playwright/test", {paths:[apps/web]})`로 자식과 같은 방식으로 해석 |
+| next 기동 | `node node_modules/next/dist/bin/next`를 상대 경로로 실행 → `MODULE_NOT_FOUND`. 게이트는 이를 "next dev exited immediately; **port may be taken by another worktree**"로 보고해 원인을 포트 충돌로 오인하게 했다 | `require.resolve("next/dist/bin/next", …)`로 해석하고, 해석 실패 시 조기에 의존성 부재로 보고 |
+
+§2.10의 세 결함이 **실행 안 된 것을 PASS**로 만든 반면 이 둘은 반대 방향, 즉 **설치된 것을 미설치로** 보는 오탐이다. 닫히는 쪽이라 위험도는 낮지만 E7을 도달 불가 상태로 고정시킨다는 점에서 결과는 같다.
+
+포트는 override가 실제로 필요했다 — 기본값 38180/33000을 이 호스트의 다른 워크트리가 이미 점유하고 있어 `PHASE1_E7_MOCK_PORT=38191`, `PHASE1_E7_APP_PORT=33011`로 실행했다. §2.10의 이식이 추가한 override와 자식 PID 확인이 없었다면 또다시 남의 서버를 테스트했을 상황이다.
+
+`npx playwright install`이 출력한 호스트 라이브러리 누락 경고(libwebp, libmanette, libenchant 등)는 WebKit/Firefox용이며 `apps/web/playwright.config.ts`는 chromium 단일 project라 무관하다. chromium 실제 기동으로 확인했다.
+
+**재실행 판정** (E1 외 전 항목 PASS):
+
+| 검사 | 결과 |
+|---|---|
+| E1 written-rights | `BLOCKED_EXTERNAL` — placeholder entitlement, 조달 대기 |
+| E2 vendor-auth0 | **PASS** (3) |
+| E3 auth0-simulator | **PASS** (10) |
+| E4 auth0-invite-mfa | **PASS** (52) |
+| E5 phase1-five-user | **PASS** (5) |
+| E6 restore-policy | **PASS** |
+| E7 playwright-phase1 | **PASS** — chromium 4개 전부 통과(16.1초): 5인 추천 조회, 5인 백테스트, member의 Owner admin 차단, entitlement 차단 시 KR 파생 표면 전면 거부 |
+| **VERDICT** | **`BLOCKED_EXTERNAL_DATA_RIGHTS`** — 이제 **E1 단독**이 유일한 차단 사유다 |
+
+이 실행의 트리는 `c362216`, 즉 **multi-universe 후보 연구가 병합된 현재 main**이다(§2.10의 08:32 실행은 병합 이전 트리였다). 따라서 이것이 현재 main 기준의 phase1 증거다.
+
+**이 호스트에서 phase1의 코드·환경 요인이 전부 소진됐다.** 남은 `BLOCKED_EXTERNAL_DATA_RIGHTS`는 KRX 서면 권리라는 외부 조달 항목 하나이며, 그것이 없을 때 닫히는 것이 이 게이트의 존재 이유다.
 
 ---
 
@@ -266,7 +298,7 @@ API는 universe 생략 시 기존 KOSPI200 동작을 유지하면서 명시적 K
 | **비노출 경계** | secret은 provider-neutral `TokenRequest`·browser·URL·DB·로그·Debug 출력 어디에도 들어가지 않는다. token endpoint 실패 body redaction, vendor 진단 sanitize, 잔여 secret 경로 봉쇄 | `a7c4a15`, `81c60f9`, `e39438e`, `a03d8fc` |
 | **배포 계약** | Compose가 gitignored `deploy/secrets/auth0_client_secret`을 read-only mount, 비밀 아닌 설정(`AUTH0_DOMAIN`/`AUTH0_CLIENT_ID`/`AUTH0_CLIENT_SECRET_FILE`)은 env로. secret 파일 provisioning은 **Windows 호스트 기준 서술이었고, Linux 호스트에는 2026-08-17에 배치됐다**(§2.8) | `afcbb77` |
 
-**남은 것 (2026-08-17 갱신):** vendor 스위트 실행은 **완료**됐다 — 실 테넌트 상대 5/5 통과, secret은 Linux 호스트에 배치(§2.8). 남은 것은 phase1 게이트를 재실행해 E2 증거를 발행하는 단계뿐이며, 그것은 게이트 스크립트의 Linux 이식에 종속된다(§2.8). 자격증명을 위조해 통과시키는 것은 여전히 금지다.
+**남은 것 없음 (2026-08-17 갱신):** vendor 스위트는 실 테넌트 상대 5/5 통과했고 secret은 Linux 호스트에 배치됐으며(§2.8), phase1 게이트가 **E2 = PASS**를 발행했다(§2.10~2.11). 자격증명을 위조해 통과시키는 것은 여전히 금지다.
 
 ### 3.10 고정 ETF 추천 파이프라인 (2026-08-12 ~ 08-13, `feat/recommendation-pipeline`)
 
@@ -307,7 +339,7 @@ API는 universe 생략 시 기존 KOSPI200 동작을 유지하면서 명시적 K
 | 4 | 추천→Paper 자동화(scheduled opt-in) + 리밸런싱 미리보기 백엔드 | **코드 작업** | ✅ **완료** (`fd3fc5b`, §2.5) |
 | 5 | Auth0 confidential client 배선 | **코드 작업** | ✅ **완료** (§3.9, main) |
 | 6 | `feat/recommendation-pipeline` → main 병합 | **코드 작업** | ✅ **완료** (08-13 fast-forward, §2.6) |
-| 6b | 전체 게이트 재실행(E7 포함) → Linux 호스트 최초 증거 발행 | **코드/운영** | ◐ **phase1 발행 완료** (`BLOCKED_EXTERNAL_DATA_RIGHTS`, §2.10). 남은 것: E7 web 의존성 설치, phase2·phase3·종합 게이트 |
+| 6b | 전체 게이트 재실행(E7 포함) → Linux 호스트 최초 증거 발행 | **코드/운영** | ◐ **phase1 완료** — E7 포함 전 검사 통과, E1만 차단 (`BLOCKED_EXTERNAL_DATA_RIGHTS`, §2.11). 남은 것: phase2·phase3·종합 게이트 |
 | 7 | 리밸런싱 미리보기 UI (백엔드만 완료, UI 미포함) | **코드 작업** | ▶️ 착수 가능 |
 | 8 | paper-runner·recommendation-runner 배포 서비스 활성화 | **운영자** | ▶️ 착수 가능 |
 | 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ✅ **완료** — 스위트 5/5 통과(§2.8), phase1 게이트가 **E2 PASS**를 발행(§2.10) |
@@ -315,7 +347,7 @@ API는 universe 생략 시 기존 KOSPI200 동작을 유지하면서 명시적 K
 | 11 | KRX 계약·실제 provider/credential/endpoint / KIS 실계좌 | **외부 구현·사장님 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
 | 12 | KOSPI200/KOSDAQ150 개별주식 후보 연구 vertical | **코드 작업** | ✅ **완료·독립 리뷰 OK** (§2.9, `ac97970`~`8c5ef9d`) |
 
-Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연구의 저장소 내부 이음매는 완료됐다. 실제 KRX provider 구현과 production credential/endpoint/권리/운영 backfill은 외부 잔여 작업이다. **당장의 코드 순서는 `phase1-gate.sh` Linux 이식 후 E7 포함 전체 게이트를 재실행해 현재 main 기준 증거를 발행하는 것**이다.
+Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연구의 저장소 내부 이음매는 완료됐다. 실제 KRX provider 구현과 production credential/endpoint/권리/운영 backfill은 외부 잔여 작업이다. **phase1은 현재 main 기준으로 E7까지 통과한 증거를 발행했고(§2.11), 당장의 코드 순서는 phase2·phase3·종합 게이트 재실행이다.**
 
 ### 4.1 소유자만 할 수 있는 것 — 외부 조달
 
@@ -335,7 +367,7 @@ Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연�
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
 1. ~~**`phase1-gate.sh` native Linux 이식.**~~ **완료 (2026-08-17, `5b3f832`, §2.10)** — WSL 가드·PATH·`CARGO_TARGET_DIR`·DB 포트를 정리했고, 이식 과정에서 드러난 거짓 PASS 3건도 함께 닫았다. pyarrow 전제는 이 게이트에는 해당하지 않는다(추천 계산 경로의 문제이며 phase1 검사는 `prepare_phase0.py`를 부르지 않는다).
-2. **E7 Playwright 포함 전체 게이트 재실행** — Auth0, 추천 파이프라인, 리밸런싱 미리보기, multi-universe 후보 연구가 반영된 main 기준 증거를 새로 발행한다. **phase1은 08-17에 발행됐지만(§2.10) 그 실행은 multi-universe 병합 이전 트리 기준이다.** 남은 것은 E7의 web 의존성 설치(저장소 루트에서 `npm ci` 후 `npx playwright install`), phase2·phase3·종합 게이트, 그리고 병합된 main 기준의 phase1 재실행이다. F1/F2/F4도 사람 재검토가 필요하다.
+2. **전체 게이트 재실행** — **phase1은 완료됐다**: E7 web 의존성 설치와 게이트의 hoisting 가정 수정을 거쳐, multi-universe가 병합된 현재 main 트리 기준으로 E2~E7 전 검사가 통과하고 E1만 차단으로 남은 판정을 발행했다(§2.11). 남은 것은 phase2·phase3·종합 게이트다. F1/F2/F4 판정문은 여전히 사람 재검토가 필요하다.
 3. **리밸런싱 미리보기 UI.** §2.5의 백엔드 계약은 완료됐지만 화면과 Live 주문은 범위 밖이다.
 4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
 5. **실제 KRX provider와 운영 원천 활성화.** 라이선스·credential·entitlement-aware HTTP transport와 endpoint를 구현하고 운영 secret, `research_writer`, migration, Raw volume을 provisioning한 뒤 실제 KRX calendar/EOD/fundamental/membership 원천을 공급한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
