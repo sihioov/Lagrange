@@ -57,14 +57,17 @@ compose config --quiet || die 'Compose interpolation/config validation failed'
 
 cat <<'EOF'
 COMPOSE_RELEASE_ORDER:
-  1. build --pull=false api-server web research-worker recommendation-runner candidate-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler reverse-proxy
+  1. build --pull=false db-role-bootstrap db-migrate api-server web research-worker recommendation-runner candidate-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler reverse-proxy
   2. up --wait postgres
   3. run --rm --no-deps db-role-bootstrap (exit code is the gate)
   4. run --rm --no-deps db-migrate (exit code is the gate)
   5. run --rm --no-deps research-raw-init (exit code is the gate)
   6. run --rm --no-deps research-schema-check (exit code is the gate)
-  7. up --wait api-server web research-worker recommendation-runner candidate-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler reverse-proxy
-  8. ps and healthcheck inspection; restart only after diagnosing a failed health gate
+  7. up --wait --no-deps api-server (the DB/schema gates already passed)
+  8. up --wait --no-deps web research-worker recommendation-runner candidate-runner nt-backtest-worker-1 nt-backtest-worker-2
+  9. up --wait --no-deps paper-scheduler
+  10. up --wait --no-deps reverse-proxy
+  11. ps and healthcheck inspection; restart only after diagnosing a failed health gate
 Live profile is not included. KIS account/order secrets are not required.
 EOF
 
@@ -78,14 +81,17 @@ if [ "$mode" = preflight ]; then
 fi
 
 compose build --pull=false \
-  api-server web research-worker recommendation-runner candidate-runner \
+  db-role-bootstrap db-migrate api-server web research-worker recommendation-runner candidate-runner \
   nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler reverse-proxy
 compose up --wait postgres
 compose run --rm --no-deps db-role-bootstrap
 compose run --rm --no-deps db-migrate
 compose run --rm --no-deps research-raw-init
 compose run --rm --no-deps research-schema-check
-compose up --wait api-server web research-worker recommendation-runner \
-  candidate-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler reverse-proxy
+compose up --wait --no-deps api-server
+compose up --wait --no-deps web research-worker recommendation-runner \
+  candidate-runner nt-backtest-worker-1 nt-backtest-worker-2
+compose up --wait --no-deps paper-scheduler
+compose up --wait --no-deps reverse-proxy
 compose ps
 echo 'COMPOSE_RELEASE: PASS'

@@ -129,6 +129,14 @@ secret_files=(
   session_secret csrf_secret auth0_client_secret kis_app_key kis_app_secret
   backup_encryption_key
 )
+check_source_mode() {
+  local path=$1 label=$2 mode
+  mode=$(stat -c '%a' -- "$path") || die "cannot stat $label: $path"
+  case "$mode" in
+    400|600) ;;
+    *) invalid+=("$label must be mode 0400 or 0600 (found $mode): $path") ;;
+  esac
+}
 for name in "${secret_files[@]}"; do
   path="$source_dir/$name"
   if [ ! -f "$path" ] || [ -L "$path" ]; then
@@ -137,8 +145,11 @@ for name in "${secret_files[@]}"; do
     invalid+=("secret $name is empty")
   elif [ "$(wc -l <"$path")" -ne 0 ] || LC_ALL=C grep -Fq $'\r' "$path"; then
     invalid+=("secret $name must be a single line")
-  elif grep -Eiq 'REPLACE_WITH|CHANGE_ME|YOUR_|example|placeholder' "$path"; then
-    missing+=("secret $name still contains a template placeholder")
+  else
+    check_source_mode "$path" "secret $name"
+    if grep -Eiq 'REPLACE_WITH|CHANGE_ME|YOUR_|example|placeholder' "$path"; then
+      missing+=("secret $name still contains a template placeholder")
+    fi
   fi
 done
 
@@ -148,8 +159,11 @@ for name in lagrange.crt lagrange.key; do
     missing+=("TLS file tls/$name")
   elif [ ! -s "$path" ]; then
     invalid+=("TLS file tls/$name is empty")
-  elif grep -Eiq 'REPLACE_WITH|CHANGE_ME|YOUR_|example|placeholder' "$path"; then
-    missing+=("TLS file tls/$name still contains a template placeholder")
+  else
+    check_source_mode "$path" "TLS file tls/$name"
+    if grep -Eiq 'REPLACE_WITH|CHANGE_ME|YOUR_|example|placeholder' "$path"; then
+      missing+=("TLS file tls/$name still contains a template placeholder")
+    fi
   fi
 done
 

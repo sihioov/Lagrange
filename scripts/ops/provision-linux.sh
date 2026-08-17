@@ -61,9 +61,17 @@ safe_path() {
   local path=$1 label=$2
   is_absolute "$path" || die "$label must be absolute: $path"
   case "$path" in
+    */../*|*/..) die "$label must not contain '..': $path" ;;
+  esac
+  case "$path" in
     /|/etc|/opt|/var|/var/lib|/usr|/usr/local) die "$label is too broad: $path" ;;
   esac
-  [ ! -L "$path" ] || die "$label must not be a symlink: $path"
+  local probe=$path
+  while [ "$probe" != / ]; do
+    [ ! -L "$probe" ] || die "$label must not traverse a symlink: $probe"
+    probe=${probe%/*}
+    [ -n "$probe" ] || probe=/
+  done
 }
 
 safe_path "$config_root" LAGRANGE_CONFIG_ROOT
@@ -91,6 +99,10 @@ declare -a required_dirs=(
   "$data_root/phase0"
 )
 
+for dir in "${required_dirs[@]}"; do
+  safe_path "$dir" required-directory
+done
+
 print_plan() {
   echo "PROVISION_LINUX mode=$mode"
   echo "  service=$service_user:$service_group worker=$worker_uid:$worker_gid"
@@ -103,6 +115,10 @@ print_plan() {
 
 account_uid() { id -u "$service_user" 2>/dev/null; }
 account_gid() { getent group "$service_group" | awk -F: 'NR == 1 { print $3 }'; }
+service_group_member() {
+  local gid=$1
+  id -G "$service_user" 2>/dev/null | tr ' ' '\n' | grep -Fxq "$gid"
+}
 
 check_mode_owner() {
   local path=$1 expected_uid=$2 expected_gid=$3 expected_mode=$4 label=$5
@@ -126,6 +142,8 @@ if [ "$mode" = preflight ]; then
   [ -n "$(account_gid)" ] || blocked "service group is missing: $service_group"
   service_uid=$(account_uid)
   service_gid=$(account_gid)
+  service_group_member "$service_gid" ||
+    blocked "service user is not a member of service group: $service_user:$service_group"
   check_mode_owner "$config_root" 0 "$service_gid" 750 LAGRANGE_CONFIG_ROOT
   check_mode_owner "$config_root/universes" 0 "$service_gid" 750 universes
   check_mode_owner "$secret_root" 0 "$service_gid" 750 host-secrets
@@ -154,6 +172,8 @@ fi
 service_uid=$(account_uid)
 service_gid=$(account_gid)
 [ -n "$service_uid" ] && [ -n "$service_gid" ] || die 'service account lookup failed after creation'
+service_group_member "$service_gid" ||
+  blocked "service user is not a member of service group: $service_user:$service_group"
 
 # Existing files are never recursively chowned. Each directory is created or
 # ownership-fenced explicitly, which prevents a typo from rewriting a volume.

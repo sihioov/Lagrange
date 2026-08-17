@@ -60,6 +60,22 @@ done
 [ -n "$start_date" ] && [ -n "$end_date" ] || die '--start and --end are required'
 [[ "$start_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die 'invalid --start date'
 [[ "$end_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die 'invalid --end date'
+validate_date_range() {
+  python3 - "$start_date" "$end_date" <<'PY'
+import datetime as dt
+import sys
+try:
+    start = dt.date.fromisoformat(sys.argv[1])
+    end = dt.date.fromisoformat(sys.argv[2])
+except ValueError as exc:
+    raise SystemExit(f"invalid calendar date: {exc}")
+if end < start:
+    raise SystemExit("--end precedes --start")
+PY
+}
+if ! date_error=$(validate_date_range 2>&1); then
+  die "$date_error"
+fi
 case "$universes" in
   etf) ;;
   candidate|all)
@@ -67,15 +83,6 @@ case "$universes" in
     ;;
   *) die 'universe must be etf, candidate, or all' ;;
 esac
-
-if [ "$mode" = execute ]; then
-  [ "${BACKFILL_CONFIRM_EXTERNAL:-}" = I_UNDERSTAND_READ_ONLY_KIS_CALLS ] ||
-    blocked 'execution is disabled until BACKFILL_CONFIRM_EXTERNAL is explicitly set'
-  bash "$script_dir/validate-production-config.sh" --env-file "$env_file"
-  command -v docker >/dev/null 2>&1 || blocked 'docker is not installed'
-  docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavailable'
-  mkdir -p "$(dirname "$state_file")"
-fi
 
 date_list() {
   python3 - "$start_date" "$end_date" <<'PY'
@@ -92,6 +99,115 @@ while day <= end:
 PY
 }
 
+env_value() {
+  local wanted=$1 line
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    case "$line" in
+      "$wanted="*) printf '%s' "${line#*=}"; return 0 ;;
+    esac
+  done <"$env_file"
+  return 1
+}
+
+check_state_path() {
+  local path=$1 label=$2 probe
+  case "$path" in
+    /*) ;;
+    *) die "$label must be absolute: $path" ;;
+  esac
+  case "$path" in
+    */../*|*/..) die "$label must not contain '..': $path" ;;
+  esac
+  probe=$path
+  while [ "$probe" != / ]; do
+    [ ! -L "$probe" ] || die "$label must not traverse a symlink: $probe"
+    probe=${probe%/*}
+    [ -n "$probe" ] || probe=/
+  done
+  if [ -e "$path" ] && { [ -L "$path" ] || [ ! -f "$path" ]; }; then
+    die "$label must be a regular non-symlink file: $path"
+  fi
+}
+
+validate_state() {
+  local expected_header=$'LAGRANGE_BACKFILL_STATE_V2\t'"$run_identity"
+  local line number=0 state_date state_status state_id extra
+  while IFS= read -r line || [ -n "$line" ]; do
+    number=$((number + 1))
+    if [ "$number" -eq 1 ]; then
+      [ "$line" = "$expected_header" ] ||
+        blocked "backfill state has a stale/foreign schema or run identity; use a new state path"
+      continue
+    fi
+    IFS=$'\t' read -r state_date state_status state_id extra <<<"$line"
+    [ "$line" = "$state_date$(printf '\t')$state_status$(printf '\t')$state_id" ] ||
+      blocked "backfill state line $number is malformed"
+    [[ "$state_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] ||
+      blocked "backfill state line $number has an invalid date"
+    case "$state_status" in RUNNING|PUBLISHED|FAILED) ;; *)
+      blocked "backfill state line $number has an invalid status" ;;
+    esac
+    [ "$state_id" = "$run_identity" ] ||
+      blocked "backfill state line $number has a foreign run identity"
+  done <"$state_file"
+  [ "$number" -gt 0 ] || blocked 'backfill state is unexpectedly empty'
+}
+
+if [ "$mode" = execute ]; then
+  [ "${BACKFILL_CONFIRM_EXTERNAL:-}" = I_UNDERSTAND_READ_ONLY_KIS_CALLS ] ||
+    blocked 'execution is disabled until BACKFILL_CONFIRM_EXTERNAL is explicitly set'
+  bash "$script_dir/validate-production-config.sh" --env-file "$env_file"
+  command -v docker >/dev/null 2>&1 || blocked 'docker is not installed'
+  docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavailable'
+  command -v flock >/dev/null 2>&1 || blocked 'flock is required to serialize backfill executions'
+  command -v sha256sum >/dev/null 2>&1 || blocked 'sha256sum is required for backfill state identity'
+
+  check_state_path "$state_file" backfill-state
+  state_dir=$(dirname -- "$state_file")
+  mkdir -p -- "$state_dir"
+  check_state_path "$state_file" backfill-state
+  state_lock="${state_file}.lock"
+  check_state_path "$state_lock" backfill-state-lock
+  exec 9>>"$state_lock" || die "cannot open backfill state lock: $state_lock"
+  flock -n 9 || blocked 'another backfill execution already holds the state lock'
+
+  : >>"$state_file"
+  check_state_path "$state_file" backfill-state
+
+  code_commit=${LAGRANGE_CODE_COMMIT:-}
+  entitlement_reference=$(env_value RESEARCH_ENTITLEMENT_REFERENCE) ||
+    die 'production env is missing RESEARCH_ENTITLEMENT_REFERENCE'
+  dataset_version_id=$(env_value RECOMMENDATION_DATASET_VERSION_ID) ||
+    die 'production env is missing RECOMMENDATION_DATASET_VERSION_ID'
+  dataset_id=$(env_value RECOMMENDATION_DATASET_ID) ||
+    die 'production env is missing RECOMMENDATION_DATASET_ID'
+  dataset_version=$(env_value RECOMMENDATION_DATASET_VERSION) ||
+    die 'production env is missing RECOMMENDATION_DATASET_VERSION'
+  curated_version=$(env_value RECOMMENDATION_CURATED_VERSION) ||
+    die 'production env is missing RECOMMENDATION_CURATED_VERSION'
+  manifest_hash=$(env_value RECOMMENDATION_DATASET_MANIFEST_SHA256) ||
+    die 'production env is missing RECOMMENDATION_DATASET_MANIFEST_SHA256'
+  identity_payload=$(cat <<EOF
+schema=2
+code_commit=$code_commit
+entitlement_reference=$entitlement_reference
+dataset_id=$dataset_id
+dataset_version_id=$dataset_version_id
+dataset_version=$dataset_version
+curated_version=$curated_version
+manifest_sha256=$manifest_hash
+source_scope=kis/kr|kis-normalized/kr|KRX/KR|etf
+EOF
+)
+  run_identity=$(printf '%s' "$identity_payload" | sha256sum | awk '{print $1}')
+  [[ "$run_identity" =~ ^[0-9a-f]{64}$ ]] || die 'could not derive backfill run identity'
+  if [ ! -s "$state_file" ]; then
+    printf 'LAGRANGE_BACKFILL_STATE_V2\t%s\n' "$run_identity" >>"$state_file"
+  fi
+  validate_state
+fi
+
 if [ "$mode" = plan ]; then
   cat <<EOF
 BACKFILL_PLAN: KIS read-only fixed ETF EOD
@@ -107,19 +223,23 @@ EOF
 fi
 
 compose=(docker compose --env-file "$env_file" -f "$root/deploy/compose/compose.yml")
+if ! dates=$(date_list); then
+  die 'failed to enumerate the validated date range'
+fi
+published_suffix=$'\tPUBLISHED\t'"$run_identity"
 while IFS= read -r date; do
-  if [ -f "$state_file" ] && grep -Fqx "$date$(printf '\t')PUBLISHED" "$state_file"; then
+  if grep -Fqx "$date$published_suffix" "$state_file"; then
     echo "BACKFILL_SKIP date=$date state=PUBLISHED"
     continue
   fi
-  printf '%s\tRUNNING\n' "$date" >>"$state_file"
+  printf '%s\tRUNNING\t%s\n' "$date" "$run_identity" >>"$state_file"
   if "${compose[@]}" run --rm --no-deps research-worker --once --date "$date"; then
-    printf '%s\tPUBLISHED\n' "$date" >>"$state_file"
+    printf '%s\tPUBLISHED\t%s\n' "$date" "$run_identity" >>"$state_file"
     echo "BACKFILL_DONE date=$date"
   else
-    printf '%s\tFAILED\n' "$date" >>"$state_file"
+    printf '%s\tFAILED\t%s\n' "$date" "$run_identity" >>"$state_file"
     echo "BACKFILL_STOPPED date=$date (rerun resumes after operator review)" >&2
     exit 1
   fi
-done < <(date_list)
+done <<<"$dates"
 echo 'BACKFILL: PASS'

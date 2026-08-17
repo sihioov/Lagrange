@@ -23,11 +23,35 @@ dry_run=$(LAGRANGE_CONFIG_ROOT="$out_dir/etc" \
   bash "$ops/provision-linux.sh" --dry-run)
 grep -Fq 'DRY_RUN: no host changes made' <<<"$dry_run"
 
+mkdir -p "$out_dir/path-test/real"
+ln -s "$out_dir/path-test/real" "$out_dir/path-test/link"
+if LAGRANGE_CONFIG_ROOT="$out_dir/path-test/link/config" \
+   LAGRANGE_DEPLOY_ROOT="$out_dir/path-test/deploy" \
+   LAGRANGE_DATA_ROOT="$out_dir/path-test/data" \
+   LAGRANGE_HOST_SECRET_ROOT="$out_dir/path-test/link/secrets" \
+   bash "$ops/provision-linux.sh" --dry-run >"$out_dir/symlink.out" 2>&1; then
+  echo 'self-test: provision accepted a symlinked ancestor' >&2
+  exit 1
+fi
+grep -Fq 'must not traverse a symlink' "$out_dir/symlink.out"
+
+if bash "$ops/backfill-production.sh" \
+   --start 2026-02-30 --end 2026-03-01 --plan >"$out_dir/date.out" 2>&1; then
+  echo 'self-test: backfill accepted an invalid calendar date' >&2
+  exit 1
+fi
+grep -Fq 'invalid calendar date' "$out_dir/date.out"
+
 cp "$root/deploy/compose/.env.example" "$out_dir/.env"
 chmod 0600 "$out_dir/.env"
+mkdir -p "$out_dir/source"
+printf 'fixture-secret' >"$out_dir/source/postgres_password"
+chmod 0644 "$out_dir/source/postgres_password"
 sed -i \
   -e "s|^LAGRANGE_DATA_DIR=.*|LAGRANGE_DATA_DIR=$out_dir/data|" \
   -e "s|^LAGRANGE_ARTIFACTS_DIR=.*|LAGRANGE_ARTIFACTS_DIR=$out_dir/data/artifacts|" \
+  -e "s|^LAGRANGE_SECRET_SOURCE_DIR=.*|LAGRANGE_SECRET_SOURCE_DIR=$out_dir/source|" \
+  -e "s|^LAGRANGE_RUNTIME_SECRET_DIR=.*|LAGRANGE_RUNTIME_SECRET_DIR=$out_dir/runtime|" \
   "$out_dir/.env"
 if LAGRANGE_ENV_FILE="$out_dir/.env" \
    LAGRANGE_SECRET_SOURCE_DIR="$root/deploy/secrets" \
@@ -37,7 +61,7 @@ if LAGRANGE_ENV_FILE="$out_dir/.env" \
   echo 'self-test: template unexpectedly passed production validation' >&2
   exit 1
 else
-  grep -Fq 'BLOCKED_EXTERNAL' "$out_dir/config.out" || {
+  grep -Fq 'secret postgres_password must be mode 0400 or 0600' "$out_dir/config.out" || {
     cat "$out_dir/config.out" >&2
     exit 1
   }
