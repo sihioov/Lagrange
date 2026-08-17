@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::fmt;
 use std::future::Future;
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::{DateTime, FixedOffset, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveTime, TimeZone, Utc};
 use domain::{BatchId, DatasetId, TradingDate, UtcTimestamp};
 use market_data::contract::{FetchMode, MARKET_KR};
 use market_data::ingest::IngestRequest;
@@ -288,6 +288,7 @@ pub enum HealthFailure {
     StaleEodPublication,
     FutureEodPublication,
     NoCandidatePublication,
+    CandidateUniverseUnavailable,
     StaleCandidatePublication,
     FutureCandidatePublication,
     NoPricePublication,
@@ -303,6 +304,9 @@ impl fmt::Display for HealthFailure {
             Self::StaleEodPublication => "latest KRX/KR EOD publication is stale",
             Self::FutureEodPublication => "latest KRX/KR EOD publication is in the future",
             Self::NoCandidatePublication => "no complete candidate source publication",
+            Self::CandidateUniverseUnavailable => {
+                "one or more enabled candidate universes are not ready"
+            }
             Self::StaleCandidatePublication => "latest candidate source publication is stale",
             Self::FutureCandidatePublication => {
                 "latest candidate source publication is in the future"
@@ -913,14 +917,14 @@ async fn run_candidate_source_ingest(
     recover_candidate_batches(&store, &sink)
         .await
         .map_err(WorkerError::CandidatePipeline)?;
-    let missing_kinds = sink
-        .missing_source_kinds(date, now.as_datetime(), config.fetch_mode)
+    let missing_by_universe = sink
+        .missing_source_kinds_by_universe(date, now.as_datetime(), config.fetch_mode)
         .await
         .map_err(|source| WorkerError::Database {
             phase: WorkerPhase::DuplicateCheck,
             source,
         })?;
-    if missing_kinds.is_empty() {
+    if missing_by_universe.is_empty() || missing_by_universe.values().all(Vec::is_empty) {
         return Ok(None);
     }
     let provider: Arc<dyn EodProvider> = match config.fetch_mode {
@@ -1150,10 +1154,11 @@ fn raw_batch_has_target_bars(
         .any(|bar| bar.date == entry.date.to_iso()))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HealthStatus {
     pub newest_eod_at: DateTime<Utc>,
     pub age: Duration,
+    pub per_universe: BTreeMap<String, Vec<String>>,
 }
 
 pub async fn healthcheck(
@@ -1186,7 +1191,11 @@ pub async fn healthcheck(
     let (newest_eod_at, age) =
         publication_freshness_for_batch(now_utc, batch_date, newest_eod_at, max_age)
             .map_err(|reason| WorkerError::Unhealthy { reason })?;
-    Ok(HealthStatus { newest_eod_at, age })
+    Ok(HealthStatus {
+        newest_eod_at,
+        age,
+        per_universe: BTreeMap::new(),
+    })
 }
 
 pub async fn candidate_healthcheck(
@@ -1241,8 +1250,43 @@ pub async fn candidate_healthcheck(
     let (source_date, _) = expected_eod.ok_or(WorkerError::Unhealthy {
         reason: HealthFailure::NoEodPublication,
     })?;
+    let expected_trading_date = TradingDate::new(
+        expected_session.year(),
+        expected_session.month(),
+        expected_session.day(),
+    )
+    .map_err(|_| WorkerError::Unhealthy {
+        reason: HealthFailure::NoCandidatePublication,
+    })?;
+    let candidate_source_sink = PostgresCandidateSourceSink::new(pool.clone());
+    let missing_by_universe = candidate_source_sink
+        .missing_source_kinds_by_universe(expected_trading_date, now_utc, expected_fetch_mode)
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::Health,
+            source,
+        })?;
+    if missing_by_universe.is_empty()
+        || missing_by_universe
+            .values()
+            .any(|missing| !missing.is_empty())
+    {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::CandidateUniverseUnavailable,
+        });
+    }
+    let per_universe = missing_by_universe
+        .into_iter()
+        .map(|(universe, missing)| {
+            (
+                universe.to_string(),
+                missing.into_iter().map(|kind| kind.to_string()).collect(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     #[derive(sqlx::FromRow)]
     struct CandidateSourceHealthRow {
+        universe_key: String,
         universe_id: uuid::Uuid,
         flow_dataset_version_id: uuid::Uuid,
         status_dataset_version_id: uuid::Uuid,
@@ -1252,10 +1296,11 @@ pub async fn candidate_healthcheck(
         flow_license_ref: String,
         retrieved_at: DateTime<Utc>,
     }
-    let source: Option<CandidateSourceHealthRow> = timeout_query(
+    let source: Vec<CandidateSourceHealthRow> = timeout_query(
         WorkerPhase::Health,
         sqlx::query_as(
-            "SELECT universe.id AS universe_id,
+            "SELECT registry.universe_key,
+                    universe.id AS universe_id,
                     flow.dataset_version_id AS flow_dataset_version_id,
                     status.dataset_version_id AS status_dataset_version_id,
                     fact.dataset_version_id AS fundamental_dataset_version_id,
@@ -1263,22 +1308,25 @@ pub async fn candidate_healthcheck(
                     flow.entitlement_id AS flow_entitlement_id,
                     flow.license_ref AS flow_license_ref,
                     LEAST(flow.retrieved_at, status.retrieved_at) AS retrieved_at
-               FROM LATERAL (
+               FROM candidate_universe_registry AS registry
+               CROSS JOIN LATERAL (
                     SELECT id, retrieved_at FROM candidate_universe_snapshots
-                     WHERE as_of_date <= $1 AND available_at <= $2
+                     WHERE index_id = registry.universe_key
+                       AND as_of_date <= $1 AND available_at <= $2
                        AND member_count = (
                            SELECT count(*) FROM candidate_universe_members AS member
                             WHERE member.universe_snapshot_id = candidate_universe_snapshots.id
                               AND member.effective_from <= $1
                               AND (member.effective_until IS NULL OR member.effective_until >= $1))
                        AND public.candidate_source_entitlement_is_valid(
-                           entitlement_id, license_ref, 'krx_kospi200_membership', $1, $1)
+                           entitlement_id, license_ref, registry.membership_dataset_id, $1, $1)
                        AND EXISTS (
                            SELECT 1 FROM candidate_raw_batch_datasets AS binding
                            JOIN candidate_raw_batch_publications AS batch
                              ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
                           WHERE binding.dataset_version_id=candidate_universe_snapshots.dataset_version_id
                             AND binding.response_kind='index_membership'
+                            AND binding.dataset_id=registry.membership_dataset_id
                             AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
                      ORDER BY as_of_date DESC, available_at DESC, id LIMIT 1
                ) AS universe
@@ -1298,6 +1346,7 @@ pub async fn candidate_healthcheck(
                              ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
                           WHERE binding.dataset_version_id=member.dataset_version_id
                             AND binding.response_kind='investor_flow'
+                            AND binding.dataset_id='krx_investor_flows'
                             AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
                      ORDER BY flow.available_at DESC, flow.id LIMIT 1
                ) AS flow
@@ -1312,6 +1361,7 @@ pub async fn candidate_healthcheck(
                              ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
                           WHERE binding.dataset_version_id=candidate_market_status_observations.dataset_version_id
                             AND binding.response_kind='market_status'
+                            AND binding.dataset_id='krx_market_status'
                             AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
                      ORDER BY available_at DESC, id LIMIT 1
                ) AS status
@@ -1326,6 +1376,7 @@ pub async fn candidate_healthcheck(
                              ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
                           WHERE binding.dataset_version_id=candidate_fundamental_observations.dataset_version_id
                             AND binding.response_kind='fundamentals'
+                            AND binding.dataset_id='krx_fundamentals'
                             AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
                      ORDER BY available_at DESC, id LIMIT 1
                ) AS fact
@@ -1340,21 +1391,48 @@ pub async fn candidate_healthcheck(
                              ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
                           WHERE binding.dataset_version_id=candidate_sector_versions.dataset_version_id
                             AND binding.response_kind='sector_classification'
+                            AND binding.dataset_id='krx_sector_classification'
                             AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)
                      ORDER BY effective_from DESC, available_at DESC, id LIMIT 1
-               ) AS sector",
+               ) AS sector
+              WHERE registry.enabled",
         )
         .bind(source_date)
         .bind(now_utc)
         .bind(expected_fetch_mode.as_str())
-        .fetch_optional(pool),
+        .fetch_all(pool),
     )
     .await?;
-    let source = source.ok_or(WorkerError::Unhealthy {
-        reason: HealthFailure::NoCandidatePublication,
-    })?;
+    if source.is_empty() {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::NoCandidatePublication,
+        });
+    }
+    if source.len() != per_universe.len() {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::CandidateUniverseUnavailable,
+        });
+    }
+    let source_universes = source
+        .iter()
+        .map(|row| row.universe_key.as_str())
+        .collect::<BTreeSet<_>>();
+    if source_universes.len() != per_universe.len()
+        || source_universes
+            .iter()
+            .any(|universe| !per_universe.contains_key(*universe))
+    {
+        return Err(WorkerError::Unhealthy {
+            reason: HealthFailure::CandidateUniverseUnavailable,
+        });
+    }
+    let source_retrieved_at = source
+        .iter()
+        .map(|row| row.retrieved_at)
+        .min()
+        .expect("nonempty source health rows");
     let (newest_eod_at, age) =
-        market_data::freshness::applicable_eod_freshness(now_utc, source_date, source.retrieved_at)
+        market_data::freshness::applicable_eod_freshness(now_utc, source_date, source_retrieved_at)
             .ok_or(WorkerError::Unhealthy {
                 reason: HealthFailure::FutureCandidatePublication,
             })?;
@@ -1372,119 +1450,145 @@ pub async fn candidate_healthcheck(
         retrieved_at: DateTime<Utc>,
         available_at: DateTime<Utc>,
     }
-    let price: PriceHealthRow = timeout_query(
-        WorkerPhase::Health,
-        sqlx::query_as(
-            "WITH required_sessions AS MATERIALIZED (
-                 SELECT calendar.session_date
-                   FROM trading_calendars AS calendar
-                  WHERE calendar.exchange = 'KRX'
-                    AND calendar.session_type = 'TRADING'
-                    AND calendar.timezone = 'Asia/Seoul'
-                    AND calendar.session_date <= $1
-                    AND calendar.source_batch_id IS NOT NULL
-                    AND calendar.content_sha256 IS NOT NULL
-                    AND calendar.retrieved_at IS NOT NULL
-                  ORDER BY calendar.session_date DESC LIMIT 60
-             )
-             SELECT price.dataset_version, price.manifest_sha256,
-                    price.curated_generation, dataset.storage_path,
-                    price.retrieved_at, price.available_at
-               FROM candidate_price_publications AS price
-               JOIN dataset_versions AS dataset ON dataset.id = price.dataset_version_id
-              WHERE dataset.dataset_id = 'krx_eod_bars'
-                AND dataset.status IN ('READY', 'WARNING')
-                AND price.first_session <= $1 AND price.last_session >= $1
-                AND (SELECT count(*) FROM required_sessions) = 60
-                AND (
-                    SELECT count(*) FROM candidate_universe_members AS member
-                     WHERE member.universe_snapshot_id = $2
-                       AND member.effective_from <= $1
-                       AND (member.effective_until IS NULL OR member.effective_until >= $1)
-                       AND NOT EXISTS (
-                           SELECT 1 FROM required_sessions AS required
-                            WHERE NOT EXISTS (
-                                SELECT 1 FROM candidate_price_instrument_sessions AS coverage_session
-                                 WHERE coverage_session.dataset_version_id = price.dataset_version_id
-                                   AND coverage_session.instrument_id = member.instrument_id
-                                   AND coverage_session.session_date = required.session_date))
-                       AND NOT EXISTS (
-                           SELECT 1 FROM required_sessions AS required
-                           CROSS JOIN (VALUES ('FOREIGN'),('INSTITUTION')) AS class(investor_class)
-                            WHERE NOT EXISTS (
-                                SELECT 1 FROM candidate_investor_flows AS history
-                                JOIN candidate_investor_flow_snapshot_rows AS flow_member
-                                  ON flow_member.flow_observation_id=history.id
-                                 WHERE flow_member.dataset_version_id = $3
-                                   AND history.instrument_id = member.instrument_id
-                                   AND history.trade_date = required.session_date
-                                   AND history.investor_class = class.investor_class
-                                   AND history.available_at <= $4))
-                       AND EXISTS (
-                           SELECT 1 FROM candidate_market_status_observations AS member_status
-                            WHERE member_status.dataset_version_id = $5
-                              AND member_status.instrument_id = member.instrument_id
-                              AND member_status.trade_date = $1
-                              AND member_status.available_at <= $4)
-                       AND EXISTS (
-                           SELECT 1 FROM candidate_fundamental_observations AS member_fact
-                            WHERE member_fact.dataset_version_id = $6
-                              AND member_fact.instrument_id = member.instrument_id
-                              AND member_fact.fiscal_period_end <= $1
-                              AND member_fact.available_at <= $4)
-                       AND EXISTS (
-                           SELECT 1 FROM candidate_sector_entries AS member_sector
-                            WHERE member_sector.sector_version_id = $7
-                              AND member_sector.instrument_id = member.instrument_id
-                              AND member_sector.effective_from <= $1
-                              AND member_sector.available_at <= $4
-                              AND (member_sector.effective_until IS NULL
-                                   OR member_sector.effective_until >= $1))
-                ) >= 5
-                AND public.candidate_source_entitlement_is_valid(
-                    price.entitlement_id, price.license_ref, 'krx_eod_bars',
-                    price.first_session, price.last_session)
-                AND public.candidate_source_entitlement_is_valid(
-                    $9, $10, 'krx_investor_flows',
-                    (SELECT min(session_date) FROM required_sessions), $1)
-                AND EXISTS (
-                    SELECT 1 FROM candidate_raw_batch_datasets AS binding
-                    JOIN candidate_raw_batch_publications AS batch
-                      ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
-                   WHERE binding.dataset_version_id=price.dataset_version_id
-                     AND binding.response_kind='bars'
-                     AND batch.state='PUBLISHED' AND batch.fetch_mode=$8)
-              ORDER BY price.available_at DESC, dataset.id LIMIT 1",
+    const PRICE_HEALTH_QUERY: &str = "WITH required_sessions AS MATERIALIZED (
+             SELECT calendar.session_date
+               FROM trading_calendars AS calendar
+              WHERE calendar.exchange = 'KRX'
+                AND calendar.session_type = 'TRADING'
+                AND calendar.timezone = 'Asia/Seoul'
+                AND calendar.session_date <= $1
+                AND calendar.source_batch_id IS NOT NULL
+                AND calendar.content_sha256 IS NOT NULL
+                AND calendar.retrieved_at IS NOT NULL
+              ORDER BY calendar.session_date DESC LIMIT 60
+         )
+         SELECT price.dataset_version, price.manifest_sha256,
+                price.curated_generation, dataset.storage_path,
+                price.retrieved_at, price.available_at
+           FROM candidate_price_publications AS price
+           JOIN dataset_versions AS dataset ON dataset.id = price.dataset_version_id
+          WHERE dataset.dataset_id = 'krx_eod_bars'
+            AND dataset.status IN ('READY', 'WARNING')
+            AND price.first_session <= $1 AND price.last_session >= $1
+            AND (SELECT count(*) FROM required_sessions) = 60
+            AND (
+                SELECT count(*) FROM candidate_universe_members AS member
+                 WHERE member.universe_snapshot_id = $2
+                   AND member.effective_from <= $1
+                   AND (member.effective_until IS NULL OR member.effective_until >= $1)
+                   AND NOT EXISTS (
+                       SELECT 1 FROM required_sessions AS required
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM candidate_price_instrument_sessions AS coverage_session
+                             WHERE coverage_session.dataset_version_id = price.dataset_version_id
+                               AND coverage_session.instrument_id = member.instrument_id
+                               AND coverage_session.session_date = required.session_date))
+                   AND NOT EXISTS (
+                       SELECT 1 FROM required_sessions AS required
+                       CROSS JOIN (VALUES ('FOREIGN'),('INSTITUTION')) AS class(investor_class)
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM candidate_investor_flows AS history
+                            JOIN candidate_investor_flow_snapshot_rows AS flow_member
+                              ON flow_member.flow_observation_id=history.id
+                             WHERE flow_member.dataset_version_id = $3
+                               AND history.instrument_id = member.instrument_id
+                               AND history.trade_date = required.session_date
+                               AND history.investor_class = class.investor_class
+                               AND history.available_at <= $4))
+                   AND EXISTS (
+                       SELECT 1 FROM candidate_market_status_observations AS member_status
+                        WHERE member_status.dataset_version_id = $5
+                          AND member_status.instrument_id = member.instrument_id
+                          AND member_status.trade_date = $1
+                          AND member_status.available_at <= $4)
+                   AND EXISTS (
+                       SELECT 1 FROM candidate_fundamental_observations AS member_fact
+                        WHERE member_fact.dataset_version_id = $6
+                          AND member_fact.instrument_id = member.instrument_id
+                          AND member_fact.fiscal_period_end <= $1
+                          AND member_fact.available_at <= $4)
+                   AND EXISTS (
+                       SELECT 1 FROM candidate_sector_entries AS member_sector
+                        WHERE member_sector.sector_version_id = $7
+                          AND member_sector.instrument_id = member.instrument_id
+                          AND member_sector.effective_from <= $1
+                          AND member_sector.available_at <= $4
+                          AND (member_sector.effective_until IS NULL
+                               OR member_sector.effective_until >= $1))
+            ) >= 5
+            AND public.candidate_source_entitlement_is_valid(
+                price.entitlement_id, price.license_ref, 'krx_eod_bars',
+                price.first_session, price.last_session)
+            AND public.candidate_source_entitlement_is_valid(
+                $9, $10, 'krx_investor_flows',
+                (SELECT min(session_date) FROM required_sessions), $1)
+            AND EXISTS (
+                SELECT 1 FROM candidate_raw_batch_datasets AS binding
+                JOIN candidate_raw_batch_publications AS batch
+                  ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
+               WHERE binding.dataset_version_id=price.dataset_version_id
+                 AND binding.dataset_id='krx_eod_bars'
+                 AND binding.response_kind='bars'
+                 AND batch.state='PUBLISHED' AND batch.fetch_mode=$8)
+          ORDER BY price.available_at DESC, dataset.id LIMIT 1";
+    let mut prices = Vec::with_capacity(source.len());
+    let mut price_age = Duration::ZERO;
+    for source in &source {
+        let price: Option<PriceHealthRow> = timeout_query(
+            WorkerPhase::Health,
+            sqlx::query_as(PRICE_HEALTH_QUERY)
+                .bind(source_date)
+                .bind(source.universe_id)
+                .bind(source.flow_dataset_version_id)
+                .bind(now_utc)
+                .bind(source.status_dataset_version_id)
+                .bind(source.fundamental_dataset_version_id)
+                .bind(source.sector_version_id)
+                .bind(expected_fetch_mode.as_str())
+                .bind(source.flow_entitlement_id)
+                .bind(&source.flow_license_ref)
+                .fetch_optional(pool),
         )
-        .bind(source_date)
-        .bind(source.universe_id)
-        .bind(source.flow_dataset_version_id)
-        .bind(now_utc)
-        .bind(source.status_dataset_version_id)
-        .bind(source.fundamental_dataset_version_id)
-        .bind(source.sector_version_id)
-        .bind(expected_fetch_mode.as_str())
-        .bind(source.flow_entitlement_id)
-        .bind(source.flow_license_ref)
-        .fetch_optional(pool),
-    )
-    .await?
-    .ok_or(WorkerError::Unhealthy {
-        reason: HealthFailure::NoPricePublication,
-    })?;
-    if price.available_at > now_utc {
-        return Err(WorkerError::Unhealthy {
-            reason: HealthFailure::FuturePricePublication,
-        });
-    }
-    let (_, price_age) =
-        market_data::freshness::applicable_eod_freshness(now_utc, source_date, price.retrieved_at)
-            .ok_or(WorkerError::Unhealthy {
+        .await?;
+        let Some(price) = price else {
+            return Err(WorkerError::Unhealthy {
+                reason: HealthFailure::CandidateUniverseUnavailable,
+            });
+        };
+        if price.available_at > now_utc {
+            return Err(WorkerError::Unhealthy {
                 reason: HealthFailure::FuturePricePublication,
-            })?;
-    if price_age > max_age {
+            });
+        }
+        let (_, age) = market_data::freshness::applicable_eod_freshness(
+            now_utc,
+            source_date,
+            price.retrieved_at,
+        )
+        .ok_or(WorkerError::Unhealthy {
+            reason: HealthFailure::FuturePricePublication,
+        })?;
+        if age > max_age {
+            return Err(WorkerError::Unhealthy {
+                reason: HealthFailure::StalePricePublication,
+            });
+        }
+        price_age = price_age.max(age);
+        prices.push(price);
+    }
+    let price = prices
+        .first()
+        .expect("every enabled universe has a price health row");
+    if prices.iter().skip(1).any(|candidate| {
+        candidate.dataset_version != price.dataset_version
+            || candidate.manifest_sha256 != price.manifest_sha256
+            || candidate.curated_generation != price.curated_generation
+            || candidate.storage_path != price.storage_path
+            || candidate.retrieved_at != price.retrieved_at
+            || candidate.available_at != price.available_at
+    }) {
         return Err(WorkerError::Unhealthy {
-            reason: HealthFailure::StalePricePublication,
+            reason: HealthFailure::CandidateUniverseUnavailable,
         });
     }
     let generation =
@@ -1524,6 +1628,7 @@ pub async fn candidate_healthcheck(
     Ok(HealthStatus {
         newest_eod_at,
         age: age.max(price_age),
+        per_universe,
     })
 }
 

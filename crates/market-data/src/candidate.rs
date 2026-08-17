@@ -4,13 +4,58 @@
 //! They model licensed source observations and expose cutoff-aware resolvers;
 //! no function silently selects the newest revision known today.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use domain::{InstrumentId, TradingDate, UtcTimestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{RawEnvelope, ResponseKind};
+
+/// The finite candidate universes supported by the source contract.
+///
+/// This is intentionally an enum rather than an arbitrary string: registry
+/// rows, membership datasets, and downstream run identity must agree on one
+/// canonical spelling and must fail closed for unknown indices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum CandidateUniverseKey {
+    #[serde(rename = "kospi200")]
+    Kospi200,
+    #[serde(rename = "kosdaq150")]
+    Kosdaq150,
+}
+
+impl CandidateUniverseKey {
+    pub const ALL: [Self; 2] = [Self::Kospi200, Self::Kosdaq150];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Kospi200 => "kospi200",
+            Self::Kosdaq150 => "kosdaq150",
+        }
+    }
+
+    pub const fn dataset_id(self) -> &'static str {
+        match self {
+            Self::Kospi200 => "krx_kospi200_membership",
+            Self::Kosdaq150 => "krx_kosdaq150_membership",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "kospi200" => Some(Self::Kospi200),
+            "kosdaq150" => Some(Self::Kosdaq150),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for CandidateUniverseKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -160,6 +205,65 @@ pub struct IndexMembershipObservation {
 #[serde(deny_unknown_fields)]
 pub struct IndexMembershipDocument {
     pub memberships: Vec<IndexMembershipObservation>,
+}
+
+impl IndexMembershipDocument {
+    /// Split one provider document into canonical, deterministically ordered
+    /// universe partitions.  The index id is part of each partition identity;
+    /// the same instrument may therefore occur once in each universe.
+    pub fn partition_by_universe(
+        &self,
+    ) -> Result<BTreeMap<CandidateUniverseKey, Self>, CandidateDataError> {
+        let mut partitions = BTreeMap::<CandidateUniverseKey, Self>::new();
+        let mut natural_keys = BTreeSet::new();
+        for row in &self.memberships {
+            let universe = CandidateUniverseKey::parse(&row.index_id).ok_or_else(|| {
+                CandidateDataError::InvalidField {
+                    field: "membership.index_id".to_owned(),
+                    detail: format!("unsupported candidate universe {:?}", row.index_id),
+                }
+            })?;
+            if !natural_keys.insert((
+                row.index_id.clone(),
+                row.instrument.clone(),
+                row.effective_from,
+                row.source_revision.clone(),
+            )) {
+                return Err(CandidateDataError::InvalidField {
+                    field: "memberships".to_owned(),
+                    detail: "contains a duplicate natural identity".to_owned(),
+                });
+            }
+            partitions
+                .entry(universe)
+                .or_insert_with(|| Self {
+                    memberships: Vec::new(),
+                })
+                .memberships
+                .push(row.clone());
+        }
+        for document in partitions.values_mut() {
+            document.memberships.sort_by(|left, right| {
+                (
+                    &left.instrument,
+                    left.effective_from,
+                    left.effective_until,
+                    left.announced_at,
+                    left.available_at,
+                    &left.source_revision,
+                )
+                    .cmp(&(
+                        &right.instrument,
+                        right.effective_from,
+                        right.effective_until,
+                        right.announced_at,
+                        right.available_at,
+                        &right.source_revision,
+                    ))
+            });
+        }
+        Ok(partitions)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -344,6 +448,9 @@ pub fn validate_candidate_document(
             for row in &document.memberships {
                 require_available(row.available_at, retrieved_at, "membership.available_at")?;
                 require_revision(&row.source_revision)?;
+                if CandidateUniverseKey::parse(&row.index_id).is_none() {
+                    return invalid("membership.index_id", "unsupported candidate universe");
+                }
                 if !canonical_id(&row.index_id)
                     || row.available_at < row.announced_at
                     || row

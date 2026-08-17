@@ -17,6 +17,7 @@
     "krx_investor_flows",
     "krx_fundamentals",
     "krx_kospi200_membership",
+    "krx_kosdaq150_membership",
     "krx_sector_classification"
   ],
   "covered_uses": [

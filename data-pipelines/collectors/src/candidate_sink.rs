@@ -4,25 +4,25 @@
 //! validated, immutable document tied to one exact curated dataset pin.  It is
 //! intentionally independent of a concrete KRX credential or transport.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use domain::{
     AssetClass, ContentHash, Currency, InstrumentStatus, TradingDate, UtcTimestamp, Venue,
 };
 use market_data::{
-    CANDIDATE_RESPONSE_KINDS, CandidateDocument, CandidateSourcePin, FinancialPeriodKind,
-    FundamentalObservation, FundamentalProfile, IndexMembershipObservation, IngestOutcome,
-    InstrumentMaster, InvestorClass, InvestorFlowObservation, MarketStatusObservation,
-    PriceCurationEvidence, RawEnvelope, ResponseKind, SectorObservation, StatementScope,
-    members_as_of, parse_candidate_envelope, sectors_as_of, validate_candidate_document,
+    CANDIDATE_RESPONSE_KINDS, CandidateDocument, CandidateSourcePin, CandidateUniverseKey,
+    FinancialPeriodKind, FundamentalObservation, FundamentalProfile, IndexMembershipDocument,
+    IndexMembershipObservation, IngestOutcome, InstrumentMaster, InvestorClass,
+    InvestorFlowObservation, MarketStatusObservation, PriceCurationEvidence, RawEnvelope,
+    ResponseKind, SectorObservation, StatementScope, members_as_of, parse_candidate_envelope,
+    sectors_as_of, validate_candidate_document,
 };
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{PublishOutcome, SinkError, candidate_pipeline::CandidateDatasetBinding};
 
-const UNIVERSE_DATASET: &str = "krx_kospi200_membership";
 const FLOW_DATASET: &str = "krx_investor_flows";
 const STATUS_DATASET: &str = "krx_market_status";
 const FUNDAMENTAL_DATASET: &str = "krx_fundamentals";
@@ -271,9 +271,10 @@ impl PostgresCandidateSourceSink {
         Ok(inserted)
     }
 
-    /// Register the exact five immutable Raw source artifacts as curated
-    /// catalog identities. The underlying procedure accepts only those five
-    /// dataset ids; `research_writer` has no broad dataset_versions DML.
+    /// Register the exact common source artifacts and one membership artifact
+    /// per enabled universe as curated catalog identities. The underlying
+    /// procedure accepts only those registry-backed dataset ids;
+    /// `research_writer` has no broad dataset_versions DML.
     pub async fn catalog_candidate_batch(
         &self,
         outcome: &IngestOutcome,
@@ -307,6 +308,34 @@ impl PostgresCandidateSourceSink {
             .execute(&mut *tx)
             .await
             .map_err(SinkError::from_sqlx)?;
+        let enabled_registry_rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT universe_key, membership_dataset_id
+               FROM public.candidate_universe_registry
+              WHERE enabled
+              ORDER BY sort_order",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(SinkError::from_sqlx)?;
+        let mut enabled_memberships = BTreeMap::new();
+        for (universe_key, dataset_id) in enabled_registry_rows {
+            let universe = CandidateUniverseKey::parse(&universe_key).ok_or_else(|| {
+                SinkError::Invariant(format!(
+                    "candidate registry contains unsupported universe {universe_key}"
+                ))
+            })?;
+            if dataset_id != universe.dataset_id() {
+                return Err(SinkError::Invariant(format!(
+                    "candidate registry dataset does not match universe {universe_key}"
+                )));
+            }
+            enabled_memberships.insert(universe, dataset_id);
+        }
+        if enabled_memberships.is_empty() {
+            return Err(SinkError::Invariant(
+                "candidate source catalog requires an enabled universe".to_owned(),
+            ));
+        }
         let requested = outcome
             .entry
             .files
@@ -322,11 +351,14 @@ impl PostgresCandidateSourceSink {
                 "candidate Raw catalog contains no supported source kind".to_owned(),
             ));
         }
-        let mut bindings = Vec::with_capacity(requested.len());
+        if requested != BTreeSet::from(CANDIDATE_RESPONSE_KINDS) {
+            return Err(SinkError::Invariant(
+                "candidate Raw catalog requires every common source and membership response kind"
+                    .to_owned(),
+            ));
+        }
+        let mut catalog_jobs = Vec::<(ResponseKind, String, String)>::new();
         for kind in requested {
-            let dataset_id = dataset_for_kind(kind).ok_or_else(|| {
-                SinkError::Invariant(format!("unsupported candidate source kind {kind}"))
-            })?;
             let mut files = outcome
                 .entry
                 .files
@@ -339,24 +371,40 @@ impl PostgresCandidateSourceSink {
                     "candidate Raw catalog is missing {kind}"
                 )));
             }
-            let canonical = files
-                .iter()
-                .map(|file| {
-                    (
-                        file.file_name.as_str(),
-                        file.content_hash.as_str(),
-                        file.size_bytes,
-                    )
-                })
-                .collect::<Vec<_>>();
-            let canonical = serde_json::to_vec(&canonical).map_err(|error| {
-                SinkError::Invariant(format!("candidate catalog serialization failed: {error}"))
-            })?;
-            let manifest_sha256 = ContentHash::from_bytes(&canonical)
-                .as_str()
-                .strip_prefix("sha256:")
-                .expect("content hashes have a sha256 prefix")
-                .to_owned();
+            if kind == ResponseKind::IndexMembership {
+                let partitions = membership_partitions(outcome, &files)?;
+                if partitions.is_empty() {
+                    return Err(SinkError::Invariant(
+                        "candidate membership Raw has no canonical universe partitions".to_owned(),
+                    ));
+                }
+                if partitions.keys().collect::<BTreeSet<_>>()
+                    != enabled_memberships.keys().collect::<BTreeSet<_>>()
+                {
+                    return Err(SinkError::Invariant(
+                        "candidate Raw membership partitions do not cover every enabled universe"
+                            .to_owned(),
+                    ));
+                }
+                for (universe, document) in partitions {
+                    catalog_jobs.push((
+                        kind,
+                        enabled_memberships
+                            .get(&universe)
+                            .expect("enabled universe was checked above")
+                            .clone(),
+                        membership_partition_manifest(universe, &document)?,
+                    ));
+                }
+            } else {
+                let dataset_id = dataset_for_kind(kind).ok_or_else(|| {
+                    SinkError::Invariant(format!("unsupported candidate source kind {kind}"))
+                })?;
+                catalog_jobs.push((kind, dataset_id.to_owned(), file_manifest(&files)?));
+            }
+        }
+        let mut bindings = Vec::with_capacity(catalog_jobs.len());
+        for (kind, dataset_id, manifest_sha256) in catalog_jobs {
             if matches!(
                 kind,
                 ResponseKind::Fundamentals
@@ -364,12 +412,15 @@ impl PostgresCandidateSourceSink {
                     | ResponseKind::SectorClassification
             ) && let Some(existing) = reusable_pit_binding(
                 &mut tx,
-                kind,
-                &manifest_sha256,
-                outcome.entry.date,
-                entitlement_id,
-                contract_reference,
-                outcome.entry.mode,
+                &ReusablePitRequest {
+                    kind,
+                    manifest_sha256: &manifest_sha256,
+                    dataset_id: &dataset_id,
+                    as_of: outcome.entry.date,
+                    entitlement_id,
+                    contract_reference,
+                    fetch_mode: outcome.entry.mode,
+                },
             )
             .await?
             {
@@ -390,7 +441,7 @@ impl PostgresCandidateSourceSink {
                     dataset_version_id: existing.0,
                     entitlement_id: existing.1,
                     license_ref: existing.2,
-                    dataset_id: dataset_id.to_owned(),
+                    dataset_id: dataset_id.clone(),
                     dataset_version: existing.4,
                     manifest_sha256: existing.5,
                     reused_existing: true,
@@ -398,15 +449,16 @@ impl PostgresCandidateSourceSink {
                 continue;
             }
             let dataset_version = format!(
-                "{}:{}:{}",
+                "{}:{}:{}:{}",
                 outcome.entry.date.to_iso(),
                 outcome.batch_id,
-                kind.as_str()
+                kind.as_str(),
+                dataset_id
             );
             let dataset_version_id: Uuid = sqlx::query_scalar(
                 "SELECT public.register_candidate_source_dataset($1, $2, $3, $4, $5, $6)",
             )
-            .bind(dataset_id)
+            .bind(&dataset_id)
             .bind(&dataset_version)
             .bind(&manifest_sha256)
             .bind(entitlement_id)
@@ -427,7 +479,7 @@ impl PostgresCandidateSourceSink {
                 dataset_version_id,
                 entitlement_id,
                 license_ref: contract_reference.to_owned(),
-                dataset_id: dataset_id.to_owned(),
+                dataset_id: dataset_id.clone(),
                 dataset_version,
                 manifest_sha256,
                 reused_existing: false,
@@ -559,25 +611,27 @@ impl PostgresCandidateSourceSink {
         cutoff_at: DateTime<Utc>,
         expected_fetch_mode: market_data::FetchMode,
     ) -> Result<Vec<ResponseKind>, SinkError> {
-        let present: (bool, bool, bool, bool, bool) = sqlx::query_as(
+        let missing_by_universe = self
+            .missing_source_kinds_by_universe(as_of, cutoff_at, expected_fetch_mode)
+            .await?;
+        let mut missing = BTreeSet::new();
+        for kinds in missing_by_universe.into_values() {
+            missing.extend(kinds);
+        }
+        Ok(missing.into_iter().collect())
+    }
+
+    /// Return source gaps independently for every enabled registry universe.
+    /// Common flow/status/fundamental/sector readiness is shared, while each
+    /// membership snapshot is resolved against its own registry dataset pin.
+    pub async fn missing_source_kinds_by_universe(
+        &self,
+        as_of: TradingDate,
+        cutoff_at: DateTime<Utc>,
+        expected_fetch_mode: market_data::FetchMode,
+    ) -> Result<BTreeMap<CandidateUniverseKey, Vec<ResponseKind>>, SinkError> {
+        let common: (bool, bool, bool, bool) = sqlx::query_as(
             "SELECT
-                EXISTS (SELECT 1 FROM candidate_universe_snapshots AS universe
-                         WHERE universe.as_of_date <= $1
-                           AND universe.available_at <= $2
-                           AND universe.member_count = (
-                               SELECT count(*) FROM candidate_universe_members AS member
-                                WHERE member.universe_snapshot_id = universe.id
-                                  AND member.effective_from <= $1
-                                  AND (member.effective_until IS NULL OR member.effective_until >= $1))
-                           AND public.candidate_source_entitlement_is_valid(
-                               universe.entitlement_id, universe.license_ref,
-                               'krx_kospi200_membership', $1, $1)
-                           AND EXISTS (SELECT 1 FROM candidate_raw_batch_datasets AS binding
-                               JOIN candidate_raw_batch_publications AS batch
-                                 ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
-                              WHERE binding.dataset_version_id=universe.dataset_version_id
-                                AND binding.response_kind='index_membership'
-                                AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)),
                 EXISTS (SELECT 1 FROM candidate_investor_flows AS flow
                          JOIN candidate_investor_flow_snapshot_rows AS member
                            ON member.flow_observation_id=flow.id
@@ -590,6 +644,7 @@ impl PostgresCandidateSourceSink {
                                JOIN candidate_raw_batch_publications AS batch
                                  ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
                               WHERE binding.dataset_version_id=member.dataset_version_id
+                                AND binding.dataset_id='krx_investor_flows'
                                 AND binding.response_kind='investor_flow'
                                 AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)),
                 EXISTS (SELECT 1 FROM candidate_market_status_observations AS status
@@ -602,6 +657,7 @@ impl PostgresCandidateSourceSink {
                                JOIN candidate_raw_batch_publications AS batch
                                  ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
                               WHERE binding.dataset_version_id=status.dataset_version_id
+                                AND binding.dataset_id='krx_market_status'
                                 AND binding.response_kind='market_status'
                                 AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)),
                 EXISTS (SELECT 1 FROM candidate_fundamental_observations AS fact
@@ -614,6 +670,7 @@ impl PostgresCandidateSourceSink {
                                JOIN candidate_raw_batch_publications AS batch
                                  ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
                               WHERE binding.dataset_version_id=fact.dataset_version_id
+                                AND binding.dataset_id='krx_fundamentals'
                                 AND binding.response_kind='fundamentals'
                                 AND batch.state='PUBLISHED' AND batch.fetch_mode=$3)),
                 EXISTS (SELECT 1 FROM candidate_sector_versions AS sector
@@ -626,6 +683,7 @@ impl PostgresCandidateSourceSink {
                                JOIN candidate_raw_batch_publications AS batch
                                  ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
                               WHERE binding.dataset_version_id=sector.dataset_version_id
+                                AND binding.dataset_id='krx_sector_classification'
                                 AND binding.response_kind='sector_classification'
                                 AND batch.state='PUBLISHED' AND batch.fetch_mode=$3))",
         )
@@ -635,19 +693,76 @@ impl PostgresCandidateSourceSink {
         .fetch_one(&self.pool)
         .await
         .map_err(SinkError::from_sqlx)?;
-        let mut missing = Vec::new();
-        for (kind, is_present) in [
-            (ResponseKind::IndexMembership, present.0),
-            (ResponseKind::InvestorFlow, present.1),
-            (ResponseKind::MarketStatus, present.2),
-            (ResponseKind::Fundamentals, present.3),
-            (ResponseKind::SectorClassification, present.4),
-        ] {
-            if !is_present {
-                missing.push(kind);
+        let registry: Vec<(String, String, i32)> = sqlx::query_as(
+            "SELECT universe_key, membership_dataset_id, sort_order
+               FROM public.candidate_universe_registry
+              WHERE enabled
+              ORDER BY sort_order",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(SinkError::from_sqlx)?;
+        let mut missing_by_universe = BTreeMap::new();
+        for (universe_key, dataset_id, _) in registry {
+            let universe = CandidateUniverseKey::parse(&universe_key).ok_or_else(|| {
+                SinkError::Invariant(format!(
+                    "candidate registry contains unsupported universe {universe_key}"
+                ))
+            })?;
+            if dataset_id != universe.dataset_id() {
+                return Err(SinkError::Invariant(format!(
+                    "candidate registry dataset does not match universe {universe_key}"
+                )));
             }
+            let membership_present: bool = sqlx::query_scalar(
+                "SELECT EXISTS (
+                    SELECT 1 FROM candidate_universe_snapshots AS universe
+                     WHERE universe.index_id=$1
+                       AND universe.as_of_date <= $2
+                       AND universe.available_at <= $3
+                       AND universe.member_count = (
+                           SELECT count(*) FROM candidate_universe_members AS member
+                            WHERE member.universe_snapshot_id=universe.id
+                              AND member.effective_from <= $2
+                              AND (member.effective_until IS NULL OR member.effective_until >= $2))
+                       AND public.candidate_source_entitlement_is_valid(
+                           universe.entitlement_id, universe.license_ref, $4, $2, $2)
+                       AND EXISTS (
+                           SELECT 1 FROM candidate_raw_batch_datasets AS binding
+                           JOIN candidate_raw_batch_publications AS batch
+                             ON batch.batch_id=binding.batch_id AND batch.surface=binding.surface
+                          WHERE binding.dataset_version_id=universe.dataset_version_id
+                            AND binding.dataset_id=$5
+                            AND binding.response_kind='index_membership'
+                            AND batch.state='PUBLISHED' AND batch.fetch_mode=$6)
+                )",
+            )
+            .bind(universe.as_str())
+            .bind(date(as_of))
+            .bind(cutoff_at)
+            .bind(&dataset_id)
+            .bind(&dataset_id)
+            .bind(expected_fetch_mode.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(SinkError::from_sqlx)?;
+            let mut missing = Vec::new();
+            if !membership_present {
+                missing.push(ResponseKind::IndexMembership);
+            }
+            for (kind, present) in [
+                (ResponseKind::InvestorFlow, common.0),
+                (ResponseKind::MarketStatus, common.1),
+                (ResponseKind::Fundamentals, common.2),
+                (ResponseKind::SectorClassification, common.3),
+            ] {
+                if !present {
+                    missing.push(kind);
+                }
+            }
+            missing_by_universe.insert(universe, missing);
         }
-        Ok(missing)
+        Ok(missing_by_universe)
     }
 
     /// Publish one document atomically. Exact replay is accepted; a natural
@@ -660,7 +775,7 @@ impl PostgresCandidateSourceSink {
     }
 
     /// Publish a coherent provider delivery in one database transaction.
-    /// This prevents a five-document candidate batch from becoming partially
+    /// This prevents a multi-universe candidate batch from becoming partially
     /// visible when any one dataset pin or source row is rejected.
     pub async fn publish_batch(
         &self,
@@ -679,13 +794,14 @@ impl PostgresCandidateSourceSink {
                 || publication.raw_manifest_sha256 != first.raw_manifest_sha256
                 || publication.fetch_mode != first.fetch_mode
                 || publication.as_of != first.as_of
+                || publication.pin.entitlement_id != first.pin.entitlement_id
                 || publication.pin.license_ref != first.pin.license_ref
             {
                 return Err(SinkError::Invariant(
                     "candidate publication batch must share one exact Raw identity".to_owned(),
                 ));
             }
-            if !datasets.insert(expected_dataset(publication.document)) {
+            if !datasets.insert(publication.pin.dataset_id.as_str()) {
                 return Err(SinkError::Invariant(
                     "candidate publication batch contains a duplicate dataset".to_owned(),
                 ));
@@ -713,12 +829,14 @@ impl PostgresCandidateSourceSink {
                 && fetch_mode == first.fetch_mode.as_str()
                 && contract_reference.as_str() == first.pin.license_ref
                 && *entitlement_date == date(first.as_of);
-            let exact_bindings: i64 = sqlx::query_scalar(
-                "SELECT count(*)
+            let (total_bindings, exact_bindings): (i64, i64) = sqlx::query_as(
+                "SELECT count(*),
+                        count(*) FILTER (WHERE
+                            (binding.response_kind,binding.dataset_id,binding.dataset_version_id) IN (
+                                SELECT * FROM unnest($2::text[],$3::text[],$4::uuid[])))
                    FROM candidate_raw_batch_datasets AS binding
                   WHERE binding.batch_id=$1 AND binding.surface='source'
-                    AND (binding.response_kind,binding.dataset_version_id) IN (
-                        SELECT * FROM unnest($2::text[],$3::uuid[]))",
+                    AND NOT binding.reused_existing",
             )
             .bind(first.raw_batch_id)
             .bind(
@@ -730,13 +848,21 @@ impl PostgresCandidateSourceSink {
             .bind(
                 publications
                     .iter()
+                    .map(|publication| publication.pin.dataset_id.as_str())
+                    .collect::<Vec<_>>(),
+            )
+            .bind(
+                publications
+                    .iter()
                     .map(|publication| publication.dataset_version_id)
                     .collect::<Vec<_>>(),
             )
             .fetch_one(&mut *tx)
             .await
             .map_err(SinkError::from_sqlx)?;
-            if !identity_matches || usize::try_from(exact_bindings).ok() != Some(publications.len())
+            if !identity_matches
+                || usize::try_from(total_bindings).ok() != Some(publications.len())
+                || usize::try_from(exact_bindings).ok() != Some(publications.len())
             {
                 return Err(SinkError::Conflict(
                     "candidate published Raw batch replay differs from its sealed identity"
@@ -808,6 +934,104 @@ pub fn candidate_raw_manifest_sha256(
         .to_owned())
 }
 
+fn file_manifest(files: &[&market_data::FileEntry]) -> Result<String, SinkError> {
+    let canonical = files
+        .iter()
+        .map(|file| {
+            (
+                file.file_name.as_str(),
+                file.content_hash.as_str(),
+                file.size_bytes,
+            )
+        })
+        .collect::<Vec<_>>();
+    let canonical = serde_json::to_vec(&canonical).map_err(|error| {
+        SinkError::Invariant(format!("candidate catalog serialization failed: {error}"))
+    })?;
+    Ok(ContentHash::from_bytes(&canonical)
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("content hashes have a sha256 prefix")
+        .to_owned())
+}
+
+fn membership_partition_manifest(
+    universe: CandidateUniverseKey,
+    document: &IndexMembershipDocument,
+) -> Result<String, SinkError> {
+    // Include the canonical index key outside the rows so identical bytes can
+    // never be rebound under the other universe's dataset id.
+    let canonical = serde_json::to_vec(&(universe.as_str(), document)).map_err(|error| {
+        SinkError::Invariant(format!(
+            "candidate membership partition serialization failed: {error}"
+        ))
+    })?;
+    Ok(ContentHash::from_bytes(&canonical)
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("content hashes have a sha256 prefix")
+        .to_owned())
+}
+
+fn read_candidate_document(
+    outcome: &IngestOutcome,
+    metadata: &market_data::FileEntry,
+) -> Result<CandidateDocument, SinkError> {
+    let stored = outcome
+        .files
+        .iter()
+        .find(|file| file.file_name == metadata.file_name)
+        .ok_or_else(|| {
+            SinkError::Invariant(
+                "candidate Raw catalog requires exact read-back for every manifest file".to_owned(),
+            )
+        })?;
+    let envelope = RawEnvelope::new(
+        outcome.batch_id,
+        metadata.kind,
+        metadata.file_name.clone(),
+        stored.bytes.clone(),
+        outcome.entry.retrieved_at,
+        metadata.request.clone(),
+    );
+    if envelope.content_hash != metadata.content_hash {
+        return Err(SinkError::Invariant(
+            "candidate Raw catalog read-back hash differs from its manifest".to_owned(),
+        ));
+    }
+    parse_candidate_envelope(&envelope).map_err(|error| {
+        SinkError::Invariant(format!("candidate Raw document is invalid: {error}"))
+    })
+}
+
+fn membership_partitions(
+    outcome: &IngestOutcome,
+    files: &[&market_data::FileEntry],
+) -> Result<BTreeMap<CandidateUniverseKey, IndexMembershipDocument>, SinkError> {
+    let mut document = IndexMembershipDocument {
+        memberships: Vec::new(),
+    };
+    for metadata in files {
+        let page = read_candidate_document(outcome, metadata)?;
+        let CandidateDocument::IndexMembership(page) = page else {
+            return Err(SinkError::Invariant(
+                "candidate membership manifest page has the wrong response kind".to_owned(),
+            ));
+        };
+        document.memberships.extend(page.memberships);
+    }
+    validate_candidate_document(
+        &CandidateDocument::IndexMembership(document.clone()),
+        outcome.entry.retrieved_at,
+    )
+    .map_err(|error| {
+        SinkError::Invariant(format!("candidate membership pages are invalid: {error}"))
+    })?;
+    document.partition_by_universe().map_err(|error| {
+        SinkError::Invariant(format!("candidate membership partition failed: {error}"))
+    })
+}
+
 /// Candidate source rights must cover the full rolling flow window, not only
 /// the delivery date. PIT reference sources remain licensed at the as-of date.
 pub fn candidate_source_rights_window(
@@ -873,16 +1097,21 @@ pub fn candidate_source_rights_window(
 
 type ReusablePitBinding = (Uuid, Uuid, String, String, String, String, bool);
 
-async fn reusable_pit_binding(
-    tx: &mut Transaction<'_, Postgres>,
+struct ReusablePitRequest<'a> {
     kind: ResponseKind,
-    manifest_sha256: &str,
+    manifest_sha256: &'a str,
+    dataset_id: &'a str,
     as_of: TradingDate,
     entitlement_id: Uuid,
-    contract_reference: &str,
+    contract_reference: &'a str,
     fetch_mode: market_data::FetchMode,
+}
+
+async fn reusable_pit_binding(
+    tx: &mut Transaction<'_, Postgres>,
+    request: &ReusablePitRequest<'_>,
 ) -> Result<Option<ReusablePitBinding>, SinkError> {
-    let (query, response_kind) = match kind {
+    let (query, response_kind) = match request.kind {
         ResponseKind::IndexMembership => (
             "SELECT DISTINCT dataset.id, source.entitlement_id, source.license_ref,
                     dataset.dataset_id, dataset.version, dataset.manifest_sha256,
@@ -894,7 +1123,8 @@ async fn reusable_pit_binding(
                  ON origin.dataset_version_id=dataset.id AND NOT origin.reused_existing
                JOIN candidate_raw_batch_publications AS origin_batch
                  ON origin_batch.batch_id=origin.batch_id AND origin_batch.surface=origin.surface
-              WHERE dataset.manifest_sha256=$1 AND source.entitlement_id=$3
+              WHERE dataset.manifest_sha256=$1 AND dataset.dataset_id=$7
+                AND source.entitlement_id=$3
                 AND source.license_ref=$4 AND origin.response_kind=$5
                 AND origin_batch.state='PUBLISHED' AND origin_batch.fetch_mode=$6",
             "index_membership",
@@ -910,7 +1140,8 @@ async fn reusable_pit_binding(
                  ON origin.dataset_version_id=dataset.id AND NOT origin.reused_existing
                JOIN candidate_raw_batch_publications AS origin_batch
                  ON origin_batch.batch_id=origin.batch_id AND origin_batch.surface=origin.surface
-              WHERE dataset.manifest_sha256=$1 AND source.entitlement_id=$3
+              WHERE dataset.manifest_sha256=$1 AND dataset.dataset_id=$7
+                AND source.entitlement_id=$3
                 AND source.license_ref=$4 AND origin.response_kind=$5
                 AND origin_batch.state='PUBLISHED' AND origin_batch.fetch_mode=$6",
             "fundamentals",
@@ -926,7 +1157,8 @@ async fn reusable_pit_binding(
                  ON origin.dataset_version_id=dataset.id AND NOT origin.reused_existing
                JOIN candidate_raw_batch_publications AS origin_batch
                  ON origin_batch.batch_id=origin.batch_id AND origin_batch.surface=origin.surface
-              WHERE dataset.manifest_sha256=$1 AND source.entitlement_id=$3
+              WHERE dataset.manifest_sha256=$1 AND dataset.dataset_id=$7
+                AND source.entitlement_id=$3
                 AND source.license_ref=$4 AND origin.response_kind=$5
                 AND origin_batch.state='PUBLISHED' AND origin_batch.fetch_mode=$6",
             "sector_classification",
@@ -934,12 +1166,13 @@ async fn reusable_pit_binding(
         _ => return Ok(None),
     };
     let rows = sqlx::query_as::<_, ReusablePitBinding>(query)
-        .bind(manifest_sha256)
-        .bind(date(as_of))
-        .bind(entitlement_id)
-        .bind(contract_reference)
+        .bind(request.manifest_sha256)
+        .bind(date(request.as_of))
+        .bind(request.entitlement_id)
+        .bind(request.contract_reference)
         .bind(response_kind)
-        .bind(fetch_mode.as_str())
+        .bind(request.fetch_mode.as_str())
+        .bind(request.dataset_id)
         .fetch_all(&mut **tx)
         .await
         .map_err(SinkError::from_sqlx)?;
@@ -947,7 +1180,8 @@ async fn reusable_pit_binding(
         0 => Ok(None),
         1 => Ok(rows.into_iter().next()),
         _ => Err(SinkError::Conflict(format!(
-            "candidate {kind} Raw manifest resolves to multiple immutable pins"
+            "candidate {} Raw manifest resolves to multiple immutable pins",
+            request.kind
         ))),
     }
 }
@@ -957,19 +1191,40 @@ fn dataset_for_kind(kind: ResponseKind) -> Option<&'static str> {
         ResponseKind::InvestorFlow => Some(FLOW_DATASET),
         ResponseKind::MarketStatus => Some(STATUS_DATASET),
         ResponseKind::Fundamentals => Some(FUNDAMENTAL_DATASET),
-        ResponseKind::IndexMembership => Some(UNIVERSE_DATASET),
+        ResponseKind::IndexMembership => None,
         ResponseKind::SectorClassification => Some(SECTOR_DATASET),
         _ => None,
     }
 }
 
-fn expected_dataset(document: &CandidateDocument) -> &'static str {
+fn validate_document_dataset(
+    document: &CandidateDocument,
+    dataset_id: &str,
+) -> Result<(), SinkError> {
     match document {
-        CandidateDocument::InvestorFlow(_) => FLOW_DATASET,
-        CandidateDocument::MarketStatus(_) => STATUS_DATASET,
-        CandidateDocument::Fundamentals(_) => FUNDAMENTAL_DATASET,
-        CandidateDocument::IndexMembership(_) => UNIVERSE_DATASET,
-        CandidateDocument::SectorClassification(_) => SECTOR_DATASET,
+        CandidateDocument::InvestorFlow(_) if dataset_id == FLOW_DATASET => Ok(()),
+        CandidateDocument::MarketStatus(_) if dataset_id == STATUS_DATASET => Ok(()),
+        CandidateDocument::Fundamentals(_) if dataset_id == FUNDAMENTAL_DATASET => Ok(()),
+        CandidateDocument::SectorClassification(_) if dataset_id == SECTOR_DATASET => Ok(()),
+        CandidateDocument::IndexMembership(document) => {
+            let partitions = document
+                .partition_by_universe()
+                .map_err(|error| SinkError::Invariant(error.to_string()))?;
+            if partitions.len() != 1
+                || partitions
+                    .keys()
+                    .next()
+                    .is_none_or(|universe| universe.dataset_id() != dataset_id)
+            {
+                return Err(SinkError::Invariant(format!(
+                    "candidate membership document requires one partition for dataset {dataset_id}"
+                )));
+            }
+            Ok(())
+        }
+        _ => Err(SinkError::Invariant(format!(
+            "candidate document requires a dataset matching its response kind, got {dataset_id}"
+        ))),
     }
 }
 
@@ -1001,13 +1256,7 @@ fn validate_publication(publication: &CandidateSourcePublication<'_>) -> Result<
         .map_err(|error| SinkError::Invariant(error.to_string()))?;
     validate_candidate_document(publication.document, publication.pin.retrieved_at)
         .map_err(|error| SinkError::Invariant(error.to_string()))?;
-    let expected = expected_dataset(publication.document);
-    if publication.pin.dataset_id != expected {
-        return Err(SinkError::Invariant(format!(
-            "candidate document requires dataset {expected}, got {}",
-            publication.pin.dataset_id
-        )));
-    }
+    validate_document_dataset(publication.document, &publication.pin.dataset_id)?;
     if publication.cutoff_at > publication.pin.retrieved_at {
         return Err(SinkError::Invariant(
             "candidate PIT cutoff cannot follow the pinned retrieval instant".to_owned(),
@@ -1424,13 +1673,28 @@ async fn publish_universe(
     publication: &CandidateSourcePublication<'_>,
     rows: &[IndexMembershipObservation],
 ) -> Result<bool, SinkError> {
+    let universe = CandidateUniverseKey::ALL
+        .iter()
+        .copied()
+        .find(|universe| universe.dataset_id() == publication.pin.dataset_id)
+        .ok_or_else(|| {
+            SinkError::Invariant(format!(
+                "candidate membership publication has unknown dataset {}",
+                publication.pin.dataset_id
+            ))
+        })?;
     let index_ids: BTreeSet<_> = rows.iter().map(|row| row.index_id.as_str()).collect();
-    if index_ids != BTreeSet::from(["kospi200"]) {
+    if index_ids != BTreeSet::from([universe.as_str()]) {
         return Err(SinkError::Invariant(
-            "candidate universe document must contain only kospi200 membership".to_owned(),
+            "candidate universe document does not match its dataset partition".to_owned(),
         ));
     }
-    let members = members_as_of(rows, "kospi200", publication.as_of, publication.cutoff_at);
+    let members = members_as_of(
+        rows,
+        universe.as_str(),
+        publication.as_of,
+        publication.cutoff_at,
+    );
     if members.is_empty() {
         return Err(SinkError::Invariant(
             "candidate universe resolves to no PIT members".to_owned(),
@@ -1485,11 +1749,12 @@ async fn publish_universe(
         Some(id) => id,
         None => sqlx::query_scalar(
             "SELECT id FROM candidate_universe_snapshots
-              WHERE index_id='kospi200' AND as_of_date=$1 AND dataset_version_id=$2
-                AND manifest_sha256=$3 AND provider=$4 AND entitlement_id=$5
-                AND entitlement_date=$6 AND license_ref=$7 AND source_revision=$8
-                AND available_at=$9 AND retrieved_at=$10 AND member_count=$11",
+              WHERE index_id=$1 AND as_of_date=$2 AND dataset_version_id=$3
+                AND manifest_sha256=$4 AND provider=$5 AND entitlement_id=$6
+                AND entitlement_date=$7 AND license_ref=$8 AND source_revision=$9
+                AND available_at=$10 AND retrieved_at=$11 AND member_count=$12",
         )
+        .bind(universe.as_str())
         .bind(date(publication.as_of))
         .bind(publication.dataset_version_id)
         .bind(&publication.pin.manifest_sha256)

@@ -10,10 +10,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::{
-    CANDIDATE_RESPONSE_KINDS, CandidateDataError, CandidateDocument, CandidateSourcePin, FetchMode,
-    FundamentalDocument, IndexMembershipDocument, IngestError, IngestOutcome, InvestorFlowDocument,
-    MARKET_KR, MarketStatusDocument, PROVIDER_KRX, RawEnvelope, RawStore, ResponseKind,
-    SectorDocument, parse_candidate_envelope, validate_candidate_document,
+    CANDIDATE_RESPONSE_KINDS, CandidateDataError, CandidateDocument, CandidateSourcePin,
+    CandidateUniverseKey, FetchMode, FundamentalDocument, IndexMembershipDocument, IngestError,
+    IngestOutcome, InvestorFlowDocument, MARKET_KR, MarketStatusDocument, PROVIDER_KRX,
+    RawEnvelope, RawStore, ResponseKind, SectorDocument, parse_candidate_envelope,
+    validate_candidate_document,
 };
 use uuid::Uuid;
 
@@ -29,6 +30,13 @@ pub struct CandidateDatasetBinding {
     pub dataset_version: String,
     pub manifest_sha256: String,
     pub reused_existing: bool,
+}
+
+impl CandidateDatasetBinding {
+    /// The immutable binding identity used by Raw catalog/replay.
+    pub fn identity(&self) -> (ResponseKind, &str) {
+        (self.kind, self.dataset_id.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,19 +78,59 @@ pub fn prepare_candidate_batch(
     bindings: &[CandidateDatasetBinding],
 ) -> Result<PreparedCandidateBatch, CandidatePipelineError> {
     let allowed = BTreeSet::from(CANDIDATE_RESPONSE_KINDS);
-    let mut by_kind = BTreeMap::new();
+    let mut by_identity = BTreeMap::<(ResponseKind, String), &CandidateDatasetBinding>::new();
+    let mut entitlement_id = None;
     for binding in bindings {
-        if !allowed.contains(&binding.kind) || by_kind.insert(binding.kind, binding).is_some() {
+        if !allowed.contains(&binding.kind) {
+            return Err(CandidatePipelineError::InvalidRaw(format!(
+                "unsupported candidate response class {}",
+                binding.kind
+            )));
+        }
+        let dataset_is_valid = match binding.kind {
+            ResponseKind::IndexMembership => CandidateUniverseKey::ALL
+                .iter()
+                .any(|universe| universe.dataset_id() == binding.dataset_id),
+            _ => dataset_for(binding.kind) == Some(binding.dataset_id.as_str()),
+        };
+        if !dataset_is_valid {
+            return Err(CandidatePipelineError::InvalidRaw(format!(
+                "{} has an unsupported dataset binding {}",
+                binding.kind, binding.dataset_id
+            )));
+        }
+        if let Some(expected_entitlement_id) = entitlement_id {
+            if expected_entitlement_id != binding.entitlement_id {
+                return Err(CandidatePipelineError::InvalidRaw(
+                    "candidate dataset bindings contain mixed entitlements".to_owned(),
+                ));
+            }
+        } else {
+            entitlement_id = Some(binding.entitlement_id);
+        }
+        if by_identity
+            .insert((binding.kind, binding.dataset_id.clone()), binding)
+            .is_some()
+        {
             return Err(CandidatePipelineError::InvalidRaw(
-                "dataset bindings must contain each requested candidate response class exactly once"
+                "candidate dataset bindings contain a duplicate (response_kind,dataset_id) identity"
                     .to_owned(),
             ));
         }
     }
-    let expected = by_kind.keys().copied().collect::<BTreeSet<_>>();
+    let expected = by_identity
+        .keys()
+        .map(|(kind, _)| *kind)
+        .collect::<BTreeSet<_>>();
     if expected.is_empty() {
         return Err(CandidatePipelineError::InvalidRaw(
             "candidate delivery must contain at least one requested source class".to_owned(),
+        ));
+    }
+    if expected != allowed {
+        return Err(CandidatePipelineError::InvalidRaw(
+            "candidate delivery must bind every common source and enabled membership class"
+                .to_owned(),
         ));
     }
     let raw_license_ref = outcome
@@ -160,7 +208,7 @@ pub fn prepare_candidate_batch(
         ));
     }
 
-    let mut sources = Vec::with_capacity(expected.len());
+    let mut sources = Vec::with_capacity(by_identity.len());
     for kind in expected {
         let mut kind_pages = pages
             .remove(&kind)
@@ -171,41 +219,68 @@ pub fn prepare_candidate_batch(
             kind_pages.into_iter().map(|(_, document)| document),
             outcome.entry.retrieved_at,
         )?;
-        let binding = by_kind[&kind];
-        if binding.entitlement_id.is_nil()
-            || binding.license_ref.trim().is_empty()
-            || binding.license_ref != raw_license_ref
-        {
-            return Err(CandidatePipelineError::InvalidRaw(
-                "candidate source binding must match the exact Raw entitlement".to_owned(),
-            ));
-        }
-        let expected_dataset = dataset_for(kind).expect("candidate kind has a dataset");
-        if binding.dataset_id != expected_dataset {
-            return Err(CandidatePipelineError::InvalidRaw(format!(
-                "{} must bind dataset {expected_dataset}",
-                kind
-            )));
-        }
-        let pin = CandidateSourcePin {
-            provider: outcome.entry.provider.clone(),
-            entitlement_id: binding.entitlement_id,
-            license_ref: binding.license_ref.clone(),
-            dataset_id: binding.dataset_id.clone(),
-            dataset_version: binding.dataset_version.clone(),
-            manifest_sha256: binding.manifest_sha256.clone(),
-            retrieved_at: outcome.entry.retrieved_at,
-        };
-        pin.validate()?;
-        if !binding.reused_existing {
-            sources.push(PreparedCandidateSource {
-                dataset_version_id: binding.dataset_version_id,
-                pin,
-                document,
-            });
+        match document {
+            CandidateDocument::IndexMembership(document) => {
+                let partitions = document.partition_by_universe()?;
+                let partition_datasets = partitions
+                    .keys()
+                    .map(|universe| universe.dataset_id())
+                    .collect::<BTreeSet<_>>();
+                let binding_datasets = by_identity
+                    .keys()
+                    .filter_map(|(binding_kind, dataset_id)| {
+                        (*binding_kind == kind).then_some(dataset_id.as_str())
+                    })
+                    .collect::<BTreeSet<_>>();
+                if partition_datasets != binding_datasets {
+                    return Err(CandidatePipelineError::InvalidRaw(
+                        "candidate membership partitions and dataset bindings do not match"
+                            .to_owned(),
+                    ));
+                }
+                for (universe, partition) in partitions {
+                    let dataset_id = universe.dataset_id();
+                    let binding = by_identity
+                        .get(&(kind, dataset_id.to_owned()))
+                        .copied()
+                        .expect("partition dataset was checked above");
+                    if let Some(source) = prepared_source(
+                        outcome,
+                        raw_license_ref,
+                        binding,
+                        CandidateDocument::IndexMembership(partition),
+                    )? {
+                        sources.push(source);
+                    }
+                }
+            }
+            document => {
+                let dataset_id = dataset_for(kind).expect("candidate kind has a dataset");
+                let binding = by_identity
+                    .get(&(kind, dataset_id.to_owned()))
+                    .copied()
+                    .ok_or_else(|| {
+                        CandidatePipelineError::InvalidRaw(format!(
+                            "candidate source is missing binding for {dataset_id}"
+                        ))
+                    })?;
+                if let Some(source) = prepared_source(outcome, raw_license_ref, binding, document)?
+                {
+                    sources.push(source);
+                }
+            }
         }
     }
-    sources.sort_by_key(|source| source_dataset(&source.document));
+    sources.sort_by(|left, right| {
+        (
+            left.pin.dataset_id.as_str(),
+            response_kind_for_document(&left.document),
+        )
+            .cmp(&(
+                right.pin.dataset_id.as_str(),
+                response_kind_for_document(&right.document),
+            ))
+    });
     Ok(PreparedCandidateBatch {
         batch_id: outcome.batch_id,
         raw_manifest_sha256: raw_manifest_sha256(&outcome.entry)?,
@@ -214,6 +289,39 @@ pub fn prepare_candidate_batch(
         cutoff_at,
         sources,
     })
+}
+
+fn prepared_source(
+    outcome: &IngestOutcome,
+    raw_license_ref: &str,
+    binding: &CandidateDatasetBinding,
+    document: CandidateDocument,
+) -> Result<Option<PreparedCandidateSource>, CandidatePipelineError> {
+    if binding.entitlement_id.is_nil()
+        || binding.license_ref.trim().is_empty()
+        || binding.license_ref != raw_license_ref
+    {
+        return Err(CandidatePipelineError::InvalidRaw(
+            "candidate source binding must match the exact Raw entitlement".to_owned(),
+        ));
+    }
+    let pin = CandidateSourcePin {
+        provider: outcome.entry.provider.clone(),
+        entitlement_id: binding.entitlement_id,
+        license_ref: binding.license_ref.clone(),
+        dataset_id: binding.dataset_id.clone(),
+        dataset_version: binding.dataset_version.clone(),
+        manifest_sha256: binding.manifest_sha256.clone(),
+        retrieved_at: outcome.entry.retrieved_at,
+    };
+    pin.validate()?;
+    Ok(
+        (!binding.reused_existing).then_some(PreparedCandidateSource {
+            dataset_version_id: binding.dataset_version_id,
+            pin,
+            document,
+        }),
+    )
 }
 
 fn merge_candidate_pages(
@@ -388,8 +496,8 @@ fn dataset_for(kind: ResponseKind) -> Option<&'static str> {
         ResponseKind::InvestorFlow => Some("krx_investor_flows"),
         ResponseKind::MarketStatus => Some("krx_market_status"),
         ResponseKind::Fundamentals => Some("krx_fundamentals"),
-        ResponseKind::IndexMembership => Some("krx_kospi200_membership"),
         ResponseKind::SectorClassification => Some("krx_sector_classification"),
+        ResponseKind::IndexMembership => None,
         ResponseKind::Bars
         | ResponseKind::Reference
         | ResponseKind::Calendar
@@ -397,13 +505,13 @@ fn dataset_for(kind: ResponseKind) -> Option<&'static str> {
     }
 }
 
-fn source_dataset(document: &CandidateDocument) -> &'static str {
+const fn response_kind_for_document(document: &CandidateDocument) -> ResponseKind {
     match document {
-        CandidateDocument::InvestorFlow(_) => "krx_investor_flows",
-        CandidateDocument::MarketStatus(_) => "krx_market_status",
-        CandidateDocument::Fundamentals(_) => "krx_fundamentals",
-        CandidateDocument::IndexMembership(_) => "krx_kospi200_membership",
-        CandidateDocument::SectorClassification(_) => "krx_sector_classification",
+        CandidateDocument::InvestorFlow(_) => ResponseKind::InvestorFlow,
+        CandidateDocument::MarketStatus(_) => ResponseKind::MarketStatus,
+        CandidateDocument::Fundamentals(_) => ResponseKind::Fundamentals,
+        CandidateDocument::IndexMembership(_) => ResponseKind::IndexMembership,
+        CandidateDocument::SectorClassification(_) => ResponseKind::SectorClassification,
     }
 }
 
@@ -424,7 +532,7 @@ mod tests {
     }
 
     fn bindings() -> Vec<CandidateDatasetBinding> {
-        CANDIDATE_RESPONSE_KINDS
+        let mut bindings = CANDIDATE_RESPONSE_KINDS
             .into_iter()
             .enumerate()
             .map(|(index, kind)| CandidateDatasetBinding {
@@ -432,12 +540,27 @@ mod tests {
                 dataset_version_id: Uuid::from_u128((index + 1) as u128),
                 entitlement_id: Uuid::from_u128(100),
                 license_ref: "fixture://candidate-license".to_owned(),
-                dataset_id: dataset_for(kind).expect("candidate dataset").to_owned(),
+                dataset_id: match kind {
+                    ResponseKind::IndexMembership => CandidateUniverseKey::Kospi200.dataset_id(),
+                    _ => dataset_for(kind).expect("candidate dataset"),
+                }
+                .to_owned(),
                 dataset_version: "synthetic-v1".to_owned(),
                 manifest_sha256: format!("{:x}", index + 10).repeat(64),
                 reused_existing: false,
             })
-            .collect()
+            .collect::<Vec<_>>();
+        bindings.push(CandidateDatasetBinding {
+            kind: ResponseKind::IndexMembership,
+            dataset_version_id: Uuid::from_u128(6),
+            entitlement_id: Uuid::from_u128(100),
+            license_ref: "fixture://candidate-license".to_owned(),
+            dataset_id: CandidateUniverseKey::Kosdaq150.dataset_id().to_owned(),
+            dataset_version: "synthetic-kosdaq-v1".to_owned(),
+            manifest_sha256: format!("{:x}", 16).repeat(32),
+            reused_existing: false,
+        });
+        bindings
     }
 
     fn outcome() -> IngestOutcome {
@@ -474,7 +597,7 @@ mod tests {
             &bindings(),
         )
         .expect("prepare candidate batch");
-        assert_eq!(prepared.sources.len(), CANDIDATE_RESPONSE_KINDS.len());
+        assert_eq!(prepared.sources.len(), CANDIDATE_RESPONSE_KINDS.len() + 1);
         assert_eq!(
             prepared
                 .sources
@@ -485,6 +608,7 @@ mod tests {
                 "krx_fundamentals",
                 "krx_investor_flows",
                 "krx_kospi200_membership",
+                "krx_kosdaq150_membership",
                 "krx_market_status",
                 "krx_sector_classification",
             ])

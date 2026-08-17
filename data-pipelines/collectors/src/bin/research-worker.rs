@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write as _;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -62,6 +62,8 @@ struct SuccessRecord {
     snapshot_high_water: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     has_more: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    per_universe: Option<BTreeMap<String, Vec<String>>>,
 }
 
 #[derive(Serialize)]
@@ -293,17 +295,22 @@ async fn run_healthcheck(values: &HashMap<String, String>) -> Result<SuccessReco
     let config = HealthcheckConfig::from_map(values)?;
     let pool = build_postgres_pool(&config.database);
     let status = healthcheck(&pool, Utc::now(), config.max_publication_age).await?;
-    if config.candidate_sources_enabled {
-        candidate_healthcheck(
-            &pool,
-            &config.curated_root,
-            Utc::now(),
-            config.max_publication_age,
-            config.expected_fetch_mode,
-            config.run_at_kst,
+    let per_universe = if config.candidate_sources_enabled {
+        Some(
+            candidate_healthcheck(
+                &pool,
+                &config.curated_root,
+                Utc::now(),
+                config.max_publication_age,
+                config.expected_fetch_mode,
+                config.run_at_kst,
+            )
+            .await?
+            .per_universe,
         )
-        .await?;
-    }
+    } else {
+        None
+    };
     pool.close().await;
     Ok(SuccessRecord {
         status: "ok",
@@ -316,6 +323,7 @@ async fn run_healthcheck(values: &HashMap<String, String>) -> Result<SuccessReco
         cursor: None,
         snapshot_high_water: None,
         has_more: None,
+        per_universe,
     })
 }
 
@@ -340,6 +348,7 @@ async fn run_internal_recover(
                 .map(|high_water| high_water.to_string()),
         ),
         has_more: Some(page.has_more),
+        per_universe: None,
     })
 }
 
@@ -360,6 +369,7 @@ async fn run_internal_collect(
         cursor: None,
         snapshot_high_water: None,
         has_more: None,
+        per_universe: None,
     })
 }
 
@@ -380,6 +390,7 @@ fn run_record(outcome: WorkerRunOutcome, date: Option<TradingDate>) -> SuccessRe
         cursor: None,
         snapshot_high_water: None,
         has_more: None,
+        per_universe: None,
     }
 }
 

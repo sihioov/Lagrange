@@ -58,11 +58,11 @@ pub use calendar::{
     CalendarError, CalendarProvenance, Holiday, KrCalendar, KrCalendarSpec, SessionTimes, krx_2020,
 };
 pub use candidate::{
-    CandidateDataError, CandidateDocument, CandidateSourcePin, FinancialPeriodKind,
-    FundamentalDocument, FundamentalObservation, FundamentalProfile, IndexMembershipDocument,
-    IndexMembershipObservation, InvestorClass, InvestorFlowDocument, InvestorFlowObservation,
-    MarketStatusDocument, MarketStatusObservation, SectorDocument, SectorObservation,
-    StatementScope, latest_flows_as_of, latest_fundamental_as_of, members_as_of,
+    CandidateDataError, CandidateDocument, CandidateSourcePin, CandidateUniverseKey,
+    FinancialPeriodKind, FundamentalDocument, FundamentalObservation, FundamentalProfile,
+    IndexMembershipDocument, IndexMembershipObservation, InvestorClass, InvestorFlowDocument,
+    InvestorFlowObservation, MarketStatusDocument, MarketStatusObservation, SectorDocument,
+    SectorObservation, StatementScope, latest_flows_as_of, latest_fundamental_as_of, members_as_of,
     parse_candidate_envelope, sectors_as_of, validate_candidate_document,
 };
 pub use contract::{
