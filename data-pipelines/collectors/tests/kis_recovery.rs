@@ -150,7 +150,11 @@ fn valid_wires_for_date(date: &str) -> Vec<Wire> {
             file_name: format!("corporate-actions-{index}.json"),
             endpoint: endpoint.into(),
             query: vec![("F_DT".into(), date.into()), ("T_DT".into(), date.into())],
-            bytes: br#"{"rt_cd":"0","output1":[]}"#.to_vec(),
+            bytes: if endpoint.ends_with("/paidin-capin") {
+                br#"{"rt_cd":"0","output":[]}"#.to_vec()
+            } else {
+                br#"{"rt_cd":"0","output1":[]}"#.to_vec()
+            },
         });
     }
     wires
@@ -213,6 +217,8 @@ impl KisRead for FakeKisRead {
                 "rt_cd": "0",
                 "output": [{"bass_dt": "20260814", "opnd_yn": "Y"}]
             })
+        } else if path.ends_with("paidin-capin") {
+            json!({"rt_cd": "0", "output": []})
         } else {
             json!({"rt_cd": "0", "output1": []})
         };
