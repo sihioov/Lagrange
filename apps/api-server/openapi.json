@@ -2239,7 +2239,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "backtest",
@@ -2255,7 +2255,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -2331,7 +2331,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "backtest",
@@ -2347,7 +2347,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -2532,7 +2532,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "backtest",
@@ -2548,7 +2548,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -2624,7 +2624,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "backtest",
@@ -2640,7 +2640,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -2716,7 +2716,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "backtest",
@@ -2732,7 +2732,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -2908,7 +2908,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "backtest",
@@ -2924,7 +2924,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -2991,7 +2991,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "paper_view",
@@ -3007,7 +3007,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -3171,7 +3171,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "paper_view",
@@ -3187,7 +3187,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -3741,7 +3741,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "paper_view",
@@ -3757,7 +3757,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -3828,7 +3828,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "paper_view",
@@ -3844,7 +3844,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -3915,7 +3915,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "paper_view",
@@ -3931,7 +3931,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -4002,7 +4002,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "paper_view",
@@ -4018,7 +4018,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -4089,7 +4089,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "paper_view",
@@ -4105,7 +4105,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -4176,7 +4176,7 @@
           },
           "ownership": {
             "owner_only": false,
-            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+            "scope": "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
           },
           "entitlement": {
             "use": "paper_view",
@@ -4192,7 +4192,7 @@
           },
           "cache": {
             "policy": "no-store",
-            "reason": "authenticated per-user data is never shared"
+            "reason": "authenticated invite-group data is never stored in a shared cache"
           },
           "errors": [
             "SESSION_UNKNOWN",
@@ -7432,6 +7432,8 @@
         "type": "object",
         "required": [
           "id",
+          "owner_user_id",
+          "can_manage",
           "strategy_id",
           "strategy_version",
           "status"
@@ -7440,6 +7442,14 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "owner_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "can_manage": {
+            "type": "boolean",
+            "description": "Whether the current actor may mutate or cancel this run"
           },
           "strategy_id": {
             "type": "string"
@@ -7937,6 +7947,8 @@
         "type": "object",
         "required": [
           "id",
+          "owner_user_id",
+          "can_manage",
           "account_type",
           "name",
           "currency",
@@ -7948,6 +7960,14 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "owner_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "can_manage": {
+            "type": "boolean",
+            "description": "Whether the current actor may change this account"
           },
           "account_type": {
             "type": "string",

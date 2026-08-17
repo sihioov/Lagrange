@@ -19,7 +19,7 @@ The one deliberate risk this pass takes is a small custom glyph — two solid po
 
 The interface serves two primary personas:
 
-- **Member researcher**: configures approved strategies, reads recommendations, runs backtests, and manages a private paper account without seeing another user's data.
+- **Member researcher**: configures approved strategies and manages owned runs/accounts while reading backtest reports and Paper account activity shared across the invite group.
 - **Owner operator**: performs the same research tasks and reaches explicitly separated administration and future live-control areas.
 
 Ability-spectrum stress personas are keyboard-only users, low-vision users at 200% zoom, users who need reduced motion, and users under time pressure who need plain recovery instructions.

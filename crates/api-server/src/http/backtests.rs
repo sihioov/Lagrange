@@ -306,6 +306,8 @@ pub async fn create(
             StatusCode::CREATED,
             Json(BacktestRunDto {
                 id: run.id.to_string(),
+                owner_user_id: run.owner_user_id.to_string(),
+                can_manage: run.owner_user_id.to_string() == actor.user_id.0,
                 strategy_id: run.strategy_id,
                 strategy_version: run.strategy_version,
                 dataset_version: run.dataset_version,
@@ -353,7 +355,7 @@ pub async fn list(
     };
     let limit = params.limit_or(PageParams::DEFAULT_LIMIT);
     match state
-        .backtest_runs()
+        .shared_backtest_runs()
         .list_page(&actor, cursor.as_ref(), limit)
         .await
     {
@@ -363,6 +365,8 @@ pub async fn list(
                 .into_iter()
                 .map(|r| BacktestRunDto {
                     id: r.id.to_string(),
+                    owner_user_id: r.owner_user_id.to_string(),
+                    can_manage: r.owner_user_id.to_string() == actor.user_id.0,
                     strategy_id: r.strategy_id,
                     strategy_version: r.strategy_version,
                     dataset_version: r.dataset_version,
@@ -409,11 +413,13 @@ pub async fn get(
     {
         return r;
     }
-    match state.backtest_runs().get(&actor, id).await {
+    match state.shared_backtest_runs().get(&actor, id).await {
         Ok(r) => (
             StatusCode::OK,
             Json(BacktestRunDto {
                 id: r.id.to_string(),
+                owner_user_id: r.owner_user_id.to_string(),
+                can_manage: r.owner_user_id.to_string() == actor.user_id.0,
                 strategy_id: r.strategy_id,
                 strategy_version: r.strategy_version,
                 dataset_version: r.dataset_version,
@@ -537,10 +543,10 @@ pub async fn metrics(
     {
         return r;
     }
-    if let Err(e) = state.backtest_runs().get(&actor, id).await {
+    if let Err(e) = state.shared_backtest_runs().get(&actor, id).await {
         return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
     }
-    match state.metrics().metrics(&actor, id).await {
+    match state.shared_metrics().metrics(&actor, id).await {
         Ok(rows) => {
             let items: Vec<MetricDto> = rows
                 .into_iter()
@@ -578,10 +584,10 @@ pub async fn equity(
     {
         return r;
     }
-    if let Err(e) = state.backtest_runs().get(&actor, id).await {
+    if let Err(e) = state.shared_backtest_runs().get(&actor, id).await {
         return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
     }
-    let artifacts = match state.metrics().artifacts(&actor, id).await {
+    let artifacts = match state.shared_metrics().artifacts(&actor, id).await {
         Ok(a) => a,
         Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
     };
@@ -637,10 +643,10 @@ pub async fn trades(
     {
         return r;
     }
-    if let Err(e) = state.backtest_runs().get(&actor, id).await {
+    if let Err(e) = state.shared_backtest_runs().get(&actor, id).await {
         return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
     }
-    match state.metrics().artifacts(&actor, id).await {
+    match state.shared_metrics().artifacts(&actor, id).await {
         Ok(artifacts) => {
             let items: Vec<TradeDto> = artifacts
                 .into_iter()
@@ -965,7 +971,7 @@ pub async fn compare(
     }
     let mut runs = Vec::with_capacity(ids.len());
     for id in &ids {
-        let run = match state.backtest_runs().get(&actor, *id).await {
+        let run = match state.shared_backtest_runs().get(&actor, *id).await {
             Ok(r) => r,
             Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
         };

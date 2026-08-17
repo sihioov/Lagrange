@@ -52,14 +52,16 @@ export function BacktestProgress({ run }: BacktestProgressProps) {
         <strong>{run.status}</strong>
       </div>
       <p>{progress === null ? t.progressNotReported : t.percentComplete(progress)}</p>
-      <button
-        className="secondary-action"
-        disabled={submitting}
-        onClick={() => void cancel()}
-        type="button"
-      >
-        {submitting ? t.requestingCancellationLabel : t.cancelBacktestButton}
-      </button>
+      {run.can_manage ? (
+        <button
+          className="secondary-action"
+          disabled={submitting}
+          onClick={() => void cancel()}
+          type="button"
+        >
+          {submitting ? t.requestingCancellationLabel : t.cancelBacktestButton}
+        </button>
+      ) : null}
       {message === "" ? null : (
         <p className="form-result" role="status">
           {message}

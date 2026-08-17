@@ -71,7 +71,7 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     ownerAccessRequiredMessage:
       "This workspace requires the Owner role. Your current session remains signed in with Member access.",
     ownerAccessRequiredTitle: "Owner access required",
-    paperAccountDescription: "Monitor your private simulated account and orders.",
+    paperAccountDescription: "Monitor simulated accounts and orders shared with your invite group.",
     privateSession: "Private session",
     recommendationsDescription: "Inspect explainable candidates, weights, and exclusions.",
     refusedDescription: "This area is restricted to the Owner.",
@@ -115,7 +115,7 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     ownerAccessRequiredMessage:
       "이 워크스페이스는 오너 권한이 필요합니다. 현재 세션은 멤버 권한으로 로그인된 상태입니다.",
     ownerAccessRequiredTitle: "오너 권한이 필요합니다",
-    paperAccountDescription: "비공개 모의투자 계좌와 주문 내역을 확인하세요.",
+    paperAccountDescription: "초대 그룹에 공유된 모의투자 계좌와 주문 내역을 확인하세요.",
     privateSession: "비공개 세션",
     recommendationsDescription: "설명 가능한 후보 종목, 비중, 제외 내역을 확인하세요.",
     refusedDescription: "이 영역은 오너 전용입니다.",

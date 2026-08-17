@@ -1331,6 +1331,10 @@ export interface components {
         BacktestRun: {
             /** Format: uuid */
             id: string;
+            /** Format: uuid */
+            owner_user_id: string;
+            /** @description Whether the current actor may mutate or cancel this run */
+            can_manage: boolean;
             strategy_id: string;
             strategy_version: string;
             dataset_version?: string;
@@ -1490,6 +1494,10 @@ export interface components {
         Account: {
             /** Format: uuid */
             id: string;
+            /** Format: uuid */
+            owner_user_id: string;
+            /** @description Whether the current actor may change this account */
+            can_manage: boolean;
             /**
              * @description LIVE accounts are Phase 3 Owner-only and never creatable via this route
              * @enum {string}

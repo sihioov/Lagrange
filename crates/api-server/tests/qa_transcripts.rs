@@ -318,7 +318,7 @@ async fn http_qa_transcripts() {
     assert!(is_replay, "replay header present");
     assert_eq!(first["id"], second["id"], "replay returns the same run");
 
-    // --- ownership: the owner cannot touch the member's run ------------------
+    // --- sharing: the owner can read, but cannot mutate, the member's run ----
     let resp = h
         .send(
             "GET",
@@ -330,9 +330,28 @@ async fn http_qa_transcripts() {
             None,
         )
         .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let shared = show(
+        "GET /api/v1/backtests/{run_id} as OWNER (invite-group read -> 200)",
+        resp,
+    )
+    .await;
+    assert_eq!(shared["can_manage"], false);
+
+    let resp = h
+        .send(
+            "POST",
+            &format!("/api/v1/backtests/{run_id}/cancel"),
+            Some(&h.owner),
+            true,
+            Some("qa-rid-42"),
+            Some("qa-foreign-cancel"),
+            Some(json!({})),
+        )
+        .await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND);
     let _ = show(
-        "GET /api/v1/backtests/{run_id} as OWNER (ownership -> 404, indistinguishable)",
+        "POST /api/v1/backtests/{run_id}/cancel as OWNER (foreign mutation -> 404)",
         resp,
     )
     .await;

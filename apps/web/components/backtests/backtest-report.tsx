@@ -155,7 +155,7 @@ export function BacktestReport({ licenseState, report, t }: BacktestReportProps)
           </table>
         </div>
       </section>
-      <RobustnessControl runId={report.run.id} />
+      {report.run.can_manage ? <RobustnessControl runId={report.run.id} /> : null}
       {robustness === null ? null : (
         <section aria-labelledby="robustness-evidence-title" className="report-section">
           <h3 id="robustness-evidence-title">{t.robustnessEvidenceHeading}</h3>

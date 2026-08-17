@@ -144,11 +144,20 @@ impl ApiState {
     pub fn accounts(&self) -> AccountRepo {
         AccountRepo::new(self.app_pool.clone())
     }
+    /// Invite-group account reads. The admin role has SELECT-only grants and
+    /// permissive read policies, while every mutation continues through the
+    /// actor-scoped app role.
+    pub fn shared_accounts(&self) -> AccountRepo {
+        AccountRepo::new(self.admin_pool.clone())
+    }
     pub fn shared(&self) -> SharedDataRepo {
         SharedDataRepo::new(self.app_pool.clone())
     }
     pub fn backtest_runs(&self) -> BacktestRunRepo {
         BacktestRunRepo::new(self.app_pool.clone())
+    }
+    pub fn shared_backtest_runs(&self) -> BacktestRunRepo {
+        BacktestRunRepo::new(self.admin_pool.clone())
     }
     pub fn robustness_suites(&self) -> RobustnessRepo {
         RobustnessRepo::new(self.app_pool.clone())
@@ -225,14 +234,26 @@ impl ApiState {
     pub fn metrics(&self) -> MetricsRepo {
         MetricsRepo::new(self.app_pool.clone())
     }
+    pub fn shared_metrics(&self) -> MetricsRepo {
+        MetricsRepo::new(self.admin_pool.clone())
+    }
     pub fn paper(&self) -> PaperRepo {
         PaperRepo::new(self.app_pool.clone())
+    }
+    pub fn shared_paper(&self) -> PaperRepo {
+        PaperRepo::new(self.admin_pool.clone())
     }
     pub fn pending_targets(&self) -> PendingTargetRepo {
         PendingTargetRepo::new(self.app_pool.clone())
     }
+    pub fn shared_pending_targets(&self) -> PendingTargetRepo {
+        PendingTargetRepo::new(self.admin_pool.clone())
+    }
     pub fn parity(&self) -> ParityRepo {
         ParityRepo::new(self.app_pool.clone())
+    }
+    pub fn shared_parity(&self) -> ParityRepo {
+        ParityRepo::new(self.admin_pool.clone())
     }
 
     /// The backtest-vs-Paper parity report for one account and session,
@@ -244,6 +265,14 @@ impl ApiState {
         as_of: &str,
     ) -> crate::error::TenancyResult<result_model::paper_parity::ParityReport> {
         self.parity().report(actor, account_id, as_of).await
+    }
+    pub async fn shared_parity_report(
+        &self,
+        actor: &Actor,
+        account_id: uuid::Uuid,
+        as_of: &str,
+    ) -> crate::error::TenancyResult<result_model::paper_parity::ParityReport> {
+        self.shared_parity().report(actor, account_id, as_of).await
     }
     pub fn ops(&self) -> OpsRepo {
         OpsRepo::new(

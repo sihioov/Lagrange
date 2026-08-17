@@ -1,6 +1,7 @@
 //! Todo 24 backtest orchestration routes: create (dataset/entitlement/
 //! capacity gates, queue enqueue), cancel, metrics, equity, trades,
-//! robustness, compare; idempotent replay; ownership; fuzz.
+//! robustness, compare; idempotent replay; shared reads and write ownership;
+//! fuzz.
 
 mod common;
 use axum::http::StatusCode;
@@ -77,10 +78,8 @@ async fn http_backtests_create_queue_result_compare_happy() {
     let job_id = body["job_id"].as_str().unwrap().to_string();
     let config_sha = body["config_sha256"].as_str().unwrap().to_string();
     assert_eq!(config_sha.len(), 64, "config hash is a real sha256 hex");
-    assert!(
-        !body.to_string().contains("owner_user_id"),
-        "no tenant column leak"
-    );
+    assert_eq!(body["owner_user_id"], h.member.user_id.to_string());
+    assert_eq!(body["can_manage"], true);
 
     let job_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1::uuid")
         .bind(&job_id)
@@ -480,15 +479,59 @@ async fn http_backtests_ownership_cancel_robustness_integrity() {
             .fetch_one(&h.member_pool().await)
             .await
             .unwrap();
+    h.seed_tenant(
+        &h.member,
+        &format!(
+            "INSERT INTO backtest_metrics (id, backtest_run_id, owner_user_id, metric_key, metric_value) VALUES \
+             (gen_random_uuid(), '{run_id}', '{owner}', 'shared_metric', 1.2345)",
+            owner = h.member.user_id
+        ),
+    )
+    .await;
 
-    // Ownership: the owner cannot read member's run (direct id guess).
+    // Every invited user can read a member's report.
     let resp = h
         .get(&format!("/api/v1/backtests/{run_id}"), Some(&h.owner))
+        .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(body["owner_user_id"], h.member.user_id.to_string());
+    assert_eq!(body["can_manage"], false);
+
+    let resp = h.get("/api/v1/backtests", Some(&h.owner)).await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    let shared = body["items"]
+        .as_array()
+        .expect("backtest runs")
+        .iter()
+        .find(|run| run["id"] == run_id)
+        .expect("member run visible in invite-group list");
+    assert_eq!(shared["can_manage"], false);
+
+    let resp = h
+        .get(
+            &format!("/api/v1/backtests/{run_id}/metrics"),
+            Some(&h.owner),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(body["items"][0]["metric_key"], "shared_metric");
+
+    // Shared visibility does not grant cancel or robustness writes.
+    let resp = h
+        .post(
+            &format!("/api/v1/backtests/{run_id}/cancel"),
+            Some(&h.owner),
+            true,
+            json!({}),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND);
     let resp = h
         .post(
-            &format!("/api/v1/backtests/{run_id}/cancel"),
+            &format!("/api/v1/backtests/{run_id}/robustness"),
             Some(&h.owner),
             true,
             json!({}),

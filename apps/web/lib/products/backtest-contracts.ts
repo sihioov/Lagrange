@@ -13,6 +13,8 @@ export const backtestRunSchema = z
     finished_at: z.iso.datetime().nullable().optional(),
     id: z.uuid(),
     job_id: z.uuid().nullable().optional(),
+    owner_user_id: z.uuid(),
+    can_manage: z.boolean(),
     start_date: z.iso.date().nullable().optional(),
     started_at: z.iso.datetime().nullable().optional(),
     status: z.enum(["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"]),

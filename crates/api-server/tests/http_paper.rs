@@ -1,5 +1,6 @@
 //! Todo 24 Paper account routes: create (PAPER only), get, bind-strategy,
-//! orders/positions/equity views; ownership; idempotency; fuzz.
+//! orders/positions/equity views; shared reads and write ownership;
+//! idempotency; fuzz.
 
 mod common;
 use axum::http::StatusCode;
@@ -33,10 +34,8 @@ async fn http_paper_accounts_happy() {
     assert_eq!(body["initial_cash"], "40000000.0000");
     assert_eq!(body["cost_profile_id"], "KRX_ETF_DEFAULT");
     let account_id = body["id"].as_str().unwrap().to_string();
-    assert!(
-        !body.to_string().contains("owner_user_id"),
-        "no tenant column leak"
-    );
+    assert_eq!(body["owner_user_id"], h.member.user_id.to_string());
+    assert_eq!(body["can_manage"], true);
 
     // get.
     let resp = h
@@ -196,12 +195,59 @@ async fn http_paper_accounts_ownership_and_gating() {
         .as_str()
         .unwrap()
         .to_string();
+    h.seed_tenant(
+        &h.member,
+        &format!(
+            "INSERT INTO orders (id, account_id, owner_user_id, order_ref, instrument_id, side, quantity, price, status, submitted_at) VALUES \
+             (gen_random_uuid(), '{account_id}', '{owner}', 'shared-order-1', '069500.KRX', 'BUY', 10.0000, 10150.0000, 'FILLED', now())",
+            owner = h.member.user_id
+        ),
+    )
+    .await;
 
-    // The owner cannot read the member's account.
+    // Every invited user can read the member's account.
     let resp = h
         .get(
             &format!("/api/v1/paper/accounts/{account_id}"),
             Some(&h.owner),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(body["owner_user_id"], h.member.user_id.to_string());
+    assert_eq!(body["can_manage"], false);
+
+    let resp = h.get("/api/v1/paper/accounts", Some(&h.owner)).await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    let shared = body["items"]
+        .as_array()
+        .expect("accounts")
+        .iter()
+        .find(|account| account["id"] == account_id)
+        .expect("member account visible in invite-group list");
+    assert_eq!(shared["can_manage"], false);
+
+    let resp = h
+        .get(
+            &format!("/api/v1/paper/accounts/{account_id}/orders"),
+            Some(&h.owner),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(body["items"][0]["order_ref"], "shared-order-1");
+
+    // Shared visibility does not grant write access.
+    let resp = h
+        .post(
+            &format!("/api/v1/paper/accounts/{account_id}/bind-strategy"),
+            Some(&h.owner),
+            true,
+            json!({
+                "strategy_config_id": "00000000-0000-4000-8000-000000000001",
+                "auto_apply_recommendations": false
+            }),
         )
         .await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND);

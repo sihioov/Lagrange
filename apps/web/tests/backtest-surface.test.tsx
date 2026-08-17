@@ -26,6 +26,8 @@ function backtestRun(includeDates = true) {
     finished_at: "2026-01-31T07:10:00Z",
     id: BASELINE_RUN_ID,
     job_id: "00000000-0000-4000-8000-000000000401",
+    owner_user_id: "00000000-0000-4000-8000-000000000001",
+    can_manage: true,
     start_date: "2020-01-02",
     started_at: "2026-01-31T07:01:00Z",
     status: "SUCCEEDED",
@@ -180,5 +182,21 @@ describe("backtest product surface", () => {
     expect(markup).toContain("Next-open execution can differ");
     expect(markup).toContain("Run robustness evidence");
     expect(markup).not.toContain("calculateBacktest");
+  });
+
+  it("renders a shared run without owner-only controls", async () => {
+    vi.stubGlobal(
+      "fetch",
+      syntheticBacktestApi({
+        ...backtestRun(),
+        can_manage: false,
+        owner_user_id: "00000000-0000-4000-8000-000000000002",
+      }),
+    );
+
+    const markup = renderToStaticMarkup(await BacktestsPage());
+
+    expect(markup).toContain("Shared · 00000000");
+    expect(markup).not.toContain("Run robustness evidence");
   });
 });

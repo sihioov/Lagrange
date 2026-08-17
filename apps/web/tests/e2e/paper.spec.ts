@@ -161,8 +161,8 @@ test("a blocked paper entitlement renders no account data", async ({ page, reque
   await expect(page.getByRole("region", { name: "Backtest parity" })).toHaveCount(0);
 });
 
-test("two invited members never see each other's account or notices", async ({ page, request }) => {
-  // Given — member 1's account and notice.
+test("invited members can switch to each other's read-only accounts", async ({ page, request }) => {
+  // Given — member 1 defaults to their own account.
   await page.goto("/paper");
   await expect(page.getByRole("region", { name: "Account and holdings" })).toContainText(
     "Paper account 1",
@@ -177,8 +177,14 @@ test("two invited members never see each other's account or notices", async ({ p
   await setScenario(request, { ...BASELINE, user: "u2" });
   await page.goto("/paper");
 
-  // Then — a different account entirely; nothing of member 1's is reused.
+  // Then — member 2 defaults to their own account but can open member 1's.
   const holdings = page.getByRole("region", { name: "Account and holdings" });
   await expect(holdings).toContainText("Paper account 2");
-  await expect(holdings).not.toContainText("Paper account 1");
+  await page
+    .getByRole("navigation", { name: "Shared paper accounts" })
+    .getByRole("link", { name: "Paper account 1 · Shared" })
+    .click();
+  await expect(holdings).toContainText("Paper account 1");
+  await expect(holdings).toContainText("Shared account · 00000000");
+  await expect(page.getByRole("form", { name: "Bind strategy" })).toHaveCount(0);
 });

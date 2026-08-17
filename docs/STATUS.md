@@ -228,6 +228,14 @@ web 의존성을 설치하자(`npm ci` 저장소 루트 → `npx playwright inst
 
 아직 `/etc/lagrange`, `/opt/lagrange`, `/var/lib/lagrange/data`와 production systemd 유닛은 설치되지 않았고, runtime DB/session/CSRF/cursor/TLS/KRX/KIS secret 및 실제 production dataset도 없다. 따라서 오늘 가능한 결과는 **코드·게이트 기준 release candidate + Owner-only 준비**까지다. Member KR-derived surface와 Live trading은 외부 증거가 생길 때까지 계속 비활성화해야 한다.
 
+### 2.13 초대 그룹 계좌·주문·리포트 공유 조회 (2026-08-17, 작업 트리)
+
+초대된 사용자는 서로의 Paper 계좌 목록·계좌 상세·주문·포지션·성과·lineage·parity와 백테스트 실행·지표·요약 리포트를 조회할 수 있다. 응답은 `owner_user_id`와 현재 사용자의 변경 가능 여부인 `can_manage`를 함께 반환하며, Web은 계좌 선택기를 제공하고 공유 리소스에서 바인딩·취소·robustness 실행 같은 소유자 전용 조작을 숨긴다.
+
+DB의 FORCE RLS 소유권 정책은 완화하지 않았다. 공유 GET/조회성 compare만 기존 SELECT 전용 admin role을 사용하고, 생성·바인딩·취소·robustness 등 mutation은 계속 actor-scoped app role을 사용한다. 따라서 타인 계좌/리포트 조회는 200이지만 타인 리소스 변경은 404로 닫힌다. 원본 백테스트 artifact 다운로드, 추천 run, 알림, Paper 리밸런싱 미리보기, Live 경로는 이번 공유 범위에 포함하지 않았다.
+
+검증 결과: API Paper 5/5, Backtest 8/8, Phase 1 5/5, Web unit 71/71, 관련 Playwright 14/14, TypeScript, production build, Biome, rustfmt, strict Clippy, OpenAPI drift/type 생성이 통과했다. 이 변경은 아직 원격 push·배포하지 않았다.
+
 ---
 
 ## 3. 최근에 고쳐진 것 (2026-08-08 ~ 08-17)

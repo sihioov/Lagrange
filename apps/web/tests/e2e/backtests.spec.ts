@@ -49,8 +49,8 @@ test("member creates, monitors, cancels, compares, and reads server-produced bac
 
   // When
   const comparisonForm = page.getByRole("form", { name: "Compare backtest runs" });
-  await comparisonForm.getByLabel("Dual momentum baseline").check();
-  await comparisonForm.getByLabel("Dual momentum higher costs").check();
+  await comparisonForm.getByLabel("Dual momentum baseline · You", { exact: true }).check();
+  await comparisonForm.getByLabel("Dual momentum higher costs · You", { exact: true }).check();
   await comparisonForm.getByRole("button", { name: "Compare selected runs" }).click();
 
   // Then
@@ -113,7 +113,9 @@ test("failed and canceled jobs stay explicit while a large trade page remains us
 
   // Then
   await expect(appAlert(page)).toContainText("Backtest failed");
-  await expect(page.getByRole("row", { name: /Canceled member run.*CANCELED/ })).toBeVisible();
+  await expect(
+    page.getByRole("row", { name: /Canceled member run.*CANCELED/ }).first(),
+  ).toBeVisible();
   await expect(
     page.getByText("Canceled and failed runs do not expose result payloads."),
   ).toBeVisible();

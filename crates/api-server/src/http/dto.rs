@@ -77,6 +77,8 @@ pub struct RecommendationItemDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct BacktestRunDto {
     pub id: String,
+    pub owner_user_id: String,
+    pub can_manage: bool,
     pub strategy_id: String,
     pub strategy_version: String,
     pub dataset_version: String,
@@ -176,6 +178,8 @@ pub struct RobustnessDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct AccountDto {
     pub id: String,
+    pub owner_user_id: String,
+    pub can_manage: bool,
     pub account_type: String,
     pub name: String,
     pub currency: String,

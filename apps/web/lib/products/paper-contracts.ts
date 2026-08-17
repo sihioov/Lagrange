@@ -16,6 +16,8 @@ export const paperAccountSchema = z
     currency: z.literal("KRW"),
     id: z.uuid(),
     initial_cash: z.string().nullable(),
+    owner_user_id: z.uuid(),
+    can_manage: z.boolean(),
     name: z.string(),
     status: z.enum(["ACTIVE", "SUSPENDED", "CLOSED"]),
     updated_at: z.string(),
@@ -176,12 +178,17 @@ export type PaperOrderModel = z.infer<typeof paperOrderSchema>;
 /**
  * The account a session's reports should default to.
  *
- * An account list is per-user by construction (the server scopes it with
- * RLS), so "the first ACTIVE one, else the first" is a display choice, never
- * an authorization one.
+ * Prefer the current user's own active account, then any owned account,
+ * before falling back to a shared account.
  */
 export function defaultAccount(accounts: readonly PaperAccountModel[]): PaperAccountModel | null {
-  return accounts.find((account) => account.status === "ACTIVE") ?? accounts[0] ?? null;
+  return (
+    accounts.find((account) => account.can_manage && account.status === "ACTIVE") ??
+    accounts.find((account) => account.can_manage) ??
+    accounts.find((account) => account.status === "ACTIVE") ??
+    accounts[0] ??
+    null
+  );
 }
 
 /**

@@ -33,6 +33,7 @@ export function BacktestHistory({ runs, t }: BacktestHistoryProps) {
               <th scope="col">{t.runColumnHeader}</th>
               <th scope="col">{t.periodColumnHeader}</th>
               <th scope="col">{t.statusColumnHeader}</th>
+              <th scope="col">{t.ownerColumnHeader}</th>
               <th scope="col">{t.runIdColumnHeader}</th>
             </tr>
           </thead>
@@ -52,6 +53,11 @@ export function BacktestHistory({ runs, t }: BacktestHistoryProps) {
                 </td>
                 <td>
                   <StatusPill label={run.status} tone={STATUS_TONES[run.status]} />
+                </td>
+                <td>
+                  {run.can_manage
+                    ? t.yourRunLabel
+                    : t.sharedRunLabel(run.owner_user_id.slice(0, 8))}
                 </td>
                 <td className="data-cell">{run.id}</td>
               </tr>

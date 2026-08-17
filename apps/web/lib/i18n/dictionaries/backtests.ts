@@ -47,6 +47,7 @@ export type BacktestsDictionary = {
   readonly notReported: string;
   readonly noWarnings: string;
   readonly openDateLabel: string;
+  readonly ownerColumnHeader: string;
   readonly pageDescription: string;
   readonly pageTitle: string;
   readonly parameterSensitivityLabel: string;
@@ -74,6 +75,7 @@ export type BacktestsDictionary = {
   readonly sideColumnHeader: string;
   readonly startDateLabel: string;
   readonly statusColumnHeader: string;
+  readonly sharedRunLabel: (owner: string) => string;
   readonly supportingCopy: (
     executionProfile: string,
     costProfileId: string,
@@ -90,6 +92,7 @@ export type BacktestsDictionary = {
   readonly validationPeriodsLabel: string;
   readonly warningsAriaLabel: string;
   readonly warningsHeading: string;
+  readonly yourRunLabel: string;
 };
 
 export const backtestsDictionary: LocaleDictionary<BacktestsDictionary> = {
@@ -132,7 +135,7 @@ export const backtestsDictionary: LocaleDictionary<BacktestsDictionary> = {
       "The worker did not produce a verified result. Review the run status before retrying.",
     failedTitle: "Backtest failed",
     historyCaption: "Backtest jobs and result availability",
-    historyEyebrow: "Private run history",
+    historyEyebrow: "Invite-group run history",
     historyHeading: "Backtest runs",
     initialCashLabel: "Initial cash (KRW)",
     instrumentColumnHeader: "Instrument",
@@ -145,6 +148,7 @@ export const backtestsDictionary: LocaleDictionary<BacktestsDictionary> = {
     notReported: "Not reported",
     noWarnings: "No server warnings.",
     openDateLabel: "Open",
+    ownerColumnHeader: "Owner",
     pageDescription:
       "Create reproducible simulations and inspect performance, cost, drawdown, and robustness evidence.",
     pageTitle: "Backtests",
@@ -174,6 +178,7 @@ export const backtestsDictionary: LocaleDictionary<BacktestsDictionary> = {
     sideColumnHeader: "Side",
     startDateLabel: "Start date",
     statusColumnHeader: "Status",
+    sharedRunLabel: (owner) => `Shared · ${owner}`,
     supportingCopy: (executionProfile, costProfileId, benchmark) =>
       `The server applies ${executionProfile}, ${costProfileId}, and benchmark ${benchmark}.`,
     timeColumnHeader: "Time",
@@ -188,6 +193,7 @@ export const backtestsDictionary: LocaleDictionary<BacktestsDictionary> = {
     validationPeriodsLabel: "Validation periods",
     warningsAriaLabel: "Backtest warnings",
     warningsHeading: "Warnings",
+    yourRunLabel: "You",
   },
   ko: {
     asOfLabel: (value) => `기준일: ${value}`,
@@ -227,7 +233,7 @@ export const backtestsDictionary: LocaleDictionary<BacktestsDictionary> = {
       "워커가 검증된 결과를 생성하지 못했습니다. 다시 시도하기 전에 실행 상태를 확인하세요.",
     failedTitle: "백테스트 실패",
     historyCaption: "백테스트 작업 및 결과 제공 여부",
-    historyEyebrow: "비공개 실행 기록",
+    historyEyebrow: "초대 그룹 실행 기록",
     historyHeading: "백테스트 실행",
     initialCashLabel: "초기 자금 (KRW)",
     instrumentColumnHeader: "종목",
@@ -240,6 +246,7 @@ export const backtestsDictionary: LocaleDictionary<BacktestsDictionary> = {
     notReported: "보고되지 않음",
     noWarnings: "서버 경고가 없습니다.",
     openDateLabel: "미지정",
+    ownerColumnHeader: "소유자",
     pageDescription:
       "재현 가능한 시뮬레이션을 생성하고 성과, 비용, 낙폭, 견고성 근거를 검토하세요.",
     pageTitle: "백테스트",
@@ -269,6 +276,7 @@ export const backtestsDictionary: LocaleDictionary<BacktestsDictionary> = {
     sideColumnHeader: "매매 구분",
     startDateLabel: "시작일",
     statusColumnHeader: "상태",
+    sharedRunLabel: (owner) => `공유 · ${owner}`,
     supportingCopy: (executionProfile, costProfileId, benchmark) =>
       `서버는 ${executionProfile}, ${costProfileId}, 벤치마크 ${benchmark}를 적용합니다.`,
     timeColumnHeader: "시각",
@@ -283,5 +291,6 @@ export const backtestsDictionary: LocaleDictionary<BacktestsDictionary> = {
     validationPeriodsLabel: "검증 기간",
     warningsAriaLabel: "백테스트 경고",
     warningsHeading: "경고",
+    yourRunLabel: "나",
   },
 };

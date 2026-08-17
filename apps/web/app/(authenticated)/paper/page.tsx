@@ -53,13 +53,20 @@ function latestSession(lineage: PaperLineageModel): string | null {
   return sessions.at(-1) ?? null;
 }
 
-export default async function PaperPage() {
+export type PaperPageProps = {
+  readonly searchParams?: Promise<{ readonly account?: string }>;
+};
+
+export default async function PaperPage({ searchParams }: PaperPageProps = {}) {
   const locale = await getLocale();
   const t = paperDictionary[locale];
   try {
     const api = await getProductApi();
     const accounts = await api.getPaperAccounts();
-    const account = defaultAccount(accounts.items);
+    const requestedAccount = (await searchParams)?.account;
+    const account =
+      accounts.items.find((candidate) => candidate.id === requestedAccount) ??
+      defaultAccount(accounts.items);
     if (account === null) {
       return shell(
         <StatePanel
@@ -99,6 +106,27 @@ export default async function PaperPage() {
 
     return shell(
       <>
+        <section aria-labelledby="paper-account-switcher-title" className="workflow-panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">{t.accountSwitcherEyebrow}</p>
+              <h2 id="paper-account-switcher-title">{t.accountSwitcherHeading}</h2>
+            </div>
+          </div>
+          <nav aria-label={t.accountSwitcherHeading} className="status-cluster">
+            {accounts.items.map((candidate) => (
+              <Link
+                aria-current={candidate.id === account.id ? "page" : undefined}
+                className="secondary-action"
+                href={`/paper?account=${candidate.id}`}
+                key={candidate.id}
+              >
+                {candidate.name} ·{" "}
+                {candidate.can_manage ? t.yourAccountLabel : t.sharedAccountShortLabel}
+              </Link>
+            ))}
+          </nav>
+        </section>
         <PaperHoldings account={account} orders={orders.items} positions={positions.items} t={t} />
         <PaperPerformance performance={performance} t={t} />
         {parity === null ? (
@@ -107,7 +135,7 @@ export default async function PaperPage() {
           <PaperParityPanel parity={parity} t={t} />
         )}
         <PaperLineage lineage={lineage} t={t} />
-        {bindable.length === 0 ? (
+        {!account.can_manage ? null : bindable.length === 0 ? (
           <StatePanel
             action={
               <Link className="secondary-action" href="/strategies">

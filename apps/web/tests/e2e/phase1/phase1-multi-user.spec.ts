@@ -105,11 +105,11 @@ test("five invited members independently create and read backtest runs", async (
     await createForm.getByRole("button", { name: "Create backtest" }).click();
     await expect(page.getByRole("status")).toContainText("Backtest queued");
 
-    // The member reads back only their own runs in the history table.
+    // The member sees every invited user's run, with their own run manageable.
     const history = page.getByRole("table", { name: "Backtest jobs and result availability" });
     await expect(history.getByText(backtestRunIdFor(user))).toBeVisible();
     for (const other of USERS.filter((candidate) => candidate !== user)) {
-      await expect(history.getByText(backtestRunIdFor(other))).toHaveCount(0);
+      await expect(history.getByText(backtestRunIdFor(other))).toBeVisible();
     }
   }
 });

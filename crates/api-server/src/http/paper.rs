@@ -575,17 +575,16 @@ pub async fn create_account(
             None,
         )
         .await;
-        (StatusCode::CREATED, Json(account_dto(created))).into_response()
+        (StatusCode::CREATED, Json(account_dto(created, &actor))).into_response()
     })
     .await
 }
 
-/// The actor's own paper accounts.
+/// Paper accounts shared with every authenticated invited user.
 ///
-/// Discovery has to be a route rather than a client-side guess: RLS is what
-/// makes the list the actor's own, so two users hitting the same path can
-/// never see each other's accounts. LIVE accounts are filtered out here —
-/// this is the Paper surface, and the Owner-only Live routes are separate.
+/// The read-only admin role permits invite-group discovery while mutations
+/// remain actor-scoped. LIVE accounts are filtered out here — this is the
+/// Paper surface, and the Owner-only Live routes are separate.
 pub async fn list_accounts(
     State(state): State<ApiState>,
     session: Session,
@@ -604,12 +603,12 @@ pub async fn list_accounts(
     {
         return r;
     }
-    match state.accounts().list(&actor).await {
+    match state.shared_accounts().list(&actor).await {
         Ok(rows) => {
             let items: Vec<AccountDto> = rows
                 .into_iter()
                 .filter(|a| a.account_type == "PAPER")
-                .map(account_dto)
+                .map(|account| account_dto(account, &actor))
                 .collect();
             (StatusCode::OK, Json(PageDto::new(items, None))).into_response()
         }
@@ -640,8 +639,8 @@ pub async fn get_account(
     {
         return r;
     }
-    match state.accounts().get(&actor, id).await {
-        Ok(row) => (StatusCode::OK, Json(account_dto(row))).into_response(),
+    match state.shared_accounts().get(&actor, id).await {
+        Ok(row) => (StatusCode::OK, Json(account_dto(row, &actor))).into_response(),
         Err(e) => tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
     }
 }
@@ -802,7 +801,7 @@ pub async fn orders(
     {
         return r;
     }
-    if let Err(e) = state.accounts().get(&actor, id).await {
+    if let Err(e) = state.shared_accounts().get(&actor, id).await {
         return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
     }
     let cursor = match decode_cursor(&state, &rid, params.cursor.as_deref()) {
@@ -811,7 +810,7 @@ pub async fn orders(
     };
     let limit = params.limit_or(PageParams::DEFAULT_LIMIT);
     match state
-        .paper()
+        .shared_paper()
         .orders(&actor, id, cursor.as_ref(), limit)
         .await
     {
@@ -860,10 +859,10 @@ pub async fn positions(
     {
         return r;
     }
-    if let Err(e) = state.accounts().get(&actor, id).await {
+    if let Err(e) = state.shared_accounts().get(&actor, id).await {
         return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
     }
-    match state.paper().positions(&actor, id).await {
+    match state.shared_paper().positions(&actor, id).await {
         Ok(rows) => {
             let items = rows
                 .into_iter()
@@ -904,7 +903,7 @@ pub async fn equity(
     {
         return r;
     }
-    if let Err(e) = state.accounts().get(&actor, id).await {
+    if let Err(e) = state.shared_accounts().get(&actor, id).await {
         return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
     }
     let cursor = match decode_cursor(&state, &rid, params.cursor.as_deref()) {
@@ -913,7 +912,7 @@ pub async fn equity(
     };
     let limit = params.limit_or(PageParams::DEFAULT_LIMIT);
     match state
-        .paper()
+        .shared_paper()
         .equity(&actor, id, cursor.as_ref(), limit)
         .await
     {
@@ -971,7 +970,7 @@ pub async fn performance(
     {
         return r;
     }
-    if let Err(e) = state.accounts().get(&actor, id).await {
+    if let Err(e) = state.shared_accounts().get(&actor, id).await {
         return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
     }
     let cursor = match decode_cursor(&state, &rid, params.cursor.as_deref()) {
@@ -980,7 +979,7 @@ pub async fn performance(
     };
     let limit = params.limit_or(PageParams::DEFAULT_LIMIT);
     let rows = match state
-        .paper()
+        .shared_paper()
         .equity(&actor, id, cursor.as_ref(), limit)
         .await
     {
@@ -1044,14 +1043,14 @@ pub async fn lineage(
     {
         return r;
     }
-    if let Err(e) = state.accounts().get(&actor, id).await {
+    if let Err(e) = state.shared_accounts().get(&actor, id).await {
         return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
     }
-    let bindings = match state.accounts().binding_history(&actor, id).await {
+    let bindings = match state.shared_accounts().binding_history(&actor, id).await {
         Ok(b) => b,
         Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
     };
-    let targets = match state.pending_targets().history(&actor, id).await {
+    let targets = match state.shared_pending_targets().history(&actor, id).await {
         Ok(t) => t,
         Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
     };
@@ -1117,7 +1116,7 @@ pub async fn parity(
     {
         return r;
     }
-    if let Err(e) = state.accounts().get(&actor, id).await {
+    if let Err(e) = state.shared_accounts().get(&actor, id).await {
         return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND");
     }
     let Some(as_of) = params.as_of.clone() else {
@@ -1133,7 +1132,7 @@ pub async fn parity(
         return code_error("INVALID_DATE", "as_of must be a valid calendar date", &rid);
     }
 
-    let report = match state.parity_report(&actor, id, &as_of).await {
+    let report = match state.shared_parity_report(&actor, id, &as_of).await {
         Ok(r) => r,
         Err(e) => return tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
     };
@@ -1159,9 +1158,14 @@ pub struct ParityParams {
     pub as_of: Option<String>,
 }
 
-fn account_dto(a: crate::repos::accounts::AccountRow) -> AccountDto {
+fn account_dto(
+    a: crate::repos::accounts::AccountRow,
+    actor: &auth::entitlement::Actor,
+) -> AccountDto {
     AccountDto {
         id: a.id.to_string(),
+        owner_user_id: a.owner_user_id.to_string(),
+        can_manage: a.owner_user_id.to_string() == actor.user_id.0,
         account_type: a.account_type,
         name: a.name,
         currency: a.currency,

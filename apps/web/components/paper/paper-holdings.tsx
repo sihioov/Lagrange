@@ -20,6 +20,12 @@ export function PaperHoldings({ account, orders, positions, t }: PaperHoldingsPr
       <dl className="definition-grid">
         <dt>{t.accountLabel}</dt>
         <dd>{account.name}</dd>
+        <dt>{t.ownerLabel}</dt>
+        <dd>
+          {account.can_manage
+            ? t.yourAccountLabel
+            : t.sharedAccountLabel(account.owner_user_id.slice(0, 8))}
+        </dd>
         <dt>{t.statusLabel}</dt>
         <dd>{account.status}</dd>
         <dt>{t.openingCashLabel}</dt>

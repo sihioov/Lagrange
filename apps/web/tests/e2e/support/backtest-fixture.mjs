@@ -42,6 +42,8 @@ function run(id, status, label, summary = {}) {
     finished_at: status === "SUCCEEDED" ? "2026-01-31T07:10:00Z" : null,
     id,
     job_id: `00000000-0000-4000-8000-0000000004${id.slice(-2)}`,
+    owner_user_id: "00000000-0000-4000-8000-000000000001",
+    can_manage: true,
     start_date: "2020-01-02",
     started_at: "2026-01-31T07:01:00Z",
     status,
@@ -111,6 +113,19 @@ function runsFor(scenario) {
   ];
 }
 
+function sharedRunsFor(scenario) {
+  const viewer = userIndex(scenario);
+  const userOrder = [viewer, ...[1, 2, 3, 4, 5].filter((index) => index !== viewer)];
+  return userOrder.flatMap((index) => {
+    const resourceScenario = { ...scenario, user: `u${index}` };
+    return runsFor(resourceScenario).map((item) => ({
+      ...item,
+      owner_user_id: `00000000-0000-4000-8000-00000000000${index}`,
+      can_manage: index === viewer,
+    }));
+  });
+}
+
 function error(status, code, message) {
   return {
     body: { error: { code, message, request_id: "request-synthetic-backtest" } },
@@ -143,7 +158,7 @@ export function backtestResponse(request) {
   }
   if (method === "GET" && pathname === "/api/v1/backtests") {
     return {
-      body: { has_more: false, items: runsFor(scenario), next_cursor: null },
+      body: { has_more: false, items: sharedRunsFor(scenario), next_cursor: null },
       status: 200,
     };
   }

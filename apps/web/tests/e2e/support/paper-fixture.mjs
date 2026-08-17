@@ -18,7 +18,7 @@ function idFor(scenario, baseId) {
   return idx === 1 ? baseId : `${baseId.slice(0, -4)}${idx}${baseId.slice(-3)}`;
 }
 
-function account(scenario) {
+function account(scenario, viewer = scenario) {
   return {
     account_type: "PAPER",
     cost_profile_id: "KRX_ETF_DEFAULT",
@@ -27,6 +27,8 @@ function account(scenario) {
     currency: "KRW",
     id: idFor(scenario, ACCOUNT_ID),
     initial_cash: "10000000.0000",
+    owner_user_id: `00000000-0000-4000-8000-00000000000${userIndex(scenario)}`,
+    can_manage: userIndex(scenario) === userIndex(viewer),
     name: `Paper account ${userIndex(scenario)}`,
     status: "ACTIVE",
     updated_at: "2026-02-02T00:30:00Z",
@@ -215,16 +217,30 @@ export function paperResponse(request) {
     return error(403, "DATA_ENTITLEMENT_REQUIRED", "paper entitlement is inactive");
   }
   if (method === "GET" && pathname === "/api/v1/paper/accounts") {
-    return page(scenario.paperAccount === "absent" ? [] : [account(scenario)]);
+    if (scenario.paperAccount === "absent") {
+      return page([]);
+    }
+    const accountScenarios = [1, 2, 3, 4, 5].map((index) => ({
+      ...scenario,
+      user: `u${index}`,
+    }));
+    return page(accountScenarios.map((candidate) => account(candidate, scenario)));
   }
 
-  const owned = `/api/v1/paper/accounts/${idFor(scenario, ACCOUNT_ID)}`;
-  if (!pathname.startsWith(owned)) {
-    // Another user's account id is indistinguishable from a missing one.
+  const accountScenario = [1, 2, 3, 4, 5]
+    .map((index) => ({ ...scenario, user: `u${index}` }))
+    .find((candidate) =>
+      pathname.startsWith(`/api/v1/paper/accounts/${idFor(candidate, ACCOUNT_ID)}`),
+    );
+  if (accountScenario === undefined) {
     return error(404, "RESOURCE_NOT_FOUND", "account not found");
   }
-  const tail = pathname.slice(owned.length);
+  const resource = `/api/v1/paper/accounts/${idFor(accountScenario, ACCOUNT_ID)}`;
+  const tail = pathname.slice(resource.length);
   if (method === "POST" && tail === "/bind-strategy") {
+    if (userIndex(accountScenario) !== userIndex(scenario)) {
+      return error(404, "RESOURCE_NOT_FOUND", "account not found");
+    }
     if (!mutationAuthorized(headers)) {
       return error(403, "CSRF_DENIED", "CSRF and idempotency headers are required");
     }
@@ -248,16 +264,16 @@ export function paperResponse(request) {
     return null;
   }
   if (tail === "") {
-    return { body: account(scenario), status: 200 };
+    return { body: account(accountScenario, scenario), status: 200 };
   }
   if (tail === "/performance") {
-    return { body: performance(scenario), status: 200 };
+    return { body: performance(accountScenario), status: 200 };
   }
   if (tail === "/lineage") {
-    return { body: lineage(scenario), status: 200 };
+    return { body: lineage(accountScenario), status: 200 };
   }
   if (tail.startsWith("/parity")) {
-    return { body: parity(scenario), status: 200 };
+    return { body: parity(accountScenario), status: 200 };
   }
   if (tail === "/positions") {
     return page([
@@ -273,7 +289,7 @@ export function paperResponse(request) {
     return page([
       {
         created_at: "2026-02-02T00:00:00Z",
-        id: idFor(scenario, ORDER_ID),
+        id: idFor(accountScenario, ORDER_ID),
         instrument_id: "069500.KRX",
         order_ref: "paper-2026-02-02-069500",
         price: "40200.0000",

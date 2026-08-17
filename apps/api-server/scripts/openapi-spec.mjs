@@ -41,28 +41,28 @@ const ROUTES = [
   ["DELETE", "/api/v1/screener/screens/{id}", { mutating: true, noBody: true, idem: true, audit: true }],
   // backtests
   ["POST", "/api/v1/backtests", { mutating: true, idem: true, entitlement: "backtest", audit: true }],
-  ["GET", "/api/v1/backtests", { entitlement: "backtest" }],
-  ["GET", "/api/v1/backtests/{run_id}", { entitlement: "backtest" }],
+  ["GET", "/api/v1/backtests", { entitlement: "backtest", shared: true }],
+  ["GET", "/api/v1/backtests/{run_id}", { entitlement: "backtest", shared: true }],
   ["POST", "/api/v1/backtests/{run_id}/cancel", { mutating: true, idem: true, entitlement: "backtest", audit: true }],
-  ["GET", "/api/v1/backtests/{run_id}/metrics", { entitlement: "backtest" }],
-  ["GET", "/api/v1/backtests/{run_id}/equity", { entitlement: "backtest" }],
-  ["GET", "/api/v1/backtests/{run_id}/trades", { entitlement: "backtest" }],
+  ["GET", "/api/v1/backtests/{run_id}/metrics", { entitlement: "backtest", shared: true }],
+  ["GET", "/api/v1/backtests/{run_id}/equity", { entitlement: "backtest", shared: true }],
+  ["GET", "/api/v1/backtests/{run_id}/trades", { entitlement: "backtest", shared: true }],
   ["POST", "/api/v1/backtests/{run_id}/robustness", { mutating: true, idem: true, entitlement: "backtest", audit: true }],
-  ["POST", "/api/v1/backtests/compare", { entitlement: "backtest" }],
+  ["POST", "/api/v1/backtests/compare", { entitlement: "backtest", shared: true }],
   // paper
-  ["GET", "/api/v1/paper/accounts", { entitlement: "paper_view" }],
+  ["GET", "/api/v1/paper/accounts", { entitlement: "paper_view", shared: true }],
   ["POST", "/api/v1/paper/accounts", { mutating: true, idem: true, entitlement: "paper_view", audit: true }],
-  ["GET", "/api/v1/paper/accounts/{account_id}", { entitlement: "paper_view" }],
+  ["GET", "/api/v1/paper/accounts/{account_id}", { entitlement: "paper_view", shared: true }],
   ["POST", "/api/v1/paper/accounts/{account_id}/bind-strategy", { mutating: true, idem: true, entitlement: "paper_view", audit: true }],
   ["POST", "/api/v1/paper/accounts/{account_id}/recommendation-previews", { mutating: true, idem: true, owner: true, entitlement: "recommendation", audit: true }],
   ["GET", "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}", { owner: true, entitlement: "paper_view" }],
   ["POST", "/api/v1/paper/accounts/{account_id}/recommendation-previews/{preview_id}/apply", { mutating: true, idem: true, owner: true, entitlement: "recommendation", audit: true }],
-  ["GET", "/api/v1/paper/accounts/{account_id}/orders", { entitlement: "paper_view" }],
-  ["GET", "/api/v1/paper/accounts/{account_id}/positions", { entitlement: "paper_view" }],
-  ["GET", "/api/v1/paper/accounts/{account_id}/equity", { entitlement: "paper_view" }],
-  ["GET", "/api/v1/paper/accounts/{account_id}/performance", { entitlement: "paper_view" }],
-  ["GET", "/api/v1/paper/accounts/{account_id}/lineage", { entitlement: "paper_view" }],
-  ["GET", "/api/v1/paper/accounts/{account_id}/parity", { entitlement: "paper_view" }],
+  ["GET", "/api/v1/paper/accounts/{account_id}/orders", { entitlement: "paper_view", shared: true }],
+  ["GET", "/api/v1/paper/accounts/{account_id}/positions", { entitlement: "paper_view", shared: true }],
+  ["GET", "/api/v1/paper/accounts/{account_id}/equity", { entitlement: "paper_view", shared: true }],
+  ["GET", "/api/v1/paper/accounts/{account_id}/performance", { entitlement: "paper_view", shared: true }],
+  ["GET", "/api/v1/paper/accounts/{account_id}/lineage", { entitlement: "paper_view", shared: true }],
+  ["GET", "/api/v1/paper/accounts/{account_id}/parity", { entitlement: "paper_view", shared: true }],
   // admin (Owner-only, audited)
   ["GET", "/api/v1/admin/datasets", { owner: true, audit: true }],
   ["POST", "/api/v1/admin/datasets/{dataset_id}/approve", { mutating: true, idem: true, owner: true, audit: true }],
@@ -172,6 +172,7 @@ function operation(route) {
   const idemRequired = flags.idem === true;
   const natural = flags.natural === true;
   const audit = flags.audit === true;
+  const shared = flags.shared === true;
 
   const op = {
     operationId: `${method}_${path.replace(/[\/{}\-]/g, "_")}`,
@@ -186,7 +187,11 @@ function operation(route) {
       auth: { required: true, session: "opaque __Host-lagrange_session cookie" },
       ownership: {
         owner_only: owner,
-        scope: owner ? "Owner role; all admin operations are audited" : "actor-scoped via RLS (foreign resources are indistinguishable from missing)",
+        scope: owner
+          ? "Owner role; all admin operations are audited"
+          : shared
+            ? "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
+            : "actor-scoped via RLS (foreign resources are indistinguishable from missing)",
       },
       entitlement: entitlement
         ? { use: entitlement, fail_closed: true, dataset: entitlement === "candidate" ? "every exact pinned candidate source dataset" : "krx_eod_bars" }
@@ -197,7 +202,12 @@ function operation(route) {
           : { required: idemRequired, header: "Idempotency-Key", replay: "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH" }
         : { required: false, note: "read-only" },
       audit: audit ? { writer: "audit_writer (append-only)", fields: "actor/time/target/before-after/reason/correlation_id" } : { writer: null },
-      cache: { policy: "no-store", reason: "authenticated per-user data is never shared" },
+      cache: {
+        policy: "no-store",
+        reason: shared
+          ? "authenticated invite-group data is never stored in a shared cache"
+          : "authenticated per-user data is never shared",
+      },
       errors: errorCodesFor(route),
       phase,
     },
@@ -709,9 +719,11 @@ const SCHEMAS = {
   },
   BacktestRun: {
     type: "object",
-    required: ["id", "strategy_id", "strategy_version", "status"],
+    required: ["id", "owner_user_id", "can_manage", "strategy_id", "strategy_version", "status"],
     properties: {
       id: uuid,
+      owner_user_id: uuid,
+      can_manage: { type: "boolean", description: "Whether the current actor may mutate or cancel this run" },
       strategy_id: { type: "string" },
       strategy_version: { type: "string" },
       dataset_version: { type: "string" },
@@ -875,9 +887,11 @@ const SCHEMAS = {
   },
   Account: {
     type: "object",
-    required: ["id", "account_type", "name", "currency", "status", "cost_profile_id", "cost_profile_version"],
+    required: ["id", "owner_user_id", "can_manage", "account_type", "name", "currency", "status", "cost_profile_id", "cost_profile_version"],
     properties: {
       id: uuid,
+      owner_user_id: uuid,
+      can_manage: { type: "boolean", description: "Whether the current actor may change this account" },
       account_type: { type: "string", enum: ["PAPER"], description: "LIVE accounts are Phase 3 Owner-only and never creatable via this route" },
       name: { type: "string" },
       currency: { type: "string", enum: ["KRW"] },

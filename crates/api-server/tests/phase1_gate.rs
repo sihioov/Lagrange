@@ -4,15 +4,17 @@
 //! identities plus the Owner run recommendation, backtest, artifact, admin,
 //! queue, and pre-Member restore flows against the real router, the real
 //! PostgreSQL schema (RLS FORCE on every tenant table), and the real
-//! entitlement service. Every cross-user read must fail closed (404/403);
-//! every KR-derived surface must gate through the ACTIVE entitlement; the
+//! entitlement service. Recommendations and raw artifact downloads remain
+//! private, while backtest summaries are shared read-only across invited
+//! users; every KR-derived surface must gate through the ACTIVE entitlement; the
 //! worker-kill path must produce exactly one ORPHANED attempt and at most
 //! one retry while the API stays up; the pre-Member restore must verify
 //! clean hashes (files restored byte-identical to the manifest) with
 //! isolation intact afterwards.
 //!
-//! Acceptance mapping: AT-01 (guess other user's ids -> 404, no data
-//! exposure), AT-03 (identical input twice -> identical run, one job row),
+//! Acceptance mapping: AT-01 (private surfaces still hide foreign ids),
+//! shared backtest reads (foreign summary -> 200, no management), AT-03
+//! (identical input twice -> identical run, one job row),
 //! AT-05 (missing/stale dataset -> typed WARNING/BLOCKED policy), AT-06
 //! (worker kill -> API alive, ORPHANED attempt, one retry).
 //!
@@ -277,16 +279,18 @@ async fn phase1_five_users_isolated_across_all_member_surfaces() {
             .await;
         assert_eq!(
             status(&resp),
-            StatusCode::NOT_FOUND,
-            "member{} must not read m1's backtest run",
+            StatusCode::OK,
+            "member{} must read m1's shared backtest report",
             i + 2
         );
+        let body = Harness::body_json(resp).await;
+        assert_eq!(body["can_manage"], false);
     }
     let own = h
         .get(&format!("/api/v1/backtests/{bt_run_id}"), Some(m1))
         .await;
     assert_eq!(status(&own), StatusCode::OK);
-    println!("AT-01 BACKTEST: 4/4 other members -> 404, m1 -> 200");
+    println!("SHARED BACKTEST: 4/4 other members -> 200 read-only, m1 -> 200 manageable");
 
     // ---- artifacts: m1 downloads authorized; others and tampered fail ----
     const ARTIFACT_BYTES: &[u8] = b"PAR1\x00\x00\x00\x00equity-curve-parquet-bytes\x00\x00";

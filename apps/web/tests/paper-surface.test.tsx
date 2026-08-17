@@ -78,6 +78,8 @@ function syntheticPaperApi(fixture: PaperFixture = {}): typeof fetch {
       currency: "KRW",
       id: ACCOUNT_ID,
       initial_cash: "10000000.0000",
+      owner_user_id: "00000000-0000-4000-8000-000000000001",
+      can_manage: true,
       name: "Paper account 1",
       status: "ACTIVE",
       updated_at: "2026-02-02T00:30:00Z",
@@ -274,12 +276,41 @@ describe("paper product surface", () => {
     expect(markup).toContain("No paper account selected");
     expect(markup).not.toContain("Daily performance");
   });
+
+  it("renders a shared account read-only", async () => {
+    vi.stubGlobal(
+      "fetch",
+      syntheticPaperApi({
+        accounts: [
+          {
+            account_type: "PAPER",
+            can_manage: false,
+            cost_profile_id: "KRX_ETF_DEFAULT",
+            cost_profile_version: 1,
+            created_at: "2026-01-02T00:30:00Z",
+            currency: "KRW",
+            id: ACCOUNT_ID,
+            initial_cash: "10000000.0000",
+            name: "Shared paper account",
+            owner_user_id: "00000000-0000-4000-8000-000000000002",
+            status: "ACTIVE",
+            updated_at: "2026-02-02T00:30:00Z",
+          },
+        ],
+      }),
+    );
+
+    const markup = renderToStaticMarkup(await PaperPage());
+
+    expect(markup).toContain("Shared account · 00000000");
+    expect(markup).not.toContain("Bind strategy");
+  });
 });
 
 describe("paper contract helpers", () => {
   it("prefers an ACTIVE account and never invents one", () => {
-    const active = { status: "ACTIVE" } as never;
-    const closed = { status: "CLOSED" } as never;
+    const active = { can_manage: true, status: "ACTIVE" } as never;
+    const closed = { can_manage: true, status: "CLOSED" } as never;
     expect(defaultAccount([closed, active])).toBe(active);
     expect(defaultAccount([closed])).toBe(closed);
     expect(defaultAccount([])).toBeNull();

@@ -66,7 +66,12 @@ export function BacktestComparison({ runs }: BacktestComparisonProps) {
           <div className="field-grid">
             {runs.map((run) => (
               <label className="form-field" key={run.id}>
-                <span>{backtestRunLabel(run)}</span>
+                <span>
+                  {backtestRunLabel(run)} ·{" "}
+                  {run.can_manage
+                    ? t.yourRunLabel
+                    : t.sharedRunLabel(run.owner_user_id.slice(0, 8))}
+                </span>
                 <input name="run_id" type="checkbox" value={run.id} />
               </label>
             ))}

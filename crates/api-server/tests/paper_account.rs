@@ -1,4 +1,4 @@
-//! Todo 30: isolated per-user Paper accounts and strategy bindings.
+//! Todo 30: per-user Paper ownership with invite-group read access.
 //!
 //! `http_paper.rs` already proves account CRUD/ownership/idempotency; this
 //! file proves the acceptance items unique to Todo 30: one ACTIVE binding
@@ -88,7 +88,7 @@ async fn bind(
 }
 
 // ---------------------------------------------------------------------------
-// Two Members open isolated accounts from the same shape.
+// Two Members open separately managed accounts from the same shape.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -117,10 +117,15 @@ async fn two_members_open_separate_accounts_with_the_same_strategy_and_cash() {
     assert_eq!(status(&resp1), StatusCode::OK);
     assert_eq!(status(&resp2), StatusCode::OK);
 
-    // member2 cannot see member1's account or ledger seed.
+    // member2 can inspect member1's account but cannot manage it.
     let resp = h
         .get(&format!("/api/v1/paper/accounts/{acct1}"), Some(&member2))
         .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(body["can_manage"], false);
+
+    let resp = bind(&h, &member2, &acct1, &cfg2, "foreign-bind").await;
     assert_eq!(status(&resp), StatusCode::NOT_FOUND);
 
     let cash1: String =

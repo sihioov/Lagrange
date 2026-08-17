@@ -3,6 +3,8 @@ import type { LocaleDictionary } from "@/lib/i18n/locale";
 export type PaperDictionary = {
   readonly accountBranchingEyebrow: string;
   readonly accountLabel: string;
+  readonly accountSwitcherEyebrow: string;
+  readonly accountSwitcherHeading: string;
   readonly activeState: string;
   readonly bindFormAriaLabel: string;
   readonly bindFormBoundMessage: (strategyId: string, strategyVersion: string) => string;
@@ -72,6 +74,7 @@ export type PaperDictionary = {
   readonly notYet: string;
   readonly onlyServerBindsNote: string;
   readonly openingCashLabel: string;
+  readonly ownerLabel: string;
   readonly pageDescription: string;
   readonly pageTitle: string;
   readonly paperOrdersCaption: string;
@@ -87,14 +90,19 @@ export type PaperDictionary = {
   readonly statusMatch: string;
   readonly statusNotComparable: string;
   readonly stillBound: string;
+  readonly sharedAccountLabel: (owner: string) => string;
+  readonly sharedAccountShortLabel: string;
   readonly unavailableMessage: string;
   readonly unavailableTitle: string;
+  readonly yourAccountLabel: string;
 };
 
 export const paperDictionary: LocaleDictionary<PaperDictionary> = {
   en: {
     accountBranchingEyebrow: "Account branching",
     accountLabel: "Account",
+    accountSwitcherEyebrow: "Invite group",
+    accountSwitcherHeading: "Shared paper accounts",
     activeState: "Active",
     bindFormAriaLabel: "Bind strategy",
     bindFormBoundMessage: (strategyId, strategyVersion) =>
@@ -171,8 +179,9 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     notYet: "Not yet",
     onlyServerBindsNote: "Only the server opens and closes bindings.",
     openingCashLabel: "Opening cash",
+    ownerLabel: "Owner",
     pageDescription:
-      "Review the cash, positions, orders, fills, and daily performance of your private simulated account.",
+      "Review cash, positions, orders, fills, and daily performance across shared simulated accounts.",
     pageTitle: "Paper account",
     paperOrdersCaption: "Paper orders and fills",
     parityAriaLabel: (status) => `Paper parity ${status}`,
@@ -187,13 +196,18 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     statusMatch: "Match",
     statusNotComparable: "Not comparable",
     stillBound: "Still bound",
+    sharedAccountLabel: (owner) => `Shared account · ${owner}`,
+    sharedAccountShortLabel: "Shared",
     unavailableMessage:
       "Paper account data could not be loaded. Retry after checking the service status.",
     unavailableTitle: "Paper account unavailable",
+    yourAccountLabel: "Your account",
   },
   ko: {
     accountBranchingEyebrow: "계좌 분기",
     accountLabel: "계좌",
+    accountSwitcherEyebrow: "초대 그룹",
+    accountSwitcherHeading: "공유 모의투자 계좌",
     activeState: "활성",
     bindFormAriaLabel: "전략 바인딩",
     bindFormBoundMessage: (strategyId, strategyVersion) =>
@@ -268,7 +282,8 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     notYet: "아직 없음",
     onlyServerBindsNote: "바인딩의 개설과 종료는 서버만 수행합니다.",
     openingCashLabel: "개시 현금",
-    pageDescription: "비공개 모의투자 계좌의 현금, 포지션, 주문, 체결, 일일 성과를 확인하세요.",
+    ownerLabel: "소유자",
+    pageDescription: "공유된 모의투자 계좌의 현금, 포지션, 주문, 체결, 일일 성과를 확인하세요.",
     pageTitle: "모의투자 계좌",
     paperOrdersCaption: "모의투자 주문 및 체결",
     parityAriaLabel: (status) => `모의투자 정합성 ${status}`,
@@ -283,8 +298,11 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     statusMatch: "일치",
     statusNotComparable: "비교 불가",
     stillBound: "바인딩 유지 중",
+    sharedAccountLabel: (owner) => `공유 계좌 · ${owner}`,
+    sharedAccountShortLabel: "공유 계좌",
     unavailableMessage:
       "모의투자 계좌 데이터를 불러오지 못했습니다. 서비스 상태를 확인한 후 다시 시도하세요.",
     unavailableTitle: "모의투자 계좌를 사용할 수 없습니다",
+    yourAccountLabel: "내 계좌",
   },
 };
