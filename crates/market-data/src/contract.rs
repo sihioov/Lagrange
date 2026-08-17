@@ -29,6 +29,9 @@ use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 pub const PROVIDER_KRX: &str = "krx";
 /// Canonical provider id of the Korea Investment & Securities Open API connector.
 pub const PROVIDER_KIS: &str = "kis";
+/// Provider id for the provider-neutral canonical batch derived from KIS wire
+/// responses. The wire batch remains under [`PROVIDER_KIS`] forever.
+pub const PROVIDER_KIS_NORMALIZED: &str = "kis-normalized";
 /// Canonical market id of the Korean market.
 pub const MARKET_KR: &str = "kr";
 
