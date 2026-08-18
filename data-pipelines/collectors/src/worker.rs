@@ -1649,7 +1649,15 @@ async fn recover_price_publications(
         .latest_manifest(&dataset_id)
         .map_err(WorkerError::Curation)?
     {
-        Some(manifest) if manifest_matches_entries(&manifest, &entries) => manifest,
+        // Legacy manifests predate exact artifact references. They remain
+        // parseable for migration, but must never be reused as a production
+        // generation: re-curate the same immutable Raw snapshot into the next
+        // version so every consumer can verify exact files, hashes and schema.
+        Some(manifest)
+            if !manifest.artifacts.is_empty() && manifest_matches_entries(&manifest, &entries) =>
+        {
+            manifest
+        }
         _ => {
             curate_generation(
                 raw,
@@ -1883,6 +1891,7 @@ mod price_recovery_contract_tests {
             .expect("price recovery function source");
         assert!(function.contains("resolve_price_dataset_entitlement"));
         assert!(function.contains("revalidate_price_raw_batch_after_rights"));
+        assert!(function.contains("!manifest.artifacts.is_empty()"));
         assert!(!function.contains("resolve_contract_entitlement("));
         assert!(!function.contains("register_candidate_instruments("));
         assert!(!function.contains(
