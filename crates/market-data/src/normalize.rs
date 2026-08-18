@@ -956,7 +956,15 @@ fn normalize_kis_action_row(
 ) -> Result<Option<(String, Value)>, NormalizeError> {
     let kind = ResponseKind::CorporateActions;
     let symbol = required_string(kind, file_name, row, "sht_cd")?;
-    if symbol.len() != 6 || !symbol.bytes().all(|byte| byte.is_ascii_digit()) {
+    // Official KSD response examples include domestic short codes such as
+    // `11138K`.  This wire field is exactly six ASCII uppercase alphanumeric
+    // bytes; membership in the numeric fixed ETF universe is checked only
+    // after the rest of the row has been validated.
+    if symbol.len() != 6
+        || !symbol
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    {
         return Err(NormalizeError::InvalidField {
             kind,
             file_name: file_name.to_owned(),

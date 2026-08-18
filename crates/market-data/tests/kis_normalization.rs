@@ -825,6 +825,64 @@ fn nonempty_corporate_actions_fail_closed_without_inventing_dates_or_values() {
 }
 
 #[test]
+fn official_alphanumeric_ksd_short_code_is_validated_then_filtered() {
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.file_name.contains("dividend"))
+            .expect("dividend wire");
+        wire.bytes = serde_json::to_vec(&json!({
+            "rt_cd": "0",
+            "output1": [{
+                "sht_cd": "11138K",
+                "record_date": "20260814",
+                "per_sto_divi_amt": "100",
+                "divi_pay_dt": "20260828"
+            }]
+        }))
+        .expect("official alphanumeric action bytes");
+    });
+    let envelopes = normalize_kis_envelopes(&source, &stored).expect("valid non-core KSD row");
+    let actions = envelopes
+        .iter()
+        .find(|envelope| envelope.kind == ResponseKind::CorporateActions)
+        .expect("canonical actions");
+    let document: Value = serde_json::from_slice(&actions.bytes).expect("canonical JSON");
+    assert_eq!(document["actions"], json!([]));
+}
+
+#[test]
+fn malformed_alphanumeric_ksd_short_codes_fail_closed() {
+    for invalid_symbol in ["11138k", "11138-", "11138", "11138KK"] {
+        let (_temp, _store, source, stored) = fixture(|wires| {
+            let wire = wires
+                .iter_mut()
+                .find(|wire| wire.file_name.contains("dividend"))
+                .expect("dividend wire");
+            wire.bytes = serde_json::to_vec(&json!({
+                "rt_cd": "0",
+                "output1": [{
+                    "sht_cd": invalid_symbol,
+                    "record_date": "20260814",
+                    "per_sto_divi_amt": "100",
+                    "divi_pay_dt": "20260828"
+                }]
+            }))
+            .expect("invalid action bytes");
+        });
+        let error = normalize_kis_envelopes(&source, &stored).expect_err("invalid KSD short code");
+        assert!(matches!(
+            error,
+            NormalizeError::InvalidField {
+                kind: ResponseKind::CorporateActions,
+                field,
+                ..
+            } if field == "sht_cd"
+        ));
+    }
+}
+
+#[test]
 fn bonus_issue_filters_by_record_date_and_preserves_later_right_date() {
     let (_temp, _store, source, stored) = fixture(|wires| {
         let wire = wires
