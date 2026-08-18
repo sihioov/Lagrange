@@ -23,9 +23,10 @@ use market_data::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, ResponseKind,
 };
 use market_data::ingest::IngestRequest;
+use market_data::normalize::NormalizeError;
 use market_data::provider::{EodProvider, KrxProvider, ProviderError, RecordedBundle};
 use market_data::providers::kis::KisProvider;
-use market_data::storage::RawStore;
+use market_data::storage::{RawStore, StoreError};
 use market_data::{
     CANDIDATE_RESPONSE_KINDS, CurateError, CurateRequest, CurateStore, curate_batch,
     curation_inputs_from_raw, ingest_bundle_with_kinds, price_curation_evidence,
@@ -376,6 +377,7 @@ impl WorkerError {
                 response_kind: Some(kind.as_str()),
                 file_name: Some(&diagnostic.file_name),
             }),
+            Self::Pipeline(PipelineError::Normalize { source, .. }) => normalize_diagnostic(source),
             Self::ChildFailure {
                 error_code,
                 endpoint,
@@ -421,6 +423,147 @@ fn provider_diagnostic(error: &ProviderError) -> Option<WorkerDiagnostic<'_>> {
         }),
         _ => None,
     }
+}
+
+/// Converts a normalization failure to a bounded operator diagnostic.
+///
+/// NormalizeError retains provider-file names and (for one validation
+/// variant) an endpoint supplied by immutable Raw.  Only plain file names and
+/// the exact reviewed KIS read endpoints are allowed through this boundary;
+/// row values, reasons, paths, hashes, and other free-form fields are never
+/// copied into a worker event.
+fn normalize_diagnostic(error: &NormalizeError) -> Option<WorkerDiagnostic<'_>> {
+    let (error_code, response_kind, file_name, endpoint) = match error {
+        NormalizeError::Store(source) => (normalize_store_error_code(source), None, None, None),
+        NormalizeError::UnsupportedScope { .. } => {
+            ("KIS_NORMALIZE_UNSUPPORTED_SCOPE", None, None, None)
+        }
+        NormalizeError::UnsupportedMode => ("KIS_NORMALIZE_UNSUPPORTED_MODE", None, None, None),
+        NormalizeError::ExistingBatchConflict { .. } => {
+            ("KIS_NORMALIZE_BATCH_CONFLICT", None, None, None)
+        }
+        NormalizeError::EvidenceCountMismatch { .. }
+        | NormalizeError::EvidenceMissing { .. }
+        | NormalizeError::EvidenceUnexpected { .. }
+        | NormalizeError::EvidenceHashMismatch { .. }
+        | NormalizeError::EvidenceSizeMismatch { .. } => {
+            ("KIS_NORMALIZE_EVIDENCE_INVALID", None, None, None)
+        }
+        NormalizeError::MissingKind { kind } => (
+            "KIS_NORMALIZE_MISSING_RESPONSE",
+            Some(kind.as_str()),
+            None,
+            None,
+        ),
+        NormalizeError::UnexpectedEndpoint {
+            file_name,
+            endpoint,
+        } => (
+            "KIS_NORMALIZE_UNEXPECTED_ENDPOINT",
+            None,
+            safe_normalize_file_name(file_name),
+            safe_kis_read_endpoint(endpoint),
+        ),
+        NormalizeError::Malformed {
+            kind, file_name, ..
+        } => (
+            "KIS_NORMALIZE_MALFORMED",
+            Some(kind.as_str()),
+            safe_normalize_file_name(file_name),
+            None,
+        ),
+        NormalizeError::MissingField {
+            kind, file_name, ..
+        } => (
+            "KIS_NORMALIZE_MISSING_FIELD",
+            Some(kind.as_str()),
+            safe_normalize_file_name(file_name),
+            None,
+        ),
+        NormalizeError::InvalidField {
+            kind, file_name, ..
+        } => (
+            "KIS_NORMALIZE_INVALID_FIELD",
+            Some(kind.as_str()),
+            safe_normalize_file_name(file_name),
+            None,
+        ),
+        NormalizeError::DuplicateRow { kind, .. } => (
+            "KIS_NORMALIZE_DUPLICATE_ROW",
+            Some(kind.as_str()),
+            None,
+            None,
+        ),
+        NormalizeError::ConflictingRow { kind, .. } => (
+            "KIS_NORMALIZE_CONFLICTING_ROW",
+            Some(kind.as_str()),
+            None,
+            None,
+        ),
+        NormalizeError::UnsupportedAction { file_name, .. } => (
+            "KIS_NORMALIZE_UNSUPPORTED_ACTION",
+            None,
+            safe_normalize_file_name(file_name),
+            None,
+        ),
+        NormalizeError::CanonicalValidation { kind, .. } => (
+            "KIS_NORMALIZE_CANONICAL_INVALID",
+            Some(kind.as_str()),
+            None,
+            None,
+        ),
+        NormalizeError::Serialization { kind, .. } => (
+            "KIS_NORMALIZE_SERIALIZATION",
+            Some(kind.as_str()),
+            None,
+            None,
+        ),
+        NormalizeError::MissingTargetObservation { .. } => {
+            ("KIS_NORMALIZE_MISSING_TARGET_OBSERVATION", None, None, None)
+        }
+        NormalizeError::TargetBarCoverage { .. } => {
+            ("KIS_NORMALIZE_BAR_COVERAGE", None, None, None)
+        }
+    };
+    Some(WorkerDiagnostic {
+        error_code,
+        endpoint,
+        http_status: None,
+        response_kind,
+        file_name,
+    })
+}
+
+fn normalize_store_error_code(error: &StoreError) -> &'static str {
+    match error {
+        StoreError::Io { .. } => "KIS_NORMALIZE_STORE_IO",
+        StoreError::FileExists { .. } => "KIS_NORMALIZE_STORE_FILE_EXISTS",
+        StoreError::CleanupFailed { original, .. }
+        | StoreError::IndeterminateBatchCommit {
+            source: original, ..
+        } => normalize_store_error_code(original),
+        StoreError::UnsafeFileName { .. }
+        | StoreError::UnsafeScope { .. }
+        | StoreError::ScopeMismatch { .. }
+        | StoreError::UnsafePath { .. }
+        | StoreError::ContentHashMismatch { .. }
+        | StoreError::CorruptManifest { .. }
+        | StoreError::CorruptBatchMetadata { .. }
+        | StoreError::InvalidBatchMetadata { .. }
+        | StoreError::MissingEvidence { .. }
+        | StoreError::Serialization { .. }
+        | StoreError::ManifestConflict { .. } => "KIS_NORMALIZE_INTEGRITY_FAILURE",
+    }
+}
+
+fn safe_normalize_file_name(file_name: &str) -> Option<&str> {
+    valid_file_name(file_name).then_some(file_name)
+}
+
+fn safe_kis_read_endpoint(endpoint: &str) -> Option<&str> {
+    KIS_READ_CHANNELS
+        .iter()
+        .find_map(|(allowed, _)| (*allowed == endpoint).then_some(*allowed))
 }
 
 fn kis_error_endpoint(error: &KisError) -> Option<&str> {
@@ -3956,6 +4099,87 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
                 })
             ));
         }
+    }
+
+    #[test]
+    fn normalize_diagnostic_is_stable_and_redacts_free_form_fields() {
+        let batch_id = domain::BatchId::generate();
+        let unsupported = super::WorkerError::Pipeline(crate::PipelineError::Normalize {
+            batch_id,
+            source: Box::new(market_data::normalize::NormalizeError::UnsupportedAction {
+                file_name: "corporate-actions.json".to_owned(),
+                reason: "secret row value must not propagate".to_owned(),
+            }),
+        });
+        let diagnostic = unsupported.safe_diagnostic().expect("normalize diagnostic");
+        assert_eq!(diagnostic.error_code, "KIS_NORMALIZE_UNSUPPORTED_ACTION");
+        assert_eq!(diagnostic.response_kind, None);
+        assert_eq!(diagnostic.file_name, Some("corporate-actions.json"));
+        assert_eq!(diagnostic.endpoint, None);
+        assert!(!format!("{diagnostic:?}").contains("secret"));
+
+        let invalid = super::WorkerError::Pipeline(crate::PipelineError::Normalize {
+            batch_id,
+            source: Box::new(market_data::normalize::NormalizeError::InvalidField {
+                kind: market_data::ResponseKind::Bars,
+                file_name: "bars.json".to_owned(),
+                field: "stck_clpr".to_owned(),
+                value: "secret-value".to_owned(),
+            }),
+        });
+        let diagnostic = invalid.safe_diagnostic().expect("normalize diagnostic");
+        assert_eq!(diagnostic.error_code, "KIS_NORMALIZE_INVALID_FIELD");
+        assert_eq!(diagnostic.response_kind, Some("bars"));
+        assert_eq!(diagnostic.file_name, Some("bars.json"));
+        assert_eq!(diagnostic.endpoint, None);
+        assert!(!format!("{diagnostic:?}").contains("secret"));
+
+        let integrity = super::WorkerError::Pipeline(crate::PipelineError::Normalize {
+            batch_id,
+            source: Box::new(market_data::normalize::NormalizeError::Store(
+                market_data::storage::StoreError::ContentHashMismatch {
+                    path: "/private/secret/path".to_owned(),
+                    recorded: "recorded-secret".to_owned(),
+                    actual: "actual-secret".to_owned(),
+                },
+            )),
+        });
+        let diagnostic = integrity.safe_diagnostic().expect("normalize diagnostic");
+        assert_eq!(diagnostic.error_code, "KIS_NORMALIZE_INTEGRITY_FAILURE");
+        assert_eq!(diagnostic.response_kind, None);
+        assert_eq!(diagnostic.file_name, None);
+        assert_eq!(diagnostic.endpoint, None);
+        assert!(!format!("{diagnostic:?}").contains("secret"));
+
+        let allowed_endpoint = super::WorkerError::Pipeline(crate::PipelineError::Normalize {
+            batch_id,
+            source: Box::new(market_data::normalize::NormalizeError::UnexpectedEndpoint {
+                file_name: "bars.json".to_owned(),
+                endpoint: "/uapi/domestic-stock/v1/quotations/inquire-price".to_owned(),
+            }),
+        });
+        let diagnostic = allowed_endpoint
+            .safe_diagnostic()
+            .expect("normalize diagnostic");
+        assert_eq!(diagnostic.error_code, "KIS_NORMALIZE_UNEXPECTED_ENDPOINT");
+        assert_eq!(
+            diagnostic.endpoint,
+            Some("/uapi/domestic-stock/v1/quotations/inquire-price")
+        );
+
+        let untrusted_endpoint = super::WorkerError::Pipeline(crate::PipelineError::Normalize {
+            batch_id,
+            source: Box::new(market_data::normalize::NormalizeError::UnexpectedEndpoint {
+                file_name: "bars.json".to_owned(),
+                endpoint: "https://attacker.invalid/secret".to_owned(),
+            }),
+        });
+        let diagnostic = untrusted_endpoint
+            .safe_diagnostic()
+            .expect("normalize diagnostic");
+        assert_eq!(diagnostic.error_code, "KIS_NORMALIZE_UNEXPECTED_ENDPOINT");
+        assert_eq!(diagnostic.endpoint, None);
+        assert_eq!(diagnostic.file_name, Some("bars.json"));
     }
 
     #[test]
