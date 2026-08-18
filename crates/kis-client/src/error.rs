@@ -95,6 +95,12 @@ pub enum KisError {
     /// An instrument could not be mapped in either direction.
     #[error("no KIS mapping for instrument {instrument}")]
     UnknownInstrument { instrument: String },
+
+    /// A caller attempted to use the market-data client outside the reviewed
+    /// read-only endpoint/TR allowlist.  This is a local configuration error:
+    /// no token is issued and no request reaches KIS.
+    #[error("KIS endpoint is not allowed for the read-only client: {endpoint} ({tr_id})")]
+    UnsupportedEndpoint { endpoint: String, tr_id: String },
 }
 
 impl KisError {
@@ -137,6 +143,7 @@ impl KisError {
             Self::Auth { .. } | Self::Credential(_) => "BROKER_AUTH_FAILED",
             Self::ClockSkew { .. } => "BROKER_CLOCK_SKEW",
             Self::UnknownInstrument { .. } => "UNKNOWN_INSTRUMENT",
+            Self::UnsupportedEndpoint { .. } => "KIS_ENDPOINT_NOT_ALLOWED",
             Self::Connect { .. } => "BROKER_UNREACHABLE",
         }
     }

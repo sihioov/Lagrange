@@ -45,6 +45,7 @@ fn shape(err: &KisError) -> &'static str {
         KisError::ClockSkew { .. } => "ClockSkew",
         KisError::UnknownInstrument { .. } => "UnknownInstrument",
         KisError::Credential(_) => "Credential",
+        KisError::UnsupportedEndpoint { .. } => "UnsupportedEndpoint",
     }
 }
 

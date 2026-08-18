@@ -16,6 +16,49 @@ use crate::retry::{RetryPolicy, Sleeper};
 use crate::secret::{CredentialRef, CredentialSource, Secret};
 use crate::transport::{HttpRequest, Transport};
 
+/// Exact read-only KIS channels approved for the market-data client.
+///
+/// Keep this deny-by-default list at the HTTP client boundary as well as in
+/// the provider adapter: a future caller must not be able to turn a generic
+/// `get(path, tr_id, ...)` seam into an account, order, or undocumented API
+/// request by typo or copy/paste.  Expanding it requires a reviewed contract
+/// and focused tests.
+const READ_ONLY_CHANNELS: &[(&str, &str)] = &[
+    (
+        "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+        "FHKST03010100",
+    ),
+    (
+        "/uapi/domestic-stock/v1/quotations/inquire-price",
+        "FHKST01010100",
+    ),
+    (
+        "/uapi/domestic-stock/v1/quotations/chk-holiday",
+        "CTCA0903R",
+    ),
+    (
+        "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
+        "HHKDB669100C0",
+    ),
+    (
+        "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
+        "HHKDB669101C0",
+    ),
+    ("/uapi/domestic-stock/v1/ksdinfo/dividend", "HHKDB669102C0"),
+    (
+        "/uapi/domestic-stock/v1/ksdinfo/merger-split",
+        "HHKDB669104C0",
+    ),
+    ("/uapi/domestic-stock/v1/ksdinfo/rev-split", "HHKDB669105C0"),
+    ("/uapi/domestic-stock/v1/ksdinfo/cap-dcrs", "HHKDB669106C0"),
+];
+
+fn is_allowed_read_channel(path: &str, tr_id: &str) -> bool {
+    READ_ONLY_CHANNELS
+        .iter()
+        .any(|(allowed_path, allowed_tr_id)| *allowed_path == path && *allowed_tr_id == tr_id)
+}
+
 /// One successful KIS read, before provider-specific parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarketDataReply {
@@ -67,6 +110,15 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
         query: &[(String, String)],
         continuation: Option<&str>,
     ) -> Result<MarketDataReply, KisError> {
+        // Reject before rate limiting, token lookup, credential resolution, or
+        // transport construction.  An invalid endpoint must be unable to
+        // cause even an authenticated network attempt.
+        if !is_allowed_read_channel(path, tr_id) {
+            return Err(KisError::UnsupportedEndpoint {
+                endpoint: path.to_owned(),
+                tr_id: tr_id.to_owned(),
+            });
+        }
         crate::retry::execute(
             RetryPolicy::reads(),
             RequestKind::Read,
@@ -325,7 +377,12 @@ mod tests {
             r#"{"rt_cd":"1","msg1":"bad","appkey":"app-key"}"#,
         )]);
         let error = client(transport)
-            .get("/quote", "TR", &[], None)
+            .get(
+                "/uapi/domestic-stock/v1/quotations/inquire-price",
+                "FHKST01010100",
+                &[],
+                None,
+            )
             .await
             .expect_err("business error");
         let rendered = error.to_string();
@@ -339,10 +396,36 @@ mod tests {
         let transport = CapturingTransport::with_responses(vec![HttpResponse::ok("not-json")]);
         let client = client(transport);
         let error = client
-            .get("/quote", "TR", &[], None)
+            .get(
+                "/uapi/domestic-stock/v1/quotations/inquire-price",
+                "FHKST01010100",
+                &[],
+                None,
+            )
             .await
             .expect_err("schema drift");
         assert!(matches!(error, KisError::SchemaDrift { .. }));
         assert_eq!(client.transport.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_order_or_account_endpoint_is_rejected_before_auth_or_transport() {
+        let transport = CapturingTransport::with_responses(vec![HttpResponse::ok(
+            r#"{"rt_cd":"0","output1":[]}"#,
+        )]);
+        let client = client(transport);
+        let error = client
+            .get(
+                "/uapi/domestic-stock/v1/trading/inquire-balance",
+                "TTTC8434R",
+                &[("CANO".to_owned(), "must-not-be-sent".to_owned())],
+                None,
+            )
+            .await
+            .expect_err("account endpoint must be outside read-only client");
+        assert!(matches!(error, KisError::UnsupportedEndpoint { .. }));
+        assert_eq!(client.transport.requests.lock().unwrap().len(), 0);
+        let rendered = error.to_string();
+        assert!(!rendered.contains("must-not-be-sent"), "{rendered}");
     }
 }
