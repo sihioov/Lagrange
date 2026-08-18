@@ -12,12 +12,17 @@ grep -Fq 'uses Compose interpolation, quote, escape' "$ops/lib/dotenv.sh" \
 
 for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
   provision-crypto-secrets.sh provision-kis-credentials.sh validate-production-config.sh compose-release.sh \
-  backfill-production.sh post-backfill-health.sh self-test.sh; do
+  backfill-production.sh post-backfill-health.sh self-test.sh renew-tailscale-tls.sh \
+  install-tailscale-tls-renewal.sh tailscale-tls-self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
   bash -n "$path" || die "$script has shell syntax errors"
 done
+
+tls_static="$root/deploy/systemd/tailscale-tls-renewal-static-check.sh"
+[ -x "$tls_static" ] || die 'Tailscale TLS renewal static check must be executable'
+bash "$tls_static" >/dev/null || die 'Tailscale TLS renewal static check failed'
 
 auth0_secret="$ops/provision-auth0-secret.sh"
 grep -Fq 'mode=dry-run' "$auth0_secret" \

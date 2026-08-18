@@ -8,7 +8,8 @@ trap 'rm -rf -- "$out_dir"' EXIT
 
 for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
   provision-crypto-secrets.sh provision-kis-credentials.sh validate-production-config.sh compose-release.sh \
-  backfill-production.sh post-backfill-health.sh; do
+  backfill-production.sh post-backfill-health.sh renew-tailscale-tls.sh \
+  install-tailscale-tls-renewal.sh tailscale-tls-self-test.sh; do
   bash -n "$ops/$script"
 done
 bash "$root/deploy/secrets/runtime-static-check.sh" >/dev/null
@@ -18,6 +19,7 @@ bash "$root/deploy/db/migrate-static-check.sh" >/dev/null
 bash "$root/scripts/qa/research-worker-smoke.sh" --static-only >/dev/null
 bash "$root/scripts/qa/recommendation-runner-smoke.sh" --static-only >/dev/null
 bash "$ops/static-check.sh" >/dev/null
+bash "$ops/tailscale-tls-self-test.sh" >/dev/null
 
 dry_run=$(LAGRANGE_CONFIG_ROOT="$out_dir/etc" \
   LAGRANGE_DEPLOY_ROOT="$out_dir/opt" \

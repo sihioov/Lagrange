@@ -1,0 +1,15 @@
+# Non-secret, root-owned 0600 configuration for renew-tailscale-tls.sh.
+# Adjust the Compose file/env paths to the immutable production checkout before
+# installing. Every path must be absolute, contain no '..', and have no
+# symlinked ancestor. TLS_DOMAIN is fixed by the helper.
+# LAGRANGE_CODE_COMMIT must be replaced with the exact approved 40-character
+# lowercase commit for the deployed Compose checkout; the placeholder below
+# is intentionally rejected by --apply and the renewal helper.
+TLS_DOMAIN=l1nnx-sh.taild74a33.ts.net
+TLS_SOURCE_DIR=/etc/lagrange/secrets/tls
+TLS_RUNTIME_DIR=/etc/lagrange/secrets/runtime/reverse-proxy
+COMPOSE_FILE=/opt/lagrange/deploy/compose/compose.yml
+COMPOSE_ENV_FILE=/opt/lagrange/deploy/compose/.env
+COMPOSE_PROJECT=lagrange-station
+LAGRANGE_CODE_COMMIT=REPLACE_WITH_40_HEX_CODE_COMMIT
+LOCK_FILE=/run/lock/lagrange-tailscale-tls-renewal.lock

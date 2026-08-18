@@ -7,6 +7,81 @@ URLs in memory and then `exec`s the Rust binary. The systemd environment file
 contains no database URLs or passwords; credentials are regular files supplied
 by the host secret manager.
 
+## Tailscale TLS renewal
+
+`lagrange-tailscale-tls-renewal.service` is a root-only, TLS-only renewal
+workflow for the fixed Tailscale name
+`l1nnx-sh.taild74a33.ts.net`. The helper defaults to a no-change plan; only
+the explicit `--renew` mode can call `tailscale cert`, and it writes the
+certificate and key to a private staging directory first. It validates the
+exact SAN, public-key match, at least 30 days remaining, and the source
+`root:root 0600` / reverse-proxy runtime `101:101 0440` contracts. It never
+touches DB, Auth0, KIS, or application credentials.
+
+Copy `tailscale-tls-renewal.conf.example` to a protected, root-owned `0600`
+configuration outside the checkout and customize it before installation. In
+particular, replace the commit placeholder with the exact 40-character
+lowercase `LAGRANGE_CODE_COMMIT` for the deployed Compose checkout; the
+installer rejects placeholders and all-zero values. Set `COMPOSE_FILE` and
+`COMPOSE_ENV_FILE` to the approved immutable checkout (the production default
+expects the checkout under `/opt/lagrange/deploy`), and make both regular,
+non-symlink files owned by `root:root` with no group/other write bits. The
+parser accepts only the documented absolute paths, rejects `..` and symlink
+ancestors, and requires the fixed domain. Do not run the installation sequence
+until the approved `/opt/lagrange/deploy` checkout exists, its Compose file/env
+paths are regular protected files, and the source/runtime TLS pair has been
+provisioned. The pending configuration is deliberately outside the install
+target:
+
+```sh
+sudo install -o root -g root -m 0600 \
+  deploy/systemd/tailscale-tls-renewal.conf.example \
+  /etc/lagrange/tailscale-tls-renewal.conf.pending
+sudoedit /etc/lagrange/tailscale-tls-renewal.conf.pending
+sudo scripts/ops/renew-tailscale-tls.sh --check \
+  --config-file /etc/lagrange/tailscale-tls-renewal.conf.pending
+scripts/ops/install-tailscale-tls-renewal.sh --dry-run \
+  --config-source /etc/lagrange/tailscale-tls-renewal.conf.pending
+```
+
+After the pending config check and dry-run pass, apply copies the artifacts and
+pending config to the fixed install locations. It refuses to overwrite an
+existing protected target config and does not issue a certificate:
+
+```sh
+sudo scripts/ops/install-tailscale-tls-renewal.sh --apply \
+  --config-source /etc/lagrange/tailscale-tls-renewal.conf.pending
+sudo scripts/ops/install-tailscale-tls-renewal.sh --check \
+  --config-source /etc/lagrange/tailscale-tls-renewal.conf.pending
+sudo /opt/lagrange/bin/renew-tailscale-tls.sh --check
+```
+
+`--apply` refuses to overwrite an existing protected config and only enables
+the timer; it does not start the timer or issue a certificate. After checking
+the installed artifacts and the current TLS pair, activation is a separate,
+explicit operator action:
+
+```sh
+sudo systemctl start lagrange-tailscale-tls-renewal.timer
+```
+
+Because the timer is persistent, this explicit start may run a missed
+invocation; perform it only after the source/runtime pair and Compose
+configuration have passed their checks.
+
+The timer then runs at 03:15 KST with a one-hour randomized delay and
+`Persistent=true`. Renewal takes an `flock` single-run lock. If Compose reports
+the `reverse-proxy` service as running, only that service is force-recreated
+with `--no-deps`; if it is absent, no service is started. A failed issuance
+leaves the existing pair untouched. A failed proxy refresh leaves an already
+validated source/runtime pair converged and reports the retryable error.
+
+The installer and renewal helper are repository artifacts only until the
+operator explicitly runs `--apply`; no certificate, Docker, or systemd command
+is run by repository tests. See the official [`tailscale cert` CLI reference](https://tailscale.com/docs/reference/tailscale-cli?tab=macos)
+and [Tailscale HTTPS certificate guidance](https://tailscale.com/docs/how-to/set-up-https-certificates)
+for the vendor-side issuance semantics.
+
 ## Install
 
 1. Build the Rust binary from `crates/api-server` and install it at

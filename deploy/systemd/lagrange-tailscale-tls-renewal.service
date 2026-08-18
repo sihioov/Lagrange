@@ -1,0 +1,30 @@
+[Unit]
+Description=Lagrange Tailscale TLS certificate renewal
+After=network-online.target tailscaled.service
+Wants=network-online.target
+ConditionPathExists=/opt/lagrange/bin/renew-tailscale-tls.sh
+ConditionFileIsExecutable=/opt/lagrange/bin/renew-tailscale-tls.sh
+ConditionPathExists=/etc/lagrange/tailscale-tls-renewal.conf
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/lagrange/bin/renew-tailscale-tls.sh --renew --config-file /etc/lagrange/tailscale-tls-renewal.conf
+UMask=0077
+TimeoutStartSec=10min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/etc/lagrange/secrets/tls /etc/lagrange/secrets/runtime/reverse-proxy /run/lock
+ReadOnlyPaths=/opt/lagrange/deploy /etc/lagrange/tailscale-tls-renewal.conf
+
+[Install]
+WantedBy=multi-user.target
