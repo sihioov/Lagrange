@@ -40,11 +40,15 @@
 # values through the operator's secret manager and then run
 # `deploy/secrets/provision-runtime-secrets.sh --scope infrastructure` as root
 # to create only the DB/bootstrap/schema UID/mode copies needed before KIS
-# credentials or dataset approval. Use `--scope backfill` after KIS credentials
-# are available to add the research-worker copies, then `--scope release` after
-# Auth0/TLS and dataset approval to create the full serving inventory. The
-# provisioner copies and validates supplied values; it deliberately does not
-# generate production credentials.
+# credentials or dataset approval. `--scope serving-prereqs` may be used after
+# the non-KIS source set (including Auth0/TLS) is ready to pre-stage every
+# serving copy without KIS, `RESEARCH_*`, entitlement, or dataset pins. It is
+# copy/readiness-only and never starts Compose services. Use `--scope backfill`
+# after KIS credentials are available to add the research-worker KIS copies,
+# then `--scope release` after Auth0/TLS and dataset approval to create the full
+# serving inventory. The provisioner preflights the complete selected source
+# and path inventory before its first write; existing runtime targets may be
+# idempotently replaced. It deliberately does not generate credentials.
 
 ## Database role credentials and cursor key
 
@@ -273,8 +277,10 @@ sudo deploy/secrets/provision-runtime-secrets.sh --scope infrastructure
 
 It fails closed if a source is missing, symlinked, or (for credential files)
 contains CR/LF. Infrastructure scope writes only the DB/bootstrap/schema
-copies and never reads KIS files. Backfill scope adds the research-worker
-copies. Release scope writes `0440` copies owned by the consuming UID,
+copies and never reads KIS files. Serving-prereqs scope writes the non-KIS
+TLS/API/worker/research DB/runner copies and only validates the source
+`backup_encryption_key`; it does not read KIS keys or start a service. Backfill
+scope adds the research-worker KIS copies. Release scope writes `0440` copies owned by the consuming UID,
 including an independent path for `candidate-runner`:
 `10001:10001` for API/workers, `999:999` for PostgreSQL/schema checks and the
 non-root bootstrap/migration one-shots, and `101:101` for the unprivileged
@@ -283,7 +289,28 @@ Nginx image. The bootstrap/migration copies are stricter `0400` files owned by
 one-shot to root would violate the deployment contract. Compose refuses to
 start until these copies exist under `LAGRANGE_RUNTIME_SECRET_DIR` (default
 `deploy/secrets/runtime`). The runtime directory is gitignored and must be
-re-provisioned after rotating a source secret.
+re-provisioned after rotating a source secret. For a production absolute source
+and runtime root, pass both paths explicitly because this helper does not load
+Compose `.env`:
+
+```sh
+sudo env \
+  LAGRANGE_SECRET_SOURCE_DIR=/etc/lagrange/secrets \
+  LAGRANGE_RUNTIME_SECRET_DIR=/etc/lagrange/secrets/runtime \
+  deploy/secrets/provision-runtime-secrets.sh --scope serving-prereqs
+```
+
+The matching read-only validator is:
+
+```sh
+export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/validate-production-config.sh \
+  --scope serving-prereqs --env-file deploy/compose/.env
+```
+
+`serving-prereqs` does not have a `compose-release.sh` execution mode; use the
+full release scope only after KIS backfill and immutable dataset approval.
 
 After the ETF Raw→Curated dataset is approved, provision the remaining serving
 copies and validate the full release contract:

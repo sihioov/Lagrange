@@ -25,12 +25,18 @@ if git check-ignore -q "$provision"; then
   die 'provisioner is unexpectedly ignored by Git'
 fi
 bash -n "$provision" || die "provisioner has shell syntax errors"
-grep -Fq -- '--scope infrastructure|backfill|release' "$provision" \
+grep -Fq -- '--scope infrastructure|serving-prereqs|backfill|release' "$provision" \
   || die 'provisioner scope contract is absent'
 grep -Fq 'scope=$scope' "$provision" \
   || die 'provisioner must report the selected scope'
-grep -Fq 'if [ "$scope" = release ]; then' "$provision" \
-  || die 'provisioner must fence serving-only copies to release scope'
+grep -Fq 'serving-prereqs)' "$provision" \
+  || die 'provisioner serving-prereqs scope branch is missing'
+grep -Fq 'preflight_source' "$provision" \
+  || die 'provisioner source preflight is missing'
+grep -Fq 'for spec in "${copy_specs[@]}"' "$provision" \
+  || die 'provisioner must preflight and copy the selected inventory'
+grep -Fq 'before creating the runtime' "$provision" \
+  || die 'provisioner must preflight before writes'
 [ -f "$db_dockerfile" ] || die 'missing database one-shot Dockerfile'
 [ -f "$paper_wrapper" ] || die 'missing Paper runtime wrapper'
 bash -n "$paper_wrapper" || die 'Paper runtime wrapper has shell syntax errors'
@@ -82,11 +88,11 @@ service_block() {
 # sides of the ownership contract. The image, provisioner, and long syntax
 # mounts must agree on the non-root UID/GID and the stricter one-shot mode.
 for service in db-role-bootstrap db-migrate; do
-  grep -Eq "^copy_secret[[:space:]]+$service[[:space:]].*[[:space:]]999[[:space:]]+999[[:space:]]+0400[[:space:]]+yes$" "$provision" \
+  grep -Eq "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]].*[[:space:]]999[[:space:]]+999[[:space:]]+0400[[:space:]]+yes$" "$provision" \
     || die "provisioner must install $service secrets as 999:999 mode 0400"
   expected_count=1
   [ "$service" = db-role-bootstrap ] && expected_count=7
-  provision_count=$(grep -Ec "^copy_secret[[:space:]]+$service[[:space:]]" "$provision" || true)
+  provision_count=$(grep -Ec "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]]" "$provision" || true)
   [ "$provision_count" -eq "$expected_count" ] \
     || die "$service provisioner entry count changed (expected $expected_count)"
   block=$(service_block "$service")
@@ -105,11 +111,11 @@ for service in db-role-bootstrap db-migrate; do
     || die "$service must mount $expected_count secrets with mode 0400"
 done
 
-# Infrastructure scope must be able to complete the DB/raw/schema gates before
-# KIS credentials or serving approval exist. Keep its exact runtime inventory
-# aligned with the validator: seven bootstrap copies, one migration copy, and
-# one PostgreSQL plus one schema-check copy. No research-worker copy belongs to
-# this scope.
+# Every selected runtime inventory entry is declared once in the provisioner
+# copy-spec functions and must remain aligned with validator runtime_specs. The
+# serving-prereqs list intentionally includes all non-KIS serving copies but no
+# KIS source; backup_encryption_key is source-only and is preflighted without a
+# runtime destination.
 for expected in \
   'db-role-bootstrap postgres_password postgres_password 999 999 0400 yes' \
   'db-role-bootstrap db_migration_owner_password db_migration_owner_password 999 999 0400 yes' \
@@ -120,15 +126,41 @@ for expected in \
   'db-role-bootstrap db_admin_password db_admin_password 999 999 0400 yes' \
   'db-migrate db_migration_owner_password db_migration_owner_password 999 999 0400 yes' \
   'postgres postgres_password postgres_password 999 999 0440 yes' \
-  'research-schema-check postgres_password postgres_password 999 999 0440 yes'; do
+  'research-schema-check postgres_password postgres_password 999 999 0440 yes' \
+  'reverse-proxy lagrange_tls_cert tls/lagrange.crt 101 101 0440 no' \
+  'reverse-proxy lagrange_tls_key tls/lagrange.key 101 101 0440 no' \
+  'api-server db_app_password db_app_password 10001 10001 0440 yes' \
+  'api-server db_admin_password db_admin_password 10001 10001 0440 yes' \
+  'api-server db_audit_password db_audit_password 10001 10001 0440 yes' \
+  'api-server cursor_secret cursor_secret 10001 10001 0440 yes' \
+  'api-server session_secret session_secret 10001 10001 0440 yes' \
+  'api-server csrf_secret csrf_secret 10001 10001 0440 yes' \
+  'api-server auth0_client_secret auth0_client_secret 10001 10001 0440 yes' \
+  'research-worker db_research_password db_research_password 10001 10001 0440 yes' \
+  'recommendation-runner db_worker_password db_worker_password 10001 10001 0440 yes' \
+  'candidate-runner db_worker_password db_worker_password 10001 10001 0440 yes' \
+  'nt-backtest-worker-1 db_worker_password db_worker_password 10001 10001 0440 yes' \
+  'nt-backtest-worker-2 db_worker_password db_worker_password 10001 10001 0440 yes' \
+  'paper-scheduler db_app_password db_app_password 10001 10001 0440 yes' \
+  'paper-scheduler db_worker_password db_worker_password 10001 10001 0440 yes' \
+  'paper-scheduler db_admin_password db_admin_password 10001 10001 0440 yes' \
+  'paper-scheduler db_audit_password db_audit_password 10001 10001 0440 yes' \
+  'research-worker kis_app_key kis_app_key 10001 10001 0440 yes' \
+  'research-worker kis_app_secret kis_app_secret 10001 10001 0440 yes'; do
   read -r service target source uid gid mode single_line <<<"$expected"
-  awk -v s="$service" -v t="$target" -v src="$source" -v u="$uid" \
-    -v g="$gid" -v m="$mode" -v one="$single_line" \
-    '$1 == "copy_secret" && $2 == s && $3 == t && $4 == src &&
-     $5 == u && $6 == g && $7 == m && $8 == one { found=1 }
-     END { exit !found }' "$provision" \
+  grep -Eq "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]]+$target[[:space:]]+$source[[:space:]]+$uid[[:space:]]+$gid[[:space:]]+$mode[[:space:]]+$single_line$" "$provision" \
     || die "infrastructure provisioner inventory missing: $expected"
 done
+grep -Fq 'add_extra_source backup_encryption_key yes' "$provision" \
+  || die 'serving-prereqs/release backup source preflight is missing'
+serving_branch=$(awk '
+  /^  serving-prereqs\)/ { in_scope=1; next }
+  in_scope && /^  backfill\)/ { exit }
+  in_scope { print }
+' "$provision")
+if grep -Eq 'kis_app_key|kis_app_secret' <<<"$serving_branch"; then
+  die 'serving-prereqs must not add KIS runtime copies'
+fi
 
 grep -Fq 'reject_dotdot()' "$provision" \
   || die 'provisioner must reject .. path aliases'
@@ -144,6 +176,14 @@ grep -Fq 'check_path "$output"' "$provision" \
   || die 'provisioner must fence runtime secret-file ancestors'
 grep -Fq 'must not traverse a symlink' "$provision" \
   || die 'provisioner must reject symlinked ancestors'
+grep -Fq "stat -c '%a'" "$provision" \
+  || die 'provisioner must validate source file modes before writes'
+grep -Fq 'crypto_placeholder_pattern' "$provision" \
+  || die 'provisioner crypto placeholder contract is missing'
+grep -Fq "grep -Eq '^[0-9a-f]{64}$'" "$provision" \
+  || die 'provisioner crypto lowercase-hex contract is missing'
+grep -Fq 'crypto source secrets must be distinct' "$provision" \
+  || die 'provisioner crypto distinctness contract is missing'
 grep -Fq "\\r'" "$provision" \
   || die 'provisioner must reject CR-containing credential secrets'
 
@@ -192,6 +232,7 @@ expect_path_rejection input-ancestor "$fixture/input.out" \
 
 rm -f "$fixture/source/postgres_password"
 printf 'fixture-secret' >"$fixture/source/postgres_password"
+chmod 0600 "$fixture/source/postgres_password"
 ln -s "$fixture/runtime-real" "$fixture/runtime/db-role-bootstrap"
 expect_path_rejection output-directory "$fixture/output-dir.out" \
   env LAGRANGE_SECRET_SOURCE_DIR="$fixture/source" \
@@ -206,5 +247,37 @@ expect_path_rejection output-file "$fixture/output-file.out" \
   env LAGRANGE_SECRET_SOURCE_DIR="$fixture/source" \
       LAGRANGE_RUNTIME_SECRET_DIR="$fixture/runtime" \
       bash "$provision" --scope backfill
+
+# A serving-prereqs crypto source with 63 hex characters must fail before any
+# runtime directory is created. The fake id(1) keeps this focused test rootless.
+crypto_source="$fixture/crypto-source"
+crypto_runtime="$fixture/crypto-runtime"
+malformed_cursor=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde
+mkdir -p "$crypto_source/tls"
+for name in postgres_password db_migration_owner_password db_app_password \
+  db_worker_password db_audit_password db_research_password db_admin_password \
+  session_secret csrf_secret cursor_secret auth0_client_secret backup_encryption_key; do
+  value=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  [ "$name" = cursor_secret ] && value=$malformed_cursor
+  printf '%s' "$value" >"$crypto_source/$name"
+  chmod 0600 "$crypto_source/$name"
+done
+printf '%s\n' fixture-certificate >"$crypto_source/tls/lagrange.crt"
+printf '%s\n' fixture-private-key >"$crypto_source/tls/lagrange.key"
+chmod 0600 "$crypto_source/tls/lagrange.crt" "$crypto_source/tls/lagrange.key"
+if PATH="$fake_bin:$PATH" env \
+   LAGRANGE_SECRET_SOURCE_DIR="$crypto_source" \
+   LAGRANGE_RUNTIME_SECRET_DIR="$crypto_runtime" \
+   bash "$provision" --scope serving-prereqs \
+   >"$fixture/crypto-shape.out" 2>&1; then
+  die 'provisioner accepted malformed cursor crypto source'
+fi
+grep -Fq 'crypto source cursor_secret must contain exactly 64 lowercase hex characters' \
+  "$fixture/crypto-shape.out" \
+  || die 'provisioner did not report malformed cursor shape'
+[ ! -e "$crypto_runtime" ] || die 'malformed crypto source left partial runtime writes'
+if grep -Fq "$malformed_cursor" "$fixture/crypto-shape.out"; then
+  die 'provisioner leaked a crypto fixture value'
+fi
 
 echo 'SECRETS_RUNTIME_STATIC: PASS'

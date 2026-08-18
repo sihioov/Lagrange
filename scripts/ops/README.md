@@ -12,24 +12,29 @@ before Compose can reinterpret a value.
 | `provision-db-secrets.sh` | `--dry-run` | `--check` performs a root-only read-only check of the seven DB source files; `--strip-trailing-newline` is an explicit atomic repair for a complete LF-terminated hex set; `--apply` generates new hex values and never overwrites an existing target |
 | `provision-crypto-secrets.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` generates four distinct 256-bit values for session/CSRF/cursor/backup encryption and atomically installs them without overwriting existing targets |
 | `provision-auth0-secret.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` reads the secret twice from a hidden terminal prompt; `--import-file` migrates a protected legacy file; both atomically install one root-owned file without overwriting it |
-| `validate-production-config.sh` | strict `--scope release` validation (root-only read-only inspection) | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
+| `validate-production-config.sh` | strict `--scope release` validation (root-only read-only inspection) | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope serving-prereqs` checks all non-KIS serving source/runtime copies without RESEARCH/KIS/dataset inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
 | `compose-release.sh` | `--scope release --plan` (root-only; it invokes the validator) | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
 | `backfill-production.sh` | `--plan` | `--execute` is root-only because it validates protected production secrets, then calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
 | `post-backfill-health.sh` | `--scope backfill --plan` | `--check` is root-only because it validates protected production secrets, then runs the existing research-worker EOD freshness health gate; no KIS call |
 | `self-test.sh` | static/no-infrastructure tests | none |
 
-Production execution is intentionally split into infrastructure, data, and serving approvals:
+Production execution is intentionally split into infrastructure, optional serving
+pre-staging, data, and serving approvals:
 
 1. host and non-KIS source secret provisioning (`provision-linux.sh --apply`,
    `provision-db-secrets.sh --apply`, `provision-crypto-secrets.sh --apply`,
    then
    `deploy/secrets/provision-runtime-secrets.sh --scope infrastructure`),
 2. database/raw/schema bootstrap (`compose-release.sh --scope infrastructure --apply`),
-3. KIS data bootstrap/backfill (`deploy/secrets/provision-runtime-secrets.sh --scope backfill`, then
+3. optionally stage non-KIS serving copies with
+   `deploy/secrets/provision-runtime-secrets.sh --scope serving-prereqs` and
+   verify them with `validate-production-config.sh --scope serving-prereqs`;
+   this is copy/readiness-only and never starts Compose services,
+4. KIS data bootstrap/backfill (`deploy/secrets/provision-runtime-secrets.sh --scope backfill`, then
    `compose-release.sh --scope backfill --apply`, then
    the bounded ETF `research-worker --once` backfill command), followed by the
    dependency-free worker healthcheck, curated dataset approval, and
-4. the full
+5. the full
    serving release (`compose-release.sh --scope release --apply`).
 
 No script enables Compose `live`, asks for a KIS account/order credential, or
@@ -137,6 +142,12 @@ require KIS credentials, serving-only Auth0/TLS values, or the recommendation
 dataset five-pin. The subsequent `--scope backfill` also does not require
 serving-only values or pins. Those
 values are outputs/approval inputs produced after the ETF Raw→Curated review.
+The `--scope serving-prereqs` check is independent of backfill: it requires the
+non-KIS Auth0/TLS/API/worker source and runtime copies, but does not require KIS
+app credentials, any `RESEARCH_*`/entitlement value, or recommendation pins.
+It never invokes Docker, a provider, or an API and is not a Compose execution
+scope; `compose-release.sh` intentionally continues to support only
+`infrastructure|backfill|release`.
 The backfill state identity binds only pre-run inputs (date range, universe,
 code commit, entitlement, and source scope), so entering the approved pin later
 does not invalidate a resumable backfill. The backfill scope does not start the

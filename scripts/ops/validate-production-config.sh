@@ -11,6 +11,11 @@
 # `--scope backfill` is the deliberately smaller first-phase contract: it gates
 # the KIS worker/bootstrap DB path without requiring serving-only Auth0/TLS
 # values or the curated dataset pin that is produced by that very backfill.
+# `--scope serving-prereqs` is the copy/readiness contract for all non-KIS
+# serving inputs. It requires Auth0/TLS, API/worker source secrets, and the
+# non-KIS runtime copies, but deliberately does not require KIS credentials,
+# RESEARCH_* settings, entitlement, or recommendation dataset pins. It never
+# starts a service; Compose remains on the three execution scopes below.
 # `--scope release` is the full serving contract and remains the default.
 set -euo pipefail
 
@@ -29,7 +34,7 @@ warnings=()
 usage() {
   cat <<'EOF'
 Usage: scripts/ops/validate-production-config.sh
-       [--scope infrastructure|backfill|release]
+       [--scope infrastructure|serving-prereqs|backfill|release]
        [--env-file PATH]
 
 Exit 0: production configuration and required secret files are ready.
@@ -53,6 +58,10 @@ the research schema check. It does not require KIS credentials, Auth0/TLS
 serving inputs, or recommendation dataset five-pin values.
 backfill scope additionally requires the KIS worker inputs, but does not
 require Auth0/TLS serving inputs or recommendation dataset five-pin values.
+serving-prereqs scope checks Auth0/TLS and every non-KIS runtime copy needed by
+the serving Compose inventory. It does not require KIS app credentials,
+RESEARCH_* or entitlement values, or recommendation dataset five-pin values;
+it is read-only and does not start Compose services.
 release scope requires every serving value and the approved five-pin dataset.
 EOF
 }
@@ -61,7 +70,7 @@ die() { echo "production-config: $*" >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --scope)
-      [ "$#" -ge 2 ] || die '--scope needs infrastructure, backfill, or release'
+      [ "$#" -ge 2 ] || die '--scope needs infrastructure, serving-prereqs, backfill, or release'
       scope=$2
       shift 2
       ;;
@@ -76,8 +85,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$scope" in
-  infrastructure|backfill|release) ;;
-  *) die "--scope must be infrastructure, backfill, or release" ;;
+  infrastructure|serving-prereqs|backfill|release) ;;
+  *) die "--scope must be infrastructure, serving-prereqs, backfill, or release" ;;
 esac
 
 # Production source secrets and runtime copies are root-owned by contract. Check
@@ -139,13 +148,17 @@ require_value() {
 required_keys=(
   LAGRANGE_DATA_DIR LAGRANGE_RUNTIME_SECRET_DIR POSTGRES_USER POSTGRES_DB
 )
-if [ "$scope" != infrastructure ]; then
+if [ "$scope" = backfill ] || [ "$scope" = release ]; then
   required_keys+=(RESEARCH_APP_ENV RESEARCH_FETCH_MODE RESEARCH_ENTITLEMENT_REFERENCE)
 fi
-if [ "$scope" = release ]; then
+if [ "$scope" = serving-prereqs ] || [ "$scope" = release ]; then
   required_keys+=(
     LAGRANGE_ARTIFACTS_DIR
     AUTH0_DOMAIN AUTH0_CLIENT_ID AUTH0_REDIRECT_URI
+  )
+fi
+if [ "$scope" = release ]; then
+  required_keys+=(
     RECOMMENDATION_DATASET_VERSION_ID RECOMMENDATION_DATASET_ID
     RECOMMENDATION_DATASET_VERSION RECOMMENDATION_CURATED_VERSION
     RECOMMENDATION_DATASET_MANIFEST_SHA256
@@ -158,8 +171,10 @@ done
 data_dir=$(get LAGRANGE_DATA_DIR)
 artifacts_dir=$(get LAGRANGE_ARTIFACTS_DIR)
 [ -z "$data_dir" ] || [[ "$data_dir" = /* ]] || invalid+=("LAGRANGE_DATA_DIR must be absolute")
-[ "$scope" = release ] && { [ -z "$artifacts_dir" ] || [[ "$artifacts_dir" = /* ]] || invalid+=("LAGRANGE_ARTIFACTS_DIR must be absolute"); }
-if [ "$scope" != infrastructure ]; then
+if [ "$scope" = serving-prereqs ] || [ "$scope" = release ]; then
+  [ -z "$artifacts_dir" ] || [[ "$artifacts_dir" = /* ]] || invalid+=("LAGRANGE_ARTIFACTS_DIR must be absolute")
+fi
+if [ "$scope" = backfill ] || [ "$scope" = release ]; then
   [ "$(get RESEARCH_APP_ENV)" = production ] || invalid+=("RESEARCH_APP_ENV must be production")
   [ "$(get RESEARCH_FETCH_MODE)" = credentialed ] || invalid+=("RESEARCH_FETCH_MODE must be credentialed")
   [ "$(get RESEARCH_CANDIDATE_ENABLED)" = false ] || invalid+=("RESEARCH_CANDIDATE_ENABLED must be false until the KIS candidate bridge is released")
@@ -187,6 +202,12 @@ elif [ "$scope" = backfill ]; then
     postgres_password db_migration_owner_password db_app_password db_worker_password
     db_audit_password db_research_password db_admin_password kis_app_key kis_app_secret
   )
+elif [ "$scope" = serving-prereqs ]; then
+  secret_files=(
+    postgres_password db_migration_owner_password db_app_password db_worker_password
+    db_audit_password db_research_password db_admin_password cursor_secret
+    session_secret csrf_secret auth0_client_secret backup_encryption_key
+  )
 else
   secret_files=(
     postgres_password db_migration_owner_password db_app_password db_worker_password
@@ -199,7 +220,9 @@ db_secret_names=(
   postgres_password db_migration_owner_password db_app_password db_worker_password
   db_audit_password db_research_password db_admin_password
 )
+crypto_secret_names=(session_secret csrf_secret cursor_secret backup_encryption_key)
 declare -A db_secret_ready=()
+declare -A crypto_secret_ready=()
 check_source_mode() {
   local path=$1 label=$2 mode
   mode=$(stat -c '%a' -- "$path") || die "cannot stat $label: $path"
@@ -208,12 +231,30 @@ check_source_mode() {
     *) invalid+=("$label must be mode 0400 or 0600 (found $mode): $path") ;;
   esac
 }
+crypto_placeholder_pattern='placeholder|example|todo|change[-_ ]*me|change[-_ ]*this|replace[-_ ]*(me|this|with)|your[-_ ]*(client[-_ ]*)?secret|secret[-_ ]*here|auth0[-_ ]*client[-_ ]*secret|<[^>]+>|\$\{[^}]+\}'
+check_crypto_source_shape() {
+  local path=$1 label=$2 byte_count
+  byte_count=$(wc -c <"$path") || die "cannot inspect $label: $path"
+  if [ "$byte_count" -ne 64 ] ||
+     ! LC_ALL=C grep -Eq '^[0-9a-f]{64}$' -- "$path" ||
+     LC_ALL=C grep -Eiq -- "$crypto_placeholder_pattern" "$path"; then
+    invalid+=("$label must contain exactly 64 lowercase hex characters with no newline or placeholder")
+    return 1
+  fi
+  return 0
+}
 for name in "${secret_files[@]}"; do
   path="$source_dir/$name"
   case "$name" in
     postgres_password|db_migration_owner_password|db_app_password|db_worker_password|db_audit_password|db_research_password|db_admin_password) is_db_secret=yes ;;
     *) is_db_secret=no ;;
   esac
+  is_crypto_secret=no
+  if [ "$scope" = serving-prereqs ] || [ "$scope" = release ]; then
+    for crypto_name in "${crypto_secret_names[@]}"; do
+      [ "$name" = "$crypto_name" ] && is_crypto_secret=yes
+    done
+  fi
   if [ ! -f "$path" ] || [ -L "$path" ]; then
     missing+=("secret $name (run the approved secret provisioning procedure)")
   elif [ ! -s "$path" ]; then
@@ -224,6 +265,12 @@ for name in "${secret_files[@]}"; do
     check_source_mode "$path" "secret $name"
     if grep -Eiq 'REPLACE_WITH|CHANGE_ME|YOUR_|example|placeholder' "$path"; then
       missing+=("secret $name still contains a template placeholder")
+    elif [ "$is_crypto_secret" = yes ]; then
+      # The shape helper reports only filenames/reasons. Mark this value ready
+      # only when its exact contract passed all three checks.
+      if check_crypto_source_shape "$path" "crypto secret $name"; then
+        crypto_secret_ready["$name"]=1
+      fi
     elif [ "$is_db_secret" = yes ]; then
       # Equality checks run only after every DB source is regular,
       # non-empty, single-line, and free of template placeholders. They never
@@ -232,6 +279,27 @@ for name in "${secret_files[@]}"; do
     fi
   fi
 done
+
+if [ "$scope" = serving-prereqs ] || [ "$scope" = release ]; then
+  all_crypto_secrets_ready=yes
+  for name in "${crypto_secret_names[@]}"; do
+    if [ -z "${crypto_secret_ready[$name]+set}" ]; then
+      all_crypto_secrets_ready=no
+      break
+    fi
+  done
+  if [ "$all_crypto_secrets_ready" = yes ]; then
+    for ((left = 0; left < ${#crypto_secret_names[@]}; left++)); do
+      for ((right = left + 1; right < ${#crypto_secret_names[@]}; right++)); do
+        left_name=${crypto_secret_names[left]}
+        right_name=${crypto_secret_names[right]}
+        if cmp -s -- "$source_dir/$left_name" "$source_dir/$right_name"; then
+          invalid+=("crypto source secrets must be distinct: $left_name conflicts with $right_name")
+        fi
+      done
+    done
+  fi
+fi
 
 # PostgreSQL role credentials are intentionally independent. Compare only
 # source files that passed the shape gate above and report filenames, never
@@ -257,7 +325,7 @@ if [ "$all_db_secrets_ready" = yes ]; then
   done
 fi
 
-if [ "$scope" = release ]; then
+if [ "$scope" = serving-prereqs ] || [ "$scope" = release ]; then
   for name in lagrange.crt lagrange.key; do
     path="$source_dir/tls/$name"
     if [ ! -f "$path" ] || [ -L "$path" ]; then
@@ -284,6 +352,25 @@ if [ "$scope" = infrastructure ]; then
     db-role-bootstrap/db_audit_password:999:999:400 db-role-bootstrap/db_research_password:999:999:400
     db-role-bootstrap/db_admin_password:999:999:400 db-migrate/db_migration_owner_password:999:999:400
     postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
+  )
+elif [ "$scope" = serving-prereqs ]; then
+  runtime_specs=(
+    reverse-proxy/lagrange_tls_cert:101:101:440 reverse-proxy/lagrange_tls_key:101:101:440
+    api-server/db_app_password:10001:10001:440 api-server/db_admin_password:10001:10001:440
+    api-server/db_audit_password:10001:10001:440 api-server/cursor_secret:10001:10001:440
+    api-server/session_secret:10001:10001:440 api-server/csrf_secret:10001:10001:440
+    api-server/auth0_client_secret:10001:10001:440
+    db-role-bootstrap/postgres_password:999:999:400
+    db-role-bootstrap/db_migration_owner_password:999:999:400
+    db-role-bootstrap/db_app_password:999:999:400 db-role-bootstrap/db_worker_password:999:999:400
+    db-role-bootstrap/db_audit_password:999:999:400 db-role-bootstrap/db_research_password:999:999:400
+    db-role-bootstrap/db_admin_password:999:999:400 db-migrate/db_migration_owner_password:999:999:400
+    postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
+    research-worker/db_research_password:10001:10001:440 recommendation-runner/db_worker_password:10001:10001:440
+    candidate-runner/db_worker_password:10001:10001:440 nt-backtest-worker-1/db_worker_password:10001:10001:440
+    nt-backtest-worker-2/db_worker_password:10001:10001:440 paper-scheduler/db_app_password:10001:10001:440
+    paper-scheduler/db_worker_password:10001:10001:440 paper-scheduler/db_admin_password:10001:10001:440
+    paper-scheduler/db_audit_password:10001:10001:440
   )
 elif [ "$scope" = backfill ]; then
   runtime_specs=(

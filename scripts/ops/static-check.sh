@@ -174,7 +174,7 @@ grep -Fq -- '--preflight must run as root' "$ops/provision-linux.sh" || die 'pro
 grep -Fq 'must not traverse a symlink' "$ops/provision-linux.sh" || die 'provision ancestor symlink fence missing'
 grep -Fq 'service user is not a member of service group' "$ops/provision-linux.sh" || die 'service group membership fence missing'
 grep -Fq 'BLOCKED_EXTERNAL' "$ops/validate-production-config.sh" || die 'config blocker contract missing'
-grep -Fq -- '--scope infrastructure|backfill|release' "$ops/validate-production-config.sh" || die 'config scope contract missing'
+grep -Fq -- '--scope infrastructure|serving-prereqs|backfill|release' "$ops/validate-production-config.sh" || die 'config scope contract missing'
 grep -Fq -- 'validation must run as root to inspect protected production paths' "$ops/validate-production-config.sh" \
   || die 'config validator root guard missing'
 grep -Fq 'LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"' "$ops/validate-production-config.sh" \
@@ -185,6 +185,18 @@ grep -Fq 'dotenv_validate_shell_overrides' "$ops/validate-production-config.sh" 
 grep -Fq 'KIS read-only' "$ops/validate-production-config.sh" || die 'KIS read-only contract missing'
 grep -Fq 'mode 0400 or 0600' "$ops/validate-production-config.sh" || die 'source secret mode contract missing'
 grep -Fq 'runtime secret' "$ops/validate-production-config.sh" || die 'runtime secret validation missing'
+grep -Fq 'serving-prereqs scope checks Auth0/TLS' "$ops/validate-production-config.sh" \
+  || die 'serving-prereqs readiness contract missing'
+grep -Fq 'backup_encryption_key' "$ops/validate-production-config.sh" \
+  || die 'serving-prereqs source inventory missing backup key'
+grep -Fq 'research-worker/db_research_password:10001:10001:440' "$ops/validate-production-config.sh" \
+  || die 'serving-prereqs runtime inventory missing research DB copy'
+grep -Fq 'crypto_placeholder_pattern' "$ops/validate-production-config.sh" \
+  || die 'validator crypto placeholder contract is missing'
+grep -Fq "grep -Eq '^[0-9a-f]{64}$'" "$ops/validate-production-config.sh" \
+  || die 'validator crypto lowercase-hex contract is missing'
+grep -Fq 'crypto source secrets must be distinct' "$ops/validate-production-config.sh" \
+  || die 'validator crypto distinctness contract is missing'
 grep -Fq 'db_secret_names=' "$ops/validate-production-config.sh" || die 'DB secret distinctness inventory missing'
 grep -Fq 'DB source secrets must be distinct' "$ops/validate-production-config.sh" || die 'DB secret distinctness blocker missing'
 grep -Fq 'cmp -s' "$ops/validate-production-config.sh" || die 'DB secret equality check missing'
@@ -194,6 +206,9 @@ grep -Fq 'build --pull=false \' "$ops/compose-release.sh" || die 'Compose build 
 grep -Fq 'db-role-bootstrap db-migrate' "$ops/compose-release.sh" || die 'one-shot images are not built before run'
 grep -Fq 'up --wait --no-deps api-server' "$ops/compose-release.sh" || die 'serving stage must not rerun removed one-shots'
 grep -Fq -- '--scope infrastructure|backfill|release' "$ops/compose-release.sh" || die 'Compose scope contract missing'
+if grep -Fq 'serving-prereqs' "$ops/compose-release.sh"; then
+  die 'serving-prereqs must remain copy/readiness-only and absent from Compose execution'
+fi
 grep -Fq 'LAGRANGE_DATA_ROOT="$data_dir"' "$ops/compose-release.sh" || die 'Compose preflight must use env-file data root'
 grep -Fq 'COMPOSE_BACKFILL_BOOTSTRAP_ORDER' "$ops/compose-release.sh" || die 'backfill Compose bootstrap order missing'
 grep -Fq 'COMPOSE_INFRASTRUCTURE_ORDER' "$ops/compose-release.sh" || die 'infrastructure Compose order missing'

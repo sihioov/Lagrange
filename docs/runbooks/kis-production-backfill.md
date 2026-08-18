@@ -95,6 +95,28 @@ sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
   scripts/ops/compose-release.sh --scope infrastructure --apply
 ```
 
+KIS 없이 Auth0/TLS와 나머지 비-KIS serving runtime copy를 먼저 준비하려면
+다음 copy/readiness-only scope를 선택적으로 실행한다. 이 scope는 Docker,
+Compose service, provider/API call을 시작하지 않고, `RESEARCH_*`, entitlement,
+KIS key/secret, recommendation five-pin도 요구하지 않는다. `compose-release.sh`
+에는 이 scope를 추가하지 않는다.
+
+```bash
+sudo env \
+  LAGRANGE_SECRET_SOURCE_DIR=/etc/lagrange/secrets \
+  LAGRANGE_RUNTIME_SECRET_DIR=/etc/lagrange/secrets/runtime \
+  deploy/secrets/provision-runtime-secrets.sh --scope serving-prereqs
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/validate-production-config.sh \
+  --scope serving-prereqs --env-file deploy/compose/.env
+```
+
+`serving-prereqs`는 DB7, session/CSRF/cursor/Auth0, backup source, TLS source를
+전체 preflight한 뒤 reverse-proxy/API/infra DB/research DB/runner DB copy만
+설치한다. backup key는 source shape만 확인하고 runtime에 복사하지 않는다.
+KIS backfill과 immutable dataset five-pin이 준비되기 전에는 API/Web/edge를
+기동할 수 없으므로 이 단계가 serving release를 의미하지 않는다.
+
 이제 KIS 자격증명이 준비된 경우에만 research-worker 런타임 copy를 추가하고
 backfill scope로 worker image를 준비한다.
 

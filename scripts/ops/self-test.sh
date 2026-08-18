@@ -684,6 +684,99 @@ else
   fi
 fi
 
+if LAGRANGE_ENV_FILE="$out_dir/.env" \
+   LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
+   bash "$ops/validate-production-config.sh" --scope serving-prereqs >"$out_dir/serving-prereqs-config.out" 2>&1; then
+  echo 'self-test: serving-prereqs scope unexpectedly passed incomplete fixtures' >&2
+  exit 1
+else
+  grep -Eq '^(INVALID_CONFIG|BLOCKED_EXTERNAL):' "$out_dir/serving-prereqs-config.out"
+  if grep -Eq 'kis_app_key|kis_app_secret|RESEARCH_|RECOMMENDATION_DATASET_|RECOMMENDATION_CURATED' \
+     "$out_dir/serving-prereqs-config.out"; then
+    echo 'self-test: serving-prereqs scope requested deferred KIS/research/dataset values' >&2
+    cat "$out_dir/serving-prereqs-config.out" >&2
+    exit 1
+  fi
+fi
+
+# The validator must reject malformed crypto source shapes and pairwise
+# duplicates without printing either fixture value. Runtime copies are omitted
+# deliberately; the source-level INVALID_CONFIG is the assertion under test.
+crypto_source="$out_dir/crypto-source"
+crypto_env="$out_dir/crypto.env"
+mkdir -p "$crypto_source/tls"
+for name in postgres_password db_migration_owner_password db_app_password \
+  db_worker_password db_audit_password db_research_password db_admin_password; do
+  printf 'db-fixture-%s' "$name" >"$crypto_source/$name"
+  chmod 0600 "$crypto_source/$name"
+done
+for name in session_secret csrf_secret cursor_secret backup_encryption_key; do
+  case "$name" in
+    session_secret) value=1111111111111111111111111111111111111111111111111111111111111111 ;;
+    csrf_secret) value=2222222222222222222222222222222222222222222222222222222222222222 ;;
+    cursor_secret) value=3333333333333333333333333333333333333333333333333333333333333333 ;;
+    backup_encryption_key) value=4444444444444444444444444444444444444444444444444444444444444444 ;;
+  esac
+  printf '%s' "$value" >"$crypto_source/$name"
+  chmod 0600 "$crypto_source/$name"
+done
+printf '%s' fixture-auth0-client-secret >"$crypto_source/auth0_client_secret"
+printf '%s\n' fixture-certificate >"$crypto_source/tls/lagrange.crt"
+printf '%s\n' fixture-private-key >"$crypto_source/tls/lagrange.key"
+chmod 0600 "$crypto_source/auth0_client_secret" "$crypto_source/tls/lagrange.crt" "$crypto_source/tls/lagrange.key"
+cp "$out_dir/.env" "$crypto_env"
+chmod 0600 "$crypto_env"
+sed -i -e "s|^LAGRANGE_SECRET_SOURCE_DIR=.*|LAGRANGE_SECRET_SOURCE_DIR=$crypto_source|" -e 's|^AUTH0_DOMAIN=.*|AUTH0_DOMAIN=tenant.auth0.com|' -e 's|^AUTH0_CLIENT_ID=.*|AUTH0_CLIENT_ID=client-id-fixture|' -e 's|^AUTH0_REDIRECT_URI=.*|AUTH0_REDIRECT_URI=https://l1nnx-sh.taild74a33.ts.net/auth/callback|' "$crypto_env"
+printf '%s' 333333333333333333333333333333333333333333333333333333333333333 >"$crypto_source/cursor_secret"
+if LAGRANGE_ENV_FILE="$crypto_env" LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 bash "$ops/validate-production-config.sh" --scope serving-prereqs >"$out_dir/crypto-shape.out" 2>&1; then
+  echo 'self-test: malformed crypto source unexpectedly passed validator' >&2
+  exit 1
+fi
+grep -Fq 'crypto secret cursor_secret must contain exactly 64 lowercase hex characters' "$out_dir/crypto-shape.out"
+if grep -Eq '3333333333|fixture-auth0-client-secret' "$out_dir/crypto-shape.out"; then
+  echo 'self-test: malformed crypto fixture leaked in validator output' >&2
+  exit 1
+fi
+printf '%s' 1111111111111111111111111111111111111111111111111111111111111111 >"$crypto_source/cursor_secret"
+if LAGRANGE_ENV_FILE="$crypto_env" LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 bash "$ops/validate-production-config.sh" --scope serving-prereqs >"$out_dir/crypto-duplicate.out" 2>&1; then
+  echo 'self-test: duplicate crypto sources unexpectedly passed validator' >&2
+  exit 1
+fi
+grep -Fq 'crypto source secrets must be distinct: session_secret conflicts with cursor_secret' "$out_dir/crypto-duplicate.out"
+if grep -Eq '1111111111|fixture-auth0-client-secret' "$out_dir/crypto-duplicate.out"; then
+  echo 'self-test: duplicate crypto fixture leaked in validator output' >&2
+  exit 1
+fi
+
+# The serving-prereqs provisioner must validate its complete source inventory
+# before creating or replacing any runtime copy. Use shape-valid fixtures with
+# one deliberately missing source and assert that the runtime tree is untouched.
+serving_source="$out_dir/serving-source"
+serving_runtime="$out_dir/serving-runtime"
+mkdir -p "$serving_source/tls"
+for name in postgres_password db_migration_owner_password db_app_password \
+  db_worker_password db_audit_password db_research_password db_admin_password \
+  cursor_secret session_secret csrf_secret; do
+  printf 'fixture-%s' "$name" >"$serving_source/$name"
+  chmod 0600 "$serving_source/$name"
+done
+printf '%s\n' 'fixture-certificate' >"$serving_source/tls/lagrange.crt"
+printf '%s\n' 'fixture-private-key' >"$serving_source/tls/lagrange.key"
+chmod 0600 "$serving_source/tls/lagrange.crt" "$serving_source/tls/lagrange.key"
+if LAGRANGE_SECRET_SOURCE_DIR="$serving_source" \
+   LAGRANGE_RUNTIME_SECRET_DIR="$serving_runtime" \
+   bash "$root/deploy/secrets/provision-runtime-secrets.sh" \
+   --scope serving-prereqs >"$out_dir/serving-prereqs-provision.out" 2>&1; then
+  echo 'self-test: serving-prereqs provision unexpectedly accepted a missing source' >&2
+  exit 1
+fi
+grep -Fq 'auth0_client_secret' "$out_dir/serving-prereqs-provision.out"
+[ ! -e "$serving_runtime" ] || {
+  echo 'self-test: serving-prereqs provision left partial runtime writes' >&2
+  find "$serving_runtime" -print >&2
+  exit 1
+}
+
 # DB role credentials must not be reused. Build a shape-valid fixture with one
 # duplicate pair and verify the validator reports only the filenames, never
 # the shared credential value.

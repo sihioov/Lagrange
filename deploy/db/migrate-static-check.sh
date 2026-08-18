@@ -36,11 +36,11 @@ service_block() {
 # particular, do not "fix" an unreadable 0400 secret by running the image as
 # root: both one-shot jobs are deliberately non-root UID/GID 999.
 for service in db-role-bootstrap db-migrate; do
-  grep -Eq "^copy_secret[[:space:]]+$service[[:space:]].*[[:space:]]999[[:space:]]+999[[:space:]]+0400[[:space:]]+yes$" "$provision" \
+  grep -Eq "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]].*[[:space:]]999[[:space:]]+999[[:space:]]+0400[[:space:]]+yes$" "$provision" \
     || die_static "provisioner must install $service secrets as 999:999 mode 0400"
   expected_count=1
   [ "$service" = db-role-bootstrap ] && expected_count=7
-  provision_count=$(grep -Ec "^copy_secret[[:space:]]+$service[[:space:]]" "$provision" || true)
+  provision_count=$(grep -Ec "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]]" "$provision" || true)
   [ "$provision_count" -eq "$expected_count" ] \
     || die_static "$service provisioner entry count changed (expected $expected_count)"
   block=$(service_block "$service")
