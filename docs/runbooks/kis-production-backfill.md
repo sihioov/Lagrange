@@ -168,6 +168,12 @@ sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
 발급 실패를 포함한 시도 간격은 최소 1분이며, wrapper는 빠른 프로세스 재실행도
 막기 위해 root:root 0600의 비밀이 아닌 마지막 시도 시각만 별도 기록한다. 별도
 worker daemon이 실행 중이면 서로 다른 token cache가 생기므로 실행을 거부한다.
+같은 provider는 `chk-holiday (CTCA0903R)`의 첫 성공 응답을 범위 프로세스의
+불변 calendar snapshot으로 재사용한다. 이 응답의 날짜 창을 벗어나면 두 번째
+휴장일 호출을 하지 않고 `KIS_CALENDAR_SNAPSHOT_MISS`로 fail-closed 중단한다.
+그때까지 성공한 날짜는 state에 보존되므로 같은 state를 검토 후 재실행하여 다음
+snapshot 창을 순차적으로 진행한다. 따라서 수년 범위도 날짜마다 휴장일 API를
+호출하지 않는다.
 이 계약의 근거는 제공된 공식 XLSX sheet 4 `접근토큰발급(P)`와 KIS 공식
 `examples_user/kis_auth.py`의 만료 기반 캐시 예제다. worker는 한 날짜의 durable
 canonical EOD DB publication이 끝날 때마다 값/본문 없는 JSON event를 flush하고, wrapper는 exact

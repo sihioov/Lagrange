@@ -30,7 +30,12 @@ grep -Fq 'postgres.dump.enc' "$backup" || die 'PostgreSQL encrypted class missin
 grep -Fq 'raw.tar.enc' "$backup" || die 'Raw encrypted class missing'
 grep -Fq 'curated.tar.enc' "$backup" || die 'Curated encrypted class missing'
 grep -Fq -- '--network none --read-only --user 999:999' "$backup" || die 'isolated restore verification contract missing'
-grep -Fq 'pg_restore --no-owner --no-privileges -d verify' "$backup" || die 'actual PostgreSQL restore verification missing'
+grep -Fq 'CREATE ROLE migration_owner NOLOGIN' "$backup" || die 'isolated restore role bootstrap missing'
+grep -Fq 'CREATE ROLE research_writer NOLOGIN' "$backup" || die 'isolated restore role inventory incomplete'
+grep -Fq 'pg_restore --exit-on-error --no-owner --no-privileges -d verify' "$backup" \
+  || die 'actual PostgreSQL restore must fail closed on restore errors'
+grep -Fq '_sqlx_migrations' "$backup" || die 'isolated restore schema verification missing'
+grep -Fq 'dataset_versions' "$backup" || die 'isolated restore dataset schema verification missing'
 grep -Fq 'MIN_KEEP wins' "$backup" || die 'bounded retention floor missing'
 grep -Fq 'MAX_TOTAL_BYTES cannot be satisfied' "$backup" || die 'disk cap failure missing'
 grep -Fq 'rm -rf -- "$oldest_path"' "$backup" || die 'retention must use resolved exact set path'

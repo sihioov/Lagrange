@@ -29,8 +29,11 @@ and a valid backfill-scope production config. It uses the existing idempotent wo
 no order/account endpoint is called. The state file is append-only and each
 date must complete Raw -> normalized -> DB publication before progress is
 recorded. One bounded worker process owns the inclusive range so its in-memory
-KIS token is reused; the token is never persisted by this script. The state
-identity binds only pre-run inputs; the curated dataset
+KIS token and one exact chk-holiday calendar snapshot are reused; the token is
+never persisted by this script. If the broker calendar snapshot does not cover
+the next date, the worker stops fail-closed without issuing a second calendar
+request; rerun the same state after review to advance the snapshot window. The
+state identity binds only pre-run inputs; the curated dataset
 pin is produced and approved after this command, so it is never required here.
 EOF
 }
@@ -230,8 +233,9 @@ BACKFILL_PLAN: KIS read-only fixed ETF EOD
   idempotency: deterministic normalized batch/source_batch_id and exact manifest replay
   state identity: V3 pre-run inputs only (date range, universe, code, entitlement, source scope)
   verification: raw manifest+hashes -> normalize -> four canonical docs -> DB publication
-  token safety: one bounded worker/provider reuses one in-memory token for the range;
-                issue attempts are gated to one per minute and no bearer token is persisted
+  token safety: one bounded worker/provider reuses one in-memory token and one exact
+                chk-holiday snapshot; issue attempts are gated to one per minute and no
+                bearer token is persisted; an uncovered date stops fail-closed
   approval: operator reviews manifest/hash/counts, then pins one dataset version for recommendation/backtest/Paper
   state: $state_file (created only by --execute)
 PLAN_ONLY: no KIS call, Docker run, file write, or account/order access

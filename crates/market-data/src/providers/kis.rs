@@ -5,12 +5,15 @@
 //! and HTTP. Every successful KIS body becomes one immutable [`RawEnvelope`]
 //! without parsing or rewriting its bytes.
 
+use std::collections::BTreeMap;
 use std::future::Future;
+use std::sync::{Arc, Mutex};
 
-use domain::{InstrumentId, Venue};
+use domain::{InstrumentId, TradingDate, Venue};
 use kis_client::{
     CredentialSource, KisError, KisMarketDataClient, MarketDataReply, Sleeper, Transport,
 };
+use serde_json::Value;
 
 use crate::contract::{FetchMode, PROVIDER_KIS, RawEnvelope, RequestMetadata, ResponseKind};
 use crate::provider::{FetchRequest, ProviderError, RemoteDiagnostic};
@@ -70,6 +73,20 @@ where
 pub struct KisProvider<R: KisRead> {
     reader: R,
     instruments: Vec<InstrumentId>,
+    calendar_snapshot_cache: bool,
+    calendar_snapshot: Arc<Mutex<Option<CalendarSnapshot>>>,
+}
+
+/// A single reviewed `chk-holiday` response shared by one bounded range
+/// process.  KIS explicitly asks clients to call this service at most once per
+/// day; a range must therefore reuse one exact response until its coverage is
+/// exhausted, then stop rather than issue a second request.
+#[derive(Debug, Clone)]
+struct CalendarSnapshot {
+    bytes: Vec<u8>,
+    request: RequestMetadata,
+    retrieved_at: domain::UtcTimestamp,
+    covered_dates: BTreeMap<TradingDate, bool>,
 }
 
 impl<R: KisRead> KisProvider<R> {
@@ -97,6 +114,8 @@ impl<R: KisRead> KisProvider<R> {
         Ok(Self {
             reader,
             instruments,
+            calendar_snapshot_cache: false,
+            calendar_snapshot: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -111,7 +130,21 @@ impl<R: KisRead> KisProvider<R> {
         Self {
             reader,
             instruments,
+            calendar_snapshot_cache: false,
+            calendar_snapshot: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Enables the range-only `chk-holiday` snapshot contract.
+    ///
+    /// Ordinary one-date daemon/once calls retain their one request per
+    /// invocation behavior.  A bounded historical range opts into this mode
+    /// so one provider instance can reuse the exact first calendar response;
+    /// a target outside that response fails closed instead of violating KIS's
+    /// one-call-per-day operational guidance.
+    pub fn with_calendar_snapshot_cache(mut self) -> Self {
+        self.calendar_snapshot_cache = true;
+        self
     }
 
     pub fn provider_id(&self) -> &'static str {
@@ -181,22 +214,28 @@ impl<R: KisRead> KisProvider<R> {
                     }
                 }
                 ResponseKind::Calendar => {
-                    self.fetch_pages(
-                        req,
-                        *kind,
-                        "calendar",
-                        None,
-                        CALENDAR_PATH,
-                        CALENDAR_TR_ID,
-                        vec![
-                            ("BASS_DT".to_owned(), date.clone()),
-                            ("CTX_AREA_FK".to_owned(), String::new()),
-                            ("CTX_AREA_NK".to_owned(), String::new()),
-                        ],
-                        PaginationPolicy::SinglePage,
-                        &mut envelopes,
-                    )
-                    .await?;
+                    let query = vec![
+                        ("BASS_DT".to_owned(), date.clone()),
+                        ("CTX_AREA_FK".to_owned(), String::new()),
+                        ("CTX_AREA_NK".to_owned(), String::new()),
+                    ];
+                    if self.calendar_snapshot_cache {
+                        self.fetch_calendar_with_snapshot(req, query, &mut envelopes)
+                            .await?;
+                    } else {
+                        self.fetch_pages(
+                            req,
+                            *kind,
+                            "calendar",
+                            None,
+                            CALENDAR_PATH,
+                            CALENDAR_TR_ID,
+                            query,
+                            PaginationPolicy::SinglePage,
+                            &mut envelopes,
+                        )
+                        .await?;
+                    }
                 }
                 ResponseKind::CorporateActions => {
                     for endpoint in corporate_action_endpoints(&date) {
@@ -218,6 +257,78 @@ impl<R: KisRead> KisProvider<R> {
             }
         }
         Ok(envelopes)
+    }
+
+    async fn fetch_calendar_with_snapshot(
+        &self,
+        req: &FetchRequest,
+        query: Vec<(String, String)>,
+        output: &mut Vec<RawEnvelope>,
+    ) -> Result<(), ProviderError> {
+        let cached = self
+            .calendar_snapshot
+            .lock()
+            .map_err(|_| {
+                calendar_snapshot_error("KIS_CALENDAR_SNAPSHOT_LOCK", "snapshot lock poisoned")
+            })?
+            .clone();
+        if let Some(snapshot) = cached {
+            return self.push_cached_calendar(req, &snapshot, output);
+        }
+
+        // The range provider is deliberately driven sequentially.  Do not
+        // add continuation handling or a retry loop around this endpoint.
+        let mut fetched = Vec::new();
+        self.fetch_pages(
+            req,
+            ResponseKind::Calendar,
+            "calendar",
+            None,
+            CALENDAR_PATH,
+            CALENDAR_TR_ID,
+            query,
+            PaginationPolicy::SinglePage,
+            &mut fetched,
+        )
+        .await?;
+        let envelope = fetched.pop().ok_or_else(|| {
+            calendar_snapshot_error(
+                "KIS_CALENDAR_SNAPSHOT_EMPTY",
+                "chk-holiday returned no calendar envelope",
+            )
+        })?;
+        let snapshot = CalendarSnapshot::from_envelope(&envelope)?;
+        if !snapshot.covered_dates.contains_key(&req.date) {
+            return Err(calendar_snapshot_miss(req.date));
+        }
+        let mut guard = self.calendar_snapshot.lock().map_err(|_| {
+            calendar_snapshot_error("KIS_CALENDAR_SNAPSHOT_LOCK", "snapshot lock poisoned")
+        })?;
+        if guard.is_none() {
+            *guard = Some(snapshot);
+        }
+        output.push(envelope);
+        Ok(())
+    }
+
+    fn push_cached_calendar(
+        &self,
+        req: &FetchRequest,
+        snapshot: &CalendarSnapshot,
+        output: &mut Vec<RawEnvelope>,
+    ) -> Result<(), ProviderError> {
+        if !snapshot.covered_dates.contains_key(&req.date) {
+            return Err(calendar_snapshot_miss(req.date));
+        }
+        output.push(RawEnvelope::new(
+            req.batch_id,
+            ResponseKind::Calendar,
+            "calendar-page-01.json",
+            snapshot.bytes.clone(),
+            snapshot.retrieved_at,
+            snapshot.request.clone(),
+        ));
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -289,6 +400,109 @@ impl<R: KisRead> KisProvider<R> {
         ));
 
         Ok(())
+    }
+}
+
+impl CalendarSnapshot {
+    fn from_envelope(envelope: &RawEnvelope) -> Result<Self, ProviderError> {
+        validate_kis_response(ResponseKind::Calendar, CALENDAR_PATH, &envelope.bytes)
+            .map_err(|error| calendar_snapshot_error(error.code, &error.reason))?;
+        let document: Value = serde_json::from_slice(&envelope.bytes).map_err(|_| {
+            calendar_snapshot_error(
+                "KIS_CALENDAR_SNAPSHOT_SCHEMA",
+                "chk-holiday response was not valid JSON",
+            )
+        })?;
+        let output = document.get("output").ok_or_else(|| {
+            calendar_snapshot_error(
+                "KIS_CALENDAR_SNAPSHOT_SCHEMA",
+                "chk-holiday response has no output",
+            )
+        })?;
+        let rows = match output {
+            Value::Array(rows) => rows.iter().collect::<Vec<_>>(),
+            Value::Object(_) => vec![output],
+            _ => {
+                return Err(calendar_snapshot_error(
+                    "KIS_CALENDAR_SNAPSHOT_SCHEMA",
+                    "chk-holiday output is not an object or array",
+                ));
+            }
+        };
+        let mut covered_dates = BTreeMap::new();
+        for row in rows {
+            let object = row.as_object().ok_or_else(|| {
+                calendar_snapshot_error(
+                    "KIS_CALENDAR_SNAPSHOT_SCHEMA",
+                    "chk-holiday output row is not an object",
+                )
+            })?;
+            let date = object
+                .get("bass_dt")
+                .and_then(Value::as_str)
+                .and_then(parse_kis_date)
+                .ok_or_else(|| {
+                    calendar_snapshot_error(
+                        "KIS_CALENDAR_SNAPSHOT_SCHEMA",
+                        "chk-holiday output row has an invalid bass_dt",
+                    )
+                })?;
+            let is_open = match object.get("opnd_yn").and_then(Value::as_str) {
+                Some("Y") => true,
+                Some("N") => false,
+                _ => {
+                    return Err(calendar_snapshot_error(
+                        "KIS_CALENDAR_SNAPSHOT_SCHEMA",
+                        "chk-holiday output row has an invalid opnd_yn",
+                    ));
+                }
+            };
+            if let Some(previous) = covered_dates.insert(date, is_open)
+                && previous != is_open
+            {
+                return Err(calendar_snapshot_error(
+                    "KIS_CALENDAR_SNAPSHOT_SCHEMA",
+                    "chk-holiday output contains conflicting duplicate dates",
+                ));
+            }
+        }
+        Ok(Self {
+            bytes: envelope.bytes.clone(),
+            request: envelope.request.clone(),
+            retrieved_at: envelope.retrieved_at,
+            covered_dates,
+        })
+    }
+}
+
+fn parse_kis_date(value: &str) -> Option<TradingDate> {
+    if value.len() != 8 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    TradingDate::parse(&format!("{}-{}-{}", &value[..4], &value[4..6], &value[6..])).ok()
+}
+
+fn calendar_snapshot_miss(date: TradingDate) -> ProviderError {
+    calendar_snapshot_error(
+        "KIS_CALENDAR_SNAPSHOT_MISS",
+        &format!(
+            "chk-holiday snapshot does not cover target date {}",
+            date.to_iso()
+        ),
+    )
+}
+
+fn calendar_snapshot_error(code: &'static str, detail: &str) -> ProviderError {
+    ProviderError::Remote {
+        provider: PROVIDER_KIS,
+        kind: ResponseKind::Calendar,
+        code,
+        retryable: false,
+        diagnostic: Some(RemoteDiagnostic {
+            endpoint: CALENDAR_PATH.to_owned(),
+            http_status: None,
+        }),
+        detail: detail.to_owned(),
     }
 }
 
@@ -483,6 +697,7 @@ mod tests {
     struct FixtureReader {
         calls: Mutex<Vec<RecordedCall>>,
         continuation_once: bool,
+        calendar_snapshot: bool,
     }
 
     #[derive(Debug)]
@@ -496,6 +711,15 @@ mod tests {
             Self {
                 calls: Mutex::new(Vec::new()),
                 continuation_once: false,
+                calendar_snapshot: false,
+            }
+        }
+
+        fn with_calendar_snapshot() -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+                continuation_once: false,
+                calendar_snapshot: true,
             }
         }
 
@@ -503,6 +727,7 @@ mod tests {
             Self {
                 calls: Mutex::new(Vec::new()),
                 continuation_once: true,
+                calendar_snapshot: false,
             }
         }
     }
@@ -529,6 +754,21 @@ mod tests {
             let body = match path {
                 DAILY_BARS_PATH => br#"{"rt_cd":"0","output1":{},"output2":[]}"#.to_vec(),
                 REFERENCE_PATH => br#"{"rt_cd":"0","output":{}}"#.to_vec(),
+                CALENDAR_PATH if self.calendar_snapshot => {
+                    let date = query
+                        .iter()
+                        .find(|(key, _)| key == "BASS_DT")
+                        .map(|(_, value)| value.as_str())
+                        .and_then(parse_kis_date)
+                        .expect("fixture calendar date");
+                    let next = date.next_day();
+                    format!(
+                        r#"{{"rt_cd":"0","ctx_area_fk":"next-fk","ctx_area_nk":"next-nk","output":[{{"bass_dt":"{}","opnd_yn":"Y"}},{{"bass_dt":"{}","opnd_yn":"N"}}]}}"#,
+                        date.to_iso().replace('-', ""),
+                        next.to_iso().replace('-', "")
+                    )
+                    .into_bytes()
+                }
                 CALENDAR_PATH => {
                     br#"{"rt_cd":"0","ctx_area_fk":"next-fk","ctx_area_nk":"next-nk","output":[]}"#
                         .to_vec()
@@ -617,9 +857,13 @@ mod tests {
     }
 
     fn request(kinds: Vec<ResponseKind>) -> FetchRequest {
+        request_at("2026-08-14", kinds)
+    }
+
+    fn request_at(date: &str, kinds: Vec<ResponseKind>) -> FetchRequest {
         FetchRequest {
             market: "kr".to_owned(),
-            date: TradingDate::parse("2026-08-14").unwrap(),
+            date: TradingDate::parse(date).unwrap(),
             kinds,
             now: UtcTimestamp::parse_rfc3339("2026-08-14T07:00:00Z").unwrap(),
             batch_id: BatchId::generate(),
@@ -791,6 +1035,40 @@ mod tests {
                 .query
                 .contains(&("CTX_AREA_NK".to_owned(), String::new()))
         );
+    }
+
+    #[tokio::test]
+    async fn range_calendar_snapshot_reuses_one_call_and_fails_closed_outside_coverage() {
+        let provider = KisProvider::kr_etf_core(FixtureReader::with_calendar_snapshot())
+            .with_calendar_snapshot_cache();
+        let first = provider
+            .fetch(&request_at("2026-08-14", vec![ResponseKind::Calendar]))
+            .await
+            .expect("first range calendar snapshot");
+        let second = provider
+            .fetch(&request_at("2026-08-15", vec![ResponseKind::Calendar]))
+            .await
+            .expect("covered date reuses range calendar snapshot");
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), 1);
+        assert_eq!(first[0].bytes, second[0].bytes);
+        assert_eq!(first[0].request.query, second[0].request.query);
+
+        let error = provider
+            .fetch(&request_at("2026-08-16", vec![ResponseKind::Calendar]))
+            .await
+            .expect_err("range calendar miss must not issue a second call");
+        assert!(matches!(
+            error,
+            ProviderError::Remote {
+                kind: ResponseKind::Calendar,
+                code: "KIS_CALENDAR_SNAPSHOT_MISS",
+                retryable: false,
+                ..
+            }
+        ));
+        let calls = provider.reader.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
     }
 
     #[tokio::test]

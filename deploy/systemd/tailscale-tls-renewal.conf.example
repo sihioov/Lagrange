@@ -12,4 +12,7 @@ COMPOSE_FILE=/opt/lagrange/releases/REPLACE_WITH_40_HEX_CODE_COMMIT/deploy/compo
 COMPOSE_ENV_FILE=/opt/lagrange/releases/REPLACE_WITH_40_HEX_CODE_COMMIT/deploy/compose/.env
 COMPOSE_PROJECT=lagrange-station
 LAGRANGE_CODE_COMMIT=REPLACE_WITH_40_HEX_CODE_COMMIT
-LOCK_FILE=/run/lock/lagrange-tailscale-tls-renewal.lock
+# Keep the lock in the already protected TLS source directory. The standard
+# /run/lock directory is sticky world-writable on production Linux hosts and
+# therefore intentionally fails the helper's no-writable-ancestor check.
+LOCK_FILE=/etc/lagrange/secrets/tls/.lagrange-tailscale-tls-renewal.lock

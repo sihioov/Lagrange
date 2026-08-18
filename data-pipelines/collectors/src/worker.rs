@@ -1335,7 +1335,7 @@ pub async fn run_credentialed_backfill_range_stream<W: io::Write>(
     let price_sink = PostgresCandidateSourceSink::new(pool);
     // Lazy issuance is preserved: construction reads no secret and makes no
     // network call. The first actually missing date obtains the one token.
-    let provider = build_production_kis_provider(&config)?;
+    let provider = build_production_kis_provider(&config)?.with_calendar_snapshot_cache();
     // Full-scope crash recovery is deliberately once per process. New targets
     // publish only their canonical EOD row here; one cumulative Curated
     // generation is reconciled after the range, avoiding a

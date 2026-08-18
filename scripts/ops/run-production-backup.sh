@@ -201,11 +201,35 @@ verify_set() {
   docker run --rm --network none --read-only --user 999:999 \
     --tmpfs /tmp:rw,exec,size=1g -v "$db_dump:/verify.dump:ro" \
     "$postgres_image" bash -euc '
+      export PGHOST=/tmp
       initdb -D /tmp/pgdata >/dev/null
-      pg_ctl -D /tmp/pgdata -o "-c listen_addresses=" -w start >/dev/null
+      pg_ctl -D /tmp/pgdata \
+        -o "-c listen_addresses= -c unix_socket_directories=/tmp" \
+        -w start >/dev/null
+      # pg_dump --no-owner/--no-privileges still preserves role references in
+      # RLS policies and object definitions.  Recreate only the exact
+      # application roles from bootstrap-roles.sh as inert cluster roles: no
+      # password, no LOGIN, no privileges, and no network is available here.
+      # An unexpected role reference therefore remains a fail-closed restore
+      # error instead of being silently invented.
+      psql -d postgres -v ON_ERROR_STOP=1 -c "
+        CREATE ROLE migration_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+        CREATE ROLE app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+        CREATE ROLE worker NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+        CREATE ROLE audit_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+        CREATE ROLE research_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+        CREATE ROLE admin NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+      "
       createdb verify
-      pg_restore --no-owner --no-privileges -d verify /verify.dump
-      psql -d verify -Atqc "SELECT 1" | grep -Fxq 1
+      pg_restore --exit-on-error --no-owner --no-privileges -d verify /verify.dump
+      restored_tables=$(psql -d verify -Atqc "
+        SELECT table_name
+          FROM information_schema.tables
+         WHERE table_schema = current_schema()
+      ")
+      for required_table in _sqlx_migrations data_batches dataset_versions; do
+        printf "%s\\n" "$restored_tables" | grep -Fxq "$required_table"
+      done
       pg_ctl -D /tmp/pgdata -m fast -w stop >/dev/null
     ' || die 'isolated PostgreSQL restore verification failed'
   rm -rf -- "$temporary"
