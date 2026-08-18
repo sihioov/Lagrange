@@ -225,6 +225,7 @@ kis_credential_plan=$(bash "$ops/provision-kis-credentials.sh" --dry-run \
   --source-dir "$out_dir/kis-plan-source")
 grep -Fq 'KIS_CREDENTIAL_PROVISION mode=dry-run' <<<"$kis_credential_plan"
 grep -Fq 'DRY_RUN: no files created' <<<"$kis_credential_plan"
+grep -Fq 'source directory is absent or protected from current user' <<<"$kis_credential_plan"
 [ ! -e "$out_dir/kis-plan-source" ]
 
 kis_source="$out_dir/kis-source"

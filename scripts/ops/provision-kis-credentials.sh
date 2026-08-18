@@ -341,7 +341,7 @@ if [ "$mode" = dry-run ]; then
       echo 'DRY_RUN: no files created (apply would refuse existing targets)' >&2
     fi
   else
-    echo 'DRY_RUN: no files created (source directory is not present)'
+    echo 'DRY_RUN: no files created (source directory is absent or protected from current user; root apply will verify it)'
   fi
   exit 0
 fi

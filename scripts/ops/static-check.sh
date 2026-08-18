@@ -152,6 +152,8 @@ grep -Fq 'installed_signatures' "$kis_credentials" \
   || die 'KIS credential pair rollback tracking missing'
 grep -Fq 'KIS_CREDENTIAL_CHECK: PASS' "$kis_credentials" \
   || die 'KIS credential check pass output missing'
+grep -Fq 'source directory is absent or protected from current user' "$kis_credentials" \
+  || die 'KIS credential dry-run must not infer absence from access denial'
 grep -Fq "'%u:%g:%a'" "$kis_credentials" \
   || die 'KIS credential ownership/mode inspection missing'
 grep -Fq 'wc -c' "$kis_credentials" \
