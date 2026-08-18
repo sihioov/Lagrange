@@ -52,9 +52,13 @@ sudo deploy/secrets/provision-runtime-secrets.sh --scope infrastructure
 ```
 
 `provision-db-secrets.sh --check` is a root-only, read-only verification of the
-exact seven DB source files. It reports `DB_SECRET_CHECK: PASS` or actionable
-filenames and metadata/shape reasons only; it never prints secret values or
-hashes.
+exact seven DB source files, accepting either canonical 64-hex or 44-character
+standard Base64 values that decode to 32 bytes. It reports
+`DB_SECRET_CHECK: PASS` or actionable filenames and metadata/shape reasons
+only; it never prints secret values or hashes. If the files have one accidental
+trailing LF/CRLF, the explicit root-only
+`scripts/ops/provision-db-secrets.sh --strip-trailing-newline` command can
+atomically repair a complete all-hex set; mixed or malformed sets are refused.
 
 실제 secret 값은 이 저장소나 명령 인자에 넣지 않는다. 다음 검사는 값 자체를
 출력하지 않고 파일 존재·regular/no-symlink·non-empty·소유자·mode와 env/dataset

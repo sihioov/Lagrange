@@ -184,6 +184,87 @@ if [ "$(id -u)" -eq 0 ]; then
   grep -Fxq 'DB_SECRET_CHECK: PASS' <<<"$db_check_output"
   [ "$(find "$db_apply_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 7 ]
 
+  # Existing operators may have generated the same 32 bytes as strict
+  # standard Base64 (`openssl rand -base64 32`). Verify that accepted format,
+  # plus malformed and short Base64 rejection, without exposing fixture values.
+  db_check_base64_source="$out_dir/db-secret-check-base64"
+  mkdir -p "$db_check_base64_source"
+  chmod 0750 "$db_check_base64_source"
+  for ((i = 0; i < ${#db_secret_names[@]}; i++)); do
+    name=${db_secret_names[i]}
+    printf '%032d' "$((i + 1))" | base64 | tr -d '\r\n' >"$db_check_base64_source/$name"
+    chown root:root -- "$db_check_base64_source/$name"
+    chmod 0600 -- "$db_check_base64_source/$name"
+  done
+  db_base64_output=$(LAGRANGE_SECRET_SOURCE_DIR="$db_check_base64_source" \
+    bash "$ops/provision-db-secrets.sh" --check)
+  grep -Fxq 'DB_SECRET_CHECK: PASS' <<<"$db_base64_output"
+  db_base64_value=$(<"$db_check_base64_source/db_worker_password")
+  printf '%s' "${db_base64_value:0:43}" >"$db_check_base64_source/db_app_password"
+  chmod 0600 -- "$db_check_base64_source/db_app_password"
+  if LAGRANGE_SECRET_SOURCE_DIR="$db_check_base64_source" \
+     bash "$ops/provision-db-secrets.sh" --check >"$out_dir/db-secret-check-base64-short.out" 2>&1; then
+    echo 'self-test: short Base64 DB secret unexpectedly passed --check' >&2
+    exit 1
+  fi
+  grep -Fq 'DB_SECRET_CHECK: FAIL db_app_password:' \
+    "$out_dir/db-secret-check-base64-short.out"
+  if grep -Fq -- "$db_base64_value" "$out_dir/db-secret-check-base64-short.out"; then
+    echo 'self-test: Base64 value leaked in short-format check output' >&2
+    exit 1
+  fi
+  install -o root -g root -m 0600 -- \
+    "$db_check_base64_source/db_worker_password" "$db_check_base64_source/db_app_password"
+  printf '%s!%s' "${db_base64_value:0:42}" "${db_base64_value:43:1}" \
+    >"$db_check_base64_source/db_app_password"
+  chmod 0600 -- "$db_check_base64_source/db_app_password"
+  if LAGRANGE_SECRET_SOURCE_DIR="$db_check_base64_source" \
+     bash "$ops/provision-db-secrets.sh" --check >"$out_dir/db-secret-check-base64-malformed.out" 2>&1; then
+    echo 'self-test: malformed Base64 DB secret unexpectedly passed --check' >&2
+    exit 1
+  fi
+  grep -Fq 'DB_SECRET_CHECK: FAIL db_app_password:' \
+    "$out_dir/db-secret-check-base64-malformed.out"
+
+  # The explicit normalizer atomically repairs only a complete set containing
+  # one LF terminator per 64-hex value; mixed sets are refused without writes.
+  db_normalize_source="$out_dir/db-secret-normalize"
+  mkdir -p "$db_normalize_source"
+  chmod 0750 "$db_normalize_source"
+  for name in "${db_secret_names[@]}"; do
+    install -o root -g root -m 0600 -- \
+      "$db_apply_source/$name" "$db_normalize_source/$name"
+    printf '\n' >>"$db_normalize_source/$name"
+  done
+  if LAGRANGE_SECRET_SOURCE_DIR="$db_normalize_source" \
+     bash "$ops/provision-db-secrets.sh" --check >"$out_dir/db-secret-check-newline.out" 2>&1; then
+    echo 'self-test: newline-terminated DB secret set unexpectedly passed --check' >&2
+    exit 1
+  fi
+  normalize_output=$(LAGRANGE_SECRET_SOURCE_DIR="$db_normalize_source" \
+    bash "$ops/provision-db-secrets.sh" --strip-trailing-newline)
+  grep -Fxq 'DB_SECRET_NORMALIZE: PASS' <<<"$normalize_output"
+  for name in "${db_secret_names[@]}"; do
+    [ "$(wc -c <"$db_normalize_source/$name")" -eq 64 ]
+    cmp -s "$db_apply_source/$name" "$db_normalize_source/$name"
+  done
+
+  db_normalize_mixed_source="$out_dir/db-secret-normalize-mixed"
+  mkdir -p "$db_normalize_mixed_source"
+  chmod 0750 "$db_normalize_mixed_source"
+  for name in "${db_secret_names[@]}"; do
+    install -o root -g root -m 0600 -- \
+      "$db_apply_source/$name" "$db_normalize_mixed_source/$name"
+  done
+  printf '\n' >>"$db_normalize_mixed_source/db_app_password"
+  if LAGRANGE_SECRET_SOURCE_DIR="$db_normalize_mixed_source" \
+     bash "$ops/provision-db-secrets.sh" --strip-trailing-newline >"$out_dir/db-secret-normalize-mixed.out" 2>&1; then
+    echo 'self-test: mixed DB secret set unexpectedly passed normalization' >&2
+    exit 1
+  fi
+  grep -Fq 'db_app_password' "$out_dir/db-secret-normalize-mixed.out"
+  [ "$(wc -c <"$db_normalize_mixed_source/db_app_password")" -eq 65 ]
+
   # A complete, otherwise valid set with one missing target must fail without
   # creating or repairing anything, while naming the actionable filename.
   db_check_partial_source="$out_dir/db-secret-check-partial"

@@ -12,6 +12,7 @@ default_source_dir=/etc/lagrange/secrets
 source_dir=${LAGRANGE_SECRET_SOURCE_DIR:-$default_source_dir}
 mode=dry-run
 mode_seen=0
+normalize_option=--strip-trailing-newline
 staging_dir=
 
 declare -a secret_names=(
@@ -26,27 +27,37 @@ declare -a secret_names=(
 declare -a installed_targets=()
 declare -a installed_signatures=()
 declare -a check_failures=()
+declare -a normalize_moved=()
+normalize_staging_dir=
 
 usage() {
   cat <<'EOF'
-Usage: scripts/ops/provision-db-secrets.sh [--dry-run|--check|--apply]
+Usage: scripts/ops/provision-db-secrets.sh [--dry-run|--check|--strip-trailing-newline|--apply]
        [--source-dir ABSOLUTE_PATH]
 
 Modes:
   --dry-run              Print the seven-file plan without changing the host
                          (default; safe to run as a non-root user).
   --check                Validate the existing seven source files read-only;
-                         requires root and never prints values or hashes.
+                         requires root; accepts strict 64-hex or 44-character
+                         standard Base64 encodings and never prints values.
+  --strip-trailing-newline
+                         Root-only atomic repair for a complete set of
+                         64-hex files with one trailing LF or CRLF; no-op for
+                         an already valid set and never prints values.
+  --normalize            Alias for --strip-trailing-newline.
   --apply                Generate the files; requires root and never overwrites
                          an existing target.
   --source-dir PATH      Override /etc/lagrange/secrets for an isolated host
                          or test. PATH must be absolute and cannot contain
                          '..' or a symlinked ancestor.
 
-The source directory may also be set with LAGRANGE_SECRET_SOURCE_DIR.  Each
-file contains 32 random bytes encoded as exactly 64 lowercase hexadecimal
-characters, is mode 0600 and owned by root:root.  Secret values are never
-printed.  This command does not create runtime copies or database roles.
+The source directory may also be set with LAGRANGE_SECRET_SOURCE_DIR.  --apply
+writes each file as 32 random bytes encoded as exactly 64 lowercase hexadecimal
+characters, with mode 0600 and owner root:root.  --check also accepts a strict
+44-character standard Base64 encoding that decodes to exactly 32 bytes. Secret
+values are never printed. This command does not create runtime copies or
+database roles.
 EOF
 }
 
@@ -58,19 +69,26 @@ die() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run)
-      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, or --apply'
+      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, --strip-trailing-newline, or --apply'
       mode=dry-run
       mode_seen=1
       shift
       ;;
     --check)
-      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, or --apply'
+      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, --strip-trailing-newline, or --apply'
       mode=check
       mode_seen=1
       shift
       ;;
+    --strip-trailing-newline|--normalize)
+      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, --strip-trailing-newline, or --apply'
+      mode=normalize
+      normalize_option=$1
+      mode_seen=1
+      shift
+      ;;
     --apply)
-      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, or --apply'
+      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, --strip-trailing-newline, or --apply'
       mode=apply
       mode_seen=1
       shift
@@ -95,6 +113,9 @@ if [ "$mode" = apply ] && [ "$(id -u)" -ne 0 ]; then
 fi
 if [ "$mode" = check ] && [ "$(id -u)" -ne 0 ]; then
   die '--check must run as root; use --dry-run for a non-root plan'
+fi
+if [ "$mode" = normalize ] && [ "$(id -u)" -ne 0 ]; then
+  die "$normalize_option must run as root; use --check for a read-only validation"
 fi
 
 safe_path() {
@@ -154,8 +175,34 @@ report_check_failure() {
   check_failures+=("$name")
 }
 
+is_valid_secret_format() {
+  local target=$1 byte_count decoded_bytes
+
+  if ! byte_count=$(wc -c <"$target" 2>/dev/null); then
+    return 1
+  fi
+  if [ "$byte_count" -eq 64 ] && \
+     LC_ALL=C grep -Eq '^[0-9a-f]{64}$' -- "$target"; then
+    return 0
+  fi
+  if [ "$byte_count" -ne 44 ] || \
+     ! LC_ALL=C grep -Eq '^[A-Za-z0-9+/]{43}=$' -- "$target"; then
+    return 1
+  fi
+  command -v base64 >/dev/null 2>&1 || return 1
+  if ! decoded_bytes=$(base64 --decode -- "$target" 2>/dev/null | wc -c); then
+    return 1
+  fi
+  [ "$decoded_bytes" -eq 32 ] || return 1
+  # Re-encode through a pipe and compare silently so non-zero pad bits are
+  # rejected as non-canonical Base64 without writing or printing the secret.
+  base64 --decode -- "$target" 2>/dev/null |
+    base64 --wrap=0 2>/dev/null |
+    cmp -s - "$target"
+}
+
 check_existing_secret() {
-  local name=$1 target metadata byte_count
+  local name=$1 target metadata
   target=$(target_path "$name")
   safe_path "$target" "secret target $name"
 
@@ -175,17 +222,13 @@ check_existing_secret() {
   if [ "$metadata" != '0:0:600' ]; then
     report_check_failure "$name" 'must be owned by root:root with mode 0600'
   fi
-  if ! byte_count=$(wc -c <"$target" 2>/dev/null); then
-    report_check_failure "$name" 'cannot read file length'
-    return 0
+  # Accept the format written by --apply, plus the standard Base64 form used
+  # by the earlier documented provisioning command. Exact byte counts and
+  # anchored alphabet checks reject newlines, CR, whitespace, and short data.
+  if ! is_valid_secret_format "$target"; then
+    report_check_failure "$name" \
+      'must contain exactly 64 lowercase hex or a canonical 44-character standard Base64 encoding'
   fi
-  if [ "$byte_count" -ne 64 ]; then
-    report_check_failure "$name" 'must contain exactly 64 bytes with no newline'
-  fi
-  if ! LC_ALL=C grep -Eq '^[0-9a-f]{64}$' -- "$target"; then
-    report_check_failure "$name" 'must contain one line of lowercase hexadecimal'
-  fi
-
 }
 
 check_existing_secrets() {
@@ -223,6 +266,196 @@ check_existing_secrets() {
   return 0
 }
 
+normalize_failure() {
+  local name=$1 reason=$2
+  echo "DB_SECRET_NORMALIZE: FAIL $name: $reason" >&2
+  normalize_failures+=("$name")
+}
+
+has_single_trailing_newline() {
+  local target=$1 byte_count last_byte last_two
+
+  if ! byte_count=$(wc -c <"$target" 2>/dev/null); then
+    return 1
+  fi
+  case "$byte_count" in
+    65)
+      if ! head -c 64 -- "$target" 2>/dev/null |
+        LC_ALL=C grep -Eq '^[0-9a-f]{64}$'; then
+        return 1
+      fi
+      if ! last_byte=$(tail -c 1 -- "$target" | od -An -v -tx1 | tr -d '[:space:]'); then
+        return 1
+      fi
+      [ "$last_byte" = 0a ]
+      ;;
+    66)
+      if ! head -c 64 -- "$target" 2>/dev/null |
+        LC_ALL=C grep -Eq '^[0-9a-f]{64}$'; then
+        return 1
+      fi
+      if ! last_two=$(tail -c 2 -- "$target" | od -An -v -tx1 | tr -d '[:space:]'); then
+        return 1
+      fi
+      [ "$last_two" = 0d0a ]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+normalize_cleanup() {
+  if [ -n "${normalize_staging_dir:-}" ] && [ -d "$normalize_staging_dir" ]; then
+    rm -rf -- "$normalize_staging_dir" 2>/dev/null || true
+  fi
+  normalize_staging_dir=
+}
+
+normalize_abort() {
+  local status=$?
+  if [ "$status" -ne 0 ] && [ -n "${normalize_staging_dir:-}" ]; then
+    normalize_restore
+  fi
+  normalize_cleanup
+  trap - EXIT
+  exit "$status"
+}
+
+normalize_restore() {
+  local i name target
+  set +e
+  for ((i = ${#normalize_moved[@]} - 1; i >= 0; i--)); do
+    name=${normalize_moved[i]}
+    target=$(target_path "$name")
+    if [ -e "$normalize_staging_dir/backup/$name" ]; then
+      mv -T -- "$normalize_staging_dir/backup/$name" "$target" 2>/dev/null || true
+    fi
+  done
+}
+
+normalize_existing_secrets() {
+  local name target metadata expected actual
+  local -a normalize_needs_strip=()
+  local -a normalize_already_valid=()
+  normalize_failures=()
+  normalize_moved=()
+  normalize_staging_dir=
+
+  if [ ! -d "$source_dir" ] || [ -L "$source_dir" ]; then
+    echo "DB_SECRET_NORMALIZE: FAIL source-directory: $source_dir is not a regular directory" >&2
+    return 1
+  fi
+
+  # Complete preflight first. No target is changed until every file has the
+  # required metadata and is either a valid accepted value or a strict 64-hex
+  # value with exactly one LF or CRLF terminator.
+  for name in "${secret_names[@]}"; do
+    target=$(target_path "$name")
+    safe_path "$target" "secret target $name"
+    if ! target_present "$target"; then
+      normalize_failure "$name" 'missing file'
+      continue
+    fi
+    if [ ! -f "$target" ] || [ -L "$target" ]; then
+      normalize_failure "$name" 'must be a regular non-symlink file'
+      continue
+    fi
+    if ! metadata=$(stat -c '%u:%g:%a' -- "$target" 2>/dev/null); then
+      normalize_failure "$name" 'cannot inspect ownership or mode'
+      continue
+    fi
+    if [ "$metadata" != '0:0:600' ]; then
+      normalize_failure "$name" 'must be owned by root:root with mode 0600'
+      continue
+    fi
+    if has_single_trailing_newline "$target"; then
+      normalize_needs_strip+=("$name")
+    elif is_valid_secret_format "$target"; then
+      normalize_already_valid+=("$name")
+    else
+      normalize_failure "$name" \
+        'must be valid accepted hex/Base64 or exactly 64-hex plus one LF/CRLF'
+    fi
+  done
+
+  if [ "${#normalize_failures[@]}" -ne 0 ]; then
+    return 1
+  fi
+  if [ "${#normalize_needs_strip[@]}" -eq 0 ]; then
+    echo 'DB_SECRET_NORMALIZE: PASS (no changes needed)'
+    return 0
+  fi
+  if [ "${#normalize_already_valid[@]}" -ne 0 ]; then
+    for name in "${normalize_already_valid[@]}"; do
+      normalize_failure "$name" 'mixed newline and already-valid formats; no files changed'
+    done
+    return 1
+  fi
+  if [ "${#normalize_needs_strip[@]}" -ne "${#secret_names[@]}" ]; then
+    echo 'DB_SECRET_NORMALIZE: FAIL mixed source set; no files changed' >&2
+    return 1
+  fi
+
+  umask 077
+  trap normalize_abort EXIT
+  normalize_staging_dir=$(mktemp -d -- "$source_dir/.lagrange-db-secret-normalize.XXXXXX") || {
+    echo 'DB_SECRET_NORMALIZE: FAIL staging directory could not be created; no files changed' >&2
+    return 1
+  }
+  chmod 0700 -- "$normalize_staging_dir"
+  mkdir -- "$normalize_staging_dir/backup"
+  chmod 0700 -- "$normalize_staging_dir/backup"
+
+  for name in "${secret_names[@]}"; do
+    target=$(target_path "$name")
+    if ! head -c 64 -- "$target" >"$normalize_staging_dir/$name" 2>/dev/null; then
+      normalize_failure "$name" 'cannot stage stripped value; no files changed'
+      normalize_cleanup
+      return 1
+    fi
+    chown root:root -- "$normalize_staging_dir/$name" 2>/dev/null || {
+      normalize_failure "$name" 'cannot set staged ownership; no files changed'
+      normalize_cleanup
+      return 1
+    }
+    chmod 0600 -- "$normalize_staging_dir/$name"
+    if ! is_valid_secret_format "$normalize_staging_dir/$name"; then
+      normalize_failure "$name" 'staged value failed validation; no files changed'
+      normalize_cleanup
+      return 1
+    fi
+    if ! ln -- "$target" "$normalize_staging_dir/backup/$name" 2>/dev/null; then
+      normalize_failure "$name" 'cannot create rollback fence; no files changed'
+      normalize_cleanup
+      return 1
+    fi
+  done
+
+  for name in "${secret_names[@]}"; do
+    target=$(target_path "$name")
+    expected=$(stat -c '%d:%i' -- "$normalize_staging_dir/backup/$name")
+    actual=$(stat -c '%d:%i' -- "$target")
+    if [ "$expected" != "$actual" ]; then
+      normalize_failure "$name" 'target changed during preflight; no files changed'
+      normalize_restore
+      normalize_cleanup
+      return 1
+    fi
+    if ! mv -T -- "$normalize_staging_dir/$name" "$target" 2>/dev/null; then
+      normalize_failure "$name" 'atomic replacement failed; rollback attempted'
+      normalize_restore
+      normalize_cleanup
+      return 1
+    fi
+    normalize_moved+=("$name")
+  done
+
+  normalize_cleanup
+  echo 'DB_SECRET_NORMALIZE: PASS'
+  return 0
+}
+
 print_plan() {
   local name
   echo "DB_SECRET_PROVISION mode=$mode"
@@ -249,6 +482,13 @@ fi
 
 if [ "$mode" = check ]; then
   if check_existing_secrets; then
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ "$mode" = normalize ]; then
+  if normalize_existing_secrets; then
     exit 0
   fi
   exit 1
