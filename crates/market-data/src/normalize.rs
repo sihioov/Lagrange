@@ -823,14 +823,11 @@ fn normalize_actions(
         }
         let document = parse_object(ResponseKind::CorporateActions, &file.file_name, &file.bytes)?;
         require_rt_ok(ResponseKind::CorporateActions, &file.file_name, &document)?;
-        // KIS documents the paid-in capital endpoint with `output`; the
-        // remaining KSD endpoints use `output1`.  Keep this distinction at the
-        // wire boundary instead of accepting an undocumented fallback.
-        let output_field = if metadata.request.endpoint.ends_with("/paidin-capin") {
-            "output"
-        } else {
-            "output1"
-        };
+        // XLSX sheet 105 row 42 labels paidin-capin as `output`, but its row 58
+        // response example and the official generated client use `output1`, as
+        // does every other reviewed KSD schedule.  Keep that exact observed
+        // field at the wire boundary instead of accepting both spellings.
+        let output_field = "output1";
         let output = required_array_or_object(
             ResponseKind::CorporateActions,
             &file.file_name,

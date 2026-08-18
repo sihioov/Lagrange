@@ -169,11 +169,7 @@ fn valid_wires() -> Vec<Wire> {
             "/uapi/domestic-stock/v1/ksdinfo/cap-dcrs",
         ),
     ] {
-        let bytes = if endpoint.ends_with("/paidin-capin") {
-            br#"{"rt_cd":"0","output":[]}"#.to_vec()
-        } else {
-            br#"{"rt_cd":"0","output1":[]}"#.to_vec()
-        };
+        let bytes = br#"{"rt_cd":"0","output1":[]}"#.to_vec();
         wires.push(Wire {
             kind: ResponseKind::CorporateActions,
             file_name: format!("corporate-actions-{label}-page-01.json"),

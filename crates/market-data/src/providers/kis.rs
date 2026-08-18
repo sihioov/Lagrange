@@ -482,9 +482,6 @@ pub(crate) fn validate_kis_response(
         (ResponseKind::Calendar, CALENDAR_PATH) => object
             .get("output")
             .is_some_and(|value| value.is_object() || value.is_array()),
-        (ResponseKind::CorporateActions, "/uapi/domestic-stock/v1/ksdinfo/paidin-capin") => object
-            .get("output")
-            .is_some_and(|value| value.is_object() || value.is_array()),
         (ResponseKind::CorporateActions, path)
             if path.starts_with("/uapi/domestic-stock/v1/ksdinfo/") =>
         {
@@ -567,7 +564,7 @@ mod tests {
                         .to_vec()
                 }
                 "/uapi/domestic-stock/v1/ksdinfo/paidin-capin" => {
-                    br#"{"rt_cd":"0","cts":"next-cts","output":[]}"#.to_vec()
+                    br#"{"rt_cd":"0","cts":"next-cts","output1":[]}"#.to_vec()
                 }
                 _ => br#"{"rt_cd":"0","cts":"next-cts","output1":[]}"#.to_vec(),
             };
@@ -921,7 +918,7 @@ mod tests {
             (
                 ResponseKind::CorporateActions,
                 "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
-                br#"{"rt_cd":"0","output":[]}"#.as_slice(),
+                br#"{"rt_cd":"0","output1":[]}"#.as_slice(),
             ),
         ] {
             validate_kis_response(kind, endpoint, body).expect("official KIS wire shape");
@@ -952,6 +949,18 @@ mod tests {
                 ResponseKind::Bars,
                 DAILY_BARS_PATH,
                 br#"{"rt_cd":"0","output1":{},"output2":{}}"#,
+            )
+            .unwrap_err()
+            .code,
+            "KIS_RESPONSE_SCHEMA_INVALID"
+        );
+        assert_eq!(
+            validate_kis_response(
+                ResponseKind::CorporateActions,
+                "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
+                // Sheet 105's layout says `output`, but its response example
+                // and the official generated client both require `output1`.
+                br#"{"rt_cd":"0","output":[]}"#,
             )
             .unwrap_err()
             .code,
