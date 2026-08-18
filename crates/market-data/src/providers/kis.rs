@@ -30,6 +30,12 @@ const CALENDAR_PATH: &str = "/uapi/domestic-stock/v1/quotations/chk-holiday";
 const CALENDAR_TR_ID: &str = "CTCA0903R";
 const MAX_PAGES: usize = 10;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaginationPolicy {
+    BodyCursor,
+    SinglePage,
+}
+
 /// Async read seam implemented by the production KIS client and by fixtures.
 #[allow(async_fn_in_trait)]
 pub trait KisRead: std::fmt::Debug + Send + Sync {
@@ -148,6 +154,7 @@ impl<R: KisRead> KisProvider<R> {
                             DAILY_BARS_PATH,
                             DAILY_BARS_TR_ID,
                             query,
+                            PaginationPolicy::BodyCursor,
                             &mut envelopes,
                         )
                         .await?;
@@ -167,6 +174,7 @@ impl<R: KisRead> KisProvider<R> {
                             REFERENCE_PATH,
                             REFERENCE_TR_ID,
                             query,
+                            PaginationPolicy::BodyCursor,
                             &mut envelopes,
                         )
                         .await?;
@@ -185,6 +193,7 @@ impl<R: KisRead> KisProvider<R> {
                             ("CTX_AREA_FK".to_owned(), String::new()),
                             ("CTX_AREA_NK".to_owned(), String::new()),
                         ],
+                        PaginationPolicy::SinglePage,
                         &mut envelopes,
                     )
                     .await?;
@@ -199,6 +208,7 @@ impl<R: KisRead> KisProvider<R> {
                             endpoint.path,
                             endpoint.tr_id,
                             endpoint.query,
+                            PaginationPolicy::BodyCursor,
                             &mut envelopes,
                         )
                         .await?;
@@ -220,6 +230,7 @@ impl<R: KisRead> KisProvider<R> {
         path: &str,
         tr_id: &str,
         mut query: Vec<(String, String)>,
+        pagination: PaginationPolicy,
         output: &mut Vec<RawEnvelope>,
     ) -> Result<(), ProviderError> {
         let mut continuation = None;
@@ -234,7 +245,13 @@ impl<R: KisRead> KisProvider<R> {
                 Some(symbol) => format!("{label}-{symbol}-page-{page:02}.json"),
                 None => format!("{label}-page-{page:02}.json"),
             };
-            update_continuation_query(&mut query, &reply.body);
+            let should_continue = reply
+                .continuation
+                .as_deref()
+                .is_some_and(|value| matches!(value, "M" | "F"));
+            let cursor_advanced = pagination == PaginationPolicy::SinglePage
+                || !should_continue
+                || update_continuation_query(&mut query, &reply.body);
             output.push(RawEnvelope::new(
                 req.batch_id,
                 kind,
@@ -254,26 +271,53 @@ impl<R: KisRead> KisProvider<R> {
                 },
             ));
 
-            if !reply
-                .continuation
-                .as_deref()
-                .is_some_and(|value| matches!(value, "M" | "F"))
-            {
+            // The current KIS layout marks chk-holiday as not supporting
+            // tr_cont pagination and requires both CTX_AREA fields to remain
+            // blank. Its response can nevertheless carry continuation-like
+            // header/body values, which must not turn one daily lookup into a
+            // repeated request loop.
+            if pagination == PaginationPolicy::SinglePage {
                 return Ok(());
+            }
+
+            if !should_continue {
+                return Ok(());
+            }
+            if !cursor_advanced {
+                return Err(pagination_error(
+                    kind,
+                    path,
+                    "BROKER_PAGINATION_STALLED",
+                    "continuation cursor did not advance",
+                ));
             }
             continuation = Some("N".to_owned());
         }
-        Err(ProviderError::Remote {
-            provider: PROVIDER_KIS,
+        Err(pagination_error(
             kind,
-            code: "BROKER_PAGINATION_LIMIT",
-            retryable: false,
-            diagnostic: Some(RemoteDiagnostic {
-                endpoint: path.to_owned(),
-                http_status: None,
-            }),
-            detail: format!("{path} exceeded the {MAX_PAGES}-page safety limit"),
-        })
+            path,
+            "BROKER_PAGINATION_LIMIT",
+            "page count exceeded the safety limit",
+        ))
+    }
+}
+
+fn pagination_error(
+    kind: ResponseKind,
+    path: &str,
+    code: &'static str,
+    detail: &'static str,
+) -> ProviderError {
+    ProviderError::Remote {
+        provider: PROVIDER_KIS,
+        kind,
+        code,
+        retryable: false,
+        diagnostic: Some(RemoteDiagnostic {
+            endpoint: path.to_owned(),
+            http_status: None,
+        }),
+        detail: detail.to_owned(),
     }
 }
 
@@ -364,10 +408,11 @@ fn corporate_action_endpoints(date: &str) -> Vec<EndpointSpec> {
     ]
 }
 
-fn update_continuation_query(query: &mut [(String, String)], body: &[u8]) {
+fn update_continuation_query(query: &mut [(String, String)], body: &[u8]) -> bool {
     let Ok(document) = serde_json::from_slice::<serde_json::Value>(body) else {
-        return;
+        return false;
     };
+    let mut advanced = false;
     for (query_key, response_key) in [
         ("CTX_AREA_FK", "ctx_area_fk"),
         ("CTX_AREA_NK", "ctx_area_nk"),
@@ -380,9 +425,14 @@ fn update_continuation_query(query: &mut [(String, String)], body: &[u8]) {
             continue;
         };
         if let Some((_, current)) = query.iter_mut().find(|(key, _)| key == query_key) {
+            if value.trim().is_empty() || current == value {
+                continue;
+            }
             *current = value.to_owned();
+            advanced = true;
         }
     }
+    advanced
 }
 
 pub(crate) fn validate_kis_response(
@@ -444,7 +494,10 @@ pub(crate) fn validate_kis_response(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use domain::{BatchId, TradingDate, UtcTimestamp};
     use kis_client::MarketDataReply;
@@ -502,9 +555,9 @@ mod tests {
                         .to_vec()
                 }
                 "/uapi/domestic-stock/v1/ksdinfo/paidin-capin" => {
-                    br#"{"rt_cd":"0","output":[]}"#.to_vec()
+                    br#"{"rt_cd":"0","cts":"next-cts","output":[]}"#.to_vec()
                 }
-                _ => br#"{"rt_cd":"0","output1":[]}"#.to_vec(),
+                _ => br#"{"rt_cd":"0","cts":"next-cts","output1":[]}"#.to_vec(),
             };
             Ok(MarketDataReply {
                 body,
@@ -527,6 +580,33 @@ mod tests {
             Ok(MarketDataReply {
                 body: br#"{"rt_cd":"0","wrong":[]}"#.to_vec(),
                 continuation: None,
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct AlwaysContinuationReader {
+        calls: AtomicUsize,
+        advancing: bool,
+    }
+
+    impl KisRead for AlwaysContinuationReader {
+        async fn get(
+            &self,
+            _path: &str,
+            _tr_id: &str,
+            _query: &[(String, String)],
+            _continuation: Option<&str>,
+        ) -> Result<MarketDataReply, KisError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let cursor = if self.advancing {
+                format!("cursor-{call}")
+            } else {
+                "same-cursor".to_owned()
+            };
+            Ok(MarketDataReply {
+                body: format!(r#"{{"rt_cd":"0","cts":"{cursor}","output1":[]}}"#).into_bytes(),
+                continuation: Some("F".to_owned()),
             })
         }
     }
@@ -684,37 +764,88 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_continuation_is_fetched_with_context_from_the_previous_body() {
+    async fn calendar_ignores_continuation_like_metadata_by_contract() {
         let provider = KisProvider::kr_etf_core(FixtureReader::with_one_continuation());
         let fetched = provider
             .fetch(&request(vec![ResponseKind::Calendar]))
             .await
-            .expect("paginated calendar");
-        assert_eq!(fetched.len(), 2);
+            .expect("single-page calendar");
+        assert_eq!(fetched.len(), 1);
         assert!(
             fetched[0]
                 .request
                 .query
                 .contains(&("CTX_AREA_FK".to_owned(), String::new()))
         );
+        let calls = provider.reader.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].continuation.is_none());
+        assert!(
+            calls[0]
+                .query
+                .contains(&("CTX_AREA_NK".to_owned(), String::new()))
+        );
+    }
+
+    #[tokio::test]
+    async fn other_endpoints_keep_body_cursor_continuation() {
+        let provider = KisProvider::kr_etf_core(FixtureReader::with_one_continuation());
+        let fetched = provider
+            .fetch(&request(vec![ResponseKind::CorporateActions]))
+            .await
+            .expect("paginated corporate actions");
+        assert_eq!(fetched.len(), 14);
         assert!(
             fetched[1]
                 .request
                 .query
-                .contains(&("CTX_AREA_FK".to_owned(), "next-fk".to_owned()))
+                .contains(&("CTS".to_owned(), "next-cts".to_owned()))
         );
         let calls = provider.reader.calls.lock().unwrap();
         assert_eq!(calls[1].continuation.as_deref(), Some("N"));
         assert!(
             calls[1]
                 .query
-                .contains(&("CTX_AREA_FK".to_owned(), "next-fk".to_owned()))
+                .contains(&("CTS".to_owned(), "next-cts".to_owned()))
         );
-        assert!(
-            calls[1]
-                .query
-                .contains(&("CTX_AREA_NK".to_owned(), "next-nk".to_owned()))
-        );
+    }
+
+    #[tokio::test]
+    async fn body_cursor_pagination_fails_on_stall_and_at_the_page_limit() {
+        for (advancing, expected_code, expected_calls) in [
+            (false, "BROKER_PAGINATION_STALLED", 2),
+            (true, "BROKER_PAGINATION_LIMIT", MAX_PAGES),
+        ] {
+            let reader = AlwaysContinuationReader {
+                calls: AtomicUsize::new(0),
+                advancing,
+            };
+            let provider = KisProvider::kr_etf_core(reader);
+            let error = provider
+                .fetch_pages(
+                    &request(vec![ResponseKind::CorporateActions]),
+                    ResponseKind::CorporateActions,
+                    "fixture",
+                    None,
+                    "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
+                    "HHKDB669101C0",
+                    vec![("CTS".to_owned(), String::new())],
+                    PaginationPolicy::BodyCursor,
+                    &mut Vec::new(),
+                )
+                .await
+                .expect_err("unbounded continuation must fail closed");
+            assert!(matches!(
+                error,
+                ProviderError::Remote {
+                    code,
+                    diagnostic: Some(RemoteDiagnostic { ref endpoint, .. }),
+                    ..
+                } if code == expected_code
+                    && endpoint == "/uapi/domestic-stock/v1/ksdinfo/bonus-issue"
+            ));
+            assert_eq!(provider.reader.calls.load(Ordering::SeqCst), expected_calls);
+        }
     }
 
     #[tokio::test]

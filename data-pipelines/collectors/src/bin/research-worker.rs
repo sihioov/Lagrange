@@ -447,6 +447,35 @@ fn error_record(
     }
 }
 
+fn error_code(error: &WorkerError) -> String {
+    if let Some(diagnostic) = error.safe_diagnostic() {
+        return diagnostic.error_code.to_owned();
+    }
+    match error {
+        WorkerError::MissingConfig { .. } => "MISSING_CONFIG",
+        WorkerError::InvalidConfig { .. } => "INVALID_CONFIG",
+        WorkerError::SyntheticForbidden { .. } => "SYNTHETIC_FORBIDDEN",
+        WorkerError::SecretFile { .. } => "SECRET_FILE_UNAVAILABLE",
+        WorkerError::Io { .. } => "WORKER_IO_FAILED",
+        WorkerError::Timeout { .. } => "WORKER_TIMEOUT",
+        WorkerError::ProviderNotConfigured => "PROVIDER_NOT_CONFIGURED",
+        WorkerError::Provider(_) => "PROVIDER_UNAVAILABLE",
+        WorkerError::KisClient(_) => "KIS_CLIENT_UNAVAILABLE",
+        WorkerError::Database { .. } => "DATABASE_UNAVAILABLE",
+        WorkerError::Unhealthy { .. } => "UNHEALTHY",
+        WorkerError::Pipeline(_) => "PIPELINE_FAILED",
+        WorkerError::CandidatePipeline(_) => "CANDIDATE_PIPELINE_FAILED",
+        WorkerError::Curation(_) => "PRICE_CURATION_FAILED",
+        WorkerError::ChildIo { .. } => "HELPER_IO_FAILED",
+        WorkerError::ChildContainment { .. } => "HELPER_CONTAINMENT_FAILED",
+        WorkerError::ChildOutput { .. } => "HELPER_OUTPUT_INVALID",
+        WorkerError::ChildFailure { .. } => "HELPER_FAILED",
+        WorkerError::Cycle { source, .. } => return error_code(source),
+        WorkerError::Shutdown => "SHUTDOWN",
+    }
+    .to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use collectors::{FailureClass, WorkerPhase};
@@ -475,33 +504,4 @@ mod tests {
         assert_eq!(value["message"], "operation failed with BROKER_REJECTED");
         assert!(!value.to_string().contains("body"));
     }
-}
-
-fn error_code(error: &WorkerError) -> String {
-    if let Some(diagnostic) = error.safe_diagnostic() {
-        return diagnostic.error_code.to_owned();
-    }
-    match error {
-        WorkerError::MissingConfig { .. } => "MISSING_CONFIG",
-        WorkerError::InvalidConfig { .. } => "INVALID_CONFIG",
-        WorkerError::SyntheticForbidden { .. } => "SYNTHETIC_FORBIDDEN",
-        WorkerError::SecretFile { .. } => "SECRET_FILE_UNAVAILABLE",
-        WorkerError::Io { .. } => "WORKER_IO_FAILED",
-        WorkerError::Timeout { .. } => "WORKER_TIMEOUT",
-        WorkerError::ProviderNotConfigured => "PROVIDER_NOT_CONFIGURED",
-        WorkerError::Provider(_) => "PROVIDER_UNAVAILABLE",
-        WorkerError::KisClient(_) => "KIS_CLIENT_UNAVAILABLE",
-        WorkerError::Database { .. } => "DATABASE_UNAVAILABLE",
-        WorkerError::Unhealthy { .. } => "UNHEALTHY",
-        WorkerError::Pipeline(_) => "PIPELINE_FAILED",
-        WorkerError::CandidatePipeline(_) => "CANDIDATE_PIPELINE_FAILED",
-        WorkerError::Curation(_) => "PRICE_CURATION_FAILED",
-        WorkerError::ChildIo { .. } => "HELPER_IO_FAILED",
-        WorkerError::ChildContainment { .. } => "HELPER_CONTAINMENT_FAILED",
-        WorkerError::ChildOutput { .. } => "HELPER_OUTPUT_INVALID",
-        WorkerError::ChildFailure { .. } => "HELPER_FAILED",
-        WorkerError::Cycle { source, .. } => return error_code(source),
-        WorkerError::Shutdown => "SHUTDOWN",
-    }
-    .to_owned()
 }
