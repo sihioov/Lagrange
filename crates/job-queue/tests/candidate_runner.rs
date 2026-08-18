@@ -188,6 +188,7 @@ fn candidate_dataset() -> CandidateDataset {
         capability: Capability::PriceReturnOnly,
         created_at: timestamp(RETRIEVED),
         source_batches: Vec::new(),
+        artifacts: Vec::new(),
         bar_count: u64::try_from(MEMBERS.len() * 260).expect("fixture bar count fits u64"),
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"candidate-placeholder"),

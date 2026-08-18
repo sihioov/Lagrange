@@ -156,6 +156,7 @@ fn qa_dataset(artifact_root: &Path) -> QaDataset {
         capability: Capability::PriceReturnOnly,
         created_at: UtcTimestamp::parse_rfc3339("2021-01-29T06:30:00Z").expect("timestamp"),
         source_batches: Vec::new(),
+        artifacts: Vec::new(),
         bar_count: 11 * 260,
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"placeholder"),

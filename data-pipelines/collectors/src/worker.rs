@@ -28,8 +28,9 @@ use market_data::provider::{EodProvider, KrxProvider, ProviderError, RecordedBun
 use market_data::providers::kis::KisProvider;
 use market_data::storage::{RawStore, StoreError};
 use market_data::{
-    CANDIDATE_RESPONSE_KINDS, CurateError, CurateRequest, CurateStore, curate_batch,
-    curation_inputs_from_raw, ingest_bundle_with_kinds, price_curation_evidence,
+    CANDIDATE_RESPONSE_KINDS, CurateError, CurateRequest, CurateStore, curate_generation,
+    curation_inputs_from_raw, curation_inputs_from_raw_entries, ingest_bundle_with_kinds,
+    price_curation_evidence_for_generation,
 };
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -38,11 +39,11 @@ use tokio::process::Command;
 
 use crate::{
     CandidateInstrumentCatalog, CandidatePipelineError, CandidatePricePublication, FailureClass,
-    PipelineError, PostgresCandidateSourceSink, PostgresPublicationSink, RECOVERY_PAGE_SIZE,
-    RecoveryBatchOutcome, RecoveryError, RecoveryPage, RecoveryPosition, RecoveryScope, SinkError,
-    ingest_and_publish, ingest_normalize_publish_kis, prepare_candidate_batch,
-    provider_failure_class, publish_candidate_batch, recover_candidate_batches,
-    recover_kis_normalization, recover_unpublished_normalized_for_date,
+    KisNormalizationRecoveryReport, PipelineError, PostgresCandidateSourceSink,
+    PostgresPublicationSink, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome, RecoveryError, RecoveryPage,
+    RecoveryPosition, RecoveryScope, SinkError, ingest_and_publish, ingest_normalize_publish_kis,
+    prepare_candidate_batch, provider_failure_class, publish_candidate_batch,
+    recover_candidate_batches, recover_kis_normalization, recover_unpublished_normalized_for_date,
     recover_unpublished_page_with_scope, recover_unpublished_with, store_failure_class,
 };
 
@@ -1304,6 +1305,114 @@ pub async fn run_internal_ingest(
         })
 }
 
+/// Runs an inclusive credentialed backfill with one in-memory KIS client.
+///
+/// Keeping the provider here, outside the date loop, is the token-safety
+/// contract: every read in the range shares one `TokenManager`, so the
+/// documented 24-hour token is reused until its expiry margin. No bearer token
+/// is written to disk, argv, the environment, or worker output.
+pub async fn run_credentialed_backfill_range_stream<W: io::Write>(
+    values: &HashMap<String, String>,
+    start: TradingDate,
+    end: TradingDate,
+    writer: &mut W,
+) -> Result<usize, WorkerError> {
+    if end < start {
+        return Err(WorkerError::InvalidConfig {
+            key: "--backfill-range",
+        });
+    }
+    let config = ResearchWorkerConfig::from_map(values)?;
+    if config.fetch_mode != FetchMode::Credentialed || config.candidate_sources_enabled {
+        return Err(WorkerError::InvalidConfig {
+            key: "--backfill-range",
+        });
+    }
+    let factory = ProductionWorkerComponentFactory;
+    let store = factory.build_store(&config)?;
+    let pool = factory.build_pool(&config)?;
+    let sink = PostgresPublicationSink::new(pool.clone());
+    let price_sink = PostgresCandidateSourceSink::new(pool);
+    // Lazy issuance is preserved: construction reads no secret and makes no
+    // network call. The first actually missing date obtains the one token.
+    let provider = build_production_kis_provider(&config)?;
+    // Full-scope crash recovery is deliberately once per process. New targets
+    // publish only their canonical EOD row here; one cumulative Curated
+    // generation is reconciled after the range, avoiding a
+    // date_count * manifest_count rescan during a multi-year backfill.
+    let normalized = recover_kis_normalization(&store).map_err(WorkerError::Pipeline)?;
+    recover_price_publications(&config, &store, &price_sink).await?;
+    let context = CredentialedIngestContext {
+        config: &config,
+        store: &store,
+        sink: &sink,
+        price_sink: &price_sink,
+        provider: &provider,
+        normalized: &normalized,
+    };
+    let mut date = start;
+    let mut processed = 0usize;
+    loop {
+        let batch_id = tokio::time::timeout(
+            config.attempt_timeout,
+            run_credentialed_backfill_date(&context, date, UtcTimestamp::now()),
+        )
+        .await
+        .map_err(|_| WorkerError::Timeout {
+            phase: WorkerPhase::Ingest,
+        })??;
+        // One cumulative Curated generation is materialized only after the
+        // range is complete. Holding the final canonical event until that
+        // succeeds ensures an idempotent rerun still enters this process if
+        // the final cumulative recovery fails.
+        if date == end {
+            recover_price_publications(&config, &store, &price_sink).await?;
+        }
+        serde_json::to_writer(
+            &mut *writer,
+            &BackfillItemWire {
+                status: "event",
+                event: "published",
+                phase: "canonical_publication",
+                batch_id,
+                target_date: date.to_iso(),
+            },
+        )
+        .map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Publication,
+        })?;
+        writer.write_all(b"\n").map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Publication,
+        })?;
+        writer.flush().map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Publication,
+        })?;
+        processed = processed.saturating_add(1);
+        if date == end {
+            break;
+        }
+        date = date.next_day();
+    }
+    Ok(processed)
+}
+
+struct CredentialedIngestContext<'a> {
+    config: &'a ResearchWorkerConfig,
+    store: &'a RawStore,
+    sink: &'a PostgresPublicationSink,
+    price_sink: &'a PostgresCandidateSourceSink,
+    provider: &'a LiveKisProvider,
+    normalized: &'a KisNormalizationRecoveryReport,
+}
+
+async fn run_credentialed_backfill_date(
+    context: &CredentialedIngestContext<'_>,
+    date: TradingDate,
+    now: UtcTimestamp,
+) -> Result<BatchId, WorkerError> {
+    run_credentialed_target_ingest(context, date, now, false).await
+}
+
 async fn run_credentialed_internal_ingest(
     config: &ResearchWorkerConfig,
     store: &RawStore,
@@ -1312,16 +1421,49 @@ async fn run_credentialed_internal_ingest(
     date: TradingDate,
     now: UtcTimestamp,
 ) -> Result<BatchId, WorkerError> {
+    let provider = build_production_kis_provider(config)?;
+    run_credentialed_internal_ingest_with_provider(
+        config, store, sink, price_sink, &provider, date, now,
+    )
+    .await
+}
+
+async fn run_credentialed_internal_ingest_with_provider(
+    config: &ResearchWorkerConfig,
+    store: &RawStore,
+    sink: &PostgresPublicationSink,
+    price_sink: &PostgresCandidateSourceSink,
+    provider: &LiveKisProvider,
+    date: TradingDate,
+    now: UtcTimestamp,
+) -> Result<BatchId, WorkerError> {
     let normalized = recover_kis_normalization(store).map_err(WorkerError::Pipeline)?;
-    // The parent recovery child owns full-scope paging. An ingest retry only
-    // repairs this target date's durable normalized entries before checking
-    // the authoritative EOD row; unrelated backlog must remain for recovery.
-    recover_unpublished_normalized_for_date(store, sink, &normalized, date)
+    recover_price_publications(config, store, price_sink).await?;
+    let context = CredentialedIngestContext {
+        config,
+        store,
+        sink,
+        price_sink,
+        provider,
+        normalized: &normalized,
+    };
+    run_credentialed_target_ingest(&context, date, now, true).await
+}
+
+async fn run_credentialed_target_ingest(
+    context: &CredentialedIngestContext<'_>,
+    date: TradingDate,
+    now: UtcTimestamp,
+    full_price_recovery_after_ingest: bool,
+) -> Result<BatchId, WorkerError> {
+    // The range performs full normalization once, then repairs only this
+    // target's durable normalized entry before its duplicate/holiday check.
+    recover_unpublished_normalized_for_date(context.store, context.sink, context.normalized, date)
         .await
         .map_err(WorkerError::Pipeline)?;
-    recover_price_publications(config, store, price_sink).await?;
 
-    let has_eod = sink
+    let has_eod = context
+        .sink
         .has_eod_for_mode(date, FetchMode::Credentialed)
         .await
         .map_err(|source| WorkerError::Database {
@@ -1329,7 +1471,8 @@ async fn run_credentialed_internal_ingest(
             source,
         })?;
     if has_eod {
-        return normalized
+        return context
+            .normalized
             .outcomes
             .iter()
             .rev()
@@ -1343,27 +1486,27 @@ async fn run_credentialed_internal_ingest(
     // A KIS calendar-confirmed closure is a durable no-price result, not a
     // transient provider miss.  Keep the normalized batch as the idempotency
     // key and do not fetch the same holiday again on every worker wake-up.
-    if let Some(outcome) = normalized
+    if let Some(outcome) = context
+        .normalized
         .outcomes
         .iter()
         .rev()
         .find(|outcome| outcome.entry.date == date)
     {
-        let (calendar, _) =
-            curation_inputs_from_raw(store, &outcome.entry).map_err(WorkerError::Curation)?;
+        let (calendar, _) = curation_inputs_from_raw(context.store, &outcome.entry)
+            .map_err(WorkerError::Curation)?;
         if !calendar.is_session(date) {
             return Ok(outcome.entry.batch_id);
         }
     }
 
-    let provider = build_production_kis_provider(config)?;
     let request = IngestRequest::new(MARKET_KR.to_owned(), date, now);
     let outcome = ingest_normalize_publish_kis(
-        store,
-        &provider,
+        context.store,
+        context.provider,
         &request,
-        Some(&config.entitlement_reference),
-        sink,
+        Some(&context.config.entitlement_reference),
+        context.sink,
     )
     .await
     .map_err(WorkerError::Pipeline)?;
@@ -1371,7 +1514,15 @@ async fn run_credentialed_internal_ingest(
     // crash between these two steps leaves the immutable normalized batch for
     // the next recovery pass, which will replay the exact Curated generation
     // and candidate-price publication without fetching KIS again.
-    recover_price_publications(config, store, price_sink).await?;
+    if full_price_recovery_after_ingest {
+        recover_price_publication_for_entry(
+            context.config,
+            context.store,
+            context.price_sink,
+            &outcome.manifest,
+        )
+        .await?;
+    }
     Ok(outcome.manifest.batch_id)
 }
 
@@ -1449,139 +1600,210 @@ async fn recover_price_publications(
     let entries = raw
         .read_reconciled_manifest(provider, MARKET_KR)
         .map_err(|source| WorkerError::Pipeline(PipelineError::Manifest { source }))?;
-    let mut published_batch = None;
+    let mut by_date = BTreeMap::<TradingDate, market_data::ManifestEntry>::new();
     for entry in entries {
         if !raw_batch_has_target_bars(raw, &entry)? {
             continue;
         }
-        if sink
-            .raw_batch_is_terminal(&entry, "price")
+        match by_date.get(&entry.date) {
+            Some(previous)
+                if previous.retrieved_at > entry.retrieved_at
+                    || (previous.retrieved_at == entry.retrieved_at
+                        && previous.batch_id.to_string() >= entry.batch_id.to_string()) => {}
+            _ => {
+                by_date.insert(entry.date, entry);
+            }
+        }
+    }
+    let entries = by_date.into_values().collect::<Vec<_>>();
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let anchor = entries.last().expect("nonempty cumulative source set");
+    let contract_reference = anchor
+        .entitlement_reference
+        .as_deref()
+        .filter(|reference| !reference.trim().is_empty())
+        .ok_or_else(|| {
+            WorkerError::Curation(CurateError::MalformedManifest {
+                context: "candidate price entitlement".to_owned(),
+                detail: "Raw EOD batch has no governing contract reference".to_owned(),
+            })
+        })?;
+    if entries.iter().any(|entry| {
+        entry
+            .entitlement_reference
+            .as_deref()
+            .filter(|reference| !reference.trim().is_empty())
+            != Some(contract_reference)
+    }) {
+        return Err(WorkerError::Curation(CurateError::MalformedManifest {
+            context: "cumulative candidate price entitlement".to_owned(),
+            detail: "one immutable generation cannot mix Raw contract references".to_owned(),
+        }));
+    }
+
+    let mut pending = Vec::new();
+    for entry in &entries {
+        if !sink
+            .raw_batch_is_terminal(entry, "price")
             .await
             .map_err(|source| WorkerError::Database {
                 phase: WorkerPhase::Recovery,
                 source,
             })?
         {
-            continue;
+            pending.push(entry.clone());
         }
-        let contract_reference = entry
-            .entitlement_reference
-            .as_deref()
-            .filter(|reference| !reference.trim().is_empty())
-            .ok_or_else(|| {
-                WorkerError::Curation(CurateError::MalformedManifest {
-                    context: "candidate price entitlement".to_owned(),
-                    detail: "Raw EOD batch has no governing contract reference".to_owned(),
-                })
-            })?;
-        let (calendar, master) =
-            curation_inputs_from_raw(raw, &entry).map_err(WorkerError::Curation)?;
-        let manifest = match curated
-            .manifest_for_source_batch(&dataset_id, entry.batch_id)
-            .map_err(WorkerError::Curation)?
-        {
-            Some(manifest) => manifest,
-            None => {
-                curate_batch(
-                    raw,
-                    &entry,
-                    &calendar,
-                    &master,
-                    &curated,
-                    &CurateRequest {
-                        dataset_id: &dataset_id,
-                        market: MARKET_KR,
-                        source: &entry.provider,
-                        now: entry.retrieved_at,
-                    },
-                )
-                .map_err(WorkerError::Curation)?
-                .manifest
-            }
-        };
-        let evidence =
-            price_curation_evidence(raw, &entry, &manifest).map_err(WorkerError::Curation)?;
-        if evidence.last_session != entry.date {
-            return Err(WorkerError::Curation(CurateError::MalformedManifest {
-                context: "candidate price publication".to_owned(),
-                detail: "Raw EOD batch contains a future session or omits its target session"
-                    .to_owned(),
-            }));
-        }
-        let entitlement_id = match sink
-            .resolve_contract_entitlement(
-                contract_reference,
-                evidence.first_session,
-                evidence.last_session,
+    }
+    if pending.is_empty() {
+        return Ok(None);
+    }
+    if pending.last().map(|entry| entry.batch_id) != Some(anchor.batch_id) {
+        return Err(WorkerError::Curation(CurateError::MalformedManifest {
+            context: "cumulative candidate price publication".to_owned(),
+            detail: "the latest source date is already terminal while an older cumulative source is pending".to_owned(),
+        }));
+    }
+
+    let (calendar, master) =
+        curation_inputs_from_raw_entries(raw, &entries).map_err(WorkerError::Curation)?;
+    let manifest = match curated
+        .latest_manifest(&dataset_id)
+        .map_err(WorkerError::Curation)?
+    {
+        Some(manifest) if manifest_matches_entries(&manifest, &entries) => manifest,
+        _ => {
+            curate_generation(
+                raw,
+                &entries,
+                &calendar,
+                &master,
+                &curated,
+                &CurateRequest {
+                    dataset_id: &dataset_id,
+                    market: MARKET_KR,
+                    source: &anchor.provider,
+                    now: entries
+                        .iter()
+                        .map(|entry| entry.retrieved_at)
+                        .max()
+                        .expect("nonempty cumulative source set"),
+                },
             )
-            .await
-        {
-            Ok(entitlement_id) => entitlement_id,
-            Err(original) => {
+            .map_err(WorkerError::Curation)?
+            .manifest
+        }
+    };
+    let evidence = price_curation_evidence_for_generation(raw, &entries, &manifest, anchor)
+        .map_err(WorkerError::Curation)?;
+    if evidence.last_session != anchor.date {
+        return Err(WorkerError::Curation(CurateError::MalformedManifest {
+            context: "candidate price publication".to_owned(),
+            detail: "cumulative Raw EOD source omits its latest target session".to_owned(),
+        }));
+    }
+    let entitlement_id = match sink
+        .resolve_contract_entitlement(
+            contract_reference,
+            evidence.first_session,
+            evidence.last_session,
+        )
+        .await
+    {
+        Ok(entitlement_id) => entitlement_id,
+        Err(original) => {
+            for entry in &pending {
                 if sink
                     .block_raw_batch_for_inactive_rights(
-                        &entry,
+                        entry,
                         "price",
                         evidence.first_session,
                         evidence.last_session,
                     )
                     .await
-                    .is_ok()
+                    .is_err()
                 {
-                    continue;
+                    return Err(WorkerError::Database {
+                        phase: WorkerPhase::Publication,
+                        source: original,
+                    });
                 }
-                return Err(WorkerError::Database {
-                    phase: WorkerPhase::Publication,
-                    source: original,
-                });
             }
-        };
-        let reference_sha256 = entry
-            .files
-            .iter()
-            .find(|file| file.kind == market_data::ResponseKind::Reference)
-            .and_then(|file| file.content_hash.as_str().strip_prefix("sha256:"))
-            .ok_or_else(|| {
-                WorkerError::Curation(CurateError::MalformedManifest {
-                    context: "candidate instrument catalog".to_owned(),
-                    detail: "Raw EOD batch has no exact reference hash".to_owned(),
-                })
-            })?;
-        let source_revision = entry.batch_id.to_string();
-        sink.register_candidate_instruments(&CandidateInstrumentCatalog {
-            master: &master,
+            return Ok(None);
+        }
+    };
+    let reference_sha256 = anchor
+        .files
+        .iter()
+        .find(|file| file.kind == market_data::ResponseKind::Reference)
+        .and_then(|file| file.content_hash.as_str().strip_prefix("sha256:"))
+        .ok_or_else(|| {
+            WorkerError::Curation(CurateError::MalformedManifest {
+                context: "candidate instrument catalog".to_owned(),
+                detail: "Raw EOD batch has no exact reference hash".to_owned(),
+            })
+        })?;
+    let source_revision = anchor.batch_id.to_string();
+    sink.register_candidate_instruments(&CandidateInstrumentCatalog {
+        master: &master,
+        entitlement_id,
+        contract_reference,
+        entitlement_date: anchor.date,
+        reference_sha256,
+        source_revision: &source_revision,
+        retrieved_at: anchor.retrieved_at,
+    })
+    .await
+    .map_err(|source| WorkerError::Database {
+        phase: WorkerPhase::Publication,
+        source,
+    })?;
+    let raw_manifest_sha256 = crate::candidate_sink::candidate_raw_manifest_sha256(anchor)
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::Publication,
+            source,
+        })?;
+    let (dataset_version_id, anchor_outcome) = sink
+        .publish_price(&CandidatePricePublication {
+            raw_batch_id: anchor.batch_id.as_uuid(),
+            raw_manifest_sha256: &raw_manifest_sha256,
+            fetch_mode: anchor.mode,
+            entitlement_date: anchor.date,
+            evidence: &evidence,
+            dataset_version: &manifest.version.to_string(),
+            storage_path,
+            provider: &anchor.provider,
             entitlement_id,
-            contract_reference,
-            entitlement_date: entry.date,
-            reference_sha256,
-            source_revision: &source_revision,
-            retrieved_at: entry.retrieved_at,
+            license_ref: contract_reference,
+            available_at: anchor.retrieved_at,
+            retrieved_at: anchor.retrieved_at,
         })
         .await
         .map_err(|source| WorkerError::Database {
             phase: WorkerPhase::Publication,
             source,
         })?;
-        let raw_manifest_sha256 = crate::candidate_sink::candidate_raw_manifest_sha256(&entry)
+    let mut published_batch =
+        (anchor_outcome == crate::PublishOutcome::Published).then_some(anchor.batch_id);
+    for entry in pending
+        .iter()
+        .filter(|entry| entry.batch_id != anchor.batch_id)
+    {
+        let raw_manifest_sha256 = crate::candidate_sink::candidate_raw_manifest_sha256(entry)
             .map_err(|source| WorkerError::Database {
                 phase: WorkerPhase::Publication,
                 source,
             })?;
-        let (_, outcome) = sink
-            .publish_price(&CandidatePricePublication {
-                raw_batch_id: entry.batch_id.as_uuid(),
-                raw_manifest_sha256: &raw_manifest_sha256,
-                fetch_mode: entry.mode,
-                entitlement_date: entry.date,
-                evidence: &evidence,
-                dataset_version: &manifest.version.to_string(),
-                storage_path,
-                provider: &entry.provider,
-                entitlement_id,
-                license_ref: contract_reference,
-                available_at: entry.retrieved_at,
-                retrieved_at: entry.retrieved_at,
-            })
+        let outcome = sink
+            .bind_price_batch_to_existing_generation(
+                entry.batch_id.as_uuid(),
+                &raw_manifest_sha256,
+                entry.mode,
+                contract_reference,
+                entry.date,
+                dataset_version_id,
+            )
             .await
             .map_err(|source| WorkerError::Database {
                 phase: WorkerPhase::Publication,
@@ -1592,6 +1814,54 @@ async fn recover_price_publications(
         }
     }
     Ok(published_batch)
+}
+
+fn manifest_matches_entries(
+    manifest: &market_data::DatasetManifest,
+    entries: &[market_data::ManifestEntry],
+) -> bool {
+    if manifest.source_batches.len() != entries.len() {
+        return false;
+    }
+    entries.iter().all(|entry| {
+        let Some(bars) = entry
+            .files
+            .iter()
+            .find(|file| file.kind == market_data::ResponseKind::Bars)
+        else {
+            return false;
+        };
+        let Some(actions) = entry
+            .files
+            .iter()
+            .find(|file| file.kind == market_data::ResponseKind::CorporateActions)
+        else {
+            return false;
+        };
+        manifest.source_batches.iter().any(|source| {
+            source.batch_id == entry.batch_id
+                && source.bars_file == bars.file_name
+                && source.bars_hash == bars.content_hash
+                && source.actions_file == actions.file_name
+                && source.actions_hash == actions.content_hash
+        })
+    })
+}
+
+/// The target-ingest path may ask for a narrow post-fetch recovery. The
+/// durable Curated contract is cumulative, so the narrow entry is only a
+/// trigger; recovery still reconciles the complete Raw history before
+/// publishing one immutable generation. This keeps the O(1) target wake-up
+/// from silently creating a one-day dataset pin.
+async fn recover_price_publication_for_entry(
+    config: &ResearchWorkerConfig,
+    raw: &RawStore,
+    sink: &PostgresCandidateSourceSink,
+    _entry: &market_data::ManifestEntry,
+) -> Result<(), WorkerError> {
+    recover_price_publications(config, raw, sink)
+        .await
+        .map(|_| ())
 }
 
 fn raw_batch_has_target_bars(
@@ -2080,7 +2350,8 @@ pub async fn candidate_healthcheck(
     let dataset_id = DatasetId::parse("krx_eod_bars").map_err(|_| WorkerError::Unhealthy {
         reason: HealthFailure::PriceManifestMismatch,
     })?;
-    let manifest = CurateStore::new(curated_root)
+    let store = CurateStore::new(curated_root);
+    let manifest = store
         .read_dataset_manifest(&dataset_id, generation)
         .map_err(|_| WorkerError::Unhealthy {
             reason: HealthFailure::PriceManifestMismatch,
@@ -2104,6 +2375,11 @@ pub async fn candidate_healthcheck(
             reason: HealthFailure::PriceManifestMismatch,
         });
     }
+    store
+        .verify_artifacts(&manifest)
+        .map_err(|_| WorkerError::Unhealthy {
+            reason: HealthFailure::PriceManifestMismatch,
+        })?;
     Ok(HealthStatus {
         newest_eod_at,
         age: age.max(price_age),
@@ -2610,6 +2886,16 @@ struct RecoveryItemWire<'a> {
     batch_id: BatchId,
     target_date: String,
     snapshot_high_water: BatchId,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BackfillItemWire<'a> {
+    status: &'a str,
+    event: &'a str,
+    phase: &'a str,
+    batch_id: BatchId,
+    target_date: String,
 }
 
 fn helper_environment(

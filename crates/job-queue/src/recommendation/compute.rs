@@ -336,6 +336,9 @@ fn attest_dataset_manifest(
                 .to_owned(),
         });
     }
+    store
+        .verify_artifacts(&manifest)
+        .map_err(map_manifest_read_error)?;
     Ok(())
 }
 
@@ -366,6 +369,9 @@ fn map_shape_error(error: FactorSeriesError) -> RecommendationError {
             detail: error.to_string(),
         },
         FactorSeriesError::Compute(_) => RecommendationError::Integrity {
+            detail: error.to_string(),
+        },
+        FactorSeriesError::ManifestIntegrity(_) => RecommendationError::Integrity {
             detail: error.to_string(),
         },
         FactorSeriesError::Engine(error) => map_factor_error(error),

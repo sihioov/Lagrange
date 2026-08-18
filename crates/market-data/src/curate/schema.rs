@@ -67,6 +67,14 @@ pub const TAX_SCALE: u8 = 6;
 pub const CORPORATE_ACTIONS_SCHEMA_VERSION: u32 = 2;
 pub const CORPORATE_ACTIONS_SCHEMA_VERSION_KEY: &str = "lagrange.corporate_actions.schema_version";
 
+/// Stable schema identifiers recorded in the immutable dataset manifest.
+/// These are deliberately narrower than a Parquet library version: consumers
+/// compare the actual Arrow schema as well as this identifier.
+pub const BARS_SCHEMA_ID: &str = "bars-v1";
+pub const ADJUSTED_BARS_SCHEMA_ID: &str = "adjusted-bars-v1";
+pub const TOTAL_RETURN_BARS_SCHEMA_ID: &str = "total-return-bars-v1";
+pub const CORPORATE_ACTIONS_SCHEMA_ID: &str = "corporate-actions-v2";
+
 fn price_type() -> DataType {
     DataType::Decimal128(PRICE_PRECISION, PRICE_SCALE as i8)
 }
@@ -575,6 +583,53 @@ fn read_batches(path: &Path) -> Result<Vec<arrow::record_batch::RecordBatch>, Cu
             context: format!("read rows {}", path.display()),
             detail: e.to_string(),
         })
+}
+
+/// Verify only the Parquet header/schema for an attested output artifact.
+///
+/// The full typed readers remain responsible for value validation.  This
+/// narrow check is used before a consumer trusts an immutable manifest, so a
+/// file with a valid Parquet magic header but a different table contract is
+/// rejected before it can be selected by a downstream engine.
+pub fn verify_parquet_schema(path: &Path, schema_id: &str) -> Result<(), CurateError> {
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    let expected = match schema_id {
+        BARS_SCHEMA_ID => CuratedSchema::bars(),
+        ADJUSTED_BARS_SCHEMA_ID | TOTAL_RETURN_BARS_SCHEMA_ID => CuratedSchema::adjusted_bars(),
+        CORPORATE_ACTIONS_SCHEMA_ID => CuratedSchema::corporate_actions(),
+        other => {
+            return Err(CurateError::MalformedManifest {
+                context: format!("artifact schema {}", path.display()),
+                detail: format!("unknown curated schema identifier {other:?}"),
+            });
+        }
+    };
+    let file = File::open(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            CurateError::MissingCuratedComponent {
+                path: path.display().to_string(),
+            }
+        } else {
+            CurateError::StoreIo {
+                context: format!("open artifact {}", path.display()),
+                detail: e.to_string(),
+            }
+        }
+    })?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
+        CurateError::MalformedParquet {
+            context: format!("read artifact header {}", path.display()),
+            detail: e.to_string(),
+        }
+    })?;
+    if builder.schema().as_ref() != &expected {
+        return Err(CurateError::MalformedParquet {
+            context: format!("artifact schema {}", path.display()),
+            detail: format!("schema does not match {schema_id}"),
+        });
+    }
+    Ok(())
 }
 
 fn str_at<'a>(batch: &'a arrow::record_batch::RecordBatch, col: &str, i: usize) -> &'a str {

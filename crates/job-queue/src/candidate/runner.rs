@@ -392,6 +392,13 @@ fn attest_price_manifest(
             "candidate price manifest does not match the database pin",
         ));
     }
+    store.verify_artifacts(&manifest).map_err(|_| {
+        StageFailure::new(
+            ErrorClass::Integrity,
+            "CANDIDATE_PRICE_ARTIFACT_INTEGRITY",
+            "candidate price artifacts do not match the database pin",
+        )
+    })?;
     Ok(())
 }
 
@@ -689,6 +696,7 @@ mod tests {
             capability: Capability::PriceReturnOnly,
             created_at: UtcTimestamp::parse_rfc3339("2026-08-14T07:00:00Z").expect("timestamp"),
             source_batches: Vec::new(),
+            artifacts: Vec::new(),
             bar_count: 1,
             action_count: 0,
             content_hash: ContentHash::from_bytes(b"placeholder"),
@@ -706,7 +714,9 @@ mod tests {
             .strip_prefix("sha256:")
             .expect("sha256 prefix");
 
-        assert!(attest_price_manifest(&store, "krx_eod_bars", 7, hash).is_ok());
+        // A legacy manifest without exact curated artifact references is not
+        // sufficient for a production pin, even when its self-hash matches.
+        assert!(attest_price_manifest(&store, "krx_eod_bars", 7, hash).is_err());
         assert!(attest_price_manifest(&store, "krx_eod_bars", 8, hash).is_err());
         assert!(attest_price_manifest(&store, "wrong_dataset", 7, hash).is_err());
         assert!(attest_price_manifest(&store, "krx_eod_bars", 7, &"0".repeat(64)).is_err());

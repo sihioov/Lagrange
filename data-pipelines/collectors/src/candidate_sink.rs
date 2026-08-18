@@ -571,6 +571,72 @@ impl PostgresCandidateSourceSink {
         ))
     }
 
+    /// Attach another immutable Raw price delivery to an already published
+    /// cumulative generation. The first (origin) batch is created by
+    /// `publish_candidate_price_publication`; subsequent batches must use the
+    /// database's `reused_existing` path so one curated generation can cover
+    /// an entire historical backfill without pretending each source has its
+    /// own dataset version.
+    pub async fn bind_price_batch_to_existing_generation(
+        &self,
+        raw_batch_id: Uuid,
+        raw_manifest_sha256: &str,
+        fetch_mode: market_data::FetchMode,
+        entitlement_reference: &str,
+        entitlement_date: TradingDate,
+        dataset_version_id: Uuid,
+    ) -> Result<PublishOutcome, SinkError> {
+        if raw_batch_id.is_nil()
+            || raw_manifest_sha256.len() != 64
+            || !raw_manifest_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || entitlement_reference.trim().is_empty()
+            || dataset_version_id.is_nil()
+        {
+            return Err(SinkError::Invariant(
+                "cumulative price Raw binding identity is invalid".to_owned(),
+            ));
+        }
+        let previous: Option<String> = sqlx::query_scalar(
+            "SELECT state FROM candidate_raw_batch_publications
+              WHERE batch_id=$1 AND surface='price'",
+        )
+        .bind(raw_batch_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(SinkError::from_sqlx)?;
+        let mut tx = self.pool.begin().await.map_err(SinkError::from_sqlx)?;
+        sqlx::query("SELECT public.begin_candidate_raw_batch($1,'price',$2,$3,$4,$5)")
+            .bind(raw_batch_id)
+            .bind(raw_manifest_sha256)
+            .bind(fetch_mode.as_str())
+            .bind(entitlement_reference)
+            .bind(date(entitlement_date))
+            .execute(&mut *tx)
+            .await
+            .map_err(SinkError::from_sqlx)?;
+        sqlx::query("SELECT public.bind_candidate_raw_dataset($1,'price','bars',$2,true)")
+            .bind(raw_batch_id)
+            .bind(dataset_version_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(SinkError::from_sqlx)?;
+        sqlx::query("SELECT public.seal_candidate_raw_batch($1,'price',$2,$3)")
+            .bind(raw_batch_id)
+            .bind(raw_manifest_sha256)
+            .bind(fetch_mode.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(SinkError::from_sqlx)?;
+        tx.commit().await.map_err(SinkError::from_sqlx)?;
+        Ok(if previous.as_deref() == Some("PUBLISHED") {
+            PublishOutcome::AlreadyPublished
+        } else {
+            PublishOutcome::Published
+        })
+    }
+
     pub async fn has_price(&self, as_of: TradingDate) -> Result<bool, SinkError> {
         sqlx::query_scalar(
             "SELECT EXISTS (

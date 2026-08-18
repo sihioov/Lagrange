@@ -56,6 +56,14 @@ pub trait TokenIssuer: Send + Sync {
 /// path that failure is ambiguous, not clean. Renewing early converts a
 /// hard-to-diagnose race into an ordinary refresh.
 pub const DEFAULT_REFRESH_MARGIN_MS: i64 = 60_000;
+/// KIS's documented safeguard between access-token issue requests.
+pub const MIN_ISSUE_INTERVAL_MS: i64 = 60_000;
+
+#[derive(Default)]
+struct TokenState {
+    token: Option<AccessToken>,
+    last_issue_attempt_ms: Option<i64>,
+}
 
 /// The single owner of the access token.
 pub struct TokenManager {
@@ -63,7 +71,7 @@ pub struct TokenManager {
     issuer: Arc<dyn TokenIssuer>,
     refresh_margin_ms: i64,
     /// The mutex IS the serialization contract; it is held across issue().
-    state: Mutex<Option<AccessToken>>,
+    state: Mutex<TokenState>,
 }
 
 impl TokenManager {
@@ -72,7 +80,7 @@ impl TokenManager {
             clock,
             issuer,
             refresh_margin_ms: DEFAULT_REFRESH_MARGIN_MS,
-            state: Mutex::new(None),
+            state: Mutex::new(TokenState::default()),
         }
     }
 
@@ -96,14 +104,27 @@ impl TokenManager {
 
         // Re-check INSIDE the lock. Checking only before acquiring would let
         // every queued caller issue in turn - a stampede one lock later.
-        if let Some(existing) = guard.as_ref()
+        if let Some(existing) = guard.token.as_ref()
             && self.is_usable(existing, now)
         {
             return Ok(existing.clone());
         }
 
+        if let Some(last_attempt) = guard.last_issue_attempt_ms {
+            let elapsed = now.saturating_sub(last_attempt).max(0);
+            if elapsed < MIN_ISSUE_INTERVAL_MS {
+                return Err(KisError::RateLimited {
+                    endpoint: crate::token_issuer::TOKEN_PATH.to_owned(),
+                    retry_after_ms: MIN_ISSUE_INTERVAL_MS.saturating_sub(elapsed) as u64,
+                });
+            }
+        }
+
+        // Record before awaiting the issuer. Failed and ambiguous attempts are
+        // also subject to KIS's one-request-per-minute safeguard.
+        guard.last_issue_attempt_ms = Some(now);
         let fresh = self.issuer.issue().await?;
-        *guard = Some(fresh.clone());
+        guard.token = Some(fresh.clone());
         Ok(fresh)
     }
 
@@ -112,7 +133,7 @@ impl TokenManager {
     /// For the 401 path: the broker is the authority on whether a token is
     /// still good, and it can revoke one before its stated expiry.
     pub async fn invalidate(&self) {
-        *self.state.lock().await = None;
+        self.state.lock().await.token = None;
     }
 }
 
@@ -243,8 +264,9 @@ mod tests {
         mgr.token().await.expect("first");
         assert_eq!(issuer.calls(), 1);
 
-        // 50s in: 50s of life left, which is inside the 60s margin.
-        clock.advance_ms(50_000);
+        // 60s in: 40s of life remain, which is inside the 60s margin, and the
+        // broker's minimum issue interval has also elapsed.
+        clock.advance_ms(MIN_ISSUE_INTERVAL_MS);
         mgr.token().await.expect("refreshed");
         assert_eq!(
             issuer.calls(),
@@ -266,6 +288,15 @@ mod tests {
         assert_eq!(issuer.calls(), 1);
         // The broker is the authority: it may revoke before stated expiry.
         mgr.invalidate().await;
+        let limited = mgr.token().await.expect_err("issue interval is enforced");
+        assert!(matches!(
+            limited,
+            KisError::RateLimited {
+                retry_after_ms: 60_000,
+                ..
+            }
+        ));
+        clock.advance_ms(MIN_ISSUE_INTERVAL_MS);
         mgr.token().await.expect("reissued");
         assert_eq!(issuer.calls(), 2);
     }
@@ -281,7 +312,14 @@ mod tests {
 
         let err = mgr.token().await.expect_err("issuer refuses");
         assert_eq!(err.code(), "BROKER_AUTH_FAILED");
-        // A failed issue must not poison the manager into never retrying.
+        // A failed issue is still an issue attempt and may not be repeated
+        // inside KIS's one-minute safeguard.
+        assert!(matches!(
+            mgr.token().await,
+            Err(KisError::RateLimited { .. })
+        ));
+        assert_eq!(issuer.calls(), 1);
+        clock.advance_ms(MIN_ISSUE_INTERVAL_MS);
         let _ = mgr.token().await;
         assert_eq!(issuer.calls(), 2);
     }

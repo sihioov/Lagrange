@@ -27,8 +27,10 @@ are candidate source data.
 --execute requires BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS
 and a valid backfill-scope production config. It uses the existing idempotent worker path;
 no order/account endpoint is called. The state file is append-only and each
-worker run must complete Raw -> normalized -> DB publication before progress
-is recorded. The state identity binds only pre-run inputs; the curated dataset
+date must complete Raw -> normalized -> DB publication before progress is
+recorded. One bounded worker process owns the inclusive range so its in-memory
+KIS token is reused; the token is never persisted by this script. The state
+identity binds only pre-run inputs; the curated dataset
 pin is produced and approved after this command, so it is never required here.
 EOF
 }
@@ -178,6 +180,7 @@ if [ "$mode" = execute ]; then
   docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavailable'
   command -v flock >/dev/null 2>&1 || blocked 'flock is required to serialize backfill executions'
   command -v sha256sum >/dev/null 2>&1 || blocked 'sha256sum is required for backfill state identity'
+  command -v mktemp >/dev/null 2>&1 || blocked 'mktemp is required for the token issue window'
 
   check_state_path "$state_file" backfill-state
   state_dir=$(dirname -- "$state_file")
@@ -227,6 +230,8 @@ BACKFILL_PLAN: KIS read-only fixed ETF EOD
   idempotency: deterministic normalized batch/source_batch_id and exact manifest replay
   state identity: V3 pre-run inputs only (date range, universe, code, entitlement, source scope)
   verification: raw manifest+hashes -> normalize -> four canonical docs -> DB publication
+  token safety: one bounded worker/provider reuses one in-memory token for the range;
+                issue attempts are gated to one per minute and no bearer token is persisted
   approval: operator reviews manifest/hash/counts, then pins one dataset version for recommendation/backtest/Paper
   state: $state_file (created only by --execute)
 PLAN_ONLY: no KIS call, Docker run, file write, or account/order access
@@ -239,19 +244,76 @@ if ! dates=$(date_list); then
   die 'failed to enumerate the validated date range'
 fi
 published_suffix=$'\tPUBLISHED\t'"$run_identity"
+pending_dates=()
 while IFS= read -r date; do
   if grep -Fqx "$date$published_suffix" "$state_file"; then
     echo "BACKFILL_SKIP date=$date state=PUBLISHED"
     continue
   fi
-  printf '%s\tRUNNING\t%s\n' "$date" "$run_identity" >>"$state_file"
-  if "${compose[@]}" run --rm --no-deps research-worker --once --date "$date"; then
-    printf '%s\tPUBLISHED\t%s\n' "$date" "$run_identity" >>"$state_file"
-    echo "BACKFILL_DONE date=$date"
-  else
-    printf '%s\tFAILED\t%s\n' "$date" "$run_identity" >>"$state_file"
-    echo "BACKFILL_STOPPED date=$date (rerun resumes after operator review)" >&2
-    exit 1
-  fi
+  pending_dates+=("$date")
 done <<<"$dates"
+
+if [ "${#pending_dates[@]}" -eq 0 ]; then
+  echo 'BACKFILL: PASS'
+  exit 0
+fi
+
+# A separately running daemon would own a different process-local token cache.
+# Refuse the overlap rather than risk a second issue request.
+if ! running_services=$("${compose[@]}" ps --status running --services); then
+  blocked 'cannot determine whether the research-worker daemon is running'
+fi
+if grep -Fxq research-worker <<<"$running_services"; then
+  blocked 'research-worker daemon is running; stop it before the bounded backfill range'
+fi
+
+# Persist only the time at which this process may have attempted issuance, not
+# the bearer token. This closes the one-minute guard across failed container
+# starts and operator reruns. The state lock serializes writers and the final
+# rename replaces a path entry rather than following a target symlink.
+token_window_file="${state_file}.token-window"
+check_state_path "$token_window_file" backfill-token-window
+now_epoch=$(date +%s)
+if [ -e "$token_window_file" ]; then
+  [ "$(stat -c '%u:%g:%a' "$token_window_file")" = 0:0:600 ] ||
+    blocked 'backfill token issue window must be root:root mode 0600'
+  IFS= read -r last_issue_epoch <"$token_window_file" ||
+    blocked 'backfill token issue window is unreadable'
+  [[ "$last_issue_epoch" =~ ^[0-9]{1,11}$ ]] ||
+    blocked 'backfill token issue window is malformed'
+  elapsed=$((now_epoch - last_issue_epoch))
+  if [ "$elapsed" -lt 60 ]; then
+    [ "$elapsed" -ge 0 ] || elapsed=0
+    blocked "wait $((60 - elapsed)) seconds before another possible token issue"
+  fi
+fi
+token_window_tmp=$(mktemp "$state_dir/.token-window.XXXXXX") ||
+  die 'cannot stage the backfill token issue window'
+chmod 0600 "$token_window_tmp"
+printf '%s\n' "$now_epoch" >"$token_window_tmp"
+mv -fT -- "$token_window_tmp" "$token_window_file"
+check_state_path "$token_window_file" backfill-token-window
+
+for date in "${pending_dates[@]}"; do
+  printf '%s\tRUNNING\t%s\n' "$date" "$run_identity" >>"$state_file"
+done
+
+# The worker flushes one allowlisted, body-free event after each date reaches
+# durable publication. Validate the exact inclusive sequence and fsync each
+# corresponding state append so a later date failure cannot erase progress.
+if "${compose[@]}" run --rm --no-deps research-worker \
+  --backfill-range --start "$start_date" --end "$end_date" | \
+  python3 "$script_dir/lib/backfill-progress.py" \
+    "$state_file" "$run_identity" "$start_date" "$end_date"
+then
+  :
+else
+  for date in "${pending_dates[@]}"; do
+    if ! grep -Fqx "$date$published_suffix" "$state_file"; then
+      printf '%s\tFAILED\t%s\n' "$date" "$run_identity" >>"$state_file"
+    fi
+  done
+  echo 'BACKFILL_STOPPED range failed (rerun resumes idempotently after operator review)' >&2
+  exit 1
+fi
 echo 'BACKFILL: PASS'

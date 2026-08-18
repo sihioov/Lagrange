@@ -380,6 +380,7 @@ async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
         capability: Capability::PriceReturnOnly,
         created_at: UtcTimestamp::parse_rfc3339("2026-05-08T07:00:00Z").unwrap(),
         source_batches: Vec::new(),
+        artifacts: Vec::new(),
         bar_count: 1,
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"placeholder"),

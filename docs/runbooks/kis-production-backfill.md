@@ -162,8 +162,17 @@ sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
   --start 2020-01-01 --end 2026-08-17 --universe etf --execute
 ```
 
-실행기는 날짜별로 `research-worker --once --date`를 호출하고, 성공한 날짜만
-state file에 `PUBLISHED`로 append한다. 상태 파일은 현재 실행의 date range,
+실행기는 승인된 전체 범위를 하나의 `research-worker --backfill-range` 프로세스로
+처리한다. 이 프로세스는 provider와 `TokenManager` 하나를 공유하여 공식 24시간
+토큰을 만료 전까지 메모리에서 재사용하고, 토큰 값 자체를 파일에 저장하지 않는다.
+발급 실패를 포함한 시도 간격은 최소 1분이며, wrapper는 빠른 프로세스 재실행도
+막기 위해 root:root 0600의 비밀이 아닌 마지막 시도 시각만 별도 기록한다. 별도
+worker daemon이 실행 중이면 서로 다른 token cache가 생기므로 실행을 거부한다.
+이 계약의 근거는 제공된 공식 XLSX sheet 4 `접근토큰발급(P)`와 KIS 공식
+`examples_user/kis_auth.py`의 만료 기반 캐시 예제다. worker는 한 날짜의 durable
+canonical EOD DB publication이 끝날 때마다 값/본문 없는 JSON event를 flush하고, wrapper는 exact
+date 순서와 batch UUID를 검증한 뒤 해당 날짜의 `PUBLISHED`를 즉시 fsync한다.
+따라서 뒤 날짜가 실패해도 앞서 성공한 progress는 재실행에 보존된다. 상태 파일은 현재 실행의 date range,
 universe, code commit, entitlement reference와 source scope만 해시한 V3
 pre-run identity에 바인딩된다. 아직 생성되지 않은 curated manifest/five-pin은
 identity에 들어가지 않으므로, 백필 후 승인 pin을 `.env`에 입력해도 재개 state가
@@ -172,6 +181,13 @@ identity에 들어가지 않으므로, 백필 후 승인 pin을 `.env`에 입력
 시 같은 identity에서 이미 `PUBLISHED`인 날짜만 건너뛴다. worker 자체의
 deterministic normalized ID와 exact manifest/evidence 비교가 재시도·crash
 recovery의 기준이다.
+
+전체 Raw/Curated manifest recovery는 range 시작에 한 번 수행한다. 신규 날짜마다
+전체 manifest를 다시 훑지 않으며, range가 끝날 때 cumulative Curated generation을
+한 번 생성한다. 마지막 날짜의 canonical event는 이 최종 Curated 단계까지 성공한
+뒤에만 출력하므로, 최종 단계 실패도 마지막 날짜가 pending인 재실행으로 반드시
+수렴한다. 중간 실패 뒤의 재실행은 시작 recovery가 앞서 완료된 날짜의 cumulative
+상태를 복구한다.
 
 각 날짜의 승인 조건은 다음 네 단계가 모두 확인되는 것이다.
 
@@ -283,10 +299,11 @@ sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
   scripts/ops/compose-release.sh --scope backfill --apply
 ```
 
-bootstrap이 성공한 뒤에만 날짜별 one-shot 백필을 실행한다. daemon을 먼저
-기동하면 기본 16:30 스케줄러가 승인된 범위 밖의 날짜를 가져올 수 있으므로,
-각 날짜는 `docker compose run --rm --no-deps research-worker --once`로만
-실행한다.
+bootstrap이 성공한 뒤에만 bounded range 백필을 실행한다. daemon을 먼저
+기동하면 기본 16:30 스케줄러가 승인된 범위 밖의 날짜를 가져오고 별도 token
+cache에서 재발급할 수 있으므로, wrapper는 실행 중 daemon을 fail-closed로
+거부하고 하나의 `docker compose run --rm --no-deps research-worker
+--backfill-range`만 실행한다.
 
 신규 DB에는 백필 전 EOD 행이 없으므로 backfill bootstrap의
 `COMPOSE_BACKFILL_BOOTSTRAP: PASS`는 PostgreSQL/one-shot 인프라 gate만 의미하며,

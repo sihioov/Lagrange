@@ -406,6 +406,8 @@ struct CanonicalRun {
     strategy_id: String,
     strategy_version: String,
     dataset_version: String,
+    dataset_version_id: Option<Uuid>,
+    dataset_manifest_sha256: Option<String>,
     engine: String,
     engine_version: String,
     config_sha256: String,
@@ -1238,11 +1240,21 @@ async fn load_payload_and_run(
     })?;
     let canonical = await_controlled_with_guard(
         sqlx::query_as::<_, CanonicalRun>(
-            "SELECT id, owner_user_id, job_id, strategy_id, strategy_version,
-                dataset_version, engine, engine_version, config_sha256,
-                code_commit, random_seed, timezone, status
+            "SELECT backtest_runs.id, backtest_runs.owner_user_id, backtest_runs.job_id,
+                backtest_runs.strategy_id, backtest_runs.strategy_version,
+                backtest_runs.dataset_version, dataset.id AS dataset_version_id,
+                dataset.manifest_sha256 AS dataset_manifest_sha256,
+                backtest_runs.engine, backtest_runs.engine_version, backtest_runs.config_sha256,
+                backtest_runs.code_commit, backtest_runs.random_seed,
+                backtest_runs.timezone, backtest_runs.status
          FROM backtest_runs
-         WHERE id = $1 AND owner_user_id = $2 AND job_id = $3",
+         LEFT JOIN dataset_versions AS dataset
+           ON dataset.dataset_id = split_part(backtest_runs.dataset_version, '@', 1)
+          AND dataset.version = split_part(backtest_runs.dataset_version, '@', 2)
+          AND dataset.status = 'READY'
+         WHERE backtest_runs.id = $1
+           AND backtest_runs.owner_user_id = $2
+           AND backtest_runs.job_id = $3",
         )
         .bind(run_id)
         .bind(claim.job.owner_user_id)
@@ -1550,6 +1562,8 @@ fn canonical_provenance_matches(left: &CanonicalRun, right: &CanonicalRun) -> bo
         && left.strategy_id == right.strategy_id
         && left.strategy_version == right.strategy_version
         && left.dataset_version == right.dataset_version
+        && left.dataset_version_id == right.dataset_version_id
+        && left.dataset_manifest_sha256 == right.dataset_manifest_sha256
         && left.engine == right.engine
         && left.engine_version == right.engine_version
         && left.config_sha256 == right.config_sha256
@@ -1571,11 +1585,21 @@ async fn recheck_canonical_provenance(
 ) -> Result<(), PublishError> {
     check_publication_guard(guard, control)?;
     let current = sqlx::query_as::<_, CanonicalRun>(
-        "SELECT id, owner_user_id, job_id, strategy_id, strategy_version,
-                dataset_version, engine, engine_version, config_sha256,
-                code_commit, random_seed, timezone, status
+        "SELECT backtest_runs.id, backtest_runs.owner_user_id, backtest_runs.job_id,
+                backtest_runs.strategy_id, backtest_runs.strategy_version,
+                backtest_runs.dataset_version, dataset.id AS dataset_version_id,
+                dataset.manifest_sha256 AS dataset_manifest_sha256,
+                backtest_runs.engine, backtest_runs.engine_version, backtest_runs.config_sha256,
+                backtest_runs.code_commit, backtest_runs.random_seed,
+                backtest_runs.timezone, backtest_runs.status
          FROM backtest_runs
-         WHERE id = $1 AND owner_user_id = $2 AND job_id = $3
+         LEFT JOIN dataset_versions AS dataset
+           ON dataset.dataset_id = split_part(backtest_runs.dataset_version, '@', 1)
+          AND dataset.version = split_part(backtest_runs.dataset_version, '@', 2)
+          AND dataset.status = 'READY'
+         WHERE backtest_runs.id = $1
+           AND backtest_runs.owner_user_id = $2
+           AND backtest_runs.job_id = $3
          FOR UPDATE",
     )
     .bind(canonical.id)
@@ -2936,8 +2960,16 @@ async fn execute<R: StrategyResolver>(
             ),
         });
     }
-    let factor_series =
-        factor_series_for(&strategy.strategy_id, &paths.dataset_root, control, guard).await?;
+    let production_curated_version =
+        attest_backtest_dataset_pin(&paths.dataset_root, canonical, control, guard).await?;
+    let factor_series = factor_series_for(
+        &strategy.strategy_id,
+        &paths.dataset_root,
+        production_curated_version,
+        control,
+        guard,
+    )
+    .await?;
     check_execution_guard(guard, control)?;
     let initial_cash = payload
         .initial_cash
@@ -3223,9 +3255,59 @@ fn cost_profile_for(payload: &BacktestPayload) -> Result<serde_json::Value, Exec
 /// fourth copy of it — after the Python package, the Rust registry, and the
 /// database — and the copy that drifts is the one that decides what a
 /// backtest computes.
+async fn attest_backtest_dataset_pin(
+    dataset_root: &Path,
+    canonical: &CanonicalRun,
+    control: &RunnerControl,
+    guard: &LeaseGuard,
+) -> Result<Option<u32>, ExecError> {
+    if std::env::var("APP_ENV").as_deref() != Ok("production") {
+        return Ok(None);
+    }
+    check_execution_guard(guard, control)?;
+    let storage_root = dataset_root.to_path_buf();
+    let expected_dataset_version = canonical.dataset_version.clone();
+    let expected_dataset_version_id = canonical.dataset_version_id;
+    let expected_manifest_sha256 = canonical.dataset_manifest_sha256.clone();
+    let computed = run_bounded_blocking(
+        control,
+        guard,
+        PREPROCESSING_DEADLINE,
+        "backtest dataset attestation",
+        move |_| {
+            crate::factor_series::attest_production_curated_pin(
+                &storage_root,
+                &expected_dataset_version,
+                expected_dataset_version_id,
+                expected_manifest_sha256.as_deref(),
+            )
+            .map(|pin| pin.curated_version)
+        },
+    )
+    .await;
+    match computed {
+        Ok(version) => Ok(Some(version)),
+        Err(BlockingWorkError::Operation(error)) => match check_execution_guard(guard, control) {
+            Ok(()) => Err(ExecError::Permanent {
+                class: ErrorClass::Integrity,
+                code: "CURATED_ARTIFACT_INTEGRITY",
+                reason: error.to_string(),
+            }),
+            Err(error) => Err(error),
+        },
+        Err(BlockingWorkError::Shutdown(reason)) => Err(ExecError::Shutdown(reason)),
+        Err(BlockingWorkError::Canceled(reason)) => Err(ExecError::Canceled(reason)),
+        Err(BlockingWorkError::LeaseLost(reason)) => Err(ExecError::LeaseLost(reason)),
+        Err(BlockingWorkError::Timeout(reason) | BlockingWorkError::Join(reason)) => {
+            Err(ExecError::Transient(reason))
+        }
+    }
+}
+
 async fn factor_series_for(
     strategy_id: &str,
     dataset_root: &Path,
+    production_curated_version: Option<u32>,
     control: &RunnerControl,
     guard: &LeaseGuard,
 ) -> Result<Option<crate::factor_series::FactorSeries>, ExecError> {
@@ -3243,13 +3325,12 @@ async fn factor_series_for(
     }
 
     let required: Vec<String> = package.required_factors.iter().cloned().collect();
-    // `dataset_root` is what the WORKER is given, and the worker appends
-    // `curated` itself. `CurateStore` is rooted one level in, at the zone
-    // rather than at the dataset, so the two readers reach the same files
-    // from different starting points.
-    let curated_root = dataset_root.join("curated");
+    // `dataset_root` is the storage root supplied to the worker (`/data` in
+    // production). Both `dataset_shape_for_version` and `CurateStore` append
+    // the `curated` zone themselves; passing `/data/curated` here would make
+    // the attestation and factor readers look under `/data/curated/curated`.
+    let storage_root = dataset_root.to_path_buf();
     let lookback = package.minimum_lookback_sessions;
-
     // Off the async runtime. Reading a year of parquet and collecting Polars
     // lazy frames is seconds of CPU-bound work with blocking file I/O inside
     // it, and leaving that on an executor thread starves every other task the
@@ -3269,13 +3350,22 @@ async fn factor_series_for(
                     "factor preprocessing canceled".to_owned(),
                 ));
             }
-            let shape = crate::factor_series::dataset_shape(&curated_root)?;
+            let curated_version =
+                production_curated_version.unwrap_or(crate::phase0::CURATED_VERSION);
+            let shape =
+                crate::factor_series::dataset_shape_for_version(&storage_root, curated_version)?;
             if cancellation.is_canceled() {
                 return Err(crate::factor_series::FactorSeriesError::Compute(
                     "factor preprocessing canceled".to_owned(),
                 ));
             }
-            crate::factor_series::build(&curated_root, &shape, &required, lookback)
+            crate::factor_series::build_for_version(
+                &storage_root,
+                &shape,
+                &required,
+                lookback,
+                curated_version,
+            )
         },
     )
     .await;
@@ -3289,6 +3379,13 @@ async fn factor_series_for(
                     Err(ExecError::Permanent {
                         class: ErrorClass::DataBlocked,
                         code: "DATASET_TOO_SHORT",
+                        reason: error.to_string(),
+                    })
+                }
+                error @ crate::factor_series::FactorSeriesError::ManifestIntegrity(_) => {
+                    Err(ExecError::Permanent {
+                        class: ErrorClass::Integrity,
+                        code: "CURATED_ARTIFACT_INTEGRITY",
                         reason: error.to_string(),
                     })
                 }
@@ -3627,6 +3724,8 @@ mod tests {
             strategy_id: "ma200_trend".to_owned(),
             strategy_version: "1.0.0".to_owned(),
             dataset_version: "kr-etf-daily-phase0-v2@2026-01".to_owned(),
+            dataset_version_id: None,
+            dataset_manifest_sha256: None,
             engine: "nautilustrader".to_owned(),
             engine_version: "1.231.0".to_owned(),
             config_sha256: "a".repeat(64),

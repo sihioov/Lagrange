@@ -232,7 +232,9 @@ pub fn load_recommendation_closes(
         ));
     }
 
-    let store = CurateStore::new(dataset_root.join("curated"));
+    // `dataset_root` is the storage root (`/data` in production); CurateStore
+    // appends the curated zone itself, just like load_recommendation_closes.
+    let store = CurateStore::new(dataset_root);
     let year = price_date.as_naive_date().year();
     let now = UtcTimestamp::now();
     let mut closes = BTreeMap::new();
@@ -647,7 +649,9 @@ fn attest_preview_dataset(
 ) -> Result<(), PaperPreviewError> {
     let dataset_id = DatasetId::parse(dataset_id)
         .map_err(|error| PaperPreviewError::InvalidPayload(error.to_string()))?;
-    let store = CurateStore::new(dataset_root.join("curated"));
+    // `dataset_root` is the storage root (`/data` in production); CurateStore
+    // appends the curated zone itself.
+    let store = CurateStore::new(dataset_root);
     let manifest = store
         .read_dataset_manifest(&dataset_id, curated_version)
         .map_err(classify_curate_read)?
@@ -673,6 +677,9 @@ fn attest_preview_dataset(
             "dataset manifest does not match its canonical database attestation".into(),
         ));
     }
+    store
+        .verify_artifacts(&manifest)
+        .map_err(|error| PaperPreviewError::MalformedCuratedData(error.to_string()))?;
     Ok(())
 }
 

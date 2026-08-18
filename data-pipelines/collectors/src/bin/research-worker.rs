@@ -9,7 +9,8 @@ use chrono::Utc;
 use collectors::{
     HealthcheckConfig, RecoveryPosition, WORKER_ENV_KEYS, WaitOutcome, WorkerControl, WorkerError,
     WorkerEvent, WorkerObserver, WorkerRunOutcome, bootstrap_worker, build_postgres_pool,
-    candidate_healthcheck, healthcheck, run_internal_ingest, run_internal_recovery_page_stream,
+    candidate_healthcheck, healthcheck, run_credentialed_backfill_range_stream,
+    run_internal_ingest, run_internal_recovery_page_stream,
 };
 use domain::{TradingDate, UtcTimestamp};
 use serde::Serialize;
@@ -17,6 +18,7 @@ use tokio::sync::{Mutex, watch};
 
 const USAGE: &str = "\
 research-worker [--once --date YYYY-MM-DD]
+research-worker --backfill-range --start YYYY-MM-DD --end YYYY-MM-DD
 research-worker healthcheck
 research-worker --help
 
@@ -28,6 +30,10 @@ DATABASE_URL is not used by this worker.
 enum Command {
     Daemon,
     Once(TradingDate),
+    BackfillRange {
+        start: TradingDate,
+        end: TradingDate,
+    },
     Healthcheck,
     Help,
     InternalRecover(RecoveryPosition),
@@ -156,6 +162,7 @@ async fn main() -> ExitCode {
     let result = match command {
         Command::Healthcheck => run_healthcheck(&values).await,
         Command::Once(date) => run_once(&values, date).await,
+        Command::BackfillRange { start, end } => run_backfill_range(&values, start, end).await,
         Command::Daemon => run_daemon(&values).await,
         Command::InternalRecover(after) => run_internal_recover(&values, after).await,
         Command::InternalIngest(date, now) => run_internal_collect(&values, date, now).await,
@@ -176,9 +183,11 @@ async fn main() -> ExitCode {
 fn command_target_date(command: &Command) -> Option<TradingDate> {
     match command {
         Command::Once(date) | Command::InternalIngest(date, _) => Some(*date),
-        Command::Daemon | Command::Healthcheck | Command::Help | Command::InternalRecover(_) => {
-            None
-        }
+        Command::Daemon
+        | Command::BackfillRange { .. }
+        | Command::Healthcheck
+        | Command::Help
+        | Command::InternalRecover(_) => None,
     }
 }
 
@@ -203,6 +212,22 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
             TradingDate::parse(date)
                 .map(Command::Once)
                 .map_err(|_| WorkerError::InvalidConfig { key: "--date" })
+        }
+        [range, start_flag, start, end_flag, end]
+            if range == "--backfill-range" && start_flag == "--start" && end_flag == "--end" =>
+        {
+            let start = TradingDate::parse(start).map_err(|_| WorkerError::InvalidConfig {
+                key: "--backfill-range",
+            })?;
+            let end = TradingDate::parse(end).map_err(|_| WorkerError::InvalidConfig {
+                key: "--backfill-range",
+            })?;
+            if end < start {
+                return Err(WorkerError::InvalidConfig {
+                    key: "--backfill-range",
+                });
+            }
+            Ok(Command::BackfillRange { start, end })
         }
         _ => Err(WorkerError::InvalidConfig { key: "arguments" }),
     }
@@ -291,6 +316,29 @@ async fn run_once(
     let worker = bootstrap_worker(values)?.with_observer(Arc::new(JsonObserver));
     let outcome = worker.run_once(date, &system_control()).await?;
     Ok(run_record(outcome, Some(date)))
+}
+
+async fn run_backfill_range(
+    values: &HashMap<String, String>,
+    start: TradingDate,
+    end: TradingDate,
+) -> Result<SuccessRecord, WorkerError> {
+    let stdout = std::io::stdout();
+    let mut writer = stdout.lock();
+    run_credentialed_backfill_range_stream(values, start, end, &mut writer).await?;
+    Ok(SuccessRecord {
+        status: "ok",
+        phase: "complete",
+        outcome: "backfilled",
+        batch_id: None,
+        date: None,
+        newest_eod_at: None,
+        age_seconds: None,
+        cursor: None,
+        snapshot_high_water: None,
+        has_more: None,
+        per_universe: None,
+    })
 }
 
 async fn run_daemon(values: &HashMap<String, String>) -> Result<SuccessRecord, WorkerError> {

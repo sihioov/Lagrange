@@ -81,13 +81,15 @@ pub use contract::{
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{
+    ADJUSTED_BARS_SCHEMA_ID, BARS_SCHEMA_ID, CORPORATE_ACTIONS_SCHEMA_ID,
     CORPORATE_ACTIONS_SCHEMA_VERSION, CORPORATE_ACTIONS_SCHEMA_VERSION_KEY, CuratedBar,
-    CuratedSchema,
+    CuratedSchema, TOTAL_RETURN_BARS_SCHEMA_ID,
 };
 pub use curate::{
-    Capability, CurateError, CurateOutcome, CurateRequest, CurateStore, DatasetManifest,
-    PriceCurationEvidence, PriceInstrumentCoverage, SourceBatchRef, curate_batch,
-    curation_inputs_from_raw, dataset_manifest_hash, price_curation_evidence,
+    Capability, CurateError, CurateOutcome, CurateRequest, CurateStore, CuratedArtifactRef,
+    DatasetManifest, PriceCurationEvidence, PriceInstrumentCoverage, SourceBatchRef, curate_batch,
+    curate_generation, curation_inputs_from_raw, curation_inputs_from_raw_entries,
+    dataset_manifest_hash, price_curation_evidence, price_curation_evidence_for_generation,
 };
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,

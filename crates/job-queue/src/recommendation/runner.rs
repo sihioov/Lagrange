@@ -649,7 +649,8 @@ async fn attest_credentialed_sources(
     let source_files = tokio::task::spawn_blocking(move || {
         let dataset_id =
             domain::DatasetId::parse(&dataset_id).map_err(|_| ErrorClass::Integrity)?;
-        CurateStore::new(storage_path)
+        let store = CurateStore::new(storage_path);
+        store
             .read_dataset_manifest(&dataset_id, curated_version)
             .map_err(|error| match error {
                 market_data::curate::CurateError::StoreIo { .. }
@@ -660,34 +661,43 @@ async fn attest_credentialed_sources(
                 _ => ErrorClass::Integrity,
             })?
             .ok_or(ErrorClass::DataBlocked)
-            .map(|manifest| {
-                manifest
-                    .source_batches
-                    .into_iter()
-                    .flat_map(|batch| {
-                        let batch_id = batch.batch_id.as_uuid();
-                        [
-                            CredentialedSourcePin {
-                                source_batch_id: batch_id,
-                                source_file_name: batch.bars_file,
-                                content_sha256: batch
-                                    .bars_hash
-                                    .as_str()
-                                    .trim_start_matches("sha256:")
-                                    .to_owned(),
-                            },
-                            CredentialedSourcePin {
-                                source_batch_id: batch_id,
-                                source_file_name: batch.actions_file,
-                                content_sha256: batch
-                                    .actions_hash
-                                    .as_str()
-                                    .trim_start_matches("sha256:")
-                                    .to_owned(),
-                            },
-                        ]
-                    })
-                    .collect::<Vec<_>>()
+            .and_then(|manifest| {
+                store
+                    .verify_artifacts(&manifest)
+                    .map_err(|error| match error {
+                        market_data::curate::CurateError::StoreIo { .. }
+                        | market_data::curate::CurateError::RawIo { .. } => ErrorClass::Transient,
+                        _ => ErrorClass::Integrity,
+                    })?;
+                Ok::<_, ErrorClass>(
+                    manifest
+                        .source_batches
+                        .into_iter()
+                        .flat_map(|batch| {
+                            let batch_id = batch.batch_id.as_uuid();
+                            [
+                                CredentialedSourcePin {
+                                    source_batch_id: batch_id,
+                                    source_file_name: batch.bars_file,
+                                    content_sha256: batch
+                                        .bars_hash
+                                        .as_str()
+                                        .trim_start_matches("sha256:")
+                                        .to_owned(),
+                                },
+                                CredentialedSourcePin {
+                                    source_batch_id: batch_id,
+                                    source_file_name: batch.actions_file,
+                                    content_sha256: batch
+                                        .actions_hash
+                                        .as_str()
+                                        .trim_start_matches("sha256:")
+                                        .to_owned(),
+                                },
+                            ]
+                        })
+                        .collect::<Vec<_>>(),
+                )
             })
     })
     .await

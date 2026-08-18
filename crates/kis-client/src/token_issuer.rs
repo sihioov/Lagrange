@@ -70,7 +70,7 @@ impl<T: Transport, C: CredentialSource> KisTokenIssuer<T, C> {
 /// treated as shorter-lived than it is costs one extra refresh, while one
 /// treated as longer-lived expires mid-request, and an auth failure on an
 /// order path is AMBIGUOUS rather than clean.
-const DEFAULT_TTL_SECS: i64 = 21_600; // 6 hours, KIS's documented lifetime
+const DEFAULT_TTL_SECS: i64 = 86_400; // 24 hours for the client-credentials token
 
 #[async_trait::async_trait]
 impl<T: Transport + Send + Sync, C: CredentialSource + Send + Sync> TokenIssuer

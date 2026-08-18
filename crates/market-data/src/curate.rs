@@ -38,7 +38,10 @@ pub mod adjust;
 pub mod parse;
 pub mod schema;
 
-pub use self::schema::{read_adjusted_bars, read_bars, read_corporate_actions};
+pub use self::schema::{
+    ADJUSTED_BARS_SCHEMA_ID, BARS_SCHEMA_ID, CORPORATE_ACTIONS_SCHEMA_ID,
+    TOTAL_RETURN_BARS_SCHEMA_ID, read_adjusted_bars, read_bars, read_corporate_actions,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -216,6 +219,20 @@ pub struct SourceBatchRef {
     pub actions_hash: ContentHash,
 }
 
+/// One exact curated Parquet output referenced by an immutable generation.
+///
+/// The path is relative to the curated root (data/curated), never an absolute
+/// path. The artifact digest is part of the dataset manifest hash, so a
+/// changed, missing, extra, or substituted file cannot satisfy a production
+/// pin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CuratedArtifactRef {
+    pub path: String,
+    pub sha256: ContentHash,
+    pub size_bytes: u64,
+    pub schema: String,
+}
+
 /// The immutable per-version dataset manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatasetManifest {
@@ -224,6 +241,10 @@ pub struct DatasetManifest {
     pub capability: Capability,
     pub created_at: UtcTimestamp,
     pub source_batches: Vec<SourceBatchRef>,
+    /// Empty on legacy v1 manifests. Production attestation rejects that
+    /// shape, while recovery can still parse it and create a new v2 snapshot.
+    #[serde(default)]
+    pub artifacts: Vec<CuratedArtifactRef>,
     pub bar_count: u64,
     pub action_count: u64,
     /// SHA-256 over the canonical manifest bytes (excluding the hash itself).
@@ -367,21 +388,8 @@ impl CurateStore {
         version: u32,
     ) -> Result<Option<DatasetManifest>, CurateError> {
         let path = self.dataset_dir(dataset_id, version).join("manifest.json");
-        match fs::metadata(&path) {
-            Ok(metadata) if metadata.is_file() => {}
-            Ok(_) => {
-                return Err(CurateError::MalformedManifest {
-                    context: format!("inspect {}", path.display()),
-                    detail: "manifest path is not a regular file".to_owned(),
-                });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(CurateError::StoreIo {
-                    context: format!("inspect {}", path.display()),
-                    detail: error.to_string(),
-                });
-            }
+        if !checked_manifest_path(&path)? {
+            return Ok(None);
         }
         let bytes = fs::read(&path).map_err(|e| CurateError::StoreIo {
             context: format!("read {}", path.display()),
@@ -396,7 +404,12 @@ impl CurateStore {
     }
 
     /// The latest manifest of a dataset, if any.
-    fn latest_manifest(
+    ///
+    /// A cumulative generation may intentionally contain source batches that
+    /// appeared in an older immutable generation.  Callers that need to
+    /// decide whether a new cumulative snapshot is required therefore inspect
+    /// this manifest as a whole instead of using the unique-source lookup.
+    pub fn latest_manifest(
         &self,
         dataset_id: &DatasetId,
     ) -> Result<Option<DatasetManifest>, CurateError> {
@@ -449,6 +462,100 @@ impl CurateStore {
         })
     }
 
+    /// Verify every immutable curated output named by a production manifest.
+    ///
+    /// This is intentionally fail-closed for manifests written before exact
+    /// artifact references existed: an empty artifact list is not enough to
+    /// attest a production pin. The check rejects symlinks and path escapes,
+    /// validates the exact generated-file set, compares byte length and
+    /// SHA-256, and checks the actual Parquet schema.
+    pub fn verify_artifacts(&self, manifest: &DatasetManifest) -> Result<(), CurateError> {
+        if manifest.artifacts.is_empty() {
+            return Err(CurateError::MalformedManifest {
+                context: "curated artifact attestation".to_owned(),
+                detail: "manifest has no exact curated artifact references".to_owned(),
+            });
+        }
+        let curated_root = self.curated_dir();
+        match fs::symlink_metadata(&curated_root) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(CurateError::MalformedManifest {
+                    context: "curated artifact attestation".to_owned(),
+                    detail: "curated root is not a regular directory".to_owned(),
+                });
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(CurateError::MissingCuratedComponent {
+                    path: curated_root.display().to_string(),
+                });
+            }
+            Err(error) => {
+                return Err(CurateError::StoreIo {
+                    context: format!("inspect {}", curated_root.display()),
+                    detail: error.to_string(),
+                });
+            }
+        }
+
+        let mut expected = BTreeSet::new();
+        for artifact in &manifest.artifacts {
+            validate_artifact_ref(artifact)?;
+            if !expected.insert(artifact.path.clone()) {
+                return Err(CurateError::MalformedManifest {
+                    context: "curated artifact attestation".to_owned(),
+                    detail: "manifest contains a duplicate artifact path".to_owned(),
+                });
+            }
+            let path = checked_artifact_path(&curated_root, &artifact.path)?;
+            let metadata = fs::symlink_metadata(&path).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    CurateError::MissingCuratedComponent {
+                        path: path.display().to_string(),
+                    }
+                } else {
+                    CurateError::StoreIo {
+                        context: format!("inspect artifact {}", path.display()),
+                        detail: error.to_string(),
+                    }
+                }
+            })?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("artifact {}", artifact.path),
+                    detail: "artifact is not a regular non-symlink file".to_owned(),
+                });
+            }
+            if metadata.len() != artifact.size_bytes {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("artifact {}", artifact.path),
+                    detail: "artifact size differs from its manifest reference".to_owned(),
+                });
+            }
+            let bytes = fs::read(&path).map_err(|error| CurateError::StoreIo {
+                context: format!("read artifact {}", path.display()),
+                detail: error.to_string(),
+            })?;
+            if ContentHash::from_bytes(&bytes) != artifact.sha256 {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("artifact {}", artifact.path),
+                    detail: "artifact SHA-256 differs from its manifest reference".to_owned(),
+                });
+            }
+            schema::verify_parquet_schema(&path, &artifact.schema)?;
+        }
+
+        let actual = collect_version_artifacts(&curated_root, manifest.version)?;
+        if actual != expected {
+            return Err(CurateError::MalformedManifest {
+                context: "curated artifact attestation".to_owned(),
+                detail: "curated output files differ from the exact manifest artifact set"
+                    .to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     /// Persists the dataset manifest for one version (JSON).
     pub fn write_dataset_manifest(&self, manifest: &DatasetManifest) -> Result<(), CurateError> {
         let dir = self.dataset_dir(&manifest.dataset_id, manifest.version);
@@ -466,6 +573,286 @@ impl CurateStore {
             detail: e.to_string(),
         })
     }
+}
+
+/// Inspect a manifest path without following symlink ancestors or the leaf.
+///
+/// `fs::metadata` follows links, which would let a production pin attest a
+/// file outside the curated root. Missing components retain the historical
+/// `None` result; any present symlink or wrong file/ directory shape is a
+/// permanent malformed-manifest failure.
+fn checked_manifest_path(path: &Path) -> Result<bool, CurateError> {
+    let component_count = path.components().count();
+    for (index, _component) in path.components().enumerate() {
+        let mut current = PathBuf::new();
+        for prior in path.components().take(index + 1) {
+            current.push(prior.as_os_str());
+        }
+        let leaf = index + 1 == component_count;
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("inspect {}", path.display()),
+                    detail: "manifest path contains a symlink".to_owned(),
+                });
+            }
+            Ok(metadata) if leaf && !metadata.is_file() => {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("inspect {}", path.display()),
+                    detail: "manifest path is not a regular file".to_owned(),
+                });
+            }
+            Ok(metadata) if !leaf && !metadata.is_dir() => {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("inspect {}", path.display()),
+                    detail: "manifest ancestor is not a directory".to_owned(),
+                });
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(CurateError::StoreIo {
+                    context: format!("inspect {}", path.display()),
+                    detail: error.to_string(),
+                });
+            }
+        }
+    }
+    Ok(true)
+}
+
+fn validate_artifact_ref(artifact: &CuratedArtifactRef) -> Result<(), CurateError> {
+    let path = Path::new(&artifact.path);
+    if artifact.path.is_empty()
+        || artifact.path.starts_with('/')
+        || artifact.path.contains('\\')
+        || artifact
+            .path
+            .bytes()
+            .any(|byte| byte == b'\0' || byte == b'\n' || byte == b'\r')
+    {
+        return Err(CurateError::MalformedManifest {
+            context: "curated artifact path".to_owned(),
+            detail: "artifact path is not a safe relative path".to_owned(),
+        });
+    }
+    for component in path.components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return Err(CurateError::MalformedManifest {
+                context: format!("curated artifact path {}", artifact.path),
+                detail: "artifact path contains a non-normal component".to_owned(),
+            });
+        }
+    }
+    let expected_name = match artifact.schema.as_str() {
+        BARS_SCHEMA_ID => "bars.parquet",
+        ADJUSTED_BARS_SCHEMA_ID => "adjusted_bars.parquet",
+        TOTAL_RETURN_BARS_SCHEMA_ID => "total_return_bars.parquet",
+        CORPORATE_ACTIONS_SCHEMA_ID => "corporate_actions.parquet",
+        _ => {
+            return Err(CurateError::MalformedManifest {
+                context: format!("curated artifact {}", artifact.path),
+                detail: "artifact schema identifier is not supported".to_owned(),
+            });
+        }
+    };
+    if path.file_name().and_then(|name| name.to_str()) != Some(expected_name)
+        || (!artifact.path.starts_with("bars/") && !artifact.path.starts_with("corporate_actions/"))
+    {
+        return Err(CurateError::MalformedManifest {
+            context: format!("curated artifact {}", artifact.path),
+            detail: "artifact path does not match its schema".to_owned(),
+        });
+    }
+    let hash = artifact.sha256.as_str();
+    if !hash.starts_with("sha256:")
+        || hash.len() != "sha256:".len() + 64
+        || !hash["sha256:".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(CurateError::MalformedManifest {
+            context: format!("curated artifact {}", artifact.path),
+            detail: "artifact hash is not lowercase sha256".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn checked_artifact_path(curated_root: &Path, relative: &str) -> Result<PathBuf, CurateError> {
+    let mut current = curated_root.to_path_buf();
+    for component in Path::new(relative).components() {
+        let std::path::Component::Normal(component) = component else {
+            return Err(CurateError::MalformedManifest {
+                context: format!("curated artifact path {relative}"),
+                detail: "artifact path escapes the curated root".to_owned(),
+            });
+        };
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("curated artifact path {relative}"),
+                    detail: "artifact path contains a symlink".to_owned(),
+                });
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(CurateError::MissingCuratedComponent {
+                    path: current.display().to_string(),
+                });
+            }
+            Err(error) => {
+                return Err(CurateError::StoreIo {
+                    context: format!("inspect {}", current.display()),
+                    detail: error.to_string(),
+                });
+            }
+        }
+    }
+    Ok(current)
+}
+
+fn collect_version_artifacts(
+    curated_root: &Path,
+    version: u32,
+) -> Result<BTreeSet<String>, CurateError> {
+    let mut files = BTreeSet::new();
+    let version_component = format!("version={version}");
+    for zone in ["bars", "corporate_actions"] {
+        let root = curated_root.join(zone);
+        match fs::symlink_metadata(&root) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("curated artifact tree {}", root.display()),
+                    detail: "curated output tree contains a symlink".to_owned(),
+                });
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("curated artifact tree {}", root.display()),
+                    detail: "curated output zone is not a directory".to_owned(),
+                });
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(CurateError::StoreIo {
+                    context: format!("inspect {}", root.display()),
+                    detail: error.to_string(),
+                });
+            }
+        }
+        collect_version_artifacts_under(
+            curated_root,
+            &root,
+            &version_component,
+            false,
+            &mut files,
+        )?;
+    }
+    Ok(files)
+}
+
+fn collect_version_artifacts_under(
+    curated_root: &Path,
+    directory: &Path,
+    version_component: &str,
+    inside_version: bool,
+    files: &mut BTreeSet<String>,
+) -> Result<(), CurateError> {
+    for entry in fs::read_dir(directory).map_err(|error| CurateError::StoreIo {
+        context: format!("list {}", directory.display()),
+        detail: error.to_string(),
+    })? {
+        let entry = entry.map_err(|error| CurateError::StoreIo {
+            context: format!("read entry under {}", directory.display()),
+            detail: error.to_string(),
+        })?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(|error| CurateError::StoreIo {
+            context: format!("inspect {}", path.display()),
+            detail: error.to_string(),
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(CurateError::MalformedManifest {
+                context: format!("curated artifact tree {}", path.display()),
+                detail: "curated output tree contains a symlink".to_owned(),
+            });
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if metadata.is_dir() {
+            collect_version_artifacts_under(
+                curated_root,
+                &path,
+                version_component,
+                inside_version || name == version_component,
+                files,
+            )?;
+        } else if inside_version {
+            if !metadata.is_file() {
+                return Err(CurateError::MalformedManifest {
+                    context: format!("curated artifact {}", path.display()),
+                    detail: "curated output is not a regular file".to_owned(),
+                });
+            }
+            let relative = path
+                .strip_prefix(curated_root)
+                .map_err(|_| CurateError::MalformedManifest {
+                    context: format!("curated artifact {}", path.display()),
+                    detail: "artifact path is outside the curated root".to_owned(),
+                })?
+                .to_str()
+                .ok_or_else(|| CurateError::MalformedManifest {
+                    context: format!("curated artifact {}", path.display()),
+                    detail: "artifact path is not valid UTF-8".to_owned(),
+                })?;
+            files.insert(relative.to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn curated_artifact_ref(
+    curated_root: &Path,
+    path: &Path,
+    schema: &'static str,
+) -> Result<CuratedArtifactRef, CurateError> {
+    let relative = path
+        .strip_prefix(curated_root)
+        .map_err(|_| CurateError::MalformedManifest {
+            context: format!("artifact {}", path.display()),
+            detail: "artifact path is outside the curated root".to_owned(),
+        })?
+        .to_str()
+        .ok_or_else(|| CurateError::MalformedManifest {
+            context: format!("artifact {}", path.display()),
+            detail: "artifact path is not valid UTF-8".to_owned(),
+        })?
+        .to_owned();
+    let metadata = fs::symlink_metadata(path).map_err(|error| CurateError::StoreIo {
+        context: format!("inspect artifact {}", path.display()),
+        detail: error.to_string(),
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(CurateError::MalformedManifest {
+            context: format!("artifact {}", path.display()),
+            detail: "written artifact is not a regular non-symlink file".to_owned(),
+        });
+    }
+    let bytes = fs::read(path).map_err(|error| CurateError::StoreIo {
+        context: format!("read artifact {}", path.display()),
+        detail: error.to_string(),
+    })?;
+    let artifact = CuratedArtifactRef {
+        path: relative,
+        sha256: ContentHash::from_bytes(&bytes),
+        size_bytes: metadata.len(),
+        schema: schema.to_owned(),
+    };
+    validate_artifact_ref(&artifact)?;
+    schema::verify_parquet_schema(path, schema)?;
+    Ok(artifact)
 }
 
 /// One curation request.
@@ -812,6 +1199,84 @@ pub fn curation_inputs_from_raw(
     Ok((calendar, master))
 }
 
+/// Rebuild one curation calendar/master view from several immutable Raw
+/// deliveries. KIS normalizes `chk-holiday` to the requested date, so a
+/// single batch's calendar is deliberately not sufficient for a historical
+/// generation. Every input is validated independently before its sessions
+/// are merged; conflicting provenance, sessions, holidays, or instrument
+/// records fail closed.
+pub fn curation_inputs_from_raw_entries(
+    raw: &RawStore,
+    entries: &[ManifestEntry],
+) -> Result<(KrCalendar, InstrumentMaster), CurateError> {
+    let first = entries
+        .first()
+        .ok_or_else(|| CurateError::MalformedManifest {
+            context: "cumulative curation inputs".to_owned(),
+            detail: "at least one Raw entry is required".to_owned(),
+        })?;
+    let (first_calendar, first_master) = curation_inputs_from_raw(raw, first)?;
+    let first_instruments = first_master.instruments().cloned().collect::<Vec<_>>();
+    let first_provenance = first_calendar.provenance().clone();
+    let mut sessions = BTreeSet::new();
+    let mut holidays = BTreeMap::<TradingDate, String>::new();
+    let mut latest_published_at = first_provenance.published_at;
+
+    for entry in entries {
+        let (calendar, master) = curation_inputs_from_raw(raw, entry)?;
+        let instruments = master.instruments().cloned().collect::<Vec<_>>();
+        if instruments != first_instruments {
+            return Err(CurateError::NonCanonicalNormalizedBatch {
+                reason: "cumulative curation inputs contain conflicting instrument masters"
+                    .to_owned(),
+            });
+        }
+        let provenance = calendar.provenance();
+        if provenance.calendar_id != first_provenance.calendar_id
+            || provenance.source != first_provenance.source
+            || provenance.version != first_provenance.version
+            || provenance.timezone != first_provenance.timezone
+            || calendar.session_times() != first_calendar.session_times()
+        {
+            return Err(CurateError::NonCanonicalNormalizedBatch {
+                reason: "cumulative curation inputs contain conflicting calendar provenance"
+                    .to_owned(),
+            });
+        }
+        sessions.extend(calendar.sessions());
+        for holiday in calendar.holidays() {
+            if let Some(existing) = holidays.insert(holiday.date, holiday.reason.clone())
+                && existing != holiday.reason
+            {
+                return Err(CurateError::NonCanonicalNormalizedBatch {
+                    reason: "cumulative curation inputs contain conflicting holiday records"
+                        .to_owned(),
+                });
+            }
+        }
+        latest_published_at = latest_published_at.max(provenance.published_at);
+    }
+
+    let calendar = KrCalendar::build(KrCalendarSpec {
+        calendar_id: first_provenance.calendar_id,
+        timezone: first_provenance.timezone,
+        session_times: first_calendar.session_times(),
+        sessions: sessions.into_iter().collect(),
+        holidays: holidays
+            .into_iter()
+            .map(|(date, reason)| Holiday { date, reason })
+            .collect(),
+        source: first_provenance.source,
+        version: first_provenance.version,
+        published_at: latest_published_at,
+        notes: first_provenance.notes,
+    })
+    .map_err(|error| CurateError::MalformedBars {
+        reason: format!("merged curation calendar is invalid: {error}"),
+    })?;
+    Ok((calendar, first_master))
+}
+
 /// Reconstruct price publication evidence from a verified Raw batch and its
 /// immutable curated manifest. Used both after curation and after a crash
 /// between filesystem publication and database publication.
@@ -946,6 +1411,216 @@ pub fn price_curation_evidence(
     })
 }
 
+/// Reconstruct price evidence for a cumulative immutable generation.
+///
+/// The ordinary [`price_curation_evidence`] function intentionally proves a
+/// one-batch generation. This variant verifies every Raw source named by the
+/// cumulative manifest, aggregates exact per-instrument sessions, and uses
+/// `source_entry` only as the durable candidate-publication anchor. The
+/// anchor must be the latest source batch so the candidate Raw entitlement
+/// date equals the generation's last session.
+pub fn price_curation_evidence_for_generation(
+    raw: &RawStore,
+    entries: &[ManifestEntry],
+    manifest: &DatasetManifest,
+    source_entry: &ManifestEntry,
+) -> Result<PriceCurationEvidence, CurateError> {
+    if entries.is_empty() {
+        return Err(CurateError::MalformedManifest {
+            context: "cumulative price publication evidence".to_owned(),
+            detail: "generation has no Raw entries".to_owned(),
+        });
+    }
+    if manifest.version == 0 || dataset_manifest_hash(manifest)? != manifest.content_hash {
+        return Err(CurateError::MalformedManifest {
+            context: "cumulative price publication evidence".to_owned(),
+            detail: "manifest hash or generation is invalid".to_owned(),
+        });
+    }
+    let source_entry_ref = manifest
+        .source_batches
+        .iter()
+        .find(|source| source.batch_id == source_entry.batch_id)
+        .ok_or_else(|| CurateError::MalformedManifest {
+            context: "cumulative price publication evidence".to_owned(),
+            detail: "manifest does not reference the publication anchor".to_owned(),
+        })?;
+    if !entries
+        .iter()
+        .any(|entry| entry.batch_id == source_entry.batch_id)
+    {
+        return Err(CurateError::MalformedManifest {
+            context: "cumulative price publication evidence".to_owned(),
+            detail: "publication anchor is absent from the Raw source set".to_owned(),
+        });
+    }
+
+    let source_ids = entries
+        .iter()
+        .map(|entry| entry.batch_id.to_string())
+        .collect::<BTreeSet<_>>();
+    if source_ids.len() != entries.len() || manifest.source_batches.len() != entries.len() {
+        return Err(CurateError::MalformedManifest {
+            context: "cumulative price publication evidence".to_owned(),
+            detail: "Raw source set contains duplicate or missing batches".to_owned(),
+        });
+    }
+    if manifest
+        .source_batches
+        .iter()
+        .any(|source| !source_ids.contains(&source.batch_id.to_string()))
+    {
+        return Err(CurateError::MalformedManifest {
+            context: "cumulative price publication evidence".to_owned(),
+            detail: "manifest contains a source batch outside the verified Raw set".to_owned(),
+        });
+    }
+
+    let mut by_instrument = BTreeMap::<String, BTreeSet<TradingDate>>::new();
+    let mut total_bars = 0u64;
+    for entry in entries {
+        validate_curation_scope(entry)?;
+        validate_normalized_raw(raw, entry)?;
+        let source = manifest
+            .source_batches
+            .iter()
+            .find(|source| source.batch_id == entry.batch_id)
+            .ok_or_else(|| CurateError::MalformedManifest {
+                context: "cumulative price publication evidence".to_owned(),
+                detail: "manifest is missing a Raw source batch".to_owned(),
+            })?;
+        let bars_meta = entry
+            .files
+            .iter()
+            .find(|file| file.kind == ResponseKind::Bars)
+            .ok_or(CurateError::MissingFile {
+                kind: ResponseKind::Bars,
+            })?;
+        let actions_meta = entry
+            .files
+            .iter()
+            .find(|file| file.kind == ResponseKind::CorporateActions)
+            .ok_or(CurateError::MissingFile {
+                kind: ResponseKind::CorporateActions,
+            })?;
+        if source.bars_file != bars_meta.file_name
+            || source.bars_hash != bars_meta.content_hash
+            || source.actions_file != actions_meta.file_name
+            || source.actions_hash != actions_meta.content_hash
+        {
+            return Err(CurateError::MalformedManifest {
+                context: "cumulative price publication evidence".to_owned(),
+                detail: "manifest source file identity does not match Raw metadata".to_owned(),
+            });
+        }
+        let files = raw
+            .read_batch_bytes(&entry.provider, &entry.market, entry)
+            .map_err(|source| CurateError::RawStore {
+                context: "read cumulative price publication evidence".to_owned(),
+                source: Box::new(source),
+            })?;
+        let bars = files
+            .iter()
+            .find(|file| file.file_name == bars_meta.file_name)
+            .ok_or(CurateError::MissingFile {
+                kind: ResponseKind::Bars,
+            })?;
+        let document = parse_bars(&bars.bytes)?;
+        total_bars = total_bars
+            .checked_add(u64::try_from(document.bars.len()).map_err(|_| {
+                CurateError::MalformedManifest {
+                    context: "cumulative price publication evidence".to_owned(),
+                    detail: "bar count exceeds u64".to_owned(),
+                }
+            })?)
+            .ok_or_else(|| CurateError::MalformedManifest {
+                context: "cumulative price publication evidence".to_owned(),
+                detail: "bar count overflows u64".to_owned(),
+            })?;
+        for bar in &document.bars {
+            let instrument = InstrumentId::parse(&bar.instrument).map_err(|error| {
+                CurateError::MalformedBars {
+                    reason: format!("invalid bar instrument {}: {error}", bar.instrument),
+                }
+            })?;
+            let session =
+                TradingDate::parse(&bar.date).map_err(|error| CurateError::MalformedBars {
+                    reason: format!("invalid bar date {}: {error}", bar.date),
+                })?;
+            if !by_instrument
+                .entry(instrument.to_string())
+                .or_default()
+                .insert(session)
+            {
+                return Err(CurateError::DuplicateBar {
+                    instrument: instrument.to_string(),
+                    date: session.to_iso(),
+                });
+            }
+        }
+    }
+    if total_bars != manifest.bar_count {
+        return Err(CurateError::MalformedManifest {
+            context: "cumulative price publication evidence".to_owned(),
+            detail: "manifest bar count does not match the verified Raw source set".to_owned(),
+        });
+    }
+    let mut all_sessions = by_instrument
+        .values()
+        .flat_map(|sessions| sessions.iter().copied())
+        .collect::<Vec<_>>();
+    all_sessions.sort_unstable();
+    let first_session = *all_sessions
+        .first()
+        .ok_or_else(|| CurateError::EodUnavailable {
+            dataset_id: manifest.dataset_id.to_string(),
+            target_date: source_entry.date,
+        })?;
+    let last_session = *all_sessions.last().expect("nonempty sessions");
+    if source_entry_ref.batch_id != source_entry.batch_id {
+        return Err(CurateError::MalformedManifest {
+            context: "cumulative price publication evidence".to_owned(),
+            detail: "publication anchor identity changed during verification".to_owned(),
+        });
+    }
+    let manifest_sha256 = manifest
+        .content_hash
+        .as_str()
+        .strip_prefix("sha256:")
+        .filter(|hash| hash.len() == 64)
+        .ok_or_else(|| CurateError::MalformedManifest {
+            context: "cumulative price publication evidence".to_owned(),
+            detail: "manifest hash is not canonical sha256".to_owned(),
+        })?
+        .to_owned();
+    let instrument_coverage = by_instrument
+        .into_iter()
+        .map(|(instrument_id, sessions)| {
+            let first_session = sessions.first().copied().expect("coverage is nonempty");
+            let last_session = sessions.last().copied().expect("coverage is nonempty");
+            let session_count =
+                u32::try_from(sessions.len()).map_err(|_| CurateError::MalformedBars {
+                    reason: format!("coverage count exceeds u32 for {instrument_id}"),
+                })?;
+            Ok(PriceInstrumentCoverage {
+                instrument_id,
+                first_session,
+                last_session,
+                session_count,
+                sessions: sessions.into_iter().collect(),
+            })
+        })
+        .collect::<Result<Vec<_>, CurateError>>()?;
+    Ok(PriceCurationEvidence {
+        curated_generation: manifest.version,
+        manifest_sha256,
+        first_session,
+        last_session,
+        source_revision: source_entry.batch_id.to_string(),
+        instrument_coverage,
+    })
+}
+
 /// Curates one immutable Raw batch into a NEW versioned Curated dataset.
 ///
 /// All-or-nothing: on any validation error nothing is written (validation
@@ -958,9 +1633,73 @@ pub fn curate_batch(
     curated: &CurateStore,
     req: &CurateRequest<'_>,
 ) -> Result<CurateOutcome, CurateError> {
-    validate_curation_scope(entry)?;
-    validate_normalized_raw(raw, entry)?;
-    if entry.provider == PROVIDER_KIS_NORMALIZED && req.source != PROVIDER_KIS_NORMALIZED {
+    curate_entries(
+        raw,
+        std::slice::from_ref(entry),
+        calendar,
+        master,
+        curated,
+        req,
+        false,
+    )
+}
+
+/// Curates a set of immutable Raw deliveries into one NEW cumulative
+/// generation. Existing source batches are allowed because every generation
+/// is immutable; the caller must pass the complete desired snapshot. Source
+/// dates must be unique and the entries must already represent the selected
+/// (latest) delivery for each date.
+pub fn curate_generation(
+    raw: &RawStore,
+    entries: &[ManifestEntry],
+    calendar: &KrCalendar,
+    master: &InstrumentMaster,
+    curated: &CurateStore,
+    req: &CurateRequest<'_>,
+) -> Result<CurateOutcome, CurateError> {
+    curate_entries(raw, entries, calendar, master, curated, req, true)
+}
+
+fn curate_entries(
+    raw: &RawStore,
+    entries: &[ManifestEntry],
+    calendar: &KrCalendar,
+    master: &InstrumentMaster,
+    curated: &CurateStore,
+    req: &CurateRequest<'_>,
+    allow_existing_sources: bool,
+) -> Result<CurateOutcome, CurateError> {
+    let first_entry = entries
+        .first()
+        .ok_or_else(|| CurateError::MalformedManifest {
+            context: "curation".to_owned(),
+            detail: "at least one Raw entry is required".to_owned(),
+        })?;
+    for entry in entries {
+        validate_curation_scope(entry)?;
+        validate_normalized_raw(raw, entry)?;
+        if entry.provider != first_entry.provider
+            || entry.market != first_entry.market
+            || entry.mode != first_entry.mode
+        {
+            return Err(CurateError::NonCanonicalNormalizedBatch {
+                reason: "cumulative curation entries do not share one provider scope".to_owned(),
+            });
+        }
+    }
+    if entries
+        .iter()
+        .map(|entry| entry.date)
+        .collect::<BTreeSet<_>>()
+        .len()
+        != entries.len()
+    {
+        return Err(CurateError::MalformedManifest {
+            context: "cumulative curation".to_owned(),
+            detail: "source dates must be unique in one immutable generation".to_owned(),
+        });
+    }
+    if first_entry.provider == PROVIDER_KIS_NORMALIZED && req.source != PROVIDER_KIS_NORMALIZED {
         return Err(CurateError::NonCanonicalNormalizedBatch {
             reason: format!(
                 "CurateRequest source must remain {PROVIDER_KIS_NORMALIZED}, got {}",
@@ -971,62 +1710,84 @@ pub fn curate_batch(
     let dataset_id = req.dataset_id;
 
     // Re-curating an already-curated batch must never duplicate/overwrite.
-    if let Some(latest) = curated.latest_manifest(dataset_id)?
+    if !allow_existing_sources
+        && let Some(latest) = curated.latest_manifest(dataset_id)?
         && latest
             .source_batches
             .iter()
-            .any(|b| b.batch_id == entry.batch_id)
+            .any(|b| b.batch_id == first_entry.batch_id)
     {
         return Err(CurateError::BatchAlreadyCurated {
             dataset_id: dataset_id.to_string(),
             version: latest.version,
-            batch_id: entry.batch_id.to_string(),
+            batch_id: first_entry.batch_id.to_string(),
         });
     }
 
-    let files = raw
-        .read_batch_bytes(&entry.provider, &entry.market, entry)
-        .map_err(|source| CurateError::RawStore {
-            context: "read raw batch".to_owned(),
-            source: Box::new(source),
-        })?;
-    let meta = |kind: ResponseKind| -> Result<&crate::storage::FileEntry, CurateError> {
-        entry
-            .files
-            .iter()
-            .find(|f| f.kind == kind)
-            .ok_or(CurateError::MissingFile { kind })
-    };
-    let file_bytes = |file_name: &str| -> Result<&[u8], CurateError> {
-        files
-            .iter()
-            .find(|f| f.file_name == file_name)
-            .map(|f| f.bytes.as_slice())
-            .ok_or(CurateError::MissingFile {
-                kind: ResponseKind::Bars,
-            })
-    };
-
-    let bars_meta = meta(ResponseKind::Bars)?;
-    let actions_meta = meta(ResponseKind::CorporateActions)?;
-    let bars_bytes = file_bytes(&bars_meta.file_name)?;
-    let actions_bytes = file_bytes(&actions_meta.file_name)?;
-
-    // ---- parse (fixture bytes are data, never executed) ----
-    let bars_doc = parse_bars(bars_bytes)?;
-    let actions_doc = parse_actions(actions_bytes)?;
-
-    // ---- validate corporate actions (point-in-time first) ----
-    let actions = build_actions(&actions_doc.actions, master, req, entry, actions_meta)?;
+    let mut bars = Vec::new();
+    let mut actions = Vec::new();
+    let mut source_batches = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let files = raw
+            .read_batch_bytes(&entry.provider, &entry.market, entry)
+            .map_err(|source| CurateError::RawStore {
+                context: "read raw batch".to_owned(),
+                source: Box::new(source),
+            })?;
+        let meta = |kind: ResponseKind| -> Result<&crate::storage::FileEntry, CurateError> {
+            entry
+                .files
+                .iter()
+                .find(|f| f.kind == kind)
+                .ok_or(CurateError::MissingFile { kind })
+        };
+        let file_bytes = |file_name: &str| -> Result<&[u8], CurateError> {
+            files
+                .iter()
+                .find(|f| f.file_name == file_name)
+                .map(|f| f.bytes.as_slice())
+                .ok_or(CurateError::MissingFile {
+                    kind: ResponseKind::Bars,
+                })
+        };
+        let bars_meta = meta(ResponseKind::Bars)?;
+        let actions_meta = meta(ResponseKind::CorporateActions)?;
+        let bars_doc = parse_bars(file_bytes(&bars_meta.file_name)?)?;
+        let actions_doc = parse_actions(file_bytes(&actions_meta.file_name)?)?;
+        actions.extend(build_actions(
+            &actions_doc.actions,
+            master,
+            req,
+            entry,
+            actions_meta,
+        )?);
+        bars.extend(build_bars(
+            &bars_doc, master, calendar, req, entry, bars_meta,
+        )?);
+        source_batches.push(SourceBatchRef {
+            batch_id: entry.batch_id,
+            bars_file: bars_meta.file_name.clone(),
+            bars_hash: bars_meta.content_hash.clone(),
+            actions_file: actions_meta.file_name.clone(),
+            actions_hash: actions_meta.content_hash.clone(),
+        });
+    }
+    let mut seen_bars = BTreeSet::new();
+    for bar in &bars {
+        if !seen_bars.insert((bar.instrument_id.to_string(), bar.trading_date)) {
+            return Err(CurateError::DuplicateBar {
+                instrument: bar.instrument_id.to_string(),
+                date: bar.trading_date.to_iso(),
+            });
+        }
+    }
     let capability = dataset_capability(&actions);
-
-    // ---- validate + normalize bars ----
-    let bars = build_bars(&bars_doc, master, calendar, req, entry, bars_meta)?;
     if bars.is_empty() {
-        if entry.provider == PROVIDER_KIS_NORMALIZED || !calendar.is_session(entry.date) {
+        if first_entry.provider == PROVIDER_KIS_NORMALIZED || !calendar.is_session(first_entry.date)
+        {
             return Err(CurateError::EodUnavailable {
                 dataset_id: dataset_id.to_string(),
-                target_date: entry.date,
+                target_date: first_entry.date,
             });
         }
         return Err(CurateError::EmptyBars {
@@ -1054,8 +1815,8 @@ pub fn curate_batch(
         context: format!("create {}", version_dir.display()),
         detail: e.to_string(),
     })?;
-    let write_guard = || -> Result<Vec<PathBuf>, CurateError> {
-        let mut written: Vec<PathBuf> = Vec::new();
+    let write_guard = || -> Result<Vec<(PathBuf, &'static str)>, CurateError> {
+        let mut written: Vec<(PathBuf, &'static str)> = Vec::new();
         let mut groups: BTreeMap<(String, i32), Vec<&CuratedBar>> = BTreeMap::new();
         for bar in &bars {
             groups
@@ -1070,7 +1831,7 @@ pub fn curate_batch(
             let rows: Vec<CuratedBar> = group.iter().map(|b| (*b).clone()).collect();
             let path = curated.bars_path(req.market, symbol, *year, version);
             write_bars(&path, &rows)?;
-            written.push(path);
+            written.push((path, BARS_SCHEMA_ID));
             let split: Vec<AdjustmentBar> = adjusted
                 .split
                 .iter()
@@ -1091,10 +1852,10 @@ pub fn curate_batch(
                 .collect();
             let path = curated.adjusted_bars_path(req.market, symbol, *year, version);
             write_adjusted_bars(&path, &split)?;
-            written.push(path);
+            written.push((path, ADJUSTED_BARS_SCHEMA_ID));
             let path = curated.total_return_bars_path(req.market, symbol, *year, version);
             write_adjusted_bars(&path, &total_return)?;
-            written.push(path);
+            written.push((path, TOTAL_RETURN_BARS_SCHEMA_ID));
         }
         let mut action_groups: BTreeMap<(String, i32), Vec<CorporateAction>> = BTreeMap::new();
         for action in &actions {
@@ -1109,7 +1870,7 @@ pub fn curate_batch(
         for ((symbol, year), rows) in &action_groups {
             let path = curated.corporate_actions_path(req.market, symbol, *year, version);
             write_corporate_actions(&path, rows)?;
-            written.push(path);
+            written.push((path, CORPORATE_ACTIONS_SCHEMA_ID));
         }
         Ok(written)
     };
@@ -1117,12 +1878,18 @@ pub fn curate_batch(
         let _ = fs::remove_dir_all(&version_dir);
     })?;
     let cleanup_on_manifest_failure = |e: CurateError| -> CurateError {
-        for path in &written {
+        for (path, _) in &written {
             let _ = fs::remove_file(path);
         }
         let _ = fs::remove_dir_all(&version_dir);
         e
     };
+
+    let mut artifacts = written
+        .iter()
+        .map(|(path, schema)| curated_artifact_ref(&curated.curated_dir(), path, schema))
+        .collect::<Result<Vec<_>, _>>()?;
+    artifacts.sort_by(|left, right| left.path.cmp(&right.path));
 
     // ---- dataset manifest ----
     let manifest = DatasetManifest {
@@ -1130,13 +1897,8 @@ pub fn curate_batch(
         version,
         capability,
         created_at: req.now,
-        source_batches: vec![SourceBatchRef {
-            batch_id: entry.batch_id,
-            bars_file: bars_meta.file_name.clone(),
-            bars_hash: bars_meta.content_hash.clone(),
-            actions_file: actions_meta.file_name.clone(),
-            actions_hash: actions_meta.content_hash.clone(),
-        }],
+        source_batches,
+        artifacts,
         bar_count: bars.len() as u64,
         action_count: actions.len() as u64,
         content_hash: ContentHash::from_bytes(b"placeholder"),
@@ -1172,6 +1934,7 @@ pub fn dataset_manifest_hash(manifest: &DatasetManifest) -> Result<ContentHash, 
         capability: &'a Capability,
         created_at: &'a UtcTimestamp,
         source_batches: &'a [SourceBatchRef],
+        artifacts: &'a [CuratedArtifactRef],
         bar_count: u64,
         action_count: u64,
     }
@@ -1181,6 +1944,7 @@ pub fn dataset_manifest_hash(manifest: &DatasetManifest) -> Result<ContentHash, 
         capability: &manifest.capability,
         created_at: &manifest.created_at,
         source_batches: &manifest.source_batches,
+        artifacts: &manifest.artifacts,
         bar_count: manifest.bar_count,
         action_count: manifest.action_count,
     };

@@ -102,6 +102,18 @@ With the environment below configured, run a single target date:
 cargo run -p collectors --bin research-worker -- --once --date 2020-01-31
 ```
 
+The production backfill wrapper uses the internal bounded-range form so all
+dates share one in-memory KIS provider and token manager:
+
+```sh
+research-worker --backfill-range --start 2020-01-01 --end 2026-08-17
+```
+
+Operators should invoke this through `scripts/ops/backfill-production.sh`,
+which validates the read-only scope, serializes runs, excludes the daemon, and
+enforces the cross-process one-minute token-issue window. The bearer token is
+never persisted.
+
 Run the daemon (no positional arguments):
 
 ```sh

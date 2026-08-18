@@ -45,6 +45,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::phase0::CURATED_VERSION;
+use domain::DatasetId;
 
 /// `date -> instrument -> factor -> raw value`.
 pub type FactorSeries = BTreeMap<String, BTreeMap<String, BTreeMap<String, f64>>>;
@@ -75,6 +76,8 @@ pub enum FactorSeriesError {
     Engine(FactorError),
     /// The dataset is too short for the strategy's declared lookback.
     InsufficientHistory { needed: u64, available: usize },
+    /// Production backtests require an exact curated artifact attestation.
+    ManifestIntegrity(String),
 }
 
 impl std::fmt::Display for FactorSeriesError {
@@ -88,6 +91,9 @@ impl std::fmt::Display for FactorSeriesError {
                 f,
                 "the strategy needs {needed} sessions of history and the dataset has {available}"
             ),
+            FactorSeriesError::ManifestIntegrity(detail) => {
+                write!(f, "curated artifact attestation failed: {detail}")
+            }
         }
     }
 }
@@ -150,6 +156,125 @@ fn compute_err<E: std::fmt::Display>(e: E) -> FactorSeriesError {
 /// Reads the instruments and session dates out of the curated bars.
 pub fn dataset_shape(dataset_root: &Path) -> Result<DatasetShape, FactorSeriesError> {
     dataset_shape_for_version(dataset_root, CURATED_VERSION)
+}
+
+/// The exact release pin supplied to a production backtest worker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductionCuratedPin {
+    pub dataset_version_id: uuid::Uuid,
+    pub dataset_id: DatasetId,
+    pub dataset_version: String,
+    pub curated_version: u32,
+    pub manifest_sha256: String,
+}
+
+fn production_curated_pin(
+    expected_dataset_version: &str,
+) -> Result<ProductionCuratedPin, FactorSeriesError> {
+    production_curated_pin_from(expected_dataset_version, |key| std::env::var(key).ok())
+}
+
+fn production_curated_pin_from<F>(
+    expected_dataset_version: &str,
+    get: F,
+) -> Result<ProductionCuratedPin, FactorSeriesError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let required = |key: &str| {
+        get(key).ok_or_else(|| {
+            FactorSeriesError::ManifestIntegrity(format!("{key} is required in production"))
+        })
+    };
+    let dataset_version_id = required("RECOMMENDATION_DATASET_VERSION_ID")?
+        .parse()
+        .map_err(|_| {
+            FactorSeriesError::ManifestIntegrity(
+                "RECOMMENDATION_DATASET_VERSION_ID must be a UUID".to_owned(),
+            )
+        })?;
+    let dataset_id_text = required("RECOMMENDATION_DATASET_ID")?;
+    let dataset_id = DatasetId::parse(&dataset_id_text).map_err(|_| {
+        FactorSeriesError::ManifestIntegrity(
+            "RECOMMENDATION_DATASET_ID is not a valid dataset id".to_owned(),
+        )
+    })?;
+    let dataset_version = required("RECOMMENDATION_DATASET_VERSION")?;
+    let curated_version = required("RECOMMENDATION_CURATED_VERSION")?
+        .parse::<u32>()
+        .ok()
+        .filter(|version| *version > 0)
+        .ok_or_else(|| {
+            FactorSeriesError::ManifestIntegrity(
+                "RECOMMENDATION_CURATED_VERSION must be a positive integer".to_owned(),
+            )
+        })?;
+    let manifest_sha256 = required("RECOMMENDATION_DATASET_MANIFEST_SHA256")?;
+    if manifest_sha256.len() != 64
+        || !manifest_sha256
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(FactorSeriesError::ManifestIntegrity(
+            "RECOMMENDATION_DATASET_MANIFEST_SHA256 must be lowercase 64-hex".to_owned(),
+        ));
+    }
+    let expected = format!("{dataset_id}@{dataset_version}");
+    if expected_dataset_version != expected {
+        return Err(FactorSeriesError::ManifestIntegrity(
+            "backtest dataset version does not match the release pin".to_owned(),
+        ));
+    }
+    Ok(ProductionCuratedPin {
+        dataset_version_id,
+        dataset_id,
+        dataset_version,
+        curated_version,
+        manifest_sha256,
+    })
+}
+
+pub(crate) fn attest_production_curated_pin(
+    dataset_root: &Path,
+    expected_dataset_version: &str,
+    expected_dataset_version_id: Option<uuid::Uuid>,
+    expected_manifest_sha256: Option<&str>,
+) -> Result<ProductionCuratedPin, FactorSeriesError> {
+    let pin = production_curated_pin(expected_dataset_version)?;
+    if expected_dataset_version_id != Some(pin.dataset_version_id) {
+        return Err(FactorSeriesError::ManifestIntegrity(
+            "database dataset version id does not match the release pin".to_owned(),
+        ));
+    }
+    if expected_manifest_sha256 != Some(pin.manifest_sha256.as_str()) {
+        return Err(FactorSeriesError::ManifestIntegrity(
+            "database dataset manifest hash does not match the release pin".to_owned(),
+        ));
+    }
+    let store = CurateStore::new(dataset_root);
+    let manifest = store
+        .read_dataset_manifest(&pin.dataset_id, pin.curated_version)
+        .map_err(|error| FactorSeriesError::ManifestIntegrity(error.to_string()))?
+        .ok_or_else(|| {
+            FactorSeriesError::ManifestIntegrity(
+                "release-pinned curated manifest is missing".to_owned(),
+            )
+        })?;
+    let computed = market_data::dataset_manifest_hash(&manifest)
+        .map_err(|error| FactorSeriesError::ManifestIntegrity(error.to_string()))?;
+    if manifest.dataset_id != pin.dataset_id
+        || manifest.version != pin.curated_version
+        || manifest.content_hash != computed
+        || computed.as_str().strip_prefix("sha256:") != Some(pin.manifest_sha256.as_str())
+    {
+        return Err(FactorSeriesError::ManifestIntegrity(
+            "release-pinned curated manifest does not match its canonical hash".to_owned(),
+        ));
+    }
+    store
+        .verify_artifacts(&manifest)
+        .map_err(|error| FactorSeriesError::ManifestIntegrity(error.to_string()))?;
+    Ok(pin)
 }
 
 /// Reads only partitions belonging to one immutable curated version.
@@ -311,6 +436,26 @@ pub fn build(
     required_factors: &[String],
     minimum_lookback: u64,
 ) -> Result<FactorSeries, FactorSeriesError> {
+    build_for_version(
+        dataset_root,
+        shape,
+        required_factors,
+        minimum_lookback,
+        CURATED_VERSION,
+    )
+}
+
+/// Computes factors from an explicitly selected immutable curated version.
+///
+/// Development callers retain [`build`] and the fixture's default version;
+/// production callers must pass the version from the attested release pin.
+pub fn build_for_version(
+    dataset_root: &Path,
+    shape: &DatasetShape,
+    required_factors: &[String],
+    minimum_lookback: u64,
+    curated_version: u32,
+) -> Result<FactorSeries, FactorSeriesError> {
     let dates = rebalance_dates(&shape.sessions, minimum_lookback);
     if dates.is_empty() {
         return Err(FactorSeriesError::InsufficientHistory {
@@ -335,7 +480,7 @@ pub fn build(
         &store,
         "kr",
         "dataset",
-        CURATED_VERSION,
+        curated_version,
     )
     .with_factors(factors_for(required_factors)?)
     .build()
@@ -618,5 +763,42 @@ mod tests {
             factors_for(&[id.to_string()])
                 .unwrap_or_else(|e| panic!("{id} must be computable: {e}"));
         }
+    }
+
+    #[test]
+    fn production_pin_requires_exact_release_identity() {
+        let version_id = uuid::Uuid::new_v4().to_string();
+        let values = BTreeMap::from([
+            ("RECOMMENDATION_DATASET_VERSION_ID", version_id.clone()),
+            ("RECOMMENDATION_DATASET_ID", "krx_eod_bars".to_owned()),
+            (
+                "RECOMMENDATION_DATASET_VERSION",
+                "2026-08-approved".to_owned(),
+            ),
+            ("RECOMMENDATION_CURATED_VERSION", "7".to_owned()),
+            ("RECOMMENDATION_DATASET_MANIFEST_SHA256", "a".repeat(64)),
+        ]);
+        let pin = production_curated_pin_from("krx_eod_bars@2026-08-approved", |key| {
+            values.get(key).cloned()
+        })
+        .expect("complete release pin");
+        assert_eq!(pin.dataset_version_id.to_string(), version_id);
+        assert_eq!(pin.dataset_id.as_str(), "krx_eod_bars");
+        assert_eq!(pin.curated_version, 7);
+
+        assert!(
+            production_curated_pin_from("wrong@2026-08-approved", |key| {
+                values.get(key).cloned()
+            })
+            .is_err()
+        );
+        assert!(
+            production_curated_pin_from("krx_eod_bars@2026-08-approved", |key| {
+                (key != "RECOMMENDATION_DATASET_MANIFEST_SHA256")
+                    .then(|| values.get(key).cloned())
+                    .flatten()
+            })
+            .is_err()
+        );
     }
 }

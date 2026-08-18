@@ -203,6 +203,7 @@ async fn finish_preview_on(
         capability: Capability::PriceReturnOnly,
         created_at: UtcTimestamp::parse_rfc3339("2026-08-12T07:00:00Z").unwrap(),
         source_batches: Vec::new(),
+        artifacts: Vec::new(),
         bar_count: 1,
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"placeholder"),

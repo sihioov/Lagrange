@@ -271,6 +271,7 @@ fn write_manifest(curated: &CurateStore, version: u32, bar_count: u64) -> Datase
         capability: Capability::PriceReturnOnly,
         created_at: now(),
         source_batches: Vec::new(),
+        artifacts: Vec::new(),
         bar_count,
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"placeholder"),
