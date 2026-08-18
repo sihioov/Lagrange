@@ -1074,6 +1074,46 @@ fn validate_generation_at(_root: &Path, path: &Path) -> Result<RemoveResult, std
     Ok(RemoveResult::Deleted)
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn rename_noreplace_at(
+    source_parent: RawFd,
+    source_name: &CStr,
+    destination_parent: RawFd,
+    destination_name: &CStr,
+) -> Result<(), std::io::Error> {
+    // Calling the kernel entry point avoids a dependency on a libc
+    // `renameat2` symbol, which glibc exports but musl does not. The argument
+    // types match renameat2(2); both paths are NUL-terminated borrowed C
+    // strings and both descriptors remain open for the duration of the call.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2 as libc::c_long,
+            source_parent as libc::c_int,
+            source_name.as_ptr(),
+            destination_parent as libc::c_int,
+            destination_name.as_ptr(),
+            libc::RENAME_NOREPLACE as libc::c_uint,
+        )
+    };
+    if result == 0 {
+        return Ok(());
+    }
+
+    let error = errno_result();
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::ENOSYS | libc::EINVAL | libc::EOPNOTSUPP)
+    ) {
+        // Never degrade to renameat after probing the destination: that would
+        // reintroduce a check/rename race and could overwrite quarantine state.
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            format!("atomic no-replace rename is unavailable: {error}"),
+        ));
+    }
+    Err(error)
+}
+
 #[cfg(unix)]
 fn move_into_quarantine(
     artifact_root: &Path,
@@ -1097,20 +1137,12 @@ fn move_into_quarantine(
     {
         // renameat2(RENAME_NOREPLACE) makes the random quarantine name an
         // actual no-overwrite boundary rather than a probabilistic promise.
-        // SAFETY: both fds are open directories; names are owned C strings.
-        let result = unsafe {
-            libc::renameat2(
-                source_parent.as_raw_fd(),
-                source_name.as_ptr(),
-                quarantine_parent.as_raw_fd(),
-                quarantine_name.as_ptr(),
-                libc::RENAME_NOREPLACE,
-            )
-        };
-        if result < 0 {
-            return Err(errno_result());
-        }
-        Ok(())
+        rename_noreplace_at(
+            source_parent.as_raw_fd(),
+            source_name.as_c_str(),
+            quarantine_parent.as_raw_fd(),
+            quarantine_name.as_c_str(),
+        )
     }
 
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
@@ -1442,6 +1474,51 @@ mod tests {
         .unwrap();
         assert_eq!(report.deleted_generations, 1);
         assert!(!quarantined.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quarantine_move_preserves_the_same_directory_entry() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let source = make_generation(root.path(), Uuid::new_v4(), COMMIT, Uuid::new_v4());
+        let quarantine = ensure_quarantine_root(root.path()).unwrap();
+        let before = fs::symlink_metadata(&source).unwrap();
+        let name = "successful-no-replace-move";
+
+        move_into_quarantine(root.path(), &source, &quarantine, name).unwrap();
+
+        let destination = quarantine.join(name);
+        let after = fs::symlink_metadata(&destination).unwrap();
+        assert!(!source.exists());
+        assert_eq!(before.dev(), after.dev());
+        assert_eq!(before.ino(), after.ino());
+        assert_eq!(
+            fs::read(destination.join("artifacts/equity.parquet")).unwrap(),
+            b"immutable"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quarantine_move_never_overwrites_an_existing_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let source = make_generation(root.path(), Uuid::new_v4(), COMMIT, Uuid::new_v4());
+        let quarantine = ensure_quarantine_root(root.path()).unwrap();
+        let name = "existing-quarantine-entry";
+        let destination = quarantine.join(name);
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("sentinel"), b"keep-existing").unwrap();
+
+        let error = move_into_quarantine(root.path(), &source, &quarantine, name).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(source.exists());
+        assert_eq!(
+            fs::read(destination.join("sentinel")).unwrap(),
+            b"keep-existing"
+        );
     }
 
     #[test]
