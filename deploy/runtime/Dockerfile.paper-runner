@@ -9,6 +9,7 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+COPY data-pipelines/collectors ./data-pipelines/collectors
 COPY configs/universes ./configs/universes
 COPY apps/api-server/auth ./apps/api-server/auth
 COPY tests/integration/migration-contract ./tests/integration/migration-contract

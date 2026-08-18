@@ -46,6 +46,28 @@ for service in db-role-bootstrap db-migrate api-server web research-worker \
   grep -Fq -- "  $service" "$script" || die "release service missing: $service"
 done
 
+# Cargo resolves every workspace member manifest while loading a package, even
+# when a member is only a dev-dependency (api-server/job-queue use collectors
+# that way). Keep this an explicit Dockerfile contract rather than allowing
+# each Rust image to discover a missing workspace path one build at a time.
+# The loop covers every tracked Dockerfile that runs a workspace cargo build;
+# deploy/db/Dockerfile intentionally uses `cargo install` and is not in scope.
+while IFS= read -r dockerfile; do
+  if ! grep -Eq '^[[:space:]]*RUN[[:space:]].*cargo[[:space:]]+build([[:space:]]|$)' "$dockerfile"; then
+    continue
+  fi
+  for copy_contract in \
+    'COPY Cargo.toml Cargo.lock rust-toolchain.toml ./' \
+    'COPY crates ./crates' \
+    'COPY data-pipelines/collectors ./data-pipelines/collectors' \
+    'COPY apps/api-server/auth ./apps/api-server/auth' \
+    'COPY tests/integration/migration-contract ./tests/integration/migration-contract'; do
+    grep -Fq -- "$copy_contract" "$dockerfile" ||
+      die "Rust workspace Dockerfile is missing required copy contract: $dockerfile ($copy_contract)"
+  done
+done < <(find "$root" -type f \( -name Dockerfile -o -name 'Dockerfile.*' \) \
+  -not -path "$root/.git/*" -print | sort)
+
 # The only Docker Compose verbs allowed in this helper are version, config,
 # and build.  Keep this check line-oriented so prose explaining forbidden
 # lifecycle verbs does not produce a false positive.
