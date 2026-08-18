@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Static contract check for the KIS/pin-independent production image prebuild.
+# This never invokes Docker or any service lifecycle command.
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+script="$root/scripts/ops/build-production-images.sh"
+
+die() { echo "production-image-build-static: $*" >&2; exit 1; }
+
+[ -f "$script" ] || die 'image build helper is missing'
+[ -x "$script" ] || die 'image build helper must be executable'
+bash -n "$script" || die 'image build helper has shell syntax errors'
+
+grep -Fq 'mode=plan' "$script" || die 'image build helper must default to plan'
+grep -Fq -- '--preflight' "$script" || die 'image build preflight mode missing'
+grep -Fq -- '--apply' "$script" || die 'image build apply mode missing'
+grep -Fq 'LAGRANGE_CODE_COMMIT' "$script" || die 'commit input contract missing'
+grep -Fq '[[ "$commit" =~ ^[0-9a-f]{40}$ ]]' "$script" \
+  || die 'exact lowercase 40-hex commit validation missing'
+grep -Fq 'git -c "safe.directory=$root" -C "$root"' "$script" \
+  || die 'Git command-local safe.directory fence missing'
+grep -Fq "rev-parse --verify 'HEAD^{commit}'" "$script" \
+  || die 'build HEAD provenance check missing'
+grep -Fq 'status --porcelain=v1 --untracked-files=all' "$script" \
+  || die 'tracked/untracked clean-worktree check missing'
+grep -Fq 'does not match the build root HEAD' "$script" \
+  || die 'commit mismatch failure missing'
+grep -Fq 'docker compose --env-file' "$script" || die 'Compose env-file invocation missing'
+grep -Fq 'config --quiet' "$script" || die 'Compose config preflight missing'
+grep -Fq 'build --pull=false' "$script" || die 'pull=false build contract missing'
+grep -Fq 'RESEARCH_APP_ENV=prebuild-disabled' "$script" \
+  || die 'research prebuild sentinel missing'
+grep -Fq 'RESEARCH_ENTITLEMENT_REFERENCE=prebuild-disabled' "$script" \
+  || die 'entitlement prebuild sentinel missing'
+grep -Fq 'BACKTEST_MIN_FREE_BYTES=0' "$script" || die 'backtest prebuild sentinel missing'
+grep -Fq 'never edits' "$script" || die 'env-file no-write documentation missing'
+grep -Fq 'network caveat' "$script" || die 'build network caveat missing'
+if grep -Fq -- '--repo-root' "$script"; then
+  die 'public alternate repo-root override must not exist'
+fi
+
+for service in db-role-bootstrap db-migrate api-server web research-worker \
+  recommendation-runner candidate-runner nt-backtest-worker-1 \
+  nt-backtest-worker-2 paper-scheduler reverse-proxy; do
+  grep -Fq -- "  $service" "$script" || die "release service missing: $service"
+done
+
+# The only Docker Compose verbs allowed in this helper are version, config,
+# and build.  Keep this check line-oriented so prose explaining forbidden
+# lifecycle verbs does not produce a false positive.
+if grep -Eq '^[[:space:]]*(docker compose|compose)[[:space:]].*(up|run|restart|start)[[:space:]]' "$script"; then
+  die 'image prebuild helper must not invoke a lifecycle command'
+fi
+for forbidden in kis_app_key kis_app_secret auth0_client_secret psql curl wget; do
+  if grep -Eiq "^[^#]*$forbidden" "$script"; then
+    die "image prebuild helper must not read or invoke $forbidden"
+  fi
+done
+if grep -Eq '^[[:space:]]*git[[:space:]]+rev-parse' "$script"; then
+  die 'image prebuild helper must not derive the commit from a shell checkout command'
+fi
+
+echo 'PRODUCTION_IMAGE_BUILD_STATIC: PASS'

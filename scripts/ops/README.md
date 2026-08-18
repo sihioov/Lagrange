@@ -15,6 +15,7 @@ before Compose can reinterpret a value.
 | `provision-auth0-secret.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` reads the secret twice from a hidden terminal prompt; `--import-file` migrates a protected legacy file; both atomically install one root-owned file without overwriting it |
 | `renew-tailscale-tls.sh` | `--dry-run` | `--check` validates the fixed Tailscale source/runtime pair; `--renew` stages `tailscale cert`, atomically reconciles TLS-only files, and refreshes only a running reverse-proxy; no KIS/Auth0/DB/API call |
 | `install-tailscale-tls-renewal.sh` | `--dry-run` | `--check` compares the approved helper/unit/custom protected config artifacts; `--apply` installs them and enables (but does not start) the timer, refuses an existing config target, and never issues a certificate or starts Compose |
+| `build-production-images.sh` | `--plan` | `--preflight` checks Docker/Compose config without a build; `--apply` builds the exact release image set with `--pull=false`, without `up`, `run`, restart, migration, DB, provider, or secret actions |
 | `validate-production-config.sh` | strict `--scope release` validation (root-only read-only inspection) | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope serving-prereqs` checks all non-KIS serving source/runtime copies without RESEARCH/KIS/dataset inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
 | `compose-release.sh` | `--scope release --plan` (root-only; it invokes the validator) | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
 | `backfill-production.sh` | `--plan` | `--execute` is root-only because it validates protected production secrets, then calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
@@ -46,6 +47,40 @@ No script enables Compose `live`, asks for a KIS account/order credential, or
 calls an order endpoint. KOSPI200/KOSDAQ150 candidate backfill is a separate
 blocked workflow until its credentialed candidate bridge and entitlement are
 available. See [`docs/runbooks/kis-production-backfill.md`](../../docs/runbooks/kis-production-backfill.md).
+
+## Prebuild production service images without KIS or dataset pins
+
+`build-production-images.sh` is the bounded image-only path for preparing the
+release images before KIS credentials, entitlement evidence, or curated dataset
+pins are available. It requires the exact lowercase 40-hex
+`LAGRANGE_CODE_COMMIT` from the process environment; it never derives the
+value from the mutable checkout and never writes `deploy/compose/.env`.
+
+Inspect the plan, then run the read-only Compose config preflight:
+
+```sh
+export LAGRANGE_CODE_COMMIT="<approved-40-hex-commit>"
+scripts/ops/build-production-images.sh --plan
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/build-production-images.sh --preflight
+```
+
+After Docker/Compose config expansion passes, the explicit root-only apply
+builds exactly the release image list using `--pull=false`:
+
+```sh
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/build-production-images.sh --apply
+```
+
+The helper performs no `up`, `run`, restart, migration, database, provider/API,
+or secret provisioning action, and keeps the live profile disabled. It supplies
+only process-local fail-closed interpolation sentinels needed to parse the
+complete Compose file; these are not written to the env file or used to start
+containers. A build can still fetch base-image or language dependencies when
+the local Docker cache is incomplete, so network access is an expected build
+caveat. This image preparation step is independent of the later infrastructure,
+backfill, and full serving execution scopes.
 
 ## Provision the read-only KIS app credentials
 

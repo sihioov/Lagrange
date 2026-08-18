@@ -13,12 +13,17 @@ grep -Fq 'uses Compose interpolation, quote, escape' "$ops/lib/dotenv.sh" \
 for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
   provision-crypto-secrets.sh provision-kis-credentials.sh validate-production-config.sh compose-release.sh \
   backfill-production.sh post-backfill-health.sh self-test.sh renew-tailscale-tls.sh \
-  install-tailscale-tls-renewal.sh tailscale-tls-self-test.sh; do
+  install-tailscale-tls-renewal.sh tailscale-tls-self-test.sh \
+  build-production-images.sh build-production-images-static-check.sh \
+  build-production-images-self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
   bash -n "$path" || die "$script has shell syntax errors"
 done
+
+bash "$ops/build-production-images-static-check.sh" >/dev/null ||
+  die 'production image build static check failed'
 
 tls_static="$root/deploy/systemd/tailscale-tls-renewal-static-check.sh"
 [ -x "$tls_static" ] || die 'Tailscale TLS renewal static check must be executable'
