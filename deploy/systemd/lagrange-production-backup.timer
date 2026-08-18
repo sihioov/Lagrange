@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Lagrange encrypted production backup
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 Asia/Seoul
+RandomizedDelaySec=30m
+Persistent=true
+Unit=lagrange-production-backup.service
+
+[Install]
+WantedBy=timers.target

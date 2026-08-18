@@ -15,7 +15,9 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   backfill-production.sh post-backfill-health.sh self-test.sh renew-tailscale-tls.sh \
   install-tailscale-tls-renewal.sh tailscale-tls-self-test.sh \
   build-production-images.sh build-production-images-static-check.sh \
-  build-production-images-self-test.sh; do
+  build-production-images-self-test.sh deploy-production-release.sh \
+  run-production-backup.sh install-production-backup.sh \
+  production-ops-static-check.sh production-ops-self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
@@ -24,6 +26,8 @@ done
 
 bash "$ops/build-production-images-static-check.sh" >/dev/null ||
   die 'production image build static check failed'
+bash "$ops/production-ops-static-check.sh" >/dev/null ||
+  die 'production release/backup static check failed'
 
 tls_static="$root/deploy/systemd/tailscale-tls-renewal-static-check.sh"
 [ -x "$tls_static" ] || die 'Tailscale TLS renewal static check must be executable'
@@ -317,6 +321,28 @@ grep -Fq 'dotenv_validate_shell_overrides' "$ops/backfill-production.sh" \
 grep -Fq 'start_date=$start_date' "$ops/backfill-production.sh" || die 'backfill identity must bind the requested date range'
 grep -Fq 'dataset_version_id' "$ops/backfill-production.sh" && die 'backfill identity must not bind future dataset pins'
 grep -Fq 'flock -n 9' "$ops/backfill-production.sh" || die 'backfill state lock missing'
+grep -Fq -- '--backfill-range --start "$start_date" --end "$end_date"' \
+  "$ops/backfill-production.sh" || die 'backfill must use one bounded range worker process'
+if grep -Fq -- 'research-worker --once --date "$date"' "$ops/backfill-production.sh"; then
+  die 'backfill must not create one token-owning worker process per date'
+fi
+grep -Fq 'ps --status running --services' "$ops/backfill-production.sh" \
+  || die 'backfill must refuse a concurrently running research-worker daemon'
+grep -Fq 'token_window_file="${state_file}.token-window"' "$ops/backfill-production.sh" \
+  || die 'backfill cross-process token issue window missing'
+grep -Fq 'chmod 0600 "$token_window_tmp"' "$ops/backfill-production.sh" \
+  || die 'backfill token issue window mode contract missing'
+grep -Fq 'MIN_ISSUE_INTERVAL_MS: i64 = 60_000' "$root/crates/kis-client/src/auth.rs" \
+  || die 'KIS token manager one-minute issue safeguard missing'
+grep -Fq 'DEFAULT_TTL_SECS: i64 = 86_400' "$root/crates/kis-client/src/token_issuer.rs" \
+  || die 'KIS token fallback TTL must match the documented 24-hour lifetime'
+grep -Fq 'backfill-progress.py' "$ops/backfill-production.sh" \
+  || die 'backfill must durably consume per-date worker progress'
+grep -Fq 'os.fsync(state.fileno())' "$ops/lib/backfill-progress.py" \
+  || die 'backfill per-date progress must be durable before the next date'
+grep -Fq 'record.get("phase") == "canonical_publication"' \
+  "$ops/lib/backfill-progress.py" \
+  || die 'backfill progress must distinguish canonical EOD from final Curated recovery'
 if grep -Eq 'compose[^#]*--profile[[:space:]]+live|--profile[[:space:]]+live' "$ops"/*.sh; then
   die 'operator workflow must not enable the live profile'
 fi

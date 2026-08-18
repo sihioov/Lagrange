@@ -11,7 +11,9 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   backfill-production.sh post-backfill-health.sh renew-tailscale-tls.sh \
   install-tailscale-tls-renewal.sh tailscale-tls-self-test.sh \
   build-production-images.sh build-production-images-static-check.sh \
-  build-production-images-self-test.sh; do
+  build-production-images-self-test.sh deploy-production-release.sh \
+  run-production-backup.sh install-production-backup.sh \
+  production-ops-static-check.sh production-ops-self-test.sh; do
   bash -n "$ops/$script"
 done
 bash "$root/deploy/secrets/runtime-static-check.sh" >/dev/null
@@ -23,6 +25,11 @@ bash "$root/scripts/qa/recommendation-runner-smoke.sh" --static-only >/dev/null
 bash "$ops/static-check.sh" >/dev/null
 bash "$ops/tailscale-tls-self-test.sh" >/dev/null
 bash "$ops/build-production-images-self-test.sh" >/dev/null
+python3 - "$ops/lib/backfill-progress.py" <<'PY'
+import pathlib
+import sys
+compile(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"), sys.argv[1], "exec")
+PY
 
 dry_run=$(LAGRANGE_CONFIG_ROOT="$out_dir/etc" \
   LAGRANGE_DEPLOY_ROOT="$out_dir/opt" \
@@ -766,6 +773,32 @@ if bash "$ops/backfill-production.sh" \
 fi
 grep -Fq 'invalid calendar date' "$out_dir/date.out"
 
+# Per-date progress is committed as each body-free worker event arrives. A
+# later failure must preserve earlier PUBLISHED records for an idempotent rerun.
+progress_state="$out_dir/progress.tsv"
+progress_identity=$(printf 'a%.0s' {1..64})
+printf 'LAGRANGE_BACKFILL_STATE_V3\t%s\n' "$progress_identity" >"$progress_state"
+printf '%s\tRUNNING\t%s\n' 2026-01-01 "$progress_identity" >>"$progress_state"
+printf '%s\tRUNNING\t%s\n' 2026-01-02 "$progress_identity" >>"$progress_state"
+if printf '%s\n' \
+  '{"status":"event","event":"published","phase":"canonical_publication","batch_id":"00000000-0000-4000-8000-000000000001","target_date":"2026-01-01"}' | \
+  python3 "$ops/lib/backfill-progress.py" "$progress_state" "$progress_identity" \
+    2026-01-01 2026-01-02 >"$out_dir/progress.out" 2>&1; then
+  echo 'self-test: incomplete backfill progress stream unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq $'2026-01-01\tPUBLISHED\t'"$progress_identity" "$progress_state"
+if grep -Fq $'2026-01-02\tPUBLISHED\t'"$progress_identity" "$progress_state"; then
+  echo 'self-test: incomplete date was marked PUBLISHED' >&2
+  exit 1
+fi
+printf '%s\n' \
+  '{"status":"event","event":"published","phase":"canonical_publication","batch_id":"00000000-0000-4000-8000-000000000001","target_date":"2026-01-01"}' \
+  '{"status":"event","event":"published","phase":"canonical_publication","batch_id":"00000000-0000-4000-8000-000000000002","target_date":"2026-01-02"}' | \
+  python3 "$ops/lib/backfill-progress.py" "$progress_state" "$progress_identity" \
+    2026-01-01 2026-01-02 >"$out_dir/progress-rerun.out"
+grep -Fq $'2026-01-02\tPUBLISHED\t'"$progress_identity" "$progress_state"
+
 # The remaining validator fixtures intentionally use production-shaped secret
 # ownership/modes and therefore require root. Keep the non-root self-test
 # useful by asserting the explicit guard, then leave those protected fixtures
@@ -1068,6 +1101,8 @@ done
 plan=$(LAGRANGE_ENV_FILE="$out_dir/.env" \
   bash "$ops/backfill-production.sh" --start 2026-01-01 --end 2026-01-03 --plan)
 grep -Fq 'PLAN_ONLY: no KIS call' <<<"$plan"
+grep -Fq 'one bounded worker/provider reuses one in-memory token' <<<"$plan"
+grep -Fq 'no bearer token is persisted' <<<"$plan"
 grep -Fq "state: $out_dir/data/backfill/state.tsv" <<<"$plan"
 if grep -Fq 'docker compose' <<<"$plan"; then
   echo 'self-test: backfill plan attempted an external command' >&2

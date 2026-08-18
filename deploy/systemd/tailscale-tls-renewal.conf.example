@@ -8,8 +8,8 @@
 TLS_DOMAIN=l1nnx-sh.taild74a33.ts.net
 TLS_SOURCE_DIR=/etc/lagrange/secrets/tls
 TLS_RUNTIME_DIR=/etc/lagrange/secrets/runtime/reverse-proxy
-COMPOSE_FILE=/opt/lagrange/deploy/compose/compose.yml
-COMPOSE_ENV_FILE=/opt/lagrange/deploy/compose/.env
+COMPOSE_FILE=/opt/lagrange/releases/REPLACE_WITH_40_HEX_CODE_COMMIT/deploy/compose/compose.yml
+COMPOSE_ENV_FILE=/opt/lagrange/releases/REPLACE_WITH_40_HEX_CODE_COMMIT/deploy/compose/.env
 COMPOSE_PROJECT=lagrange-station
 LAGRANGE_CODE_COMMIT=REPLACE_WITH_40_HEX_CODE_COMMIT
 LOCK_FILE=/run/lock/lagrange-tailscale-tls-renewal.lock

@@ -16,6 +16,9 @@ before Compose can reinterpret a value.
 | `renew-tailscale-tls.sh` | `--dry-run` | `--check` validates the fixed Tailscale source/runtime pair; `--renew` stages `tailscale cert`, atomically reconciles TLS-only files, and refreshes only a running reverse-proxy; no KIS/Auth0/DB/API call |
 | `install-tailscale-tls-renewal.sh` | `--dry-run` | `--check` compares the approved helper/unit/custom protected config artifacts; `--apply` installs them and enables (but does not start) the timer, refuses an existing config target, and never issues a certificate or starts Compose |
 | `build-production-images.sh` | `--plan` | `--preflight` checks Docker/Compose config without a build; `--apply` builds the exact release image set with `--pull=false`, without `up`, `run`, restart, migration, DB, provider, or secret actions |
+| `deploy-production-release.sh` | `--dry-run` | root-only `--apply` installs one exact clean Git commit plus protected Compose `.env` into an immutable release and atomically switches `current`; `--rollback` selects an existing release; no service action |
+| `run-production-backup.sh` | `--plan` | root-only `--check` is read-only; `--run` encrypts PostgreSQL/Raw/Curated, performs an isolated restore, then applies bounded retention; `--verify-latest` repeats verification |
+| `install-production-backup.sh` | `--dry-run` | root-only `--apply` installs helper/config/units and enables but does not start timers; no Docker, backup, restore, or prune during install |
 | `validate-production-config.sh` | strict `--scope release` validation (root-only read-only inspection) | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope serving-prereqs` checks all non-KIS serving source/runtime copies without RESEARCH/KIS/dataset inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
 | `compose-release.sh` | `--scope release --plan` (root-only; it invokes the validator) | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
 | `backfill-production.sh` | `--plan` | `--execute` is root-only because it validates protected production secrets, then calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
@@ -38,7 +41,7 @@ pre-staging, data, and serving approvals:
    then its explicit root-only `--apply`/`--check`, followed by
    `deploy/secrets/provision-runtime-secrets.sh --scope backfill`, then
    `compose-release.sh --scope backfill --apply`, then
-   the bounded ETF `research-worker --once` backfill command), followed by the
+   the bounded ETF `research-worker --backfill-range` backfill command), followed by the
    dependency-free worker healthcheck, curated dataset approval, and
 5. the full
    serving release (`compose-release.sh --scope release --apply`).
@@ -47,6 +50,10 @@ No script enables Compose `live`, asks for a KIS account/order credential, or
 calls an order endpoint. KOSPI200/KOSDAQ150 candidate backfill is a separate
 blocked workflow until its credentialed candidate bridge and entitlement are
 available. See [`docs/runbooks/kis-production-backfill.md`](../../docs/runbooks/kis-production-backfill.md).
+
+Exact release layout and rollback plus disk-bounded encrypted backup and
+restore-verification installation are documented in
+[`docs/runbooks/production-release-and-backup.md`](../../docs/runbooks/production-release-and-backup.md).
 
 ## Prebuild production service images without KIS or dataset pins
 
@@ -226,9 +233,21 @@ scope; `compose-release.sh` intentionally continues to support only
 The backfill state identity binds only pre-run inputs (date range, universe,
 code commit, entitlement, and source scope), so entering the approved pin later
 does not invalidate a resumable backfill. The backfill scope does not start the
-worker daemon: each date is an isolated `docker compose run --rm --no-deps
-research-worker --once` invocation, preventing the 16:30 daemon from fetching
-outside the approved range. After the dependency-free
+worker daemon: one bounded `docker compose run --rm --no-deps research-worker
+--backfill-range` invocation owns the approved inclusive range. The process
+keeps one provider and `TokenManager`, reuses the documented 24-hour token,
+enforces the one-token-request-per-minute safeguard even after a failed issue,
+and never persists the bearer token. The wrapper refuses a concurrently running
+worker daemon and keeps only a root-owned mode-0600 non-secret issue-time marker
+to protect quick process reruns. Each successfully published date emits a
+body-free canonical-publication event that is sequence/UUID checked and fsynced
+to the state file immediately, so a later date failure preserves earlier
+progress. Full manifest recovery runs once at range start and cumulative Curated
+generation once at range completion; the last event is held until that final
+generation succeeds so its failure remains resumable. This follows the official KIS token contract in
+the supplied workbook (sheet 4, `접근토큰발급(P)`) and the official
+[`kis_auth.py` cache example](https://github.com/koreainvestment/open-trading-api/blob/main/examples_user/kis_auth.py).
+After the dependency-free
 `scripts/ops/post-backfill-health.sh --scope backfill --check`, run the full
 release scope and then `scripts/ops/post-backfill-health.sh --scope release --check`.
 

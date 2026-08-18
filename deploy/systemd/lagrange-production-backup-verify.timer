@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly Lagrange production backup restore verification
+
+[Timer]
+OnCalendar=Sun *-*-* 04:15:00 Asia/Seoul
+RandomizedDelaySec=1h
+Persistent=true
+Unit=lagrange-production-backup-verify.service
+
+[Install]
+WantedBy=timers.target

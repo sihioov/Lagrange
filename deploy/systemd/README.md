@@ -1,5 +1,18 @@
 # Paper runner systemd deployment
 
+## Production backup timers
+
+`scripts/ops/install-production-backup.sh` installs the encrypted production
+backup helper and daily/weekly timers. It is plan-only by default, requires a
+custom root-owned mode-0600 config for apply, refuses existing targets, enables
+without `--now`, and never starts Docker or creates a backup. The stable
+`/opt/lagrange/bin` helper directory is outside immutable releases. Protected
+backup and TLS configs pin Compose paths to the exact immutable
+`/opt/lagrange/releases/<commit>` directory rather than traversing convenience
+`current`/`deploy` symlinks. See
+`docs/runbooks/production-release-and-backup.md` for activation and restore
+verification.
+
 `paper-runner.service` is the production deployment unit for the worker-wide
 Paper daemon. It launches the secret-file adapter from
 `deploy/runtime/paper-runner-entrypoint`, which builds role-scoped PostgreSQL
@@ -23,12 +36,12 @@ configuration outside the checkout and customize it before installation. In
 particular, replace the commit placeholder with the exact 40-character
 lowercase `LAGRANGE_CODE_COMMIT` for the deployed Compose checkout; the
 installer rejects placeholders and all-zero values. Set `COMPOSE_FILE` and
-`COMPOSE_ENV_FILE` to the approved immutable checkout (the production default
-expects the checkout under `/opt/lagrange/deploy`), and make both regular,
+`COMPOSE_ENV_FILE` to the approved immutable release under
+`/opt/lagrange/releases/<exact-commit>/deploy/compose`, and make both regular,
 non-symlink files owned by `root:root` with no group/other write bits. The
 parser accepts only the documented absolute paths, rejects `..` and symlink
 ancestors, and requires the fixed domain. Do not run the installation sequence
-until the approved `/opt/lagrange/deploy` checkout exists, its Compose file/env
+until the approved immutable release exists, its Compose file/env
 paths are regular protected files, and the source/runtime TLS pair has been
 provisioned. The pending configuration is deliberately outside the install
 target:

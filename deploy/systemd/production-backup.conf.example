@@ -1,0 +1,16 @@
+# Copy outside the tracked tree, customize, then set root:root mode 0600.
+BACKUP_ROOT=/srv/backups/lagrange
+DATA_ROOT=/var/lib/lagrange/data
+COMPOSE_FILE=/opt/lagrange/releases/REPLACE_WITH_EXACT_40_HEX_RELEASE_COMMIT/deploy/compose/compose.yml
+COMPOSE_ENV_FILE=/opt/lagrange/releases/REPLACE_WITH_EXACT_40_HEX_RELEASE_COMMIT/deploy/compose/.env
+COMPOSE_PROJECT=lagrange
+LAGRANGE_CODE_COMMIT=REPLACE_WITH_EXACT_40_HEX_RELEASE_COMMIT
+KEY_FILE=/etc/lagrange/secrets/backup_encryption_key
+LOCK_FILE=/var/lib/lagrange/backup-state/production-backup.lock
+METRICS_FILE=/var/lib/lagrange/backup-state/production-backup.prom
+MAX_TOTAL_BYTES=536870912000
+MIN_FREE_BYTES=107374182400
+RETENTION_DAYS=35
+MIN_KEEP=7
+POSTGRES_SERVICE=postgres
+POSTGRES_IMAGE=postgres:18.4

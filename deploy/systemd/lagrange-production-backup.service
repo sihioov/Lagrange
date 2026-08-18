@@ -1,0 +1,29 @@
+[Unit]
+Description=Lagrange encrypted production backup and restore verification
+After=docker.service
+Requires=docker.service
+ConditionFileIsExecutable=/opt/lagrange/bin/run-production-backup.sh
+ConditionPathExists=/etc/lagrange/production-backup.conf
+ConditionPathIsDirectory=/srv/backups/lagrange
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/lagrange/bin/run-production-backup.sh --run --config-file /etc/lagrange/production-backup.conf
+UMask=0077
+TimeoutStartSec=12h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/opt/lagrange /etc/lagrange/production-backup.conf /etc/lagrange/secrets/backup_encryption_key /var/lib/lagrange/data
+ReadWritePaths=/srv/backups/lagrange /var/lib/lagrange/backup-state
+
+[Install]
+WantedBy=multi-user.target
