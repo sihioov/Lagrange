@@ -10,7 +10,7 @@ before Compose can reinterpret a value.
 |---|---|---|
 | `provision-linux.sh` | `--dry-run` | `--preflight` and `--apply` inspect/change the approved account/directories as root; `--apply` is the only mutating mode |
 | `provision-db-secrets.sh` | `--dry-run` | `--check` performs a root-only read-only check of the seven DB source files; `--strip-trailing-newline` is an explicit atomic repair for a complete LF-terminated hex set; `--apply` generates new hex values and never overwrites an existing target |
-| `provision-auth0-secret.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` reads the secret twice from a hidden terminal prompt and atomically installs one root-owned file without overwriting it |
+| `provision-auth0-secret.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` reads the secret twice from a hidden terminal prompt; `--import-file` migrates a protected legacy file; both atomically install one root-owned file without overwriting it |
 | `validate-production-config.sh` | strict `--scope release` validation (root-only read-only inspection) | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
 | `compose-release.sh` | `--scope release --plan` (root-only; it invokes the validator) | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
 | `backfill-production.sh` | `--plan` | `--execute` is root-only because it validates protected production secrets, then calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
@@ -51,6 +51,19 @@ sudo scripts/ops/provision-auth0-secret.sh --apply
 sudo scripts/ops/provision-auth0-secret.sh --check
 ```
 
+To migrate an existing legacy file without retyping its value, pass only the
+absolute source path. The source is never printed or deleted:
+
+```sh
+sudo scripts/ops/provision-auth0-secret.sh \
+  --import-file /var/lib/lagrange/legacy/auth0_client_secret
+```
+
+The import source must be a regular non-symlink file with no symlinked
+ancestor, owner-read permission, and no group/other permission bits (`0600`
+is preferred). Its value must pass the same non-empty, printable,
+whitespace-free, no-placeholder checks as interactive input.
+
 `--apply` is root-only and reads the value twice from `/dev/tty` with terminal
 echo disabled. It does not accept the client secret in an argument, an
 environment variable, standard input, or a command substitution, and it never
@@ -70,9 +83,9 @@ pass a safe absolute directory with no `..` component or symlinked ancestor:
 sudo scripts/ops/provision-auth0-secret.sh --check --source-dir /var/lib/lagrange/test-secrets
 ```
 
-The source directory must be owned by UID 0 and must not be group/other
-writable. `--source-dir` changes only the parent directory used by this local
-check; it does not provide a way to inject a secret non-interactively.
+The target source directory must be owned by UID 0 and must not be group/other
+writable. `--source-dir` changes the target parent directory for an isolated
+host or test; it does not provide a way to inject a secret non-interactively.
 
 `validate-production-config.sh` is root-only for every validation scope because
 the production source secrets and service-specific runtime copies are

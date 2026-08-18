@@ -28,6 +28,10 @@ grep -Fq -- '--check must run as root' "$auth0_secret" \
   || die 'Auth0 secret check root guard missing'
 grep -Fq -- '--apply must run as root' "$auth0_secret" \
   || die 'Auth0 secret apply root guard missing'
+grep -Fq -- '--import-file must run as root' "$auth0_secret" \
+  || die 'Auth0 secret import root guard missing'
+grep -Fq -- '--import-file' "$auth0_secret" \
+  || die 'Auth0 secret import mode missing'
 grep -Fq 'default_source_dir=/etc/lagrange/secrets' "$auth0_secret" \
   || die 'Auth0 secret source default missing'
 grep -Fq 'target_name=auth0_client_secret' "$auth0_secret" \
@@ -54,6 +58,10 @@ grep -Fq "'%u:%g:%a'" "$auth0_secret" \
   || die 'Auth0 secret check ownership/mode inspection missing'
 grep -Fq 'wc -c' "$auth0_secret" \
   || die 'Auth0 secret check byte-length inspection missing'
+grep -Fq 'legacy Auth0 secret source must not be group/other accessible' "$auth0_secret" \
+  || die 'Auth0 legacy source mode fence missing'
+grep -Fq 'cp -- "$import_file" "$staged"' "$auth0_secret" \
+  || die 'Auth0 import staged-copy fence missing'
 for forbidden in curl wget docker psql openssl; do
   if grep -Eiq "^[^#]*($forbidden)" "$auth0_secret"; then
     die "Auth0 secret provisioner must not reference $forbidden"

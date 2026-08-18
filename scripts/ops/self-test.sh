@@ -182,6 +182,39 @@ if [ "$(id -u)" -eq 0 ]; then
     echo 'self-test: existing Auth0 fixture value leaked in apply output' >&2
     exit 1
   fi
+
+  auth0_import_source="$out_dir/auth0-import-source"
+  auth0_import_target="$out_dir/auth0-import-target"
+  mkdir -p "$auth0_import_source" "$auth0_import_target"
+  chmod 0750 "$auth0_import_source" "$auth0_import_target"
+  auth0_import_fixture='legacy-test-value-987654321'
+  printf '%s' "$auth0_import_fixture" >"$auth0_import_source/legacy-secret"
+  chown root:root -- "$auth0_import_source/legacy-secret"
+  chmod 0600 -- "$auth0_import_source/legacy-secret"
+  auth0_import_output=$(bash "$ops/provision-auth0-secret.sh" \
+    --import-file "$auth0_import_source/legacy-secret" \
+    --source-dir "$auth0_import_target" 2>&1)
+  grep -Fq 'AUTH0_SECRET_PROVISION mode=import' <<<"$auth0_import_output"
+  [ "$(stat -c '%u:%g:%a' -- "$auth0_import_target/auth0_client_secret")" = '0:0:600' ]
+  cmp -s "$auth0_import_source/legacy-secret" \
+    "$auth0_import_target/auth0_client_secret"
+  if grep -Fq -- "$auth0_import_fixture" <<<"$auth0_import_output"; then
+    echo 'self-test: imported Auth0 fixture value leaked in import output' >&2
+    exit 1
+  fi
+  if bash "$ops/provision-auth0-secret.sh" \
+     --import-file "$auth0_import_source/legacy-secret" \
+     --source-dir "$auth0_import_target" \
+     >"$out_dir/auth0-import-existing.out" 2>&1; then
+    echo 'self-test: existing Auth0 target unexpectedly accepted --import-file' >&2
+    exit 1
+  fi
+  grep -Fq 'refusing to overwrite existing Auth0 client secret' \
+    "$out_dir/auth0-import-existing.out"
+  if grep -Fq -- "$auth0_import_fixture" "$out_dir/auth0-import-existing.out"; then
+    echo 'self-test: imported Auth0 fixture value leaked on target refusal' >&2
+    exit 1
+  fi
 fi
 
 # DB source credentials are generated only by the explicit root apply mode.

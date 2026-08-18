@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Provision the production Auth0 confidential-client secret from a hidden
-# terminal prompt.  The default mode is a non-mutating plan; --apply is
-# explicit, root-only, and never accepts a secret through an argument or
-# environment variable.  No Auth0 network/API call is made by this script.
+# terminal prompt or an explicitly named, protected legacy file.  The default
+# mode is a non-mutating plan; --apply/--import-file are explicit, root-only,
+# and never accept a secret through an argument or environment variable.  No
+# Auth0 network/API call is made by this script.
 set -euo pipefail
 
 default_source_dir=/etc/lagrange/secrets
@@ -10,6 +11,7 @@ source_dir=$default_source_dir
 target_name=auth0_client_secret
 mode=dry-run
 mode_seen=0
+import_file=
 staging_dir=
 installed=0
 installed_signature=
@@ -22,7 +24,7 @@ placeholder_pattern='placeholder|example|todo|change[-_ ]*me|change[-_ ]*this|re
 usage() {
   cat <<'EOF'
 Usage: scripts/ops/provision-auth0-secret.sh [--dry-run|--check|--apply]
-       [--source-dir ABSOLUTE_PATH]
+       [--import-file ABSOLUTE_PATH] [--source-dir ABSOLUTE_PATH]
 
 Modes:
   --dry-run              Print the one-file plan without changing the host
@@ -33,15 +35,18 @@ Modes:
   --apply                Read and confirm the secret from a hidden interactive
                          terminal prompt; requires root.  Never overwrites an
                          existing target.
+  --import-file PATH     Import an existing legacy secret file; requires root.
+                         PATH is metadata/shape-checked and its value is never
+                         printed or accepted through argv or the environment.
   --source-dir PATH      Override /etc/lagrange/secrets for an isolated host
                          or test. PATH must be absolute, contain no '..', and
                          have no symlinked ancestor.
 
-The default target is /etc/lagrange/secrets/auth0_client_secret.  --apply
-writes exactly one non-empty, printable, whitespace-free line as root:root
-mode 0600, without a newline, using an atomic no-clobber install.  The secret
-is never read from argv or the environment, printed, logged, or sent to
-Auth0; this command performs no Auth0 network/API verification.
+The default target is /etc/lagrange/secrets/auth0_client_secret.  --apply and
+--import-file write exactly one non-empty, printable, whitespace-free line as
+root:root mode 0600, without a newline, using an atomic no-clobber install.
+The secret is never read from argv or the environment, printed, logged, or
+sent to Auth0; this command performs no Auth0 network/API verification.
 EOF
 }
 
@@ -53,22 +58,30 @@ die() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run)
-      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, or --apply'
+      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, --apply, or --import-file'
       mode=dry-run
       mode_seen=1
       shift
       ;;
     --check)
-      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, or --apply'
+      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, --apply, or --import-file'
       mode=check
       mode_seen=1
       shift
       ;;
     --apply)
-      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, or --apply'
+      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, --apply, or --import-file'
       mode=apply
       mode_seen=1
       shift
+      ;;
+    --import-file)
+      [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode: --dry-run, --check, --apply, or --import-file'
+      [ "$#" -ge 2 ] || die '--import-file needs an absolute path'
+      import_file=$2
+      mode=import
+      mode_seen=1
+      shift 2
       ;;
     --source-dir)
       [ "$#" -ge 2 ] || die '--source-dir needs an absolute path'
@@ -90,6 +103,9 @@ if [ "$mode" = apply ] && [ "$(id -u)" -ne 0 ]; then
 fi
 if [ "$mode" = check ] && [ "$(id -u)" -ne 0 ]; then
   die '--check must run as root; use --dry-run for a non-root plan'
+fi
+if [ "$mode" = import ] && [ "$(id -u)" -ne 0 ]; then
+  die '--import-file must run as root; use --dry-run for a non-root plan'
 fi
 
 # A trailing slash is harmless but normalizing it keeps the target path and
@@ -184,6 +200,37 @@ validate_secret_value() {
   if is_placeholder_value "$value"; then
     die 'Auth0 client secret looks like a placeholder'
   fi
+}
+
+validate_import_file() {
+  local metadata source_mode source_mode_bits byte_count
+
+  safe_path "$import_file" 'legacy Auth0 secret source'
+  if [ ! -e "$import_file" ]; then
+    die "legacy Auth0 secret source is missing: $import_file"
+  fi
+  if [ ! -f "$import_file" ] || [ -L "$import_file" ]; then
+    die 'legacy Auth0 secret source must be a regular non-symlink file'
+  fi
+  metadata=$(stat -c '%a' -- "$import_file" 2>/dev/null) ||
+    die 'cannot inspect legacy Auth0 secret source mode'
+  source_mode=$metadata
+  source_mode_bits=$((8#$source_mode))
+  (( (source_mode_bits & 0077) == 0 )) ||
+    die 'legacy Auth0 secret source must not be group/other accessible'
+  (( (source_mode_bits & 0400) != 0 )) ||
+    die 'legacy Auth0 secret source must be readable by its owner'
+
+  byte_count=$(wc -c <"$import_file" 2>/dev/null) ||
+    die 'cannot inspect legacy Auth0 secret source length'
+  [ "$byte_count" -gt 0 ] ||
+    die 'legacy Auth0 secret source must not be empty'
+  ! LC_ALL=C grep -q '[[:space:]]' -- "$import_file" ||
+    die 'legacy Auth0 secret source must be one non-empty line without CR, LF, or whitespace'
+  ! LC_ALL=C grep -q '[^[:print:]]' -- "$import_file" ||
+    die 'legacy Auth0 secret source must contain printable characters only'
+  ! LC_ALL=C grep -Eiq -- "$placeholder_pattern" "$import_file" ||
+    die 'legacy Auth0 secret source looks like a placeholder'
 }
 
 report_check_failure() {
@@ -325,6 +372,9 @@ cleanup() {
 safe_path "$source_dir" source-directory
 target=$(target_path)
 safe_path "$target" 'Auth0 secret target'
+if [ "$mode" = import ]; then
+  safe_path "$import_file" 'legacy Auth0 secret source'
+fi
 
 if [ "$mode" = dry-run ]; then
   print_plan
@@ -343,9 +393,13 @@ if [ "$mode" = check ]; then
   exit 1
 fi
 
-# --apply is explicit and root-only.  Do not create missing ancestors: the
+# --apply/--import-file are explicit and root-only.  Do not create missing ancestors: the
 # operator must first prepare the protected parent; only the final source
 # directory may be bootstrapped beneath an existing safe parent.
+if [ "$mode" = import ]; then
+  check_target_absent || die 'refusing to overwrite existing Auth0 client secret; no files were changed'
+  validate_import_file
+fi
 if [ ! -e "$source_dir" ]; then
   source_parent=${source_dir%/*}
   [ -n "$source_parent" ] || source_parent=/
@@ -368,7 +422,11 @@ fi
 source_metadata
 check_target_absent || die 'refusing to overwrite existing Auth0 client secret; no files were changed'
 
-read_secret_interactively
+if [ "$mode" = apply ]; then
+  read_secret_interactively
+else
+  validate_import_file
+fi
 
 umask 077
 staging_dir=$(mktemp -d -- "$source_dir/.lagrange-auth0-secret.XXXXXX") ||
@@ -377,8 +435,14 @@ chmod 0700 -- "$staging_dir"
 trap cleanup EXIT
 
 staged=$staging_dir/$target_name
-if ! printf '%s' "$auth0_secret" >"$staged"; then
-  die 'cannot stage Auth0 client secret; no files were changed'
+if [ "$mode" = apply ]; then
+  if ! printf '%s' "$auth0_secret" >"$staged"; then
+    die 'cannot stage Auth0 client secret; no files were changed'
+  fi
+else
+  if ! cp -- "$import_file" "$staged"; then
+    die 'cannot stage legacy Auth0 client secret; no files were changed'
+  fi
 fi
 chown root:root -- "$staged" || die 'cannot set staged Auth0 secret ownership; no files were changed'
 chmod 0600 -- "$staged" || die 'cannot set staged Auth0 secret mode; no files were changed'
@@ -415,6 +479,11 @@ rm -f -- "$staged"
 rmdir -- "$staging_dir"
 staging_dir=
 unset auth0_secret
-echo "AUTH0_SECRET_PROVISION mode=apply target=$target"
-echo 'APPLY: installed Auth0 client secret atomically as root:root mode 0600 without a newline'
-echo 'APPLY: secret value was not printed; no Auth0 network/API call was made'
+if [ "$mode" = import ]; then
+  echo "AUTH0_SECRET_PROVISION mode=import target=$target"
+  echo 'IMPORT: installed Auth0 client secret atomically as root:root mode 0600 without a newline'
+else
+  echo "AUTH0_SECRET_PROVISION mode=apply target=$target"
+  echo 'APPLY: installed Auth0 client secret atomically as root:root mode 0600 without a newline'
+fi
+echo 'RESULT: secret value was not printed; no Auth0 network/API call was made'
