@@ -10,12 +10,43 @@ bash -n "$ops/lib/dotenv.sh" || die 'shared dotenv helper has shell syntax error
 grep -Fq 'uses Compose interpolation, quote, escape' "$ops/lib/dotenv.sh" \
   || die 'dotenv parser must reject Compose interpretation syntax'
 
-for script in provision-linux.sh validate-production-config.sh compose-release.sh \
-  backfill-production.sh post-backfill-health.sh self-test.sh; do
+for script in provision-linux.sh provision-db-secrets.sh validate-production-config.sh \
+  compose-release.sh backfill-production.sh post-backfill-health.sh self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
   bash -n "$path" || die "$script has shell syntax errors"
+done
+
+db_secrets="$ops/provision-db-secrets.sh"
+grep -Fq 'mode=dry-run' "$db_secrets" \
+  || die 'DB secret provisioner must default to a dry-run plan'
+grep -Fq -- '--apply must run as root' "$db_secrets" \
+  || die 'DB secret apply root guard missing'
+grep -Fq 'default_source_dir=/etc/lagrange/secrets' "$db_secrets" \
+  || die 'DB secret source default missing'
+grep -Fq 'must not contain' "$db_secrets" \
+  || die 'DB secret dot-dot path fence missing'
+grep -Fq 'must not traverse a symlink' "$db_secrets" \
+  || die 'DB secret ancestor symlink fence missing'
+grep -Fq 'source directory must be owned by uid 0' "$db_secrets" \
+  || die 'DB secret source ownership fence missing'
+grep -Fq 'source directory must not be group/other writable' "$db_secrets" \
+  || die 'DB secret source write fence missing'
+grep -Fq 'source_mode_bits & 0022' "$db_secrets" \
+  || die 'DB secret source write mask must preserve group/other read access'
+grep -Fq 'openssl rand -hex 32' "$db_secrets" \
+  || die 'DB secret generator must use 256-bit OpenSSL values'
+grep -Fq 'cmp -s' "$db_secrets" \
+  || die 'DB secret distinctness check missing'
+grep -Fq 'install -o root -g root -m 0600' "$db_secrets" \
+  || die 'DB secret owner fence missing'
+grep -Fq '0600' "$db_secrets" \
+  || die 'DB secret mode fence missing'
+for forbidden in docker curl psql kis api; do
+  if grep -Eiq "^[^#]*(\\$forbidden|$forbidden)" "$db_secrets"; then
+    die "DB secret provisioner must not reference $forbidden"
+  fi
 done
 
 grep -Fq 'DRY_RUN: no host changes made' "$ops/provision-linux.sh" || die 'provision dry-run contract missing'

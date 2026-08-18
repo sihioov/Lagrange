@@ -6,8 +6,8 @@ ops="$root/scripts/ops"
 out_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-ops-self-test.XXXXXX")
 trap 'rm -rf -- "$out_dir"' EXIT
 
-for script in provision-linux.sh validate-production-config.sh compose-release.sh \
-  backfill-production.sh post-backfill-health.sh; do
+for script in provision-linux.sh provision-db-secrets.sh validate-production-config.sh \
+  compose-release.sh backfill-production.sh post-backfill-health.sh; do
   bash -n "$ops/$script"
 done
 bash "$root/deploy/secrets/runtime-static-check.sh" >/dev/null
@@ -66,6 +66,118 @@ if LAGRANGE_CONFIG_ROOT="$out_dir/path-test/link/config" \
   exit 1
 fi
 grep -Fq 'must not traverse a symlink' "$out_dir/symlink.out"
+
+# DB source credentials are generated only by the explicit root apply mode.
+# Exercise the non-root plan/guard in every environment, and exercise the
+# complete file contract when this no-infrastructure test itself has root.
+db_secret_source="$out_dir/db-secret-source"
+db_secret_plan=$(LAGRANGE_SECRET_SOURCE_DIR="$db_secret_source" \
+  bash "$ops/provision-db-secrets.sh" --dry-run)
+grep -Fq 'DB_SECRET_PROVISION mode=dry-run' <<<"$db_secret_plan"
+grep -Fq 'DRY_RUN: no files created' <<<"$db_secret_plan"
+[ ! -e "$db_secret_source" ]
+
+if [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+  db_apply_guard_cmd=(runuser -u nobody -- env \
+    "LAGRANGE_SECRET_SOURCE_DIR=$out_dir/db-secret-guard" \
+    bash "$ops/provision-db-secrets.sh" --apply)
+elif [ "$(id -u)" -ne 0 ]; then
+  db_apply_guard_cmd=(env \
+    "LAGRANGE_SECRET_SOURCE_DIR=$out_dir/db-secret-guard" \
+    bash "$ops/provision-db-secrets.sh" --apply)
+else
+  db_apply_guard_cmd=()
+fi
+if [ "${#db_apply_guard_cmd[@]}" -gt 0 ]; then
+  if "${db_apply_guard_cmd[@]}" >"$out_dir/db-secret-root.out" 2>&1; then
+    echo 'self-test: non-root DB secret apply unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq -- 'provision-db-secrets: --apply must run as root' \
+    "$out_dir/db-secret-root.out" || {
+    cat "$out_dir/db-secret-root.out" >&2
+    exit 1
+  }
+fi
+
+if [ "$(id -u)" -eq 0 ]; then
+  db_unsafe_source="$out_dir/db-secret-unsafe"
+  mkdir -p "$db_unsafe_source"
+  chmod 0770 "$db_unsafe_source"
+  if LAGRANGE_SECRET_SOURCE_DIR="$db_unsafe_source" \
+     bash "$ops/provision-db-secrets.sh" --apply >"$out_dir/db-secret-unsafe.out" 2>&1; then
+    echo 'self-test: writable DB secret source directory was unexpectedly accepted' >&2
+    exit 1
+  fi
+  grep -Fq 'source directory must not be group/other writable' \
+    "$out_dir/db-secret-unsafe.out"
+  [ "$(find "$db_unsafe_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 0 ]
+
+  # 0750 is the production host-directory mode from provision-linux.sh.  It
+  # must remain valid because group read/traverse is not group write access.
+  db_apply_source="$out_dir/db-secret-apply"
+  mkdir -p "$db_apply_source"
+  chmod 0750 "$db_apply_source"
+  [ "$(stat -c '%u:%a' -- "$db_apply_source")" = '0:750' ]
+  db_apply_output=$(LAGRANGE_SECRET_SOURCE_DIR="$db_apply_source" \
+    bash "$ops/provision-db-secrets.sh" --apply)
+  grep -Fq 'APPLY: generated exactly seven distinct DB source secret files' \
+    <<<"$db_apply_output"
+  db_secret_names=(
+    postgres_password
+    db_migration_owner_password
+    db_app_password
+    db_worker_password
+    db_audit_password
+    db_research_password
+    db_admin_password
+  )
+  for name in "${db_secret_names[@]}"; do
+    db_file="$db_apply_source/$name"
+    [ -f "$db_file" ] && [ ! -L "$db_file" ]
+    [ "$(stat -c '%u:%g:%a' -- "$db_file")" = '0:0:600' ]
+    [ "$(wc -c <"$db_file")" -eq 64 ]
+    LC_ALL=C grep -Eq '^[0-9a-f]{64}$' -- "$db_file"
+    value=$(<"$db_file")
+    if grep -Fq -- "$value" <<<"$db_apply_output"; then
+      echo "self-test: DB secret value leaked in apply output: $name" >&2
+      exit 1
+    fi
+  done
+  [ "$(find "$db_apply_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 7 ]
+  for ((i = 0; i < ${#db_secret_names[@]}; i++)); do
+    for ((j = i + 1; j < ${#db_secret_names[@]}; j++)); do
+      if cmp -s "$db_apply_source/${db_secret_names[i]}" \
+         "$db_apply_source/${db_secret_names[j]}"; then
+        echo 'self-test: generated DB source values are not distinct' >&2
+        exit 1
+      fi
+    done
+  done
+
+  db_existing_source="$out_dir/db-secret-existing"
+  mkdir -p "$db_existing_source"
+  printf '%s' sentinel >"$db_existing_source/db_app_password"
+  if LAGRANGE_SECRET_SOURCE_DIR="$db_existing_source" \
+     bash "$ops/provision-db-secrets.sh" --apply >"$out_dir/db-secret-existing.out" 2>&1; then
+    echo 'self-test: existing DB secret target was unexpectedly overwritten' >&2
+    exit 1
+  fi
+  grep -Fq 'refusing to overwrite existing DB source secret' \
+    "$out_dir/db-secret-existing.out"
+  [ "$(find "$db_existing_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 1 ]
+  grep -Fxq sentinel "$db_existing_source/db_app_password"
+fi
+
+db_path_real="$out_dir/db-secret-path-real"
+mkdir -p "$db_path_real"
+ln -s "$db_path_real" "$out_dir/db-secret-path-link"
+if LAGRANGE_SECRET_SOURCE_DIR="$out_dir/db-secret-path-link/secrets" \
+   bash "$ops/provision-db-secrets.sh" --dry-run >"$out_dir/db-secret-symlink.out" 2>&1; then
+  echo 'self-test: DB secret provision accepted a symlinked ancestor' >&2
+  exit 1
+fi
+grep -Fq 'must not traverse a symlink' "$out_dir/db-secret-symlink.out"
 
 if bash "$ops/backfill-production.sh" \
    --start 2026-02-30 --end 2026-03-01 --plan >"$out_dir/date.out" 2>&1; then
