@@ -40,6 +40,13 @@ Exit 1: invalid configuration or unsafe file shape.
 The KIS account reference is intentionally optional. Live/order credentials are
 not required and are rejected from this read-only release profile.
 
+Validation is root-only because production source secrets and service-specific
+runtime copies are intentionally protected by root ownership and restrictive
+modes. `--help` remains available to unprivileged callers. Preserve the commit
+when invoking through sudo:
+  export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
+  sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" scripts/ops/validate-production-config.sh --scope infrastructure --env-file deploy/compose/.env
+
 infrastructure scope requires only the production DB/bootstrap inputs and
 runtime copies for PostgreSQL, role bootstrap, migrations, Raw ownership, and
 the research schema check. It does not require KIS credentials, Auth0/TLS
@@ -72,6 +79,14 @@ case "$scope" in
   infrastructure|backfill|release) ;;
   *) die "--scope must be infrastructure, backfill, or release" ;;
 esac
+
+# Production source secrets and runtime copies are root-owned by contract. Check
+# the caller before touching the env file or any configured secret path so an
+# unprivileged invocation reports the real permission prerequisite instead of
+# misclassifying protected files as missing. Keep --help usable above.
+if [ "$(id -u)" -ne 0 ]; then
+  die "validation must run as root to inspect protected production paths; use sudo env LAGRANGE_CODE_COMMIT=\"\$LAGRANGE_CODE_COMMIT\" scripts/ops/validate-production-config.sh --scope $scope --env-file $env_file"
+fi
 
 if [ ! -f "$env_file" ]; then
   echo "BLOCKED_EXTERNAL: missing production env file: $env_file" >&2

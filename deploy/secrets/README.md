@@ -268,5 +268,8 @@ copies and validate the full release contract:
 
 ```sh
 sudo deploy/secrets/provision-runtime-secrets.sh --scope release
-scripts/ops/validate-production-config.sh --scope release --env-file deploy/compose/.env
+export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/validate-production-config.sh \
+  --scope release --env-file deploy/compose/.env
 ```

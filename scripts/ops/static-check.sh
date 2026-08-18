@@ -80,6 +80,12 @@ grep -Fq 'must not traverse a symlink' "$ops/provision-linux.sh" || die 'provisi
 grep -Fq 'service user is not a member of service group' "$ops/provision-linux.sh" || die 'service group membership fence missing'
 grep -Fq 'BLOCKED_EXTERNAL' "$ops/validate-production-config.sh" || die 'config blocker contract missing'
 grep -Fq -- '--scope infrastructure|backfill|release' "$ops/validate-production-config.sh" || die 'config scope contract missing'
+grep -Fq -- 'validation must run as root to inspect protected production paths' "$ops/validate-production-config.sh" \
+  || die 'config validator root guard missing'
+grep -Fq 'LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"' "$ops/validate-production-config.sh" \
+  || die 'config validator sudo commit-preservation guidance missing'
+grep -Fq 'validator fixture checks skipped for non-root caller' "$ops/self-test.sh" \
+  || die 'self-test must account for the validator root contract'
 grep -Fq 'dotenv_validate_shell_overrides' "$ops/validate-production-config.sh" || die 'shell/env-file precedence fence missing'
 grep -Fq 'KIS read-only' "$ops/validate-production-config.sh" || die 'KIS read-only contract missing'
 grep -Fq 'mode 0400 or 0600' "$ops/validate-production-config.sh" || die 'source secret mode contract missing'

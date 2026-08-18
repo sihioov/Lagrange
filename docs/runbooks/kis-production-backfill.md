@@ -66,7 +66,9 @@ pin의 shape만 확인한다.
 
 ```bash
 export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
-scripts/ops/validate-production-config.sh --scope infrastructure --env-file deploy/compose/.env
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/validate-production-config.sh \
+  --scope infrastructure --env-file deploy/compose/.env
 ```
 
 infrastructure scope는 KIS key/secret 없이 절대 운영 데이터·runtime 경로,
@@ -83,9 +85,12 @@ migration, Raw ownership, schema check one-shot만 실행하며 research-worker,
 API/Web 또는 어떤 provider/API call도 시작하지 않는다.
 
 ```bash
-scripts/ops/compose-release.sh --scope infrastructure --plan
-scripts/ops/compose-release.sh --scope infrastructure --preflight
-scripts/ops/compose-release.sh --scope infrastructure --apply
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/compose-release.sh --scope infrastructure --plan
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/compose-release.sh --scope infrastructure --preflight
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/compose-release.sh --scope infrastructure --apply
 ```
 
 이제 KIS 자격증명이 준비된 경우에만 research-worker 런타임 copy를 추가하고
@@ -93,7 +98,9 @@ backfill scope로 worker image를 준비한다.
 
 ```bash
 sudo deploy/secrets/provision-runtime-secrets.sh --scope backfill
-scripts/ops/validate-production-config.sh --scope backfill --env-file deploy/compose/.env
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/validate-production-config.sh \
+  --scope backfill --env-file deploy/compose/.env
 ```
 
 ## 2. 고정 ETF 백필
@@ -109,7 +116,8 @@ scripts/ops/backfill-production.sh \
 운영자가 범위와 읽기 전용 호출을 확인한 뒤에만 실행 guard를 설정한다.
 
 ```bash
-BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS \
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS \
   scripts/ops/backfill-production.sh \
   --start 2020-01-01 --end 2026-08-17 --universe etf --execute
 ```
@@ -212,8 +220,10 @@ quality gate가 `SCHEMA_MISMATCH`/`BLOCKED`로 거부해야 한다.
 기동은 계획/검증을 먼저 수행한다.
 
 ```bash
-scripts/ops/compose-release.sh --scope backfill --plan
-scripts/ops/compose-release.sh --scope backfill --preflight
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/compose-release.sh --scope backfill --plan
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/compose-release.sh --scope backfill --preflight
 ```
 
 먼저 backfill scope를 적용한다. 이 단계는 Auth0/TLS와 아직 생성되지 않은
@@ -229,7 +239,8 @@ recommendation/candidate/backtest/Paper/reverse-proxy는 이 단계에서 시작
 않는다.
 
 ```bash
-scripts/ops/compose-release.sh --scope backfill --apply
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/compose-release.sh --scope backfill --apply
 ```
 
 bootstrap이 성공한 뒤에만 날짜별 one-shot 백필을 실행한다. daemon을 먼저
@@ -242,7 +253,8 @@ bootstrap이 성공한 뒤에만 날짜별 one-shot 백필을 실행한다. daem
 KIS 데이터가 준비됐거나 worker health가 healthy라는 뜻이 아니다.
 
 ```bash
-scripts/ops/post-backfill-health.sh --scope backfill --check
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/post-backfill-health.sh --scope backfill --check
 ```
 
 이 검사는 실행 중 worker daemon을 요구하지 않고 동일한 worker image의
@@ -253,8 +265,11 @@ dataset version과 five-pin을 승인한다. 이어서 Auth0/TLS와 serving runt
 secret을 provision하고 full release validator/Compose를 실행한다.
 
 ```bash
-scripts/ops/validate-production-config.sh --scope release --env-file deploy/compose/.env
-scripts/ops/compose-release.sh --scope release --apply
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/validate-production-config.sh \
+  --scope release --env-file deploy/compose/.env
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/compose-release.sh --scope release --apply
 docker compose --env-file deploy/compose/.env \
   -f deploy/compose/compose.yml ps
 docker compose --env-file deploy/compose/.env \
@@ -264,7 +279,8 @@ docker compose --env-file deploy/compose/.env \
 full serving 기동 뒤에는 release scope readiness gate를 다시 실행한다.
 
 ```bash
-scripts/ops/post-backfill-health.sh --scope release --check
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/post-backfill-health.sh --scope release --check
 ```
 
 이 gate는 worker daemon의 running 여부를 확인하지 않는다. Compose에 정의된

@@ -293,4 +293,7 @@ install -d -o "$service_uid" -g "$service_gid" -m 0750 -- "$data_root/artifacts"
 install -d -o "$service_uid" -g "$service_gid" -m 0750 -- "$data_root/phase0"
 
 echo "APPLY: host paths and service account are ready"
-echo "APPLY: next run scripts/ops/validate-production-config.sh before secrets/Compose"
+echo 'APPLY: next run sudo scripts/ops/provision-db-secrets.sh --apply (or --check if already provisioned)'
+echo 'APPLY: then sudo deploy/secrets/provision-runtime-secrets.sh --scope infrastructure'
+echo 'APPLY: then export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"'
+echo 'APPLY: then sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" scripts/ops/validate-production-config.sh --scope infrastructure --env-file deploy/compose/.env'

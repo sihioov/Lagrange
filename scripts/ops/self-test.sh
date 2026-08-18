@@ -333,6 +333,26 @@ if bash "$ops/backfill-production.sh" \
 fi
 grep -Fq 'invalid calendar date' "$out_dir/date.out"
 
+# The remaining validator fixtures intentionally use production-shaped secret
+# ownership/modes and therefore require root. Keep the non-root self-test
+# useful by asserting the explicit guard, then leave those protected fixtures
+# to a root invocation instead of accepting an insecure test bypass.
+if [ "$(id -u)" -ne 0 ]; then
+  if bash "$ops/validate-production-config.sh" --scope infrastructure \
+     >"$out_dir/config-root.out" 2>&1; then
+    echo 'self-test: non-root production validation unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq 'validation must run as root to inspect protected production paths' \
+    "$out_dir/config-root.out" || {
+    cat "$out_dir/config-root.out" >&2
+    exit 1
+  }
+  echo 'OPS_SELF_TEST: validator fixture checks skipped for non-root caller (production validation is root-only)'
+  echo 'OPS_SELF_TEST: PASS'
+  exit 0
+fi
+
 cp "$root/deploy/compose/.env.example" "$out_dir/.env"
 chmod 0600 "$out_dir/.env"
 mkdir -p "$out_dir/source"

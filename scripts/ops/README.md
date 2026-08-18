@@ -10,10 +10,10 @@ before Compose can reinterpret a value.
 |---|---|---|
 | `provision-linux.sh` | `--dry-run` | `--preflight` and `--apply` inspect/change the approved account/directories as root; `--apply` is the only mutating mode |
 | `provision-db-secrets.sh` | `--dry-run` | `--check` performs a root-only read-only check of the seven DB source files; `--strip-trailing-newline` is an explicit atomic repair for a complete LF-terminated hex set; `--apply` generates new hex values and never overwrites an existing target |
-| `validate-production-config.sh` | strict `--scope release` validation | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
-| `compose-release.sh` | `--scope release --plan` | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
-| `backfill-production.sh` | `--plan` | `--execute` calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
-| `post-backfill-health.sh` | `--scope backfill --plan` | `--check` runs the existing research-worker EOD freshness health gate; no KIS call |
+| `validate-production-config.sh` | strict `--scope release` validation (root-only read-only inspection) | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
+| `compose-release.sh` | `--scope release --plan` (root-only; it invokes the validator) | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
+| `backfill-production.sh` | `--plan` | `--execute` is root-only because it validates protected production secrets, then calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
+| `post-backfill-health.sh` | `--scope backfill --plan` | `--check` is root-only because it validates protected production secrets, then runs the existing research-worker EOD freshness health gate; no KIS call |
 | `self-test.sh` | static/no-infrastructure tests | none |
 
 Production execution is intentionally split into infrastructure, data, and serving approvals:
@@ -33,6 +33,18 @@ No script enables Compose `live`, asks for a KIS account/order credential, or
 calls an order endpoint. KOSPI200/KOSDAQ150 candidate backfill is a separate
 blocked workflow until its credentialed candidate bridge and entitlement are
 available. See [`docs/runbooks/kis-production-backfill.md`](../../docs/runbooks/kis-production-backfill.md).
+
+`validate-production-config.sh` is root-only for every validation scope because
+the production source secrets and service-specific runtime copies are
+root-owned and mode-protected. `--help` remains available without root. When
+using `sudo`, preserve the exact build commit explicitly:
+
+```sh
+export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/validate-production-config.sh \
+  --scope infrastructure --env-file deploy/compose/.env
+```
 
 `validate-production-config.sh --scope infrastructure` intentionally does not
 require KIS credentials, serving-only Auth0/TLS values, or the recommendation
