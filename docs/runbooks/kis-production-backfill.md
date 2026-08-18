@@ -35,10 +35,12 @@ readiness와 후보 실행은 `BLOCKED_EXTERNAL`로 취급한다. 이를 ETF EOD
 
 ```bash
 scripts/ops/provision-linux.sh --dry-run
-scripts/ops/provision-linux.sh --preflight
+sudo scripts/ops/provision-linux.sh --preflight
 ```
 
-`--preflight`가 실패하면 `--apply`를 실행하기 전에 경로·계정·권한을 검토한다.
+`--preflight`는 `/etc/lagrange`와 데이터 경로의 보호된 조상 디렉터리를
+검사하므로 root가 필요하다. 실패하면 `--apply`를 실행하기 전에
+경로·계정·권한을 검토한다.
 `--apply`는 명시적으로 승인된 root 터미널에서만 실행하며, 계정·디렉터리
 생성 외의 삭제·초기화·재귀 복사는 하지 않는다.
 

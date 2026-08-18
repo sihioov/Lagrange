@@ -25,6 +25,36 @@ dry_run=$(LAGRANGE_CONFIG_ROOT="$out_dir/etc" \
   bash "$ops/provision-linux.sh" --dry-run)
 grep -Fq 'DRY_RUN: no host changes made' <<<"$dry_run"
 
+# The canonical host directories are root-owned and mode 0750, so preflight is
+# intentionally root-only. Exercise that guard as an unprivileged user even
+# when this self-test itself is launched by root.
+preflight_guard_env=(
+  "LAGRANGE_CONFIG_ROOT=$out_dir/etc"
+  "LAGRANGE_DEPLOY_ROOT=$out_dir/opt"
+  "LAGRANGE_DATA_ROOT=$out_dir/data"
+  "LAGRANGE_HOST_SECRET_ROOT=$out_dir/etc/secrets"
+)
+if [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+  preflight_guard_cmd=(runuser -u nobody -- env "${preflight_guard_env[@]}" \
+    bash "$ops/provision-linux.sh" --preflight)
+elif [ "$(id -u)" -ne 0 ]; then
+  preflight_guard_cmd=(env "${preflight_guard_env[@]}" \
+    bash "$ops/provision-linux.sh" --preflight)
+else
+  preflight_guard_cmd=()
+fi
+if [ "${#preflight_guard_cmd[@]}" -gt 0 ]; then
+  if "${preflight_guard_cmd[@]}" >"$out_dir/preflight-root.out" 2>&1; then
+    echo 'self-test: non-root preflight unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq -- 'provision-linux: --preflight must run as root' \
+    "$out_dir/preflight-root.out" || {
+    cat "$out_dir/preflight-root.out" >&2
+    exit 1
+  }
+fi
+
 mkdir -p "$out_dir/path-test/real"
 ln -s "$out_dir/path-test/real" "$out_dir/path-test/link"
 if LAGRANGE_CONFIG_ROOT="$out_dir/path-test/link/config" \

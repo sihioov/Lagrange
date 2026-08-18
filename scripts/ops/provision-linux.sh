@@ -27,8 +27,13 @@ Usage: scripts/ops/provision-linux.sh [--dry-run|--preflight|--apply]
 
 Modes:
   --dry-run    Print the idempotent plan without changing the host (default).
-  --preflight  Require the account, paths, ownership, and modes to exist.
+  --preflight  Require the account, paths, ownership, and modes to exist;
+               root is required to inspect protected host paths.
   --apply      Create the account/paths and ownership fences; root required.
+
+The --dry-run plan is safe to inspect as a non-root user. Both --preflight and
+--apply require root because the provisioned paths are intentionally protected
+by root ownership and mode 0750 fences.
 
 The paths may be overridden for an isolated test with:
   LAGRANGE_CONFIG_ROOT, LAGRANGE_DEPLOY_ROOT, LAGRANGE_DATA_ROOT,
@@ -58,6 +63,21 @@ while [ "$#" -gt 0 ]; do
     *) die "unknown option: $1 (use --help)" ;;
   esac
 done
+
+# Preflight must inspect directories whose ancestors are intentionally
+# root-owned and mode 0750. Refuse before any path/account checks so an
+# unprivileged caller gets an actionable permission message instead of a
+# misleading "missing" result for an existing child.
+if [ "$(id -u)" -ne 0 ]; then
+  case "$mode" in
+    preflight)
+      die '--preflight must run as root to inspect protected paths; use sudo scripts/ops/provision-linux.sh --preflight (or --dry-run for a non-root plan)'
+      ;;
+    apply)
+      die '--apply must run as root; use --dry-run for non-root checks'
+      ;;
+  esac
+fi
 
 is_absolute() { [[ "$1" = /* ]]; }
 safe_path() {
@@ -91,10 +111,6 @@ case "$worker_gid" in
   ''|*[!0-9]*) die 'LAGRANGE_WORKER_GID must be numeric 10001' ;;
   *) die 'LAGRANGE_WORKER_GID must be exactly 10001' ;;
 esac
-
-if [ "$mode" = apply ] && [ "$(id -u)" -ne 0 ]; then
-  die '--apply must run as root; use --dry-run or --preflight for non-root checks'
-fi
 
 declare -a required_dirs=(
   "$config_root"

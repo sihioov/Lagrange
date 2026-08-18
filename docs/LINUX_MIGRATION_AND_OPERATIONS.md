@@ -292,7 +292,7 @@ scripts/ops/provision-linux.sh --dry-run
 # fence. The script never deletes, truncates, recursively copies, or generates
 # secrets. Run this explicitly as root, then verify without mutation.
 sudo scripts/ops/provision-linux.sh --apply
-scripts/ops/provision-linux.sh --preflight
+sudo scripts/ops/provision-linux.sh --preflight
 ~~~
 
 계정을 먼저 만든 뒤 `phase0` 디렉터리를 다시 소유시킨다.

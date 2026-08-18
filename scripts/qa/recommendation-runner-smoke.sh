@@ -62,11 +62,12 @@ for required in \
 done
 for required in \
   'data_group=lagrange-data' \
+  '--preflight must run as root' \
   'LAGRANGE_WORKER_UID must be exactly 10001' \
   'LAGRANGE_WORKER_GID must be exactly 10001' \
   'data group GID conflict' \
   'chown "$worker_uid:$worker_gid"'; do
-  grep -Fq "$required" "$provision" \
+  grep -Fq -- "$required" "$provision" \
     || { echo "host provisioning contract missing: $required" >&2; exit 2; }
 done
 if grep -Fq 'adopt' "$provision"; then
