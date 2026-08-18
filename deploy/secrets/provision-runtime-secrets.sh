@@ -90,6 +90,19 @@ check_path() {
   done
 }
 
+# `install -o/-g` treats numeric-looking arguments as names on some host
+# configurations and therefore fails when a Docker-only UID has no NSS entry.
+# Keep the ownership contract numeric all the way through.  The explicit
+# shape gate also prevents a future inventory edit from turning this into an
+# option-injection or name-resolution path.
+numeric_chown() {
+  local uid=$1 gid=$2 path=$3 label=${4:-runtime path}
+  [[ "$uid" =~ ^[0-9]+$ ]] || die "$label UID must be numeric: $uid"
+  [[ "$gid" =~ ^[0-9]+$ ]] || die "$label GID must be numeric: $gid"
+  chown --no-dereference -- "$uid:$gid" "$path" ||
+    die "cannot set numeric ownership $uid:$gid: $path"
+}
+
 # Resolve relative operator paths against the caller's physical working
 # directory, preserving the old relative-path behavior without allowing `..`
 # aliases or a symlinked ancestor to reach a root-owned copy operation.
@@ -265,13 +278,44 @@ chmod 0750 -- "$runtime_dir"
 copy_secret() {
   local service=$1 target=$2 source=$3 uid=$4 gid=$5 mode=$6
   local input="$source_dir/$source" output_dir="$runtime_dir/$service" output="$runtime_dir/$service/$target"
+  local staged expected_mode actual
   check_path "$input" "secret source $source"
   check_path "$output_dir" "runtime service directory $service"
   check_path "$output" "runtime secret $service/$target"
-  install -d -o "$uid" -g "$gid" -m 0750 -- "$output_dir"
+  mkdir -p -- "$output_dir" || die "cannot create runtime service directory: $service"
   check_path "$output_dir" "runtime service directory $service"
-  install -o "$uid" -g "$gid" -m "$mode" -- "$input" "$output"
+  numeric_chown "$uid" "$gid" "$output_dir" "runtime service directory $service"
+  check_path "$output_dir" "runtime service directory $service"
+  chmod 0750 -- "$output_dir" || die "cannot set runtime service directory mode: $service"
+  check_path "$output_dir" "runtime service directory $service"
+
+  # Stage beside the destination so the final rename is same-filesystem and
+  # atomic.  A failed copy/chown/chmod leaves an old target intact and only
+  # removes this invocation's private staging inode.
+  umask 077
+  staged=$(mktemp -- "$output_dir/.lagrange-secret.${target}.XXXXXX") ||
+    die "cannot create runtime secret staging file: $service/$target"
+  if ! cp --no-dereference -- "$input" "$staged"; then
+    rm -f -- "$staged"
+    die "cannot stage runtime secret: $service/$target"
+  fi
+  check_path "$staged" "runtime secret staging file $service/$target"
+  numeric_chown "$uid" "$gid" "$staged" "runtime secret $service/$target"
+  chmod "$mode" -- "$staged" || {
+    rm -f -- "$staged"
+    die "cannot set runtime secret mode: $service/$target"
+  }
+  check_path "$staged" "runtime secret staging file $service/$target"
+  if ! mv -T -- "$staged" "$output"; then
+    rm -f -- "$staged"
+    die "cannot atomically install runtime secret: $service/$target"
+  fi
   check_path "$output" "runtime secret $service/$target"
+  expected_mode=${mode#0}
+  actual=$(stat -c '%u:%g:%a' -- "$output") ||
+    die "cannot verify runtime secret metadata: $service/$target"
+  [ "$actual" = "$uid:$gid:$expected_mode" ] ||
+    die "runtime secret metadata mismatch for $service/$target: found $actual, expected $uid:$gid:$expected_mode"
 }
 
 for spec in "${copy_specs[@]}"; do

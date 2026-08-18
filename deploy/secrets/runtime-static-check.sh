@@ -186,6 +186,17 @@ grep -Fq 'crypto source secrets must be distinct' "$provision" \
   || die 'provisioner crypto distinctness contract is missing'
 grep -Fq "\\r'" "$provision" \
   || die 'provisioner must reject CR-containing credential secrets'
+grep -Fq 'numeric_chown()' "$provision" \
+  || die 'provisioner must use an explicit numeric ownership helper'
+grep -Fq 'chown --no-dereference -- "$uid:$gid"' "$provision" \
+  || die 'provisioner must assign Docker-only UIDs with numeric chown'
+if grep -Eq '^[[:space:]]*install([[:space:]]|$)' "$provision"; then
+  die 'provisioner must not use install -o/-g for Docker-only numeric UIDs'
+fi
+grep -Fq 'mktemp -- "$output_dir/.lagrange-secret.' "$provision" \
+  || die 'provisioner must stage runtime files before replacement'
+grep -Fq 'mv -T -- "$staged" "$output"' "$provision" \
+  || die 'provisioner must atomically rename staged runtime files'
 
 # Exercise the path fence without requiring real root or any secret copy. A
 # fake id(1) satisfies the early root guard; every fixture exits before mkdir/
@@ -278,6 +289,53 @@ grep -Fq 'crypto source cursor_secret must contain exactly 64 lowercase hex char
 [ ! -e "$crypto_runtime" ] || die 'malformed crypto source left partial runtime writes'
 if grep -Fq "$malformed_cursor" "$fixture/crypto-shape.out"; then
   die 'provisioner leaked a crypto fixture value'
+fi
+
+# Exercise the numeric ownership path with fakeroot.  UID/GID 10001 is
+# deliberately a Docker-only identity on production hosts, so no NSS user is
+# required for this test.  fakeroot lets the root guard and stat assertions run
+# without mutating host ownership; the provisioner still receives numeric
+# chown arguments and the resulting metadata is checked for every UID class.
+if command -v fakeroot >/dev/null 2>&1; then
+  numeric_source="$fixture/numeric-source"
+  numeric_runtime="$fixture/numeric-runtime"
+  mkdir -p "$numeric_source/tls"
+  for name in postgres_password db_migration_owner_password db_app_password \
+    db_worker_password db_audit_password db_research_password db_admin_password \
+    auth0_client_secret; do
+    printf 'fixture-%s' "$name" >"$numeric_source/$name"
+    chmod 0600 "$numeric_source/$name"
+  done
+  printf '%064d' 1 >"$numeric_source/session_secret"
+  printf '%064d' 2 >"$numeric_source/csrf_secret"
+  printf '%064d' 3 >"$numeric_source/cursor_secret"
+  printf '%064d' 4 >"$numeric_source/backup_encryption_key"
+  chmod 0600 "$numeric_source/session_secret" "$numeric_source/csrf_secret" \
+    "$numeric_source/cursor_secret" "$numeric_source/backup_encryption_key"
+  printf '%s\n' fixture-certificate >"$numeric_source/tls/lagrange.crt"
+  printf '%s\n' fixture-private-key >"$numeric_source/tls/lagrange.key"
+  chmod 0600 "$numeric_source/tls/lagrange.crt" "$numeric_source/tls/lagrange.key"
+  if ! PATH="$fake_bin:$PATH" fakeroot bash -c '
+    set -e
+    source_dir=$2
+    runtime_dir=$3
+    LAGRANGE_SECRET_SOURCE_DIR="$source_dir" \
+      LAGRANGE_RUNTIME_SECRET_DIR="$runtime_dir" \
+      bash "$1" --scope serving-prereqs >/dev/null
+    LAGRANGE_SECRET_SOURCE_DIR="$source_dir" \
+      LAGRANGE_RUNTIME_SECRET_DIR="$runtime_dir" \
+      bash "$1" --scope serving-prereqs >/dev/null
+    [ "$(stat -c "%u:%g:%a" "$runtime_dir/api-server/session_secret")" = 10001:10001:440 ]
+    [ "$(stat -c "%u:%g:%a" "$runtime_dir/reverse-proxy/lagrange_tls_cert")" = 101:101:440 ]
+    [ "$(stat -c "%u:%g:%a" "$runtime_dir/db-role-bootstrap/postgres_password")" = 999:999:400 ]
+    [ "$(stat -c "%u:%g:%a" "$runtime_dir/api-server")" = 10001:10001:750 ]
+  ' _ "$provision" "$numeric_source" "$numeric_runtime" \
+    >"$fixture/numeric-ownership.out" 2>&1; then
+    cat "$fixture/numeric-ownership.out" >&2
+    die 'numeric ownership fixture did not converge to expected metadata'
+  fi
+else
+  echo 'secrets-runtime-static-check: fakeroot unavailable; numeric stat fixture skipped' >&2
 fi
 
 echo 'SECRETS_RUNTIME_STATIC: PASS'

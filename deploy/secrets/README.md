@@ -289,7 +289,10 @@ Nginx image. The bootstrap/migration copies are stricter `0400` files owned by
 one-shot to root would violate the deployment contract. Compose refuses to
 start until these copies exist under `LAGRANGE_RUNTIME_SECRET_DIR` (default
 `deploy/secrets/runtime`). The runtime directory is gitignored and must be
-re-provisioned after rotating a source secret. For a production absolute source
+re-provisioned after rotating a source secret. Ownership is applied with
+numeric `chown` (the Docker-only `10001` identity does not need a host NSS
+account), and each file is staged in its service directory before an atomic
+replacement. For a production absolute source
 and runtime root, pass both paths explicitly because this helper does not load
 Compose `.env`:
 
