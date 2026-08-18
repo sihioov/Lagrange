@@ -10,6 +10,7 @@ before Compose can reinterpret a value.
 |---|---|---|
 | `provision-linux.sh` | `--dry-run` | `--preflight` and `--apply` inspect/change the approved account/directories as root; `--apply` is the only mutating mode |
 | `provision-db-secrets.sh` | `--dry-run` | `--check` performs a root-only read-only check of the seven DB source files; `--strip-trailing-newline` is an explicit atomic repair for a complete LF-terminated hex set; `--apply` generates new hex values and never overwrites an existing target |
+| `provision-auth0-secret.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` reads the secret twice from a hidden terminal prompt and atomically installs one root-owned file without overwriting it |
 | `validate-production-config.sh` | strict `--scope release` validation (root-only read-only inspection) | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
 | `compose-release.sh` | `--scope release --plan` (root-only; it invokes the validator) | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
 | `backfill-production.sh` | `--plan` | `--execute` is root-only because it validates protected production secrets, then calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
@@ -33,6 +34,45 @@ No script enables Compose `live`, asks for a KIS account/order credential, or
 calls an order endpoint. KOSPI200/KOSDAQ150 candidate backfill is a separate
 blocked workflow until its credentialed candidate bridge and entitlement are
 available. See [`docs/runbooks/kis-production-backfill.md`](../../docs/runbooks/kis-production-backfill.md).
+
+## Provision the Auth0 client secret
+
+The production target is `/etc/lagrange/secrets/auth0_client_secret`. Inspect
+the plan first; the default mode never reads a secret or changes the host:
+
+```sh
+scripts/ops/provision-auth0-secret.sh --dry-run
+```
+
+Apply only after the protected source directory is ready:
+
+```sh
+sudo scripts/ops/provision-auth0-secret.sh --apply
+sudo scripts/ops/provision-auth0-secret.sh --check
+```
+
+`--apply` is root-only and reads the value twice from `/dev/tty` with terminal
+echo disabled. It does not accept the client secret in an argument, an
+environment variable, standard input, or a command substitution, and it never
+prints or logs the value. The script rejects empty, multiline, CR/LF,
+whitespace, non-printable, and common placeholder values, then writes exactly
+one line without a trailing newline as `root:root` mode `0600`. The existing
+target is never overwritten; the final install is an atomic same-filesystem
+no-clobber link. No Auth0 network/API call or vendor-side secret verification
+is performed.
+
+`--check` is root-only and read-only. It reports only the source-directory and
+target metadata/shape (regular non-symlink file, ownership, mode, byte shape,
+and placeholder status), never the secret or a hash. For an isolated test,
+pass a safe absolute directory with no `..` component or symlinked ancestor:
+
+```sh
+sudo scripts/ops/provision-auth0-secret.sh --check --source-dir /var/lib/lagrange/test-secrets
+```
+
+The source directory must be owned by UID 0 and must not be group/other
+writable. `--source-dir` changes only the parent directory used by this local
+check; it does not provide a way to inject a secret non-interactively.
 
 `validate-production-config.sh` is root-only for every validation scope because
 the production source secrets and service-specific runtime copies are

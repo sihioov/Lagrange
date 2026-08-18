@@ -379,9 +379,10 @@ secret은 공급자·Secret Manager에서 Linux에 재발급하거나 암호화�
 
 ~~~bash
 sudo install -d -m 0700 -o root -g root /etc/lagrange/secrets
-# secret manager 또는 승인된 전송 절차로 한 파일씩 배치한다.
-sudo install -o root -g root -m 0400 <secure-source>/auth0_client_secret \
-  /etc/lagrange/secrets/auth0_client_secret
+# Apply reads the value twice from a hidden terminal prompt. It does not
+# accept the secret through argv/environment/stdin and makes no Auth0 API call.
+sudo scripts/ops/provision-auth0-secret.sh --apply
+sudo scripts/ops/provision-auth0-secret.sh --check
 ~~~
 
 Compose를 사용할 때는 `deploy/secrets/<name>`의 실제 파일도 별도로 provision하고 `chmod 600` 이상으로 제한한다. `*.example`을 그대로 production secret으로 사용하지 않는다. `git status --short`와 `git ls-files -- deploy/secrets`로 실값이 tracked되지 않았는지 확인한다.

@@ -6,8 +6,9 @@ ops="$root/scripts/ops"
 out_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-ops-self-test.XXXXXX")
 trap 'rm -rf -- "$out_dir"' EXIT
 
-for script in provision-linux.sh provision-db-secrets.sh validate-production-config.sh \
-  compose-release.sh backfill-production.sh post-backfill-health.sh; do
+for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
+  validate-production-config.sh compose-release.sh backfill-production.sh \
+  post-backfill-health.sh; do
   bash -n "$ops/$script"
 done
 bash "$root/deploy/secrets/runtime-static-check.sh" >/dev/null
@@ -66,6 +67,122 @@ if LAGRANGE_CONFIG_ROOT="$out_dir/path-test/link/config" \
   exit 1
 fi
 grep -Fq 'must not traverse a symlink' "$out_dir/symlink.out"
+
+# Auth0 client-secret provisioning is intentionally interactive and is never
+# exercised with a real credential here.  Exercise its default plan, root-only
+# guards, protected-path fence, and read-only shape reporting with deterministic
+# fixture text; assert that the fixture value never appears in output.
+auth0_secret_plan=$(bash "$ops/provision-auth0-secret.sh" --dry-run \
+  --source-dir "$out_dir/auth0-plan-source" 2>"$out_dir/auth0-plan.err")
+grep -Fq 'AUTH0_SECRET_PROVISION mode=dry-run' <<<"$auth0_secret_plan"
+grep -Fq 'DRY_RUN: no files created' <<<"$auth0_secret_plan"
+[ ! -e "$out_dir/auth0-plan-source" ]
+
+auth0_source="$out_dir/auth0-source"
+mkdir -p "$auth0_source"
+chmod 0750 "$auth0_source"
+if [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+  auth0_apply_guard_cmd=(runuser -u nobody -- \
+    bash "$ops/provision-auth0-secret.sh" --apply --source-dir "$auth0_source")
+  auth0_check_guard_cmd=(runuser -u nobody -- \
+    bash "$ops/provision-auth0-secret.sh" --check --source-dir "$auth0_source")
+elif [ "$(id -u)" -ne 0 ]; then
+  auth0_apply_guard_cmd=(bash "$ops/provision-auth0-secret.sh" --apply --source-dir "$auth0_source")
+  auth0_check_guard_cmd=(bash "$ops/provision-auth0-secret.sh" --check --source-dir "$auth0_source")
+else
+  auth0_apply_guard_cmd=()
+  auth0_check_guard_cmd=()
+fi
+if [ "${#auth0_apply_guard_cmd[@]}" -gt 0 ]; then
+  if "${auth0_apply_guard_cmd[@]}" >"$out_dir/auth0-apply-root.out" 2>&1; then
+    echo 'self-test: non-root Auth0 secret apply unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq -- 'provision-auth0-secret: --apply must run as root' \
+    "$out_dir/auth0-apply-root.out" || {
+    cat "$out_dir/auth0-apply-root.out" >&2
+    exit 1
+  }
+  if "${auth0_check_guard_cmd[@]}" >"$out_dir/auth0-check-root.out" 2>&1; then
+    echo 'self-test: non-root Auth0 secret check unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq -- 'provision-auth0-secret: --check must run as root' \
+    "$out_dir/auth0-check-root.out" || {
+    cat "$out_dir/auth0-check-root.out" >&2
+    exit 1
+  }
+fi
+
+auth0_path_real="$out_dir/auth0-path-real"
+mkdir -p "$auth0_path_real"
+ln -s "$auth0_path_real" "$out_dir/auth0-path-link"
+if bash "$ops/provision-auth0-secret.sh" --dry-run \
+   --source-dir "$out_dir/auth0-path-link/secrets" >"$out_dir/auth0-symlink.out" 2>&1; then
+  echo 'self-test: Auth0 secret provision accepted a symlinked ancestor' >&2
+  exit 1
+fi
+grep -Fq 'must not traverse a symlink' "$out_dir/auth0-symlink.out"
+
+if [ "$(id -u)" -eq 0 ]; then
+  auth0_fixture='safe-test-value-0123456789'
+  printf '%s' "$auth0_fixture" >"$auth0_source/auth0_client_secret"
+  chown root:root -- "$auth0_source/auth0_client_secret"
+  chmod 0600 -- "$auth0_source/auth0_client_secret"
+  if bash "$ops/provision-auth0-secret.sh" --check \
+     --source-dir "$auth0_source" \
+     >"$out_dir/auth0-check-valid.out" 2>&1; then
+    grep -Fxq 'AUTH0_SECRET_CHECK: PASS' "$out_dir/auth0-check-valid.out"
+  else
+    cat "$out_dir/auth0-check-valid.out" >&2
+    exit 1
+  fi
+  if grep -Fq -- "$auth0_fixture" "$out_dir/auth0-check-valid.out"; then
+    echo 'self-test: Auth0 fixture value leaked in valid check output' >&2
+    exit 1
+  fi
+
+  printf '%s' 'your-client-secret' >"$auth0_source/auth0_client_secret"
+  if bash "$ops/provision-auth0-secret.sh" --check \
+     --source-dir "$auth0_source" \
+     >"$out_dir/auth0-check-placeholder.out" 2>&1; then
+    echo 'self-test: Auth0 placeholder unexpectedly passed --check' >&2
+    exit 1
+  fi
+  grep -Fq 'looks like a placeholder' "$out_dir/auth0-check-placeholder.out"
+  if grep -Fq -- 'your-client-secret' "$out_dir/auth0-check-placeholder.out"; then
+    echo 'self-test: Auth0 placeholder leaked in check output' >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$auth0_fixture" >"$auth0_source/auth0_client_secret"
+  if bash "$ops/provision-auth0-secret.sh" --check \
+     --source-dir "$auth0_source" \
+     >"$out_dir/auth0-check-newline.out" 2>&1; then
+    echo 'self-test: newline-terminated Auth0 secret unexpectedly passed --check' >&2
+    exit 1
+  fi
+  grep -Fq 'must be one non-empty line' "$out_dir/auth0-check-newline.out"
+  if grep -Fq -- "$auth0_fixture" "$out_dir/auth0-check-newline.out"; then
+    echo 'self-test: Auth0 fixture value leaked in newline check output' >&2
+    exit 1
+  fi
+
+  printf '%s' 'existing-auth0-fixture' >"$auth0_source/auth0_client_secret"
+  if bash "$ops/provision-auth0-secret.sh" --apply \
+     --source-dir "$auth0_source" \
+     >"$out_dir/auth0-existing-apply.out" 2>&1; then
+    echo 'self-test: existing Auth0 target unexpectedly accepted --apply' >&2
+    exit 1
+  fi
+  grep -Fq 'refusing to overwrite existing Auth0 client secret' \
+    "$out_dir/auth0-existing-apply.out"
+  grep -Fxq 'existing-auth0-fixture' "$auth0_source/auth0_client_secret"
+  if grep -Fq -- 'existing-auth0-fixture' "$out_dir/auth0-existing-apply.out"; then
+    echo 'self-test: existing Auth0 fixture value leaked in apply output' >&2
+    exit 1
+  fi
+fi
 
 # DB source credentials are generated only by the explicit root apply mode.
 # Exercise the non-root plan/check/apply guards in every environment, and

@@ -10,12 +10,54 @@ bash -n "$ops/lib/dotenv.sh" || die 'shared dotenv helper has shell syntax error
 grep -Fq 'uses Compose interpolation, quote, escape' "$ops/lib/dotenv.sh" \
   || die 'dotenv parser must reject Compose interpretation syntax'
 
-for script in provision-linux.sh provision-db-secrets.sh validate-production-config.sh \
-  compose-release.sh backfill-production.sh post-backfill-health.sh self-test.sh; do
+for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
+  validate-production-config.sh compose-release.sh backfill-production.sh \
+  post-backfill-health.sh self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
   bash -n "$path" || die "$script has shell syntax errors"
+done
+
+auth0_secret="$ops/provision-auth0-secret.sh"
+grep -Fq 'mode=dry-run' "$auth0_secret" \
+  || die 'Auth0 secret provisioner must default to a dry-run plan'
+grep -Fq 'mode=check' "$auth0_secret" \
+  || die 'Auth0 secret read-only check mode missing'
+grep -Fq -- '--check must run as root' "$auth0_secret" \
+  || die 'Auth0 secret check root guard missing'
+grep -Fq -- '--apply must run as root' "$auth0_secret" \
+  || die 'Auth0 secret apply root guard missing'
+grep -Fq 'default_source_dir=/etc/lagrange/secrets' "$auth0_secret" \
+  || die 'Auth0 secret source default missing'
+grep -Fq 'target_name=auth0_client_secret' "$auth0_secret" \
+  || die 'Auth0 secret target name missing'
+grep -Fq 'must not contain' "$auth0_secret" \
+  || die 'Auth0 secret dot-dot path fence missing'
+grep -Fq 'must not traverse a symlink' "$auth0_secret" \
+  || die 'Auth0 secret ancestor symlink fence missing'
+grep -Fq 'source directory must be owned by uid 0' "$auth0_secret" \
+  || die 'Auth0 secret source ownership fence missing'
+grep -Fq 'source directory must not be group/other writable' "$auth0_secret" \
+  || die 'Auth0 secret source write fence missing'
+grep -Fq 'read -r -s' "$auth0_secret" \
+  || die 'Auth0 secret apply must use hidden terminal input'
+grep -Fq '/dev/tty' "$auth0_secret" \
+  || die 'Auth0 secret apply must read from a terminal'
+grep -Fq 'placeholder_pattern' "$auth0_secret" \
+  || die 'Auth0 secret placeholder rejection missing'
+grep -Fq 'ln -T' "$auth0_secret" \
+  || die 'Auth0 secret atomic no-clobber install missing'
+grep -Fq 'AUTH0_SECRET_CHECK: PASS' "$auth0_secret" \
+  || die 'Auth0 secret check pass output missing'
+grep -Fq "'%u:%g:%a'" "$auth0_secret" \
+  || die 'Auth0 secret check ownership/mode inspection missing'
+grep -Fq 'wc -c' "$auth0_secret" \
+  || die 'Auth0 secret check byte-length inspection missing'
+for forbidden in curl wget docker psql openssl; do
+  if grep -Eiq "^[^#]*($forbidden)" "$auth0_secret"; then
+    die "Auth0 secret provisioner must not reference $forbidden"
+  fi
 done
 
 db_secrets="$ops/provision-db-secrets.sh"
