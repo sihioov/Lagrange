@@ -250,7 +250,8 @@ async fn typed_status_natural_key_is_serialized_across_datasets() {
         "INSERT INTO data_entitlements
          (contract_document_sha256,contract_reference,status,covered_datasets,
           covered_uses,effective_from,effective_until,managed_by)
-         VALUES (repeat('7',64),$1,'ACTIVE',$2,'[\"candidate\"]'::jsonb,
+         VALUES (repeat('7',64),$1,'ACTIVE',$2,
+                 '[\"candidate\",\"dataset\",\"recommendation\",\"backtest\",\"paper_view\"]'::jsonb,
                  DATE '2020-01-01',DATE '2030-12-31',
                  '00000000-0000-4000-8000-000000000042'::uuid)",
     )
@@ -426,7 +427,8 @@ async fn research_writer_catalogs_exact_raw_sources_without_broad_dataset_dml() 
         "INSERT INTO data_entitlements
          (contract_document_sha256, contract_reference, status, covered_datasets,
           covered_uses, effective_from, effective_until, managed_by)
-         VALUES (repeat('8',64),$1,'ACTIVE',$2,'[\"candidate\"]'::jsonb,
+         VALUES (repeat('8',64),$1,'ACTIVE',$2,
+                 '[\"candidate\",\"dataset\",\"recommendation\",\"backtest\",\"paper_view\"]'::jsonb,
                  DATE '2020-01-01',DATE '2030-12-31',
                  '00000000-0000-4000-8000-000000000042'::uuid)",
     )

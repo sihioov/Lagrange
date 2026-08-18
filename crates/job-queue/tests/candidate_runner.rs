@@ -359,7 +359,8 @@ async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
          (id, contract_document_sha256, contract_reference, status, covered_datasets,
           covered_uses, effective_from, effective_until, managed_by)
          VALUES ($1,repeat('8',64),$2,'ACTIVE',$3,
-                 '[\"candidate\"]'::jsonb,DATE '2020-01-01',DATE '2030-12-31',
+                 '[\"candidate\",\"dataset\",\"recommendation\",\"backtest\",\"paper_view\"]'::jsonb,
+                 DATE '2020-01-01',DATE '2030-12-31',
                  '00000000-0000-4000-8000-000000000042'::uuid)",
     )
     .bind(CANDIDATE_ENTITLEMENT_ID)
@@ -1090,7 +1091,8 @@ async fn rolling_raw_sources_curate_seal_schedule_run_and_publish_without_source
         "INSERT INTO data_entitlements
          (id,contract_document_sha256,contract_reference,status,covered_datasets,
           covered_uses,effective_from,effective_until,managed_by)
-         VALUES ($1,repeat('7',64),$2,'ACTIVE',$3,'[\"candidate\"]'::jsonb,
+         VALUES ($1,repeat('7',64),$2,'ACTIVE',$3,
+                 '[\"candidate\",\"dataset\",\"recommendation\",\"backtest\",\"paper_view\"]'::jsonb,
                  DATE '2020-01-01',DATE '2030-12-31',
                  '00000000-0000-4000-8000-000000000042'::uuid)",
     )

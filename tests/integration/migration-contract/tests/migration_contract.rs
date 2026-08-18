@@ -142,6 +142,10 @@ const CANDIDATE_MULTI_UNIVERSE_UP_SQL: &str =
     include_str!("../../../../migrations/0045_candidate_multi_universe.up.sql");
 const CANDIDATE_MULTI_UNIVERSE_DOWN_SQL: &str =
     include_str!("../../../../migrations/0045_candidate_multi_universe.down.sql");
+const CANDIDATE_PRICE_REVALIDATION_UP_SQL: &str =
+    include_str!("../../../../migrations/0046_candidate_price_rights_revalidation.up.sql");
+const CANDIDATE_PRICE_REVALIDATION_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0046_candidate_price_rights_revalidation.down.sql");
 const CANDIDATE_SCHEDULE_RS: &str =
     include_str!("../../../../crates/job-queue/src/candidate/schedule.rs");
 const CANDIDATE_RUNNER_RS: &str =
@@ -569,6 +573,344 @@ fn candidate_multi_universe_contract_is_registry_and_identity_scoped() {
             && !CANDIDATE_MULTI_UNIVERSE_DOWN_SQL.contains("candidate_0045_function_backup"),
         "0045 rollback must be self-contained and must not depend on a persistent backup table"
     );
+}
+
+#[test]
+fn candidate_price_revalidation_is_exact_and_append_only() {
+    for token in [
+        "CREATE FUNCTION public.price_dataset_entitlement_is_valid",
+        "[\"dataset\",\"recommendation\",\"backtest\",\"paper_view\"]",
+        "CREATE FUNCTION public.resolve_price_dataset_entitlement",
+        "CREATE TABLE public.candidate_price_revalidation_events",
+        "blocked_first_date",
+        "revalidated_first_date",
+        "rights_first_date",
+        "rights_last_date",
+        "CREATE FUNCTION public.revalidate_candidate_price_raw_batch",
+        "ENTITLEMENT_REVALIDATED",
+        "FORCE ROW LEVEL SECURITY",
+        "candidate_price_revalidation_events_immutable",
+    ] {
+        assert!(
+            CANDIDATE_PRICE_REVALIDATION_UP_SQL.contains(token),
+            "0046 up is missing price revalidation token {token}"
+        );
+    }
+    assert!(!CANDIDATE_PRICE_REVALIDATION_UP_SQL.contains("candidate_price_revalidation_exact_uq"));
+    assert!(
+        CANDIDATE_PRICE_REVALIDATION_UP_SQL
+            .contains("price requires an exact active price dataset entitlement")
+    );
+    assert!(
+        CANDIDATE_PRICE_REVALIDATION_UP_SQL.contains("covered_uses @> '[\"candidate\"]'::jsonb")
+    );
+    assert!(CANDIDATE_PRICE_REVALIDATION_UP_SQL.contains("state = 'CATALOGED'"));
+    assert!(CANDIDATE_PRICE_REVALIDATION_UP_SQL.contains("ON DELETE RESTRICT"));
+    assert!(
+        CANDIDATE_PRICE_REVALIDATION_DOWN_SQL
+            .contains("0046 rollback blocked by price revalidation history")
+    );
+    assert!(CANDIDATE_PRICE_REVALIDATION_DOWN_SQL.contains("ERRCODE = '55000'"));
+    assert!(
+        CANDIDATE_PRICE_REVALIDATION_DOWN_SQL
+            .contains("DROP TABLE public.candidate_price_revalidation_events")
+    );
+    assert!(
+        CANDIDATE_PRICE_REVALIDATION_DOWN_SQL.contains("covered_uses @> '[\"candidate\"]'::jsonb")
+    );
+}
+
+async fn reopen_price_raw_batch(
+    pool: &PgPool,
+    batch_id: Uuid,
+    raw_hash: &str,
+    contract_reference: &str,
+    entitlement_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT public.revalidate_candidate_price_raw_batch(\
+            $1, 'price', $2, 'credentialed', $3, '2026-08-18'::date,\
+            '2020-01-01'::date, '2026-08-18'::date, $4)",
+    )
+    .bind(batch_id)
+    .bind(raw_hash)
+    .bind(contract_reference)
+    .bind(entitlement_id)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+/// Live PostgreSQL proof for the rights-reopen convergence boundary.  The
+/// fixture mirrors the production failure shape: the newest price delivery
+/// was blocked on its single source day while an older delivery is still
+/// CATALOGED.  Revalidation widens the requested window, but the audit keeps
+/// the original blocked window so a replay cannot silently change identity.
+#[tokio::test]
+async fn candidate_price_rights_reopen_is_audited_and_idempotent() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+
+    let result: Result<(), Box<dyn Error>> = async {
+        MIGRATOR.run(&owner).await?;
+
+        let managed_by = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO users (id, issuer, subject, email) \
+             VALUES ($1, 'rights-reopen-test', $2, $3)",
+        )
+        .bind(managed_by)
+        .bind(managed_by.to_string())
+        .bind(format!(
+            "rights-reopen-{}@example.test",
+            managed_by.simple()
+        ))
+        .execute(&owner)
+        .await?;
+
+        let entitlement_id = Uuid::new_v4();
+        let contract_reference = "rights-reopen-contract";
+        sqlx::query(
+            "INSERT INTO data_entitlements \
+             (id, contract_document_sha256, contract_reference, status,\
+              covered_datasets, covered_uses, effective_from, effective_until, managed_by) \
+             VALUES ($1, $2, $3, 'PENDING',\
+                     '[\"krx_eod_bars\"]'::jsonb,\
+                     '[\"dataset\",\"recommendation\",\"backtest\",\"paper_view\"]'::jsonb,\
+                     '2020-01-01'::date, '2026-08-18'::date, $4)",
+        )
+        .bind(entitlement_id)
+        .bind("a".repeat(64))
+        .bind(contract_reference)
+        .bind(managed_by)
+        .execute(&owner)
+        .await?;
+
+        let blocked_batch = Uuid::new_v4();
+        let blocked_hash = "b".repeat(64);
+        sqlx::query(
+            "SELECT public.begin_candidate_raw_batch(\
+                $1, 'price', $2, 'credentialed', $3, '2026-08-18'::date)",
+        )
+        .bind(blocked_batch)
+        .bind(&blocked_hash)
+        .bind(contract_reference)
+        .execute(&owner)
+        .await?;
+        sqlx::query(
+            "SELECT public.block_candidate_raw_batch_for_inactive_rights(\
+                $1, 'price', $2, 'credentialed', $3, '2026-08-18'::date,\
+                '2026-08-18'::date, '2026-08-18'::date)",
+        )
+        .bind(blocked_batch)
+        .bind(&blocked_hash)
+        .bind(contract_reference)
+        .execute(&owner)
+        .await?;
+
+        // This older source is the pending cumulative suffix seen by worker
+        // recovery when the latest day is already terminal.
+        let older_batch = Uuid::new_v4();
+        let older_hash = "c".repeat(64);
+        sqlx::query(
+            "SELECT public.begin_candidate_raw_batch(\
+                $1, 'price', $2, 'credentialed', $3, '2020-01-01'::date)",
+        )
+        .bind(older_batch)
+        .bind(&older_hash)
+        .bind(contract_reference)
+        .execute(&owner)
+        .await?;
+
+        let inactive_resolve = sqlx::query_scalar::<_, Uuid>(
+            "SELECT public.resolve_price_dataset_entitlement(\
+                $1, '2020-01-01'::date, '2026-08-18'::date)",
+        )
+        .bind(contract_reference)
+        .fetch_one(&owner)
+        .await
+        .expect_err("PENDING rights must not resolve");
+        assert_eq!(pg_code(&inactive_resolve).as_deref(), Some("42501"));
+
+        let inactive_revalidate = sqlx::query(
+            "SELECT public.revalidate_candidate_price_raw_batch(\
+                $1, 'price', $2, 'credentialed', $3, '2026-08-18'::date,\
+                '2020-01-01'::date, '2026-08-18'::date, $4)",
+        )
+        .bind(blocked_batch)
+        .bind(&blocked_hash)
+        .bind(contract_reference)
+        .bind(entitlement_id)
+        .execute(&owner)
+        .await
+        .expect_err("inactive rights must not reopen a blocked Raw row");
+        assert_eq!(pg_code(&inactive_revalidate).as_deref(), Some("42501"));
+
+        sqlx::query("UPDATE data_entitlements SET status = 'ACTIVE' WHERE id = $1")
+            .bind(entitlement_id)
+            .execute(&owner)
+            .await?;
+        let resolved = sqlx::query_scalar::<_, Uuid>(
+            "SELECT public.resolve_price_dataset_entitlement(\
+                $1, '2020-01-01'::date, '2026-08-18'::date)",
+        )
+        .bind(contract_reference)
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(resolved, entitlement_id);
+
+        reopen_price_raw_batch(
+            &owner,
+            blocked_batch,
+            &blocked_hash,
+            contract_reference,
+            entitlement_id,
+        )
+        .await?;
+
+        let (event_count, blocked_day, revalidated_range): (i64, bool, bool) = sqlx::query_as(
+            "SELECT count(*)::bigint,\
+                    bool_and(blocked_first_date = '2026-08-18'::date \
+                             AND blocked_last_date = '2026-08-18'::date),\
+                    bool_and(revalidated_first_date = '2020-01-01'::date \
+                             AND revalidated_last_date = '2026-08-18'::date) \
+               FROM candidate_price_revalidation_events \
+              WHERE batch_id = $1",
+        )
+        .bind(blocked_batch)
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(event_count, 1);
+        assert!(blocked_day && revalidated_range);
+        let state: String = sqlx::query_scalar(
+            "SELECT state FROM candidate_raw_batch_publications \
+              WHERE batch_id = $1 AND surface = 'price'",
+        )
+        .bind(blocked_batch)
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(state, "CATALOGED");
+
+        // Crash/retry replay is a no-op, while a changed immutable hash is a
+        // conflict even though the row is now CATALOGED.
+        reopen_price_raw_batch(
+            &owner,
+            blocked_batch,
+            &blocked_hash,
+            contract_reference,
+            entitlement_id,
+        )
+        .await?;
+        let replay_count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM candidate_price_revalidation_events \
+              WHERE batch_id = $1",
+        )
+        .bind(blocked_batch)
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(replay_count, 1);
+        let conflict = sqlx::query(
+            "SELECT public.revalidate_candidate_price_raw_batch(\
+                $1, 'price', $2, 'credentialed', $3, '2026-08-18'::date,\
+                '2020-01-01'::date, '2026-08-18'::date, $4)",
+        )
+        .bind(blocked_batch)
+        .bind("d".repeat(64))
+        .bind(contract_reference)
+        .bind(entitlement_id)
+        .execute(&owner)
+        .await
+        .expect_err("changed Raw hash must fail closed");
+        assert_eq!(pg_code(&conflict).as_deref(), Some("23514"));
+
+        // A later revocation/re-block/reactivation is a new real transition,
+        // not a duplicate replay, and therefore appends a second event.
+        sqlx::query("UPDATE data_entitlements SET status = 'REVOKED' WHERE id = $1")
+            .bind(entitlement_id)
+            .execute(&owner)
+            .await?;
+        sqlx::query(
+            "SELECT public.block_candidate_raw_batch_for_inactive_rights(\
+                $1, 'price', $2, 'credentialed', $3, '2026-08-18'::date,\
+                '2026-08-18'::date, '2026-08-18'::date)",
+        )
+        .bind(blocked_batch)
+        .bind(&blocked_hash)
+        .bind(contract_reference)
+        .execute(&owner)
+        .await?;
+        sqlx::query("UPDATE data_entitlements SET status = 'ACTIVE' WHERE id = $1")
+            .bind(entitlement_id)
+            .execute(&owner)
+            .await?;
+        reopen_price_raw_batch(
+            &owner,
+            blocked_batch,
+            &blocked_hash,
+            contract_reference,
+            entitlement_id,
+        )
+        .await?;
+        let second_count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM candidate_price_revalidation_events \
+              WHERE batch_id = $1",
+        )
+        .bind(blocked_batch)
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(second_count, 2);
+
+        let older_state: String = sqlx::query_scalar(
+            "SELECT state FROM candidate_raw_batch_publications \
+              WHERE batch_id = $1 AND surface = 'price'",
+        )
+        .bind(older_batch)
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(older_state, "CATALOGED");
+
+        let candidate_rights: bool = sqlx::query_scalar(
+            "SELECT public.candidate_source_entitlement_is_valid(\
+                $1, $2, 'krx_eod_bars', '2020-01-01'::date, '2026-08-18'::date)",
+        )
+        .bind(entitlement_id)
+        .bind(contract_reference)
+        .fetch_one(&owner)
+        .await?;
+        assert!(
+            !candidate_rights,
+            "price-only rights must not open candidate flows"
+        );
+
+        // Existing audit evidence makes rollback intentionally irreversible.
+        let rollback = sqlx::raw_sql(CANDIDATE_PRICE_REVALIDATION_DOWN_SQL)
+            .execute(&owner)
+            .await
+            .expect_err("0046 down must refuse to erase revalidation history");
+        assert_eq!(pg_code(&rollback).as_deref(), Some("55000"));
+        let audit_table: Option<String> = sqlx::query_scalar(
+            "SELECT to_regclass('public.candidate_price_revalidation_events')::text",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert!(audit_table.is_some());
+        Ok(())
+    }
+    .await;
+
+    drop(owner);
+    if let Err(error) = drop_contract_db(&super_url, &db).await {
+        panic!("cleanup failed: {error}");
+    }
+    if let Err(error) = result {
+        panic!("rights reopen contract failed: {error}");
+    }
 }
 
 /// Live PostgreSQL 18 proof for the new registry, denormalized Raw binding
@@ -3649,7 +3991,7 @@ fn recommendation_pipeline_migration_is_tracked() {
 #[test]
 fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
     for token in [
-        "version IN (22, 23, 24, 25, 33, 34, 35, 42, 45)",
+        "version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46)",
         "convalidated",
         "pg_get_constraintdef",
         "format_type",
@@ -3732,7 +4074,7 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         assert!(
             missing_required
                 .to_string()
-                .contains("successful SQLx migrations 22-25, 33-35, 42, and 45 are required")
+                .contains("successful SQLx migrations 22-25, 33-35, 42, 45, and 46 are required")
         );
         sqlx::query("UPDATE _sqlx_migrations SET success = true WHERE version = 33")
             .execute(&owner)
@@ -4964,6 +5306,11 @@ async fn full_contract_body(
         (
             "candidate_price_publications",
             "candidate_source_select_candidate_price_publications",
+            "SELECT",
+        ),
+        (
+            "candidate_price_revalidation_events",
+            "candidate_price_revalidation_events_select",
             "SELECT",
         ),
         (

@@ -8,8 +8,35 @@ DECLARE
 BEGIN
   IF to_regclass('public._sqlx_migrations') IS NULL
      OR (SELECT count(*) FROM _sqlx_migrations
-         WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42, 45) AND success) <> 9 THEN
-    RAISE EXCEPTION 'successful SQLx migrations 22-25, 33-35, 42, and 45 are required';
+         WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46) AND success) <> 10 THEN
+    RAISE EXCEPTION 'successful SQLx migrations 22-25, 33-35, 42, 45, and 46 are required';
+  END IF;
+
+  IF NOT EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'candidate_raw_batch_publications'
+          AND column_name = 'rights_first_date'
+          AND is_nullable = 'NO'
+     )
+     OR NOT EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'candidate_raw_batch_publications'
+          AND column_name = 'rights_last_date'
+          AND is_nullable = 'NO'
+     )
+     OR NOT EXISTS (
+       SELECT 1
+         FROM pg_trigger
+        WHERE tgrelid = to_regclass('public.candidate_raw_batch_publications')
+          AND tgname = 'candidate_raw_rights_window_default'
+          AND NOT tgisinternal
+          AND tgenabled = 'O'
+     ) THEN
+    RAISE EXCEPTION 'candidate Raw rights coverage columns or default trigger are missing';
   END IF;
 
   IF to_regclass('public.data_batches') IS NULL
@@ -20,6 +47,7 @@ BEGIN
      OR to_regclass('public.candidate_price_instrument_sessions') IS NULL
      OR to_regclass('public.candidate_raw_batch_publications') IS NULL
      OR to_regclass('public.candidate_raw_batch_datasets') IS NULL
+     OR to_regclass('public.candidate_price_revalidation_events') IS NULL
      OR to_regclass('public.candidate_universe_registry') IS NULL
      OR to_regclass('public.candidate_investor_flow_snapshot_rows') IS NULL THEN
     RAISE EXCEPTION 'research publication tables are missing';
@@ -34,6 +62,7 @@ BEGIN
             'data_entitlements','dataset_versions','instruments','data_batches',
             'trading_calendars','trading_calendar_versions',
             'candidate_raw_batch_publications','candidate_raw_batch_datasets',
+            'candidate_price_revalidation_events',
             'candidate_universe_registry',
             'candidate_instrument_registrations','candidate_price_publications',
             'candidate_price_instrument_coverage','candidate_price_instrument_sessions'
@@ -71,6 +100,27 @@ BEGIN
          AND pg_get_userbyid(proowner) = 'migration_owner'
          AND proconfig = ARRAY['search_path=pg_catalog']::text[]
      )
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_proc
+       WHERE oid = 'public.price_dataset_entitlement_is_valid(uuid,text,date,date)'::regprocedure
+         AND prosecdef
+         AND pg_get_userbyid(proowner) = 'migration_owner'
+         AND proconfig = ARRAY['search_path=pg_catalog']::text[]
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_proc
+       WHERE oid = 'public.resolve_price_dataset_entitlement(text,date,date)'::regprocedure
+         AND prosecdef
+         AND pg_get_userbyid(proowner) = 'migration_owner'
+         AND proconfig = ARRAY['search_path=pg_catalog']::text[]
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_proc
+       WHERE oid = 'public.revalidate_candidate_price_raw_batch(uuid,text,text,text,text,date,date,date,uuid)'::regprocedure
+         AND prosecdef
+         AND pg_get_userbyid(proowner) = 'migration_owner'
+         AND proconfig = ARRAY['search_path=pg_catalog']::text[]
+     )
      OR NOT has_function_privilege(
           'research_writer', 'public.resolve_candidate_contract_entitlement(text,date,date)', 'EXECUTE')
      OR NOT has_function_privilege(
@@ -87,6 +137,12 @@ BEGIN
           'research_writer', 'public.seal_candidate_raw_batch(uuid,text,text,text)', 'EXECUTE')
      OR NOT has_function_privilege(
           'research_writer', 'public.block_candidate_raw_batch_for_inactive_rights(uuid,text,text,text,text,date,date,date)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'research_writer', 'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'research_writer', 'public.resolve_price_dataset_entitlement(text,date,date)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'research_writer', 'public.revalidate_candidate_price_raw_batch(uuid,text,text,text,text,date,date,date,uuid)', 'EXECUTE')
      OR has_table_privilege(
           'research_writer', 'public.dataset_versions', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
      OR has_table_privilege(
@@ -283,7 +339,7 @@ BEGIN
     RAISE EXCEPTION 'research_writer has unexpected role memberships';
   END IF;
 
-  IF (SELECT count(*) FROM pg_policy WHERE research_role = ANY(polroles)) <> 23
+  IF (SELECT count(*) FROM pg_policy WHERE research_role = ANY(polroles)) <> 24
      OR (SELECT count(*)
          FROM pg_policy p
          JOIN pg_class c ON c.oid = p.polrelid
@@ -294,7 +350,8 @@ BEGIN
            ('trading_calendars', 'trading_calendars_insert_research_writer', 'a', false, true),
            ('trading_calendars', 'trading_calendars_update_research_writer', 'w', true, true),
            ('trading_calendar_versions', 'trading_calendar_versions_select_research_writer', 'r', true, false),
-           ('trading_calendar_versions', 'trading_calendar_versions_insert_research_writer', 'a', false, true)
+           ('trading_calendar_versions', 'trading_calendar_versions_insert_research_writer', 'a', false, true),
+           ('candidate_price_revalidation_events', 'candidate_price_revalidation_events_select', 'r', true, false)
          ) expected(table_name, policy_name, command, needs_qual, needs_check)
            ON expected.table_name = c.relname
           AND expected.policy_name = p.polname
@@ -304,7 +361,7 @@ BEGIN
            AND (NOT expected.needs_qual OR pg_get_expr(p.polqual, p.polrelid) = 'true')
            AND (expected.needs_qual OR p.polqual IS NULL)
            AND (NOT expected.needs_check OR pg_get_expr(p.polwithcheck, p.polrelid) = 'true')
-           AND (expected.needs_check OR p.polwithcheck IS NULL)) <> 7 THEN
+           AND (expected.needs_check OR p.polwithcheck IS NULL)) <> 8 THEN
     RAISE EXCEPTION 'required research_writer RLS policies are missing or drifted';
   END IF;
 
@@ -385,6 +442,26 @@ BEGIN
   END IF;
 
   IF NOT EXISTS (
+       SELECT 1 FROM pg_class
+        WHERE oid = 'public.candidate_price_revalidation_events'::regclass
+          AND relrowsecurity
+          AND relforcerowsecurity
+     )
+     OR NOT EXISTS (
+       SELECT 1
+         FROM pg_trigger t
+         JOIN pg_proc f ON f.oid = t.tgfoid
+        WHERE t.tgrelid = 'public.candidate_price_revalidation_events'::regclass
+          AND t.tgname = 'candidate_price_revalidation_events_immutable'
+          AND NOT t.tgisinternal
+          AND t.tgenabled = 'O'
+          AND f.proname = 'candidate_source_reject_mutation'
+          AND f.prosecdef = false
+     ) THEN
+    RAISE EXCEPTION 'candidate price revalidation audit is not append-only or RLS protected';
+  END IF;
+
+  IF NOT EXISTS (
     SELECT 1
     FROM pg_trigger t
     JOIN pg_proc f ON f.oid = t.tgfoid
@@ -450,6 +527,7 @@ BEGIN
       ('candidate_price_instrument_sessions', 'SELECT')
       ,('candidate_raw_batch_publications', 'SELECT')
       ,('candidate_raw_batch_datasets', 'SELECT')
+      ,('candidate_price_revalidation_events', 'SELECT')
     )
     (SELECT * FROM actual EXCEPT SELECT * FROM expected)
     UNION ALL
@@ -476,7 +554,8 @@ BEGIN
            'candidate_fundamental_observations','candidate_sector_versions',
            'candidate_sector_entries','candidate_price_publications',
            'candidate_price_instrument_coverage','candidate_price_instrument_sessions',
-           'candidate_raw_batch_publications','candidate_raw_batch_datasets'
+           'candidate_raw_batch_publications','candidate_raw_batch_datasets',
+           'candidate_price_revalidation_events'
          )
          AND has_table_privilege(
            'research_writer', c.oid,

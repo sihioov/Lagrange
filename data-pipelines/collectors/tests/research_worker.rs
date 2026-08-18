@@ -55,7 +55,8 @@ async fn seed_candidate_entitlement(pool: &PgPool) {
          (contract_document_sha256,contract_reference,status,covered_datasets,
           covered_uses,effective_from,effective_until,managed_by)
          VALUES (repeat('8',64),'fixture://candidate-license','ACTIVE',$1,
-                 '[\"candidate\"]'::jsonb,DATE '2000-01-01',DATE '2030-12-31',
+                 '[\"candidate\",\"dataset\",\"recommendation\",\"backtest\",\"paper_view\"]'::jsonb,
+                 DATE '2000-01-01',DATE '2030-12-31',
                  '00000000-0000-4000-8000-000000000042'::uuid)",
     )
     .bind(serde_json::json!([

@@ -38,7 +38,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::{
-    CandidateInstrumentCatalog, CandidatePipelineError, CandidatePricePublication, FailureClass,
+    CandidatePipelineError, CandidatePricePublication, FailureClass,
     KisNormalizationRecoveryReport, PipelineError, PostgresCandidateSourceSink,
     PostgresPublicationSink, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome, RecoveryError, RecoveryPage,
     RecoveryPosition, RecoveryScope, SinkError, ingest_and_publish, ingest_normalize_publish_kis,
@@ -1643,29 +1643,6 @@ async fn recover_price_publications(
         }));
     }
 
-    let mut pending = Vec::new();
-    for entry in &entries {
-        if !sink
-            .raw_batch_is_terminal(entry, "price")
-            .await
-            .map_err(|source| WorkerError::Database {
-                phase: WorkerPhase::Recovery,
-                source,
-            })?
-        {
-            pending.push(entry.clone());
-        }
-    }
-    if pending.is_empty() {
-        return Ok(None);
-    }
-    if pending.last().map(|entry| entry.batch_id) != Some(anchor.batch_id) {
-        return Err(WorkerError::Curation(CurateError::MalformedManifest {
-            context: "cumulative candidate price publication".to_owned(),
-            detail: "the latest source date is already terminal while an older cumulative source is pending".to_owned(),
-        }));
-    }
-
     let (calendar, master) =
         curation_inputs_from_raw_entries(raw, &entries).map_err(WorkerError::Curation)?;
     let manifest = match curated
@@ -1704,7 +1681,7 @@ async fn recover_price_publications(
         }));
     }
     let entitlement_id = match sink
-        .resolve_contract_entitlement(
+        .resolve_price_dataset_entitlement(
             contract_reference,
             evidence.first_session,
             evidence.last_session,
@@ -1713,11 +1690,28 @@ async fn recover_price_publications(
     {
         Ok(entitlement_id) => entitlement_id,
         Err(original) => {
+            let mut pending = Vec::new();
+            for entry in &entries {
+                if !sink
+                    .raw_batch_is_terminal(entry, "price")
+                    .await
+                    .map_err(|source| WorkerError::Database {
+                        phase: WorkerPhase::Recovery,
+                        source,
+                    })?
+                {
+                    pending.push(entry.clone());
+                }
+            }
             for entry in &pending {
                 if sink
                     .block_raw_batch_for_inactive_rights(
                         entry,
                         "price",
+                        // Persist the exact decision window used for this
+                        // cumulative attempt.  Revalidation later may ask
+                        // for a wider window, but must include this original
+                        // blocked scope.
                         evidence.first_session,
                         evidence.last_session,
                     )
@@ -1733,32 +1727,45 @@ async fn recover_price_publications(
             return Ok(None);
         }
     };
-    let reference_sha256 = anchor
-        .files
-        .iter()
-        .find(|file| file.kind == market_data::ResponseKind::Reference)
-        .and_then(|file| file.content_hash.as_str().strip_prefix("sha256:"))
-        .ok_or_else(|| {
-            WorkerError::Curation(CurateError::MalformedManifest {
-                context: "candidate instrument catalog".to_owned(),
-                detail: "Raw EOD batch has no exact reference hash".to_owned(),
-            })
+
+    // A renewed price entitlement may arrive after one or more exact Raw
+    // deliveries were terminally blocked.  Re-open only those exact
+    // entitlement-inactive rows; any other terminal reason remains a hard
+    // failure in the database procedure.  This is deliberately separate from
+    // candidate instrument registration, whose candidate-use contract is not
+    // required for the fixed ETF price dataset.
+    for entry in &entries {
+        sink.revalidate_price_raw_batch_after_rights(
+            entry,
+            // Revalidation uses the current cumulative requested window; the
+            // database checks that it fully contains the original blocked
+            // window stored on this exact Raw ledger row.
+            evidence.first_session,
+            evidence.last_session,
+            entitlement_id,
+        )
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::Recovery,
+            source,
         })?;
-    let source_revision = anchor.batch_id.to_string();
-    sink.register_candidate_instruments(&CandidateInstrumentCatalog {
-        master: &master,
-        entitlement_id,
-        contract_reference,
-        entitlement_date: anchor.date,
-        reference_sha256,
-        source_revision: &source_revision,
-        retrieved_at: anchor.retrieved_at,
-    })
-    .await
-    .map_err(|source| WorkerError::Database {
-        phase: WorkerPhase::Publication,
-        source,
-    })?;
+    }
+    let mut pending = Vec::new();
+    for entry in &entries {
+        if !sink
+            .raw_batch_is_terminal(entry, "price")
+            .await
+            .map_err(|source| WorkerError::Database {
+                phase: WorkerPhase::Recovery,
+                source,
+            })?
+        {
+            pending.push(entry.clone());
+        }
+    }
+    if pending.is_empty() {
+        return Ok(None);
+    }
     let raw_manifest_sha256 = crate::candidate_sink::candidate_raw_manifest_sha256(anchor)
         .map_err(|source| WorkerError::Database {
             phase: WorkerPhase::Publication,
@@ -1862,6 +1869,35 @@ async fn recover_price_publication_for_entry(
     recover_price_publications(config, raw, sink)
         .await
         .map(|_| ())
+}
+
+#[cfg(test)]
+mod price_recovery_contract_tests {
+    #[test]
+    fn cumulative_recovery_revalidates_blocked_price_and_does_not_require_candidate_catalog() {
+        let source = include_str!("worker.rs");
+        let function = source
+            .split_once("async fn recover_price_publications(")
+            .and_then(|(_, rest)| rest.split_once("fn manifest_matches_entries("))
+            .map(|(body, _)| body)
+            .expect("price recovery function source");
+        assert!(function.contains("resolve_price_dataset_entitlement"));
+        assert!(function.contains("revalidate_price_raw_batch_after_rights"));
+        assert!(!function.contains("resolve_contract_entitlement("));
+        assert!(!function.contains("register_candidate_instruments("));
+        assert!(!function.contains(
+            "the latest source date is already terminal while an older cumulative source is pending"
+        ));
+        assert!(function.contains("block_raw_batch_for_inactive_rights"));
+        assert!(function.contains("return Ok(None)"));
+        let resolve = function
+            .find("let entitlement_id = match sink")
+            .expect("price resolver branch");
+        let revalidate = function
+            .find("revalidate_price_raw_batch_after_rights")
+            .expect("price revalidation branch");
+        assert!(resolve < revalidate, "active resolver must precede reopen");
+    }
 }
 
 fn raw_batch_has_target_bars(
@@ -2265,8 +2301,8 @@ pub async fn candidate_healthcheck(
                           AND (member_sector.effective_until IS NULL
                                OR member_sector.effective_until >= $1))
             ) >= 5
-            AND public.candidate_source_entitlement_is_valid(
-                price.entitlement_id, price.license_ref, 'krx_eod_bars',
+            AND public.price_dataset_entitlement_is_valid(
+                price.entitlement_id, price.license_ref,
                 price.first_session, price.last_session)
             AND public.candidate_source_entitlement_is_valid(
                 $9, $10, 'krx_investor_flows',

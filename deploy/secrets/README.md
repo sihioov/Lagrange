@@ -259,9 +259,9 @@ PGOPTIONS='-c lock_timeout=5s' sqlx migrate run
 ```
 
 Compose first runs `db-migrate` to apply every checked-in SQLx migration
-through `0045`, then runs `research-schema-check` as a fail-closed one-shot.
+through `0046`, then runs `research-schema-check` as a fail-closed one-shot.
 The worker is not launched unless that gate finds successful migrations
-`22–25`, `33–35`, `42`, and `45` (the research schema versions it checks), exact normalized
+`22–25`, `33–35`, `42`, `45`, and `46` (the research schema versions it checks), exact normalized
 PK/unique/CHECK definitions, the required publication column
 type/nullability/identity/default contract, exact valid/ready indexes, RLS
 policies, append-only enforcement, and the exact `research_writer` role/grant

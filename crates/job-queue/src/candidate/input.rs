@@ -480,7 +480,7 @@ pub(crate) async fn attest_candidate_input(
         .ok_or_else(|| CandidateInputError::DataBlocked {
             detail: "candidate input requires 60 confirmed KRX sessions".into(),
         })?;
-    for (entitlement_id, license_ref, dataset_id, first_use_date) in [
+    for (index, (entitlement_id, license_ref, dataset_id, first_use_date)) in [
         (
             payload.price_entitlement_id,
             price_license_ref.as_str(),
@@ -517,18 +517,35 @@ pub(crate) async fn attest_candidate_input(
             sector_dataset_id.as_str(),
             payload.as_of_date,
         ),
-    ] {
-        let entitled: bool = sqlx::query_scalar(
-            "SELECT public.candidate_source_entitlement_is_valid($1, $2, $3, $4, $5)",
-        )
-        .bind(entitlement_id)
-        .bind(license_ref)
-        .bind(dataset_id)
-        .bind(first_use_date)
-        .bind(payload.as_of_date)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|error| unavailable("re-attest candidate entitlement", error))?;
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // The fixed ETF price dataset has its own four-surface entitlement.
+        // Status, flow, fundamentals, membership, and sector remain under
+        // the candidate-use contract and its complete source universe.
+        let entitled: bool = if index == 0 {
+            sqlx::query_scalar("SELECT public.price_dataset_entitlement_is_valid($1, $2, $3, $4)")
+                .bind(entitlement_id)
+                .bind(license_ref)
+                .bind(first_use_date)
+                .bind(payload.as_of_date)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|error| unavailable("re-attest price entitlement", error))?
+        } else {
+            sqlx::query_scalar(
+                "SELECT public.candidate_source_entitlement_is_valid($1, $2, $3, $4, $5)",
+            )
+            .bind(entitlement_id)
+            .bind(license_ref)
+            .bind(dataset_id)
+            .bind(first_use_date)
+            .bind(payload.as_of_date)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|error| unavailable("re-attest candidate entitlement", error))?
+        };
         if !entitled {
             return Err(CandidateInputError::DataBlocked {
                 detail: format!("candidate entitlement is inactive for {dataset_id}"),

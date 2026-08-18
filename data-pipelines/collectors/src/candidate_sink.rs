@@ -205,6 +205,78 @@ impl PostgresCandidateSourceSink {
             .map_err(SinkError::from_sqlx)
     }
 
+    /// Resolve the fixed ETF price entitlement without requiring the
+    /// candidate-source bridge's universe datasets.  Candidate source
+    /// publication continues to use `resolve_contract_entitlement` above.
+    pub async fn resolve_price_dataset_entitlement(
+        &self,
+        contract_reference: &str,
+        first_session: TradingDate,
+        last_session: TradingDate,
+    ) -> Result<Uuid, SinkError> {
+        if contract_reference.trim().is_empty() || last_session < first_session {
+            return Err(SinkError::Invariant(
+                "price entitlement scope is invalid".to_owned(),
+            ));
+        }
+        sqlx::query_scalar("SELECT public.resolve_price_dataset_entitlement($1, $2, $3)")
+            .bind(contract_reference)
+            .bind(date(first_session))
+            .bind(date(last_session))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(SinkError::from_sqlx)
+    }
+
+    /// Re-open exactly an entitlement-inactive price Raw block after the
+    /// database has confirmed the renewed price entitlement.  The migration
+    /// appends an immutable audit event before moving the ledger to its
+    /// existing CATALOGED/pending state, so a crash can safely replay this
+    /// call without losing the original BLOCKED evidence.
+    pub async fn revalidate_price_raw_batch_after_rights(
+        &self,
+        entry: &market_data::ManifestEntry,
+        first_date: TradingDate,
+        last_date: TradingDate,
+        entitlement_id: Uuid,
+    ) -> Result<(), SinkError> {
+        let contract_reference = entry
+            .entitlement_reference
+            .as_deref()
+            .filter(|reference| !reference.trim().is_empty())
+            .ok_or_else(|| {
+                SinkError::Invariant(
+                    "price Raw revalidation requires its original entitlement".to_owned(),
+                )
+            })?;
+        if entitlement_id.is_nil()
+            || last_date < first_date
+            || entry.date < first_date
+            || entry.date > last_date
+        {
+            return Err(SinkError::Invariant(
+                "price Raw revalidation rights window is invalid".to_owned(),
+            ));
+        }
+        sqlx::query(
+            "SELECT public.revalidate_candidate_price_raw_batch(
+                $1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        )
+        .bind(entry.batch_id.as_uuid())
+        .bind("price")
+        .bind(candidate_raw_manifest_sha256(entry)?)
+        .bind(entry.mode.as_str())
+        .bind(contract_reference)
+        .bind(date(entry.date))
+        .bind(date(first_date))
+        .bind(date(last_date))
+        .bind(entitlement_id)
+        .execute(&self.pool)
+        .await
+        .map_err(SinkError::from_sqlx)?;
+        Ok(())
+    }
+
     pub async fn register_candidate_instruments(
         &self,
         catalog: &CandidateInstrumentCatalog<'_>,
@@ -642,7 +714,7 @@ impl PostgresCandidateSourceSink {
             "SELECT EXISTS (
                 SELECT 1 FROM candidate_price_publications
                  WHERE first_session <= $1 AND last_session >= $1
-                   AND public.candidate_source_entitlement_is_valid(
+                   AND public.price_dataset_entitlement_is_valid(
                        entitlement_id, license_ref, 'krx_eod_bars',
                        first_session, last_session)
             )",
@@ -2211,5 +2283,41 @@ mod tests {
         assert!(down.contains("DROP TABLE public.candidate_price_instrument_sessions"));
         assert!(!up.contains("GRANT INSERT ON TABLE public.dataset_versions TO research_writer"));
         assert!(!up.contains("GRANT INSERT ON TABLE public.candidate_price_publications"));
+    }
+
+    #[test]
+    fn price_rights_revalidation_is_append_only_and_candidate_scoped() {
+        let up =
+            include_str!("../../../migrations/0046_candidate_price_rights_revalidation.up.sql");
+        let down =
+            include_str!("../../../migrations/0046_candidate_price_rights_revalidation.down.sql");
+        for token in [
+            "CREATE FUNCTION public.price_dataset_entitlement_is_valid",
+            "[\"dataset\",\"recommendation\",\"backtest\",\"paper_view\"]",
+            "CREATE FUNCTION public.resolve_price_dataset_entitlement",
+            "CREATE OR REPLACE FUNCTION public.publish_candidate_price_publication",
+            "price_dataset_entitlement_is_valid(",
+            "CREATE TABLE public.candidate_price_revalidation_events",
+            "blocked_first_date",
+            "revalidated_first_date",
+            "rights_first_date",
+            "rights_last_date",
+            "candidate_raw_rights_window_default",
+            "CREATE FUNCTION public.revalidate_candidate_price_raw_batch",
+            "ENTITLEMENT_REVALIDATED",
+            "state = 'CATALOGED'",
+            "candidate_price_revalidation_events_immutable",
+            "FORCE ROW LEVEL SECURITY",
+        ] {
+            assert!(
+                up.contains(token),
+                "0046 up missing price-rights token {token}"
+            );
+        }
+        assert!(!up.contains("candidate_price_revalidation_exact_uq"));
+        assert!(up.contains(r#"entitlement.covered_uses @> '["candidate"]'::jsonb"#));
+        assert!(down.contains("0046 rollback blocked by price revalidation history"));
+        assert!(down.contains("DROP TABLE public.candidate_price_revalidation_events"));
+        assert!(down.contains(r#"covered_uses @> '["candidate"]'::jsonb"#));
     }
 }
