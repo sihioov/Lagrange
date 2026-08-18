@@ -50,9 +50,9 @@ project.
 - `chk-holiday` is single-page for this project.  Send blank continuation fields, consume only the
   first response, require the exact target date, and do not call it more than once per daily run.
   Do not follow contradictory continuation tokens returned by that endpoint.
-- Daily bars and reference quotes are single-page.  KSD schedules may continue only on an `M`
-  marker with a nonempty `cts` that changed from the previous request.  `F`, an unknown marker, a
-  repeated/missing cursor, or the page limit fails closed instead of looping or truncating.
+- Daily bars, reference quotes, and KSD schedules are single-page.  KSD requests keep `CTS` blank;
+  an absent/blank continuation marker is terminal, while any nonempty marker fails closed before
+  Raw visibility.  Never follow generic sample-code `M`/`F` handling for these reviewed endpoints.
 - Malformed JSON, nonzero `rt_cd`, an undocumented response shape, or a missing target observation
   also fails closed.
 - Raw data becomes visible only after HTTP success, JSON/schema validation, and immutable hash
