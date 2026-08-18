@@ -711,7 +711,7 @@ fn bonus_issue_filters_by_record_date_and_preserves_later_right_date() {
 }
 
 #[test]
-fn reverse_split_uses_official_list_dt_and_remains_typed_unsupported() {
+fn reverse_split_allows_official_blank_list_dt_and_remains_typed_unsupported() {
     let (_temp, _store, source, stored) = fixture(|wires| {
         let wire = wires
             .iter_mut()
@@ -722,7 +722,7 @@ fn reverse_split_uses_official_list_dt_and_remains_typed_unsupported() {
             "output1": [{
                 "sht_cd": "069500",
                 "record_date": "20260814",
-                "list_dt": "20260818",
+                "list_dt": "",
                 "inter_bf_face_amt": "100",
                 "inter_af_face_amt": "1000"
             }]
@@ -731,6 +731,129 @@ fn reverse_split_uses_official_list_dt_and_remains_typed_unsupported() {
     });
     let error = normalize_kis_envelopes(&source, &stored).expect_err("unsupported action");
     assert!(matches!(error, NormalizeError::UnsupportedAction { .. }));
+}
+
+#[test]
+fn documented_blank_secondary_action_dates_are_validated_then_filtered() {
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        for (label, row) in [
+            (
+                "dividend",
+                json!({
+                    "sht_cd": "000001",
+                    "record_date": "20260814",
+                    "divi_pay_dt": "",
+                    "per_sto_divi_amt": "100"
+                }),
+            ),
+            (
+                "merger-split",
+                json!({
+                    "sht_cd": "000001",
+                    "record_date": "20260814",
+                    "list_dt": "",
+                    "merge_rate": "1.00"
+                }),
+            ),
+            (
+                "reverse-split",
+                json!({
+                    "sht_cd": "000001",
+                    "record_date": "20260814",
+                    "list_dt": "",
+                    "inter_bf_face_amt": "100",
+                    "inter_af_face_amt": "1000"
+                }),
+            ),
+            (
+                "capital-decrease",
+                json!({
+                    "sht_cd": "000001",
+                    "record_date": "20260814",
+                    "list_dt": "",
+                    "reduce_cap_rate": "1.00"
+                }),
+            ),
+        ] {
+            let wire = wires
+                .iter_mut()
+                .find(|wire| wire.file_name.contains(label))
+                .expect("corporate action wire");
+            wire.bytes =
+                serde_json::to_vec(&json!({"rt_cd": "0", "output1": [row]})).expect("action bytes");
+        }
+    });
+    let envelopes = normalize_kis_envelopes(&source, &stored).expect("unrelated actions filtered");
+    let document = envelopes
+        .iter()
+        .find(|envelope| envelope.kind == ResponseKind::CorporateActions)
+        .expect("canonical actions");
+    let document: Value = serde_json::from_slice(&document.bytes).expect("canonical json");
+    assert_eq!(document["actions"], json!([]));
+}
+
+#[test]
+fn optional_action_date_is_required_as_a_field_and_validated_when_nonblank() {
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.file_name.contains("reverse-split"))
+            .expect("reverse split wire");
+        wire.bytes = serde_json::to_vec(&json!({
+            "rt_cd": "0",
+            "output1": [{
+                "sht_cd": "000001",
+                "record_date": "20260814",
+                "inter_bf_face_amt": "100",
+                "inter_af_face_amt": "1000"
+            }]
+        }))
+        .expect("reverse split bytes");
+    });
+    let error = normalize_kis_envelopes(&source, &stored).expect_err("missing list date field");
+    assert!(matches!(error, NormalizeError::MissingField { field, .. } if field == "list_dt"));
+
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.file_name.contains("reverse-split"))
+            .expect("reverse split wire");
+        wire.bytes = serde_json::to_vec(&json!({
+            "rt_cd": "0",
+            "output1": [{
+                "sht_cd": "000001",
+                "record_date": "20260814",
+                "list_dt": "not-a-date",
+                "inter_bf_face_amt": "100",
+                "inter_af_face_amt": "1000"
+            }]
+        }))
+        .expect("reverse split bytes");
+    });
+    let error = normalize_kis_envelopes(&source, &stored).expect_err("invalid list date");
+    assert!(matches!(
+        error,
+        NormalizeError::InvalidField { field, .. } if field == "list_dt"
+    ));
+
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.file_name.contains("reverse-split"))
+            .expect("reverse split wire");
+        wire.bytes = serde_json::to_vec(&json!({
+            "rt_cd": "0",
+            "output1": [{
+                "sht_cd": "000001",
+                "list_dt": "",
+                "inter_bf_face_amt": "100",
+                "inter_af_face_amt": "1000"
+            }]
+        }))
+        .expect("reverse split bytes");
+    });
+    let error = normalize_kis_envelopes(&source, &stored).expect_err("missing record date");
+    assert!(matches!(error, NormalizeError::MissingField { field, .. } if field == "record_date"));
 }
 
 #[test]

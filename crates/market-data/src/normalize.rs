@@ -938,25 +938,25 @@ fn normalize_kis_action_row(
         (vec![record_date, right_date], None)
     } else if endpoint.ends_with("/dividend") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
-        let pay_date = required_kis_date(kind, file_name, row, "divi_pay_dt")?;
+        let pay_date = documented_optional_kis_date(kind, file_name, row, "divi_pay_dt")?;
         let _ = required_kis_decimal(kind, file_name, row, "per_sto_divi_amt")?;
-        (vec![record_date, pay_date], None)
+        (event_dates(record_date, pay_date), None)
     } else if endpoint.ends_with("/merger-split") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
-        let list_date = required_kis_date(kind, file_name, row, "list_dt")?;
+        let list_date = documented_optional_kis_date(kind, file_name, row, "list_dt")?;
         let _ = required_kis_decimal(kind, file_name, row, "merge_rate")?;
-        (vec![record_date, list_date], None)
+        (event_dates(record_date, list_date), None)
     } else if endpoint.ends_with("/rev-split") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
-        let list_date = required_kis_date(kind, file_name, row, "list_dt")?;
+        let list_date = documented_optional_kis_date(kind, file_name, row, "list_dt")?;
         let _ = required_kis_decimal(kind, file_name, row, "inter_bf_face_amt")?;
         let _ = required_kis_decimal(kind, file_name, row, "inter_af_face_amt")?;
-        (vec![record_date, list_date], None)
+        (event_dates(record_date, list_date), None)
     } else if endpoint.ends_with("/cap-dcrs") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
-        let list_date = required_kis_date(kind, file_name, row, "list_dt")?;
+        let list_date = documented_optional_kis_date(kind, file_name, row, "list_dt")?;
         let _ = required_kis_decimal(kind, file_name, row, "reduce_cap_rate")?;
-        (vec![record_date, list_date], None)
+        (event_dates(record_date, list_date), None)
     } else {
         return Err(NormalizeError::UnexpectedEndpoint {
             file_name: file_name.to_owned(),
@@ -1025,6 +1025,46 @@ fn required_kis_date(
 ) -> Result<TradingDate, NormalizeError> {
     let value = required_string(kind, file_name, row, field)?;
     parse_kis_date(kind, file_name, field, value)
+}
+
+fn documented_optional_kis_date(
+    kind: ResponseKind,
+    file_name: &str,
+    row: &Map<String, Value>,
+    field: &str,
+) -> Result<Option<TradingDate>, NormalizeError> {
+    // Official XLSX response examples explicitly contain blank secondary dates:
+    // dividend sheet 96 (`divi_pay_dt`), merger sheet 109 (`list_dt`),
+    // rev-split sheet 95 (`list_dt`), and cap-dcrs sheet 90 (`list_dt`).  The
+    // field itself remains required and every nonblank value remains typed.
+    let value = row
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| missing_field(kind, file_name, field))?;
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let normalized = if value.len() == 10
+        && value.as_bytes()[4] == b'/'
+        && value.as_bytes()[7] == b'/'
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+    {
+        value.replace('/', "-")
+    } else {
+        value.to_owned()
+    };
+    parse_kis_date(kind, file_name, field, &normalized).map(Some)
+}
+
+fn event_dates(record_date: TradingDate, secondary_date: Option<TradingDate>) -> Vec<TradingDate> {
+    let mut dates = vec![record_date];
+    if let Some(date) = secondary_date {
+        dates.push(date);
+    }
+    dates
 }
 
 fn required_kis_decimal(
