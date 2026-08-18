@@ -9,7 +9,7 @@ before Compose can reinterpret a value.
 | Script | Default behavior | External action |
 |---|---|---|
 | `provision-linux.sh` | `--dry-run` | `--preflight` and `--apply` inspect/change the approved account/directories as root; `--apply` is the only mutating mode |
-| `provision-db-secrets.sh` | `--dry-run` | `--apply` generates exactly the seven root-owned DB source files; it never overwrites an existing target or prints a value |
+| `provision-db-secrets.sh` | `--dry-run` | `--check` performs a root-only read-only check of the seven DB source files; `--apply` generates them, never overwrites an existing target, and never prints a value |
 | `validate-production-config.sh` | strict `--scope release` validation | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
 | `compose-release.sh` | `--scope release --plan` | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
 | `backfill-production.sh` | `--plan` | `--execute` calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
@@ -62,6 +62,21 @@ root:
 ```sh
 sudo scripts/ops/provision-db-secrets.sh --apply
 ```
+
+After provisioning (or when the files already exist), verify the complete set
+without changing anything:
+
+```sh
+sudo scripts/ops/provision-db-secrets.sh --check
+```
+
+`--check` requires root because the production source directory is protected.
+It accepts only the exact seven named targets when they are regular,
+non-symlink files owned by `root:root` with mode `0600`, containing exactly 64
+lowercase hexadecimal bytes with no newline, and pairwise-distinct values. It
+prints `DB_SECRET_CHECK: PASS` on success; failures report filenames and safe
+shape/metadata reasons only, never secret values or hashes. The check is
+read-only.
 
 The script creates only these seven files:
 `postgres_password`, `db_migration_owner_password`, `db_app_password`,

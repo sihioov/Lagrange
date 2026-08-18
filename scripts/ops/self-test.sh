@@ -68,8 +68,9 @@ fi
 grep -Fq 'must not traverse a symlink' "$out_dir/symlink.out"
 
 # DB source credentials are generated only by the explicit root apply mode.
-# Exercise the non-root plan/guard in every environment, and exercise the
-# complete file contract when this no-infrastructure test itself has root.
+# Exercise the non-root plan/check/apply guards in every environment, and
+# exercise the complete file contract when this no-infrastructure test itself
+# has root.
 db_secret_source="$out_dir/db-secret-source"
 db_secret_plan=$(LAGRANGE_SECRET_SOURCE_DIR="$db_secret_source" \
   bash "$ops/provision-db-secrets.sh" --dry-run)
@@ -96,6 +97,29 @@ if [ "${#db_apply_guard_cmd[@]}" -gt 0 ]; then
   grep -Fq -- 'provision-db-secrets: --apply must run as root' \
     "$out_dir/db-secret-root.out" || {
     cat "$out_dir/db-secret-root.out" >&2
+    exit 1
+  }
+fi
+
+if [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+  db_check_guard_cmd=(runuser -u nobody -- env \
+    "LAGRANGE_SECRET_SOURCE_DIR=$out_dir/db-secret-check-guard" \
+    bash "$ops/provision-db-secrets.sh" --check)
+elif [ "$(id -u)" -ne 0 ]; then
+  db_check_guard_cmd=(env \
+    "LAGRANGE_SECRET_SOURCE_DIR=$out_dir/db-secret-check-guard" \
+    bash "$ops/provision-db-secrets.sh" --check)
+else
+  db_check_guard_cmd=()
+fi
+if [ "${#db_check_guard_cmd[@]}" -gt 0 ]; then
+  if "${db_check_guard_cmd[@]}" >"$out_dir/db-secret-check-root.out" 2>&1; then
+    echo 'self-test: non-root DB secret check unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq -- 'provision-db-secrets: --check must run as root' \
+    "$out_dir/db-secret-check-root.out" || {
+    cat "$out_dir/db-secret-check-root.out" >&2
     exit 1
   }
 fi
@@ -154,6 +178,48 @@ if [ "$(id -u)" -eq 0 ]; then
       fi
     done
   done
+
+  db_check_output=$(LAGRANGE_SECRET_SOURCE_DIR="$db_apply_source" \
+    bash "$ops/provision-db-secrets.sh" --check)
+  grep -Fxq 'DB_SECRET_CHECK: PASS' <<<"$db_check_output"
+  [ "$(find "$db_apply_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 7 ]
+
+  # A complete, otherwise valid set with one missing target must fail without
+  # creating or repairing anything, while naming the actionable filename.
+  db_check_partial_source="$out_dir/db-secret-check-partial"
+  mkdir -p "$db_check_partial_source"
+  chmod 0750 "$db_check_partial_source"
+  for name in "${db_secret_names[@]}"; do
+    [ "$name" = db_admin_password ] && continue
+    install -o root -g root -m 0600 -- \
+      "$db_apply_source/$name" "$db_check_partial_source/$name"
+  done
+  if LAGRANGE_SECRET_SOURCE_DIR="$db_check_partial_source" \
+     bash "$ops/provision-db-secrets.sh" --check >"$out_dir/db-secret-check-partial.out" 2>&1; then
+    echo 'self-test: partial DB secret set unexpectedly passed --check' >&2
+    exit 1
+  fi
+  grep -Fq 'DB_SECRET_CHECK: FAIL db_admin_password: missing file' \
+    "$out_dir/db-secret-check-partial.out"
+  [ "$(find "$db_check_partial_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 6 ]
+
+  # Exercise the pairwise cmp gate as well as the missing-target gate.
+  db_check_duplicate_source="$out_dir/db-secret-check-duplicate"
+  mkdir -p "$db_check_duplicate_source"
+  chmod 0750 "$db_check_duplicate_source"
+  for name in "${db_secret_names[@]}"; do
+    install -o root -g root -m 0600 -- \
+      "$db_apply_source/$name" "$db_check_duplicate_source/$name"
+  done
+  install -o root -g root -m 0600 -- \
+    "$db_apply_source/db_app_password" "$db_check_duplicate_source/db_admin_password"
+  if LAGRANGE_SECRET_SOURCE_DIR="$db_check_duplicate_source" \
+     bash "$ops/provision-db-secrets.sh" --check >"$out_dir/db-secret-check-duplicate.out" 2>&1; then
+    echo 'self-test: duplicate DB secret set unexpectedly passed --check' >&2
+    exit 1
+  fi
+  grep -Fq 'DB_SECRET_CHECK: FAIL db_app_password,db_admin_password: values are not distinct' \
+    "$out_dir/db-secret-check-duplicate.out"
 
   db_existing_source="$out_dir/db-secret-existing"
   mkdir -p "$db_existing_source"

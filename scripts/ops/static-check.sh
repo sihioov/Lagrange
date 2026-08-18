@@ -21,6 +21,10 @@ done
 db_secrets="$ops/provision-db-secrets.sh"
 grep -Fq 'mode=dry-run' "$db_secrets" \
   || die 'DB secret provisioner must default to a dry-run plan'
+grep -Fq 'mode=check' "$db_secrets" \
+  || die 'DB secret read-only check mode missing'
+grep -Fq -- '--check must run as root' "$db_secrets" \
+  || die 'DB secret check root guard missing'
 grep -Fq -- '--apply must run as root' "$db_secrets" \
   || die 'DB secret apply root guard missing'
 grep -Fq 'default_source_dir=/etc/lagrange/secrets' "$db_secrets" \
@@ -39,6 +43,14 @@ grep -Fq 'openssl rand -hex 32' "$db_secrets" \
   || die 'DB secret generator must use 256-bit OpenSSL values'
 grep -Fq 'cmp -s' "$db_secrets" \
   || die 'DB secret distinctness check missing'
+grep -Fq 'cmp -s --' "$db_secrets" \
+  || die 'DB secret read-only equality check must use silent cmp'
+grep -Fq 'DB_SECRET_CHECK: PASS' "$db_secrets" \
+  || die 'DB secret check pass output missing'
+grep -Fq "'%u:%g:%a'" "$db_secrets" \
+  || die 'DB secret check ownership/mode inspection missing'
+grep -Fq "wc -c <\"\$target\"" "$db_secrets" \
+  || die 'DB secret check byte-length inspection missing'
 grep -Fq 'install -o root -g root -m 0600' "$db_secrets" \
   || die 'DB secret owner fence missing'
 grep -Fq '0600' "$db_secrets" \

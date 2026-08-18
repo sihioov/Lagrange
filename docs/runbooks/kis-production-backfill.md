@@ -46,8 +46,15 @@ sudo scripts/ops/provision-linux.sh --preflight
 
 ```bash
 sudo scripts/ops/provision-linux.sh --apply
+sudo scripts/ops/provision-db-secrets.sh --apply
+sudo scripts/ops/provision-db-secrets.sh --check
 sudo deploy/secrets/provision-runtime-secrets.sh --scope infrastructure
 ```
+
+`provision-db-secrets.sh --check` is a root-only, read-only verification of the
+exact seven DB source files. It reports `DB_SECRET_CHECK: PASS` or actionable
+filenames and metadata/shape reasons only; it never prints secret values or
+hashes.
 
 실제 secret 값은 이 저장소나 명령 인자에 넣지 않는다. 다음 검사는 값 자체를
 출력하지 않고 파일 존재·regular/no-symlink·non-empty·소유자·mode와 env/dataset
