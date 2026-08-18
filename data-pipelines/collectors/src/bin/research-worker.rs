@@ -37,7 +37,7 @@ enum Command {
 #[derive(Serialize)]
 struct ErrorRecord {
     status: &'static str,
-    error_code: &'static str,
+    error_code: String,
     provider: &'static str,
     market: &'static str,
     target_date: Option<String>,
@@ -45,6 +45,10 @@ struct ErrorRecord {
     class: &'static str,
     batch_id: Option<String>,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    http_status: Option<u16>,
 }
 
 #[derive(Serialize)]
@@ -405,17 +409,7 @@ fn report_error(error: &WorkerError, target_date: Option<TradingDate>) -> ExitCo
         Ok("credentialed") => "KIS-NORMALIZED",
         _ => "KRX",
     };
-    let record = ErrorRecord {
-        status: "error",
-        error_code: error_code(error),
-        provider,
-        market: "KR",
-        target_date: target_date.map(|date| date.to_iso()),
-        phase: error.phase().as_str(),
-        class: error.failure_class().as_str(),
-        batch_id: error.batch_id().map(|batch_id| batch_id.to_string()),
-        message: error.to_string(),
-    };
+    let record = error_record(error, target_date, provider);
     println!(
         "{}",
         serde_json::to_string(&record).unwrap_or_else(|_| {
@@ -425,7 +419,68 @@ fn report_error(error: &WorkerError, target_date: Option<TradingDate>) -> ExitCo
     ExitCode::from(2)
 }
 
-fn error_code(error: &WorkerError) -> &'static str {
+fn error_record(
+    error: &WorkerError,
+    target_date: Option<TradingDate>,
+    provider: &'static str,
+) -> ErrorRecord {
+    let diagnostic = error.safe_diagnostic();
+    let code = error_code(error);
+    let message = match diagnostic {
+        Some(value) => format!("operation failed with {}", value.error_code),
+        None => error.to_string(),
+    };
+    ErrorRecord {
+        status: "error",
+        error_code: code,
+        provider,
+        market: "KR",
+        target_date: target_date.map(|date| date.to_iso()),
+        phase: error.phase().as_str(),
+        class: error.failure_class().as_str(),
+        batch_id: error.batch_id().map(|batch_id| batch_id.to_string()),
+        message,
+        endpoint: diagnostic
+            .and_then(|value| value.endpoint)
+            .map(str::to_owned),
+        http_status: diagnostic.and_then(|value| value.http_status),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use collectors::{FailureClass, WorkerPhase};
+
+    use super::*;
+
+    #[test]
+    fn helper_failure_event_exposes_only_safe_provider_diagnostic() {
+        let error = WorkerError::ChildFailure {
+            phase: WorkerPhase::Ingest,
+            class: FailureClass::Permanent,
+            batch_id: None,
+            error_code: "BROKER_REJECTED".to_owned(),
+            endpoint: Some(
+                "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice".to_owned(),
+            ),
+            http_status: Some(403),
+        };
+        let value = serde_json::to_value(error_record(&error, None, "KIS-NORMALIZED")).unwrap();
+        assert_eq!(value["error_code"], "BROKER_REJECTED");
+        assert_eq!(
+            value["endpoint"],
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+        );
+        assert_eq!(value["http_status"], 403);
+        assert_eq!(value["message"], "operation failed with BROKER_REJECTED");
+        assert!(!value.to_string().contains("body"));
+    }
+}
+
+fn error_code(error: &WorkerError) -> String {
+    if let Some(diagnostic) = error.safe_diagnostic() {
+        return diagnostic.error_code.to_owned();
+    }
     match error {
         WorkerError::MissingConfig { .. } => "MISSING_CONFIG",
         WorkerError::InvalidConfig { .. } => "INVALID_CONFIG",
@@ -445,7 +500,8 @@ fn error_code(error: &WorkerError) -> &'static str {
         WorkerError::ChildContainment { .. } => "HELPER_CONTAINMENT_FAILED",
         WorkerError::ChildOutput { .. } => "HELPER_OUTPUT_INVALID",
         WorkerError::ChildFailure { .. } => "HELPER_FAILED",
-        WorkerError::Cycle { source, .. } => error_code(source),
+        WorkerError::Cycle { source, .. } => return error_code(source),
         WorkerError::Shutdown => "SHUTDOWN",
     }
+    .to_owned()
 }

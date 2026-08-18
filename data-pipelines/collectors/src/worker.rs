@@ -220,6 +220,9 @@ pub enum WorkerError {
         phase: WorkerPhase,
         class: FailureClass,
         batch_id: Option<BatchId>,
+        error_code: String,
+        endpoint: Option<String>,
+        http_status: Option<u16>,
     },
     #[error("research worker cycle failed")]
     Cycle {
@@ -330,6 +333,73 @@ impl WorkerError {
             Self::Cycle { target_date, .. } => Some(*target_date),
             _ => None,
         }
+    }
+
+    /// Safe, structured provider metadata suitable for an operator event.
+    /// Free-form provider details and response bodies are intentionally absent.
+    pub fn safe_diagnostic(&self) -> Option<WorkerDiagnostic<'_>> {
+        match self {
+            Self::KisClient(source) => Some(WorkerDiagnostic {
+                error_code: source.code(),
+                endpoint: kis_error_endpoint(source),
+                http_status: kis_error_http_status(source),
+            }),
+            Self::Provider(source) => provider_diagnostic(source),
+            Self::Pipeline(PipelineError::Ingest {
+                source: market_data::IngestError::Provider(source),
+            })
+            | Self::CandidatePipeline(CandidatePipelineError::Ingest(
+                market_data::IngestError::Provider(source),
+            )) => provider_diagnostic(source),
+            Self::ChildFailure {
+                error_code,
+                endpoint,
+                http_status,
+                ..
+            } => Some(WorkerDiagnostic {
+                error_code,
+                endpoint: endpoint.as_deref(),
+                http_status: *http_status,
+            }),
+            Self::Cycle { source, .. } => source.safe_diagnostic(),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkerDiagnostic<'a> {
+    pub error_code: &'a str,
+    pub endpoint: Option<&'a str>,
+    pub http_status: Option<u16>,
+}
+
+fn provider_diagnostic(error: &ProviderError) -> Option<WorkerDiagnostic<'_>> {
+    match error {
+        ProviderError::Remote {
+            code, diagnostic, ..
+        } => Some(WorkerDiagnostic {
+            error_code: code,
+            endpoint: diagnostic.as_ref().map(|value| value.endpoint.as_str()),
+            http_status: diagnostic.as_ref().and_then(|value| value.http_status),
+        }),
+        _ => None,
+    }
+}
+
+fn kis_error_endpoint(error: &KisError) -> Option<&str> {
+    match error {
+        KisError::RateLimited { endpoint, .. }
+        | KisError::Broker { endpoint, .. }
+        | KisError::SchemaDrift { endpoint, .. } => Some(endpoint),
+        _ => None,
+    }
+}
+
+fn kis_error_http_status(error: &KisError) -> Option<u16> {
+    match error {
+        KisError::Broker { status, .. } => Some(*status),
+        _ => None,
     }
 }
 
@@ -2329,6 +2399,10 @@ struct HelperWireRecord {
     #[serde(default)]
     message: Option<String>,
     #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    http_status: Option<u16>,
+    #[serde(default)]
     outcome: Option<String>,
     #[serde(default)]
     date: Option<String>,
@@ -2446,6 +2520,8 @@ fn decode_helper_output_with_provider(
                 || record.target_date.is_some()
                 || record.class.is_some()
                 || record.message.is_some()
+                || record.endpoint.is_some()
+                || record.http_status.is_some()
                 || record.newest_eod_at.is_some()
                 || record.age_seconds.is_some()
                 || record.cursor.is_some()
@@ -2514,6 +2590,18 @@ fn decode_helper_output_with_provider(
                     phase: default_phase,
                 });
             }
+            let error_code = record.error_code.expect("validated error code");
+            if !valid_error_code(&error_code)
+                || !record.endpoint.as_deref().is_none_or(valid_endpoint)
+                || record
+                    .http_status
+                    .is_some_and(|status| !(100..=599).contains(&status))
+                || (record.http_status.is_some() && record.endpoint.is_none())
+            {
+                return Err(WorkerError::ChildOutput {
+                    phase: default_phase,
+                });
+            }
             let class = match record.class.as_deref() {
                 Some("retryable") => FailureClass::Retryable,
                 Some("permanent") => FailureClass::Permanent,
@@ -2527,12 +2615,31 @@ fn decode_helper_output_with_provider(
                 phase,
                 class,
                 batch_id,
+                error_code,
+                endpoint: record.endpoint,
+                http_status: record.http_status,
             })
         }
         _ => Err(WorkerError::ChildOutput {
             phase: default_phase,
         }),
     }
+}
+
+fn valid_error_code(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn valid_endpoint(value: &str) -> bool {
+    value.starts_with("/uapi/")
+        && value.len() <= 256
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.'))
 }
 
 fn parse_worker_phase(
@@ -3692,7 +3799,11 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
                 phase: WorkerPhase::Publication,
                 class: crate::FailureClass::Permanent,
                 batch_id: Some(id),
+                error_code,
+                endpoint: None,
+                http_status: None,
             } if id == batch_id
+                && error_code == "PIPELINE_FAILED"
         ));
         assert!(matches!(
             decode_helper_output_with_provider(output.as_bytes(), WorkerPhase::Ingest, None, "KRX"),
@@ -3700,6 +3811,44 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
                 phase: WorkerPhase::Ingest
             })
         ));
+    }
+
+    #[test]
+    fn helper_provider_diagnostic_preserves_only_validated_safe_metadata() {
+        let output = br#"{"status":"error","error_code":"BROKER_REJECTED","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"broker body must not propagate: appsecret=fixture-secret","endpoint":"/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice","http_status":403}"#;
+        let error = decode_helper_output_with_provider(
+            output,
+            WorkerPhase::Ingest,
+            Some(domain::TradingDate::parse("2026-08-18").unwrap()),
+            "KIS-NORMALIZED",
+        )
+        .expect_err("provider failure");
+        let diagnostic = error.safe_diagnostic().expect("safe diagnostic");
+        assert_eq!(diagnostic.error_code, "BROKER_REJECTED");
+        assert_eq!(
+            diagnostic.endpoint,
+            Some("/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice")
+        );
+        assert_eq!(diagnostic.http_status, Some(403));
+        assert!(!error.to_string().contains("fixture-secret"));
+
+        for invalid in [
+            br#"{"status":"error","error_code":"BROKER_REJECTED","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"redacted","endpoint":"https://attacker.invalid/uapi/path","http_status":403}"#.as_slice(),
+            br#"{"status":"error","error_code":"bad code","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"redacted","endpoint":"/uapi/path","http_status":403}"#.as_slice(),
+            br#"{"status":"error","error_code":"BROKER_REJECTED","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"redacted","endpoint":null,"http_status":403}"#.as_slice(),
+        ] {
+            assert!(matches!(
+                decode_helper_output_with_provider(
+                    invalid,
+                    WorkerPhase::Ingest,
+                    Some(domain::TradingDate::parse("2026-08-18").unwrap()),
+                    "KIS-NORMALIZED",
+                ),
+                Err(super::WorkerError::ChildOutput {
+                    phase: WorkerPhase::Ingest
+                })
+            ));
+        }
     }
 
     #[test]

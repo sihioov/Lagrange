@@ -105,6 +105,10 @@ pub enum ProviderError {
         kind: ResponseKind,
         code: &'static str,
         retryable: bool,
+        /// Endpoint and HTTP status are safe operational metadata. Response
+        /// bodies and free-form broker details must never be copied from this
+        /// diagnostic into a worker event.
+        diagnostic: Option<RemoteDiagnostic>,
         detail: String,
     },
     /// Transient endpoint or transport I/O.
@@ -136,6 +140,12 @@ pub enum ProviderError {
     /// The manifest is valid JSON but declares unsupported configuration.
     #[error("recorded bundle configuration is invalid: {detail}")]
     RecordedBundleInvalid { detail: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteDiagnostic {
+    pub endpoint: String,
+    pub http_status: Option<u16>,
 }
 
 /// A reference to a stored credential, e.g. `env:KRX_CREDENTIAL_REF`. The

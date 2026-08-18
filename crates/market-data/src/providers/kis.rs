@@ -13,7 +13,7 @@ use kis_client::{
 };
 
 use crate::contract::{FetchMode, PROVIDER_KIS, RawEnvelope, RequestMetadata, ResponseKind};
-use crate::provider::{FetchRequest, ProviderError};
+use crate::provider::{FetchRequest, ProviderError, RemoteDiagnostic};
 use crate::validate::ValidationError;
 
 /// Fixed launch universe from `configs/universes/kr-etf-core-v1.yaml`.
@@ -229,13 +229,7 @@ impl<R: KisRead> KisProvider<R> {
                 .reader
                 .get(path, tr_id, &sent_query, continuation.as_deref())
                 .await
-                .map_err(|error| ProviderError::Remote {
-                    provider: PROVIDER_KIS,
-                    kind,
-                    code: error.code(),
-                    retryable: error.is_retryable(kis_client::RequestKind::Read),
-                    detail: error.to_string(),
-                })?;
+                .map_err(|error| remote_error(kind, path, error))?;
             let file_name = match symbol {
                 Some(symbol) => format!("{label}-{symbol}-page-{page:02}.json"),
                 None => format!("{label}-page-{page:02}.json"),
@@ -274,8 +268,30 @@ impl<R: KisRead> KisProvider<R> {
             kind,
             code: "BROKER_PAGINATION_LIMIT",
             retryable: false,
+            diagnostic: Some(RemoteDiagnostic {
+                endpoint: path.to_owned(),
+                http_status: None,
+            }),
             detail: format!("{path} exceeded the {MAX_PAGES}-page safety limit"),
         })
+    }
+}
+
+fn remote_error(kind: ResponseKind, requested_endpoint: &str, error: KisError) -> ProviderError {
+    let http_status = match &error {
+        KisError::Broker { status, .. } => Some(*status),
+        _ => None,
+    };
+    ProviderError::Remote {
+        provider: PROVIDER_KIS,
+        kind,
+        code: error.code(),
+        retryable: error.is_retryable(kis_client::RequestKind::Read),
+        diagnostic: Some(RemoteDiagnostic {
+            endpoint: requested_endpoint.to_owned(),
+            http_status,
+        }),
+        detail: error.to_string(),
     }
 }
 
@@ -512,6 +528,32 @@ mod tests {
                 body: br#"{"rt_cd":"0","wrong":[]}"#.to_vec(),
                 continuation: None,
             })
+        }
+    }
+
+    #[test]
+    fn remote_error_keeps_status_and_requested_endpoint_but_not_body_in_diagnostic() {
+        let error = remote_error(
+            ResponseKind::Bars,
+            DAILY_BARS_PATH,
+            KisError::Broker {
+                status: 403,
+                endpoint: DAILY_BARS_PATH.to_owned(),
+                body: "appsecret=fixture-secret".to_owned(),
+            },
+        );
+        match error {
+            ProviderError::Remote {
+                code,
+                diagnostic: Some(diagnostic),
+                ..
+            } => {
+                assert_eq!(code, "BROKER_REJECTED");
+                assert_eq!(diagnostic.endpoint, DAILY_BARS_PATH);
+                assert_eq!(diagnostic.http_status, Some(403));
+                assert!(!diagnostic.endpoint.contains("fixture-secret"));
+            }
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 

@@ -304,6 +304,7 @@ impl<R: KisCandidateMasterRead> KisCandidateMasterProvider<R> {
                         kind: ResponseKind::CandidateMaster,
                         code: error.code(),
                         retryable: error.is_retryable(kis_client::RequestKind::Read),
+                        diagnostic: None,
                         detail: format!("{source}: {error}"),
                     })?;
             let mut archive =
@@ -313,6 +314,7 @@ impl<R: KisCandidateMasterRead> KisCandidateMasterProvider<R> {
                         kind: ResponseKind::CandidateMaster,
                         code: "KIS_MASTER_SCHEMA_DRIFT",
                         retryable: false,
+                        diagnostic: None,
                         detail: error.to_string(),
                     }
                 })?;
@@ -809,6 +811,7 @@ impl<R: KisCandidateMasterRead> KisCandidateMasterProvider<R> {
                         kind: ResponseKind::CandidateMaster,
                         code: error.code(),
                         retryable: error.is_retryable(kis_client::RequestKind::Read),
+                        diagnostic: None,
                         detail: format!("{source}: {error}"),
                     })?;
             validate_candidate_master_archive(source, &bytes).map_err(|error| {
@@ -817,6 +820,7 @@ impl<R: KisCandidateMasterRead> KisCandidateMasterProvider<R> {
                     kind: ResponseKind::CandidateMaster,
                     code: "KIS_MASTER_SCHEMA_DRIFT",
                     retryable: false,
+                    diagnostic: None,
                     detail: error.to_string(),
                 }
             })?;

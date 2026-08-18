@@ -238,6 +238,7 @@ impl<R: KisRead> KisCandidateProvider<R> {
                     kind,
                     code: "BROKER_SCHEMA_DRIFT",
                     retryable: false,
+                    diagnostic: None,
                     detail: reason,
                 }
             })?;
@@ -273,6 +274,7 @@ impl<R: KisRead> KisCandidateProvider<R> {
             kind,
             code: "BROKER_PAGINATION_LIMIT",
             retryable: false,
+            diagnostic: None,
             detail: format!("{path} exceeded the {MAX_PAGES}-page safety limit"),
         })
     }
@@ -284,6 +286,7 @@ fn remote_error(kind: ResponseKind, error: KisError) -> ProviderError {
         kind,
         code: error.code(),
         retryable: error.is_retryable(RequestKind::Read),
+        diagnostic: None,
         detail: error.to_string(),
     }
 }
