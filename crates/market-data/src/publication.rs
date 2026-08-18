@@ -403,7 +403,7 @@ fn validate_normalized_manifest(manifest: &ManifestEntry) -> Result<(), Publicat
     Ok(())
 }
 
-const NORMALIZER: &str = "kis-wire-to-canonical-v1";
+const NORMALIZER: &str = "kis-wire-to-canonical-v2";
 const NORMALIZER_SCHEMA_VERSION: u32 = 1;
 
 fn invalid_provenance(file_name: &str, reason: impl Into<String>) -> PublicationError {

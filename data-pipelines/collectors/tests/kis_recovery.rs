@@ -96,6 +96,10 @@ fn valid_wires_for_date(date: &str) -> Vec<Wire> {
             query: vec![("FID_INPUT_ISCD".into(), symbol.into())],
             bytes: serde_json::to_vec(&json!({
                 "rt_cd": "0",
+                "output1": {
+                    "hts_kor_isnm": format!("ETF {symbol}"),
+                    "stck_shrn_iscd": symbol
+                },
                 "output2": [{
                     "stck_bsop_date": date,
                     "stck_oprc": "100.00",
@@ -116,8 +120,7 @@ fn valid_wires_for_date(date: &str) -> Vec<Wire> {
             bytes: serde_json::to_vec(&json!({
                 "rt_cd": "0",
                 "output": {
-                    "std_pdno": symbol,
-                    "prdt_name": format!("ETF {symbol}")
+                    "stck_shrn_iscd": symbol
                 }
             }))
             .expect("reference"),
@@ -202,11 +205,18 @@ impl KisRead for FakeKisRead {
             if self.malformed_first_bar && symbol == KR_ETF_CORE_SYMBOLS[0] {
                 row.as_object_mut().expect("bar row").remove("stck_clpr");
             }
-            json!({"rt_cd": "0", "output1": {}, "output2": [row]})
+            json!({
+                "rt_cd": "0",
+                "output1": {
+                    "hts_kor_isnm": format!("ETF {symbol}"),
+                    "stck_shrn_iscd": symbol
+                },
+                "output2": [row]
+            })
         } else if path.ends_with("inquire-price") {
             json!({
                 "rt_cd": "0",
-                "output": {"std_pdno": symbol, "prdt_name": format!("ETF {symbol}")}
+                "output": {"stck_shrn_iscd": symbol}
             })
         } else if path.ends_with("chk-holiday") {
             json!({
@@ -216,6 +226,9 @@ impl KisRead for FakeKisRead {
         } else {
             json!({"rt_cd": "0", "output1": []})
         };
+        // KSD schedule endpoints are documented as single-page.  A missing
+        // terminal marker is therefore the expected fixture shape; a
+        // non-empty marker is rejected by the provider instead of followed.
         Ok(MarketDataReply {
             body: serde_json::to_vec(&body).expect("fake KIS JSON"),
             continuation: None,

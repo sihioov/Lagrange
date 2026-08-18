@@ -2788,7 +2788,9 @@ fn decode_helper_output_with_provider(
                     .is_none_or(|kind| ResponseKind::parse(kind).is_some())
                 || !record.file_name.as_deref().is_none_or(valid_file_name)
                 || (record.response_kind.is_some() != record.file_name.is_some())
-                || (record.response_kind.is_some() && record.endpoint.is_none())
+                || (record.response_kind.is_some()
+                    && record.endpoint.is_none()
+                    && !error_code.starts_with("KIS_NORMALIZE_"))
             {
                 return Err(WorkerError::ChildOutput {
                     phase: default_phase,
@@ -2980,9 +2982,26 @@ fn decode_recovery_line_with_provider(
                 return Err(WorkerError::ChildOutput { phase });
             }
             match decode_helper_output_with_provider(line, phase, None, expected_provider) {
-                Err(error @ WorkerError::ChildFailure { .. }) => {
-                    Ok(RecoveryLine::Terminal(Err(error)))
-                }
+                Err(WorkerError::ChildFailure {
+                    class,
+                    batch_id,
+                    error_code,
+                    endpoint,
+                    http_status,
+                    response_context,
+                    ..
+                }) => Ok(RecoveryLine::Terminal(Err(WorkerError::ChildFailure {
+                    // A nested normalization/publication stage is executed by
+                    // the recovery helper. Preserve its bounded diagnostic,
+                    // but report the operator-visible phase as recovery.
+                    phase,
+                    class,
+                    batch_id,
+                    error_code,
+                    endpoint,
+                    http_status,
+                    response_context,
+                }))),
                 _ => Err(WorkerError::ChildOutput { phase }),
             }
         }
@@ -3981,6 +4000,37 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
         assert!(matches!(
             decode_recovery_line(
                 b"{\"status\":\"ok\",\"phase\":\"recovery\",\"outcome\":\"recovered\",\"batch_id\":null,\"date\":null,\"newest_eod_at\":null,\"age_seconds\":null,\"cursor\":null,\"has_more\":false}"
+            ),
+            Err(super::WorkerError::ChildOutput {
+                phase: WorkerPhase::Recovery
+            })
+        ));
+
+        let normalization_failure = br#"{"status":"error","error_code":"KIS_NORMALIZE_MISSING_FIELD","provider":"KIS-NORMALIZED","market":"KR","target_date":null,"phase":"publication","class":"permanent","batch_id":"00000000-0000-4000-8000-000000000001","message":"operation failed with KIS_NORMALIZE_MISSING_FIELD","response_kind":"reference","file_name":"reference-069500-page-01.json"}"#;
+        let decoded = super::decode_recovery_line_with_provider(
+            normalization_failure,
+            super::WORKER_PROVIDER_KIS_NORMALIZED,
+        )
+        .expect("bounded normalization diagnostic");
+        assert!(matches!(
+            decoded,
+            super::RecoveryLine::Terminal(Err(super::WorkerError::ChildFailure {
+                phase: WorkerPhase::Recovery,
+                class: crate::FailureClass::Permanent,
+                error_code,
+                endpoint: None,
+                response_context: Some(context),
+                ..
+            })) if error_code == "KIS_NORMALIZE_MISSING_FIELD"
+                && context.response_kind == "reference"
+                && context.file_name == "reference-069500-page-01.json"
+        ));
+
+        let unscoped_context = br#"{"status":"error","error_code":"BROKER_REJECTED","provider":"KIS-NORMALIZED","market":"KR","target_date":null,"phase":"publication","class":"permanent","batch_id":null,"message":"redacted","response_kind":"reference","file_name":"reference-069500-page-01.json"}"#;
+        assert!(matches!(
+            super::decode_recovery_line_with_provider(
+                unscoped_context,
+                super::WORKER_PROVIDER_KIS_NORMALIZED,
             ),
             Err(super::WorkerError::ChildOutput {
                 phase: WorkerPhase::Recovery

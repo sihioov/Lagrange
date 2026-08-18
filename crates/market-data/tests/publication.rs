@@ -116,7 +116,7 @@ fn calendar_payload_with_id(calendar_id: &str, sessions: &str) -> Vec<u8> {
 fn normalized_lineage(upstream_batch_id: BatchId) -> NormalizationLineage {
     NormalizationLineage {
         schema_version: 1,
-        normalizer: "kis-wire-to-canonical-v1".to_owned(),
+        normalizer: "kis-wire-to-canonical-v2".to_owned(),
         upstream_provider: PROVIDER_KIS.to_owned(),
         upstream_market: MARKET_KR.to_owned(),
         upstream_batch_id,
@@ -151,7 +151,7 @@ fn normalized_request(
     mode: FetchMode,
 ) -> RequestMetadata {
     RequestMetadata {
-        endpoint: format!("kis.normalized/kis-wire-to-canonical-v1/{kind}"),
+        endpoint: format!("kis.normalized/kis-wire-to-canonical-v2/{kind}"),
         query: vec![
             (
                 "upstream_batch_id".to_owned(),
@@ -233,7 +233,7 @@ fn normalized_files(lineage: &NormalizationLineage) -> Vec<(ResponseKind, &'stat
             "reference.json",
             with_lineage(
                 json!({
-                    "source":"kis-inquire-price-v1",
+                    "source":"kis-inquire-price-and-daily-bars-v1",
                     "instruments":[{"symbol":"069500","name":"ETF 069500","lot_size":1,"currency":"KRW","kind":"equity-etf"}]
                 }),
                 lineage,

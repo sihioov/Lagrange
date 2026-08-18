@@ -21,7 +21,7 @@ use tempfile::TempDir;
 const TARGET_DATE: &str = "2026-08-14";
 const RETRIEVED_AT: &str = "2026-08-14T08:00:00Z";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Wire {
     kind: ResponseKind,
     file_name: String,
@@ -89,7 +89,10 @@ fn valid_wires() -> Vec<Wire> {
             "rt_cd": "0",
             "msg_cd": "MCA00000",
             "msg1": "",
-            "output1": {},
+            "output1": {
+                "hts_kor_isnm": format!("ETF {symbol}"),
+                "stck_shrn_iscd": symbol
+            },
             "output2": [
                 {
                     "stck_bsop_date": "20260813",
@@ -121,8 +124,6 @@ fn valid_wires() -> Vec<Wire> {
         let reference = json!({
             "rt_cd": "0",
             "output": {
-                "std_pdno": symbol,
-                "prdt_name": format!("ETF {symbol}"),
                 "stck_shrn_iscd": symbol
             }
         });
@@ -377,6 +378,164 @@ fn normalized_reference_must_be_exact_fixed_etf_universe_at_curation_boundary() 
 }
 
 #[test]
+fn reference_name_comes_only_from_matching_daily_bars_output1() {
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.kind == ResponseKind::Reference)
+            .expect("reference wire");
+        let mut document: Value = serde_json::from_slice(&wire.bytes).expect("reference JSON");
+        document["output"]["prdt_name"] = Value::String("must not be used".to_owned());
+        wire.bytes = serde_json::to_vec(&document).expect("reference bytes");
+    });
+    let envelopes = normalize_kis_envelopes(&source, &stored).expect("official reference shape");
+    let reference = envelopes
+        .iter()
+        .find(|envelope| envelope.kind == ResponseKind::Reference)
+        .expect("reference envelope");
+    let document: Value = serde_json::from_slice(&reference.bytes).expect("canonical reference");
+    let first_symbol = format!("{}.KRX", KR_ETF_CORE_SYMBOLS[0]);
+    let instrument = document["instruments"]
+        .as_array()
+        .expect("instruments")
+        .iter()
+        .find(|instrument| instrument["symbol"] == first_symbol)
+        .expect("first instrument");
+    assert_eq!(
+        instrument["name"],
+        format!("ETF {}", KR_ETF_CORE_SYMBOLS[0])
+    );
+}
+
+#[test]
+fn daily_bars_reference_fields_are_required_and_must_match_the_request() {
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.kind == ResponseKind::Bars)
+            .expect("bars wire");
+        let mut document: Value = serde_json::from_slice(&wire.bytes).expect("bars JSON");
+        document["output1"]
+            .as_object_mut()
+            .expect("output1")
+            .remove("hts_kor_isnm");
+        wire.bytes = serde_json::to_vec(&document).expect("bars bytes");
+    });
+    let error = normalize_kis_envelopes(&source, &stored).expect_err("missing official name");
+    assert!(matches!(
+        error,
+        NormalizeError::MissingField {
+            kind: ResponseKind::Bars,
+            field,
+            ..
+        } if field == "hts_kor_isnm"
+    ));
+
+    let (_temp, _store, source, stored) = fixture(|wires| {
+        let wire = wires
+            .iter_mut()
+            .find(|wire| wire.kind == ResponseKind::Bars)
+            .expect("bars wire");
+        let mut document: Value = serde_json::from_slice(&wire.bytes).expect("bars JSON");
+        document["output1"]["stck_shrn_iscd"] = Value::String("000001".to_owned());
+        wire.bytes = serde_json::to_vec(&document).expect("bars bytes");
+    });
+    let error = normalize_kis_envelopes(&source, &stored).expect_err("provider symbol mismatch");
+    assert!(matches!(
+        error,
+        NormalizeError::InvalidField {
+            kind: ResponseKind::Bars,
+            field,
+            ..
+        } if field == "stck_shrn_iscd"
+    ));
+}
+
+#[test]
+fn inquire_price_symbol_is_required_and_must_match_the_request() {
+    for mutation in ["missing", "mismatch"] {
+        let (_temp, _store, source, stored) = fixture(|wires| {
+            let wire = wires
+                .iter_mut()
+                .find(|wire| wire.kind == ResponseKind::Reference)
+                .expect("reference wire");
+            let mut document: Value = serde_json::from_slice(&wire.bytes).expect("reference JSON");
+            if mutation == "missing" {
+                document["output"]
+                    .as_object_mut()
+                    .expect("output")
+                    .remove("stck_shrn_iscd");
+            } else {
+                document["output"]["stck_shrn_iscd"] = Value::String("000001".to_owned());
+            }
+            wire.bytes = serde_json::to_vec(&document).expect("reference bytes");
+        });
+        let error = normalize_kis_envelopes(&source, &stored).expect_err("invalid provider symbol");
+        match mutation {
+            "missing" => assert!(matches!(
+                error,
+                NormalizeError::MissingField {
+                    kind: ResponseKind::Reference,
+                    field,
+                    ..
+                }
+                if field == "stck_shrn_iscd"
+            )),
+            "mismatch" => assert!(matches!(
+                error,
+                NormalizeError::InvalidField {
+                    kind: ResponseKind::Reference,
+                    field,
+                    ..
+                }
+                if field == "stck_shrn_iscd"
+            )),
+            _ => unreachable!("fixed mutation"),
+        }
+    }
+}
+
+#[test]
+fn duplicate_and_conflicting_daily_bar_names_fail_closed() {
+    for (name, conflict) in [
+        (format!("ETF {}", KR_ETF_CORE_SYMBOLS[0]), false),
+        ("other".to_owned(), true),
+    ] {
+        let (_temp, _store, source, stored) = fixture(|wires| {
+            let mut duplicate = wires
+                .iter()
+                .find(|wire| wire.kind == ResponseKind::Bars)
+                .expect("bars wire")
+                .clone();
+            duplicate.file_name = "daily-bars-duplicate-page-01.json".to_owned();
+            let mut document: Value = serde_json::from_slice(&duplicate.bytes).expect("bars JSON");
+            document["output1"]["hts_kor_isnm"] = Value::String(name.clone());
+            document["output2"] = Value::Array(Vec::new());
+            duplicate.bytes = serde_json::to_vec(&document).expect("duplicate bytes");
+            wires.push(duplicate);
+        });
+        let error = normalize_kis_envelopes(&source, &stored).expect_err("duplicate name source");
+        if conflict {
+            assert!(matches!(
+                error,
+                NormalizeError::ConflictingRow {
+                    kind: ResponseKind::Reference,
+                    ..
+                }
+            ));
+        } else {
+            assert!(matches!(
+                error,
+                NormalizeError::DuplicateRow {
+                    kind: ResponseKind::Reference,
+                    ..
+                }
+            ));
+        }
+    }
+}
+
+#[test]
 fn wire_kis_scope_cannot_enter_curation_directly() {
     let (_temp, store, source, _stored) = fixture(|_| {});
     let error = curation_inputs_from_raw(&store, &source)
@@ -572,7 +731,7 @@ fn existing_deterministic_batch_conflict_fails_closed() {
         b"not the canonical bars document".to_vec(),
         source.retrieved_at,
         RequestMetadata {
-            endpoint: "kis.normalized/kis-wire-to-canonical-v1/bars".to_owned(),
+            endpoint: "kis.normalized/kis-wire-to-canonical-v2/bars".to_owned(),
             query: Vec::new(),
             headers: Vec::new(),
             mode: FetchMode::Credentialed,

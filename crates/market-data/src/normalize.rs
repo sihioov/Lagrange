@@ -26,7 +26,7 @@ use crate::providers::kis::KR_ETF_CORE_SYMBOLS;
 use crate::storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};
 use crate::validate::validate_response;
 
-const NORMALIZER: &str = "kis-wire-to-canonical-v1";
+const NORMALIZER: &str = "kis-wire-to-canonical-v2";
 const NORMALIZER_SCHEMA_VERSION: u32 = 1;
 const COLLISION_RETRIES: usize = 100;
 const COLLISION_RETRY_DELAY: Duration = Duration::from_millis(2);
@@ -593,8 +593,9 @@ fn normalize_reference(
     lineage: &NormalizationLineage,
     batch_id: BatchId,
 ) -> Result<RawEnvelope, NormalizeError> {
+    let names = daily_bar_reference_names(source, stored)?;
     let files = source_files(source, stored, ResponseKind::Reference)?;
-    let mut instruments = BTreeMap::<String, Value>::new();
+    let mut symbols = BTreeSet::new();
     for (metadata, file) in files {
         require_endpoint(metadata, REFERENCE_ENDPOINT)?;
         let document = parse_object(ResponseKind::Reference, &file.file_name, &file.bytes)?;
@@ -606,38 +607,25 @@ fn normalize_reference(
             &document,
             "output",
         )?;
-        // std_pdno is the documented standard product number.  Some KIS
-        // deployments expose the same value under stck_shrn_iscd; if present,
-        // it must agree with the request symbol.
-        if let Some(provider_symbol) = first_string(output, &["std_pdno", "stck_shrn_iscd"])
-            && provider_symbol != symbol
-        {
+        // Official XLSX sheet 29 documents stck_shrn_iscd on inquire-price,
+        // but no product-name field.  This response remains the independent
+        // proof that the requested and provider-returned security agree.
+        let provider_symbol = required_string(
+            ResponseKind::Reference,
+            &file.file_name,
+            output,
+            "stck_shrn_iscd",
+        )?;
+        if provider_symbol != symbol {
             return Err(NormalizeError::InvalidField {
                 kind: ResponseKind::Reference,
                 file_name: file.file_name.clone(),
-                field: "std_pdno".to_owned(),
+                field: "stck_shrn_iscd".to_owned(),
                 value: provider_symbol.to_owned(),
             });
         }
-        let name = first_string(output, &["prdt_name", "hts_kor_isnm"])
-            .filter(|name| !name.trim().is_empty())
-            .ok_or_else(|| missing_field(ResponseKind::Reference, &file.file_name, "prdt_name"))?;
-        let instrument = json_object([
-            ("symbol", Value::String(canonical_instrument(&symbol))),
-            ("name", Value::String(name.to_owned())),
-            ("lot_size", Value::Number(Number::from(1))),
-            ("currency", Value::String("KRW".to_owned())),
-            ("kind", Value::String("equity-etf".to_owned())),
-        ]);
-        let instrument = Value::Object(instrument);
-        if let Some(previous) = instruments.insert(symbol.clone(), instrument.clone()) {
-            if previous == instrument {
-                return Err(NormalizeError::DuplicateRow {
-                    kind: ResponseKind::Reference,
-                    key: symbol,
-                });
-            }
-            return Err(NormalizeError::ConflictingRow {
+        if !symbols.insert(symbol.clone()) {
+            return Err(NormalizeError::DuplicateRow {
                 kind: ResponseKind::Reference,
                 key: symbol,
             });
@@ -647,19 +635,36 @@ fn normalize_reference(
         .iter()
         .map(|symbol| (*symbol).to_owned())
         .collect::<BTreeSet<_>>();
-    if instruments.keys().cloned().collect::<BTreeSet<_>>() != expected_symbols {
+    if symbols != expected_symbols || names.keys().cloned().collect::<BTreeSet<_>>() != symbols {
         return Err(NormalizeError::Malformed {
             kind: ResponseKind::Reference,
             file_name: "reference.json".to_owned(),
-            reason: "KIS reference did not cover the fixed KR ETF core universe".to_owned(),
+            reason:
+                "KIS reference and daily-bars names did not agree on the fixed KR ETF core universe"
+                    .to_owned(),
         });
     }
+    let instruments = symbols
+        .into_iter()
+        .map(|symbol| {
+            let name = names
+                .get(&symbol)
+                .expect("validated daily-bars name coverage");
+            Value::Object(json_object([
+                ("symbol", Value::String(canonical_instrument(&symbol))),
+                ("name", Value::String(name.clone())),
+                ("lot_size", Value::Number(Number::from(1))),
+                ("currency", Value::String("KRW".to_owned())),
+                ("kind", Value::String("equity-etf".to_owned())),
+            ]))
+        })
+        .collect();
     let mut document = json_object([
-        ("source", Value::String("kis-inquire-price-v1".to_owned())),
         (
-            "instruments",
-            Value::Array(instruments.into_values().collect()),
+            "source",
+            Value::String("kis-inquire-price-and-daily-bars-v1".to_owned()),
         ),
+        ("instruments", Value::Array(instruments)),
     ]);
     add_lineage(&mut document, lineage);
     canonical_envelope(
@@ -670,6 +675,52 @@ fn normalize_reference(
         lineage,
         batch_id,
     )
+}
+
+fn daily_bar_reference_names(
+    source: &ManifestEntry,
+    stored: &[StoredFile],
+) -> Result<BTreeMap<String, String>, NormalizeError> {
+    let files = source_files(source, stored, ResponseKind::Bars)?;
+    let mut names = BTreeMap::new();
+    for (metadata, file) in files {
+        require_endpoint(metadata, DAILY_BARS_ENDPOINT)?;
+        let document = parse_object(ResponseKind::Bars, &file.file_name, &file.bytes)?;
+        require_rt_ok(ResponseKind::Bars, &file.file_name, &document)?;
+        let requested_symbol = query_symbol(ResponseKind::Bars, metadata, &file.file_name)?;
+        let output = required_object(ResponseKind::Bars, &file.file_name, &document, "output1")?;
+        // Official XLSX sheet 40 defines both fields as required.  Names are
+        // never sourced from inquire-price or synthesized locally.
+        let provider_symbol = required_string(
+            ResponseKind::Bars,
+            &file.file_name,
+            output,
+            "stck_shrn_iscd",
+        )?;
+        if provider_symbol != requested_symbol {
+            return Err(NormalizeError::InvalidField {
+                kind: ResponseKind::Bars,
+                file_name: file.file_name.clone(),
+                field: "stck_shrn_iscd".to_owned(),
+                value: provider_symbol.to_owned(),
+            });
+        }
+        let name = required_string(ResponseKind::Bars, &file.file_name, output, "hts_kor_isnm")?
+            .to_owned();
+        if let Some(previous) = names.insert(requested_symbol.clone(), name.clone()) {
+            if previous == name {
+                return Err(NormalizeError::DuplicateRow {
+                    kind: ResponseKind::Reference,
+                    key: requested_symbol,
+                });
+            }
+            return Err(NormalizeError::ConflictingRow {
+                kind: ResponseKind::Reference,
+                key: requested_symbol,
+            });
+        }
+    }
+    Ok(names)
 }
 
 fn normalize_calendar(
@@ -1396,12 +1447,6 @@ fn canonical_number(
             }),
         _ => Err(invalid_field(kind, file_name, field, value)),
     }
-}
-
-fn first_string<'a>(object: &'a Map<String, Value>, fields: &[&str]) -> Option<&'a str> {
-    fields
-        .iter()
-        .find_map(|field| object.get(*field).and_then(Value::as_str))
 }
 
 fn json_object<const N: usize>(fields: [(&str, Value); N]) -> Map<String, Value> {
