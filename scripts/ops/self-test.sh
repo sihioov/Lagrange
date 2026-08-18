@@ -7,8 +7,8 @@ out_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-ops-self-test.XXXXXX")
 trap 'rm -rf -- "$out_dir"' EXIT
 
 for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
-  validate-production-config.sh compose-release.sh backfill-production.sh \
-  post-backfill-health.sh; do
+  provision-crypto-secrets.sh validate-production-config.sh compose-release.sh \
+  backfill-production.sh post-backfill-health.sh; do
   bash -n "$ops/$script"
 done
 bash "$root/deploy/secrets/runtime-static-check.sh" >/dev/null
@@ -215,6 +215,131 @@ if [ "$(id -u)" -eq 0 ]; then
     echo 'self-test: imported Auth0 fixture value leaked on target refusal' >&2
     exit 1
   fi
+fi
+
+# The four non-KIS cryptographic source secrets use a fixed 32-byte contract
+# represented as exactly 64 lowercase hex bytes. Exercise plans, root guards,
+# path fences, generation/check shape, pairwise distinctness, placeholder
+# rejection, no output leakage, and the no-overwrite gate in a temp tree.
+crypto_secret_plan=$(bash "$ops/provision-crypto-secrets.sh" --dry-run \
+  --source-dir "$out_dir/crypto-plan-source")
+grep -Fq 'CRYPTO_SECRET_PROVISION mode=dry-run' <<<"$crypto_secret_plan"
+grep -Fq 'DRY_RUN: no files created' <<<"$crypto_secret_plan"
+[ ! -e "$out_dir/crypto-plan-source" ]
+
+crypto_source="$out_dir/crypto-source"
+mkdir -p "$crypto_source"
+chmod 0750 "$crypto_source"
+if [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+  crypto_apply_guard_cmd=(runuser -u nobody -- \
+    bash "$ops/provision-crypto-secrets.sh" --apply --source-dir "$crypto_source")
+  crypto_check_guard_cmd=(runuser -u nobody -- \
+    bash "$ops/provision-crypto-secrets.sh" --check --source-dir "$crypto_source")
+elif [ "$(id -u)" -ne 0 ]; then
+  crypto_apply_guard_cmd=(bash "$ops/provision-crypto-secrets.sh" --apply --source-dir "$crypto_source")
+  crypto_check_guard_cmd=(bash "$ops/provision-crypto-secrets.sh" --check --source-dir "$crypto_source")
+else
+  crypto_apply_guard_cmd=()
+  crypto_check_guard_cmd=()
+fi
+if [ "${#crypto_apply_guard_cmd[@]}" -gt 0 ]; then
+  if "${crypto_apply_guard_cmd[@]}" >"$out_dir/crypto-apply-root.out" 2>&1; then
+    echo 'self-test: non-root crypto secret apply unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq -- 'provision-crypto-secrets: --apply must run as root' \
+    "$out_dir/crypto-apply-root.out" || {
+    cat "$out_dir/crypto-apply-root.out" >&2
+    exit 1
+  }
+  if "${crypto_check_guard_cmd[@]}" >"$out_dir/crypto-check-root.out" 2>&1; then
+    echo 'self-test: non-root crypto secret check unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq -- 'provision-crypto-secrets: --check must run as root' \
+    "$out_dir/crypto-check-root.out" || {
+    cat "$out_dir/crypto-check-root.out" >&2
+    exit 1
+  }
+fi
+
+crypto_path_real="$out_dir/crypto-path-real"
+mkdir -p "$crypto_path_real"
+ln -s "$crypto_path_real" "$out_dir/crypto-path-link"
+if bash "$ops/provision-crypto-secrets.sh" --dry-run \
+   --source-dir "$out_dir/crypto-path-link/secrets" >"$out_dir/crypto-symlink.out" 2>&1; then
+  echo 'self-test: crypto secret provision accepted a symlinked ancestor' >&2
+  exit 1
+fi
+grep -Fq 'must not traverse a symlink' "$out_dir/crypto-symlink.out"
+
+if [ "$(id -u)" -eq 0 ]; then
+  crypto_apply_source="$out_dir/crypto-apply-source"
+  mkdir -p "$crypto_apply_source"
+  chmod 0750 "$crypto_apply_source"
+  crypto_apply_output=$(bash "$ops/provision-crypto-secrets.sh" \
+    --apply --source-dir "$crypto_apply_source")
+  grep -Fq 'CRYPTO_SECRET_PROVISION mode=apply' <<<"$crypto_apply_output"
+  crypto_secret_names=(session_secret csrf_secret cursor_secret backup_encryption_key)
+  for name in "${crypto_secret_names[@]}"; do
+    crypto_file="$crypto_apply_source/$name"
+    [ -f "$crypto_file" ] && [ ! -L "$crypto_file" ]
+    [ "$(stat -c '%u:%g:%a' -- "$crypto_file")" = '0:0:600' ]
+    [ "$(wc -c <"$crypto_file")" -eq 64 ]
+    LC_ALL=C grep -Eq '^[0-9a-f]{64}$' -- "$crypto_file"
+    crypto_value=$(<"$crypto_file")
+    if grep -Fq -- "$crypto_value" <<<"$crypto_apply_output"; then
+      echo "self-test: crypto secret value leaked in apply output: $name" >&2
+      exit 1
+    fi
+  done
+  [ "$(find "$crypto_apply_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 4 ]
+  for ((i = 0; i < ${#crypto_secret_names[@]}; i++)); do
+    for ((j = i + 1; j < ${#crypto_secret_names[@]}; j++)); do
+      if cmp -s "$crypto_apply_source/${crypto_secret_names[i]}" \
+         "$crypto_apply_source/${crypto_secret_names[j]}"; then
+        echo 'self-test: generated crypto source values are not distinct' >&2
+        exit 1
+      fi
+    done
+  done
+  crypto_check_output=$(bash "$ops/provision-crypto-secrets.sh" \
+    --check --source-dir "$crypto_apply_source")
+  grep -Fxq 'CRYPTO_SECRET_CHECK: PASS' <<<"$crypto_check_output"
+  for name in "${crypto_secret_names[@]}"; do
+    crypto_value=$(<"$crypto_apply_source/$name")
+    if grep -Fq -- "$crypto_value" <<<"$crypto_check_output"; then
+      echo "self-test: crypto secret value leaked in check output: $name" >&2
+      exit 1
+    fi
+  done
+
+  crypto_placeholder_fixture='example-test-secret'
+  printf '%s' "$crypto_placeholder_fixture" >"$crypto_apply_source/session_secret"
+  if bash "$ops/provision-crypto-secrets.sh" --check \
+     --source-dir "$crypto_apply_source" >"$out_dir/crypto-placeholder.out" 2>&1; then
+    echo 'self-test: crypto placeholder unexpectedly passed --check' >&2
+    exit 1
+  fi
+  grep -Fq 'must contain exactly 64 lowercase hex characters' \
+    "$out_dir/crypto-placeholder.out"
+  if grep -Fq -- "$crypto_placeholder_fixture" "$out_dir/crypto-placeholder.out"; then
+    echo 'self-test: crypto placeholder value leaked in check output' >&2
+    exit 1
+  fi
+
+  crypto_existing_source="$out_dir/crypto-existing-source"
+  mkdir -p "$crypto_existing_source"
+  chmod 0750 "$crypto_existing_source"
+  printf '%s' sentinel >"$crypto_existing_source/session_secret"
+  if bash "$ops/provision-crypto-secrets.sh" --apply \
+     --source-dir "$crypto_existing_source" >"$out_dir/crypto-existing.out" 2>&1; then
+    echo 'self-test: existing crypto target unexpectedly accepted --apply' >&2
+    exit 1
+  fi
+  grep -Fq 'refusing to overwrite existing crypto secret' "$out_dir/crypto-existing.out"
+  grep -Fxq sentinel "$crypto_existing_source/session_secret"
+  [ "$(find "$crypto_existing_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 1 ]
 fi
 
 # DB source credentials are generated only by the explicit root apply mode.

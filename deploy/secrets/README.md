@@ -88,6 +88,28 @@ decode to exactly 32 bytes. Secret files should use base64 or hex so they stay
 portable UTF-8 one-line files. Keep `cursor_secret` independent from database,
 session, and CSRF secrets; changing it invalidates existing API cursors.
 
+## Generate the four non-KIS cryptographic source files
+
+On a Linux production host, the repository-owned operator helper can generate
+the independent source values before KIS/Auth0 provisioning:
+
+```sh
+scripts/ops/provision-crypto-secrets.sh --dry-run
+sudo scripts/ops/provision-crypto-secrets.sh --apply
+sudo scripts/ops/provision-crypto-secrets.sh --check
+```
+
+It creates only `session_secret`, `csrf_secret`, `cursor_secret`, and
+`backup_encryption_key` under `/etc/lagrange/secrets` (or a safe
+`--source-dir` override). Every value is an independently generated 256-bit
+OpenSSL value represented as exactly 64 lowercase hexadecimal characters with
+no line terminator; files are `root:root` mode `0600` and pairwise distinct.
+The cursor loader accepts this encoding as 32 bytes, while the session/CSRF
+and backup examples require at least 256 bits. `--apply` is explicit and
+root-only, never overwrites an existing target, and writes atomically without
+printing values. `--check` is root-only and read-only; it reports only
+metadata/shape, never a secret or hash, and makes no network/API call.
+
 ## Auth0 confidential client
 
 Configure Auth0 as a first-party Regular Web Application using Client Secret

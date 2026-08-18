@@ -379,6 +379,9 @@ secret은 공급자·Secret Manager에서 Linux에 재발급하거나 암호화�
 
 ~~~bash
 sudo install -d -m 0700 -o root -g root /etc/lagrange/secrets
+# These four KIS-independent source values are 256-bit lowercase hex files.
+sudo scripts/ops/provision-crypto-secrets.sh --apply
+sudo scripts/ops/provision-crypto-secrets.sh --check
 # Apply reads the value twice from a hidden terminal prompt. It does not
 # accept the secret through argv/environment/stdin and makes no Auth0 API call.
 sudo scripts/ops/provision-auth0-secret.sh --apply

@@ -10,6 +10,7 @@ before Compose can reinterpret a value.
 |---|---|---|
 | `provision-linux.sh` | `--dry-run` | `--preflight` and `--apply` inspect/change the approved account/directories as root; `--apply` is the only mutating mode |
 | `provision-db-secrets.sh` | `--dry-run` | `--check` performs a root-only read-only check of the seven DB source files; `--strip-trailing-newline` is an explicit atomic repair for a complete LF-terminated hex set; `--apply` generates new hex values and never overwrites an existing target |
+| `provision-crypto-secrets.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` generates four distinct 256-bit values for session/CSRF/cursor/backup encryption and atomically installs them without overwriting existing targets |
 | `provision-auth0-secret.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` reads the secret twice from a hidden terminal prompt; `--import-file` migrates a protected legacy file; both atomically install one root-owned file without overwriting it |
 | `validate-production-config.sh` | strict `--scope release` validation (root-only read-only inspection) | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
 | `compose-release.sh` | `--scope release --plan` (root-only; it invokes the validator) | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
@@ -19,8 +20,9 @@ before Compose can reinterpret a value.
 
 Production execution is intentionally split into infrastructure, data, and serving approvals:
 
-1. host and non-KIS DB secret provisioning (`provision-linux.sh --apply`,
-   `provision-db-secrets.sh --apply`, then
+1. host and non-KIS source secret provisioning (`provision-linux.sh --apply`,
+   `provision-db-secrets.sh --apply`, `provision-crypto-secrets.sh --apply`,
+   then
    `deploy/secrets/provision-runtime-secrets.sh --scope infrastructure`),
 2. database/raw/schema bootstrap (`compose-release.sh --scope infrastructure --apply`),
 3. KIS data bootstrap/backfill (`deploy/secrets/provision-runtime-secrets.sh --scope backfill`, then
@@ -34,6 +36,37 @@ No script enables Compose `live`, asks for a KIS account/order credential, or
 calls an order endpoint. KOSPI200/KOSDAQ150 candidate backfill is a separate
 blocked workflow until its credentialed candidate bridge and entitlement are
 available. See [`docs/runbooks/kis-production-backfill.md`](../../docs/runbooks/kis-production-backfill.md).
+
+## Generate the non-KIS cryptographic source secrets
+
+The four source files that are independent of KIS/Auth0/database access are
+`session_secret`, `csrf_secret`, `cursor_secret`, and
+`backup_encryption_key`. Inspect the no-change plan first:
+
+```sh
+scripts/ops/provision-crypto-secrets.sh --dry-run
+```
+
+Generate them only with the explicit root operation, then verify read-only:
+
+```sh
+sudo scripts/ops/provision-crypto-secrets.sh --apply
+sudo scripts/ops/provision-crypto-secrets.sh --check
+```
+
+Each file is an independently generated 256-bit OpenSSL CSPRNG value encoded
+as exactly 64 lowercase hexadecimal characters, with no trailing newline,
+owned by `root:root`, mode `0600`, and pairwise distinct. This representation
+matches the API cursor loader's accepted 64-hex/32-byte contract; session and
+CSRF skeletons and the backup encryption passphrase contract require at least
+256 bits, which the same representation supplies. The helper performs no KIS,
+Auth0, database, or other network/API call. It never prints values, accepts a
+secret through argv/environment, or overwrites an existing target.
+
+`--check` reports only filenames plus metadata/shape reasons and does not emit
+secret contents or hashes. The safe `--source-dir ABSOLUTE_PATH` override is
+available for isolated tests; its directory must be root-owned, not
+group/other-writable, and have no `..` component or symlinked ancestor.
 
 ## Provision the Auth0 client secret
 

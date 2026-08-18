@@ -11,8 +11,8 @@ grep -Fq 'uses Compose interpolation, quote, escape' "$ops/lib/dotenv.sh" \
   || die 'dotenv parser must reject Compose interpretation syntax'
 
 for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
-  validate-production-config.sh compose-release.sh backfill-production.sh \
-  post-backfill-health.sh self-test.sh; do
+  provision-crypto-secrets.sh validate-production-config.sh compose-release.sh \
+  backfill-production.sh post-backfill-health.sh self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
@@ -65,6 +65,51 @@ grep -Fq 'cp -- "$import_file" "$staged"' "$auth0_secret" \
 for forbidden in curl wget docker psql openssl; do
   if grep -Eiq "^[^#]*($forbidden)" "$auth0_secret"; then
     die "Auth0 secret provisioner must not reference $forbidden"
+  fi
+done
+
+crypto_secrets="$ops/provision-crypto-secrets.sh"
+grep -Fq 'mode=dry-run' "$crypto_secrets" \
+  || die 'crypto secret provisioner must default to a dry-run plan'
+grep -Fq 'mode=check' "$crypto_secrets" \
+  || die 'crypto secret read-only check mode missing'
+grep -Fq -- '--check must run as root' "$crypto_secrets" \
+  || die 'crypto secret check root guard missing'
+grep -Fq -- '--apply must run as root' "$crypto_secrets" \
+  || die 'crypto secret apply root guard missing'
+grep -Fq 'default_source_dir=/etc/lagrange/secrets' "$crypto_secrets" \
+  || die 'crypto secret source default missing'
+grep -Fq 'session_secret' "$crypto_secrets" \
+  || die 'session secret inventory missing'
+grep -Fq 'csrf_secret' "$crypto_secrets" \
+  || die 'CSRF secret inventory missing'
+grep -Fq 'cursor_secret' "$crypto_secrets" \
+  || die 'cursor secret inventory missing'
+grep -Fq 'backup_encryption_key' "$crypto_secrets" \
+  || die 'backup encryption key inventory missing'
+grep -Fq 'must not contain' "$crypto_secrets" \
+  || die 'crypto secret dot-dot path fence missing'
+grep -Fq 'must not traverse a symlink' "$crypto_secrets" \
+  || die 'crypto secret ancestor symlink fence missing'
+grep -Fq 'source directory must be owned by uid 0' "$crypto_secrets" \
+  || die 'crypto secret source ownership fence missing'
+grep -Fq 'source directory must not be group/other writable' "$crypto_secrets" \
+  || die 'crypto secret source write fence missing'
+grep -Fq 'openssl rand -hex 32' "$crypto_secrets" \
+  || die 'crypto secret generator must use 256-bit OpenSSL values'
+grep -Fq 'cmp -s' "$crypto_secrets" \
+  || die 'crypto secret distinctness check missing'
+grep -Fq 'CRYPTO_SECRET_CHECK: PASS' "$crypto_secrets" \
+  || die 'crypto secret check pass output missing'
+grep -Fq 'ln -T' "$crypto_secrets" \
+  || die 'crypto secret atomic no-clobber install missing'
+grep -Fq "'%u:%g:%a'" "$crypto_secrets" \
+  || die 'crypto secret ownership/mode inspection missing'
+grep -Fq 'wc -c' "$crypto_secrets" \
+  || die 'crypto secret shape inspection missing'
+for forbidden in curl wget docker psql; do
+  if grep -Eiq "^[^#]*($forbidden)" "$crypto_secrets"; then
+    die "crypto secret provisioner must not reference $forbidden"
   fi
 done
 

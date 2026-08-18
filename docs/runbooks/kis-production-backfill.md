@@ -48,6 +48,8 @@ sudo scripts/ops/provision-linux.sh --preflight
 sudo scripts/ops/provision-linux.sh --apply
 sudo scripts/ops/provision-db-secrets.sh --apply
 sudo scripts/ops/provision-db-secrets.sh --check
+sudo scripts/ops/provision-crypto-secrets.sh --apply
+sudo scripts/ops/provision-crypto-secrets.sh --check
 sudo deploy/secrets/provision-runtime-secrets.sh --scope infrastructure
 ```
 
