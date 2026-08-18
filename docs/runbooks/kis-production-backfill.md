@@ -188,6 +188,24 @@ identity에 들어가지 않으므로, 백필 후 승인 pin을 `.env`에 입력
 deterministic normalized ID와 exact manifest/evidence 비교가 재시도·crash
 recovery의 기준이다.
 
+### 2.1 KSD 기업행사 페이지네이션 계약
+
+KSD 여섯 endpoint path의 페이지네이션은 사용자가 승인한 현재 공식
+[`koreainvestment/open-trading-api` 예제](https://github.com/koreainvestment/open-trading-api/blob/main/examples_user/domestic_stock/domestic_stock_functions.py)의
+endpoint-specific 동작을 따른다. 첫 요청은 `CTS`와 `tr_cont`를 빈 값으로 보내고,
+응답 헤더가 정확히 `M`일 때만 같은 query(빈 `CTS`)로 다음 요청을 하며 다음 요청의
+`tr_cont`는 `N`으로 보낸다. `F`, 빈 값, 그 밖의 값은 종료로 처리한다. 페이지 수는
+최대 10개이며, 같은 응답 bytes가 다시 오면 중복 페이지로 간주해 Raw 저장 전에
+fail-closed 중단한다. 페이지는 `*-page-01.json`, `*-page-02.json`처럼 별도 불변
+envelope으로 유지하고, 모든 페이지의 응답 검증이 끝나기 전에는 Raw manifest를
+공개하지 않는다.
+
+제공된 `docs/kis_openapi_entiredocs_20260818_030007.xlsx`의 KSD 설명은
+페이지네이션 불가/`CTS` 공백으로 적혀 있어 위 GitHub 예제와 충돌한다. 이번 운영
+범위에서는 사용자가 지정한 최신 공식 GitHub 예제를 KSD의 좁은 `M → N` 규칙에
+우선 적용하되, XLSX의 충돌 사실을 이 문서와 테스트에 남긴다. 이 예외는 KSD 여섯
+path에만 적용하며 `chk-holiday`, 일봉, 현재가 조회에는 전파하지 않는다.
+
 전체 Raw/Curated manifest recovery는 range 시작에 한 번 수행한다. 신규 날짜마다
 전체 manifest를 다시 훑지 않으며, range가 끝날 때 cumulative Curated generation을
 한 번 생성한다. 마지막 날짜의 canonical event는 이 최종 Curated 단계까지 성공한

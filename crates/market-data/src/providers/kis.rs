@@ -33,11 +33,13 @@ const CALENDAR_TR_ID: &str = "CTCA0903R";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaginationPolicy {
     SinglePage,
-    /// KSD schedule responses are single-page in the reviewed XLSX contract.
-    /// A non-empty continuation marker is not silently ignored because doing
-    /// so could publish a truncated first page.
-    KsdSinglePage,
+    /// KSD schedule responses follow the endpoint-specific official GitHub
+    /// sample: an initial blank `tr_cont`, followed by `N` only when the
+    /// response header is exactly `M`. `F` and every other marker are terminal.
+    KsdGithubSample,
 }
+
+const KSD_MAX_PAGES: usize = 10;
 
 /// Async read seam implemented by the production KIS client and by fixtures.
 #[allow(async_fn_in_trait)]
@@ -247,7 +249,7 @@ impl<R: KisRead> KisProvider<R> {
                             endpoint.path,
                             endpoint.tr_id,
                             endpoint.query,
-                            PaginationPolicy::KsdSinglePage,
+                            PaginationPolicy::KsdGithubSample,
                             &mut envelopes,
                         )
                         .await?;
@@ -344,62 +346,85 @@ impl<R: KisRead> KisProvider<R> {
         pagination: PaginationPolicy,
         output: &mut Vec<RawEnvelope>,
     ) -> Result<(), ProviderError> {
-        let continuation: Option<String> = None;
-        // Every reviewed endpoint consumes exactly one page. Any future
-        // expansion must add an explicit endpoint-specific rule rather than
-        // restoring generic M/F following.
-        let page = 1;
-        let sent_query = query.clone();
-        let reply = self
-            .reader
-            .get(path, tr_id, &sent_query, continuation.as_deref())
-            .await
-            .map_err(|error| remote_error(kind, path, error))?;
-        let MarketDataReply {
-            body,
-            continuation: marker,
-        } = reply;
-        let file_name = match symbol {
-            Some(symbol) => format!("{label}-{symbol}-page-{page:02}.json"),
-            None => format!("{label}-page-{page:02}.json"),
-        };
-        // The reviewed XLSX marks chk-holiday and all KSD schedule
-        // endpoints as not supporting pagination.  Daily bars and
-        // reference quotes are also single-page.  For KSD, a non-empty
-        // marker is an unsupported continuation signal: do not issue a
-        // second request and do not expose the first page to Raw.
-        if pagination == PaginationPolicy::KsdSinglePage
-            && marker
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-        {
-            return Err(pagination_error(
-                kind,
-                path,
-                "BROKER_PAGINATION_UNSUPPORTED",
-                "non-empty KSD continuation marker is unsupported for this single-page endpoint",
-            ));
-        }
-        output.push(RawEnvelope::new(
-            req.batch_id,
-            kind,
-            file_name,
-            body,
-            req.now,
-            RequestMetadata {
-                endpoint: path.to_owned(),
-                query: sent_query,
-                headers: vec![
-                    ("authorization".to_owned(), "[REDACTED]".to_owned()),
-                    ("appkey".to_owned(), "[REDACTED]".to_owned()),
-                    ("appsecret".to_owned(), "[REDACTED]".to_owned()),
-                    ("tr_id".to_owned(), tr_id.to_owned()),
-                ],
-                mode: FetchMode::Credentialed,
-            },
-        ));
+        let mut continuation: Option<String> = None;
+        let mut previous_bodies: Vec<Vec<u8>> = Vec::new();
+        let mut pages = Vec::new();
 
-        Ok(())
+        for page in 1..=KSD_MAX_PAGES {
+            // The official KSD sample keeps CTS unchanged (blank for this
+            // adapter) and changes only the request continuation header to
+            // `N` after an `M` response. Do not carry broker CTS values.
+            let sent_query = query.clone();
+            let request_continuation = continuation.clone();
+            let reply = self
+                .reader
+                .get(path, tr_id, &sent_query, request_continuation.as_deref())
+                .await
+                .map_err(|error| remote_error(kind, path, error))?;
+            let MarketDataReply {
+                body,
+                continuation: marker,
+            } = reply;
+
+            // A repeated opaque body is the broker returning the same page
+            // again. Stop before retaining either page so a bad continuation
+            // cannot become visible as a duplicate Raw response.
+            if previous_bodies.iter().any(|previous| previous == &body) {
+                return Err(pagination_error(
+                    kind,
+                    path,
+                    "BROKER_PAGINATION_STALLED",
+                    "KSD continuation returned repeated response bytes",
+                ));
+            }
+
+            let file_name = match symbol {
+                Some(symbol) => format!("{label}-{symbol}-page-{page:02}.json"),
+                None => format!("{label}-page-{page:02}.json"),
+            };
+            pages.push(RawEnvelope::new(
+                req.batch_id,
+                kind,
+                file_name,
+                body.clone(),
+                req.now,
+                RequestMetadata {
+                    endpoint: path.to_owned(),
+                    query: sent_query,
+                    headers: vec![
+                        ("authorization".to_owned(), "[REDACTED]".to_owned()),
+                        ("appkey".to_owned(), "[REDACTED]".to_owned()),
+                        ("appsecret".to_owned(), "[REDACTED]".to_owned()),
+                        ("tr_id".to_owned(), tr_id.to_owned()),
+                        (
+                            "tr_cont".to_owned(),
+                            request_continuation.unwrap_or_default(),
+                        ),
+                    ],
+                    mode: FetchMode::Credentialed,
+                },
+            ));
+
+            let follows =
+                pagination == PaginationPolicy::KsdGithubSample && marker.as_deref() == Some("M");
+            if !follows {
+                output.extend(pages);
+                return Ok(());
+            }
+
+            previous_bodies.push(body);
+            if page == KSD_MAX_PAGES {
+                return Err(pagination_error(
+                    kind,
+                    path,
+                    "BROKER_PAGINATION_LIMIT",
+                    "KSD continuation exceeded the bounded page limit",
+                ));
+            }
+            continuation = Some("N".to_owned());
+        }
+
+        unreachable!("the bounded KSD pagination loop returns on every page")
     }
 }
 
@@ -681,10 +706,8 @@ pub(crate) fn validate_kis_response(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
-    };
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
 
     use domain::{BatchId, TradingDate, UtcTimestamp};
     use kis_client::MarketDataReply;
@@ -702,6 +725,8 @@ mod tests {
 
     #[derive(Debug)]
     struct RecordedCall {
+        path: String,
+        tr_id: String,
         query: Vec<(String, String)>,
         continuation: Option<String>,
     }
@@ -736,11 +761,13 @@ mod tests {
         async fn get(
             &self,
             path: &str,
-            _tr_id: &str,
+            tr_id: &str,
             query: &[(String, String)],
             continuation: Option<&str>,
         ) -> Result<MarketDataReply, KisError> {
             self.calls.lock().unwrap().push(RecordedCall {
+                path: path.to_owned(),
+                tr_id: tr_id.to_owned(),
                 query: query.to_vec(),
                 continuation: continuation.map(str::to_owned),
             });
@@ -804,29 +831,42 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct MarkerReader {
-        marker: Option<&'static str>,
-        cts: Option<&'static str>,
-        calls: AtomicUsize,
+    struct ScriptedReader {
+        replies: Mutex<VecDeque<MarketDataReply>>,
+        calls: Mutex<Vec<RecordedCall>>,
     }
 
-    impl KisRead for MarkerReader {
+    impl ScriptedReader {
+        fn new(replies: impl IntoIterator<Item = MarketDataReply>) -> Self {
+            Self {
+                replies: Mutex::new(replies.into_iter().collect()),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl KisRead for ScriptedReader {
         async fn get(
             &self,
-            _path: &str,
-            _tr_id: &str,
-            _query: &[(String, String)],
-            _continuation: Option<&str>,
+            path: &str,
+            tr_id: &str,
+            query: &[(String, String)],
+            continuation: Option<&str>,
         ) -> Result<MarketDataReply, KisError> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            let body = self
-                .cts
-                .map(|cts| format!(r#"{{"rt_cd":"0","cts":"{cts}","output1":[]}}"#).into_bytes())
-                .unwrap_or_else(|| br#"{"rt_cd":"0","output1":[]}"#.to_vec());
-            Ok(MarketDataReply {
-                body,
-                continuation: self.marker.map(str::to_owned),
-            })
+            self.calls.lock().unwrap().push(RecordedCall {
+                path: path.to_owned(),
+                tr_id: tr_id.to_owned(),
+                query: query.to_vec(),
+                continuation: continuation.map(str::to_owned),
+            });
+            self.replies
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or_else(|| KisError::SchemaDrift {
+                    endpoint: path.to_owned(),
+                    detail: "fixture exhausted".to_owned(),
+                })
         }
     }
 
@@ -1087,46 +1127,165 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ksd_action_nonempty_marker_fails_before_raw_visibility() {
-        for marker in [Some("M"), Some("F"), Some("unknown")] {
-            let reader = MarkerReader {
-                marker,
-                cts: Some("next-cts"),
-                calls: AtomicUsize::new(0),
-            };
-            let provider = KisProvider::kr_etf_core(reader);
-            let mut output = Vec::new();
-            let error = provider
-                .fetch_pages(
-                    &request(vec![ResponseKind::CorporateActions]),
-                    ResponseKind::CorporateActions,
-                    "fixture",
-                    None,
-                    "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
-                    "HHKDB669101C0",
-                    vec![("CTS".to_owned(), String::new())],
-                    PaginationPolicy::KsdSinglePage,
-                    &mut output,
-                )
-                .await
-                .expect_err("non-empty KSD marker must fail closed");
-            assert!(matches!(
-                error,
-                ProviderError::Remote {
-                    code: "BROKER_PAGINATION_UNSUPPORTED",
-                    ..
-                }
-            ));
-            assert_eq!(provider.reader.calls.load(Ordering::SeqCst), 1);
-            assert!(output.is_empty());
-        }
+    async fn ksd_action_follows_exact_m_then_terminal_marker() {
+        let reader = ScriptedReader::new([
+            MarketDataReply {
+                body: br#"{"rt_cd":"0","output1":[{"page":"one"}]}"#.to_vec(),
+                continuation: Some("M".to_owned()),
+            },
+            MarketDataReply {
+                body: br#"{"rt_cd":"0","output1":[{"page":"two"}]}"#.to_vec(),
+                continuation: Some("F".to_owned()),
+            },
+        ]);
+        let provider = KisProvider::kr_etf_core(reader);
+        let mut output = Vec::new();
+        provider
+            .fetch_pages(
+                &request(vec![ResponseKind::CorporateActions]),
+                ResponseKind::CorporateActions,
+                "corporate-actions-bonus",
+                None,
+                "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
+                "HHKDB669101C0",
+                vec![
+                    ("CTS".to_owned(), String::new()),
+                    ("F_DT".to_owned(), "20260818".to_owned()),
+                    ("T_DT".to_owned(), "20260818".to_owned()),
+                    ("SHT_CD".to_owned(), String::new()),
+                ],
+                PaginationPolicy::KsdGithubSample,
+                &mut output,
+            )
+            .await
+            .expect("official M then terminal flow");
 
-        for marker in [None, Some(""), Some("  ")] {
-            let reader = MarkerReader {
-                marker,
-                cts: Some("ignored-cts"),
-                calls: AtomicUsize::new(0),
-            };
+        assert_eq!(
+            output
+                .iter()
+                .map(|envelope| envelope.file_name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "corporate-actions-bonus-page-01.json",
+                "corporate-actions-bonus-page-02.json"
+            ]
+        );
+        let calls = provider.reader.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].path, "/uapi/domestic-stock/v1/ksdinfo/bonus-issue");
+        assert_eq!(calls[0].tr_id, "HHKDB669101C0");
+        assert_eq!(calls[0].continuation, None);
+        assert_eq!(calls[1].continuation.as_deref(), Some("N"));
+        assert_eq!(calls[0].query, calls[1].query);
+        assert_eq!(
+            calls[0].query,
+            vec![
+                ("CTS".to_owned(), String::new()),
+                ("F_DT".to_owned(), "20260818".to_owned()),
+                ("T_DT".to_owned(), "20260818".to_owned()),
+                ("SHT_CD".to_owned(), String::new()),
+            ]
+        );
+        assert_eq!(
+            output[0]
+                .request
+                .headers
+                .iter()
+                .find(|(name, _)| name == "tr_cont")
+                .map(|(_, value)| value.as_str()),
+            Some("")
+        );
+        assert_eq!(
+            output[1]
+                .request
+                .headers
+                .iter()
+                .find(|(name, _)| name == "tr_cont")
+                .map(|(_, value)| value.as_str()),
+            Some("N")
+        );
+    }
+
+    #[tokio::test]
+    async fn ksd_action_repeated_response_bytes_fail_closed_without_partial_output() {
+        let body = br#"{"rt_cd":"0","output1":[{"page":"same"}]}"#.to_vec();
+        let reader = ScriptedReader::new([
+            MarketDataReply {
+                body: body.clone(),
+                continuation: Some("M".to_owned()),
+            },
+            MarketDataReply {
+                body,
+                continuation: Some("M".to_owned()),
+            },
+        ]);
+        let provider = KisProvider::kr_etf_core(reader);
+        let mut output = Vec::new();
+        let error = provider
+            .fetch_pages(
+                &request(vec![ResponseKind::CorporateActions]),
+                ResponseKind::CorporateActions,
+                "fixture",
+                None,
+                "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
+                "HHKDB669101C0",
+                vec![("CTS".to_owned(), String::new())],
+                PaginationPolicy::KsdGithubSample,
+                &mut output,
+            )
+            .await
+            .expect_err("repeated continuation payload must stop");
+        assert!(matches!(
+            error,
+            ProviderError::Remote {
+                code: "BROKER_PAGINATION_STALLED",
+                ..
+            }
+        ));
+        assert!(output.is_empty());
+        assert_eq!(provider.reader.calls.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn ksd_action_page_cap_fails_closed_without_partial_output() {
+        let reader = ScriptedReader::new((0..KSD_MAX_PAGES).map(|page| MarketDataReply {
+            body: format!(r#"{{"rt_cd":"0","output1":[{{"page":"{page}"}}]}}"#).into_bytes(),
+            continuation: Some("M".to_owned()),
+        }));
+        let provider = KisProvider::kr_etf_core(reader);
+        let mut output = Vec::new();
+        let error = provider
+            .fetch_pages(
+                &request(vec![ResponseKind::CorporateActions]),
+                ResponseKind::CorporateActions,
+                "fixture",
+                None,
+                "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
+                "HHKDB669101C0",
+                vec![("CTS".to_owned(), String::new())],
+                PaginationPolicy::KsdGithubSample,
+                &mut output,
+            )
+            .await
+            .expect_err("continuation must not exceed the page cap");
+        assert!(matches!(
+            error,
+            ProviderError::Remote {
+                code: "BROKER_PAGINATION_LIMIT",
+                ..
+            }
+        ));
+        assert!(output.is_empty());
+        assert_eq!(provider.reader.calls.lock().unwrap().len(), KSD_MAX_PAGES);
+    }
+
+    #[tokio::test]
+    async fn ksd_action_non_m_markers_are_terminal_without_other_endpoint_calls() {
+        for marker in ["F", "unknown"] {
+            let reader = ScriptedReader::new([MarketDataReply {
+                body: br#"{"rt_cd":"0","output1":[]}"#.to_vec(),
+                continuation: Some(marker.to_owned()),
+            }]);
             let provider = KisProvider::kr_etf_core(reader);
             let mut output = Vec::new();
             provider
@@ -1135,16 +1294,26 @@ mod tests {
                     ResponseKind::CorporateActions,
                     "fixture",
                     None,
-                    "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
-                    "HHKDB669101C0",
-                    vec![("CTS".to_owned(), String::new())],
-                    PaginationPolicy::KsdSinglePage,
+                    "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
+                    "HHKDB669100C0",
+                    vec![
+                        ("CTS".to_owned(), String::new()),
+                        ("GB1".to_owned(), "1".to_owned()),
+                    ],
+                    PaginationPolicy::KsdGithubSample,
                     &mut output,
                 )
                 .await
-                .expect("absent/blank KSD marker is a terminal single page");
+                .expect("non-M is terminal per exact GitHub sample");
             assert_eq!(output.len(), 1);
-            assert_eq!(provider.reader.calls.load(Ordering::SeqCst), 1);
+            let calls = provider.reader.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(
+                calls[0].path,
+                "/uapi/domestic-stock/v1/ksdinfo/paidin-capin"
+            );
+            assert_eq!(calls[0].tr_id, "HHKDB669100C0");
+            assert!(calls[0].continuation.is_none());
         }
     }
 

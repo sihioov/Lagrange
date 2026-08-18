@@ -50,9 +50,15 @@ project.
 - `chk-holiday` is single-page for this project.  Send blank continuation fields, consume only the
   first response, require the exact target date, and do not call it more than once per daily run.
   Do not follow contradictory continuation tokens returned by that endpoint.
-- Daily bars, reference quotes, and KSD schedules are single-page.  KSD requests keep `CTS` blank;
-  an absent/blank continuation marker is terminal, while any nonempty marker fails closed before
-  Raw visibility.  Never follow generic sample-code `M`/`F` handling for these reviewed endpoints.
+- Daily bars, reference quotes, and `chk-holiday` remain single-page.  Those requests keep their
+  continuation fields blank and never follow a broker marker.  For the six KSD action endpoint
+  paths, the user-approved current official GitHub sample takes precedence over the contradictory
+  XLSX pagination note: initial `CTS` and `tr_cont` are blank; only an exact response header
+  `tr_cont=M` permits one or more next GETs with the unchanged query (including blank `CTS`) and
+  request header `tr_cont=N`.  `F`, blank, or any other marker is terminal.  KSD pagination is
+  bounded at ten pages and repeated response bytes fail closed before any Raw batch is visible.
+  The discrepancy and the exact sample behavior are recorded in the KIS backfill runbook; no
+  other endpoint may inherit this continuation policy.
 - Malformed JSON, nonzero `rt_cd`, an undocumented response shape, or a missing target observation
   also fails closed.
 - Raw data becomes visible only after HTTP success, JSON/schema validation, and immutable hash
