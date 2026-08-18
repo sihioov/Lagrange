@@ -7,7 +7,7 @@ out_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-ops-self-test.XXXXXX")
 trap 'rm -rf -- "$out_dir"' EXIT
 
 for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
-  provision-crypto-secrets.sh validate-production-config.sh compose-release.sh \
+  provision-crypto-secrets.sh provision-kis-credentials.sh validate-production-config.sh compose-release.sh \
   backfill-production.sh post-backfill-health.sh; do
   bash -n "$ops/$script"
 done
@@ -213,6 +213,158 @@ if [ "$(id -u)" -eq 0 ]; then
     "$out_dir/auth0-import-existing.out"
   if grep -Fq -- "$auth0_import_fixture" "$out_dir/auth0-import-existing.out"; then
     echo 'self-test: imported Auth0 fixture value leaked on target refusal' >&2
+    exit 1
+  fi
+fi
+
+# KIS app-key/app-secret provisioning is interactive and is never exercised
+# with a real credential here. Exercise its plan, root-only guards, path fence,
+# read-only shape checks, pairwise distinctness, no-overwrite gate, and output
+# non-disclosure with deterministic fixture text.
+kis_credential_plan=$(bash "$ops/provision-kis-credentials.sh" --dry-run \
+  --source-dir "$out_dir/kis-plan-source")
+grep -Fq 'KIS_CREDENTIAL_PROVISION mode=dry-run' <<<"$kis_credential_plan"
+grep -Fq 'DRY_RUN: no files created' <<<"$kis_credential_plan"
+[ ! -e "$out_dir/kis-plan-source" ]
+
+kis_source="$out_dir/kis-source"
+mkdir -p "$kis_source"
+chmod 0750 "$kis_source"
+if [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+  kis_apply_guard_cmd=(runuser -u nobody -- \
+    bash "$ops/provision-kis-credentials.sh" --apply --source-dir "$kis_source")
+  kis_check_guard_cmd=(runuser -u nobody -- \
+    bash "$ops/provision-kis-credentials.sh" --check --source-dir "$kis_source")
+elif [ "$(id -u)" -ne 0 ]; then
+  kis_apply_guard_cmd=(bash "$ops/provision-kis-credentials.sh" --apply --source-dir "$kis_source")
+  kis_check_guard_cmd=(bash "$ops/provision-kis-credentials.sh" --check --source-dir "$kis_source")
+else
+  kis_apply_guard_cmd=()
+  kis_check_guard_cmd=()
+fi
+if [ "${#kis_apply_guard_cmd[@]}" -gt 0 ]; then
+  if "${kis_apply_guard_cmd[@]}" >"$out_dir/kis-apply-root.out" 2>&1; then
+    echo 'self-test: non-root KIS credential apply unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq -- 'provision-kis-credentials: --apply must run as root' \
+    "$out_dir/kis-apply-root.out" || {
+    cat "$out_dir/kis-apply-root.out" >&2
+    exit 1
+  }
+  if "${kis_check_guard_cmd[@]}" >"$out_dir/kis-check-root.out" 2>&1; then
+    echo 'self-test: non-root KIS credential check unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq -- 'provision-kis-credentials: --check must run as root' \
+    "$out_dir/kis-check-root.out" || {
+    cat "$out_dir/kis-check-root.out" >&2
+    exit 1
+  }
+fi
+
+kis_path_real="$out_dir/kis-path-real"
+mkdir -p "$kis_path_real"
+ln -s "$kis_path_real" "$out_dir/kis-path-link"
+if bash "$ops/provision-kis-credentials.sh" --dry-run \
+   --source-dir "$out_dir/kis-path-link/secrets" >"$out_dir/kis-symlink.out" 2>&1; then
+  echo 'self-test: KIS credential provision accepted a symlinked ancestor' >&2
+  exit 1
+fi
+grep -Fq 'must not traverse a symlink' "$out_dir/kis-symlink.out"
+
+kis_key_fixture='alpha-value-0123456789'
+kis_secret_fixture='beta-value-9876543210'
+if [ "$(id -u)" -eq 0 ]; then
+  if command -v script >/dev/null 2>&1; then
+    kis_apply_source="$out_dir/kis-apply-source"
+    mkdir -p "$kis_apply_source"
+    chmod 0750 "$kis_apply_source"
+    kis_apply_output=$(printf '%s\n' \
+      "$kis_key_fixture" "$kis_key_fixture" \
+      "$kis_secret_fixture" "$kis_secret_fixture" | \
+      script -qefE never -c \
+      "bash '$ops/provision-kis-credentials.sh' --apply --source-dir '$kis_apply_source'" \
+      /dev/null 2>&1)
+    grep -Fq 'KIS_CREDENTIAL_PROVISION mode=apply' <<<"$kis_apply_output"
+    for name in kis_app_key kis_app_secret; do
+      kis_file="$kis_apply_source/$name"
+      [ "$(stat -c '%u:%g:%a' -- "$kis_file")" = '0:0:600' ]
+      [ "$(wc -l <"$kis_file")" -eq 0 ]
+      [ "$(wc -c <"$kis_file")" -gt 0 ]
+    done
+    if grep -Eq "$kis_key_fixture|$kis_secret_fixture" <<<"$kis_apply_output"; then
+      echo 'self-test: KIS fixture value leaked in interactive apply output' >&2
+      exit 1
+    fi
+  fi
+  printf '%s' "$kis_key_fixture" >"$kis_source/kis_app_key"
+  printf '%s' "$kis_secret_fixture" >"$kis_source/kis_app_secret"
+  chown root:root -- "$kis_source/kis_app_key" "$kis_source/kis_app_secret"
+  chmod 0600 -- "$kis_source/kis_app_key" "$kis_source/kis_app_secret"
+  if bash "$ops/provision-kis-credentials.sh" --check \
+     --source-dir "$kis_source" >"$out_dir/kis-check-valid.out" 2>&1; then
+    grep -Fxq 'KIS_CREDENTIAL_CHECK: PASS' "$out_dir/kis-check-valid.out"
+  else
+    cat "$out_dir/kis-check-valid.out" >&2
+    exit 1
+  fi
+  if grep -Eq "$kis_key_fixture|$kis_secret_fixture" "$out_dir/kis-check-valid.out"; then
+    echo 'self-test: KIS fixture value leaked in valid check output' >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$kis_key_fixture" >"$kis_source/kis_app_key"
+  if bash "$ops/provision-kis-credentials.sh" --check \
+     --source-dir "$kis_source" >"$out_dir/kis-check-newline.out" 2>&1; then
+    echo 'self-test: newline-terminated KIS credential unexpectedly passed --check' >&2
+    exit 1
+  fi
+  grep -Fq 'one non-empty printable whitespace-free line' "$out_dir/kis-check-newline.out"
+  if grep -Fq -- "$kis_key_fixture" "$out_dir/kis-check-newline.out"; then
+    echo 'self-test: KIS fixture value leaked in newline check output' >&2
+    exit 1
+  fi
+
+  printf '%s' 'replace-me' >"$kis_source/kis_app_key"
+  printf '%s' "$kis_secret_fixture" >"$kis_source/kis_app_secret"
+  if bash "$ops/provision-kis-credentials.sh" --check \
+     --source-dir "$kis_source" >"$out_dir/kis-check-placeholder.out" 2>&1; then
+    echo 'self-test: KIS placeholder unexpectedly passed --check' >&2
+    exit 1
+  fi
+  grep -Fq 'no placeholder' "$out_dir/kis-check-placeholder.out"
+  if grep -Fq 'replace-me' "$out_dir/kis-check-placeholder.out"; then
+    echo 'self-test: KIS placeholder leaked in check output' >&2
+    exit 1
+  fi
+
+  printf '%s' "$kis_key_fixture" >"$kis_source/kis_app_key"
+  printf '%s' "$kis_key_fixture" >"$kis_source/kis_app_secret"
+  if bash "$ops/provision-kis-credentials.sh" --check \
+     --source-dir "$kis_source" >"$out_dir/kis-check-duplicate.out" 2>&1; then
+    echo 'self-test: duplicate KIS credentials unexpectedly passed --check' >&2
+    exit 1
+  fi
+  grep -Fq 'values must differ' "$out_dir/kis-check-duplicate.out"
+  if grep -Fq -- "$kis_key_fixture" "$out_dir/kis-check-duplicate.out"; then
+    echo 'self-test: duplicate KIS fixture leaked in check output' >&2
+    exit 1
+  fi
+
+  printf '%s' 'existing-target-sentinel' >"$kis_source/kis_app_key"
+  printf '%s' "$kis_secret_fixture" >"$kis_source/kis_app_secret"
+  if bash "$ops/provision-kis-credentials.sh" --apply \
+     --source-dir "$kis_source" >"$out_dir/kis-existing-apply.out" 2>&1; then
+    echo 'self-test: existing KIS target unexpectedly accepted --apply' >&2
+    exit 1
+  fi
+  grep -Fq 'refusing to overwrite an existing KIS credential' \
+    "$out_dir/kis-existing-apply.out"
+  grep -Fxq 'existing-target-sentinel' "$kis_source/kis_app_key"
+  [ "$(find "$kis_source" -maxdepth 1 -name '.lagrange-kis-credentials.*' -print | wc -l)" -eq 0 ]
+  if grep -Fq 'existing-target-sentinel' "$out_dir/kis-existing-apply.out"; then
+    echo 'self-test: existing KIS fixture value leaked in apply output' >&2
     exit 1
   fi
 fi

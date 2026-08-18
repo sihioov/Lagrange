@@ -11,6 +11,7 @@ before Compose can reinterpret a value.
 | `provision-linux.sh` | `--dry-run` | `--preflight` and `--apply` inspect/change the approved account/directories as root; `--apply` is the only mutating mode |
 | `provision-db-secrets.sh` | `--dry-run` | `--check` performs a root-only read-only check of the seven DB source files; `--strip-trailing-newline` is an explicit atomic repair for a complete LF-terminated hex set; `--apply` generates new hex values and never overwrites an existing target |
 | `provision-crypto-secrets.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` generates four distinct 256-bit values for session/CSRF/cursor/backup encryption and atomically installs them without overwriting existing targets |
+| `provision-kis-credentials.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` reads both KIS values twice from a hidden terminal prompt and atomically installs the distinct root-owned pair without overwriting either target |
 | `provision-auth0-secret.sh` | `--dry-run` | `--check` performs a root-only read-only check; `--apply` reads the secret twice from a hidden terminal prompt; `--import-file` migrates a protected legacy file; both atomically install one root-owned file without overwriting it |
 | `validate-production-config.sh` | strict `--scope release` validation (root-only read-only inspection) | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope serving-prereqs` checks all non-KIS serving source/runtime copies without RESEARCH/KIS/dataset inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
 | `compose-release.sh` | `--scope release --plan` (root-only; it invokes the validator) | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
@@ -30,7 +31,9 @@ pre-staging, data, and serving approvals:
    `deploy/secrets/provision-runtime-secrets.sh --scope serving-prereqs` and
    verify them with `validate-production-config.sh --scope serving-prereqs`;
    this is copy/readiness-only and never starts Compose services,
-4. KIS data bootstrap/backfill (`deploy/secrets/provision-runtime-secrets.sh --scope backfill`, then
+4. KIS credential/data bootstrap and backfill (`provision-kis-credentials.sh --dry-run`,
+   then its explicit root-only `--apply`/`--check`, followed by
+   `deploy/secrets/provision-runtime-secrets.sh --scope backfill`, then
    `compose-release.sh --scope backfill --apply`, then
    the bounded ETF `research-worker --once` backfill command), followed by the
    dependency-free worker healthcheck, curated dataset approval, and
@@ -41,6 +44,41 @@ No script enables Compose `live`, asks for a KIS account/order credential, or
 calls an order endpoint. KOSPI200/KOSDAQ150 candidate backfill is a separate
 blocked workflow until its credentialed candidate bridge and entitlement are
 available. See [`docs/runbooks/kis-production-backfill.md`](../../docs/runbooks/kis-production-backfill.md).
+
+## Provision the read-only KIS app credentials
+
+The source targets are `/etc/lagrange/secrets/kis_app_key` and
+`/etc/lagrange/secrets/kis_app_secret`. Inspect the no-change plan first:
+
+```sh
+scripts/ops/provision-kis-credentials.sh --dry-run
+```
+
+After the operator has obtained the approved read-only KIS credentials, enter
+them only at the hidden root terminal prompt and verify the resulting files:
+
+```sh
+sudo scripts/ops/provision-kis-credentials.sh --apply
+sudo scripts/ops/provision-kis-credentials.sh --check
+```
+
+`--apply` reads and confirms each value twice from `/dev/tty`; it never accepts
+a value through argv, an environment variable, standard input, or a log. Each
+value must be printable, non-empty, whitespace-free, CR/LF-free, and at most
+4096 bytes. The two values must differ. The 4096-byte bound is only a local
+accidental-paste guard because the worker/client have no provider-specific
+length contract; it does not assert KIS's exact format or length. Files are
+written without a newline as `root:root` mode `0600`, staged atomically, and
+neither existing target is overwritten. The helper makes no KIS network/API
+call or vendor verification.
+
+The helper only installs and checks credentials. The operator remains
+responsible for deciding and recording the applicable KIS data-use rights,
+read-only entitlement, and redistribution scope before any backfill execution.
+Once the source pair and the DB/runtime prerequisites are ready, run
+`deploy/secrets/provision-runtime-secrets.sh --scope backfill` to copy the pair
+to the research-worker runtime; that scope is still provisioning only and does
+not start a worker or call KIS.
 
 ## Generate the non-KIS cryptographic source secrets
 

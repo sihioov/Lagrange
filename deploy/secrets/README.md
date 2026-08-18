@@ -92,6 +92,41 @@ decode to exactly 32 bytes. Secret files should use base64 or hex so they stay
 portable UTF-8 one-line files. Keep `cursor_secret` independent from database,
 session, and CSRF secrets; changing it invalidates existing API cursors.
 
+## KIS read-only app credentials
+
+The KIS source pair is provisioned separately from runtime copies:
+
+```sh
+scripts/ops/provision-kis-credentials.sh --dry-run
+sudo scripts/ops/provision-kis-credentials.sh --apply
+sudo scripts/ops/provision-kis-credentials.sh --check
+```
+
+`--apply` is root-only and reads each value twice from a hidden `/dev/tty`
+prompt. It does not accept values through argv, environment, standard input, or
+logs, never overwrites either existing target, and makes no KIS network/API
+call. Both files are regular non-symlink `root:root` mode `0600` files with no
+trailing newline; values are non-empty, printable, whitespace-free, distinct,
+and no longer than 4096 bytes. The 4096-byte limit is an accidental-paste
+guard, not a hardcoded KIS credential-length assertion: the worker/client only
+require a readable non-empty single-line file and impose no provider-specific
+length in this repository.
+
+The helper validates storage shape, not rights. The operator is responsible for
+deciding and recording the KIS read-only data-use entitlement and any
+redistribution restrictions before executing a backfill. After the source pair
+and DB/runtime prerequisites are ready, copy it into the research-worker's
+protected runtime directory with the provisioning-only backfill scope:
+
+```sh
+sudo deploy/secrets/provision-runtime-secrets.sh --scope backfill
+```
+
+This scope prepares the `0440` `10001:10001` runtime copies and does not start a
+service or call KIS. Validate with
+`scripts/ops/validate-production-config.sh --scope backfill` before the
+separately guarded read-only worker execution.
+
 ## Generate the four non-KIS cryptographic source files
 
 On a Linux production host, the repository-owned operator helper can generate

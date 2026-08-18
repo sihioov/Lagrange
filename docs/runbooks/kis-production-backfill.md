@@ -117,8 +117,24 @@ sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
 KIS backfill과 immutable dataset five-pin이 준비되기 전에는 API/Web/edge를
 기동할 수 없으므로 이 단계가 serving release를 의미하지 않는다.
 
-이제 KIS 자격증명이 준비된 경우에만 research-worker 런타임 copy를 추가하고
-backfill scope로 worker image를 준비한다.
+이제 승인된 KIS 읽기 전용 자격증명이 준비된 경우에만 research-worker 런타임
+copy를 추가하고 backfill scope로 worker image를 준비한다. 값은 저장소·명령
+인자·환경변수에 넣지 말고 hidden terminal에서 입력한다.
+
+```bash
+scripts/ops/provision-kis-credentials.sh --dry-run
+sudo scripts/ops/provision-kis-credentials.sh --apply
+sudo scripts/ops/provision-kis-credentials.sh --check
+```
+
+이 helper는 두 값을 `root:root`/`0600` source file로 원자적으로 설치·검사할
+뿐이며 KIS network/API 호출이나 vendor 검증을 하지 않는다. worker/client에
+provider 고유 길이 계약이 없으므로 4096바이트 상한은 accidental paste 방지용
+로컬 guard일 뿐이다. KIS data-use/redistribution rights, read-only entitlement와
+적용 범위를 실제 문서로 판단·기록하는 책임은 operator에게 있다. 앱 키가
+있다는 사실만으로 해당 권리가 증명되지는 않는다.
+
+그 다음 runtime copy와 config 검사를 실행한다.
 
 ```bash
 sudo deploy/secrets/provision-runtime-secrets.sh --scope backfill

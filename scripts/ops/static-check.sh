@@ -11,7 +11,7 @@ grep -Fq 'uses Compose interpolation, quote, escape' "$ops/lib/dotenv.sh" \
   || die 'dotenv parser must reject Compose interpretation syntax'
 
 for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
-  provision-crypto-secrets.sh validate-production-config.sh compose-release.sh \
+  provision-crypto-secrets.sh provision-kis-credentials.sh validate-production-config.sh compose-release.sh \
   backfill-production.sh post-backfill-health.sh self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
@@ -110,6 +110,59 @@ grep -Fq 'wc -c' "$crypto_secrets" \
 for forbidden in curl wget docker psql; do
   if grep -Eiq "^[^#]*($forbidden)" "$crypto_secrets"; then
     die "crypto secret provisioner must not reference $forbidden"
+  fi
+done
+
+kis_credentials="$ops/provision-kis-credentials.sh"
+grep -Fq 'mode=dry-run' "$kis_credentials" \
+  || die 'KIS credential provisioner must default to a dry-run plan'
+grep -Fq 'mode=check' "$kis_credentials" \
+  || die 'KIS credential read-only check mode missing'
+grep -Fq -- '--check must run as root' "$kis_credentials" \
+  || die 'KIS credential check root guard missing'
+grep -Fq -- '--apply must run as root' "$kis_credentials" \
+  || die 'KIS credential apply root guard missing'
+grep -Fq 'default_source_dir=/etc/lagrange/secrets' "$kis_credentials" \
+  || die 'KIS credential source default missing'
+grep -Fq 'key_name=kis_app_key' "$kis_credentials" \
+  || die 'KIS app-key inventory missing'
+grep -Fq 'secret_name=kis_app_secret' "$kis_credentials" \
+  || die 'KIS app-secret inventory missing'
+grep -Fq 'must not contain' "$kis_credentials" \
+  || die 'KIS credential dot-dot path fence missing'
+grep -Fq 'must not traverse a symlink' "$kis_credentials" \
+  || die 'KIS credential ancestor symlink fence missing'
+grep -Fq 'source directory must be owned by uid 0' "$kis_credentials" \
+  || die 'KIS credential source ownership fence missing'
+grep -Fq 'source directory must not be group/other writable' "$kis_credentials" \
+  || die 'KIS credential source write fence missing'
+grep -Fq 'read -r -s -u 3' "$kis_credentials" \
+  || die 'KIS credential apply must use hidden terminal input'
+grep -Fq '/dev/tty' "$kis_credentials" \
+  || die 'KIS credential apply must read from a terminal'
+grep -Fq 'placeholder_pattern' "$kis_credentials" \
+  || die 'KIS credential placeholder rejection missing'
+grep -Fq 'max_secret_bytes=4096' "$kis_credentials" \
+  || die 'KIS credential local length guard missing'
+grep -Fq 'cmp -s' "$kis_credentials" \
+  || die 'KIS credential pair distinctness check missing'
+grep -Fq 'ln -T' "$kis_credentials" \
+  || die 'KIS credential atomic no-clobber install missing'
+grep -Fq 'installed_signatures' "$kis_credentials" \
+  || die 'KIS credential pair rollback tracking missing'
+grep -Fq 'KIS_CREDENTIAL_CHECK: PASS' "$kis_credentials" \
+  || die 'KIS credential check pass output missing'
+grep -Fq "'%u:%g:%a'" "$kis_credentials" \
+  || die 'KIS credential ownership/mode inspection missing'
+grep -Fq 'wc -c' "$kis_credentials" \
+  || die 'KIS credential byte-length inspection missing'
+grep -Fq 'wc -l' "$kis_credentials" \
+  || die 'KIS credential newline-shape inspection missing'
+grep -Fq 'install -o root -g root -m 0600' "$kis_credentials" \
+  || die 'KIS credential owner/mode install fence missing'
+for forbidden in curl wget docker psql openssl tailscale; do
+  if grep -Eiq "^[^#]*($forbidden)" "$kis_credentials"; then
+    die "KIS credential provisioner must not reference $forbidden"
   fi
 done
 
