@@ -27,7 +27,11 @@ pub enum IngestError {
     /// The provider failed (timeout, credentials, unsafe file name, ...).
     Provider(ProviderError),
     /// The response bytes failed structural schema validation.
-    MalformedResponse { kind: ResponseKind, reason: String },
+    MalformedResponse {
+        kind: ResponseKind,
+        reason: String,
+        diagnostic: Option<ResponseValidationDiagnostic>,
+    },
     /// The provider returned a partial or out-of-scope response-class set.
     ResponseShape { detail: String },
     /// The immutable store rejected the batch.
@@ -39,11 +43,18 @@ pub enum IngestError {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResponseValidationDiagnostic {
+    pub code: &'static str,
+    pub endpoint: String,
+    pub file_name: String,
+}
+
 impl std::fmt::Display for IngestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Provider(e) => write!(f, "ingest provider failure: {e}"),
-            Self::MalformedResponse { kind, reason } => {
+            Self::MalformedResponse { kind, reason, .. } => {
                 write!(f, "malformed {kind} response: {reason}")
             }
             Self::ResponseShape { detail } => {
@@ -97,6 +108,7 @@ impl From<ValidationError> for IngestError {
         Self::MalformedResponse {
             kind: e.kind,
             reason: e.reason,
+            diagnostic: None,
         }
     }
 }
@@ -213,7 +225,17 @@ pub async fn ingest_kis_bundle<R: KisRead>(
     let envelopes = provider.fetch(&fetch_req).await?;
     validate_returned_kinds(&crate::contract::EOD_RESPONSE_KINDS, &envelopes)?;
     for envelope in &envelopes {
-        validate_kis_response(envelope.kind, &envelope.request.endpoint, &envelope.bytes)?;
+        validate_kis_response(envelope.kind, &envelope.request.endpoint, &envelope.bytes).map_err(
+            |error| IngestError::MalformedResponse {
+                kind: error.kind,
+                reason: error.reason,
+                diagnostic: Some(ResponseValidationDiagnostic {
+                    code: error.code,
+                    endpoint: envelope.request.endpoint.clone(),
+                    file_name: envelope.file_name.clone(),
+                }),
+            },
+        )?;
     }
     persist_bundle(
         store,
@@ -276,6 +298,7 @@ pub async fn ingest_kis_candidate_bundle_with_kinds<R: KisRead>(
             .map_err(|reason| IngestError::MalformedResponse {
                 kind: envelope.kind,
                 reason,
+                diagnostic: None,
             })?;
     }
     persist_bundle(

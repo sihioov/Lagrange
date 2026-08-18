@@ -19,7 +19,9 @@ use kis_client::{
     BucketKey, CredentialRef, KisError, KisMarketDataClient, Quota, RateLimiter, SystemClock,
     TokenManager, TokioSleeper,
 };
-use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX};
+use market_data::contract::{
+    FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, ResponseKind,
+};
 use market_data::ingest::IngestRequest;
 use market_data::provider::{EodProvider, KrxProvider, ProviderError, RecordedBundle};
 use market_data::providers::kis::KisProvider;
@@ -223,6 +225,7 @@ pub enum WorkerError {
         error_code: String,
         endpoint: Option<String>,
         http_status: Option<u16>,
+        response_context: Option<Box<ChildResponseContext>>,
     },
     #[error("research worker cycle failed")]
     Cycle {
@@ -236,6 +239,12 @@ pub enum WorkerError {
     CandidatePipeline(#[source] CandidatePipelineError),
     #[error("price curation failed")]
     Curation(#[source] CurateError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChildResponseContext {
+    pub response_kind: String,
+    pub file_name: String,
 }
 
 impl WorkerError {
@@ -343,6 +352,8 @@ impl WorkerError {
                 error_code: source.code(),
                 endpoint: kis_error_endpoint(source),
                 http_status: kis_error_http_status(source),
+                response_kind: None,
+                file_name: None,
             }),
             Self::Provider(source) => provider_diagnostic(source),
             Self::Pipeline(PipelineError::Ingest {
@@ -351,15 +362,36 @@ impl WorkerError {
             | Self::CandidatePipeline(CandidatePipelineError::Ingest(
                 market_data::IngestError::Provider(source),
             )) => provider_diagnostic(source),
+            Self::Pipeline(PipelineError::Ingest {
+                source:
+                    market_data::IngestError::MalformedResponse {
+                        kind,
+                        diagnostic: Some(diagnostic),
+                        ..
+                    },
+            }) => Some(WorkerDiagnostic {
+                error_code: diagnostic.code,
+                endpoint: Some(&diagnostic.endpoint),
+                http_status: None,
+                response_kind: Some(kind.as_str()),
+                file_name: Some(&diagnostic.file_name),
+            }),
             Self::ChildFailure {
                 error_code,
                 endpoint,
                 http_status,
+                response_context,
                 ..
             } => Some(WorkerDiagnostic {
                 error_code,
                 endpoint: endpoint.as_deref(),
                 http_status: *http_status,
+                response_kind: response_context
+                    .as_deref()
+                    .map(|context| context.response_kind.as_str()),
+                file_name: response_context
+                    .as_deref()
+                    .map(|context| context.file_name.as_str()),
             }),
             Self::Cycle { source, .. } => source.safe_diagnostic(),
             _ => None,
@@ -372,6 +404,8 @@ pub struct WorkerDiagnostic<'a> {
     pub error_code: &'a str,
     pub endpoint: Option<&'a str>,
     pub http_status: Option<u16>,
+    pub response_kind: Option<&'a str>,
+    pub file_name: Option<&'a str>,
 }
 
 fn provider_diagnostic(error: &ProviderError) -> Option<WorkerDiagnostic<'_>> {
@@ -382,6 +416,8 @@ fn provider_diagnostic(error: &ProviderError) -> Option<WorkerDiagnostic<'_>> {
             error_code: code,
             endpoint: diagnostic.as_ref().map(|value| value.endpoint.as_str()),
             http_status: diagnostic.as_ref().and_then(|value| value.http_status),
+            response_kind: None,
+            file_name: None,
         }),
         _ => None,
     }
@@ -2403,6 +2439,10 @@ struct HelperWireRecord {
     #[serde(default)]
     http_status: Option<u16>,
     #[serde(default)]
+    response_kind: Option<String>,
+    #[serde(default)]
+    file_name: Option<String>,
+    #[serde(default)]
     outcome: Option<String>,
     #[serde(default)]
     date: Option<String>,
@@ -2522,6 +2562,8 @@ fn decode_helper_output_with_provider(
                 || record.message.is_some()
                 || record.endpoint.is_some()
                 || record.http_status.is_some()
+                || record.response_kind.is_some()
+                || record.file_name.is_some()
                 || record.newest_eod_at.is_some()
                 || record.age_seconds.is_some()
                 || record.cursor.is_some()
@@ -2597,6 +2639,13 @@ fn decode_helper_output_with_provider(
                     .http_status
                     .is_some_and(|status| !(100..=599).contains(&status))
                 || (record.http_status.is_some() && record.endpoint.is_none())
+                || !record
+                    .response_kind
+                    .as_deref()
+                    .is_none_or(|kind| ResponseKind::parse(kind).is_some())
+                || !record.file_name.as_deref().is_none_or(valid_file_name)
+                || (record.response_kind.is_some() != record.file_name.is_some())
+                || (record.response_kind.is_some() && record.endpoint.is_none())
             {
                 return Err(WorkerError::ChildOutput {
                     phase: default_phase,
@@ -2618,6 +2667,14 @@ fn decode_helper_output_with_provider(
                 error_code,
                 endpoint: record.endpoint,
                 http_status: record.http_status,
+                response_context: record.response_kind.zip(record.file_name).map(
+                    |(response_kind, file_name)| {
+                        Box::new(ChildResponseContext {
+                            response_kind,
+                            file_name,
+                        })
+                    },
+                ),
             })
         }
         _ => Err(WorkerError::ChildOutput {
@@ -2640,6 +2697,14 @@ fn valid_endpoint(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.'))
+}
+
+fn valid_file_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
 fn parse_worker_phase(
@@ -3802,6 +3867,7 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
                 error_code,
                 endpoint: None,
                 http_status: None,
+                response_context: None,
             } if id == batch_id
                 && error_code == "PIPELINE_FAILED"
         ));
@@ -3815,6 +3881,26 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
 
     #[test]
     fn helper_provider_diagnostic_preserves_only_validated_safe_metadata() {
+        let pipeline_error = super::WorkerError::Pipeline(crate::PipelineError::Ingest {
+            source: market_data::IngestError::MalformedResponse {
+                kind: market_data::ResponseKind::Calendar,
+                reason: "fixture detail must not propagate".to_owned(),
+                diagnostic: Some(market_data::ingest::ResponseValidationDiagnostic {
+                    code: "KIS_RESPONSE_SCHEMA_INVALID",
+                    endpoint: "/uapi/domestic-stock/v1/quotations/chk-holiday".to_owned(),
+                    file_name: "calendar-page-01.json".to_owned(),
+                }),
+            },
+        });
+        let pipeline_diagnostic = pipeline_error.safe_diagnostic().unwrap();
+        assert_eq!(
+            pipeline_diagnostic.error_code,
+            "KIS_RESPONSE_SCHEMA_INVALID"
+        );
+        assert_eq!(pipeline_diagnostic.response_kind, Some("calendar"));
+        assert_eq!(pipeline_diagnostic.file_name, Some("calendar-page-01.json"));
+        assert!(!pipeline_error.to_string().contains("fixture detail"));
+
         let output = br#"{"status":"error","error_code":"BROKER_REJECTED","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"broker body must not propagate: appsecret=fixture-secret","endpoint":"/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice","http_status":403}"#;
         let error = decode_helper_output_with_provider(
             output,
@@ -3832,10 +3918,31 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
         assert_eq!(diagnostic.http_status, Some(403));
         assert!(!error.to_string().contains("fixture-secret"));
 
+        let validation_output = br#"{"status":"error","error_code":"KIS_RESPONSE_SCHEMA_INVALID","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"operation failed with KIS_RESPONSE_SCHEMA_INVALID","endpoint":"/uapi/domestic-stock/v1/quotations/chk-holiday","response_kind":"calendar","file_name":"calendar-page-01.json"}"#;
+        let validation_error = decode_helper_output_with_provider(
+            validation_output,
+            WorkerPhase::Ingest,
+            Some(domain::TradingDate::parse("2026-08-18").unwrap()),
+            "KIS-NORMALIZED",
+        )
+        .expect_err("validation failure");
+        let validation_diagnostic = validation_error.safe_diagnostic().unwrap();
+        assert_eq!(
+            validation_diagnostic.error_code,
+            "KIS_RESPONSE_SCHEMA_INVALID"
+        );
+        assert_eq!(validation_diagnostic.response_kind, Some("calendar"));
+        assert_eq!(
+            validation_diagnostic.file_name,
+            Some("calendar-page-01.json")
+        );
+
         for invalid in [
             br#"{"status":"error","error_code":"BROKER_REJECTED","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"redacted","endpoint":"https://attacker.invalid/uapi/path","http_status":403}"#.as_slice(),
             br#"{"status":"error","error_code":"bad code","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"redacted","endpoint":"/uapi/path","http_status":403}"#.as_slice(),
             br#"{"status":"error","error_code":"BROKER_REJECTED","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"redacted","endpoint":null,"http_status":403}"#.as_slice(),
+            br#"{"status":"error","error_code":"KIS_RESPONSE_SCHEMA_INVALID","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"redacted","endpoint":"/uapi/path","response_kind":"calendar","file_name":"../secret"}"#.as_slice(),
+            br#"{"status":"error","error_code":"KIS_RESPONSE_SCHEMA_INVALID","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-08-18","phase":"ingest","class":"permanent","batch_id":null,"message":"redacted","endpoint":"/uapi/path","response_kind":"calendar"}"#.as_slice(),
         ] {
             assert!(matches!(
                 decode_helper_output_with_provider(

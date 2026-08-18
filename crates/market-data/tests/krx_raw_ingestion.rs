@@ -197,7 +197,7 @@ fn malformed_response_typed_failure_with_no_partial_output() {
     let err = ingest_bundle_with_kinds(&store, &provider, &req, None, &[ResponseKind::Bars])
         .expect_err("malformed schema must fail");
     match &err {
-        IngestError::MalformedResponse { kind, reason } => {
+        IngestError::MalformedResponse { kind, reason, .. } => {
             assert_eq!(*kind, ResponseKind::Bars);
             assert!(!reason.is_empty());
         }

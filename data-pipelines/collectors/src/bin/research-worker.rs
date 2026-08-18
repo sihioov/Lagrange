@@ -49,6 +49,10 @@ struct ErrorRecord {
     endpoint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     http_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -444,6 +448,12 @@ fn error_record(
             .and_then(|value| value.endpoint)
             .map(str::to_owned),
         http_status: diagnostic.and_then(|value| value.http_status),
+        response_kind: diagnostic
+            .and_then(|value| value.response_kind)
+            .map(str::to_owned),
+        file_name: diagnostic
+            .and_then(|value| value.file_name)
+            .map(str::to_owned),
     }
 }
 
@@ -493,6 +503,7 @@ mod tests {
                 "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice".to_owned(),
             ),
             http_status: Some(403),
+            response_context: None,
         };
         let value = serde_json::to_value(error_record(&error, None, "KIS-NORMALIZED")).unwrap();
         assert_eq!(value["error_code"], "BROKER_REJECTED");
@@ -503,5 +514,23 @@ mod tests {
         assert_eq!(value["http_status"], 403);
         assert_eq!(value["message"], "operation failed with BROKER_REJECTED");
         assert!(!value.to_string().contains("body"));
+
+        let validation_error = WorkerError::ChildFailure {
+            phase: WorkerPhase::Ingest,
+            class: FailureClass::Permanent,
+            batch_id: None,
+            error_code: "KIS_RESPONSE_SCHEMA_INVALID".to_owned(),
+            endpoint: Some("/uapi/domestic-stock/v1/quotations/chk-holiday".to_owned()),
+            http_status: None,
+            response_context: Some(Box::new(collectors::ChildResponseContext {
+                response_kind: "calendar".to_owned(),
+                file_name: "calendar-page-01.json".to_owned(),
+            })),
+        };
+        let value =
+            serde_json::to_value(error_record(&validation_error, None, "KIS-NORMALIZED")).unwrap();
+        assert_eq!(value["response_kind"], "calendar");
+        assert_eq!(value["file_name"], "calendar-page-01.json");
+        assert!(value.get("http_status").is_none());
     }
 }

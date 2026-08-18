@@ -14,7 +14,6 @@ use kis_client::{
 
 use crate::contract::{FetchMode, PROVIDER_KIS, RawEnvelope, RequestMetadata, ResponseKind};
 use crate::provider::{FetchRequest, ProviderError, RemoteDiagnostic};
-use crate::validate::ValidationError;
 
 /// Fixed launch universe from `configs/universes/kr-etf-core-v1.yaml`.
 pub const KR_ETF_CORE_SYMBOLS: [&str; 11] = [
@@ -435,23 +434,35 @@ fn update_continuation_query(query: &mut [(String, String)], body: &[u8]) -> boo
     advanced
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KisResponseValidationError {
+    pub(crate) kind: ResponseKind,
+    pub(crate) code: &'static str,
+    pub(crate) reason: String,
+}
+
 pub(crate) fn validate_kis_response(
     kind: ResponseKind,
     endpoint: &str,
     bytes: &[u8],
-) -> Result<(), ValidationError> {
+) -> Result<(), KisResponseValidationError> {
     let document: serde_json::Value =
-        serde_json::from_slice(bytes).map_err(|error| ValidationError {
+        serde_json::from_slice(bytes).map_err(|error| KisResponseValidationError {
             kind,
+            code: "KIS_RESPONSE_MALFORMED_JSON",
             reason: format!("not valid KIS JSON: {error}"),
         })?;
-    let object = document.as_object().ok_or_else(|| ValidationError {
-        kind,
-        reason: "KIS response must be a JSON object".to_owned(),
-    })?;
-    if object.get("rt_cd").and_then(serde_json::Value::as_str) != Some("0") {
-        return Err(ValidationError {
+    let object = document
+        .as_object()
+        .ok_or_else(|| KisResponseValidationError {
             kind,
+            code: "KIS_RESPONSE_SCHEMA_INVALID",
+            reason: "KIS response must be a JSON object".to_owned(),
+        })?;
+    if object.get("rt_cd").and_then(serde_json::Value::as_str) != Some("0") {
+        return Err(KisResponseValidationError {
+            kind,
+            code: "KIS_RESPONSE_SCHEMA_INVALID",
             reason: "KIS response rt_cd must equal 0".to_owned(),
         });
     }
@@ -484,8 +495,9 @@ pub(crate) fn validate_kis_response(
         _ => false,
     };
     if !valid {
-        return Err(ValidationError {
+        return Err(KisResponseValidationError {
             kind,
+            code: "KIS_RESPONSE_SCHEMA_INVALID",
             reason: format!("unexpected KIS response shape for endpoint {endpoint:?}"),
         });
     }
@@ -759,7 +771,19 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(error, IngestError::MalformedResponse { .. }));
+        assert!(matches!(
+            error,
+            IngestError::MalformedResponse {
+                kind: ResponseKind::Bars,
+                diagnostic: Some(crate::ingest::ResponseValidationDiagnostic {
+                    code: "KIS_RESPONSE_SCHEMA_INVALID",
+                    ref endpoint,
+                    ref file_name,
+                }),
+                ..
+            } if endpoint == DAILY_BARS_PATH
+                && file_name == "daily-bars-069500-page-01.json"
+        ));
         assert!(store.read_manifest(PROVIDER_KIS, "kr").unwrap().is_empty());
     }
 
@@ -916,6 +940,22 @@ mod tests {
                 br#"{"rt_cd":"0","output1":{},"output2":[]}"#,
             )
             .is_err()
+        );
+        assert_eq!(
+            validate_kis_response(ResponseKind::Bars, DAILY_BARS_PATH, b"not-json")
+                .unwrap_err()
+                .code,
+            "KIS_RESPONSE_MALFORMED_JSON"
+        );
+        assert_eq!(
+            validate_kis_response(
+                ResponseKind::Bars,
+                DAILY_BARS_PATH,
+                br#"{"rt_cd":"0","output1":{},"output2":{}}"#,
+            )
+            .unwrap_err()
+            .code,
+            "KIS_RESPONSE_SCHEMA_INVALID"
         );
     }
 }

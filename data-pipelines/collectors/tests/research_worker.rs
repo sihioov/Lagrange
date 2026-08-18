@@ -1022,6 +1022,7 @@ fn pipeline_error_classification_matrix_is_structural() {
             source: IngestError::MalformedResponse {
                 kind: ResponseKind::Bars,
                 reason: "invalid shape".into(),
+                diagnostic: None,
             },
         }
         .is_retryable()
