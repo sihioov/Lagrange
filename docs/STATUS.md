@@ -1,6 +1,61 @@
 # Lagrange Station — 상태 종합
 
-**기준일: 2026년 8월 17일 (2026-08-17).** 08-14 Linux 호스트 이관은 §2.6~2.7, Auth0 실 테넌트 검증은 §2.8, KOSPI200/KOSDAQ150 개별주식 후보 연구 vertical 완료는 §2.9, phase1 게이트 Linux 이식은 §2.10~2.11, 오늘의 전체 출시 게이트와 Linux 배포 preflight는 §2.12에 기록한다. 이 문서는 특정 시점의 스냅샷이다. 아래 수치와 판정은 각 표에 적힌 실행일의 코드에 대한 것이며, 코드가 바뀌면 게이트를 다시 돌려 갱신해야 한다 — 판정 파일은 자동으로 낡는다. Paper 구현의 기준 커밋은 `cf8704a`와 `8da6548`, 연구 메타데이터 발행 구현은 `bf041f5`부터 `bb81837`까지, 고정 ETF 추천 파이프라인과 Paper 리밸런싱 미리보기는 `554834c`~`dc4dd0e`, multi-universe 후보 연구 구현은 `ac97970`~`8c5ef9d`다.
+**최신 기준일: 2026년 8월 19일 (2026-08-19).** 현재 권위 있는 운영 스냅샷은 바로 아래 §0이다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현 이력을 보존한 기록이다. 과거의 "미설치", "KIS credential 없음", "초기 백필 미완료" 같은 문장은 당시에는 사실이었지만 현재 상태를 뜻하지 않는다. 코드가 바뀌면 게이트와 판정은 다시 실행해 갱신해야 한다.
+
+## 0. 2026-08-19 현재 운영 스냅샷
+
+### 0.1 저장소와 실행 환경
+
+- 운영 저장소는 `/data/workspace/lagrange`, 브랜치는 `main`, 기준 커밋은 `8da8527145505f7068499b6d703f8fada35d3e5f`다.
+- `main`은 현재 `origin/main`보다 69개 커밋 앞서 있고 아직 push하지 않았다.
+- 추적 파일은 깨끗하다. 공식 KIS 참고 문서 `docs/kis_openapi_entiredocs_20260818_030007.xlsx`만 의도적으로 untracked 상태이며 수정·삭제·커밋하지 않는다.
+- Linux 서비스 계정/경로, PostgreSQL 역할과 migration 1~45, DB/KIS/Auth0/crypto secret, Tailscale TLS, 운영 이미지, immutable release, TLS 갱신 timer와 암호화 백업·복원 timer를 준비했다. 실제 secret 값은 이 문서나 Git에 기록하지 않는다.
+- 확인 시점에 `lagrange-station-postgres-1`만 의도적으로 실행 중이며 31시간 동안 healthy다. API/Web/recommendation/backtest/Paper/reverse-proxy와 Live/order profile은 아직 기동하지 않았다.
+- `/var/lib/lagrange/data`의 현재 실데이터 사용량은 약 411MiB다. Rust `target`, Docker image와 BuildKit cache는 운영 데이터 및 백업 범위가 아니다.
+
+### 0.2 Stage5 KIS 과거 시세 상태
+
+- immutable source Raw batch: `3d4f061f-8b8c-54f3-bb44-4d491b3ad256`
+- Raw 파일 187개: 고정 ETF 11종목 × 17개 기간 창
+- 정규화 결과: `2020-01-31`부터 `2026-08-19`까지 XKRX 거래일 1,608일, 매 거래일 정확히 11종목
+- 승인 XKRX calendar artifact hash: `sha256:467f189584ceeeaa32858d3b3ae87b2cd1e93d049fb091ec623de050dc3bc6e9`
+- provider-free recovery state는 `COMPLETED`이며 기존 Raw batch를 재사용했다. recovery 서비스는 `network_mode:none`, Raw read-only 범위, KIS secret/환경변수/DB/backend/egress 없음으로 격리된다.
+- 이 데이터의 계약은 계속 `vendor_snapshot=true`, `strict_pit=false`, `ready=false`다. 아직 Production Curated, DB publication, recommendation/backtest/Paper five-pin에 연결하지 않는다.
+
+### 0.3 출시 판정
+
+현재는 운영 기반과 KIS 가격 수집·정규화까지 준비됐지만 **production READY 출시는 아니다**. KIS가 반환한 과거 가격은 수집 시점 vendor snapshot이며, 과거 시점의 종목 상태·기업행사 공개시각·정정/철회 계보를 단독으로 증명하지 못한다. 이 상태에서 five-pin을 만들거나 추천·백테스트·Paper에 연결하면 미래정보 참조 금지 원칙을 위반할 수 있으므로 fail-closed를 유지한다.
+
+실거래는 별도 후속 프로젝트다. 계좌·잔고·주문·정정·취소·체결·주문 WebSocket과 Compose `live` profile은 계속 금지한다.
+
+### 0.4 Stage6 공식 데이터 통합 결정
+
+사용 목적은 개인 내부용으로 진행한다. 데이터는 API에서 DB로 직접 넣지 않고 다음 경계를 지킨다.
+
+`공식 소스 → immutable Raw → 교차검증/종목 식별 → 승인된 Curated → DB`
+
+소스 역할은 다음처럼 고정한다.
+
+- **KIS**: 고정 ETF 11종목의 주 가격 소스. 과거 데이터는 strict PIT가 아닌 수집 시점 vendor snapshot으로 표시한다.
+- **KRX Open API**: 종목·시장 상태·상장 효력일·시장조치의 최종 기준이며 KIS 가격의 교차검증 소스다.
+- **KIND**: 신규/추가/변경상장, 상호변경, 시장조치와 게시·정정 관계를 보강한다. 반드시 API일 필요는 없고 공식 Excel/다운로드도 immutable Raw로 수집할 수 있다.
+- **OpenDART**: 기업공시 결정 정보, 최초 공시시각, 정정·철회 체인을 제공한다.
+- **KSD/SEIBro**: 배당·증자·감자·합병/분할·권리 일정 등 기업행사 세부사항을 제공한다.
+- 소스가 충돌하거나 공개시각·효력일·정정 계보가 부족하면 자동 추정하지 않고 Raw만 보존한 채 Curated/READY/pin을 차단한다.
+
+초기 범위는 고정 ETF 11종목, 시작일 `2020-01-31`이다. KIS는 주 가격, KRX는 가격 교차검증과 시장 효력일, KIND/OpenDART는 공개·정정 시각, KSD/SEIBro는 권리·행사 세부 기준으로 사용한다. record date·지급일·상장일·권리락일을 `available_at`으로 소급하지 않는다.
+
+### 0.5 다음 작업 계획 — 아직 구현 시작 전
+
+1. KSD/SEIBro·KRX Open API·OpenDART·KIND의 ETF11 read-only endpoint/파일, 이용 조건, 필드, 페이징, 수정·철회 의미를 공식 문서로 고정한다.
+2. KSD/OpenDART부터 fixture 기반 immutable Raw 어댑터를 구현한다. exact request/source metadata, `retrieved_at`, content hash, pagination 완전성을 검증하고 실제 key가 필요한 호출은 별도 운영 gate로 둔다.
+3. KRX/KIND 근거로 ETF11 종목 identity와 유효구간을 구성하고 KIS 가격↔KRX 가격, KSD 이벤트↔KIND/OpenDART 공시를 교차검증한다.
+4. 효력일·공개시각·정정 계보가 충족된 이벤트만 canonical Curated로 변환한다. 누락·충돌·애매한 기업행사는 typed blocker로 중단한다.
+5. `2020-01-31` 이후 ETF11 pilot 백필을 수행해 Raw/lineage/hash/count와 strict PIT 가능 범위를 검수한다.
+6. 승인된 DatasetManifest와 five-pin을 확정하고 DB publication 및 recommendation/backtest/Paper의 동일 exact pin 사용을 검증한다.
+7. release scope를 적용하고 Auth0/TLS/API/Web/worker/reverse-proxy health, 재부팅, 백업 복원을 최종 확인한다.
+
+실제 구현은 primary agent가 감독하고 GPT-5.6 Luna max 하위 에이전트가 수행한다. 단순 검토에는 Luna xhigh를 사용할 수 있다. 모든 편집과 커밋은 `/data/workspace/lagrange`의 `main`에서만 수행하며, 단계별 검토와 검증을 통과한 뒤 다음 단계로 이동한다.
 
 ---
 
