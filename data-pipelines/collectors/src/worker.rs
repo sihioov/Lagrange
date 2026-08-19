@@ -1847,7 +1847,7 @@ fn validate_explicit_daily_range_source(
         if file.request.endpoint != DAILY_RANGE_ENDPOINT
             || file.request.mode != FetchMode::Credentialed
             || file.request.query.len() != expected_query_keys.len()
-            || file.request.headers.len() != 2
+            || file.request.headers.len() != 5
         {
             return Err(format!(
                 "explicit source file {} request metadata is invalid",
@@ -1917,10 +1917,34 @@ fn validate_explicit_daily_range_source(
         symbols.insert(symbol);
         maximum_end =
             Some(maximum_end.map_or(actual_end, |value: TradingDate| value.max(actual_end)));
+        let mut authorization = None;
+        let mut appkey = None;
+        let mut appsecret = None;
         let mut tr_id = None;
         let mut tr_cont = None;
         for (key, value) in &file.request.headers {
-            if key.eq_ignore_ascii_case("tr_id") {
+            if key.eq_ignore_ascii_case("authorization") {
+                if authorization.replace(value.as_str()).is_some() {
+                    return Err(format!(
+                        "explicit source file {} repeats authorization",
+                        file.file_name
+                    ));
+                }
+            } else if key.eq_ignore_ascii_case("appkey") {
+                if appkey.replace(value.as_str()).is_some() {
+                    return Err(format!(
+                        "explicit source file {} repeats appkey",
+                        file.file_name
+                    ));
+                }
+            } else if key.eq_ignore_ascii_case("appsecret") {
+                if appsecret.replace(value.as_str()).is_some() {
+                    return Err(format!(
+                        "explicit source file {} repeats appsecret",
+                        file.file_name
+                    ));
+                }
+            } else if key.eq_ignore_ascii_case("tr_id") {
                 if tr_id.replace(value.as_str()).is_some() {
                     return Err(format!(
                         "explicit source file {} repeats tr_id",
@@ -1941,7 +1965,12 @@ fn validate_explicit_daily_range_source(
                 ));
             }
         }
-        if tr_id != Some(DAILY_RANGE_TR_ID) || tr_cont != Some("") {
+        if authorization != Some("[REDACTED]")
+            || appkey != Some("[REDACTED]")
+            || appsecret != Some("[REDACTED]")
+            || tr_id != Some(DAILY_RANGE_TR_ID)
+            || tr_cont != Some("")
+        {
             return Err(format!(
                 "explicit source file {} continuation/header contract is invalid",
                 file.file_name
@@ -2239,6 +2268,9 @@ mod daily_range_source_selection_tests {
                             ("FID_ORG_ADJ_PRC".to_owned(), "1".to_owned()),
                         ],
                         headers: vec![
+                            ("authorization".to_owned(), "[REDACTED]".to_owned()),
+                            ("appkey".to_owned(), "[REDACTED]".to_owned()),
+                            ("appsecret".to_owned(), "[REDACTED]".to_owned()),
                             ("tr_id".to_owned(), DAILY_RANGE_TR_ID.to_owned()),
                             ("tr_cont".to_owned(), String::new()),
                         ],
@@ -2339,7 +2371,7 @@ mod daily_range_source_selection_tests {
     }
 
     #[test]
-    fn explicit_existing_source_accepts_exact_multi_window_contract() {
+    fn explicit_existing_source_accepts_recorded_five_header_multi_window_contract() {
         let start = TradingDate::parse("2020-01-31").unwrap();
         let middle = TradingDate::parse("2020-02-02").unwrap();
         let end = TradingDate::parse("2020-02-03").unwrap();
