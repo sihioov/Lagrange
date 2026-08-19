@@ -54,6 +54,16 @@ pub const PROVIDER_KIS_CANDIDATE: &str = "kis-candidate";
 pub const PROVIDER_KIS_CANDIDATE_NORMALIZED: &str = "kis-candidate-normalized";
 /// Canonical provider id of the OpenDART disclosure connector.
 pub const PROVIDER_OPENDART: &str = "opendart";
+/// Canonical provider id of the KIND (`kind.krx.co.kr`) ETF disclosure-search
+/// browser-capture connector.
+///
+/// KIND has no API: its search UI runs only in a browser, so a separate
+/// browser-capture stage performs the interaction and this crate only
+/// ingests the bytes that stage already captured (see
+/// [`crate::providers::kind`]). Kept out of [`PROVIDER_OPENDART`] because the
+/// two are unrelated disclosure sources with independent batches, even
+/// though they share [`ResponseKind::DisclosureIndex`].
+pub const PROVIDER_KIND_DISCLOSURE: &str = "kind-disclosure";
 /// Canonical market id of the Korean market.
 pub const MARKET_KR: &str = "kr";
 
@@ -87,7 +97,11 @@ pub enum ResponseKind {
     /// candidate-source evidence and must never enter the EOD reference
     /// normalizer or publication path.
     CandidateMaster,
-    /// OpenDART `list.json` disclosure search bodies.
+    /// A disclosure-source search-index response body: OpenDART's
+    /// `list.json` pages, or a KIND (`kind.krx.co.kr`) ETF disclosure-search
+    /// page capture. Provider-neutral by design — the batch's `provider`
+    /// field (e.g. [`PROVIDER_OPENDART`] vs. [`PROVIDER_KIND_DISCLOSURE`])
+    /// distinguishes which source produced a given delivery.
     ///
     /// This is disclosure-source evidence and must never enter the EOD,
     /// candidate, or publication paths.

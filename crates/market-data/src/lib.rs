@@ -77,10 +77,10 @@ pub use candidate_normalize::{
 };
 pub use contract::{
     ALL_RESPONSE_KINDS, CANDIDATE_MASTER_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS,
-    DISCLOSURE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KIS,
-    PROVIDER_KIS_CANDIDATE, PROVIDER_KIS_CANDIDATE_NORMALIZED, PROVIDER_KIS_DAILY_RANGE,
-    PROVIDER_KIS_DAILY_RANGE_NORMALIZED, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, PROVIDER_OPENDART,
-    RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
+    DISCLOSURE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KIND_DISCLOSURE,
+    PROVIDER_KIS, PROVIDER_KIS_CANDIDATE, PROVIDER_KIS_CANDIDATE_NORMALIZED,
+    PROVIDER_KIS_DAILY_RANGE, PROVIDER_KIS_DAILY_RANGE_NORMALIZED, PROVIDER_KIS_NORMALIZED,
+    PROVIDER_KRX, PROVIDER_OPENDART, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{
@@ -109,6 +109,10 @@ pub use normalize::{
 };
 pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
+};
+pub use providers::kind::{
+    CapturedPage, KIND_DISCLOSURE_MAX_PAGES, KIND_DISCLOSURE_PAGE_SIZE,
+    KIND_ETF_DISCLOSURE_ENDPOINT, KindError, ingest_etf_disclosure_capture,
 };
 pub use providers::kis::{
     KR_ETF_CORE_SYMBOLS, KisProvider, KisRead, MAX_DAILY_BAR_OBSERVATIONS, MAX_DAILY_BAR_WINDOWS,
