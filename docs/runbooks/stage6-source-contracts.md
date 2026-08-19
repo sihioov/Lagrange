@@ -131,6 +131,18 @@ wrong. From the terms page itself:
 
 ### Statistics products covering the missing categories
 
+`[verified]` The leaf enumeration below was originally cited to
+`MDCINFO003.cmd`, which the verification pass proved is the Terms of Use page,
+and the verification pass had confirmed `MDCINFO002.cmd` only at heading level.
+The coordinator therefore re-fetched
+`https://data.krx.co.kr/contents/MDC/INFO/informationController/MDCINFO002.cmd`
+directly on 2026-08-19 (HTTP 200) and confirmed every label below is present in
+that page's served content — `전종목 시세`, `전종목 기본정보`,
+`개별종목 종합정보`, `괴리율 추이`, `장마감 괴리율 추이`, `추적오차율 추이`,
+`PDF(Portfolio Deposit File)`, `신규상장종목 현황`, `상장폐지종목 현황`,
+`매매거래정지종목 현황`, `매매거래정지 내역(개별종목)`,
+`관리종목 지정 내역(개별종목)`, `지정일전후 등락률`.
+
 From the `이용안내` menu tree: 증권상품 > ETF offers `전종목 시세`,
 `전종목 기본정보`, `개별종목 종합정보`, `괴리율 추이`, `장마감 괴리율 추이`,
 `추적오차율 추이`, and `PDF(Portfolio Deposit File)`. The 이슈 통계 section
