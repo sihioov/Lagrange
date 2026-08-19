@@ -31,6 +31,30 @@ bash "$ops/build-production-images-static-check.sh" >/dev/null ||
 bash "$ops/production-ops-static-check.sh" >/dev/null ||
   die 'production release/backup static check failed'
 
+xkrx_bootstrap="$ops/xkrx-calendar-bootstrap.py"
+[ -x "$xkrx_bootstrap" ] || die 'XKRX calendar bootstrap must be executable'
+python3 "$xkrx_bootstrap" --check --end 2026-08-19 >/dev/null ||
+  die 'checked-in XKRX calendar bootstrap artifact failed validation'
+grep -Fq 'exchange_calendars==4.13.2' "$root/nt/pyproject.toml" ||
+  die 'XKRX bootstrap dependency pin is missing'
+grep -Fq 'fc5a2ad0d61b5c3a6539a3061cd4cbb55c59f4a903455cec7926e4b798919996' "$xkrx_bootstrap" ||
+  die 'XKRX bootstrap wheel hash is missing'
+grep -Fq 'a9459425dd64142cd54fbc639847403c7e0c33d60fbc326c94fc1d6bd127f002' "$xkrx_bootstrap" ||
+  die 'XKRX bootstrap source hash is missing'
+grep -Fq 'source_authority' "$xkrx_bootstrap" ||
+  die 'XKRX bootstrap third-party provenance is missing'
+grep -Fq 'historical-session-dates-only' "$xkrx_bootstrap" ||
+  die 'XKRX bootstrap dates-only contract is missing'
+grep -Fq "get_calendar(CALENDAR_NAME, start=str(start), end=str(end))" "$xkrx_bootstrap" ||
+  die 'XKRX bootstrap must query explicit calendar bounds'
+if grep -Fq 'sessions_in_range' "$xkrx_bootstrap"; then
+  die 'XKRX bootstrap must validate explicit schedule labels without a second bounded API query'
+fi
+if grep -Fq 'package_available' "$xkrx_bootstrap"; then
+  die 'XKRX bootstrap must not bypass uv with a global package'
+fi
+grep -Fq 'uv' "$xkrx_bootstrap" || die 'XKRX bootstrap locked uv execution is missing'
+
 tls_static="$root/deploy/systemd/tailscale-tls-renewal-static-check.sh"
 [ -x "$tls_static" ] || die 'Tailscale TLS renewal static check must be executable'
 bash "$tls_static" >/dev/null || die 'Tailscale TLS renewal static check failed'

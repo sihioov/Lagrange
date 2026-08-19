@@ -13,6 +13,10 @@ version = "0.1.0"
 description = "Lagrange Station NautilusTrader workspace: strategies, custom-data, backtest-worker, paper-runner, live-node."
 requires-python = ">=3.12"
 dependencies = [
+    # Historical XKRX calendar bootstrap.  Keep this exact pin in the NT
+    # environment so the generator can be run by `uv run --locked` without a
+    # developer-managed download or an unreviewed resolver update.
+    "exchange_calendars==4.13.2",
     "nautilus_trader==1.231.0",
 ]
 

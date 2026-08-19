@@ -1,0 +1,31 @@
+{
+  "artifact": "calendar.json",
+  "artifact_sha256": "sha256:ec37ae015b5fa7031d4f6748141a828e2d168617db44e8df970ff34263a8e7ec",
+  "artifact_size_bytes": 835991,
+  "calendar_id": "xkrx-historical-session-dates",
+  "contract": "historical-session-dates-only",
+  "effective_from": "2020-01-31",
+  "exchange": "KRX",
+  "generator": "scripts/ops/xkrx-calendar-bootstrap.py",
+  "manifest_schema_version": 1,
+  "non_session_count": 783,
+  "range": {
+    "end": "2026-08-19",
+    "start": "2020-01-31"
+  },
+  "session_count": 1610,
+  "source": {
+    "authority": "third-party-derived",
+    "calendar": "XKRX",
+    "license": "Apache-2.0",
+    "package": "exchange_calendars",
+    "revision": "dbe38b1",
+    "sdist_sha256": "sha256:a9459425dd64142cd54fbc639847403c7e0c33d60fbc326c94fc1d6bd127f002",
+    "sdist_url": "https://files.pythonhosted.org/packages/47/73/460b0ece4e7444e3098b7738974c822787e134578d069d3a88b4be17d50a/exchange_calendars-4.13.2.tar.gz",
+    "upstream_commit": "dbe38b1",
+    "version": "4.13.2",
+    "wheel_sha256": "sha256:fc5a2ad0d61b5c3a6539a3061cd4cbb55c59f4a903455cec7926e4b798919996",
+    "wheel_url": "https://files.pythonhosted.org/packages/c8/4c/0469b40057bc9f8d9594dcc6024202626b981ae4b52dfcd304552e8e1c3a/exchange_calendars-4.13.2-py3-none-any.whl"
+  },
+  "timezone": "Asia/Seoul"
+}
