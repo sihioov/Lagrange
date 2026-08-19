@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use domain::{BatchId, TradingDate, UtcTimestamp};
 
-use crate::contract::{ResponseKind, StoredFile};
+use crate::contract::{PROVIDER_KIS_DAILY_RANGE, ResponseKind, StoredFile};
 use crate::provider::{EodProvider, ProviderError};
 use crate::providers::kis::{KisProvider, KisRead, validate_kis_response};
 use crate::providers::kis_candidate::{
@@ -242,6 +242,52 @@ pub async fn ingest_kis_bundle<R: KisRead>(
         provider.provider_id(),
         provider.fetch_mode(),
         req,
+        entitlement_reference,
+        batch_id,
+        &envelopes,
+    )
+}
+
+/// Captures a bounded historical KIS daily-bar range as immutable Raw only.
+///
+/// The range provider deliberately uses a separate `kis-daily-range` scope:
+/// the existing normalizer/publication contract is target-date based and must
+/// not silently reinterpret a multi-date wire response.  This function is a
+/// safe acquisition seam for the later range-aware normalizer; it performs no
+/// calendar, current-price, account, or order request.
+pub async fn ingest_kis_daily_bars_range<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    market: &str,
+    start: TradingDate,
+    end: TradingDate,
+    now: UtcTimestamp,
+    entitlement_reference: Option<&str>,
+) -> Result<IngestOutcome, IngestError> {
+    let batch_id = BatchId::generate();
+    let envelopes = provider
+        .fetch_daily_bars_range(market, start, end, now, batch_id)
+        .await?;
+    validate_returned_kinds(&[ResponseKind::Bars], &envelopes)?;
+    for envelope in &envelopes {
+        validate_kis_response(envelope.kind, &envelope.request.endpoint, &envelope.bytes).map_err(
+            |error| IngestError::MalformedResponse {
+                kind: error.kind,
+                reason: error.reason,
+                diagnostic: Some(ResponseValidationDiagnostic {
+                    code: error.code,
+                    endpoint: envelope.request.endpoint.clone(),
+                    file_name: envelope.file_name.clone(),
+                }),
+            },
+        )?;
+    }
+    let request = IngestRequest::new(market.to_owned(), start, now);
+    persist_bundle(
+        store,
+        PROVIDER_KIS_DAILY_RANGE,
+        provider.fetch_mode(),
+        &request,
         entitlement_reference,
         batch_id,
         &envelopes,

@@ -5,11 +5,11 @@
 //! and HTTP. Every successful KIS body becomes one immutable [`RawEnvelope`]
 //! without parsing or rewriting its bytes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
-use domain::{InstrumentId, TradingDate, Venue};
+use domain::{BatchId, InstrumentId, TradingDate, Venue};
 use kis_client::{
     CredentialSource, KisError, KisMarketDataClient, MarketDataReply, Sleeper, Transport,
 };
@@ -40,6 +40,12 @@ enum PaginationPolicy {
 }
 
 const KSD_MAX_PAGES: usize = 10;
+
+/// The documented maximum number of daily observations returned by one
+/// `FHKST03010100` request.
+pub const MAX_DAILY_BAR_OBSERVATIONS: usize = 100;
+/// Guard against a non-progressing or maliciously long date-window replay.
+pub const MAX_DAILY_BAR_WINDOWS: usize = 1_024;
 
 /// Async read seam implemented by the production KIS client and by fixtures.
 #[allow(async_fn_in_trait)]
@@ -256,6 +262,125 @@ impl<R: KisRead> KisProvider<R> {
                     }
                 }
                 unsupported => return Err(ProviderError::UnsupportedKind(*unsupported)),
+            }
+        }
+        Ok(envelopes)
+    }
+
+    /// Fetches a bounded historical daily-bar range as exact KIS wire bytes.
+    ///
+    /// This is intentionally a Raw-only capability.  The existing EOD path
+    /// remains one target date per `FetchRequest`; callers that use this
+    /// method must persist the result under
+    /// [`crate::contract::PROVIDER_KIS_DAILY_RANGE`] and must not pass it to
+    /// `normalize_kis_batch` until a range-aware canonical contract exists.
+    /// No `chk-holiday`, current-price, account, or order request is made.
+    pub async fn fetch_daily_bars_range(
+        &self,
+        market: &str,
+        start: TradingDate,
+        end: TradingDate,
+        now: domain::UtcTimestamp,
+        batch_id: BatchId,
+    ) -> Result<Vec<RawEnvelope>, ProviderError> {
+        if market != "kr" {
+            return Err(ProviderError::InvalidConfiguration {
+                detail: format!("KIS provider supports market kr, got {market:?}"),
+            });
+        }
+        if end < start {
+            return Err(ProviderError::InvalidConfiguration {
+                detail: "historical daily-bar range end precedes start".to_owned(),
+            });
+        }
+
+        let request = FetchRequest {
+            market: market.to_owned(),
+            date: start,
+            kinds: vec![ResponseKind::Bars],
+            now,
+            batch_id,
+        };
+        let mut envelopes = Vec::new();
+        for instrument in &self.instruments {
+            // KIS returns the newest rows first.  Keep the requested start
+            // fixed and move the next window's end to oldest_date - 1 day;
+            // this avoids both gaps and broker continuation semantics (which
+            // this endpoint explicitly does not support).
+            let mut current_end = end;
+            let mut seen_dates = BTreeSet::new();
+            for window in 1..=MAX_DAILY_BAR_WINDOWS {
+                if current_end < start {
+                    break;
+                }
+                let start_text = start.to_iso().replace('-', "");
+                let end_text = current_end.to_iso().replace('-', "");
+                let query = vec![
+                    ("FID_COND_MRKT_DIV_CODE".to_owned(), "J".to_owned()),
+                    ("FID_INPUT_ISCD".to_owned(), instrument.symbol().to_owned()),
+                    ("FID_INPUT_DATE_1".to_owned(), start_text.clone()),
+                    ("FID_INPUT_DATE_2".to_owned(), end_text.clone()),
+                    ("FID_PERIOD_DIV_CODE".to_owned(), "D".to_owned()),
+                    // Preserve execution/original prices; adjustment is a
+                    // separate curation concern and is never backfilled from
+                    // current reference data.
+                    ("FID_ORG_ADJ_PRC".to_owned(), "1".to_owned()),
+                ];
+                let label = format!("daily-bars-range-window-{window}");
+                let before = envelopes.len();
+                self.fetch_pages(
+                    &request,
+                    ResponseKind::Bars,
+                    &label,
+                    Some(instrument.symbol()),
+                    DAILY_BARS_PATH,
+                    DAILY_BARS_TR_ID,
+                    query,
+                    PaginationPolicy::SinglePage,
+                    &mut envelopes,
+                )
+                .await?;
+                let envelope = envelopes.last().ok_or_else(|| {
+                    pagination_error(
+                        ResponseKind::Bars,
+                        DAILY_BARS_PATH,
+                        "KIS_DAILY_RANGE_EMPTY_RESPONSE",
+                        "daily-bars range request returned no envelope",
+                    )
+                })?;
+                debug_assert_eq!(envelopes.len(), before + 1);
+                let summary = validate_daily_bars_range_envelope(
+                    envelope,
+                    instrument.symbol(),
+                    start,
+                    current_end,
+                )?;
+                for date in summary.dates {
+                    if !seen_dates.insert(date) {
+                        return Err(range_validation_error(
+                            "KIS_DAILY_RANGE_OVERLAP",
+                            "daily-bars windows overlap on a business date",
+                        ));
+                    }
+                }
+                if summary.row_count < MAX_DAILY_BAR_OBSERVATIONS || summary.oldest <= Some(start) {
+                    break;
+                }
+                let oldest = summary.oldest.ok_or_else(|| {
+                    range_validation_error(
+                        "KIS_DAILY_RANGE_WINDOW_PROGRESS",
+                        "full daily-bars window had no oldest date",
+                    )
+                })?;
+                current_end = oldest.previous_day();
+                if window == MAX_DAILY_BAR_WINDOWS {
+                    return Err(pagination_error(
+                        ResponseKind::Bars,
+                        DAILY_BARS_PATH,
+                        "KIS_DAILY_RANGE_WINDOW_LIMIT",
+                        "daily-bars range exceeded the bounded window limit",
+                    ));
+                }
             }
         }
         Ok(envelopes)
@@ -505,6 +630,114 @@ fn parse_kis_date(value: &str) -> Option<TradingDate> {
         return None;
     }
     TradingDate::parse(&format!("{}-{}-{}", &value[..4], &value[4..6], &value[6..])).ok()
+}
+
+struct DailyBarsRangePage {
+    row_count: usize,
+    oldest: Option<TradingDate>,
+    dates: BTreeSet<TradingDate>,
+}
+
+fn validate_daily_bars_range_envelope(
+    envelope: &RawEnvelope,
+    symbol: &str,
+    start: TradingDate,
+    end: TradingDate,
+) -> Result<DailyBarsRangePage, ProviderError> {
+    validate_kis_response(ResponseKind::Bars, DAILY_BARS_PATH, &envelope.bytes).map_err(
+        |error| range_validation_error(error.code, "daily-bars response schema invalid"),
+    )?;
+    let document: Value = serde_json::from_slice(&envelope.bytes)
+        .map_err(|_| range_validation_error("KIS_DAILY_RANGE_SCHEMA", "daily-bars JSON invalid"))?;
+    let output1 = document
+        .get("output1")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            range_validation_error("KIS_DAILY_RANGE_SCHEMA", "output1 is not an object")
+        })?;
+    let returned_symbol = output1
+        .get("stck_shrn_iscd")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            range_validation_error("KIS_DAILY_RANGE_SCHEMA", "output1 has no stck_shrn_iscd")
+        })?;
+    if returned_symbol != symbol {
+        return Err(range_validation_error(
+            "KIS_DAILY_RANGE_SYMBOL_MISMATCH",
+            "daily-bars output1 symbol differs from requested symbol",
+        ));
+    }
+    let rows = document
+        .get("output2")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            range_validation_error("KIS_DAILY_RANGE_SCHEMA", "output2 is not an array")
+        })?;
+    if rows.len() > MAX_DAILY_BAR_OBSERVATIONS {
+        return Err(range_validation_error(
+            "KIS_DAILY_RANGE_PAGE_LIMIT",
+            "daily-bars response exceeded the documented 100-observation limit",
+        ));
+    }
+    let mut dates = BTreeSet::new();
+    let mut previous_date = None;
+    for row in rows {
+        let object = row.as_object().ok_or_else(|| {
+            range_validation_error("KIS_DAILY_RANGE_SCHEMA", "output2 row is not an object")
+        })?;
+        let date_text = object
+            .get("stck_bsop_date")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                range_validation_error(
+                    "KIS_DAILY_RANGE_SCHEMA",
+                    "output2 row has no stck_bsop_date",
+                )
+            })?;
+        let date = parse_kis_date(date_text).ok_or_else(|| {
+            range_validation_error("KIS_DAILY_RANGE_DATE_INVALID", "output2 date is invalid")
+        })?;
+        if date < start || date > end {
+            return Err(range_validation_error(
+                "KIS_DAILY_RANGE_DATE_OUT_OF_SCOPE",
+                "output2 date is outside the requested range",
+            ));
+        }
+        if let Some(previous) = previous_date
+            && date >= previous
+        {
+            return Err(range_validation_error(
+                "KIS_DAILY_RANGE_OVERLAP",
+                "output2 dates are not strictly newest-to-oldest",
+            ));
+        }
+        previous_date = Some(date);
+        if !dates.insert(date) {
+            return Err(range_validation_error(
+                "KIS_DAILY_RANGE_OVERLAP",
+                "output2 contains an overlapping business date",
+            ));
+        }
+    }
+    Ok(DailyBarsRangePage {
+        row_count: dates.len(),
+        oldest: dates.iter().next().copied(),
+        dates,
+    })
+}
+
+fn range_validation_error(code: &'static str, detail: &'static str) -> ProviderError {
+    ProviderError::Remote {
+        provider: PROVIDER_KIS,
+        kind: ResponseKind::Bars,
+        code,
+        retryable: false,
+        diagnostic: Some(RemoteDiagnostic {
+            endpoint: DAILY_BARS_PATH.to_owned(),
+            http_status: None,
+        }),
+        detail: detail.to_owned(),
+    }
 }
 
 fn calendar_snapshot_miss(date: TradingDate) -> ProviderError {

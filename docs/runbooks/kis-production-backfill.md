@@ -216,6 +216,53 @@ envelope으로 유지하고, 모든 페이지의 응답 검증이 끝나기 전�
 우선 적용하되, XLSX의 충돌 사실을 이 문서와 테스트에 남긴다. 이 예외는 KSD 여섯
 path에만 적용하며 `chk-holiday`, 일봉, 현재가 조회에는 전파하지 않는다.
 
+### 2.2 과거 일봉 범위 Raw 캡처 (Stage 3 bounded slice)
+
+KIS 공식 XLSX sheet 40의 `FHKST03010100`
+([공식 GitHub 예제](https://github.com/koreainvestment/open-trading-api/blob/main/examples_user/domestic_stock/domestic_stock_examples.py))는
+`FID_INPUT_DATE_1`/`FID_INPUT_DATE_2`와 `D` 일봉을 사용하며 한 응답 최대 100건,
+`tr_cont`를 이용한 다음 조회 불가로 명시한다. 범위 캡처는 이 계약을 지키기 위해
+한 호출에서 `tr_cont`를 따라가지 않고, 같은 시작일과 직전 응답의 가장 오래된
+`stck_bsop_date - 1일`을 다음 종료일로 사용한다. 응답은 100건 미만이거나
+가장 오래된 행이 시작일에 도달하면 종료한다. `output2`는 KIS가 반환하는
+최신일→과거일 순서를 그대로 지켜야 하며, 날짜 범위 밖, 중복/겹침, 진행하지
+않는 응답은 Raw를 공개하기 전에 영구 오류로 중단한다. 이 검사는 응답의 범위와
+순서·중복을 보장하지만, 휴장일/상장 전 구간을 포함한 날짜별 완전성은 판정하지
+않는다. 완전한 session 집합은 별도 XKRX scheduler artifact와 운영 검수에서
+확정하며, 누락된 KIS 행을 합성하지 않는다.
+
+Rust의 `ingest_kis_daily_bars_range`는 이 호출들을 하나의 immutable Raw batch로
+저장하되 provider scope를 `kis-daily-range`로 분리한다. 각 원문 bytes와 실제
+query(`FID_INPUT_DATE_1/2`, 종목, `D`, 원주가 여부), 응답 hash, retrieval time을
+그대로 보존하며, `chk-holiday`, `inquire-price`, 계좌/주문 API를 호출하지 않는다.
+`inquire-price (FHKST01010100)`는 현재/reference identity 응답일 뿐 과거 날짜의
+가격 또는 과거 시점 관측으로 사용하지 않는다. `inquire-daily-itemchartprice`의
+응답도 취득 시점의 vendor snapshot일 뿐이며, KIS wire 계약은 availability time,
+revision time 또는 knowledge time을 제공하지 않는다. 따라서 이 Raw만으로
+strict historical PIT를 주장하거나 `available_at`을 과거 시각으로 backdate할 수
+없다. `FID_ORG_ADJ_PRC=1`은 원주가/비조정 가격 요청이며, 조정 가격이나 PIT
+관측을 합성하지 않는다.
+
+이 Stage 3의 현재 검증 단위는 고정 ETF 11종 각각에 대한 bounded window(단일
+윈도우 테스트에서는 11개 Raw evidence)다. 이것은 기존 30-wire 단일일 EOD
+batch의 검증 결과가 아니다. XKRX 날짜·종목 상장기간·응답 누락/공백·기업행사
+처리·일별 lineage를 별도로 승인하기 전에는 production dataset과 dataset pin을
+`READY`로 만들 수 없다.
+
+이 Stage 3 slice는 아직 `backfill-production.sh`, `normalize_kis_batch`,
+publication sink 또는 Curated dataset에 연결하지 않는다. 현재 normalizer는
+한 target date의 four-file EOD batch를 전제로 하므로, 범위 Raw를 일별 문서로
+잘라내어 KIS 응답처럼 만들면 provenance와 PIT가 위조된다. 범위별 Raw의
+deterministic per-session lineage, 수정주가/권리락 처리와 canonical output
+schema를 별도 승인하기 전까지 실운영 백필·dataset pin은 blocked 상태다.
+
+### 2.3 기존 단일일 EOD 경로 (Stage 3와 분리)
+
+아래 recovery/Curated/DB 단계는 기존 단일 target-date EOD 경로의 운영 계약이다.
+Stage 3 `kis-daily-range` Raw를 이 단계로 보내는 wiring은 아직 없으며, 범위
+aware normalizer와 canonical per-session lineage가 승인되기 전까지는 실행할 수
+없다.
+
 전체 Raw/Curated manifest recovery는 range 시작에 한 번 수행한다. 신규 날짜마다
 전체 manifest를 다시 훑지 않으며, range가 끝날 때 cumulative Curated generation을
 한 번 생성한다. 마지막 날짜의 canonical event는 이 최종 Curated 단계까지 성공한

@@ -76,8 +76,8 @@ pub use candidate_normalize::{
 pub use contract::{
     ALL_RESPONSE_KINDS, CANDIDATE_MASTER_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS,
     EOD_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CANDIDATE,
-    PROVIDER_KIS_CANDIDATE_NORMALIZED, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, RawEnvelope,
-    RequestMetadata, ResponseKind, StoredFile,
+    PROVIDER_KIS_CANDIDATE_NORMALIZED, PROVIDER_KIS_DAILY_RANGE, PROVIDER_KIS_NORMALIZED,
+    PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{
@@ -94,6 +94,7 @@ pub use curate::{
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,
     ingest_kis_bundle, ingest_kis_candidate_bundle, ingest_kis_candidate_bundle_with_kinds,
+    ingest_kis_daily_bars_range,
 };
 pub use instrument_master::{
     AliasNamespace, Instrument, InstrumentAlias, InstrumentMaster, ListingReason, MasterError,
@@ -106,7 +107,9 @@ pub use normalize::{
 pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
 };
-pub use providers::kis::{KR_ETF_CORE_SYMBOLS, KisProvider, KisRead};
+pub use providers::kis::{
+    KR_ETF_CORE_SYMBOLS, KisProvider, KisRead, MAX_DAILY_BAR_OBSERVATIONS, MAX_DAILY_BAR_WINDOWS,
+};
 pub use providers::kis_candidate::{
     KIS_CANDIDATE_SUPPORTED_KINDS, KIS_CANDIDATE_UNSUPPORTED_KINDS, KisCandidateProvider,
 };

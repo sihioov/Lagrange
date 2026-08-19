@@ -29,6 +29,13 @@ use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 pub const PROVIDER_KRX: &str = "krx";
 /// Canonical provider id of the Korea Investment & Securities Open API connector.
 pub const PROVIDER_KIS: &str = "kis";
+/// Provider scope for bounded historical daily-bar range captures.
+///
+/// Range captures are immutable Raw evidence only.  They are deliberately
+/// kept out of `provider=kis`, whose existing date-partitioned EOD normalizer
+/// expects one target date per delivery until a range-aware normalizer is
+/// approved.
+pub const PROVIDER_KIS_DAILY_RANGE: &str = "kis-daily-range";
 /// Provider id for the provider-neutral canonical batch derived from KIS wire
 /// responses. The wire batch remains under [`PROVIDER_KIS`] forever.
 pub const PROVIDER_KIS_NORMALIZED: &str = "kis-normalized";
