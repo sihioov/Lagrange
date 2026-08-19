@@ -185,6 +185,35 @@ is tracked separately, is unconfirmed.
 - status codes distinguish no-data (`013`) from errors (`010`–`012`, `014`,
   `020`–`021`, `100`–`101`, `800`, `900`–`901`); `000` is success
 
+### Wire shape of the list envelope
+
+`[verified]` The coordinator re-fetched the guide page on 2026-08-19 (HTTP 200)
+to settle the row-array key, which the first research pass had not recorded. The
+official `응답 결과` table lists the envelope keys `status`, `message`,
+`page_no`, `page_count`, `total_count`, `total_page`, then the key **`list`**,
+and under it the per-row keys `corp_cls`, `corp_name`, `corp_code`,
+`stock_code`, `report_nm`, `rcept_no`, `flr_nm`, `rcept_dt`, `rm`. So `list` is
+the documented row-array key, not an assumption.
+
+Two shape questions the documentation does **not** settle, both first-use risks
+for the adapter rather than gaps in the decision record:
+
+- The table names the four envelope integers but never states their JSON type,
+  while the matching *request* parameters are typed `STRING`. The adapter
+  therefore accepts either a JSON number or a digit-only JSON string for
+  `page_no`, `page_count`, `total_count`, and `total_page`, and still fails
+  closed on anything that is not a well-formed non-negative integer. Insisting
+  on one representation would have been an inference.
+- `rm` is listed as a response key, but nothing states whether it is present on
+  every row or omitted when there is no remark. The adapter currently requires
+  it, which is the fail-closed reading. If real traffic omits it on
+  remark-free rows, that surfaces as a typed `UndocumentedShape` on first use
+  rather than as silent corruption — see checklist item 16.
+
+Note also a typo in the official table itself: the description column for
+`total_count` reads `총 페이지 수` rather than `총 건수`. The key names are
+unaffected.
+
 ### Timestamp granularity
 
 `[verified]` `rcept_dt` is documented as `공시 접수일자(YYYYMMDD)`. The full
@@ -496,6 +525,13 @@ credentialed call, because read-only public fetching cannot settle it.
 15. **Licence sign-off.** Record an `entitlement_reference` covering KOGL Type 2
     non-commercial use and KRX 제11조③ post-termination use, interpreted against
     this project's stated personal-internal purpose.
+16. **First real `list.json` and `company.json` response.** With a key issued,
+    capture one real response per surface and confirm the adapter's shape
+    assumptions against it: whether the four envelope integers arrive as JSON
+    numbers or strings (both are accepted), and whether `rm` is present on every
+    row or omitted when there is no remark. The adapter fails closed with a
+    typed `UndocumentedShape` on a mismatch rather than mis-parsing, so this is a
+    first-use verification, not a correctness risk.
 
 ## Read-only allowlist — approval state
 
