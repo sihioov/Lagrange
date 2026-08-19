@@ -55,17 +55,20 @@ Applying a changed existing artifact is refused unless `--replace` is given
 after reviewing the new manifest.  A range extension is therefore a visible,
 hash-changing artifact update rather than an in-place holiday correction.
 
-Stage 1 intentionally does not wire this artifact into the Rust worker or
-backfill.  The existing historical worker therefore remains on its current
-KIS path until a separately reviewed Stage 2 integration adds a typed
-dates-only scheduler loader.  When that integration is made, it must use this
-artifact only for an in-range session/non-session decision, fail closed
-outside the manifest range, and never pass it to publication or curation.
-Canonical Rust publication/curation keeps its existing typed calendar contract
-and evidence; this artifact does not provide publication session times.  A
-current daily/live run remains allowed to validate its target through the
-allowlisted KIS `chk-holiday (CTCA0903R)` endpoint; that live check is not a
-historical bootstrap mechanism and must not silently extend this artifact.
+Stage 2 wires this artifact into the bounded historical backfill wrapper as a
+package-free, fail-closed session-date emitter.  The wrapper accepts only an
+in-range session list after validating both artifact and manifest; weekends and
+closures are omitted, and an empty selection exits without a Docker, worker, or
+KIS call.  A single Rust worker process receives the exact sorted list.  Its
+provider makes one allowlisted KIS `chk-holiday (CTCA0903R)` call for the first
+needed session day, then validates later dates against the immutable cached
+snapshot; an uncovered date makes no second call and fails closed with
+`KIS_CALENDAR_SNAPSHOT_MISS`.  That live check is canonical validation, not a
+historical bootstrap mechanism, and must not silently extend the materialized
+artifact.  The dates-only artifact is never passed to Raw/publication/curation,
+and canonical Rust
+publication/curation keeps its existing typed calendar contract and evidence;
+the artifact does not provide publication session times.
 
 The old Rust `krx_2020()` fixture is not a bootstrap source.  In particular it
 does not represent the third-party XKRX closures on 2020-05-01, 2020-08-17,

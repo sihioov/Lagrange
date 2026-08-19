@@ -90,9 +90,9 @@ def record_failure(
     error_code = raw_code if isinstance(raw_code, str) and ERROR_CODE.fullmatch(raw_code) else "WORKER_ERROR"
     record_date = safe_date(record.get("target_date"))
     expected_text = expected.isoformat()
-    # BackfillRange has no command-level target_date.  Its worker always emits
-    # dates in order, so a missing target is safely attributed to the next
-    # expected date; a contradictory target is a protocol failure.
+    # Session-list backfill has no command-level target_date. Its worker emits
+    # the validated dates in order, so a missing target is safely attributed to
+    # the next expected date; a contradictory target is a protocol failure.
     if record_date is not None and record_date != expected_text:
         append_state(state_path, expected_text, "FAILED", run_identity, "BACKFILL_PROGRESS_INVALID")
         print(
@@ -138,11 +138,29 @@ def protocol_failure(state_path: str, run_identity: str, expected: dt.date, code
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
-        raise SystemExit("backfill-progress: expected STATE IDENTITY START END")
-    state_path, run_identity, start_text, end_text = sys.argv[1:]
+    if len(sys.argv) not in (5, 6):
+        raise SystemExit("backfill-progress: expected STATE IDENTITY START END [SESSION_DATES_CSV]")
+    state_path, run_identity, start_text, end_text = sys.argv[1:5]
     expected: dt.date | None = dt.date.fromisoformat(start_text)
     end = dt.date.fromisoformat(end_text)
+    if len(sys.argv) == 6:
+        session_dates = sys.argv[5].split(",")
+        if (
+            not session_dates
+            or any(safe_date(value) != value for value in session_dates)
+            or session_dates != sorted(set(session_dates))
+            or session_dates[0] != start_text
+            or session_dates[-1] != end_text
+        ):
+            raise SystemExit("backfill-progress: SESSION_DATES_CSV must be sorted, unique, and bounded by START/END")
+        expected_dates = [dt.date.fromisoformat(value) for value in session_dates]
+    else:
+        expected_dates = []
+        current = expected
+        while current is not None and current <= end:
+            expected_dates.append(current)
+            current = None if current == end else current + dt.timedelta(days=1)
+    expected_index = 0
     published: set[str] = set()
     with open(state_path, encoding="ascii") as existing:
         for line in existing:
@@ -210,7 +228,8 @@ def main() -> int:
                 os.fsync(state.fileno())
                 published.add(date_text)
             print(f"BACKFILL_DONE date={date_text}", flush=True)
-            expected_date = None if expected_date == end else expected_date + dt.timedelta(days=1)
+            expected_index += 1
+            expected_date = expected_dates[expected_index] if expected_index < len(expected_dates) else None
     if expected_date is not None:
         return protocol_failure(state_path, run_identity, expected_date, "BACKFILL_INCOMPLETE")
     return 0

@@ -14,7 +14,9 @@ provider는 첫 응답의 Raw bytes를 immutable snapshot으로 보존하고, �
 일일 timer는 다음 계약을 사용한다.
 
 - `OnCalendar=*-*-* 03:15:00 Asia/Seoul`, `Persistent=true`
-- 같은 immutable release 경로, code commit, date range, universe, state 파일
+- 같은 immutable release 경로, code commit, civil date range, universe, state 파일
+- 범위는 scheduler-only XKRX artifact의 materialized range 안에 있어야 하며, 각
+  실행은 검증된 비연속 session list만 worker에 전달한다(주말/휴장일은 호출 없음)
 - `After=docker.service network-online.target` 및 `Wants=network-online.target`
 - `--auto-resume --execute`와 읽기 전용 guard만 unit에 포함
 - `SuccessExitStatus=74 75`; 영구 실패 exit 1은 systemd 실패로 남겨 자동 재개를 막음
@@ -28,8 +30,8 @@ provider는 첫 응답의 Raw bytes를 immutable snapshot으로 보존하고, �
 scripts/ops/install-kis-backfill-timer.sh --dry-run \
   --release-root /opt/lagrange/releases/<40-hex-commit> \
   --code-commit <40-hex-commit> \
-  --state-file /var/lib/lagrange/data/backfill/state.tsv \
-  --start 2020-01-01 --end 2026-08-18
+  --state-file /var/lib/lagrange/state/backfill/state.tsv \
+  --start 2020-01-31 --end 2026-08-18
 ```
 
 `--apply`는 현재 한국 시간 03:15 이전에만 허용된다. `Persistent=true` timer를
@@ -51,7 +53,15 @@ deferred failure에서는 오류 날짜 하나만 state에 추가된다. 아직 
 미래 날짜 전체를 `FAILED`로 기록하지 않는다. 영구 오류의 재시도는 operator가
 state와 Raw/Curated evidence를 검토한 뒤 `--auto-resume` 없이 별도로 실행해야 한다.
 
-상태 파일은 V3 identity를 유지하지만 오류 행은 다음처럼 error code를 추가한다.
+상태 파일은 worker가 쓰는 Raw/Curated data tree와 분리된
+`/var/lib/lagrange/state/backfill/` 아래에 생성된다. 디렉터리는 root:root 0700,
+state/lock 파일은 root:root 0600이어야 한다. 과거
+`/var/lib/lagrange/data/backfill/` 파일은 자동 이동·삭제하지 않으며, 해당 경로를
+계속 쓰려면 `LAGRANGE_BACKFILL_STATE`로 명시해야 한다. 다만 worker-owned
+`data` 트리 아래의 기존 경로는 조상 신뢰 경계를 만족하지 않아 정상적으로
+거부될 수 있으므로 새 root-owned 경로를 지정한다. 상태 파일은 scheduler-only XKRX
+calendar id/hash/range까지 포함하는 V4 identity를 유지하지만 오류 행은 다음처럼
+error code를 추가한다.
 
 ```text
 2026-01-20\tDEFERRED\t<run-identity>\tKIS_CALENDAR_SNAPSHOT_MISS

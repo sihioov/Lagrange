@@ -48,7 +48,7 @@ usage() {
 Usage: install-kis-backfill-timer.sh [--dry-run|--preflight|--check|--apply]
        --release-root /opt/lagrange/releases/<40-hex-commit>
        --code-commit <40-lowercase-hex>
-       --state-file /var/lib/lagrange/data/backfill/state.tsv
+       --state-file /var/lib/lagrange/state/backfill/state.tsv
        --start YYYY-MM-DD --end YYYY-MM-DD [--universe etf]
        [--systemd-dir PATH] [--replace-existing]
 

@@ -145,12 +145,13 @@ sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
 
 ## 2. 고정 ETF 백필
 
-날짜 범위는 KIS provider의 trading-day/holiday 검증에 맡긴다. 주말과 휴일을
-임의로 데이터로 채우지 않는다. 계획 명령은 API·Docker·파일 쓰기를 하지 않는다.
+날짜 범위는 먼저 scheduler-only XKRX artifact의 검증된 session 목록으로 제한한다.
+주말과 휴일을 임의로 데이터로 채우지 않는다. 계획 명령은 API·Docker·파일 쓰기를
+하지 않는다.
 
 ```bash
 scripts/ops/backfill-production.sh \
-  --start 2020-01-01 --end 2026-08-17 --universe etf --plan
+  --start 2020-01-31 --end 2026-08-17 --universe etf --plan
 ```
 
 운영자가 범위와 읽기 전용 호출을 확인한 뒤에만 실행 guard를 설정한다.
@@ -159,28 +160,37 @@ scripts/ops/backfill-production.sh \
 sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
   BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS \
   scripts/ops/backfill-production.sh \
-  --start 2020-01-01 --end 2026-08-17 --universe etf --execute
+  --start 2020-01-31 --end 2026-08-17 --universe etf --execute
 ```
 
-실행기는 승인된 전체 범위를 하나의 `research-worker --backfill-range` 프로세스로
-처리한다. 이 프로세스는 provider와 `TokenManager` 하나를 공유하여 공식 24시간
+실행기는 먼저 검증된 scheduler-only XKRX 날짜 artifact에서 요청 범위의 session
+날짜만 읽는다. artifact는 `data/calendars/xkrx/calendar.json`과 manifest의
+SHA-256을 검증하고, 범위 밖·symlink·변조·manifest mismatch에서는 fail-closed한다.
+토요일/일요일/closure는 worker·Docker·KIS 호출을 만들지 않는다. 하나의
+`research-worker --backfill-session-dates DATE[,DATE...]` 프로세스가 정확히
+검증된 sorted session list만 순회하며, civil range로 다시 넓히지 않는다. 이
+프로세스는 provider와 `TokenManager` 하나를 공유하여 공식 24시간
 토큰을 만료 전까지 메모리에서 재사용하고, 토큰 값 자체를 파일에 저장하지 않는다.
 발급 실패를 포함한 시도 간격은 최소 1분이며, wrapper는 빠른 프로세스 재실행도
 막기 위해 root:root 0600의 비밀이 아닌 마지막 시도 시각만 별도 기록한다. 별도
 worker daemon이 실행 중이면 서로 다른 token cache가 생기므로 실행을 거부한다.
-같은 provider는 `chk-holiday (CTCA0903R)`의 첫 성공 응답을 범위 프로세스의
-불변 calendar snapshot으로 재사용한다. 이 응답의 날짜 창을 벗어나면 두 번째
-휴장일 호출을 하지 않고 `KIS_CALENDAR_SNAPSHOT_MISS`로 fail-closed 중단한다.
-그때까지 성공한 날짜는 state에 보존되므로 같은 state를 검토 후 재실행하여 다음
-snapshot 창을 순차적으로 진행한다. 따라서 수년 범위도 날짜마다 휴장일 API를
-호출하지 않는다.
+같은 provider는 첫 번째 필요한 session day에 `chk-holiday (CTCA0903R)`를 한 번
+호출하고, 성공한 응답을 범위 프로세스의 불변 calendar snapshot으로 재사용한다.
+이후 session day는 이 캐시된 snapshot으로만 검증한다. snapshot의 날짜 창을
+벗어나면 두 번째 휴장일 호출을 하지 않고 `KIS_CALENDAR_SNAPSHOT_MISS`로
+fail-closed 중단한다. 그때까지 성공한 날짜는 state에 보존되므로 같은 state를
+검토 후 재실행하여 다음 snapshot 창을 순차적으로 진행한다. scheduler artifact가
+허용한 session list 밖의 날짜에는 휴장일 API를 호출하지 않는다. artifact의
+dates-only/session schedule을 KIS 응답으로 위조하거나 Raw/publication/curation에
+주입하지 않는다.
 이 계약의 근거는 제공된 공식 XLSX sheet 4 `접근토큰발급(P)`와 KIS 공식
 `examples_user/kis_auth.py`의 만료 기반 캐시 예제다. worker는 한 날짜의 durable
 canonical EOD DB publication이 끝날 때마다 값/본문 없는 JSON event를 flush하고, wrapper는 exact
 date 순서와 batch UUID를 검증한 뒤 해당 날짜의 `PUBLISHED`를 즉시 fsync한다.
 따라서 뒤 날짜가 실패해도 앞서 성공한 progress는 재실행에 보존된다. 상태 파일은 현재 실행의 date range,
-universe, code commit, entitlement reference와 source scope만 해시한 V3
-pre-run identity에 바인딩된다. 아직 생성되지 않은 curated manifest/five-pin은
+universe, code commit, entitlement reference와 source scope, XKRX calendar id,
+artifact SHA-256, full artifact range를 해시한 V4 pre-run identity에 바인딩된다.
+아직 생성되지 않은 curated manifest/five-pin은
 identity에 들어가지 않으므로, 백필 후 승인 pin을 `.env`에 입력해도 재개 state가
 무효화되지 않는다. 다른 실행의 상태나 구버전 형식은 fail-closed로 거부한다.
 실행 중 동시 백필은 `flock`으로 직렬화한다. 실패한 날짜에서 중지하며, 재실행
@@ -234,7 +244,7 @@ path에만 적용하며 `chk-holiday`, 일봉, 현재가 조회에는 전파하�
 
 ```bash
 scripts/ops/backfill-production.sh \
-  --start 2020-01-01 --end 2026-08-17 --universe all --plan
+  --start 2020-01-31 --end 2026-08-17 --universe all --plan
 # bridge가 준비되기 전 --execute는 BLOCKED_EXTERNAL이어야 한다.
 ```
 
@@ -323,11 +333,13 @@ sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
   scripts/ops/compose-release.sh --scope backfill --apply
 ```
 
-bootstrap이 성공한 뒤에만 bounded range 백필을 실행한다. daemon을 먼저
+bootstrap이 성공한 뒤에만 검증된 세션 날짜 목록으로 백필을 실행한다. daemon을 먼저
 기동하면 기본 16:30 스케줄러가 승인된 범위 밖의 날짜를 가져오고 별도 token
 cache에서 재발급할 수 있으므로, wrapper는 실행 중 daemon을 fail-closed로
-거부하고 하나의 `docker compose run --rm --no-deps research-worker
---backfill-range`만 실행한다.
+거부하고 검증된 XKRX 세션 날짜만 포함한 하나의
+`docker compose run --rm --no-deps research-worker
+--backfill-session-dates YYYY-MM-DD[,YYYY-MM-DD...]`만 실행한다. 주말·휴장일은
+이 목록에 포함되지 않아 worker/KIS/Docker 호출이 발생하지 않는다.
 
 신규 DB에는 백필 전 EOD 행이 없으므로 backfill bootstrap의
 `COMPOSE_BACKFILL_BOOTSTRAP: PASS`는 PostgreSQL/one-shot 인프라 gate만 의미하며,
@@ -346,17 +358,23 @@ dataset version과 five-pin을 승인한다. 이어서 Auth0/TLS와 serving runt
 secret을 provision하고 full release validator/Compose를 실행한다.
 
 백필 상태와 Raw/Curated 산출물을 한 번에 검토할 때는 별도의 로컬 보고서를
-사용한다. 이 보고서는 승인이나 DB 쓰기를 수행하지 않고, V3 상태의 모든 날짜가
+사용한다. 이 보고서는 승인이나 DB 쓰기를 수행하지 않고, V4 상태의 검증된 XKRX
+session 날짜가
 `PUBLISHED`인지, `kis`/`kis-normalized` Raw manifest가 요청 범위를 덮는지,
 Curated manifest가 선언한 파일의 크기·SHA-256·Parquet magic이 맞는지만 확인한다.
 DB `READY`, entitlement 승인, 다섯 pin은 의도적으로 `NOT_CHECKED`로 남긴다.
 
 ```sh
-scripts/ops/backfill-review-report.sh --start 2020-01-01 --end 2026-08-18 \
-  --state-file /var/lib/lagrange/data/backfill/etf-2020-01-01-to-2026-08-18-<commit>.tsv \
+scripts/ops/backfill-review-report.sh --start 2020-01-31 --end 2026-08-18 \
+  --state-file /var/lib/lagrange/state/backfill/etf-2020-01-31-to-2026-08-18-<commit>.tsv \
   --data-root /var/lib/lagrange/data --check
 ```
 
+기본 progress state는 worker-writable data tree와 분리된
+`/var/lib/lagrange/state/backfill/` 아래 root-owned 0700/0600 계약으로 생성된다.
+기존 `/var/lib/lagrange/data/backfill/` state는 자동 이동·삭제하지 않으며,
+`LAGRANGE_BACKFILL_STATE`로 강제해도 worker-owned 조상 경로 때문에 fail-closed될
+수 있다.
 `CURATED_CANDIDATE_FOUND_UNAPPROVED`가 출력되어도 출시 승인이 아니다. 이후
 operator-attestation 런북의 `register-dataset-version.sh --plan/--check/--apply`
 절차로 정확한 artifact set, DB lineage, ACTIVE entitlement를 다시 확인하고,

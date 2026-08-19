@@ -102,11 +102,11 @@ With the environment below configured, run a single target date:
 cargo run -p collectors --bin research-worker -- --once --date 2020-01-31
 ```
 
-The production backfill wrapper uses the internal bounded-range form so all
-dates share one in-memory KIS provider and token manager:
+The production backfill wrapper passes the validated, non-contiguous session
+list so all dates share one in-memory KIS provider and token manager:
 
 ```sh
-research-worker --backfill-range --start 2020-01-01 --end 2026-08-17
+research-worker --backfill-session-dates 2020-01-31,2020-02-03,2020-02-04
 ```
 
 Operators should invoke this through `scripts/ops/backfill-production.sh`,

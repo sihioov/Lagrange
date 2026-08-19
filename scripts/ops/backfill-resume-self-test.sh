@@ -19,7 +19,7 @@ bash -n "$script_dir/backfill-production.sh" "$installer"
 identity=$(printf 'a%.0s' {1..64})
 write_state() {
   local path=$1
-  printf 'LAGRANGE_BACKFILL_STATE_V3\t%s\n' "$identity" >"$path"
+  printf 'LAGRANGE_BACKFILL_STATE_V4\t%s\n' "$identity" >"$path"
   printf '2026-01-01\tRUNNING\t%s\n' "$identity" >>"$path"
 }
 
@@ -60,6 +60,17 @@ set -e
 grep -Fq $'2026-01-02\tFAILED\t'"$identity"$'\tBACKFILL_INCOMPLETE' "$incomplete_state"
 ! grep -Fq $'2026-01-03\tFAILED\t' "$incomplete_state"
 
+session_state="$tmp/session-list.tsv"
+write_state "$session_state"
+printf '%s\tRUNNING\t%s\n' 2026-01-01 "$identity" >>"$session_state"
+printf '%s\tRUNNING\t%s\n' 2026-01-05 "$identity" >>"$session_state"
+printf '%s\n' \
+  '{"status":"event","event":"published","phase":"canonical_publication","batch_id":"00000000-0000-4000-8000-000000000001","target_date":"2026-01-01"}' \
+  '{"status":"event","event":"published","phase":"canonical_publication","batch_id":"00000000-0000-4000-8000-000000000002","target_date":"2026-01-05"}' | \
+  python3 "$progress" "$session_state" "$identity" 2026-01-01 2026-01-05 \
+    2026-01-01,2026-01-05 >/dev/null
+grep -Fq $'2026-01-05\tPUBLISHED\t'"$identity" "$session_state"
+
 fake_commit=$(printf 'b%.0s' {1..40})
 fake_release="$tmp/releases/$fake_commit"
 mkdir -p "$fake_release/scripts/ops"
@@ -69,7 +80,7 @@ plan=$(
   "$installer" --release-root "$fake_release" \
     --code-commit "$fake_commit" \
     --state-file "$tmp/data/backfill/state.tsv" \
-    --start 2020-01-01 --end 2026-08-18 --dry-run
+    --start 2020-01-31 --end 2026-08-18 --dry-run
 )
 grep -Fq 'daily 03:15 Asia/Seoul' <<<"$plan"
 grep -Fq 'no KIS/Docker/DB/secret/order call' <<<"$plan"
@@ -81,12 +92,12 @@ norep=$(grep -Ei 'app.?secret|app.?key|access.?token|CANO|ACNT_PRDT_CD' <<<"$pla
 early_plan=$(KIS_BACKFILL_TIMER_TEST_NOW=03:14:59 "$installer" \
   --release-root "$fake_release" --code-commit "$fake_commit" \
   --state-file "$tmp/data/backfill/state.tsv" \
-  --start 2020-01-01 --end 2026-08-18 --dry-run)
+  --start 2020-01-31 --end 2026-08-18 --dry-run)
 grep -Fq 'apply-window=open' <<<"$early_plan"
 late_plan=$(KIS_BACKFILL_TIMER_TEST_NOW=03:15:00 "$installer" \
   --release-root "$fake_release" --code-commit "$fake_commit" \
   --state-file "$tmp/data/backfill/state.tsv" \
-  --start 2020-01-01 --end 2026-08-18 --dry-run)
+  --start 2020-01-31 --end 2026-08-18 --dry-run)
 grep -Fq 'apply-window=closed' <<<"$late_plan"
 grep -Fq 'SuccessExitStatus=74 75' "$installer"
 grep -Fq 'automatic resume is blocked' "$script_dir/backfill-production.sh"

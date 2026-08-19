@@ -550,16 +550,21 @@ def build_manifest(artifact: dict[str, Any], artifact_bytes: bytes) -> dict[str,
 
 
 def reject_unsafe_output(path: Path) -> None:
-    if path.is_symlink():
-        raise BootstrapError(f"refusing symlink output directory: {path}")
+    # Check the lexical path before resolving it.  Resolving first would hide
+    # a symlinked parent (for example ``/var/lib/alias/xkrx``) and could make a
+    # caller validate a calendar outside the checked-in directory by accident.
+    if not path.is_absolute():
+        raise BootstrapError(f"output directory must be absolute: {path}")
+    if any(part == ".." for part in path.parts):
+        raise BootstrapError(f"output directory must not contain '..': {path}")
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise BootstrapError(f"output path traverses a symlink: {current}")
     resolved = path.resolve()
     if resolved in {Path("/"), Path.home()}:
         raise BootstrapError(f"refusing to use a broad output directory: {resolved}")
-    current = resolved
-    while current != current.parent:
-        if current.exists() and current.is_symlink():
-            raise BootstrapError(f"output path traverses a symlink: {current}")
-        current = current.parent
     if path.exists() and not path.is_dir():
         raise BootstrapError(f"output path is not a directory: {path}")
 
@@ -661,12 +666,96 @@ def run_check(start: dt.date, end: dt.date, output_dir: Path) -> None:
     )
 
 
+def _validated_selection(
+    start: dt.date, end: dt.date, output_dir: Path
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load the checked-in calendar for a scheduler-only date selection.
+
+    This deliberately shares the full artifact/manifest validator with
+    ``--check``.  It does not import exchange_calendars and it never exposes
+    the audit-only source schedule to callers.
+    """
+
+    reject_unsafe_output(output_dir)
+    # ``load_existing`` normally validates an exact checked-in range.  A
+    # scheduler selection is allowed to be an inclusive subrange, so first
+    # recover the artifact's own range from the untrusted JSON and then run the
+    # same complete validator against that exact range before filtering it.
+    artifact_path = output_dir / ARTIFACT_NAME
+    manifest_path = output_dir / MANIFEST_NAME
+    if not artifact_path.is_file() or artifact_path.is_symlink():
+        raise BootstrapError(f"missing or unsafe artifact: {artifact_path}")
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise BootstrapError(f"missing or unsafe manifest: {manifest_path}")
+    try:
+        candidate = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BootstrapError(f"calendar artifact is not valid UTF-8 JSON: {exc}") from exc
+    if not isinstance(candidate, dict):
+        raise BootstrapError("calendar artifact must be a JSON object")
+    try:
+        candidate_range = candidate["range"]
+        artifact_start = parse_date(candidate_range["start"], "artifact range start")
+        artifact_end = parse_date(candidate_range["end"], "artifact range end")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BootstrapError("calendar artifact range is malformed") from exc
+    artifact, manifest, _ = load_existing(output_dir, artifact_start, artifact_end)
+    if start < artifact_start or end > artifact_end:
+        raise BootstrapError(
+            f"requested selection {start}..{end} is outside materialized artifact range "
+            f"{artifact_start}..{artifact_end}"
+        )
+    return artifact, manifest
+
+
+def run_emit_sessions(start: dt.date, end: dt.date, output_dir: Path) -> None:
+    artifact, manifest = _validated_selection(start, end, output_dir)
+    selected_sessions = [
+        entry
+        for entry in artifact["sessions"]
+        if start <= parse_date(entry["date"], "session date") <= end
+    ]
+    selected_non_sessions = [
+        entry
+        for entry in artifact["non_sessions"]
+        if start <= parse_date(entry["date"], "non-session date") <= end
+    ]
+    metadata = {
+        "schema": "xkrx-historical-session-selection-v1",
+        "contract": artifact["contract"],
+        "representation": artifact["representation"],
+        "calendar_id": manifest["calendar_id"],
+        "artifact_sha256": manifest["artifact_sha256"],
+        "artifact_size_bytes": manifest["artifact_size_bytes"],
+        "source": manifest["source"],
+        "artifact_range": manifest["range"],
+        "requested_range": {"start": start.isoformat(), "end": end.isoformat()},
+        "session_count": len(selected_sessions),
+        "skipped_non_session_count": len(selected_non_sessions),
+    }
+    # Keep stdout strictly dates-only for a scheduler pipe.  The caller can
+    # capture stderr in memory for the identity/count metadata.
+    print(
+        json.dumps(metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        file=sys.stderr,
+    )
+    # stdout is a deliberately boring, package-free wire format: one
+    # validated civil date per line and no open/close or reason fields.
+    for entry in selected_sessions:
+        print(entry["date"])
+
+
 def parser() -> argparse.ArgumentParser:
     command = argparse.ArgumentParser(description=__doc__)
     modes = command.add_mutually_exclusive_group()
     modes.add_argument("--plan", action="store_true", help="print a no-change plan (default)")
     modes.add_argument("--apply", action="store_true", help="materialize the artifact")
     modes.add_argument("--check", action="store_true", help="validate an existing artifact")
+    modes.add_argument(
+        "--emit-sessions",
+        action="store_true",
+        help="emit only validated session dates for the historical scheduler",
+    )
     command.add_argument("--start", default=DEFAULT_START, help=f"inclusive start date (default: {DEFAULT_START})")
     command.add_argument("--end", required=True, help="inclusive end date; an explicit end is required")
     command.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
@@ -688,6 +777,8 @@ def main(argv: list[str]) -> int:
             run_apply(start, end, output_dir, argv, args.replace, args._locked_child_token)
         elif args.check:
             run_check(start, end, output_dir)
+        elif args.emit_sessions:
+            run_emit_sessions(start, end, output_dir)
         else:
             run_plan(start, end, output_dir)
         return 0

@@ -1305,27 +1305,30 @@ pub async fn run_internal_ingest(
         })
 }
 
-/// Runs an inclusive credentialed backfill with one in-memory KIS client.
+/// Runs an inclusive credentialed backfill over an exact, sorted session list.
 ///
-/// Keeping the provider here, outside the date loop, is the token-safety
-/// contract: every read in the range shares one `TokenManager`, so the
-/// documented 24-hour token is reused until its expiry margin. No bearer token
-/// is written to disk, argv, the environment, or worker output.
-pub async fn run_credentialed_backfill_range_stream<W: io::Write>(
+/// The scheduler-only XKRX artifact is intentionally consumed by the operator
+/// wrapper, not by this provider.  This CLI boundary accepts the already
+/// validated civil dates so weekends/closures never enter the worker loop while
+/// one process still owns one in-memory TokenManager and cumulative recovery.
+pub async fn run_credentialed_backfill_session_dates_stream<W: io::Write>(
     values: &HashMap<String, String>,
-    start: TradingDate,
-    end: TradingDate,
+    dates: &[TradingDate],
     writer: &mut W,
 ) -> Result<usize, WorkerError> {
-    if end < start {
+    if dates.is_empty()
+        || dates.len() > 10_000
+        || dates.windows(2).any(|window| window[0] >= window[1])
+    {
         return Err(WorkerError::InvalidConfig {
-            key: "--backfill-range",
+            key: "--backfill-session-dates",
         });
     }
+    let end = *dates.last().expect("validated non-empty session dates");
     let config = ResearchWorkerConfig::from_map(values)?;
     if config.fetch_mode != FetchMode::Credentialed || config.candidate_sources_enabled {
         return Err(WorkerError::InvalidConfig {
-            key: "--backfill-range",
+            key: "--backfill-session-dates",
         });
     }
     let factory = ProductionWorkerComponentFactory;
@@ -1350,9 +1353,8 @@ pub async fn run_credentialed_backfill_range_stream<W: io::Write>(
         provider: &provider,
         normalized: &normalized,
     };
-    let mut date = start;
     let mut processed = 0usize;
-    loop {
+    for &date in dates {
         let batch_id = tokio::time::timeout(
             config.attempt_timeout,
             run_credentialed_backfill_date(&context, date, UtcTimestamp::now()),
@@ -1388,10 +1390,6 @@ pub async fn run_credentialed_backfill_range_stream<W: io::Write>(
             phase: WorkerPhase::Publication,
         })?;
         processed = processed.saturating_add(1);
-        if date == end {
-            break;
-        }
-        date = date.next_day();
     }
     Ok(processed)
 }

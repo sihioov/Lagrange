@@ -24,7 +24,7 @@ before Compose can reinterpret a value.
 | `backfill-production.sh` | `--plan` | `--execute` is root-only because it validates protected production secrets, then calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
 | `install-kis-backfill-timer.sh` | `--dry-run` | root-only `--apply` installs one immutable-release daily 03:15 KST timer, enables but does not start it, and refuses installation at/after the current day's boundary; only deferred/retryable exits are timer-success, while permanent failures halt auto-resume |
 | `post-backfill-health.sh` | `--scope backfill --plan` | `--check` is root-only because it validates protected production secrets, then runs the existing research-worker EOD freshness health gate; no KIS call |
-| `backfill-review-report.sh` | `--start DATE --end DATE --state-file PATH --plan` | `--check` reads only the V3 backfill state, Raw manifest indexes, and curated artifact bytes; it never registers READY or claims DB/entitlement approval |
+| `backfill-review-report.sh` | `--start DATE --end DATE --state-file PATH --plan` | `--check` reads only the V4 backfill state, validated XKRX session dates, Raw manifest indexes, and curated artifact bytes; it never registers READY or claims DB/entitlement approval |
 | `self-test.sh` | static/no-infrastructure tests | none |
 
 Production execution is intentionally split into infrastructure, optional serving
@@ -43,7 +43,7 @@ pre-staging, data, and serving approvals:
    then its explicit root-only `--apply`/`--check`, followed by
    `deploy/secrets/provision-runtime-secrets.sh --scope backfill`, then
    `compose-release.sh --scope backfill --apply`, then
-   the bounded ETF `research-worker --backfill-range` backfill command), followed by the
+   the bounded ETF `research-worker --backfill-session-dates` backfill command), followed by the
    dependency-free worker healthcheck, the local non-approving
    `backfill-review-report.sh` handoff, curated dataset approval, and
 5. the full
@@ -244,12 +244,15 @@ app credentials, any `RESEARCH_*`/entitlement value, or recommendation pins.
 It never invokes Docker, a provider, or an API and is not a Compose execution
 scope; `compose-release.sh` intentionally continues to support only
 `infrastructure|backfill|release`.
-The backfill state identity binds only pre-run inputs (date range, universe,
-code commit, entitlement, and source scope), so entering the approved pin later
-does not invalidate a resumable backfill. The backfill scope does not start the
-worker daemon: one bounded `docker compose run --rm --no-deps research-worker
---backfill-range` invocation owns the approved inclusive range. The process
-keeps one provider and `TokenManager`, reuses the documented 24-hour token,
+The backfill state identity binds the pre-run inputs (date range, universe,
+code commit, entitlement, and source scope) plus the scheduler-only XKRX
+calendar id, artifact hash, and full artifact range, so a calendar change
+cannot silently reuse a stale PUBLISHED line. The backfill scope does not
+start the worker daemon: one bounded `docker compose run --rm --no-deps
+research-worker --backfill-session-dates DATE[,DATE...]` invocation owns the
+exact sorted validated session list. Weekend/holiday dates are never passed to
+Docker or KIS. The worker preserves one provider and `TokenManager` across the
+whole list, reuses the documented 24-hour token,
 enforces the one-token-request-per-minute safeguard even after a failed issue,
 and never persists the bearer token. The wrapper refuses a concurrently running
 worker daemon and keeps only a root-owned mode-0600 non-secret issue-time marker

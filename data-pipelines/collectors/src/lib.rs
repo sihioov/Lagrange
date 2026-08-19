@@ -33,6 +33,6 @@ pub use worker::{
     WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome, bootstrap_worker,
     bootstrap_worker_with, build_postgres_pool, candidate_healthcheck, current_kst_date,
     healthcheck, next_run_delay, publication_age, retry_delay,
-    run_credentialed_backfill_range_stream, run_internal_ingest, run_internal_recovery,
+    run_credentialed_backfill_session_dates_stream, run_internal_ingest, run_internal_recovery,
     run_internal_recovery_page_stream, run_internal_recovery_stream, validate_synthetic_policy,
 };

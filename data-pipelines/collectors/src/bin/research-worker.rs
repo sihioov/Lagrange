@@ -9,7 +9,7 @@ use chrono::Utc;
 use collectors::{
     HealthcheckConfig, RecoveryPosition, WORKER_ENV_KEYS, WaitOutcome, WorkerControl, WorkerError,
     WorkerEvent, WorkerObserver, WorkerRunOutcome, bootstrap_worker, build_postgres_pool,
-    candidate_healthcheck, healthcheck, run_credentialed_backfill_range_stream,
+    candidate_healthcheck, healthcheck, run_credentialed_backfill_session_dates_stream,
     run_internal_ingest, run_internal_recovery_page_stream,
 };
 use domain::{TradingDate, UtcTimestamp};
@@ -18,7 +18,7 @@ use tokio::sync::{Mutex, watch};
 
 const USAGE: &str = "\
 research-worker [--once --date YYYY-MM-DD]
-research-worker --backfill-range --start YYYY-MM-DD --end YYYY-MM-DD
+research-worker --backfill-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
 research-worker healthcheck
 research-worker --help
 
@@ -30,10 +30,7 @@ DATABASE_URL is not used by this worker.
 enum Command {
     Daemon,
     Once(TradingDate),
-    BackfillRange {
-        start: TradingDate,
-        end: TradingDate,
-    },
+    BackfillSessionDates(Vec<TradingDate>),
     Healthcheck,
     Help,
     InternalRecover(RecoveryPosition),
@@ -162,7 +159,7 @@ async fn main() -> ExitCode {
     let result = match command {
         Command::Healthcheck => run_healthcheck(&values).await,
         Command::Once(date) => run_once(&values, date).await,
-        Command::BackfillRange { start, end } => run_backfill_range(&values, start, end).await,
+        Command::BackfillSessionDates(dates) => run_backfill_session_dates(&values, &dates).await,
         Command::Daemon => run_daemon(&values).await,
         Command::InternalRecover(after) => run_internal_recover(&values, after).await,
         Command::InternalIngest(date, now) => run_internal_collect(&values, date, now).await,
@@ -184,7 +181,7 @@ fn command_target_date(command: &Command) -> Option<TradingDate> {
     match command {
         Command::Once(date) | Command::InternalIngest(date, _) => Some(*date),
         Command::Daemon
-        | Command::BackfillRange { .. }
+        | Command::BackfillSessionDates(_)
         | Command::Healthcheck
         | Command::Help
         | Command::InternalRecover(_) => None,
@@ -213,24 +210,29 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
                 .map(Command::Once)
                 .map_err(|_| WorkerError::InvalidConfig { key: "--date" })
         }
-        [range, start_flag, start, end_flag, end]
-            if range == "--backfill-range" && start_flag == "--start" && end_flag == "--end" =>
-        {
-            let start = TradingDate::parse(start).map_err(|_| WorkerError::InvalidConfig {
-                key: "--backfill-range",
-            })?;
-            let end = TradingDate::parse(end).map_err(|_| WorkerError::InvalidConfig {
-                key: "--backfill-range",
-            })?;
-            if end < start {
-                return Err(WorkerError::InvalidConfig {
-                    key: "--backfill-range",
-                });
-            }
-            Ok(Command::BackfillRange { start, end })
-        }
+        [flag, dates] if flag == "--backfill-session-dates" => parse_session_dates(dates),
         _ => Err(WorkerError::InvalidConfig { key: "arguments" }),
     }
+}
+
+fn parse_session_dates(value: &str) -> Result<Command, WorkerError> {
+    let dates = value
+        .split(',')
+        .map(|date| {
+            TradingDate::parse(date).map_err(|_| WorkerError::InvalidConfig {
+                key: "--backfill-session-dates",
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if dates.is_empty()
+        || dates.len() > 10_000
+        || dates.windows(2).any(|window| window[0] >= window[1])
+    {
+        return Err(WorkerError::InvalidConfig {
+            key: "--backfill-session-dates",
+        });
+    }
+    Ok(Command::BackfillSessionDates(dates))
 }
 
 fn parse_internal_recovery_args(args: &[String]) -> Result<RecoveryPosition, WorkerError> {
@@ -318,14 +320,13 @@ async fn run_once(
     Ok(run_record(outcome, Some(date)))
 }
 
-async fn run_backfill_range(
+async fn run_backfill_session_dates(
     values: &HashMap<String, String>,
-    start: TradingDate,
-    end: TradingDate,
+    dates: &[TradingDate],
 ) -> Result<SuccessRecord, WorkerError> {
     let stdout = std::io::stdout();
     let mut writer = stdout.lock();
-    run_credentialed_backfill_range_stream(values, start, end, &mut writer).await?;
+    run_credentialed_backfill_session_dates_stream(values, dates, &mut writer).await?;
     Ok(SuccessRecord {
         status: "ok",
         phase: "complete",
@@ -580,5 +581,30 @@ mod tests {
         assert_eq!(value["response_kind"], "calendar");
         assert_eq!(value["file_name"], "calendar-page-01.json");
         assert!(value.get("http_status").is_none());
+    }
+
+    #[test]
+    fn session_date_argument_preserves_non_contiguous_sorted_dates() {
+        let command = parse_args(&[
+            "--backfill-session-dates".to_owned(),
+            "1998-12-04,1998-12-05,1998-12-07".to_owned(),
+        ])
+        .expect("sorted session dates are accepted");
+        match command {
+            Command::BackfillSessionDates(dates) => {
+                assert_eq!(dates.len(), 3);
+                assert!(dates[0] < dates[1] && dates[1] < dates[2]);
+            }
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn session_date_argument_rejects_unsorted_or_duplicate_dates() {
+        for value in ["2026-08-18,2026-08-17", "2026-08-18,2026-08-18", ""] {
+            assert!(
+                parse_args(&["--backfill-session-dates".to_owned(), value.to_owned(),]).is_err()
+            );
+        }
     }
 }

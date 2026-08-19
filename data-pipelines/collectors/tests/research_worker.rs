@@ -1822,7 +1822,7 @@ fn worker_cli_help_and_argument_errors_are_stable_json() {
     assert!(help.status.success());
     let help_text = String::from_utf8(help.stdout).unwrap();
     assert!(help_text.contains("--once --date YYYY-MM-DD"));
-    assert!(help_text.contains("--backfill-range --start YYYY-MM-DD --end YYYY-MM-DD"));
+    assert!(help_text.contains("--backfill-session-dates YYYY-MM-DD[,YYYY-MM-DD...]"));
     assert!(help_text.contains("healthcheck"));
 
     let missing_date = Command::new(env!("CARGO_BIN_EXE_research-worker"))
@@ -1840,7 +1840,7 @@ fn worker_cli_help_and_argument_errors_are_stable_json() {
 }
 
 #[test]
-fn worker_backfill_range_rejects_invalid_bounds_before_config_or_secret_access() {
+fn worker_legacy_backfill_range_is_rejected_before_config_or_secret_access() {
     let output = Command::new(env!("CARGO_BIN_EXE_research-worker"))
         .env_clear()
         .args([
@@ -1850,6 +1850,27 @@ fn worker_backfill_range_rejects_invalid_bounds_before_config_or_secret_access()
             "--end",
             "2020-01-01",
         ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["error_code"], "INVALID_CONFIG");
+    assert_eq!(json["phase"], "config");
+    assert!(json["target_date"].is_null());
+    let visible = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!visible.contains("KIS_APP_KEY"));
+    assert!(!visible.contains("KIS_APP_SECRET"));
+}
+
+#[test]
+fn worker_backfill_session_dates_rejects_unsorted_input_before_config_or_secret_access() {
+    let output = Command::new(env!("CARGO_BIN_EXE_research-worker"))
+        .env_clear()
+        .args(["--backfill-session-dates", "2026-08-18,2026-08-17"])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));

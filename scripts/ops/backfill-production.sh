@@ -9,6 +9,15 @@ root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/dotenv.sh"
 env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
 state_file=${LAGRANGE_BACKFILL_STATE:-}
+calendar_dir=${LAGRANGE_XKRX_CALENDAR_DIR:-$root/data/calendars/xkrx}
+calendar_selection_file=
+calendar_metadata_file=
+calendar_id=
+calendar_artifact_sha256=
+calendar_artifact_size=
+calendar_artifact_range=
+calendar_session_count=0
+calendar_non_session_count=0
 start_date=
 end_date=
 universes=etf
@@ -28,13 +37,15 @@ are candidate source data.
 --execute requires BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS
 and a valid backfill-scope production config. It uses the existing idempotent worker path;
 no order/account endpoint is called. The state file is append-only and each
-date must complete Raw -> normalized -> DB publication before progress is
-recorded. One bounded worker process owns the inclusive range so its in-memory
-KIS token and one exact chk-holiday calendar snapshot are reused; the token is
-never persisted by this script. If the broker calendar snapshot does not cover
-the next date, the worker stops fail-closed without issuing a second calendar
-request; rerun the same state after review to advance the snapshot window. The
-state identity binds only pre-run inputs; the curated dataset
+session date must complete Raw -> normalized -> DB publication before progress
+is recorded. The validated XKRX scheduler artifact supplies the only session
+date input: weekends and closures create zero Docker, worker, or KIS calls.
+The one worker process receives the exact sorted session list, makes one
+allowlisted KIS chk-holiday call for the first needed date, and validates later
+dates against its immutable cached snapshot. A date outside that snapshot makes
+no second call and fails closed. The state identity
+binds pre-run inputs plus the calendar id,
+artifact hash, and full artifact range; the curated dataset
 pin is produced and approved after this command, so it is never required here.
 
 --auto-resume is reserved for the recurring systemd timer. It permits a fresh
@@ -99,8 +110,10 @@ case "$universes" in
 esac
 
 # Read the same strict, non-evaluating dotenv contract used by the validator.
-# This is needed even for --plan so the default state path follows the
-# effective absolute LAGRANGE_DATA_DIR rather than a host-specific fallback.
+# This is needed even for --plan so the effective absolute data root is still
+# validated before a production operation.  Progress state intentionally does
+# not follow that worker-writable data root; its default is the protected
+# /var/lib/lagrange/state tree below.
 [ -f "$env_file" ] || blocked "production env file missing: $env_file"
 if ! dotenv_load "$env_file"; then
   echo 'INVALID_CONFIG: production env file is malformed' >&2
@@ -113,22 +126,11 @@ data_dir=$(dotenv_get LAGRANGE_DATA_DIR)
 case "$data_dir" in
   */../*|*/..) die 'LAGRANGE_DATA_DIR must not contain ..' ;;
 esac
-[ -n "$state_file" ] || state_file="$data_dir/backfill/state.tsv"
-
-date_list() {
-  python3 - "$start_date" "$end_date" <<'PY'
-import datetime as dt
-import sys
-start = dt.date.fromisoformat(sys.argv[1])
-end = dt.date.fromisoformat(sys.argv[2])
-if end < start:
-    raise SystemExit("backfill-production: --end precedes --start")
-day = start
-while day <= end:
-    print(day.isoformat())
-    day += dt.timedelta(days=1)
-PY
-}
+# Progress state is deliberately outside the worker-writable data tree.  The
+# old /var/lib/lagrange/data/backfill location remains readable only when an
+# operator explicitly supplies LAGRANGE_BACKFILL_STATE; it is never migrated
+# or removed automatically.
+[ -n "$state_file" ] || state_file=/var/lib/lagrange/state/backfill/state.tsv
 
 check_state_path() {
   local path=$1 label=$2 probe
@@ -150,8 +152,219 @@ check_state_path() {
   fi
 }
 
+validate_directory_ancestors() {
+  local path=$1 label=$2 probe=$1
+  case "$path" in
+    /*) ;;
+    *) blocked "$label must be absolute: $path" ;;
+  esac
+  case "$path" in
+    */../*|*/..) blocked "$label must not contain '..': $path" ;;
+  esac
+  while [ "$probe" != / ]; do
+    [ ! -L "$probe" ] || blocked "$label must not traverse a symlink: $probe"
+    if [ -e "$probe" ]; then
+      [ -d "$probe" ] || blocked "$label ancestor must be a directory: $probe"
+    fi
+    probe=${probe%/*}
+    [ -n "$probe" ] || probe=/
+  done
+}
+
+validate_trusted_state_ancestors() {
+  local path=$1 probe=$1 shape mode uid gid
+  # /tmp is a sticky system boundary used only by local tests; the random
+  # test root below it is still checked.  /var/lib is the production boundary
+  # for /var/lib/lagrange/state.  Do not treat a worker-owned data directory
+  # as trusted merely because its child was created root-owned.
+  while [ "$probe" != / ]; do
+    case "$probe" in
+      /tmp|/var/lib) break ;;
+    esac
+    if [ -e "$probe" ]; then
+      [ -d "$probe" ] || blocked "backfill state ancestor must be a directory: $probe"
+      shape=$(stat -Lc '%u:%g:%a' -- "$probe") ||
+        blocked "cannot inspect backfill state ancestor: $probe"
+      IFS=: read -r uid gid mode <<<"$shape"
+      [ "$uid" = 0 ] && [ "$gid" = 0 ] ||
+        blocked "backfill state ancestor must be root:root: $probe"
+      if (( 8#$mode & 0022 )); then
+        blocked "backfill state ancestor must not be group/other writable: $probe"
+      fi
+    fi
+    probe=${probe%/*}
+    [ -n "$probe" ] || probe=/
+  done
+}
+
+ensure_state_directory() {
+  local path=$1 probe=$1
+  [ "$(id -u)" -eq 0 ] || blocked 'backfill execute must run as root for protected state/lock files'
+  case "$path" in
+    /|/*/../*|*/..) blocked 'backfill state directory path is unsafe' ;;
+  esac
+
+  # Build missing components one at a time. mkdir never follows an existing
+  # symlink here; a race that creates a component between the check and mkdir
+  # is treated as a failure rather than followed.
+  local -a missing=()
+  while [ "$probe" != / ]; do
+    [ ! -L "$probe" ] || blocked "backfill state directory must not traverse a symlink: $probe"
+    if [ -e "$probe" ]; then
+      [ -d "$probe" ] || blocked "backfill state directory ancestor is not a directory: $probe"
+      break
+    fi
+    missing+=("$probe")
+    probe=${probe%/*}
+    [ -n "$probe" ] || probe=/
+  done
+  validate_directory_ancestors "$probe" backfill-state-ancestor
+  # Check the first existing ancestor before creating any child.  In
+  # particular, never create a root-owned state directory below a
+  # worker-owned data directory and then claim the path is protected.
+  validate_trusted_state_ancestors "$probe"
+
+  local index current
+  for ((index=${#missing[@]} - 1; index >= 0; index--)); do
+    current=${missing[index]}
+    [ ! -e "$current" ] && [ ! -L "$current" ] ||
+      blocked "backfill state directory appeared during safe creation: $current"
+    mkdir -- "$current" || blocked "cannot create backfill state directory: $current"
+    chown root:root -- "$current" || blocked "cannot set backfill state directory owner: $current"
+    chmod 0700 -- "$current" || blocked "cannot set backfill state directory mode: $current"
+  done
+
+  validate_directory_ancestors "$path" backfill-state-ancestor
+  validate_trusted_state_ancestors "$path"
+  [ "$(stat -Lc '%u:%g:%a:%F' -- "$path")" = '0:0:700:directory' ] ||
+    blocked 'backfill state directory must be root:root mode 0700'
+}
+
+ensure_protected_state_file() {
+  local path=$1 label=$2
+  if [ -L "$path" ]; then
+    blocked "$label must not be a symlink: $path"
+  fi
+  if [ ! -e "$path" ]; then
+    # noclobber maps to an exclusive create for the shell's regular-file
+    # redirection. The root-only state directory prevents an unprivileged
+    # replacement, and a concurrent creator is revalidated below.
+    if ! (umask 077; set -C; : >"$path"); then
+      [ ! -L "$path" ] && [ -e "$path" ] ||
+        blocked "$label could not be created without following a symlink: $path"
+    else
+      chown root:root -- "$path" || blocked "cannot set $label owner: $path"
+      chmod 0600 -- "$path" || blocked "cannot set $label mode: $path"
+    fi
+  fi
+  [ ! -L "$path" ] && [ -f "$path" ] ||
+    blocked "$label must be a regular non-symlink file: $path"
+  case "$(stat -Lc '%u:%g:%a:%F' -- "$path")" in
+    '0:0:600:regular file'|'0:0:600:regular empty file') ;;
+    *)
+    blocked "$label must be root:root mode 0600"
+    ;;
+  esac
+}
+
+verify_lock_fd_identity() {
+  local path_identity fd_identity
+  [ ! -L "$state_lock" ] || blocked 'backfill state lock became a symlink after open'
+  path_identity=$(stat -Lc '%d:%i:%u:%g:%a:%F' -- "$state_lock") ||
+    blocked 'cannot inspect backfill state lock after open'
+  fd_identity=$(stat -Lc '%d:%i:%u:%g:%a:%F' -- /proc/$$/fd/9) ||
+    blocked 'cannot inspect opened backfill state lock descriptor'
+  [ "$path_identity" = "$fd_identity" ] ||
+    blocked 'opened backfill state lock descriptor does not match its path'
+  case "$path_identity" in
+    *:0:0:600:regular\ file|*:0:0:600:regular\ empty\ file) ;;
+    *) blocked 'backfill state lock changed owner, mode, or type after open' ;;
+  esac
+}
+
+load_calendar_selection() {
+  command -v python3 >/dev/null 2>&1 || blocked 'python3 is required to validate the XKRX session artifact'
+  calendar_selection_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-xkrx-sessions.XXXXXX") ||
+    die 'cannot stage the validated XKRX session list'
+  calendar_metadata_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-xkrx-metadata.XXXXXX") ||
+    die 'cannot stage the validated XKRX calendar metadata'
+  trap 'rm -f -- "$calendar_selection_file" "$calendar_metadata_file"' EXIT
+  if ! python3 "$root/scripts/ops/xkrx-calendar-bootstrap.py" \
+    --emit-sessions --start "$start_date" --end "$end_date" \
+    --output-dir "$calendar_dir" >"$calendar_selection_file" 2>"$calendar_metadata_file"; then
+    blocked 'XKRX scheduler artifact validation failed; no KIS, Docker, or worker call was made'
+  fi
+
+  local identity_line
+  if ! identity_line=$(python3 - "$calendar_metadata_file" "$calendar_selection_file" "$start_date" "$end_date" <<'PY'
+import datetime as dt
+import json
+import re
+import sys
+from pathlib import Path
+
+metadata_path, selection_path, start_text, end_text = sys.argv[1:]
+try:
+    start = dt.date.fromisoformat(start_text)
+    end = dt.date.fromisoformat(end_text)
+except ValueError as exc:
+    raise SystemExit(f"invalid requested range: {exc}")
+lines = Path(metadata_path).read_text(encoding="utf-8").splitlines()
+if len(lines) != 1:
+    raise SystemExit("XKRX emitter metadata must contain exactly one JSON line")
+try:
+    metadata = json.loads(lines[0])
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"XKRX emitter metadata is not valid JSON: {exc}")
+if not isinstance(metadata, dict) or metadata.get("schema") != "xkrx-historical-session-selection-v1":
+    raise SystemExit("XKRX emitter metadata schema is invalid")
+requested = metadata.get("requested_range")
+artifact_range = metadata.get("artifact_range")
+if requested != {"start": start.isoformat(), "end": end.isoformat()}:
+    raise SystemExit("XKRX emitter metadata requested range mismatch")
+if not isinstance(artifact_range, dict):
+    raise SystemExit("XKRX emitter metadata artifact range is invalid")
+try:
+    artifact_start = dt.date.fromisoformat(artifact_range["start"])
+    artifact_end = dt.date.fromisoformat(artifact_range["end"])
+except (KeyError, TypeError, ValueError) as exc:
+    raise SystemExit(f"XKRX emitter metadata artifact range is invalid: {exc}")
+if not artifact_start <= start <= end <= artifact_end:
+    raise SystemExit("requested range is outside the validated XKRX artifact range")
+calendar_id = metadata.get("calendar_id")
+artifact_sha = metadata.get("artifact_sha256")
+artifact_size = metadata.get("artifact_size_bytes")
+if not isinstance(calendar_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", calendar_id):
+    raise SystemExit("XKRX calendar id is invalid")
+if not isinstance(artifact_sha, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_sha):
+    raise SystemExit("XKRX artifact SHA-256 is invalid")
+if not isinstance(artifact_size, int) or artifact_size <= 0:
+    raise SystemExit("XKRX artifact size is invalid")
+try:
+    session_count = int(metadata["session_count"])
+    non_session_count = int(metadata["skipped_non_session_count"])
+except (KeyError, TypeError, ValueError) as exc:
+    raise SystemExit(f"XKRX selection counts are invalid: {exc}")
+if session_count < 0 or non_session_count < 0 or session_count + non_session_count != (end - start).days + 1:
+    raise SystemExit("XKRX selection counts do not cover the requested civil range")
+dates = Path(selection_path).read_text(encoding="ascii").splitlines()
+if any(not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) for value in dates):
+    raise SystemExit("XKRX session selection contains a malformed date")
+if dates != sorted(dates) or len(dates) != len(set(dates)) or len(dates) != session_count:
+    raise SystemExit("XKRX session selection is not sorted, unique, or count-matched")
+if any(not (start.isoformat() <= value <= end.isoformat()) for value in dates):
+    raise SystemExit("XKRX session selection escapes the requested range")
+print("\t".join((calendar_id, artifact_sha, str(artifact_size), f"{artifact_start}..{artifact_end}", str(session_count), str(non_session_count))))
+PY
+  ); then
+    blocked 'XKRX scheduler metadata or session list failed closed validation; no KIS, Docker, or worker call was made'
+  fi
+  IFS=$'\t' read -r calendar_id calendar_artifact_sha256 calendar_artifact_size \
+    calendar_artifact_range calendar_session_count calendar_non_session_count <<<"$identity_line"
+}
+
 validate_state() {
-  local expected_header=$'LAGRANGE_BACKFILL_STATE_V3\t'"$run_identity"
+  local expected_header=$'LAGRANGE_BACKFILL_STATE_V4\t'"$run_identity"
   local line number=0 state_date state_status state_id state_code
   declare -A last_status=()
   while IFS= read -r line || [ -n "$line" ]; do
@@ -180,12 +393,10 @@ validate_state() {
           blocked "backfill state line $number has an unexpected error code"
         ;;
       FAILED)
-        if [ "${#fields[@]}" -eq 4 ]; then
-          [[ "$state_code" =~ ^[A-Z][A-Z0-9_]{0,63}$ ]] ||
-            blocked "backfill state line $number has an invalid error code"
-        elif [ "${#fields[@]}" -ne 3 ]; then
-          blocked "backfill state line $number is malformed"
-        fi
+        [ "${#fields[@]}" -eq 4 ] ||
+          blocked "backfill state line $number requires an error code"
+        [[ "$state_code" =~ ^[A-Z][A-Z0-9_]{0,63}$ ]] ||
+          blocked "backfill state line $number has an invalid error code"
         ;;
       DEFERRED|RETRYABLE)
         [ "${#fields[@]}" -eq 4 ] ||
@@ -207,7 +418,7 @@ validate_state() {
 check_auto_resume_state() {
   [ "$auto_resume" -eq 1 ] || return 0
   local last_line last_status last_code
-  # A freshly initialized V3 state contains only its identity header.  The
+  # A freshly initialized V4 state contains only its identity header.  The
   # first timer invocation is allowed to start the bounded range.
   [ "$(wc -l <"$state_file")" -eq 1 ] && return 0
   last_line=$(tail -n 1 -- "$state_file")
@@ -225,6 +436,12 @@ check_auto_resume_state() {
   esac
 }
 
+# The calendar artifact is validated before either the plan is printed or any
+# execute gate is evaluated.  This makes a missing/tampered/out-of-range
+# scheduler input a fail-closed local error, and gives both paths identical
+# session counts and identity material.
+load_calendar_selection
+
 if [ "$mode" = execute ]; then
   [ "${BACKFILL_CONFIRM_EXTERNAL:-}" = I_UNDERSTAND_READ_ONLY_KIS_CALLS ] ||
     blocked 'execution is disabled until BACKFILL_CONFIRM_EXTERNAL is explicitly set'
@@ -238,47 +455,45 @@ if [ "$mode" = execute ]; then
     exit 1
   fi
   command -v docker >/dev/null 2>&1 || blocked 'docker is not installed'
-  docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavailable'
   command -v flock >/dev/null 2>&1 || blocked 'flock is required to serialize backfill executions'
   command -v sha256sum >/dev/null 2>&1 || blocked 'sha256sum is required for backfill state identity'
   command -v mktemp >/dev/null 2>&1 || blocked 'mktemp is required for the token issue window'
 
-  check_state_path "$state_file" backfill-state
   state_dir=$(dirname -- "$state_file")
-  mkdir -p -- "$state_dir"
-  check_state_path "$state_file" backfill-state
+  ensure_state_directory "$state_dir"
+  case "$state_file" in
+    "$state_dir"/*) ;;
+    *) blocked 'backfill state must be a direct file below its protected state directory' ;;
+  esac
+  ensure_protected_state_file "$state_file" backfill-state
   state_lock="${state_file}.lock"
-  check_state_path "$state_lock" backfill-state-lock
+  ensure_protected_state_file "$state_lock" backfill-state-lock
   exec 9>>"$state_lock" || die "cannot open backfill state lock: $state_lock"
+  verify_lock_fd_identity
   flock -n 9 || blocked 'another backfill execution already holds the state lock'
-
-  if [ -e "$state_file" ]; then
-    [ "$(stat -c '%u:%g:%a' "$state_file")" = 0:0:600 ] ||
-      blocked 'backfill state must be root:root mode 0600'
-  else
-    (umask 077; : >>"$state_file")
-    chmod 0600 -- "$state_file"
-  fi
-  check_state_path "$state_file" backfill-state
+  verify_lock_fd_identity
 
   code_commit=$(dotenv_effective_get LAGRANGE_CODE_COMMIT)
   entitlement_reference=$(dotenv_get RESEARCH_ENTITLEMENT_REFERENCE)
   [ -n "$entitlement_reference" ] ||
     die 'production env is missing RESEARCH_ENTITLEMENT_REFERENCE'
   identity_payload=$(cat <<EOF
-schema=3
+schema=4
 start_date=$start_date
 end_date=$end_date
 universe=$universes
 code_commit=$code_commit
 entitlement_reference=$entitlement_reference
 source_scope=kis/kr|kis-normalized/kr|KRX/KR|etf
+calendar_id=$calendar_id
+calendar_artifact_sha256=$calendar_artifact_sha256
+calendar_artifact_range=$calendar_artifact_range
 EOF
 )
   run_identity=$(printf '%s' "$identity_payload" | sha256sum | awk '{print $1}')
   [[ "$run_identity" =~ ^[0-9a-f]{64}$ ]] || die 'could not derive backfill run identity'
   if [ ! -s "$state_file" ]; then
-    printf 'LAGRANGE_BACKFILL_STATE_V3\t%s\n' "$run_identity" >>"$state_file"
+    printf 'LAGRANGE_BACKFILL_STATE_V4\t%s\n' "$run_identity" >>"$state_file"
   fi
   validate_state
   check_auto_resume_state
@@ -293,28 +508,30 @@ fi
 if [ "$mode" = plan ]; then
   cat <<EOF
 BACKFILL_PLAN: KIS read-only fixed ETF EOD
-  source dates: $start_date..$end_date (provider decides trading-day/holiday response)
+  civil range: $start_date..$end_date
+  validated XKRX scheduler: calendar_id=$calendar_id artifact_sha256=$calendar_artifact_sha256
+  artifact range: $calendar_artifact_range
+  session dates: $calendar_session_count (non-session skips: $calendar_non_session_count)
+  source dates: only validated XKRX sessions; no worker/KIS/Docker call for a skipped date
   raw scope: kis/kr; normalized scope: kis-normalized/kr; DB logical provider: KRX
   idempotency: deterministic normalized batch/source_batch_id and exact manifest replay
-  state identity: V3 pre-run inputs only (date range, universe, code, entitlement, source scope)
+  state identity: V4 pre-run inputs plus calendar id/hash/full artifact range
   verification: raw manifest+hashes -> normalize -> four canonical docs -> DB publication
   token safety: one bounded worker/provider reuses one in-memory token and one exact
                 chk-holiday snapshot; issue attempts are gated to one per minute and no
                 bearer token is persisted; an uncovered date stops fail-closed
   approval: operator reviews manifest/hash/counts, then pins one dataset version for recommendation/backtest/Paper
   state: $state_file (created only by --execute)
-PLAN_ONLY: no KIS call, Docker run, file write, or account/order access
+PLAN_ONLY: no KIS call, Docker run, persistent state/artifact write, or account/order access
 EOF
   exit 0
 fi
 
-compose=(docker compose --env-file "$env_file" -f "$root/deploy/compose/compose.yml")
-if ! dates=$(date_list); then
-  die 'failed to enumerate the validated date range'
-fi
+dates=$(cat -- "$calendar_selection_file")
 published_suffix=$'\tPUBLISHED\t'"$run_identity"
 pending_dates=()
-while IFS= read -r date; do
+while IFS= read -r date || [ -n "$date" ]; do
+  [ -n "$date" ] || continue
   if grep -Fqx "$date$published_suffix" "$state_file"; then
     echo "BACKFILL_SKIP date=$date state=PUBLISHED"
     continue
@@ -323,9 +540,22 @@ while IFS= read -r date; do
 done <<<"$dates"
 
 if [ "${#pending_dates[@]}" -eq 0 ]; then
-  echo 'BACKFILL: PASS'
+  echo "BACKFILL: PASS (sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count; no worker/KIS/Docker call)"
   exit 0
 fi
+
+docker compose version >/dev/null 2>&1 ||
+  blocked 'Docker Compose v2 is unavailable'
+compose=(docker compose --env-file "$env_file" -f "$root/deploy/compose/compose.yml")
+
+# Keep the exact validated session sequence in one bounded argv value.  The
+# worker rejects unsorted/duplicate/empty input and iterates these dates only;
+# it never reconstructs a civil range or asks KIS about a skipped date.
+session_dates_csv=$(IFS=,; printf '%s' "${pending_dates[*]}")
+[ "${#session_dates_csv}" -le 1_000_000 ] ||
+  blocked 'validated XKRX session list is too large for one worker invocation'
+worker_start=${pending_dates[0]}
+worker_end=${pending_dates[$((${#pending_dates[@]} - 1))]}
 
 # A separately running daemon would own a different process-local token cache.
 # Refuse the overlap rather than risk a second issue request.
@@ -372,9 +602,9 @@ done
 # corresponding state append so a later date failure cannot erase progress.
 progress_rc=0
 if "${compose[@]}" run --rm --no-deps research-worker \
-  --backfill-range --start "$start_date" --end "$end_date" | \
+  --backfill-session-dates "$session_dates_csv" | \
   python3 "$script_dir/lib/backfill-progress.py" \
-    "$state_file" "$run_identity" "$start_date" "$end_date"; then
+    "$state_file" "$run_identity" "$worker_start" "$worker_end" "$session_dates_csv"; then
   progress_rc=0
 else
   progress_rc=$?
@@ -394,4 +624,4 @@ case "$progress_rc" in
     exit 1
     ;;
 esac
-echo 'BACKFILL: PASS'
+echo "BACKFILL: PASS (civil_range=$start_date..$end_date sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count)"

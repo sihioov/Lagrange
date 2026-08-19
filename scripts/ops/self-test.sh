@@ -34,6 +34,7 @@ import pathlib
 import sys
 compile(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"), sys.argv[1], "exec")
 PY
+python3 "$ops/test_xkrx_calendar_bootstrap.py" >/dev/null
 
 dry_run=$(LAGRANGE_CONFIG_ROOT="$out_dir/etc" \
   LAGRANGE_DEPLOY_ROOT="$out_dir/opt" \
@@ -781,7 +782,7 @@ grep -Fq 'invalid calendar date' "$out_dir/date.out"
 # later failure must preserve earlier PUBLISHED records for an idempotent rerun.
 progress_state="$out_dir/progress.tsv"
 progress_identity=$(printf 'a%.0s' {1..64})
-printf 'LAGRANGE_BACKFILL_STATE_V3\t%s\n' "$progress_identity" >"$progress_state"
+printf 'LAGRANGE_BACKFILL_STATE_V4\t%s\n' "$progress_identity" >"$progress_state"
 printf '%s\tRUNNING\t%s\n' 2026-01-01 "$progress_identity" >>"$progress_state"
 printf '%s\tRUNNING\t%s\n' 2026-01-02 "$progress_identity" >>"$progress_state"
 if printf '%s\n' \
@@ -1105,11 +1106,25 @@ done
 plan=$(LAGRANGE_ENV_FILE="$out_dir/.env" \
   bash "$ops/backfill-production.sh" --start 2026-01-01 --end 2026-01-03 --plan)
 grep -Fq 'PLAN_ONLY: no KIS call' <<<"$plan"
-grep -Fq 'one bounded worker/provider reuses one in-memory token' <<<"$plan"
+grep -Fq 'validated XKRX scheduler' <<<"$plan"
+grep -Fq 'session dates:' <<<"$plan"
+grep -Fq 'state identity: V4' <<<"$plan"
 grep -Fq 'no bearer token is persisted' <<<"$plan"
-grep -Fq "state: $out_dir/data/backfill/state.tsv" <<<"$plan"
+grep -Fq 'state: /var/lib/lagrange/state/backfill/state.tsv' <<<"$plan"
 if grep -Fq 'docker compose' <<<"$plan"; then
   echo 'self-test: backfill plan attempted an external command' >&2
+  exit 1
+fi
+
+# A civil weekend contains no XKRX sessions.  The validated scheduler must
+# report the skips and the plan must remain completely side-effect free rather
+# than constructing a worker invocation for either weekend date.
+weekend_plan=$(LAGRANGE_ENV_FILE="$out_dir/.env" \
+  bash "$ops/backfill-production.sh" --start 2020-02-01 --end 2020-02-02 --plan)
+grep -Fq 'session dates: 0 (non-session skips: 2)' <<<"$weekend_plan"
+grep -Fq 'no worker/KIS/Docker call' <<<"$weekend_plan"
+if grep -Fq 'docker compose' <<<"$weekend_plan"; then
+  echo 'self-test: weekend backfill plan attempted an external command' >&2
   exit 1
 fi
 health_plan=$(bash "$ops/post-backfill-health.sh" --plan)

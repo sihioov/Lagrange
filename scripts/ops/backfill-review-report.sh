@@ -10,6 +10,8 @@ set -euo pipefail
 mode=plan
 state_file=${LAGRANGE_BACKFILL_STATE:-}
 data_root=${LAGRANGE_DATA_DIR:-/var/lib/lagrange/data}
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+calendar_dir=${LAGRANGE_XKRX_CALENDAR_DIR:-$repo_root/data/calendars/xkrx}
 start_date=
 end_date=
 dataset_id=krx_eod_bars
@@ -54,7 +56,7 @@ BACKFILL_REVIEW_PLAN: local-only non-approving ETF report
   state: $state_file
   data_root: $data_root
   dataset: $dataset_id
-  checks: V3 state completion, KIS/KIS-normalized Raw date coverage, curated manifest/artifact integrity
+  checks: V4 state completion, validated XKRX session-date Raw coverage, curated manifest/artifact integrity
   decision: report only; READY registration, DB readiness, entitlement approval, and release pins remain separate
 PLAN_ONLY: no production file read, write, or external service action made
 EOF
@@ -62,14 +64,16 @@ EOF
 fi
 
 command -v python3 >/dev/null 2>&1 || die 'python3 is required for --check'
-exec python3 - "$state_file" "$start_date" "$end_date" "$data_root" "$dataset_id" <<'PY'
+exec python3 - "$state_file" "$start_date" "$end_date" "$data_root" "$dataset_id" "$calendar_dir" "$repo_root" <<'PY'
 from __future__ import annotations
 
 import datetime as dt
 import hashlib
 import json
 import os
+import re
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -111,6 +115,49 @@ def parse_date(value: str, label: str) -> dt.date:
     if parsed.isoformat() != value:
         fail(f"{label} is not canonical YYYY-MM-DD")
     return parsed
+
+
+def validated_session_dates(
+    start: dt.date, end: dt.date, calendar_dir_text: str, repo_root_text: str
+) -> list[str]:
+    calendar_dir = Path(calendar_dir_text)
+    safe_existing_path(calendar_dir, "XKRX calendar directory", want_dir=True)
+    script = Path(repo_root_text) / "scripts" / "ops" / "xkrx-calendar-bootstrap.py"
+    safe_existing_path(script, "XKRX calendar bootstrap", want_dir=False)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--emit-sessions",
+            "--start",
+            start.isoformat(),
+            "--end",
+            end.isoformat(),
+            "--output-dir",
+            str(calendar_dir),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        fail("XKRX scheduler artifact validation failed")
+    metadata_lines = result.stderr.splitlines()
+    if len(metadata_lines) != 1:
+        fail("XKRX scheduler metadata is malformed")
+    try:
+        metadata = json.loads(metadata_lines[0])
+    except json.JSONDecodeError:
+        fail("XKRX scheduler metadata is not JSON")
+    if not isinstance(metadata, dict) or metadata.get("requested_range") != {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+    }:
+        fail("XKRX scheduler metadata range mismatch")
+    dates = result.stdout.splitlines()
+    if dates != sorted(dates) or len(dates) != len(set(dates)):
+        fail("XKRX scheduler session dates are not sorted and unique")
+    return dates
 
 
 def canonical_manifest_hash(value: dict) -> str:
@@ -276,16 +323,12 @@ def curated_candidates(data_root: Path, dataset_id: str) -> tuple[list[dict], li
 
 
 def main() -> int:
-    state_file, start_text, end_text, data_root_text, dataset_id = sys.argv[1:]
+    state_file, start_text, end_text, data_root_text, dataset_id, calendar_dir_text, repo_root_text = sys.argv[1:]
     start = parse_date(start_text, "start date")
     end = parse_date(end_text, "end date")
     if end < start:
         fail("end date precedes start date")
-    expected_dates = []
-    current = start
-    while current <= end:
-        expected_dates.append(current.isoformat())
-        current += dt.timedelta(days=1)
+    expected_dates = validated_session_dates(start, end, calendar_dir_text, repo_root_text)
     expected = set(expected_dates)
     if len(expected_dates) > 10000:
         fail("date range is unreasonably large")
@@ -295,22 +338,37 @@ def main() -> int:
     safe_existing_path(state, "backfill state", want_dir=False)
     safe_existing_path(data_root, "data root", want_dir=True)
     lines = state.read_text(encoding="ascii").splitlines()
-    if not lines or len(lines[0].split("\t")) != 2 or lines[0].split("\t")[0] != "LAGRANGE_BACKFILL_STATE_V3":
-        fail("backfill state is not a V3 file")
+    if not lines or len(lines[0].split("\t")) != 2 or lines[0].split("\t")[0] != "LAGRANGE_BACKFILL_STATE_V4":
+        fail("backfill state is not a V4 file")
     run_identity = lines[0].split("\t", 1)[1]
     if len(run_identity) != 64 or any(char not in "0123456789abcdef" for char in run_identity):
         fail("backfill state identity is malformed")
     latest: dict[str, str] = {}
     history_failures = 0
+    history_deferred = 0
+    history_retryable = 0
+    error_code_pattern = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
     for line_number, line in enumerate(lines[1:], 2):
         fields = line.split("\t")
-        if len(fields) != 3:
-            fail(f"backfill state line {line_number} is malformed")
-        date, status, identity = fields
-        if date not in expected or identity != run_identity or status not in {"RUNNING", "PUBLISHED", "FAILED"}:
+        if len(fields) not in (3, 4):
+            fail(f"backfill state line {line_number} has an invalid field count")
+        date, status, identity = fields[:3]
+        if date not in expected or identity != run_identity:
             fail(f"backfill state line {line_number} is outside the requested run")
+        if status in {"RUNNING", "PUBLISHED"}:
+            if len(fields) != 3:
+                fail(f"backfill state line {line_number} has an unexpected error code")
+        elif status in {"DEFERRED", "RETRYABLE", "FAILED"}:
+            if len(fields) != 4 or not error_code_pattern.fullmatch(fields[3]):
+                fail(f"backfill state line {line_number} has an invalid error code")
+        else:
+            fail(f"backfill state line {line_number} has an invalid status")
         if status == "FAILED":
             history_failures += 1
+        elif status == "DEFERRED":
+            history_deferred += 1
+        elif status == "RETRYABLE":
+            history_retryable += 1
         latest[date] = status
     missing_state = [date for date in expected_dates if latest.get(date) != "PUBLISHED"]
     published = len(expected_dates) - len(missing_state)
@@ -325,7 +383,11 @@ def main() -> int:
     candidates, curated_issues = curated_candidates(data_root, dataset_id)
     print("BACKFILL_REVIEW_REPORT: local-only non-approving")
     print(f"  range={start_text}..{end_text} expected_dates={len(expected_dates)} run_identity={run_identity}")
-    print(f"  state published={published}/{len(expected_dates)} latest_incomplete={len(missing_state)} historical_failures={history_failures}")
+    print(
+        f"  state published={published}/{len(expected_dates)} "
+        f"latest_incomplete={len(missing_state)} historical_failures={history_failures} "
+        f"historical_deferred={history_deferred} historical_retryable={history_retryable}"
+    )
     for provider in ("kis", "kis-normalized"):
         rows, dates = raw_summary[provider]
         print(f"  raw provider={provider} market=kr manifest_rows={rows} covered_dates={dates}/{len(expected_dates)}")

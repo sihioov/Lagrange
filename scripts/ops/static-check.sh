@@ -54,6 +54,9 @@ if grep -Fq 'package_available' "$xkrx_bootstrap"; then
   die 'XKRX bootstrap must not bypass uv with a global package'
 fi
 grep -Fq 'uv' "$xkrx_bootstrap" || die 'XKRX bootstrap locked uv execution is missing'
+grep -Fq -- '--emit-sessions' "$xkrx_bootstrap" || die 'XKRX validated session emitter is missing'
+grep -Fq 'requested_range' "$xkrx_bootstrap" || die 'XKRX session metadata must identify the requested range'
+grep -Fq 'artifact_sha256' "$xkrx_bootstrap" || die 'XKRX session metadata must expose the artifact hash'
 
 tls_static="$root/deploy/systemd/tailscale-tls-renewal-static-check.sh"
 [ -x "$tls_static" ] || die 'Tailscale TLS renewal static check must be executable'
@@ -352,17 +355,44 @@ done
   || die 'backfill-review-report.sh must have exact mode 0755'
 grep -Fq 'PLAN_ONLY: no KIS call' "$ops/backfill-production.sh" || die 'backfill must default to no-call plan'
 grep -Fq 'KOSPI200/KOSDAQ150 credentialed candidate bridge' "$ops/backfill-production.sh" || die 'candidate blocker missing'
-grep -Fq 'LAGRANGE_BACKFILL_STATE_V3' "$ops/backfill-production.sh" || die 'backfill state identity schema missing'
+grep -Fq 'LAGRANGE_BACKFILL_STATE_V4' "$ops/backfill-production.sh" || die 'backfill state identity schema missing'
 grep -Fq -- '--scope backfill' "$ops/backfill-production.sh" || die 'backfill must use backfill config scope'
-grep -Fq 'state_file="$data_dir/backfill/state.tsv"' "$ops/backfill-production.sh" \
-  || die 'backfill state default must derive from LAGRANGE_DATA_DIR'
+grep -Fq 'state_file=/var/lib/lagrange/state/backfill/state.tsv' "$ops/backfill-production.sh" \
+  || die 'backfill state default must use the root-owned state tree'
+grep -Fq 'validate_trusted_state_ancestors' "$ops/backfill-production.sh" \
+  || die 'backfill state ancestors must be trust-boundary checked'
 grep -Fq 'dotenv_validate_shell_overrides' "$ops/backfill-production.sh" \
   || die 'backfill must share shell/env-file precedence fence'
 grep -Fq 'start_date=$start_date' "$ops/backfill-production.sh" || die 'backfill identity must bind the requested date range'
+grep -Fq 'calendar_artifact_sha256=$calendar_artifact_sha256' "$ops/backfill-production.sh" \
+  || die 'backfill identity must bind the XKRX artifact hash'
+grep -Fq 'calendar_artifact_range=$calendar_artifact_range' "$ops/backfill-production.sh" \
+  || die 'backfill identity must bind the XKRX artifact range'
+grep -Fq 'calendar_dir=${LAGRANGE_XKRX_CALENDAR_DIR' "$ops/backfill-production.sh" \
+  || die 'backfill XKRX artifact path override is missing'
+grep -Fq 'non-session skips:' "$ops/backfill-production.sh" \
+  || die 'backfill plan must report non-session skips'
 grep -Fq 'dataset_version_id' "$ops/backfill-production.sh" && die 'backfill identity must not bind future dataset pins'
 grep -Fq 'flock -n 9' "$ops/backfill-production.sh" || die 'backfill state lock missing'
-grep -Fq -- '--backfill-range --start "$start_date" --end "$end_date"' \
-  "$ops/backfill-production.sh" || die 'backfill must use one bounded range worker process'
+grep -Fq 'ensure_state_directory' "$ops/backfill-production.sh" \
+  || die 'backfill state directory hardening missing'
+grep -Fq 'ensure_protected_state_file' "$ops/backfill-production.sh" \
+  || die 'backfill state/lock protected-file hardening missing'
+grep -Fq 'verify_lock_fd_identity' "$ops/backfill-production.sh" \
+  || die 'backfill lock descriptor identity check missing'
+grep -Fq 'set -C' "$ops/backfill-production.sh" \
+  || die 'backfill state/lock creation must use exclusive noclobber semantics'
+grep -Fq -- '--emit-sessions --start "$start_date" --end "$end_date"' \
+  "$ops/backfill-production.sh" || die 'backfill must use the validated XKRX session emitter'
+grep -Fq 'session_dates_csv' "$ops/backfill-production.sh" \
+  || die 'backfill must preserve the exact validated session list'
+grep -Fq -- '--backfill-session-dates "$session_dates_csv"' \
+  "$ops/backfill-production.sh" || die 'backfill must pass only validated session dates to the worker'
+grep -Fq 'SESSION_DATES_CSV' "$ops/lib/backfill-progress.py" \
+  || die 'backfill progress must validate the exact session sequence'
+if grep -Fq -- '--backfill-range' "$root/data-pipelines/collectors/src/bin/research-worker.rs"; then
+  die 'public research-worker backfill range bypass must be removed'
+fi
 if grep -Fq -- 'research-worker --once --date "$date"' "$ops/backfill-production.sh"; then
   die 'backfill must not create one token-owning worker process per date'
 fi

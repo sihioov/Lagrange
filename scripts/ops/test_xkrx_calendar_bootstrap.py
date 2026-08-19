@@ -176,6 +176,78 @@ for start, end, expected_sessions, expected_non_sessions in (
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_emit_sessions_keeps_stdout_dates_only_and_reports_selection_metadata_on_stderr(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--emit-sessions",
+                "--start",
+                "2020-01-31",
+                "--end",
+                "2020-02-02",
+            ],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["2020-01-31"])
+        self.assertNotIn("session_count", result.stdout)
+        metadata = json.loads(result.stderr)
+        self.assertEqual(metadata["requested_range"], {"start": "2020-01-31", "end": "2020-02-02"})
+        self.assertEqual(metadata["session_count"], 1)
+        self.assertEqual(metadata["skipped_non_session_count"], 2)
+        self.assertEqual(metadata["artifact_sha256"], json.loads(MANIFEST.read_text(encoding="utf-8"))["artifact_sha256"])
+
+    def test_emit_sessions_refuses_outside_materialized_range(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--emit-sessions",
+                "--start",
+                "2026-08-19",
+                "--end",
+                "2026-08-20",
+            ],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("outside materialized artifact range", result.stderr)
+
+    def test_emit_sessions_refuses_tampered_artifact_or_manifest(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xkrx-tamper-") as directory:
+            output = Path(directory) / "xkrx"
+            output.mkdir()
+            shutil.copy2(ARTIFACT, output / "calendar.json")
+            shutil.copy2(MANIFEST, output / "manifest.json")
+            with (output / "calendar.json").open("ab") as stream:
+                stream.write(b" ")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--emit-sessions",
+                    "--start",
+                    "2020-01-31",
+                    "--end",
+                    "2020-02-02",
+                    "--output-dir",
+                    str(output),
+                ],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("calendar manifest does not match", result.stderr)
+
     def test_plan_is_side_effect_free_and_start_cannot_predate_effective_date(self) -> None:
         with tempfile.TemporaryDirectory(prefix="xkrx-plan-") as directory:
             output = Path(directory) / "artifact"
