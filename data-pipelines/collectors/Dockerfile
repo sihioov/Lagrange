@@ -14,6 +14,10 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY data-pipelines/collectors ./data-pipelines/collectors
 COPY apps/api-server/auth ./apps/api-server/auth
+COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
+COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml
+COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json
+COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json
 COPY tests/integration/migration-contract ./tests/integration/migration-contract
 COPY tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
 COPY tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contract

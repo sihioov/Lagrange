@@ -11,8 +11,16 @@
 !nt/
 !nt/**
 !configs/
+!configs/evidence/
+!configs/evidence/kis-range-canonical-approved-manifests.json
 !configs/universes/
 !configs/universes/**
+!data/
+!data/calendars/
+!data/calendars/xkrx/
+!data/calendars/xkrx/**
+!data/calendars/xkrx/calendar.json
+!data/calendars/xkrx/manifest.json
 !data-pipelines/
 !data-pipelines/collectors/
 !data-pipelines/collectors/**

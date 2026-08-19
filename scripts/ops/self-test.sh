@@ -20,6 +20,21 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   bash -n "$ops/$script"
 done
 
+range_worker_dockerfile="$root/data-pipelines/collectors/Dockerfile"
+for range_copy in \
+  'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json' \
+  'COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml' \
+  'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json' \
+  'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json'; do
+  grep -Fq -- "$range_copy" "$range_worker_dockerfile"
+done
+for range_context in \
+  '!configs/evidence/kis-range-canonical-approved-manifests.json' \
+  '!data/calendars/xkrx/calendar.json' \
+  '!data/calendars/xkrx/manifest.json'; do
+  grep -Fqx -- "$range_context" "$root/.dockerignore"
+done
+
 range_env="$out_dir/range-raw.env"
 printf 'LAGRANGE_CODE_COMMIT=%s\nRESEARCH_ENTITLEMENT_REFERENCE=fixture-stage5\n' \
   "$(git -C "$root" rev-parse HEAD)" >"$range_env"

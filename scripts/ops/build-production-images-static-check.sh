@@ -70,6 +70,27 @@ while IFS= read -r dockerfile; do
 done < <(find "$root" -type f \( -name Dockerfile -o -name 'Dockerfile.*' \) \
   -not -path "$root/.git/*" -print | sort)
 
+# The isolated range worker compiles market-data's approved-evidence and XKRX
+# loaders with include_bytes!. Keep those exact immutable inputs in the
+# production build context; a successful local workspace build must not hide
+# a missing Docker COPY contract.
+collector_dockerfile="$root/data-pipelines/collectors/Dockerfile"
+for range_copy in \
+  'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json' \
+  'COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml' \
+  'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json' \
+  'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json'; do
+  grep -Fq -- "$range_copy" "$collector_dockerfile" \
+    || die "range worker Dockerfile is missing immutable input copy: $range_copy"
+done
+for range_context in \
+  '!configs/evidence/kis-range-canonical-approved-manifests.json' \
+  '!data/calendars/xkrx/calendar.json' \
+  '!data/calendars/xkrx/manifest.json'; do
+  grep -Fqx -- "$range_context" "$root/.dockerignore" \
+    || die "Docker build context does not allow required range input: $range_context"
+done
+
 # The only Docker Compose verbs allowed in this helper are version, config,
 # and build.  Keep this check line-oriented so prose explaining forbidden
 # lifecycle verbs does not produce a false positive.
