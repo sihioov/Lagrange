@@ -164,6 +164,27 @@ fn manifest_text(store: &RawStore) -> String {
     std::fs::read_to_string(store.manifest_path(PROVIDER_OPENDART, MARKET_KR)).unwrap_or_default()
 }
 
+/// Lists the file names inside `entry`'s batch dir, sorted. Used to prove a
+/// secret sweep is not vacuous before it concludes the key is absent.
+fn batch_dir_file_names(
+    store: &RawStore,
+    date: &TradingDate,
+    entry: &ManifestEntry,
+) -> Vec<String> {
+    let dir = store.batch_dir(PROVIDER_OPENDART, MARKET_KR, date, &entry.batch_id);
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .expect("batch dir exists")
+        .map(|file| {
+            file.expect("dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 /// Reads back every stored file inside `entry`'s batch dir, `batch.json`
 /// included (it lives in the same directory).
 fn batch_dir_file_bytes(
@@ -390,13 +411,33 @@ async fn sentinel_key_never_reaches_stored_bytes_batch_json_or_manifest() {
         panic!("expected Stored outcome");
     };
 
-    for bytes in batch_dir_file_bytes(&store, &date, &entry) {
+    // Guard against a vacuous scan: this is the load-bearing proof for the one
+    // hard security requirement, so assert the sweep actually saw the two page
+    // bodies plus `batch.json` before concluding the key is absent.
+    let names = batch_dir_file_names(&store, &date, &entry);
+    assert_eq!(
+        names.len(),
+        3,
+        "expected two page files plus batch.json: {names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name == "batch.json"),
+        "the sweep must cover batch.json, where request metadata is persisted: {names:?}"
+    );
+
+    let scanned = batch_dir_file_bytes(&store, &date, &entry);
+    assert_eq!(scanned.len(), names.len());
+    for bytes in scanned {
         assert!(
             !contains_bytes(&bytes, SENTINEL_KEY.as_bytes()),
             "sentinel leaked into a stored batch file"
         );
     }
     let manifest = manifest_text(&store);
+    assert!(
+        !manifest.is_empty(),
+        "manifest must exist and be non-empty for this assertion to mean anything"
+    );
     assert!(
         !manifest.contains(SENTINEL_KEY),
         "sentinel leaked into manifest.jsonl: {manifest}"

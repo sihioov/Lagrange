@@ -78,6 +78,10 @@ Step 1을 문서 수준에서 완료했다. 구현·어댑터·신규 API 호출
 
 Stage5 계약 flag는 그대로 `vendor_snapshot=true`, `strict_pit=false`, `ready=false`다. Curated/DB publication/five-pin/추천·백테스트·Paper 연결은 계속 `BLOCKED`다.
 
+**Step 2 착수 — OpenDART fixture 어댑터 (2026-08-19).** 승인된 OpenDART 코어에 대해 Raw-only 어댑터를 구현했다. `ResponseKind`에 `DisclosureIndex`/`DisclosureEntityMaster`/`DisclosureEntityProfile`을 추가했고(`5309ffa`), 이들은 `EOD`/`CANDIDATE`/`CANDIDATE_MASTER`/`ALL_RESPONSE_KINDS` 어디에도 포함되지 않으며 `validate::validate_response`가 명시적으로 거부한다 — `CandidateMaster` 선례와 동일하게 Raw-only 증거를 기존 파이프라인에서 격리한다. 어댑터(`cc268d5`)는 reader trait + fixture 구조로, **HTTP 클라이언트와 네트워크 I/O가 존재하지 않고 의존성 추가도 없다.** live reader는 credential reference 없이 생성 불가한 stub이며 항상 fail-closed다. key는 query parameter이므로 `RequestMetadata` 생성 지점 단 한 곳에서 리댁션하고, sentinel key가 stored bytes·`batch.json`·manifest에 도달하지 않음을 테스트로 증명한다. 페이지네이션은 10페이지 상한, `total_count`/`total_page` 불변, 동일 bytes 거부, `013`은 batch를 만들지 않는 typed empty다. `corpCode.xml`은 ZIP magic 검사 후 바이트 그대로 저장하며 압축을 풀거나 파싱하지 않는다. 게이트는 fmt/clippy `-D warnings` clean, `cargo test -p market-data` 315 passed. **key가 발급되지 않았으므로 실제 요청은 한 건도 발생하지 않았다.**
+
+전체 워크스페이스 `cargo test --workspace --no-fail-fast`는 1,692 passed / 21 failed다. 실패 3개 타깃(`collectors research_worker` 6건, `job-queue paper_preview` 3건, `job-queue recommendation_compute` 12건)은 변경 이전 커밋 `603f9c7`에서 동일한 타깃·동일한 건수로 재현되므로 **Stage6 변경과 무관한 기존 실패**다. parquet/curated close loader와 factor snapshot 계열이며 별도 조사 대상이다.
+
 **부분 승인 (2026-08-19).** 소유자가 OpenDART 코어(`list.json`/`list.xml`, `corpCode.xml`, `company.json`)를 fixture 기반 Raw 어댑터 작업 범위로 승인했다. 나머지 allowlist 행, 모든 계정 등록, 라이선스 해석은 계속 보류다. 어떤 소스에도 key가 발급되지 않았으므로 실제 요청은 한 건도 발생하지 않았다. KRX 미러 vs 원본 선택, KSD 포함 여부, KOGL 제2유형·KRX 제11조③ `entitlement_reference`는 미결정 상태로 남는다.
 
 ---
