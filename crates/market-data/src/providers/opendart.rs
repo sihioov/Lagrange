@@ -160,8 +160,10 @@ pub enum OpenDartError {
     /// The walk did not reach a terminal page within
     /// [`DISCLOSURE_LIST_MAX_PAGES`].
     PaginationBoundExceeded { max_pages: usize },
-    /// `corpCode.xml` body was neither ZIP-magic-prefixed nor a documented
-    /// JSON error body.
+    /// `corpCode.xml` body was neither ZIP-magic-prefixed nor a recognisable
+    /// documented error envelope. Both envelope encodings are recognised: the
+    /// JSON form, and the XML form this surface actually returns in practice
+    /// (observed 2026-08-20, with HTTP 200).
     NotAZipArchive,
     /// The response body was empty where content was required.
     EmptyBody,
@@ -274,9 +276,19 @@ fn sanitize_status(status: &str) -> String {
     {
         status.to_owned()
     } else {
-        "UNDOCUMENTED_STATUS".to_owned()
+        UNDOCUMENTED_STATUS_MARKER.to_owned()
     }
 }
+
+/// Fixed marker [`sanitize_status`] substitutes for any status value that
+/// fails its short-ASCII-alphanumeric bound. Named (rather than inlined at
+/// every call site) so callers that need to distinguish "the provider sent
+/// a documented-looking status" from "the provider sent something outside
+/// that bound" can compare against it — see
+/// [`validate_zip_or_documented_error`]'s XML branch, which reports the
+/// latter as [`OpenDartError::UndocumentedShape`] instead of fabricating a
+/// status.
+const UNDOCUMENTED_STATUS_MARKER: &str = "UNDOCUMENTED_STATUS";
 
 /// Validates a required entitlement reference: every ingest entry point in
 /// this module must be given one, and an empty or whitespace-only value
@@ -508,9 +520,12 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
     /// parameter sent. The body must be non-empty and start with the ZIP
     /// local-file-header magic `PK\x03\x04`. The archive is **never**
     /// unzipped and its inner XML is **never** parsed — the bytes are stored
-    /// exactly as received. If a JSON error body arrives instead (the
-    /// documented error path), this fails closed with a typed error rather
-    /// than storing it as if it were the archive.
+    /// exactly as received. If a documented error envelope arrives instead,
+    /// this fails closed with a typed error rather than storing it as if it
+    /// were the archive. In practice this surface returns that envelope as
+    /// **XML with HTTP 200** (observed 2026-08-20), so the status line cannot
+    /// be relied on; the JSON form is recognised too. Only the status code
+    /// crosses into the error — the envelope's `message` prose never does.
     ///
     /// `entitlement_reference` is required, not optional: see
     /// [`ingest_disclosure_index`](Self::ingest_disclosure_index) for the
@@ -768,8 +783,32 @@ fn validate_single_page_json(bytes: &[u8]) -> Result<(), OpenDartError> {
 
 /// Validates a `corpCode.xml` body: either it starts with the ZIP
 /// local-file-header magic (accepted, stored byte-for-byte, never unzipped
-/// or parsed), or it is the documented JSON error path (rejected with a
-/// typed error rather than stored as if it were the archive).
+/// or parsed), or it is one of two documented error shapes, rejected with a
+/// typed status error rather than stored as if it were the archive:
+///
+/// - JSON: `{"status": "...", "message": "..."}`.
+/// - XML: observed 2026-08-20 against the live `.xml` surface, given a
+///   deliberately invalid key — HTTP 200 with body
+///   `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><result><status>010</status><message>...</message></result>`.
+///   Status `010` documents an unregistered (or otherwise invalid) key.
+///
+/// The XML `<status>` value is pulled out with a minimal, targeted search —
+/// find the `<status>` open tag, take the text up to the matching
+/// `</status>`, trim it — never a general XML parse of the document, and
+/// the sibling `<message>` element is never read: it is untrusted,
+/// non-ASCII provider prose and must never reach an error, a log, or a
+/// `Debug`/`Display` output.
+///
+/// Both shapes' extracted status is routed through [`sanitize_status`]
+/// before use, exactly like every other OpenDART surface, so neither can
+/// smuggle a free-form provider message. A status that fails that bound
+/// (not short and ASCII-alphanumeric) is reported as
+/// [`OpenDartError::UndocumentedShape`] — the envelope was recognised, but
+/// its status content was not — rather than fabricating a status value.
+///
+/// Precedence: ZIP magic wins; then a recognisable status envelope (JSON or
+/// XML) yields the status error; a body that is neither is
+/// [`OpenDartError::NotAZipArchive`].
 fn validate_zip_or_documented_error(bytes: &[u8]) -> Result<(), OpenDartError> {
     if bytes.is_empty() {
         return Err(OpenDartError::EmptyBody);
@@ -777,15 +816,57 @@ fn validate_zip_or_documented_error(bytes: &[u8]) -> Result<(), OpenDartError> {
     if bytes.starts_with(&ZIP_LOCAL_FILE_MAGIC) {
         return Ok(());
     }
-    match serde_json::from_slice::<Value>(bytes) {
-        Ok(Value::Object(object)) => match object.get("status").and_then(Value::as_str) {
+    if let Ok(Value::Object(object)) = serde_json::from_slice::<Value>(bytes) {
+        return match object.get("status").and_then(Value::as_str) {
             Some(status) => Err(OpenDartError::UnexpectedStatus {
                 status: sanitize_status(status),
             }),
             None => Err(OpenDartError::MissingStatus),
-        },
-        _ => Err(OpenDartError::NotAZipArchive),
+        };
     }
+    if let Some(status) = extract_xml_status(bytes) {
+        let sanitized = sanitize_status(&status);
+        return if sanitized == UNDOCUMENTED_STATUS_MARKER {
+            Err(OpenDartError::UndocumentedShape)
+        } else {
+            Err(OpenDartError::UnexpectedStatus { status: sanitized })
+        };
+    }
+    Err(OpenDartError::NotAZipArchive)
+}
+
+/// Documented open/close tags for the single `<status>` element in the
+/// `corpCode.xml` surface's XML error envelope (see
+/// [`validate_zip_or_documented_error`]).
+const XML_STATUS_OPEN_TAG: &str = "<status>";
+const XML_STATUS_CLOSE_TAG: &str = "</status>";
+
+/// Extracts the text of a documented `<status>` element from a
+/// `corpCode.xml` XML error envelope, without a general XML parser: finds
+/// the first `<status>` open tag, takes the bytes up to the first following
+/// `</status>`, and trims the result. Deliberately does not touch the
+/// sibling `<message>` element at all — only `<status>` is ever read.
+///
+/// Returns `None` when no matching `<status>...</status>` pair is present,
+/// meaning this body is not a recognisable XML status envelope at all (as
+/// opposed to one whose status content fails the bound applied by
+/// [`sanitize_status`], which is a distinct, later outcome).
+fn extract_xml_status(bytes: &[u8]) -> Option<String> {
+    let open_at = find_subslice(bytes, XML_STATUS_OPEN_TAG.as_bytes())?;
+    let after_open = open_at + XML_STATUS_OPEN_TAG.len();
+    let close_at = find_subslice(&bytes[after_open..], XML_STATUS_CLOSE_TAG.as_bytes())?;
+    let status_bytes = &bytes[after_open..after_open + close_at];
+    Some(String::from_utf8_lossy(status_bytes).trim().to_owned())
+}
+
+/// First index at which `needle` occurs in `haystack`, or `None`.
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 #[cfg(test)]

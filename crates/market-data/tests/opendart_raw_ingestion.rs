@@ -167,6 +167,35 @@ fn corp_code_error_body() -> Vec<u8> {
         .into_bytes()
 }
 
+/// The exact `corpCode.xml` error envelope observed live 2026-08-20 against
+/// the documented `.xml` surface, given a deliberately invalid key: HTTP 200
+/// carrying an XML (not JSON) body. Status `010` documents an unregistered
+/// key. Kept byte-for-byte as observed, Korean `<message>` text included, so
+/// the leak-boundary test below can prove that text never reaches an
+/// error's `Debug` or `Display` output.
+fn corp_code_xml_error_body() -> Vec<u8> {
+    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><result><status>010</status><message>등록되지 않은 인증키입니다.</message></result>"
+        .as_bytes()
+        .to_vec()
+}
+
+/// A `corpCode.xml` XML error envelope whose `<status>` text is far longer
+/// than any documented status code — used to prove the extraction bound:
+/// a recognised envelope with out-of-bound status content must not be
+/// smuggled into `UnexpectedStatus`.
+fn corp_code_xml_error_body_with_status(status: &str) -> Vec<u8> {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><result><status>{status}</status><message>SYNTHETIC out-of-bound status, not a real envelope</message></result>"
+    )
+    .into_bytes()
+}
+
+/// A `corpCode.xml` body that is neither ZIP-magic-prefixed, a JSON error
+/// envelope, nor an XML error envelope.
+fn corp_code_undocumented_body() -> Vec<u8> {
+    b"SYNTHETIC-NEITHER-ZIP-NOR-JSON-NOR-XML".to_vec()
+}
+
 fn manifest_text(store: &RawStore) -> String {
     std::fs::read_to_string(store.manifest_path(PROVIDER_OPENDART, MARKET_KR)).unwrap_or_default()
 }
@@ -941,6 +970,133 @@ async fn entity_master_json_error_body_fails_closed_instead_of_being_stored() {
         .expect_err("a JSON error body must never be stored as the archive");
     assert!(matches!(error, OpenDartError::UnexpectedStatus { .. }));
     assert!(!store.provider_dir(PROVIDER_OPENDART, MARKET_KR).exists());
+}
+
+// ---------------------------------------------------------------------
+// corpCode.xml's documented error path is XML, not JSON (observed
+// 2026-08-20): it must fail closed with the actual status rather than be
+// misreported as `NotAZipArchive`, and its untrusted `<message>` text must
+// never cross into an error, a log, or a `Debug`/`Display` output.
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn entity_master_xml_error_body_fails_closed_with_status_010() {
+    let (_temp, store) = new_store();
+    let date = fixed_date();
+    let retrieved_at = fixed_retrieved_at();
+
+    let reader = FixtureReader::new(vec![corp_code_xml_error_body()]);
+    let provider = OpenDartProvider::new(reader);
+
+    let error = provider
+        .ingest_entity_master(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
+        .await
+        .expect_err("the documented XML error envelope must never be stored as the archive");
+    match &error {
+        OpenDartError::UnexpectedStatus { status } => assert_eq!(status, "010"),
+        other => panic!("expected UnexpectedStatus {{ status: \"010\" }}, got {other:?}"),
+    }
+    assert!(!matches!(error, OpenDartError::NotAZipArchive));
+    assert!(!store.provider_dir(PROVIDER_OPENDART, MARKET_KR).exists());
+}
+
+#[tokio::test]
+async fn entity_master_neither_zip_nor_status_envelope_is_not_a_zip_archive() {
+    let (_temp, store) = new_store();
+    let date = fixed_date();
+    let retrieved_at = fixed_retrieved_at();
+
+    let reader = FixtureReader::new(vec![corp_code_undocumented_body()]);
+    let provider = OpenDartProvider::new(reader);
+
+    let error = provider
+        .ingest_entity_master(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
+        .await
+        .expect_err("a body that is neither a ZIP nor a recognisable status envelope must fail");
+    assert!(matches!(error, OpenDartError::NotAZipArchive));
+    assert!(!store.provider_dir(PROVIDER_OPENDART, MARKET_KR).exists());
+}
+
+#[tokio::test]
+async fn entity_master_xml_status_out_of_bound_is_undocumented_shape_not_a_status() {
+    let (_temp, store) = new_store();
+    let date = fixed_date();
+    let retrieved_at = fixed_retrieved_at();
+
+    // 10 ASCII digits: recognisable as a `<status>` envelope, but longer
+    // than any documented OpenDART status code — the extraction bound must
+    // reject this as an undocumented shape rather than fabricate a status.
+    let reader = FixtureReader::new(vec![corp_code_xml_error_body_with_status("0123456789")]);
+    let provider = OpenDartProvider::new(reader);
+
+    let error = provider
+        .ingest_entity_master(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
+        .await
+        .expect_err("an out-of-bound status must not be reported as a status error");
+    assert!(
+        matches!(error, OpenDartError::UndocumentedShape),
+        "expected UndocumentedShape, got {error:?}"
+    );
+    assert!(!store.provider_dir(PROVIDER_OPENDART, MARKET_KR).exists());
+}
+
+#[tokio::test]
+async fn entity_master_xml_error_message_text_never_leaks_into_error_output() {
+    let (_temp, store) = new_store();
+    let date = fixed_date();
+    let retrieved_at = fixed_retrieved_at();
+
+    let reader = FixtureReader::new(vec![corp_code_xml_error_body()]);
+    let provider = OpenDartProvider::new(reader);
+
+    let error = provider
+        .ingest_entity_master(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
+        .await
+        .expect_err("the XML error envelope must fail closed");
+
+    // The Korean `<message>` text from the fixture body — untrusted,
+    // non-ASCII provider prose — must appear in neither `Debug` nor
+    // `Display` output of the resulting error. Only the `<status>` value
+    // (already asserted elsewhere to be "010") may cross this boundary.
+    let debug_text = format!("{error:?}");
+    let display_text = format!("{error}");
+    const LEAKED_MESSAGE_FRAGMENT: &str = "인증키";
+    assert!(
+        !debug_text.contains(LEAKED_MESSAGE_FRAGMENT),
+        "Debug output must never contain the provider's <message> text, got {debug_text:?}"
+    );
+    assert!(
+        !display_text.contains(LEAKED_MESSAGE_FRAGMENT),
+        "Display output must never contain the provider's <message> text, got {display_text:?}"
+    );
 }
 
 // ---------------------------------------------------------------------
