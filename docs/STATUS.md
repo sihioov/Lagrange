@@ -82,6 +82,19 @@ Stage5 계약 flag는 그대로 `vendor_snapshot=true`, `strict_pit=false`, `rea
 
 전체 워크스페이스 `cargo test --workspace --no-fail-fast`는 1,692 passed / 21 failed다. 실패 3개 타깃(`collectors research_worker` 6건, `job-queue paper_preview` 3건, `job-queue recommendation_compute` 12건)은 변경 이전 커밋 `603f9c7`에서 동일한 타깃·동일한 건수로 재현되므로 **Stage6 변경과 무관한 기존 실패**다. parquet/curated close loader와 factor snapshot 계열이며 별도 조사 대상이다.
 
+### 0.7 Stage6 D4 판정 — OpenDART는 ETF11을 커버하지 않는다 (2026-08-20)
+
+소유자가 OpenDART key를 제공해 live 경로를 승인했고, **`GET /api/corpCode.xml` 단 1회**를 호출했다. 결과는 결정적이다.
+
+- 응답은 3,596,991바이트 ZIP, 내부 `CORPCODE.xml`은 28,585,431바이트, 엔트리 118,714개, 그중 `stock_code`가 비어 있지 않은 것은 3,984개다.
+- **ETF11 종목코드 11개 중 `stock_code`로 등장하는 것은 0개다.**
+- 같은 파일의 대조군 `005930`·`000660`·`035420`는 모두 확인되므로 방법론 실패가 아니라 실제 부재다.
+- `자산운용`을 포함하는 법인은 458개 존재하지만 **전부 `stock_code`가 없다** — 공시 제출인은 운용사이고 ETF 자체는 공시 대상 법인이 아니다. `KODEX`·`상장지수`는 0건이다.
+
+따라서 **`list.json`과 `company.json`은 `corp_code` 기반이므로 ETF11에 쓸 수 없다.** ADR-0004 D4가 확정됐고, 그 파급은 다음과 같다: ETF11의 공시일 근거는 **KIND만 남으며**, 이는 선호가 아니라 의존이다. D5의 "KSD 이벤트 + 공시 근거 가용일" 결합이 전적으로 KIND에 의존하게 되고, KIND의 게시 시각 granularity와 정정 연계는 아직 미확인이므로 **그 gap들이 critical path로 올라왔다**(체크리스트 10·11번). `corpCode.xml` 자체는 이 부재의 증거로, 그리고 발행사가 공시 대상인 개별주식 범위에서는 identity join으로 계속 가치가 있다.
+
+**live 경로 차단 — rustls 비호환 (ADR-0004 D10).** `opendart.fss.or.kr`은 TLS 1.2만 지원하고 순방향 비밀성이 없는 static RSA 암호군(`AES128-GCM-SHA256`)을 선택하며, ECDHE로 제한하면 handshake failure로 거부한다. rustls는 순방향 비밀성 없는 키교환을 구현하지 않으므로, 워크스페이스의 단일 TLS 스택 정책 아래서 in-process 전송 계층은 이 호스트에 도달할 수 없다. 인증서 체인 자체는 정상(GlobalSign Root CA - R3, SAN에 `opendart.fss.or.kr` 포함)이므로 신뢰 문제가 아니라 암호군 비호환이다. 위 `corpCode.xml` 취득은 그래서 **진단 목적의 외부 도구 조회**였고 immutable Raw 배치를 만들지 않았다. 두 번째 TLS 스택 도입은 명시된 단일 스택 규칙을 바꾸는 결정이라 소유자 판단으로 남긴다. D4 결과 때문에 이 표면의 ETF11 용도가 사라졌으므로 차단의 실질 비용은 거의 없다.
+
 **부분 승인 (2026-08-19).** 소유자가 OpenDART 코어(`list.json`/`list.xml`, `corpCode.xml`, `company.json`)를 fixture 기반 Raw 어댑터 작업 범위로 승인했다. 나머지 allowlist 행, 모든 계정 등록, 라이선스 해석은 계속 보류다. 어떤 소스에도 key가 발급되지 않았으므로 실제 요청은 한 건도 발생하지 않았다. KRX 미러 vs 원본 선택, KSD 포함 여부, KOGL 제2유형·KRX 제11조③ `entitlement_reference`는 미결정 상태로 남는다.
 
 ---

@@ -1,10 +1,15 @@
 # ADR-0004: Stage6 official source contracts and day-granularity availability
 
-- **Status:** Partially approved — the OpenDART core surface
-  (`list.json`/`list.xml`, `corpCode.xml`, `company.json`) was approved by the
-  owner on 2026-08-19 for fixture-based Raw adapter work. Every other allowlist
-  row, all registrations, and the licence interpretation remain pending.
-- **Date:** 2026-08-19
+- **Status:** Partially approved and partly resolved by measurement. The
+  OpenDART core surface (`list.json`/`list.xml`, `corpCode.xml`,
+  `company.json`) was approved by the owner on 2026-08-19 for fixture-based Raw
+  adapter work, and the owner supplied a key on 2026-08-20 authorising a live
+  path. **D4 is now settled by one live `corpCode.xml` request: OpenDART does
+  not cover the ETF11 universe.** D10 records a hard TLS incompatibility that
+  blocks the in-process live path. Every other allowlist row and all remaining
+  registrations stay pending; the owner has recorded the use as personal and
+  internal, so the licence question is not a blocker (see D8).
+- **Date:** 2026-08-19, amended 2026-08-20
 - **Deciders:** Product owner (pending), implementation coordinator, Claude Opus 5 research coordination
 
 ## Context
@@ -117,7 +122,38 @@ Raw retention does not collide with a post-termination use prohibition.
 
 This is a preference, not a licence conclusion. See D8.
 
-### D4: The disclosure sources are not interchangeable, and KIND leads for ETF11
+### D4: OpenDART does not cover the ETF11 universe — KIND is the disclosure authority
+
+**Resolved 2026-08-20 by measurement, superseding the pending reading below.**
+
+The owner supplied a key and one live `corpCode.xml` request was made. The
+archive holds 118,714 entities, 3,984 of them carrying a non-empty
+`stock_code`. **None of the eleven ETF short codes appears as a `stock_code`:
+0 of 11.** The result was validated against controls in the same file —
+`005930`, `000660`, and `035420` all resolve — so this is a real absence, not a
+method failure. 458 entities match `자산운용`, every one of them with no
+`stock_code`: the asset manager is the DART filer, and the ETF itself is not a
+disclosure entity. No `KODEX` or `상장지수` entity exists at all.
+
+Consequences, which are larger than this one decision:
+
+- OpenDART cannot supply ETF11 instrument identity, and cannot supply an ETF11
+  disclosure date. `list.json` and `company.json` are keyed by `corp_code`, and
+  the eleven ETFs have none, so the approved core surface has **no ETF11 use**.
+- **KIND becomes the only viable disclosure-date authority for ETF11.** That is
+  now a dependency, not a preference.
+- D5's "KSD event plus a disclosure-backed availability date" therefore rests
+  entirely on KIND, whose posting-time granularity is unconfirmed beyond
+  date-only and whose correction linkage is unverified. Those were runbook gaps;
+  they are now on the critical path.
+- `corpCode.xml` keeps standing value as the evidence for this negative, and as
+  the identity join for any future individual-stock scope, where issuers *are*
+  disclosure entities.
+
+The reading below is retained because it records what was knowable from
+documentation alone, and why the measurement was the deciding step.
+
+### D4 (superseded): The disclosure sources are not interchangeable, and KIND leads for ETF11
 
 OpenDART's coverage of the 11 ETFs is unresolved: `corp_cls` has only
 Y/K/N/E with no fund bucket, `pblntf_ty=G 펀드공시` documents only collective
@@ -226,6 +262,33 @@ KRX Data Marketplace, KSD portal), and the licence interpretation are the
 operator's decisions.
 
 Live and order scope is unchanged and remains forbidden.
+
+### D10: rustls cannot reach OpenDART — the in-process live path is blocked
+
+Verified 2026-08-20 against the live host. `opendart.fss.or.kr` negotiates
+**TLS 1.2 only** (a TLS 1.3 attempt is refused with a protocol-version alert)
+and selects `AES128-GCM-SHA256` — static RSA key exchange, no forward secrecy.
+Restricting the offer to ECDHE suites is refused with a handshake failure.
+
+rustls deliberately implements no non-forward-secret key exchange, so the
+`opendart-client` transport — rustls by workspace policy, one TLS stack — cannot
+complete a handshake with this host. This is an incompatibility, not a
+misconfiguration, and no rustls setting resolves it.
+
+The transport, the gated CLI, and the adapter contract are all correct and
+tested; only the final socket is blocked. Options, none taken unilaterally
+because each changes a standing rule or an invariant:
+
+1. Introduce a second TLS backend for this one crate. It would work, and it
+   contradicts the explicit one-TLS-stack rule recorded in `kis-client`'s
+   manifest, widening the supply-chain surface.
+2. Fetch with an external tool the operator already trusts and adopt the bytes
+   into Raw. That weakens "Raw comes from a recorded in-process request", which
+   is the property the lineage design rests on.
+3. Leave the live path blocked and treat OpenDART as documentation-only for
+   ETF11 — which D4 makes nearly free, since the surface has no ETF11 use.
+
+Given D4, option 3 costs almost nothing today. The choice is the owner's.
 
 ## Consequences
 

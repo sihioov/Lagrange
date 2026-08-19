@@ -81,8 +81,12 @@ project.
 Stage6 adds OpenDART (`opendart.fss.or.kr`) as a read-only disclosure-evidence source for the
 fixed 11 ETF universe.  The owner approved only the core surface below, on 2026-08-19, and only
 for fixture-backed Raw adapter work.  Approval covers the request shape, the fixture contract,
-and an operator-gated live path; it is not permission to send a live request.  No key has been
-issued, so no request has been sent.  Decisions and evidence live in
+and an operator-gated live path.  The owner supplied a key on 2026-08-20 and authorized the live
+path; exactly one live request has been made since, a single `GET /api/corpCode.xml`.  Its result
+settled the ETF coverage question below: **OpenDART does not model the fixed 11 ETF issues as
+disclosure entities**, so `list.json` and `company.json`, both keyed by `corp_code`, have no ETF11
+use.  Note also that the live host negotiates TLS 1.2 with a static-RSA suite only, which rustls
+does not implement, so the in-process transport cannot currently reach it (see ADR-0004 D10).  Decisions and evidence live in
 `docs/decisions/0004-stage6-official-source-contracts.md` and
 `docs/runbooks/stage6-source-contracts.md`.
 
@@ -136,8 +140,12 @@ key to disk permanently inside an immutable store.
   means the result set shifted and completeness cannot be proven: fail closed.
 - Identical response bytes for two different requested pages fails closed.
 - `corpCode.xml` and `company.json` are single-page.  Send no continuation field and reject any
-  pagination-like marker.  `corpCode.xml` must begin with the ZIP magic `PK\x03\x04`; an error JSON
-  body in its place fails closed instead of being stored as an archive.  The archive is stored
+  pagination-like marker.  `corpCode.xml` must begin with the ZIP magic `PK\x03\x04`; an error body
+  in its place fails closed instead of being stored as an archive.  Observed 2026-08-20: the `.xml`
+  surface returns its error envelope as **XML with HTTP 200**
+  (`<result><status>010</status>...`), so validation cannot rely on the status line, and `010`
+  means an unregistered key.  Only the status code may cross into an error; the `<message>` prose
+  never does.  The archive is stored
   byte-for-byte and is not unzipped or parsed in the Raw stage.
 - Status `000` is success.  `013` is documented no-data and must be a typed empty outcome, distinct
   from an error.  Any other status, a missing `status`, malformed JSON, or an undocumented shape
@@ -160,10 +168,12 @@ key to disk permanently inside an immutable store.
   advisory codes only — `정` means a later correction exists, `철` means the report is deemed
   withdrawn.  Never present these as a structured lineage join.
 - A record date, payment date, listing date, or ex-rights date is never written to `available_at`.
-- Whether OpenDART covers the 11 ETFs at all is unresolved: `corp_cls` has no fund bucket, and only
-  collective-investment registration sub-types are documented under `펀드공시`.  Fixture tests prove
-  the `corp_code`/`stock_code` mapping machinery works; they do not establish coverage.  No code or
-  document may imply otherwise until the owner supplies a key or the real `corpCode.xml`.
+- **Resolved 2026-08-20: OpenDART does not cover the 11 ETFs.**  One live `corpCode.xml` request
+  returned 118,714 entities, 3,984 with a non-empty `stock_code`, and none of the eleven ETF short
+  codes among them; controls in the same file resolve, and the 458 `자산운용` entities all lack a
+  `stock_code` because the asset manager is the filer rather than the ETF.  Do not build an ETF11
+  identity or disclosure-date path on OpenDART.  `corpCode.xml` remains the identity join for any
+  future individual-stock scope, where issuers are disclosure entities.
 
 ### Rights and source of truth
 

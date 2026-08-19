@@ -12,7 +12,10 @@ still awaits the approval `AGENTS.md` requires for any change to a method, path,
 host, or response contract. See the allowlist table at the end for the per-row
 state.
 
-No key has been issued for any surface, so no request has been sent to any of
+As of 2026-08-20 the owner has supplied an OpenDART key. **Exactly one live
+request has been made against any surface in this document**: a single
+`GET /api/corpCode.xml`, whose purpose and result are recorded in checklist
+item 4 below. No other surface has been contacted, and no key exists for any of
 them.
 
 ## How this evidence was gathered
@@ -265,6 +268,38 @@ Three DS005 endpoints were opened in detail — `crDecsn` (감자),
 fields include `bddd` / `bdds` (이사회결의일), `cr_std` (감자기준일),
 `crsc_nstklstprd` (신주상장예정일), and `mgsc_mgdt` (합병기일).
 
+### Live-path blocker — rustls cannot complete a handshake
+
+`[verified]` Observed against the live host on 2026-08-20:
+
+- TLS 1.3 is refused with a protocol-version alert; the host is **TLS 1.2 only**.
+- The negotiated suite is `AES128-GCM-SHA256` — static RSA key exchange, **no
+  forward secrecy**.
+- Restricting the client offer to ECDHE suites is refused with a handshake
+  failure alert.
+
+rustls implements no non-forward-secret key exchange, so the workspace's
+one-TLS-stack policy makes the in-process `opendart-client` transport unable to
+reach this host at all. The certificate chain itself is fine (GlobalSign Root
+CA - R3, and the SAN covers `opendart.fss.or.kr`), so this is a cipher-suite
+incompatibility, not a trust problem. ADR-0004 D10 records the options; the
+choice is the owner's.
+
+### The `.xml` surface returns XML errors, with HTTP 200
+
+`[verified]` A deliberately invalid key against `/api/corpCode.xml` returned
+**HTTP 200** with an XML envelope, not JSON:
+
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?><result><status>010</status><message>...</message></result>
+```
+
+Two consequences. The transport cannot detect this from the status line, so
+validation must, and status `010` is the documented "unregistered key" code. The
+adapter's non-ZIP branch originally recognised only a JSON envelope and would
+have reported a shape complaint instead of the real status — corrected, with the
+`<message>` prose deliberately never crossing into an error.
+
 ### Corp identification
 
 `GET https://opendart.fss.or.kr/api/corpCode.xml` returns a zip containing XML
@@ -482,10 +517,16 @@ credentialed call, because read-only public fetching cannot settle it.
    can differ across dates. That determines whether it is a true point-in-time
    query or a date filter over a current table — which decides whether it can
    anchor instrument identity validity intervals.
-4. **ETF coverage in OpenDART.** Download `corpCode.xml` and check whether any
-   of `069500`, `102110`, `229200`, `143850`, `133690`, `195930`, `192090`,
-   `148070`, `114260`, `153130`, `132030` appears as a `stock_code`. This single
-   check settles ADR-0004 D4.
+4. ~~**ETF coverage in OpenDART.**~~ **CLOSED 2026-08-20 — answer: no.** One
+   live `corpCode.xml` request returned a 3,596,991-byte ZIP holding a
+   28,585,431-byte `CORPCODE.xml` with 118,714 entities, 3,984 of them carrying
+   a non-empty `stock_code`. **None of the eleven ETF short codes appears:
+   0 of 11.** Controls in the same file resolve (`005930`, `000660`, `035420`),
+   so the absence is real rather than a method failure. 458 entities match
+   `자산운용`, all without a `stock_code` — the asset manager is the filer and
+   the ETF is not a disclosure entity. `KODEX` and `상장지수` match nothing. See
+   ADR-0004 D4 for the consequences; the archive was read only, never unzipped
+   into the Raw zone.
 5. **OpenDART quota.** Find the actual posted numeric limit referenced by
    Art. 10(4), from the key-management dashboard or the homepage notice. Do not
    inherit the third-party figure.
