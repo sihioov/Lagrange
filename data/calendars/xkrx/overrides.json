@@ -1,0 +1,44 @@
+{
+  "authority": "operator-reviewed official sources",
+  "calendar_id": "xkrx-historical-session-dates",
+  "contract": "xkrx-calendar-session-overrides",
+  "entries": [
+    {
+      "action": "remove_session",
+      "date": "2026-06-03",
+      "reason": "South Korea national election day; KRX holiday rule applies.",
+      "reason_code": "national_election_day",
+      "sources": [
+        {
+          "authority": "KRX",
+          "claim": "KRX holiday rule includes national election days.",
+          "url": "https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp"
+        },
+        {
+          "authority": "National Election Commission",
+          "claim": "The 2026 national election date is 2026-06-03.",
+          "url": "https://www.nec.go.kr/site/nec/ex/bbs/View.do?bcIdx=289351&cbIdx=1104"
+        }
+      ]
+    },
+    {
+      "action": "remove_session",
+      "date": "2026-07-17",
+      "reason": "Constitution Day public holiday restored from 2026; KRX holiday rule applies.",
+      "reason_code": "constitution_day_public_holiday",
+      "sources": [
+        {
+          "authority": "KRX",
+          "claim": "KRX holiday rule includes public holidays.",
+          "url": "https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp"
+        },
+        {
+          "authority": "Korea policy / Ministry of Personnel Management",
+          "claim": "Constitution Day is a public holiday from 2026.",
+          "url": "https://m.korea.kr/news/policyNewsView.do?newsId=148959009"
+        }
+      ]
+    }
+  ],
+  "schema_version": 1
+}

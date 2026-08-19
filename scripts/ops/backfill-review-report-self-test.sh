@@ -141,6 +141,8 @@ cp -- "$script_dir/../../data/calendars/xkrx/calendar.json" \
   "$no_call_root/data/calendars/xkrx/calendar.json"
 cp -- "$script_dir/../../data/calendars/xkrx/manifest.json" \
   "$no_call_root/data/calendars/xkrx/manifest.json"
+cp -- "$script_dir/../../data/calendars/xkrx/overrides.json" \
+  "$no_call_root/data/calendars/xkrx/overrides.json"
 cat >"$no_call_root/scripts/ops/validate-production-config.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

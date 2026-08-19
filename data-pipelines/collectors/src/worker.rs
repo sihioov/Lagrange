@@ -1481,6 +1481,7 @@ pub struct DailyRangeRawSummary {
     pub normalized_count: usize,
     pub start: TradingDate,
     pub end: TradingDate,
+    pub reused_existing_source: bool,
 }
 
 pub async fn run_credentialed_daily_range_raw_stream<W: io::Write>(
@@ -1546,7 +1547,82 @@ pub async fn run_credentialed_daily_range_raw_stream<W: io::Write>(
 
     let outcomes = normalize_kis_daily_range_batch(&store, &source, &expected)
         .map_err(WorkerError::RangeNormalize)?;
-    for outcome in &outcomes {
+    emit_daily_range_events(writer, &outcomes)?;
+    Ok(DailyRangeRawSummary {
+        source_batch_id: source.batch_id,
+        normalized_count: outcomes.len(),
+        start,
+        end,
+        reused_existing_source: false,
+    })
+}
+
+/// Re-normalize an explicitly identified immutable Stage3 source batch.
+///
+/// This path intentionally does not construct a provider or read KIS
+/// credentials.  The source batch must already be present in the reconciled
+/// Raw manifest and must satisfy the exact range request contract before the
+/// Stage4A normalizer is called.  A missing, malformed, or conflicting batch
+/// is a permanent error; there is deliberately no fetch fallback.
+pub async fn run_existing_daily_range_raw_stream<W: io::Write>(
+    values: &HashMap<String, String>,
+    start: TradingDate,
+    end: TradingDate,
+    source_batch_id: BatchId,
+    writer: &mut W,
+) -> Result<DailyRangeRawSummary, WorkerError> {
+    let config = DailyRangeRawRecoveryConfig::from_map(values)?;
+    let expected =
+        ExpectedRangeSessions::approved_xkrx(start, end).map_err(WorkerError::RangeNormalize)?;
+    if expected.sessions.is_empty() {
+        return Err(WorkerError::InvalidConfig {
+            key: "daily-range-session-selection",
+        });
+    }
+    let store = RawStore::new(&config.raw_root);
+    let entries = store
+        .read_reconciled_manifest(PROVIDER_KIS_DAILY_RANGE, MARKET_KR)
+        .map_err(|source| WorkerError::Pipeline(PipelineError::Manifest { source }))?;
+    let source = entries
+        .into_iter()
+        .find(|entry| entry.batch_id == source_batch_id)
+        .ok_or_else(|| {
+            WorkerError::RangeNormalize(RangeNormalizeError::ExistingBatchConflict {
+                batch_id: source_batch_id,
+                reason:
+                    "explicit existing source batch is missing from the reconciled Raw manifest"
+                        .to_owned(),
+            })
+        })?;
+    validate_explicit_daily_range_source(
+        &source,
+        start,
+        end,
+        config.entitlement_reference.as_str(),
+    )
+    .map_err(|reason| {
+        WorkerError::RangeNormalize(RangeNormalizeError::ExistingBatchConflict {
+            batch_id: source_batch_id,
+            reason,
+        })
+    })?;
+    let outcomes = normalize_kis_daily_range_batch(&store, &source, &expected)
+        .map_err(WorkerError::RangeNormalize)?;
+    emit_daily_range_events(writer, &outcomes)?;
+    Ok(DailyRangeRawSummary {
+        source_batch_id: source.batch_id,
+        normalized_count: outcomes.len(),
+        start,
+        end,
+        reused_existing_source: true,
+    })
+}
+
+fn emit_daily_range_events<W: io::Write>(
+    writer: &mut W,
+    outcomes: &[market_data::range_normalize::RangeNormalizationOutcome],
+) -> Result<(), WorkerError> {
+    for outcome in outcomes {
         serde_json::to_writer(
             &mut *writer,
             &BackfillItemWire {
@@ -1567,12 +1643,57 @@ pub async fn run_credentialed_daily_range_raw_stream<W: io::Write>(
             phase: WorkerPhase::Ingest,
         })?;
     }
-    Ok(DailyRangeRawSummary {
-        source_batch_id: source.batch_id,
-        normalized_count: outcomes.len(),
-        start,
-        end,
-    })
+    Ok(())
+}
+
+#[derive(Debug)]
+struct DailyRangeRawRecoveryConfig {
+    raw_root: PathBuf,
+    entitlement_reference: String,
+}
+
+impl DailyRangeRawRecoveryConfig {
+    fn from_map(values: &HashMap<String, String>) -> Result<Self, WorkerError> {
+        if required(values, "APP_ENV")? != "production"
+            || required(values, "RESEARCH_FETCH_MODE")? != "credentialed"
+        {
+            return Err(WorkerError::InvalidConfig {
+                key: "daily-range-environment",
+            });
+        }
+        let commit = required(values, "LAGRANGE_CODE_COMMIT")?;
+        if !is_git_commit(commit) {
+            return Err(WorkerError::InvalidConfig {
+                key: "LAGRANGE_CODE_COMMIT",
+            });
+        }
+        if values
+            .get("RESEARCH_CANDIDATE_ENABLED")
+            .map(String::as_str)
+            .unwrap_or("false")
+            != "false"
+        {
+            return Err(WorkerError::InvalidConfig {
+                key: "RESEARCH_CANDIDATE_ENABLED",
+            });
+        }
+        let raw_root = PathBuf::from(nonempty(values, "RESEARCH_RAW_ROOT")?);
+        if !raw_root.is_absolute() {
+            return Err(WorkerError::InvalidConfig {
+                key: "RESEARCH_RAW_ROOT",
+            });
+        }
+        let entitlement_reference = nonempty(values, "RESEARCH_ENTITLEMENT_REFERENCE")?.to_owned();
+        if entitlement_reference.len() > 256 {
+            return Err(WorkerError::InvalidConfig {
+                key: "RESEARCH_ENTITLEMENT_REFERENCE",
+            });
+        }
+        Ok(Self {
+            raw_root,
+            entitlement_reference,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -1680,6 +1801,159 @@ fn find_existing_daily_range_source(
         entitlement_reference,
         preferred_batch_id,
     )
+}
+
+fn validate_explicit_daily_range_source(
+    entry: &ManifestEntry,
+    start: TradingDate,
+    end: TradingDate,
+    entitlement_reference: &str,
+) -> Result<(), String> {
+    if entry.provider != PROVIDER_KIS_DAILY_RANGE
+        || entry.market != MARKET_KR
+        || entry.mode != FetchMode::Credentialed
+        || entry.date != start
+        || entry.entitlement_reference.as_deref() != Some(entitlement_reference)
+    {
+        return Err(
+            "explicit source scope/mode/date/entitlement does not match the requested identity"
+                .to_owned(),
+        );
+    }
+    if entry.files.is_empty() {
+        return Err("explicit source has no daily-bar response files".to_owned());
+    }
+    let expected_symbols: BTreeSet<&str> = KR_ETF_CORE_SYMBOLS.iter().copied().collect();
+    let expected_query_keys: BTreeSet<&str> = [
+        "FID_COND_MRKT_DIV_CODE",
+        "FID_INPUT_ISCD",
+        "FID_INPUT_DATE_1",
+        "FID_INPUT_DATE_2",
+        "FID_PERIOD_DIV_CODE",
+        "FID_ORG_ADJ_PRC",
+    ]
+    .into_iter()
+    .collect();
+    let mut symbols = BTreeSet::new();
+    let mut windows = BTreeSet::new();
+    let mut maximum_end = None;
+    for file in &entry.files {
+        if file.kind != ResponseKind::Bars {
+            return Err(format!(
+                "explicit source file {} is not a daily-bar response",
+                file.file_name
+            ));
+        }
+        if file.request.endpoint != DAILY_RANGE_ENDPOINT
+            || file.request.mode != FetchMode::Credentialed
+            || file.request.query.len() != expected_query_keys.len()
+            || file.request.headers.len() != 2
+        {
+            return Err(format!(
+                "explicit source file {} request metadata is invalid",
+                file.file_name
+            ));
+        }
+        let query_value = |key: &str| {
+            file.request
+                .query
+                .iter()
+                .find(|(actual, _)| actual == key)
+                .map(|(_, value)| value.as_str())
+        };
+        let keys = file
+            .request
+            .query
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<BTreeSet<_>>();
+        if keys != expected_query_keys
+            || query_value("FID_COND_MRKT_DIV_CODE") != Some("J")
+            || query_value("FID_PERIOD_DIV_CODE") != Some("D")
+            || query_value("FID_ORG_ADJ_PRC") != Some("1")
+        {
+            return Err(format!(
+                "explicit source file {} query contract is invalid",
+                file.file_name
+            ));
+        }
+        let Some(symbol) = query_value("FID_INPUT_ISCD") else {
+            return Err(format!(
+                "explicit source file {} has no symbol",
+                file.file_name
+            ));
+        };
+        if !expected_symbols.contains(symbol) {
+            return Err(format!(
+                "explicit source file {} has an unexpected symbol",
+                file.file_name
+            ));
+        }
+        let Some(actual_start) = query_value("FID_INPUT_DATE_1").and_then(parse_compact_date)
+        else {
+            return Err(format!(
+                "explicit source file {} has an invalid start date",
+                file.file_name
+            ));
+        };
+        let Some(actual_end) = query_value("FID_INPUT_DATE_2").and_then(parse_compact_date) else {
+            return Err(format!(
+                "explicit source file {} has an invalid end date",
+                file.file_name
+            ));
+        };
+        if actual_start != start || actual_end < start || actual_end > end {
+            return Err(format!(
+                "explicit source file {} date bounds are invalid",
+                file.file_name
+            ));
+        }
+        if !windows.insert((symbol.to_owned(), actual_end)) {
+            return Err(format!(
+                "explicit source file {} duplicates a symbol/window",
+                file.file_name
+            ));
+        }
+        symbols.insert(symbol);
+        maximum_end =
+            Some(maximum_end.map_or(actual_end, |value: TradingDate| value.max(actual_end)));
+        let mut tr_id = None;
+        let mut tr_cont = None;
+        for (key, value) in &file.request.headers {
+            if key.eq_ignore_ascii_case("tr_id") {
+                if tr_id.replace(value.as_str()).is_some() {
+                    return Err(format!(
+                        "explicit source file {} repeats tr_id",
+                        file.file_name
+                    ));
+                }
+            } else if key.eq_ignore_ascii_case("tr_cont") {
+                if tr_cont.replace(value.as_str()).is_some() {
+                    return Err(format!(
+                        "explicit source file {} repeats tr_cont",
+                        file.file_name
+                    ));
+                }
+            } else {
+                return Err(format!(
+                    "explicit source file {} has an unexpected header",
+                    file.file_name
+                ));
+            }
+        }
+        if tr_id != Some(DAILY_RANGE_TR_ID) || tr_cont != Some("") {
+            return Err(format!(
+                "explicit source file {} continuation/header contract is invalid",
+                file.file_name
+            ));
+        }
+    }
+    if symbols != expected_symbols || maximum_end != Some(end) {
+        return Err(
+            "explicit source does not contain the exact fixed 11-symbol requested range".to_owned(),
+        );
+    }
+    Ok(())
 }
 
 /// Selects an immutable range source before any provider construction. The
@@ -2062,6 +2336,36 @@ mod daily_range_source_selection_tests {
                 batch_id, ..
             }) if batch_id == other
         ));
+    }
+
+    #[test]
+    fn explicit_existing_source_accepts_exact_multi_window_contract() {
+        let start = TradingDate::parse("2020-01-31").unwrap();
+        let middle = TradingDate::parse("2020-02-02").unwrap();
+        let end = TradingDate::parse("2020-02-03").unwrap();
+        let source =
+            valid_multi_window_entry(BatchId::generate(), start, "ent-1", start, middle, end);
+        validate_explicit_daily_range_source(&source, start, end, "ent-1")
+            .expect("exact source request contract is accepted");
+    }
+
+    #[test]
+    fn explicit_existing_source_rejects_scope_and_query_tampering() {
+        let start = TradingDate::parse("2020-01-31").unwrap();
+        let end = TradingDate::parse("2020-02-03").unwrap();
+        let mut source = valid_multi_window_entry(
+            BatchId::generate(),
+            start,
+            "ent-1",
+            start,
+            TradingDate::parse("2020-02-02").unwrap(),
+            end,
+        );
+        source.entitlement_reference = Some("other-entitlement".to_owned());
+        assert!(validate_explicit_daily_range_source(&source, start, end, "ent-1").is_err());
+        source.entitlement_reference = Some("ent-1".to_owned());
+        source.files[0].request.headers[1].1 = "M".to_owned();
+        assert!(validate_explicit_daily_range_source(&source, start, end, "ent-1").is_err());
     }
 
     #[test]

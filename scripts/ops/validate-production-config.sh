@@ -11,10 +11,14 @@
 # `--scope backfill` is the deliberately smaller first-phase contract: it gates
 # the KIS worker/bootstrap DB path without requiring serving-only Auth0/TLS
 # values or the curated dataset pin that is produced by that very backfill.
-# `--scope range-raw` is the DB-free Stage5 contract: it gates only the
+# `--scope range-raw` is the DB-free Stage5 capture contract: it gates only the
 # production credentialed daily-range worker, its Raw root, entitlement, KIS
 # source files, and isolated runtime copies. It deliberately does not require
 # PostgreSQL, Curated, Auth0/TLS, or recommendation inputs.
+# `--scope range-raw-recovery` is the provider-free Stage5 recovery contract:
+# it gates only the production Raw root, entitlement, and code identity. It
+# intentionally requires no KIS source/runtime files, database values, or
+# network-capable service inputs.
 # `--scope serving-prereqs` is the copy/readiness contract for all non-KIS
 # serving inputs. It requires Auth0/TLS, API/worker source secrets, and the
 # non-KIS runtime copies, but deliberately does not require KIS credentials,
@@ -38,7 +42,7 @@ warnings=()
 usage() {
   cat <<'EOF'
 Usage: scripts/ops/validate-production-config.sh
-       [--scope infrastructure|serving-prereqs|backfill|range-raw|release]
+       [--scope infrastructure|serving-prereqs|backfill|range-raw|range-raw-recovery|release]
        [--env-file PATH]
 
 Exit 0: production configuration and required secret files are ready.
@@ -65,6 +69,9 @@ require Auth0/TLS serving inputs or recommendation dataset five-pin values.
 range-raw scope requires only the DB-free production credentialed KIS Raw
 inputs and its isolated runtime copies; it does not require database, Curated,
 Auth0/TLS, or recommendation values.
+range-raw-recovery scope requires only the production Raw root, entitlement,
+and exact code commit. It uses a network-disabled, secret-free recovery
+service and does not require KIS source/runtime files or any database values.
 serving-prereqs scope checks Auth0/TLS and every non-KIS runtime copy needed by
 the serving Compose inventory. It does not require KIS app credentials,
 RESEARCH_* or entitlement values, or recommendation dataset five-pin values;
@@ -77,7 +84,7 @@ die() { echo "production-config: $*" >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --scope)
-      [ "$#" -ge 2 ] || die '--scope needs infrastructure, serving-prereqs, backfill, range-raw, or release'
+      [ "$#" -ge 2 ] || die '--scope needs infrastructure, serving-prereqs, backfill, range-raw, range-raw-recovery, or release'
       scope=$2
       shift 2
       ;;
@@ -92,8 +99,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$scope" in
-  infrastructure|serving-prereqs|backfill|range-raw|release) ;;
-  *) die "--scope must be infrastructure, serving-prereqs, backfill, range-raw, or release" ;;
+  infrastructure|serving-prereqs|backfill|range-raw|range-raw-recovery|release) ;;
+  *) die "--scope must be infrastructure, serving-prereqs, backfill, range-raw, range-raw-recovery, or release" ;;
 esac
 
 # Production source secrets and runtime copies are root-owned by contract. Check
@@ -152,11 +159,14 @@ require_value() {
 # Compose parses the complete file even for infrastructure's service subset,
 # so the exact build commit remains a preflight input. Worker/serving settings
 # below begin only at backfill and are intentionally absent from infrastructure.
-required_keys=(LAGRANGE_DATA_DIR LAGRANGE_RUNTIME_SECRET_DIR)
-if [ "$scope" != range-raw ]; then
+required_keys=(LAGRANGE_DATA_DIR)
+if [ "$scope" != range-raw ] && [ "$scope" != range-raw-recovery ]; then
+  required_keys+=(LAGRANGE_RUNTIME_SECRET_DIR)
+fi
+if [ "$scope" != range-raw ] && [ "$scope" != range-raw-recovery ]; then
   required_keys+=(POSTGRES_USER POSTGRES_DB)
 fi
-if [ "$scope" = backfill ] || [ "$scope" = range-raw ] || [ "$scope" = release ]; then
+if [ "$scope" = backfill ] || [ "$scope" = range-raw ] || [ "$scope" = range-raw-recovery ] || [ "$scope" = release ]; then
   required_keys+=(RESEARCH_APP_ENV RESEARCH_FETCH_MODE RESEARCH_ENTITLEMENT_REFERENCE)
 fi
 if [ "$scope" = serving-prereqs ] || [ "$scope" = release ]; then
@@ -182,7 +192,7 @@ artifacts_dir=$(get LAGRANGE_ARTIFACTS_DIR)
 if [ "$scope" = serving-prereqs ] || [ "$scope" = release ]; then
   [ -z "$artifacts_dir" ] || [[ "$artifacts_dir" = /* ]] || invalid+=("LAGRANGE_ARTIFACTS_DIR must be absolute")
 fi
-if [ "$scope" = backfill ] || [ "$scope" = range-raw ] || [ "$scope" = release ]; then
+if [ "$scope" = backfill ] || [ "$scope" = range-raw ] || [ "$scope" = range-raw-recovery ] || [ "$scope" = release ]; then
   [ "$(get RESEARCH_APP_ENV)" = production ] || invalid+=("RESEARCH_APP_ENV must be production")
   [ "$(get RESEARCH_FETCH_MODE)" = credentialed ] || invalid+=("RESEARCH_FETCH_MODE must be credentialed")
   [ "$(get RESEARCH_CANDIDATE_ENABLED)" = false ] || invalid+=("RESEARCH_CANDIDATE_ENABLED must be false until the KIS candidate bridge is released")
@@ -212,6 +222,8 @@ elif [ "$scope" = backfill ]; then
   )
 elif [ "$scope" = range-raw ]; then
   secret_files=(kis_app_key kis_app_secret)
+elif [ "$scope" = range-raw-recovery ]; then
+  secret_files=()
 elif [ "$scope" = serving-prereqs ]; then
   secret_files=(
     postgres_password db_migration_owner_password db_app_password db_worker_password
@@ -398,6 +410,8 @@ elif [ "$scope" = range-raw ]; then
     research-range-raw/kis_app_key:10001:10001:440
     research-range-raw/kis_app_secret:10001:10001:440
   )
+elif [ "$scope" = range-raw-recovery ]; then
+  runtime_specs=()
 else
   runtime_specs=(
     reverse-proxy/lagrange_tls_cert:101:101:440 reverse-proxy/lagrange_tls_key:101:101:440

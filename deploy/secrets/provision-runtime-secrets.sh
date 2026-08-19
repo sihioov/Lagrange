@@ -9,7 +9,8 @@
 # before KIS credentials or curated dataset approval; serving-prereqs stages the
 # non-KIS serving copies without starting anything; backfill adds the
 # research-worker KIS copies; range-raw installs only the isolated DB-free
-# Stage5 KIS pair; and release installs the complete inventory.
+# Stage5 KIS pair; range-raw-recovery installs no copies because its service is
+# provider-free and network-disabled; and release installs the complete inventory.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -26,7 +27,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage: deploy/secrets/provision-runtime-secrets.sh
-       [--scope infrastructure|serving-prereqs|backfill|range-raw|release]
+       [--scope infrastructure|serving-prereqs|backfill|range-raw|range-raw-recovery|release]
 
   --scope infrastructure
                     Install only PostgreSQL/bootstrap/schema runtime copies;
@@ -40,6 +41,9 @@ Usage: deploy/secrets/provision-runtime-secrets.sh
                     KIS backfill.
   --scope range-raw Install only the isolated research-range-raw KIS pair;
                     no DB, Curated, Auth0, or TLS copies are created.
+  --scope range-raw-recovery
+                    Install no runtime copies; the recovery service is
+                    provider-free, network-disabled, and secret-free.
   --scope release   Install every Compose service secret (default).
 EOF
 }
@@ -47,7 +51,7 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --scope)
-      [ "$#" -ge 2 ] || die '--scope needs infrastructure, serving-prereqs, backfill, range-raw, or release'
+      [ "$#" -ge 2 ] || die '--scope needs infrastructure, serving-prereqs, backfill, range-raw, range-raw-recovery, or release'
       scope=$2
       shift 2
       ;;
@@ -56,8 +60,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$scope" in
-  infrastructure|serving-prereqs|backfill|range-raw|release) ;;
-  *) die '--scope must be infrastructure, serving-prereqs, backfill, range-raw, or release' ;;
+  infrastructure|serving-prereqs|backfill|range-raw|range-raw-recovery|release) ;;
+  *) die '--scope must be infrastructure, serving-prereqs, backfill, range-raw, range-raw-recovery, or release' ;;
 esac
 
 [ "$(id -u)" -eq 0 ] || die "must run as root to assign service UID ownership"
@@ -179,6 +183,9 @@ case "$scope" in
   range-raw)
     add_copy research-range-raw kis_app_key kis_app_key 10001 10001 0440 yes
     add_copy research-range-raw kis_app_secret kis_app_secret 10001 10001 0440 yes
+    ;;
+  range-raw-recovery)
+    # Deliberately empty: this service has no KIS, DB, or other runtime secret.
     ;;
   release)
     add_serving_copies

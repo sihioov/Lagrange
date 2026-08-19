@@ -25,7 +25,7 @@ if git check-ignore -q "$provision"; then
   die 'provisioner is unexpectedly ignored by Git'
 fi
 bash -n "$provision" || die "provisioner has shell syntax errors"
-grep -Fq -- '--scope infrastructure|serving-prereqs|backfill|range-raw|release' "$provision" \
+grep -Fq -- '--scope infrastructure|serving-prereqs|backfill|range-raw|range-raw-recovery|release' "$provision" \
   || die 'provisioner scope contract is absent'
 grep -Fq 'scope=$scope' "$provision" \
   || die 'provisioner must report the selected scope'
@@ -162,6 +162,16 @@ serving_branch=$(awk '
 ' "$provision")
 if grep -Eq 'kis_app_key|kis_app_secret' <<<"$serving_branch"; then
   die 'serving-prereqs must not add KIS runtime copies'
+fi
+recovery_branch=$(awk '
+  /^  range-raw-recovery\)/ { in_scope=1; next }
+  in_scope && /^  release\)/ { exit }
+  in_scope { print }
+' "$provision")
+grep -Fq 'range-raw-recovery)' "$provision" \
+  || die 'range-raw-recovery provisioner scope is missing'
+if grep -Eq 'add_copy|kis_app_key|kis_app_secret' <<<"$recovery_branch"; then
+  die 'range-raw-recovery must not install runtime or KIS secret copies'
 fi
 
 grep -Fq 'reject_dotdot()' "$provision" \

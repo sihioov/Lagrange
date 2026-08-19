@@ -11,7 +11,7 @@ use collectors::{
     WorkerControl, WorkerError, WorkerEvent, WorkerObserver, WorkerRunOutcome, bootstrap_worker,
     build_postgres_pool, candidate_healthcheck, healthcheck,
     run_credentialed_backfill_session_dates_stream, run_credentialed_daily_range_raw_stream,
-    run_internal_ingest, run_internal_recovery_page_stream,
+    run_existing_daily_range_raw_stream, run_internal_ingest, run_internal_recovery_page_stream,
 };
 use domain::{TradingDate, UtcTimestamp};
 use serde::Serialize;
@@ -20,7 +20,7 @@ use tokio::sync::{Mutex, watch};
 const USAGE: &str = "\
 research-worker [--once --date YYYY-MM-DD]
 research-worker --backfill-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
-research-worker --range-raw --start YYYY-MM-DD --end YYYY-MM-DD
+research-worker --range-raw --start YYYY-MM-DD --end YYYY-MM-DD [--existing-source-batch-id UUID]
 research-worker healthcheck
 research-worker --help
 
@@ -36,6 +36,7 @@ enum Command {
     DailyRangeRaw {
         start: TradingDate,
         end: TradingDate,
+        existing_source_batch_id: Option<domain::BatchId>,
     },
     Healthcheck,
     Help,
@@ -101,6 +102,8 @@ struct SuccessRecord {
     normalized_start: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     normalized_end: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reused_existing_source: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -187,7 +190,11 @@ async fn main() -> ExitCode {
         Command::Healthcheck => run_healthcheck(&values).await,
         Command::Once(date) => run_once(&values, date).await,
         Command::BackfillSessionDates(dates) => run_backfill_session_dates(&values, &dates).await,
-        Command::DailyRangeRaw { start, end } => run_daily_range_raw(&values, start, end).await,
+        Command::DailyRangeRaw {
+            start,
+            end,
+            existing_source_batch_id,
+        } => run_daily_range_raw(&values, start, end, existing_source_batch_id).await,
         Command::Daemon => run_daemon(&values).await,
         Command::InternalRecover(after) => run_internal_recover(&values, after).await,
         Command::InternalIngest(date, now) => run_internal_collect(&values, date, now).await,
@@ -247,17 +254,39 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
         [mode, start_flag, start, end_flag, end]
             if mode == "--range-raw" && start_flag == "--start" && end_flag == "--end" =>
         {
-            let start = TradingDate::parse(start)
-                .map_err(|_| WorkerError::InvalidConfig { key: "--start" })?;
-            let end =
-                TradingDate::parse(end).map_err(|_| WorkerError::InvalidConfig { key: "--end" })?;
-            if end < start {
-                return Err(WorkerError::InvalidConfig { key: "--range-raw" });
-            }
-            Ok(Command::DailyRangeRaw { start, end })
+            parse_daily_range_raw(start, end, None)
+        }
+        [mode, start_flag, start, end_flag, end, batch_flag, batch]
+            if mode == "--range-raw"
+                && start_flag == "--start"
+                && end_flag == "--end"
+                && batch_flag == "--existing-source-batch-id" =>
+        {
+            let source_batch_id = batch.parse().map_err(|_| WorkerError::InvalidConfig {
+                key: "--existing-source-batch-id",
+            })?;
+            parse_daily_range_raw(start, end, Some(source_batch_id))
         }
         _ => Err(WorkerError::InvalidConfig { key: "arguments" }),
     }
+}
+
+fn parse_daily_range_raw(
+    start: &str,
+    end: &str,
+    existing_source_batch_id: Option<domain::BatchId>,
+) -> Result<Command, WorkerError> {
+    let start =
+        TradingDate::parse(start).map_err(|_| WorkerError::InvalidConfig { key: "--start" })?;
+    let end = TradingDate::parse(end).map_err(|_| WorkerError::InvalidConfig { key: "--end" })?;
+    if end < start {
+        return Err(WorkerError::InvalidConfig { key: "--range-raw" });
+    }
+    Ok(Command::DailyRangeRaw {
+        start,
+        end,
+        existing_source_batch_id,
+    })
 }
 
 fn parse_session_dates(value: &str) -> Result<Command, WorkerError> {
@@ -394,6 +423,7 @@ async fn run_backfill_session_dates(
         normalized_count: None,
         normalized_start: None,
         normalized_end: None,
+        reused_existing_source: None,
     })
 }
 
@@ -401,11 +431,17 @@ async fn run_daily_range_raw(
     values: &HashMap<String, String>,
     start: TradingDate,
     end: TradingDate,
+    existing_source_batch_id: Option<domain::BatchId>,
 ) -> Result<SuccessRecord, WorkerError> {
     let stdout = std::io::stdout();
     let mut writer = stdout.lock();
-    let summary: DailyRangeRawSummary =
-        run_credentialed_daily_range_raw_stream(values, start, end, &mut writer).await?;
+    let summary: DailyRangeRawSummary = match existing_source_batch_id {
+        Some(source_batch_id) => {
+            run_existing_daily_range_raw_stream(values, start, end, source_batch_id, &mut writer)
+                .await?
+        }
+        None => run_credentialed_daily_range_raw_stream(values, start, end, &mut writer).await?,
+    };
     Ok(SuccessRecord {
         status: "ok",
         phase: "raw_only_normalization",
@@ -431,6 +467,7 @@ async fn run_daily_range_raw(
         normalized_count: Some(summary.normalized_count),
         normalized_start: Some(summary.start.to_iso()),
         normalized_end: Some(summary.end.to_iso()),
+        reused_existing_source: Some(summary.reused_existing_source),
     })
 }
 
@@ -489,6 +526,7 @@ async fn run_healthcheck(values: &HashMap<String, String>) -> Result<SuccessReco
         normalized_count: None,
         normalized_start: None,
         normalized_end: None,
+        reused_existing_source: None,
     })
 }
 
@@ -524,6 +562,7 @@ async fn run_internal_recover(
         normalized_count: None,
         normalized_start: None,
         normalized_end: None,
+        reused_existing_source: None,
     })
 }
 
@@ -555,6 +594,7 @@ async fn run_internal_collect(
         normalized_count: None,
         normalized_start: None,
         normalized_end: None,
+        reused_existing_source: None,
     })
 }
 
@@ -586,6 +626,7 @@ fn run_record(outcome: WorkerRunOutcome, date: Option<TradingDate>) -> SuccessRe
         normalized_count: None,
         normalized_start: None,
         normalized_end: None,
+        reused_existing_source: None,
     }
 }
 
@@ -761,7 +802,11 @@ mod tests {
         .expect("range raw arguments");
         assert!(matches!(
             command,
-            Command::DailyRangeRaw { start, end }
+            Command::DailyRangeRaw {
+                start,
+                end,
+                existing_source_batch_id: None,
+            }
                 if start == TradingDate::parse("2020-01-31").unwrap()
                     && end == TradingDate::parse("2020-02-03").unwrap()
         ));
@@ -775,6 +820,23 @@ mod tests {
             ])
             .is_err()
         );
+        let existing = domain::BatchId::generate();
+        let command = parse_args(&[
+            "--range-raw".to_owned(),
+            "--start".to_owned(),
+            "2020-01-31".to_owned(),
+            "--end".to_owned(),
+            "2020-02-03".to_owned(),
+            "--existing-source-batch-id".to_owned(),
+            existing.to_string(),
+        ])
+        .expect("existing source range arguments");
+        assert!(matches!(
+            command,
+            Command::DailyRangeRaw {
+                existing_source_batch_id: Some(batch), ..
+            } if batch == existing
+        ));
     }
 
     #[test]
@@ -801,6 +863,7 @@ mod tests {
             normalized_count: Some(11),
             normalized_start: Some("2020-01-31".to_owned()),
             normalized_end: Some("2020-02-03".to_owned()),
+            reused_existing_source: Some(true),
         };
         let value = serde_json::to_value(record).expect("success record serializes");
         assert_eq!(value["vendor_snapshot"], true);
@@ -813,5 +876,6 @@ mod tests {
         assert_eq!(value["normalized_count"], 11);
         assert_eq!(value["normalized_start"], "2020-01-31");
         assert_eq!(value["normalized_end"], "2020-02-03");
+        assert_eq!(value["reused_existing_source"], true);
     }
 }

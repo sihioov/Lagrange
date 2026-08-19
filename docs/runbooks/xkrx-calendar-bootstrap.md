@@ -25,7 +25,16 @@ The reviewed upstream inputs are pinned in `nt/pyproject.toml` and
 The initial fixed-universe artifact is effective from `2020-01-31` and the
 current checked-in artifact covers `2020-01-31..2026-08-19`:
 `data/calendars/xkrx/calendar.json`, with its source and content manifest in
-`data/calendars/xkrx/manifest.json`.
+`data/calendars/xkrx/manifest.json`. The checked-in `overrides.json` is an
+operator-reviewed, source-backed ledger hashed into the artifact and manifest.
+It removes the 2026-06-03 national election day and 2026-07-17 Constitution
+Day from the scheduler session set. The ledger cites the [KRX holiday rule](https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp),
+the [National Election Commission's 2026 election date](https://www.nec.go.kr/site/nec/ex/bbs/View.do?bcIdx=289351&cbIdx=1104),
+and the [government notice restoring Constitution Day as a public holiday](https://m.korea.kr/news/policyNewsView.do?newsId=148959009).
+These are derived operator corrections: `exchange_calendars` remains the raw
+audit source and must not be described as having known those later closures.
+Its `source_schedule` retains both raw upstream rows for audit, while the
+dates-only session/non-session partition applies the reviewed removals.
 
 The upstream XKRX schedule is queried only within its reviewed supported
 bounds `1956-01-01..2050-12-31`; this repository's fixed universe further
@@ -80,6 +89,7 @@ artifact.
 `--check` verifies the schema/contract, package/version/source hashes, reviewed
 upstream revision/license/authority, fixed effective date and supported range,
 sorted uniqueness, session/non-session disjointness, complete date partition,
-weekend exclusion, derived closure reasons, exact source-schedule timestamps
-and optional breaks, and manifest size/content hash.  It does not regenerate
+weekend exclusion, derived/ledger closure reasons, exact source-schedule
+timestamps and optional breaks, the source-backed override ledger hash, and
+manifest size/content hash. It does not regenerate
 the calendar, so release checks cannot be changed by a local Python dependency.

@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ops" / "xkrx-calendar-bootstrap.py"
 ARTIFACT = ROOT / "data" / "calendars" / "xkrx" / "calendar.json"
 MANIFEST = ROOT / "data" / "calendars" / "xkrx" / "manifest.json"
+OVERRIDES = ROOT / "data" / "calendars" / "xkrx" / "overrides.json"
 
 
 def load_bootstrap_module():
@@ -104,7 +105,22 @@ class XkrxCalendarBootstrapTests(unittest.TestCase):
         exceptional = next(row for row in artifact["source_schedule"] if row["date"] == "2020-12-03")
         self.assertEqual(exceptional["open_local"], "2020-12-03T10:00:00+09:00")
         self.assertEqual(exceptional["close_local"], "2020-12-03T16:30:00+09:00")
-        self.assertTrue(all(entry["reason"].startswith("derived:") for entry in artifact["non_sessions"]))
+        self.assertEqual(
+            {entry["date"] for entry in artifact["override_entries"]},
+            {"2026-06-03", "2026-07-17"},
+        )
+        self.assertEqual(
+            {entry["reason"] for entry in artifact["non_sessions"] if entry["date"] in {"2026-06-03", "2026-07-17"}},
+            {"override:national_election_day", "override:constitution_day_public_holiday"},
+        )
+        raw_dates = {entry["date"] for entry in artifact["source_schedule"]}
+        self.assertTrue({"2026-06-03", "2026-07-17"}.issubset(raw_dates))
+        self.assertTrue(
+            all(
+                entry["reason"].startswith(("derived:", "override:"))
+                for entry in artifact["non_sessions"]
+            )
+        )
         self.assertEqual(manifest["source"]["revision"], "dbe38b1")
         self.assertEqual(manifest["source"]["license"], "Apache-2.0")
         self.assertEqual(
@@ -166,6 +182,11 @@ for start, end, expected_sessions, expected_non_sessions in (
     artifact = module.materialize(dt.date.fromisoformat(start), dt.date.fromisoformat(end), xc)
     assert [row["date"] for row in artifact["sessions"]] == expected_sessions
     assert [row["date"] for row in artifact["non_sessions"]] == expected_non_sessions
+artifact = module.materialize(dt.date(2026, 6, 3), dt.date(2026, 7, 17), xc)
+assert "2026-06-03" not in {{row["date"] for row in artifact["sessions"]}}
+assert "2026-07-17" not in {{row["date"] for row in artifact["sessions"]}}
+assert {{row["date"] for row in artifact["source_schedule"]}} >= {{"2026-06-03", "2026-07-17"}}
+assert {{row["date"] for row in artifact["override_entries"]}} == {{"2026-06-03", "2026-07-17"}}
 '''
         result = subprocess.run(
             [uv, "run", "--project", "nt", "--locked", "python", "-c", code],
@@ -226,6 +247,7 @@ for start, end, expected_sessions, expected_non_sessions in (
             output.mkdir()
             shutil.copy2(ARTIFACT, output / "calendar.json")
             shutil.copy2(MANIFEST, output / "manifest.json")
+            shutil.copy2(OVERRIDES, output / "overrides.json")
             with (output / "calendar.json").open("ab") as stream:
                 stream.write(b" ")
             result = subprocess.run(

@@ -1,19 +1,26 @@
 {
   "artifact": "calendar.json",
-  "artifact_sha256": "sha256:ec37ae015b5fa7031d4f6748141a828e2d168617db44e8df970ff34263a8e7ec",
-  "artifact_size_bytes": 835991,
+  "artifact_sha256": "sha256:467f189584ceeeaa32858d3b3ae87b2cd1e93d049fb091ec623de050dc3bc6e9",
+  "artifact_size_bytes": 838011,
   "calendar_id": "xkrx-historical-session-dates",
   "contract": "historical-session-dates-only",
   "effective_from": "2020-01-31",
   "exchange": "KRX",
   "generator": "scripts/ops/xkrx-calendar-bootstrap.py",
-  "manifest_schema_version": 1,
-  "non_session_count": 783,
+  "manifest_schema_version": 2,
+  "non_session_count": 785,
+  "override_ledger": {
+    "contract": "xkrx-calendar-session-overrides",
+    "name": "overrides.json",
+    "schema_version": 1,
+    "sha256": "sha256:bba5b6f1c6d72e4df3ee393d473a61eaf112c9f7a83a724b7b5cba9280897865",
+    "size_bytes": 1586
+  },
   "range": {
     "end": "2026-08-19",
     "start": "2020-01-31"
   },
-  "session_count": 1610,
+  "session_count": 1608,
   "source": {
     "authority": "third-party-derived",
     "calendar": "XKRX",

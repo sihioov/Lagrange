@@ -7,19 +7,26 @@ root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/dotenv.sh"
 
 env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
-state_file=${LAGRANGE_RANGE_RAW_STATE:-/var/lib/lagrange/state/range-raw/state.tsv}
+default_state_file=/var/lib/lagrange/state/range-raw/state.tsv
+state_file=${LAGRANGE_RANGE_RAW_STATE:-$default_state_file}
+state_file_from_env=${LAGRANGE_RANGE_RAW_STATE:-}
 start_date=
 end_date=
+existing_source_batch_id=
+state_file_flag_seen=0
 mode=plan
 mode_seen=0
 
 usage() {
   cat <<'EOF'
 Usage: scripts/ops/kis-range-raw-backfill.sh --start YYYY-MM-DD --end YYYY-MM-DD [--plan|--preflight|--execute]
+       scripts/ops/kis-range-raw-backfill.sh --start YYYY-MM-DD --end YYYY-MM-DD --existing-source-batch-id UUID --execute
 
 Stage5 captures only the fixed 11-ETF historical daily-bars range. It uses
 the dedicated research-range-raw Compose one-shot and stores isolated Raw
-scopes. It does not publish, curate, open a DB, or claim strict PIT.
+scopes. Explicit existing-source recovery uses research-range-raw-recovery,
+which has no KIS secrets or network namespace. It does not publish, curate,
+open a DB, or claim strict PIT.
 
 --plan (default) performs no Docker, KIS, secret read, file write, or state
 write. --preflight validates configuration and Compose expansion. --execute
@@ -27,7 +34,9 @@ requires KIS_RANGE_RAW_CONFIRM=I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS.
 
 Resume uses the immutable Raw manifest: an exact deterministic source batch is
 reused without another KIS request. State contains only a hashed identity,
-status, and UUIDv5 source batch identity.
+status, and UUIDv5 source batch identity. An explicit existing-source recovery
+is execute-only, uses a separate V3 state file, verifies the immutable Raw
+manifest before normalization, and never falls through to KIS/provider fetch.
 EOF
 }
 
@@ -38,8 +47,9 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --start) [ "$#" -ge 2 ] || die '--start needs YYYY-MM-DD'; start_date=$2; shift 2 ;;
     --end) [ "$#" -ge 2 ] || die '--end needs YYYY-MM-DD'; end_date=$2; shift 2 ;;
+    --existing-source-batch-id) [ "$#" -ge 2 ] || die '--existing-source-batch-id needs UUID'; existing_source_batch_id=$2; shift 2 ;;
     --env-file) [ "$#" -ge 2 ] || die '--env-file needs an absolute path'; env_file=$2; shift 2 ;;
-    --state-file) [ "$#" -ge 2 ] || die '--state-file needs an absolute path'; state_file=$2; shift 2 ;;
+    --state-file) [ "$#" -ge 2 ] || die '--state-file needs an absolute path'; state_file=$2; state_file_flag_seen=1; shift 2 ;;
     --plan|--preflight|--execute)
       [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode'
       mode=${1#--}; mode_seen=1; shift ;;
@@ -47,6 +57,28 @@ while [ "$#" -gt 0 ]; do
     *) die "unknown option: $1" ;;
   esac
 done
+
+if [ -n "$existing_source_batch_id" ]; then
+  [[ "$existing_source_batch_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ||
+    die '--existing-source-batch-id must be a lowercase UUID'
+  [ "$mode" = execute ] || die '--existing-source-batch-id is allowed only with --execute'
+  if [ "$state_file_flag_seen" -eq 1 ] && [ "$state_file" = "$default_state_file" ]; then
+    die 'explicit existing-source recovery must use a separate --state-file, not the default range-raw state'
+  elif [ -z "$state_file_from_env" ]; then
+    state_file="/var/lib/lagrange/state/range-raw/existing-${existing_source_batch_id}.tsv"
+  elif [ "$state_file" = "$default_state_file" ]; then
+    die 'explicit existing-source recovery must use a separate --state-file, not the default range-raw state'
+  fi
+fi
+
+compose_service=research-range-raw
+compose_profile=range-raw
+validation_scope=range-raw
+if [ -n "$existing_source_batch_id" ]; then
+  compose_service=research-range-raw-recovery
+  compose_profile=range-raw-recovery
+  validation_scope=range-raw-recovery
+fi
 
 [ -n "$start_date" ] && [ -n "$end_date" ] || die '--start and --end are required'
 [[ "$start_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die 'invalid --start date'
@@ -124,15 +156,26 @@ normalizer=kis-daily-range-to-session-bars-v2
 code=$commit
 entitlement=$(dotenv_get RESEARCH_ENTITLEMENT_REFERENCE)
 "
+if [ -n "$existing_source_batch_id" ]; then
+  identity_material+="existing_source_batch_id=$existing_source_batch_id
+recovery=immutable-raw-only
+"
+fi
 identity=$(printf '%s' "$identity_material" | sha256sum | awk '{print $1}')
-stored_batch_id=$(python3 - "$identity" <<'PY'
+if [ -n "$existing_source_batch_id" ]; then
+  stored_batch_id=$existing_source_batch_id
+else
+  stored_batch_id=$(python3 - "$identity" <<'PY'
 import sys
 import uuid
 
 NAMESPACE = uuid.UUID("7fb4e3e8-5e85-5a4e-9d3b-5c8d14a3e2b1")
 print(uuid.uuid5(NAMESPACE, sys.argv[1]))
 PY
-)
+  )
+fi
+state_version=V2
+[ -n "$existing_source_batch_id" ] && state_version=V3
 
 # Validate the scheduler-only approved session artifact before any mode can
 # proceed. This is a local read-only check; it never imports exchange_calendars
@@ -150,6 +193,7 @@ print_plan() {
   echo '  requests=one process-owned TokenManager; normally one OAuth token POST within its lifetime + daily-itemchartprice GET windows; no tr_cont continuation'
   echo '  policy=current vendor snapshot acquired_at; strict PIT/READY/publication/Curated/DB unsupported'
   echo "  code_commit=$commit source_batch_id=$stored_batch_id state=$state_file identity_sha256=$identity"
+  [ -z "$existing_source_batch_id" ] || echo '  existing_source_recovery=true provider_construction=false KIS_call=false'
   echo '  execute=KIS_RANGE_RAW_CONFIRM=I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS ... --execute'
   echo 'PLAN_ONLY: no Docker, KIS, secret read, file write, or state write made'
 }
@@ -159,7 +203,7 @@ print_plan() {
 
 validate_production() {
   LAGRANGE_CODE_COMMIT="$commit" "$root/scripts/ops/validate-production-config.sh" \
-    --scope range-raw --env-file "$env_file"
+    --scope "$validation_scope" --env-file "$env_file"
 }
 
 compose() {
@@ -169,7 +213,7 @@ compose() {
     BACKTEST_RECONCILE_GRACE_SECS=0 \
     BACKTEST_RECONCILE_INTERVAL_SECS=0 \
     RANGE_RAW_BATCH_ID="$stored_batch_id" \
-    docker compose --profile range-raw \
+    docker compose --profile "$compose_profile" \
     --env-file "$env_file" -f "$root/deploy/compose/compose.yml" "$@"
 }
 
@@ -177,15 +221,15 @@ verify_image_provenance() {
   local image revision image_commit
   image="lagrange-station-research-range-raw:${commit}"
   docker image inspect "$image" >/dev/null 2>&1 ||
-    die "research-range-raw image was not produced: $image"
+    die "$compose_service image was not produced: $image"
   revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image") ||
-    die 'cannot inspect research-range-raw OCI revision'
+    die "cannot inspect $compose_service OCI revision"
   [ "$revision" = "$commit" ] ||
-    die 'research-range-raw OCI revision does not match LAGRANGE_CODE_COMMIT'
+    die "$compose_service OCI revision does not match LAGRANGE_CODE_COMMIT"
   image_commit=$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" |
     awk -F= '$1 == "LAGRANGE_CODE_COMMIT" { print substr($0, index($0, "=") + 1); exit }')
   [ "$image_commit" = "$commit" ] ||
-    die 'research-range-raw image ENV LAGRANGE_CODE_COMMIT does not match the requested commit'
+    die "$compose_service image ENV LAGRANGE_CODE_COMMIT does not match the requested commit"
 }
 
 validate_production
@@ -198,14 +242,18 @@ if [ "$mode" = preflight ]; then
   exit 0
 fi
 
-[ "${KIS_RANGE_RAW_CONFIRM:-}" = I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS ] ||
-  blocked 'set KIS_RANGE_RAW_CONFIRM=I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS for execute'
+if [ -z "$existing_source_batch_id" ]; then
+  [ "${KIS_RANGE_RAW_CONFIRM:-}" = I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS ] ||
+    blocked 'set KIS_RANGE_RAW_CONFIRM=I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS for execute'
+fi
 
 running_services=$(compose ps --status running --services 2>/dev/null || true)
 printf '%s\n' "$running_services" | grep -qx 'research-worker' &&
   blocked 'ordinary research-worker daemon is running; stop it before the isolated range one-shot' || true
 printf '%s\n' "$running_services" | grep -qx 'research-range-raw' &&
   blocked 'another research-range-raw one-shot is already running' || true
+printf '%s\n' "$running_services" | grep -qx 'research-range-raw-recovery' &&
+  blocked 'another research-range-raw-recovery one-shot is already running' || true
 
 state_dir=${state_file%/*}
 [ "$state_dir" != "$state_file" ] || die 'state-file must include a protected parent directory'
@@ -358,14 +406,20 @@ if [ -e "$state_file" ] && [ -s "$state_file" ]; then
   [ -f "$state_file" ] && [ ! -L "$state_file" ] || blocked 'state file is not regular non-symlink'
   [ "$(wc -l <"$state_file")" -eq 1 ] || blocked 'state file must contain exactly one record'
   IFS=$'\t' read -r version stored_identity stored_status stored_batch_id rest <"$state_file" || true
-  [ "$version" = V2 ] && [ "$stored_identity" = "$identity" ] || blocked 'state identity/version mismatch'
+  [ "$version" = "$state_version" ] && [ "$stored_identity" = "$identity" ] || blocked 'state identity/version mismatch'
   [ -z "${rest:-}" ] || blocked 'state record has unexpected fields'
-  [ "$stored_batch_id" = "$(python3 - "$identity" <<'PY'
+  expected_state_batch_id=$stored_batch_id
+  if [ -z "$existing_source_batch_id" ]; then
+    expected_state_batch_id=$(python3 - "$identity" <<'PY'
 import sys
 import uuid
 print(uuid.uuid5(uuid.UUID("7fb4e3e8-5e85-5a4e-9d3b-5c8d14a3e2b1"), sys.argv[1]))
 PY
-)" ] || blocked 'state source batch identity does not match the deterministic run identity'
+    )
+  else
+    expected_state_batch_id=$existing_source_batch_id
+  fi
+  [ "$stored_batch_id" = "$expected_state_batch_id" ] || blocked 'state source batch identity does not match the run identity'
   case "$stored_status" in
     COMPLETED) echo 'KIS_RANGE_RAW: PASS (exact identity already completed; immutable evidence retained)'; exit 0 ;;
     RUNNING|FAILED) ;;
@@ -377,7 +431,7 @@ write_state() {
   local status=$1 tmp parent
   tmp=$(mktemp "$state_dir/.state.XXXXXX")
   chmod 0600 "$tmp"
-  printf 'V2\t%s\t%s\t%s\n' "$identity" "$status" "$stored_batch_id" >"$tmp"
+  printf '%s\t%s\t%s\t%s\n' "$state_version" "$identity" "$status" "$stored_batch_id" >"$tmp"
   python3 - "$tmp" <<'PY'
 import os
 import sys
@@ -401,9 +455,10 @@ PY
 }
 
 write_state RUNNING
-compose build --pull=false research-range-raw
+compose build --pull=false "$compose_service"
 verify_image_provenance
-RANGE_RAW_BATCH_ID="$stored_batch_id" compose run --rm --no-deps research-range-raw \
-  --range-raw --start "$start_date" --end "$end_date"
+run_args=(--range-raw --start "$start_date" --end "$end_date")
+[ -z "$existing_source_batch_id" ] || run_args+=(--existing-source-batch-id "$existing_source_batch_id")
+RANGE_RAW_BATCH_ID="$stored_batch_id" compose run --rm --no-deps "$compose_service" "${run_args[@]}"
 write_state COMPLETED
 echo 'KIS_RANGE_RAW: PASS (Raw-only capture/normalization completed; no publication/Curated/DB action)'

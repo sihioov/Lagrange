@@ -18,6 +18,7 @@ COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evid
 COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml
 COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json
 COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json
+COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json
 COPY tests/integration/migration-contract ./tests/integration/migration-contract
 COPY tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
 COPY tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contract

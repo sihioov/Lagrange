@@ -25,13 +25,15 @@ for range_copy in \
   'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json' \
   'COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml' \
   'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json' \
-  'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json'; do
+  'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json' \
+  'COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json'; do
   grep -Fq -- "$range_copy" "$range_worker_dockerfile"
 done
 for range_context in \
   '!configs/evidence/kis-range-canonical-approved-manifests.json' \
   '!data/calendars/xkrx/calendar.json' \
-  '!data/calendars/xkrx/manifest.json'; do
+  '!data/calendars/xkrx/manifest.json' \
+  '!data/calendars/xkrx/overrides.json'; do
   grep -Fqx -- "$range_context" "$root/.dockerignore"
 done
 
@@ -66,7 +68,9 @@ if command -v fakeroot >/dev/null 2>&1; then
   range_runtime="$range_fixture/runtime"
   range_state="$range_fixture/state/range.tsv"
   range_env_file="$range_fixture/compose.env"
+  recovery_env_file="$range_fixture/recovery-compose.env"
   range_fake_bin="$range_fixture/bin"
+  range_fake_log="$range_fixture/docker.log"
   mkdir -p "$range_source" "$range_fake_bin"
   printf '%s' stage5-fixture-app-key >"$range_source/kis_app_key"
   printf '%s' stage5-fixture-app-secret >"$range_source/kis_app_secret"
@@ -82,9 +86,19 @@ RESEARCH_ENTITLEMENT_REFERENCE=fixture-stage5
 LAGRANGE_CODE_COMMIT=$range_commit
 EOF
   chmod 0600 "$range_env_file"
+  cat >"$recovery_env_file" <<EOF
+LAGRANGE_DATA_DIR=$range_fixture/data
+RESEARCH_APP_ENV=production
+RESEARCH_FETCH_MODE=credentialed
+RESEARCH_CANDIDATE_ENABLED=false
+RESEARCH_ENTITLEMENT_REFERENCE=fixture-stage5
+LAGRANGE_CODE_COMMIT=$range_commit
+EOF
+  chmod 0600 "$recovery_env_file"
   cat >"$range_fake_bin/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >>"${FAKE_DOCKER_LOG:?}"
 if [ "${1:-}" = compose ]; then
   shift
   command_name=
@@ -98,7 +112,11 @@ if [ "${1:-}" = compose ]; then
     config|build|ps) ;;
     images) echo stage5-self-test-image ;;
     run)
-      printf '%s\n' '{"status":"ok","phase":"raw_only_normalization","outcome":"daily_range_normalized","vendor_snapshot":true,"strict_pit":false,"ready":false,"publication":false,"curated":false,"db":false,"source_batch_id":"00000000-0000-0000-0000-000000000001","normalized_count":11,"normalized_start":"2020-01-31","normalized_end":"2020-02-03"}'
+      reused=false
+      for argument in "$@"; do
+        [ "$argument" = '--existing-source-batch-id' ] && reused=true
+      done
+      printf '%s\n' "{\"status\":\"ok\",\"phase\":\"raw_only_normalization\",\"outcome\":\"daily_range_normalized\",\"vendor_snapshot\":true,\"strict_pit\":false,\"ready\":false,\"publication\":false,\"curated\":false,\"db\":false,\"reused_existing_source\":$reused,\"source_batch_id\":\"00000000-0000-0000-0000-000000000001\",\"normalized_count\":11,\"normalized_start\":\"2020-01-31\",\"normalized_end\":\"2020-02-03\"}"
       ;;
     *) echo "unexpected fake compose command: $command_name" >&2; exit 97 ;;
   esac
@@ -126,15 +144,18 @@ EOF
     runtime_dir=$2
     env_file=$3
     state_file=$4
-    repo=$5
-    ops=$6
-    commit=$7
-    PATH=$8:$PATH
+    recovery_env_file=$5
+    fake_log=$6
+    repo=$7
+    ops=$8
+    commit=$9
+    PATH=${10}:$PATH
     LAGRANGE_SECRET_SOURCE_DIR="$source_dir" \
       LAGRANGE_RUNTIME_SECRET_DIR="$runtime_dir" \
       bash "$repo/deploy/secrets/provision-runtime-secrets.sh" --scope range-raw >/dev/null
     output=$(LAGRANGE_CODE_COMMIT="$commit" \
       KIS_RANGE_RAW_CONFIRM=I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS \
+      FAKE_DOCKER_LOG="$fake_log" \
       LAGRANGE_RANGE_RAW_STATE="$state_file" \
       bash "$repo/scripts/ops/kis-range-raw-backfill.sh" \
         --env-file "$env_file" --start 2020-01-31 --end 2020-02-03 --execute)
@@ -146,7 +167,24 @@ EOF
     done
     [ "$(wc -l <"$state_file")" -eq 1 ]
     grep -Fq "V2" "$state_file"
+    existing_state=${state_file%.tsv}-existing.tsv
+    : >"$fake_log"
+    recovery_output=$(LAGRANGE_CODE_COMMIT="$commit" \
+      FAKE_DOCKER_LOG="$fake_log" \
+      LAGRANGE_RANGE_RAW_STATE="$existing_state" \
+      bash "$repo/scripts/ops/kis-range-raw-backfill.sh" \
+        --env-file "$recovery_env_file" --start 2020-01-31 --end 2020-02-03 \
+        --existing-source-batch-id 00000000-0000-0000-0000-000000000001 --execute)
+    grep -Fq "\"reused_existing_source\":true" <<<"$recovery_output"
+    grep -Fq "V3" "$existing_state"
+    grep -Fq -- "--profile range-raw-recovery" "$fake_log"
+    grep -Fq -- "run --rm --no-deps research-range-raw-recovery" "$fake_log"
+    if grep -Fq -- "run --rm --no-deps research-range-raw " "$fake_log"; then
+      echo "self-test: recovery selected the KIS capture service" >&2
+      exit 1
+    fi
   ' _ "$range_source" "$range_runtime" "$range_env_file" "$range_state" \
+      "$recovery_env_file" "$range_fake_log" \
       "$range_fixture/repo" "$ops" "$range_commit" "$range_fake_bin" \
       >"$out_dir/range-execute.out" 2>&1; then
     cat "$out_dir/range-execute.out" >&2

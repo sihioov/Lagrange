@@ -79,14 +79,16 @@ for range_copy in \
   'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json' \
   'COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml' \
   'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json' \
-  'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json'; do
+  'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json' \
+  'COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json'; do
   grep -Fq -- "$range_copy" "$collector_dockerfile" \
     || die "range worker Dockerfile is missing immutable input copy: $range_copy"
 done
 for range_context in \
   '!configs/evidence/kis-range-canonical-approved-manifests.json' \
   '!data/calendars/xkrx/calendar.json' \
-  '!data/calendars/xkrx/manifest.json'; do
+  '!data/calendars/xkrx/manifest.json' \
+  '!data/calendars/xkrx/overrides.json'; do
   grep -Fqx -- "$range_context" "$root/.dockerignore" \
     || die "Docker build context does not allow required range input: $range_context"
 done

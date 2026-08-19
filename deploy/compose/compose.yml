@@ -616,6 +616,42 @@ services:
       - range-raw-egress
 
   # ------------------------------------------------------------------
+  # research-range-raw-recovery — explicit Stage5 immutable-source recovery.
+  # This is intentionally a separate profile/service from the KIS capture
+  # job: it has no KIS environment variables, no Compose secrets, no DB or
+  # backend dependency, and no network namespace at all. The worker's
+  # --existing-source-batch-id path reads only committed Raw evidence.
+  # ------------------------------------------------------------------
+  research-range-raw-recovery:
+    profiles: ["range-raw-recovery"]
+    image: lagrange-station-research-range-raw:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    entrypoint: ["/usr/local/bin/research-worker"]
+    init: true
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging: *default-logging
+    cpus: "2"
+    mem_limit: 4g
+    network_mode: none
+    environment:
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+      APP_ENV: ${RESEARCH_APP_ENV:?RESEARCH_APP_ENV must be explicitly set to production}
+      RESEARCH_FETCH_MODE: credentialed
+      RESEARCH_RAW_ROOT: /data
+      RESEARCH_ENTITLEMENT_REFERENCE: ${RESEARCH_ENTITLEMENT_REFERENCE:?RESEARCH_ENTITLEMENT_REFERENCE must identify the exact active data-use contract}
+      RESEARCH_CANDIDATE_ENABLED: "false"
+      RANGE_RAW_BATCH_ID: ${RANGE_RAW_BATCH_ID:?RANGE_RAW_BATCH_ID must be the deterministic Stage5 source batch UUID}
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
+
+  # ------------------------------------------------------------------
   # recommendation-runner — fixed 11-ETF target generation and opt-in Paper
   # scheduling. It has no broker credentials and reads only curated data plus
   # the immutable universe pin.
@@ -1142,6 +1178,8 @@ secrets:
 #               uses network_mode:none and has no external dependency.
 #   range-raw-egress — dedicated Stage5 KIS-only egress; no PostgreSQL/backend
 #               attachment is possible for the isolated historical job.
+#   research-range-raw-recovery uses network_mode:none and is intentionally
+#               not attached to any Compose network.
 #   backtest-iso internal:true — nt-backtest-worker-1/2 + postgres ONLY.
 #               No default route => no internet for backtest workers.
 # ----------------------------------------------------------------------

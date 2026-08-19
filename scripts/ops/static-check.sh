@@ -32,8 +32,16 @@ grep -Fq 'KIS_RANGE_RAW_CONFIRM=I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS' "$
   || die 'Stage5 range raw execute confirmation missing'
 grep -Fq 'research-range-raw' "$range_raw" \
   || die 'Stage5 must use the dedicated range-raw Compose service'
-grep -Fq 'run --rm --no-deps research-range-raw' "$range_raw" \
-  || die 'Stage5 must run one isolated no-deps container'
+grep -Fq 'compose_service=research-range-raw' "$range_raw" \
+  || die 'Stage5 capture service selection missing'
+grep -Fq 'compose_service=research-range-raw-recovery' "$range_raw" \
+  || die 'Stage5 recovery service selection missing'
+grep -Fq 'compose_profile=range-raw-recovery' "$range_raw" \
+  || die 'Stage5 recovery Compose profile missing'
+grep -Fq 'validation_scope=range-raw-recovery' "$range_raw" \
+  || die 'Stage5 recovery validator scope missing'
+grep -Fq 'run --rm --no-deps "$compose_service"' "$range_raw" \
+  || die 'Stage5 must run one selected isolated no-deps container'
 grep -Fq 'research-worker daemon is running' "$range_raw" \
   || die 'Stage5 daemon overlap guard missing'
 grep -Fq 'read_reconciled_manifest' "$root/data-pipelines/collectors/src/worker.rs" \
@@ -78,6 +86,14 @@ grep -Fq 'verify_state_file_identity' "$range_raw" \
   || die 'Stage5 state FD identity check is missing'
 grep -Fq 'range-raw-egress' "$root/deploy/compose/compose.yml" \
   || die 'Stage5 dedicated egress network is missing'
+grep -Fq -- '--existing-source-batch-id' "$range_raw" \
+  || die 'Stage5 explicit immutable-source recovery option is missing'
+grep -Fq 'state_version=V3' "$range_raw" \
+  || die 'Stage5 explicit recovery state version is missing'
+grep -Fq 'reused_existing_source' "$root/data-pipelines/collectors/src/bin/research-worker.rs" \
+  || die 'Stage5 recovery machine output flag is missing'
+grep -Fq 'run_existing_daily_range_raw_stream' "$root/data-pipelines/collectors/src/worker.rs" \
+  || die 'Stage5 provider-free existing-source worker path is missing'
 grep -Fq 'networks:' "$root/deploy/compose/compose.yml" \
   || die 'Compose network contract is missing'
 range_service_block=$(awk '
@@ -94,7 +110,7 @@ if grep -Fq 'depends_on:' <<<"$range_service_block"; then
   die 'Stage5 service must not depend on PostgreSQL or another Compose service'
 fi
 state_line=$(grep -nF 'write_state RUNNING' "$range_raw" | head -n1 | cut -d: -f1)
-build_line=$(grep -nF 'compose build --pull=false research-range-raw' "$range_raw" | head -n1 | cut -d: -f1)
+build_line=$(grep -nF 'compose build --pull=false "$compose_service"' "$range_raw" | head -n1 | cut -d: -f1)
 run_line=$(grep -nF 'RANGE_RAW_BATCH_ID="$stored_batch_id" compose run' "$range_raw" | head -n1 | cut -d: -f1)
 [ -n "$state_line" ] && [ -n "$build_line" ] && [ "$state_line" -lt "$build_line" ] \
   || die 'Stage5 must write RUNNING state before image build/network work'
@@ -113,6 +129,32 @@ grep -Fq 'cannot claim strict historical PIT' "$stage5_doc" \
   || die 'Stage5 runbook PIT limitation missing'
 grep -Fq 'Any non-empty continuation marker' "$stage5_doc" \
   || die 'Stage5 runbook pagination limitation missing'
+grep -Fq 'reused_existing_source=true' "$stage5_doc" \
+  || die 'Stage5 explicit recovery output contract missing'
+
+grep -Fq -- 'range-raw-recovery' "$root/scripts/ops/validate-production-config.sh" \
+  || die 'Stage5 recovery validator scope is missing'
+grep -Fq -- 'range-raw-recovery' "$root/deploy/secrets/provision-runtime-secrets.sh" \
+  || die 'Stage5 recovery runtime scope is missing'
+recovery_service_block=$(awk '
+  $0 == "  research-range-raw-recovery:" { inside=1; print; next }
+  inside && $0 ~ /^  [^[:space:]][^:]*:/ { exit }
+  inside { print }
+' "$root/deploy/compose/compose.yml")
+grep -Fq 'profiles: ["range-raw-recovery"]' <<<"$recovery_service_block" \
+  || die 'Stage5 recovery service profile is missing'
+grep -Fq 'network_mode: none' <<<"$recovery_service_block" \
+  || die 'Stage5 recovery service must use network_mode:none'
+if grep -Eiq 'KIS_APP|secrets:|range-raw-egress|backend:|postgres' <<<"$recovery_service_block"; then
+  die 'Stage5 recovery service must not expose KIS secrets, networks, or DB dependencies'
+fi
+
+xkrx_override="$root/data/calendars/xkrx/overrides.json"
+[ -f "$xkrx_override" ] || die 'XKRX source-backed override ledger is missing'
+grep -Fq 'national_election_day' "$xkrx_override" \
+  || die 'XKRX election-day override is missing'
+grep -Fq 'constitution_day_public_holiday' "$xkrx_override" \
+  || die 'XKRX Constitution-Day override is missing'
 
 bash "$ops/build-production-images-static-check.sh" >/dev/null ||
   die 'production image build static check failed'
@@ -360,7 +402,7 @@ grep -Fq -- '--preflight must run as root' "$ops/provision-linux.sh" || die 'pro
 grep -Fq 'must not traverse a symlink' "$ops/provision-linux.sh" || die 'provision ancestor symlink fence missing'
 grep -Fq 'service user is not a member of service group' "$ops/provision-linux.sh" || die 'service group membership fence missing'
 grep -Fq 'BLOCKED_EXTERNAL' "$ops/validate-production-config.sh" || die 'config blocker contract missing'
-grep -Fq -- '--scope infrastructure|serving-prereqs|backfill|range-raw|release' "$ops/validate-production-config.sh" || die 'config scope contract missing'
+grep -Fq -- '--scope infrastructure|serving-prereqs|backfill|range-raw|range-raw-recovery|release' "$ops/validate-production-config.sh" || die 'config scope contract missing'
 grep -Fq -- 'validation must run as root to inspect protected production paths' "$ops/validate-production-config.sh" \
   || die 'config validator root guard missing'
 grep -Fq 'LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"' "$ops/validate-production-config.sh" \

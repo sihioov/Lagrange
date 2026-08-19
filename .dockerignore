@@ -21,6 +21,7 @@
 !data/calendars/xkrx/**
 !data/calendars/xkrx/calendar.json
 !data/calendars/xkrx/manifest.json
+!data/calendars/xkrx/overrides.json
 !data-pipelines/
 !data-pipelines/collectors/
 !data-pipelines/collectors/**

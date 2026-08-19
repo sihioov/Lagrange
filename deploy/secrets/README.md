@@ -59,6 +59,12 @@ it does not require or install PostgreSQL, Auth0, TLS, Curated, or ordinary
 passes a deterministic `RANGE_RAW_BATCH_ID`; it remains Raw-only and does not
 start the ordinary worker daemon.
 
+Explicit immutable-source recovery uses the separate
+`--scope range-raw-recovery` contract only as a no-op/documentation scope. Its
+`research-range-raw-recovery` Compose service uses `network_mode: none`, has
+no KIS or other secret mounts, and does not require runtime-secret
+provisioning.
+
 ## Database role credentials and cursor key
 
 The PostgreSQL administrator credential and the migration-owner credential are

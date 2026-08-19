@@ -1,5 +1,5 @@
 {
-  "artifact_schema_version": 2,
+  "artifact_schema_version": 3,
   "calendar_id": "xkrx-historical-session-dates",
   "contract": "historical-session-dates-only",
   "effective_from": "2020-01-31",
@@ -3806,6 +3806,11 @@
       "weekday": "Sunday"
     },
     {
+      "date": "2026-06-03",
+      "reason": "override:national_election_day",
+      "weekday": "Wednesday"
+    },
+    {
       "date": "2026-06-06",
       "reason": "derived:weekend",
       "weekday": "Saturday"
@@ -3864,6 +3869,11 @@
       "date": "2026-07-12",
       "reason": "derived:weekend",
       "weekday": "Sunday"
+    },
+    {
+      "date": "2026-07-17",
+      "reason": "override:constitution_day_public_holiday",
+      "weekday": "Friday"
     },
     {
       "date": "2026-07-18",
@@ -7723,6 +7733,11 @@
       "weekday": "Sunday"
     },
     {
+      "date": "2026-06-03",
+      "reason": "override:national_election_day",
+      "weekday": "Wednesday"
+    },
+    {
       "date": "2026-06-06",
       "reason": "derived:weekend",
       "weekday": "Saturday"
@@ -7783,6 +7798,11 @@
       "weekday": "Sunday"
     },
     {
+      "date": "2026-07-17",
+      "reason": "override:constitution_day_public_holiday",
+      "weekday": "Friday"
+    },
+    {
       "date": "2026-07-18",
       "reason": "derived:weekend",
       "weekday": "Saturday"
@@ -7838,6 +7858,51 @@
       "weekday": "Monday"
     }
   ],
+  "override_entries": [
+    {
+      "action": "remove_session",
+      "date": "2026-06-03",
+      "reason": "South Korea national election day; KRX holiday rule applies.",
+      "reason_code": "national_election_day",
+      "sources": [
+        {
+          "authority": "KRX",
+          "claim": "KRX holiday rule includes national election days.",
+          "url": "https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp"
+        },
+        {
+          "authority": "National Election Commission",
+          "claim": "The 2026 national election date is 2026-06-03.",
+          "url": "https://www.nec.go.kr/site/nec/ex/bbs/View.do?bcIdx=289351&cbIdx=1104"
+        }
+      ]
+    },
+    {
+      "action": "remove_session",
+      "date": "2026-07-17",
+      "reason": "Constitution Day public holiday restored from 2026; KRX holiday rule applies.",
+      "reason_code": "constitution_day_public_holiday",
+      "sources": [
+        {
+          "authority": "KRX",
+          "claim": "KRX holiday rule includes public holidays.",
+          "url": "https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp"
+        },
+        {
+          "authority": "Korea policy / Ministry of Personnel Management",
+          "claim": "Constitution Day is a public holiday from 2026.",
+          "url": "https://m.korea.kr/news/policyNewsView.do?newsId=148959009"
+        }
+      ]
+    }
+  ],
+  "override_ledger": {
+    "contract": "xkrx-calendar-session-overrides",
+    "name": "overrides.json",
+    "schema_version": 1,
+    "sha256": "sha256:bba5b6f1c6d72e4df3ee393d473a61eaf112c9f7a83a724b7b5cba9280897865",
+    "size_bytes": 1586
+  },
   "range": {
     "end": "2026-08-19",
     "start": "2020-01-31"
@@ -14065,10 +14130,6 @@
       "weekday": "Tuesday"
     },
     {
-      "date": "2026-06-03",
-      "weekday": "Wednesday"
-    },
-    {
       "date": "2026-06-04",
       "weekday": "Thursday"
     },
@@ -14191,10 +14252,6 @@
     {
       "date": "2026-07-16",
       "weekday": "Thursday"
-    },
-    {
-      "date": "2026-07-17",
-      "weekday": "Friday"
     },
     {
       "date": "2026-07-20",

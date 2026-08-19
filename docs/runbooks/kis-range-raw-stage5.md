@@ -15,6 +15,18 @@ request. The result is an acquisition-time current vendor snapshot: KIS does
 not provide availability, revision, or knowledge-time evidence here, so this
 operation cannot claim strict historical PIT and must not backdate `available_at`.
 
+An explicit `--existing-source-batch-id` recovery is a separate
+`research-range-raw-recovery` Compose service and `range-raw-recovery` validator
+scope. It mounts only the Raw tree, uses `network_mode: none`, has no Compose
+secrets or KIS environment variables, and does not require runtime secret
+provisioning. The Rust recovery path reads the named immutable Raw manifest and
+never constructs a provider or falls through to a KIS fetch.
+
+The approved scheduler range is the dates-only XKRX artifact and its hashed
+override ledger. The 2026-06-03 election-day and 2026-07-17 Constitution-Day
+corrections are source-backed calendar overrides; they are not claims that the
+KIS endpoint or `exchange_calendars` supplied those closure facts.
+
 ## Gates and resume
 
 The wrapper defaults to a local plan:
@@ -57,6 +69,26 @@ at least one window must end at the requested `end`. If state is lost and this
 conflict is reported, the operator must restore the protected state record or
 review/quarantine the existing Raw batch before retrying; do not delete evidence
 or fetch a replacement batch.
+
+For recovery of an already captured immutable Stage3 batch, use a separate
+execute-only state identity and the explicit source ID:
+
+```sh
+sudo env LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)" \
+  scripts/ops/kis-range-raw-backfill.sh \
+  --start 2020-01-31 --end 2026-08-19 \
+  --existing-source-batch-id 3d4f061f-8b8c-54f3-bb44-4d491b3ad256 \
+  --execute
+```
+
+The wrapper binds the source ID into a V3 state record (or an explicitly
+provided separate `--state-file`), verifies scope, entitlement, exact 11 ETF
+symbols, daily endpoint/query/header contract, and bounded multi-window
+coverage, then invokes only Raw readback/normalization. Missing, malformed, or
+conflicting evidence is a permanent stop; this path never constructs a
+provider, reads KIS credential values, or falls through to refetch. Completion
+JSON includes `reused_existing_source=true`. Do not point this mode at the
+ordinary default state file or alter the old state/evidence.
 
 The process emits one machine-readable completion record with
 `vendor_snapshot=true`, `strict_pit=false`, `ready=false`,

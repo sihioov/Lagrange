@@ -42,10 +42,13 @@ TIMEZONE = "Asia/Seoul"
 DEFAULT_START = "2020-01-31"
 SUPPORTED_START = dt.date(1956, 1, 1)
 SUPPORTED_END = dt.date(2050, 12, 31)
-ARTIFACT_SCHEMA_VERSION = 2
-MANIFEST_SCHEMA_VERSION = 1
+ARTIFACT_SCHEMA_VERSION = 3
+MANIFEST_SCHEMA_VERSION = 2
 ARTIFACT_NAME = "calendar.json"
 MANIFEST_NAME = "manifest.json"
+OVERRIDE_LEDGER_NAME = "overrides.json"
+OVERRIDE_LEDGER_SCHEMA_VERSION = 1
+OVERRIDE_LEDGER_CONTRACT = "xkrx-calendar-session-overrides"
 ARTIFACT_CONTRACT = "historical-session-dates-only"
 CALENDAR_ID = "xkrx-historical-session-dates"
 WHEEL_SHA256 = "fc5a2ad0d61b5c3a6539a3061cd4cbb55c59f4a903455cec7926e4b798919996"
@@ -63,6 +66,50 @@ DEFAULT_OUTPUT_DIR = ROOT / "data" / "calendars" / "xkrx"
 UTC = dt.timezone.utc
 SEOUL = ZoneInfo(TIMEZONE)
 
+# These are operator-reviewed corrections to the pinned third-party schedule.
+# exchange_calendars 4.13.2 remains the raw schedule authority for the
+# artifact's audit-only source_schedule; it must not be described as knowing
+# these later official closures.  The URLs are retained as auditable evidence
+# and the canonical ledger bytes are hashed into both artifacts.
+OVERRIDE_LEDGER_ENTRIES: tuple[dict[str, Any], ...] = (
+    {
+        "date": "2026-06-03",
+        "action": "remove_session",
+        "reason_code": "national_election_day",
+        "reason": "South Korea national election day; KRX holiday rule applies.",
+        "sources": (
+            {
+                "authority": "KRX",
+                "url": "https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp",
+                "claim": "KRX holiday rule includes national election days.",
+            },
+            {
+                "authority": "National Election Commission",
+                "url": "https://www.nec.go.kr/site/nec/ex/bbs/View.do?bcIdx=289351&cbIdx=1104",
+                "claim": "The 2026 national election date is 2026-06-03.",
+            },
+        ),
+    },
+    {
+        "date": "2026-07-17",
+        "action": "remove_session",
+        "reason_code": "constitution_day_public_holiday",
+        "reason": "Constitution Day public holiday restored from 2026; KRX holiday rule applies.",
+        "sources": (
+            {
+                "authority": "KRX",
+                "url": "https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp",
+                "claim": "KRX holiday rule includes public holidays.",
+            },
+            {
+                "authority": "Korea policy / Ministry of Personnel Management",
+                "url": "https://m.korea.kr/news/policyNewsView.do?newsId=148959009",
+                "claim": "Constitution Day is a public holiday from 2026.",
+            },
+        ),
+    },
+)
+
 
 class BootstrapError(RuntimeError):
     """A safe, user-actionable bootstrap failure."""
@@ -76,7 +123,7 @@ def parse_date(value: str, label: str) -> dt.date:
 
 
 def source_metadata() -> dict[str, Any]:
-    return {
+    artifact = {
         "authority": "third-party-derived",
         "calendar": CALENDAR_NAME,
         "license": UPSTREAM_LICENSE,
@@ -89,6 +136,7 @@ def source_metadata() -> dict[str, Any]:
         "wheel_url": WHEEL_URL,
         "sdist_url": SDIST_URL,
     }
+    return artifact
 
 
 def reexec_with_locked_environment(argv: list[str]) -> None:
@@ -323,7 +371,7 @@ def materialize(start: dt.date, end: dt.date, xc: Any) -> dict[str, Any]:
             )
         cursor += dt.timedelta(days=1)
 
-    return {
+    artifact = {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "contract": ARTIFACT_CONTRACT,
         "representation": "dates-only",
@@ -349,10 +397,77 @@ def materialize(start: dt.date, end: dt.date, xc: Any) -> dict[str, Any]:
         "source_schedule": source_schedule,
         "source_schedule_purpose": "audit-only; not a publication or curation calendar",
     }
+    return apply_calendar_overrides(artifact)
 
 
 def canonical_bytes(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+
+
+def override_ledger_value() -> dict[str, Any]:
+    # Round-trip through JSON so the in-code tuple constants have exactly the
+    # same list/object shape as the tracked JSON ledger.
+    return json.loads(
+        json.dumps(
+            {
+                "schema_version": OVERRIDE_LEDGER_SCHEMA_VERSION,
+                "contract": OVERRIDE_LEDGER_CONTRACT,
+                "calendar_id": CALENDAR_ID,
+                "authority": "operator-reviewed official sources",
+                "entries": list(OVERRIDE_LEDGER_ENTRIES),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+
+
+def override_ledger_bytes() -> bytes:
+    return canonical_bytes(override_ledger_value())
+
+
+def override_ledger_metadata() -> dict[str, Any]:
+    payload = override_ledger_bytes()
+    return {
+        "name": OVERRIDE_LEDGER_NAME,
+        "schema_version": OVERRIDE_LEDGER_SCHEMA_VERSION,
+        "contract": OVERRIDE_LEDGER_CONTRACT,
+        "sha256": f"sha256:{sha256_bytes(payload)}",
+        "size_bytes": len(payload),
+    }
+
+
+def apply_calendar_overrides(artifact: dict[str, Any]) -> dict[str, Any]:
+    ledger = override_ledger_value()
+    artifact_range = artifact["range"]
+    start = parse_date(artifact_range["start"], "artifact range start")
+    end = parse_date(artifact_range["end"], "artifact range end")
+    entries = [
+        entry
+        for entry in ledger["entries"]
+        if start <= parse_date(entry["date"], "override date") <= end
+    ]
+    session_by_date = {entry["date"]: entry for entry in artifact["sessions"]}
+    for override in entries:
+        date_text = override["date"]
+        if date_text not in session_by_date:
+            raise BootstrapError(
+                f"calendar override {date_text} is not present in the raw {CALENDAR_NAME} schedule"
+            )
+        artifact["sessions"] = [entry for entry in artifact["sessions"] if entry["date"] != date_text]
+        artifact["non_sessions"].append(
+            {
+                "date": date_text,
+                "weekday": weekday_name(parse_date(date_text, "override date")),
+                "reason": f"override:{override['reason_code']}",
+            }
+        )
+    artifact["sessions"].sort(key=lambda entry: entry["date"])
+    artifact["non_sessions"].sort(key=lambda entry: entry["date"])
+    artifact["holidays"] = list(artifact["non_sessions"])
+    artifact["override_ledger"] = override_ledger_metadata()
+    artifact["override_entries"] = entries
+    return artifact
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -381,6 +496,8 @@ def validate_artifact(artifact: dict[str, Any], expected_start: dt.date, expecte
         "holidays",
         "source_schedule",
         "source_schedule_purpose",
+        "override_ledger",
+        "override_entries",
     }
     missing = sorted(required - artifact.keys())
     if missing:
@@ -413,6 +530,16 @@ def validate_artifact(artifact: dict[str, Any], expected_start: dt.date, expecte
         raise BootstrapError("calendar artifact must not claim official/KIS authority")
     if artifact["source_schedule_purpose"] != "audit-only; not a publication or curation calendar":
         raise BootstrapError("calendar source schedule must remain audit-only")
+    expected_ledger = override_ledger_value()
+    expected_override_entries = [
+        entry
+        for entry in expected_ledger["entries"]
+        if expected_start <= parse_date(entry["date"], "override date") <= expected_end
+    ]
+    if artifact["override_entries"] != expected_override_entries:
+        raise BootstrapError("calendar override entries do not match the reviewed ledger")
+    if artifact["override_ledger"] != override_ledger_metadata():
+        raise BootstrapError("calendar override ledger metadata does not match the reviewed ledger")
     try:
         artifact_range = artifact["range"]
         if not isinstance(artifact_range, dict):
@@ -469,12 +596,19 @@ def validate_artifact(artifact: dict[str, Any], expected_start: dt.date, expecte
         if entry.get("reason") not in {
             "derived:weekend",
             "derived:exchange_calendars_closure",
+            "override:national_election_day",
+            "override:constitution_day_public_holiday",
         }:
             raise BootstrapError(f"non-session {date_value} has an unknown reason")
 
     source_dates = [entry.get("date") for entry in source_schedule]
-    if source_dates != session_dates:
-        raise BootstrapError("audit source schedule must exactly follow session dates")
+    override_dates = {entry["date"] for entry in expected_override_entries}
+    if source_dates != sorted(set(session_dates) | override_dates):
+        raise BootstrapError(
+            "audit source schedule must preserve raw upstream sessions, including overridden dates"
+        )
+    if not override_dates.issubset(set(source_dates)):
+        raise BootstrapError("every calendar override must correspond to a raw upstream session")
     for entry in source_schedule:
         date_value = parse_date(entry.get("date", ""), "source schedule date")
         parsed: dict[str, dt.datetime | None] = {}
@@ -544,6 +678,7 @@ def build_manifest(artifact: dict[str, Any], artifact_bytes: bytes) -> dict[str,
         "range": artifact["range"],
         "session_count": len(artifact["sessions"]),
         "non_session_count": len(artifact["non_sessions"]),
+        "override_ledger": artifact["override_ledger"],
         "source": source_metadata(),
         "generator": "scripts/ops/xkrx-calendar-bootstrap.py",
     }
@@ -596,11 +731,17 @@ def atomic_write(path: Path, payload: bytes, replace: bool) -> None:
 def load_existing(output_dir: Path, start: dt.date, end: dt.date) -> tuple[dict[str, Any], dict[str, Any], bytes]:
     artifact_path = output_dir / ARTIFACT_NAME
     manifest_path = output_dir / MANIFEST_NAME
+    override_path = output_dir / OVERRIDE_LEDGER_NAME
     if not artifact_path.is_file() or artifact_path.is_symlink():
         raise BootstrapError(f"missing or unsafe artifact: {artifact_path}")
     if not manifest_path.is_file() or manifest_path.is_symlink():
         raise BootstrapError(f"missing or unsafe manifest: {manifest_path}")
+    if not override_path.is_file() or override_path.is_symlink():
+        raise BootstrapError(f"missing or unsafe override ledger: {override_path}")
     artifact_bytes = artifact_path.read_bytes()
+    override_bytes = override_path.read_bytes()
+    if override_bytes != override_ledger_bytes():
+        raise BootstrapError("override ledger does not match the reviewed source-backed bytes")
     try:
         artifact = json.loads(artifact_bytes.decode("utf-8"))
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -645,10 +786,12 @@ def run_apply(
     artifact_bytes = canonical_bytes(artifact)
     manifest = build_manifest(artifact, artifact_bytes)
     manifest_bytes = canonical_bytes(manifest)
+    ledger_bytes = override_ledger_bytes()
     # Refuse a changed existing artifact unless the operator explicitly opted
     # into replacement; identical reruns remain idempotent and write nothing.
     atomic_write(output_dir / ARTIFACT_NAME, artifact_bytes, replace)
     atomic_write(output_dir / MANIFEST_NAME, manifest_bytes, replace)
+    atomic_write(output_dir / OVERRIDE_LEDGER_NAME, ledger_bytes, replace)
     print(
         f"XKRX_CALENDAR_APPLY: PASS range={start.isoformat()}..{end.isoformat()} "
         f"sessions={len(artifact['sessions'])} non_sessions={len(artifact['non_sessions'])} "

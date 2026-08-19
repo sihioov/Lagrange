@@ -51,6 +51,8 @@ const APPROVED_EFFECTIVE_FROM: &str = "2020-01-31";
 const APPROVED_CALENDAR_BYTES: &[u8] = include_bytes!("../../../data/calendars/xkrx/calendar.json");
 const APPROVED_CALENDAR_MANIFEST_BYTES: &[u8] =
     include_bytes!("../../../data/calendars/xkrx/manifest.json");
+const APPROVED_CALENDAR_OVERRIDES_BYTES: &[u8] =
+    include_bytes!("../../../data/calendars/xkrx/overrides.json");
 const APPROVED_LISTING_BYTES: &[u8] =
     include_bytes!("../../../configs/universes/kr-etf-core-v1.yaml");
 
@@ -453,7 +455,7 @@ fn parse_approved_calendar_artifact() -> Result<ValidatedCalendarArtifact, Range
     if manifest_object
         .get("manifest_schema_version")
         .and_then(Value::as_u64)
-        != Some(1)
+        != Some(2)
         || manifest_object.get("calendar_id").and_then(Value::as_str) != Some(APPROVED_CALENDAR_ID)
         || manifest_object.get("contract").and_then(Value::as_str)
             != Some("historical-session-dates-only")
@@ -465,7 +467,7 @@ fn parse_approved_calendar_artifact() -> Result<ValidatedCalendarArtifact, Range
     let root = artifact
         .as_object()
         .ok_or_else(|| calendar_error("calendar artifact is not an object"))?;
-    if root.get("artifact_schema_version").and_then(Value::as_u64) != Some(2)
+    if root.get("artifact_schema_version").and_then(Value::as_u64) != Some(3)
         || root.get("contract").and_then(Value::as_str) != Some("historical-session-dates-only")
         || root.get("representation").and_then(Value::as_str) != Some("dates-only")
         || root.get("exchange").and_then(Value::as_str) != Some("KRX")
@@ -567,15 +569,97 @@ fn parse_approved_calendar_artifact() -> Result<ValidatedCalendarArtifact, Range
             .checked_add_days(1)
             .map_err(|_| calendar_error("calendar civil range overflowed"))?;
     }
+    let override_ledger: Value = serde_json::from_slice(APPROVED_CALENDAR_OVERRIDES_BYTES)?;
+    let override_object = override_ledger
+        .as_object()
+        .ok_or_else(|| calendar_error("calendar override ledger is not an object"))?;
+    if override_object
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        != Some(1)
+        || override_object.get("contract").and_then(Value::as_str)
+            != Some("xkrx-calendar-session-overrides")
+        || override_object.get("calendar_id").and_then(Value::as_str) != Some(APPROVED_CALENDAR_ID)
+        || override_object.get("authority").and_then(Value::as_str)
+            != Some("operator-reviewed official sources")
+    {
+        return Err(calendar_error(
+            "calendar override ledger identity is invalid",
+        ));
+    }
+    let override_entries = override_object
+        .get("entries")
+        .and_then(Value::as_array)
+        .ok_or_else(|| calendar_error("calendar override ledger entries are missing"))?;
+    if override_entries.len() != 2 {
+        return Err(calendar_error(
+            "calendar override ledger entry count is invalid",
+        ));
+    }
+    let mut override_dates = Vec::with_capacity(override_entries.len());
+    for (index, entry) in override_entries.iter().enumerate() {
+        let object = entry
+            .as_object()
+            .ok_or_else(|| calendar_error(format!("override_entries[{index}] is not an object")))?;
+        let date = parse_artifact_date(
+            object
+                .get("date")
+                .ok_or_else(|| calendar_error(format!("override_entries[{index}] lacks date")))?,
+            &format!("override_entries[{index}]"),
+        )?;
+        if object.get("action").and_then(Value::as_str) != Some("remove_session")
+            || object.get("reason_code").and_then(Value::as_str).is_none()
+            || object.get("reason").and_then(Value::as_str).is_none()
+            || object.get("sources").and_then(Value::as_array).is_none()
+        {
+            return Err(calendar_error(format!(
+                "override_entries[{index}] is not an auditable removal"
+            )));
+        }
+        override_dates.push(date);
+    }
+    assert_sorted_unique(&override_dates, "override dates")?;
+    if override_dates
+        .iter()
+        .any(|date| *date < range_start || *date > range_end)
+    {
+        return Err(calendar_error("calendar override lies outside its range"));
+    }
+    let artifact_override_ledger = root
+        .get("override_ledger")
+        .ok_or_else(|| calendar_error("calendar artifact lacks override_ledger"))?;
+    let expected_override_hash = ContentHash::from_bytes(APPROVED_CALENDAR_OVERRIDES_BYTES);
+    let expected_override_metadata = json!({
+        "name": "overrides.json",
+        "schema_version": 1,
+        "contract": "xkrx-calendar-session-overrides",
+        "sha256": expected_override_hash.to_string(),
+        "size_bytes": APPROVED_CALENDAR_OVERRIDES_BYTES.len(),
+    });
+    if artifact_override_ledger != &expected_override_metadata
+        || root.get("override_entries") != Some(&Value::Array(override_entries.clone()))
+    {
+        return Err(calendar_error(
+            "calendar override ledger metadata/entries do not match the embedded ledger",
+        ));
+    }
+    if manifest_object.get("override_ledger") != Some(artifact_override_ledger) {
+        return Err(calendar_error(
+            "calendar manifest override ledger does not match the artifact",
+        ));
+    }
     let schedule = root
         .get("source_schedule")
         .and_then(Value::as_array)
         .ok_or_else(|| calendar_error("source_schedule must be an array"))?;
-    if schedule.len() != sessions.len() {
+    if schedule.len() != sessions.len() + override_dates.len() {
         return Err(calendar_error(
-            "source_schedule count differs from sessions",
+            "source_schedule count differs from raw sessions and overrides",
         ));
     }
+    let mut expected_source_dates = sessions.clone();
+    expected_source_dates.extend(override_dates.iter().copied());
+    expected_source_dates.sort_unstable();
     for (index, row) in schedule.iter().enumerate() {
         let object = row
             .as_object()
@@ -586,8 +670,10 @@ fn parse_approved_calendar_artifact() -> Result<ValidatedCalendarArtifact, Range
                 .ok_or_else(|| calendar_error(format!("source_schedule[{index}] lacks date")))?,
             &format!("source_schedule[{index}]"),
         )?;
-        if date != sessions[index] {
-            return Err(calendar_error("source_schedule dates differ from sessions"));
+        if date != expected_source_dates[index] {
+            return Err(calendar_error(
+                "source_schedule dates differ from raw sessions/overrides",
+            ));
         }
         for field in [
             "open_local",
