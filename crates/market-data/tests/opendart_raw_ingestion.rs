@@ -11,13 +11,21 @@ use domain::{TradingDate, UtcTimestamp};
 use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_OPENDART, ResponseKind};
 use market_data::storage::RawStore;
 use market_data::{
-    DISCLOSURE_LIST_MAX_PAGES, ManifestEntry, OPENDART_DISCLOSURE_LIST_ENDPOINT,
-    OPENDART_ENTITY_COMPANY_ENDPOINT, OPENDART_ENTITY_CORPCODE_ENDPOINT, OpenDartError,
-    OpenDartOutcome, OpenDartProvider, OpenDartRead,
+    DISCLOSURE_LIST_MAX_PAGES, DisclosureListFilter, ManifestEntry,
+    OPENDART_DISCLOSURE_LIST_ENDPOINT, OPENDART_ENTITY_COMPANY_ENDPOINT,
+    OPENDART_ENTITY_CORPCODE_ENDPOINT, OpenDartError, OpenDartOutcome, OpenDartProvider,
+    OpenDartRead,
 };
 use serde_json::json;
 
 const NOW: &str = "2026-08-19T08:00:00Z";
+
+/// Synthetic entitlement reference used by every ingest call in this file.
+/// Not a real vault path — this module never touches real entitlement
+/// records — only a fixed, obviously-synthetic value satisfying the
+/// required, non-empty `entitlement_reference` parameter.
+const SYNTHETIC_ENTITLEMENT_REFERENCE: &str =
+    "vault://synthetic-entitlements/opendart-test-only.pdf";
 
 fn new_store() -> (tempfile::TempDir, RawStore) {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -280,7 +288,15 @@ async fn disclosure_index_happy_path_single_page() {
     let provider = OpenDartProvider::new(reader.clone());
 
     let outcome = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect("single-page list.json ingest should succeed");
 
@@ -288,6 +304,11 @@ async fn disclosure_index_happy_path_single_page() {
         panic!("expected Stored outcome");
     };
     assert_eq!(entry.provider, PROVIDER_OPENDART);
+    assert_eq!(
+        entry.entitlement_reference.as_deref(),
+        Some(SYNTHETIC_ENTITLEMENT_REFERENCE),
+        "the required entitlement reference must persist onto the manifest row"
+    );
     assert_eq!(entry.files.len(), 1);
     let file = &entry.files[0];
     assert_eq!(file.kind, ResponseKind::DisclosureIndex);
@@ -329,7 +350,15 @@ async fn disclosure_index_total_page_zero_is_terminal_after_one_page() {
     let provider = OpenDartProvider::new(reader.clone());
 
     let outcome = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect("total_page=0 must terminate immediately, not error");
     let OpenDartOutcome::Stored(entry) = outcome else {
@@ -350,7 +379,14 @@ async fn entity_master_happy_path_zip_magic_accepted_and_stored_byte_for_byte() 
     let provider = OpenDartProvider::new(reader.clone());
 
     let outcome = provider
-        .ingest_entity_master(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_entity_master(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect("ZIP-magic corpCode.xml ingest should succeed");
     assert_eq!(reader.calls()[0].path, "/api/corpCode.xml");
@@ -395,6 +431,7 @@ async fn entity_profile_happy_path() {
             retrieved_at,
             FetchMode::Synthetic,
             "00000001",
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
         )
         .await
         .expect("company.json ingest should succeed");
@@ -471,7 +508,15 @@ async fn no_live_credential_reaches_stored_bytes_batch_json_or_manifest() {
     let provider = OpenDartProvider::new(reader);
 
     let outcome = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect("multi-page ingest should succeed");
     let OpenDartOutcome::Stored(entry) = outcome else {
@@ -535,7 +580,15 @@ async fn disclosure_index_no_data_status_is_typed_empty_not_error() {
     let provider = OpenDartProvider::new(reader);
 
     let outcome = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect("status=013 must not be an error");
     assert_eq!(outcome, OpenDartOutcome::Empty);
@@ -582,6 +635,7 @@ async fn entity_profile_status_and_shape_failures_are_distinct_typed_errors() {
                 retrieved_at,
                 FetchMode::Synthetic,
                 "00000001",
+                SYNTHETIC_ENTITLEMENT_REFERENCE,
             )
             .await;
         let error = match result {
@@ -653,7 +707,15 @@ async fn disclosure_index_multi_page_walk_terminates_and_records_page_sequence()
     let provider = OpenDartProvider::new(reader.clone());
 
     let outcome = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect("three-page walk should terminate cleanly");
     let OpenDartOutcome::Stored(entry) = outcome else {
@@ -703,7 +765,15 @@ async fn disclosure_index_total_page_change_mid_walk_fails_closed() {
     let provider = OpenDartProvider::new(reader);
 
     let error = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect_err("a shifting result set must fail closed");
     assert!(matches!(error, OpenDartError::InconsistentPagination));
@@ -736,7 +806,15 @@ async fn disclosure_index_identical_bytes_across_pages_fails_closed() {
     let provider = OpenDartProvider::new(reader);
 
     let error = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect_err("byte-identical pages must fail closed");
     assert!(matches!(
@@ -780,7 +858,15 @@ async fn disclosure_index_exceeding_page_bound_fails_closed() {
     let provider = OpenDartProvider::new(reader.clone());
 
     let error = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect_err("a walk that never terminates must fail closed at the bound");
     assert!(matches!(
@@ -814,7 +900,15 @@ async fn disclosure_index_rejects_rcept_no_not_14_digits() {
     let provider = OpenDartProvider::new(reader);
 
     let error = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect_err("a non-14-digit rcept_no must fail closed");
     assert!(matches!(error, OpenDartError::InvalidRceptNo));
@@ -835,7 +929,14 @@ async fn entity_master_json_error_body_fails_closed_instead_of_being_stored() {
     let provider = OpenDartProvider::new(reader);
 
     let error = provider
-        .ingest_entity_master(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_entity_master(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect_err("a JSON error body must never be stored as the archive");
     assert!(matches!(error, OpenDartError::UnexpectedStatus { .. }));
@@ -875,7 +976,15 @@ async fn disclosure_index_no_data_after_prior_page_fails_closed() {
     let provider = OpenDartProvider::new(reader);
 
     let error = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect_err("013 after a prior success must fail closed, not resolve to Empty");
     assert!(matches!(
@@ -911,6 +1020,7 @@ async fn entity_profile_rejects_pagination_like_marker() {
             retrieved_at,
             FetchMode::Synthetic,
             "00000001",
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
         )
         .await
         .expect_err("a pagination-like marker on a single-page surface must fail closed");
@@ -970,7 +1080,15 @@ async fn disclosure_index_carries_real_etf_short_codes_as_stock_code_without_cor
     let provider = OpenDartProvider::new(reader);
 
     let outcome = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect("synthetic rows carrying real ETF short codes must validate");
     let OpenDartOutcome::Stored(entry) = outcome else {
@@ -1014,7 +1132,15 @@ async fn disclosure_index_accepts_string_typed_envelope_integers() {
 
     let provider = OpenDartProvider::new(FixtureReader::new(vec![body]));
     let outcome = provider
-        .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
         .await
         .expect("string-typed envelope integers are a documented-value representation");
     assert!(matches!(outcome, OpenDartOutcome::Stored(_)));
@@ -1049,12 +1175,89 @@ async fn disclosure_index_rejects_non_integer_envelope_values() {
 
         let provider = OpenDartProvider::new(FixtureReader::new(vec![body]));
         let error = provider
-            .ingest_disclosure_index(&store, MARKET_KR, &date, retrieved_at, FetchMode::Synthetic)
+            .ingest_disclosure_index(
+                &store,
+                MARKET_KR,
+                &date,
+                retrieved_at,
+                FetchMode::Synthetic,
+                DisclosureListFilter::default(),
+                SYNTHETIC_ENTITLEMENT_REFERENCE,
+            )
             .await
             .expect_err("a non-integer envelope value must fail closed");
         assert!(
             matches!(error, OpenDartError::UndocumentedShape),
             "expected UndocumentedShape, got {error:?}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------
+// Part 1: the entitlement reference is required, not optional. An empty or
+// whitespace-only value must fail closed on every surface, before any
+// request is issued and before any batch or manifest is written.
+// ---------------------------------------------------------------------
+
+/// `FixtureReader::new(vec![])` carries zero canned pages: if validation
+/// let a call reach `OpenDartRead::get`, the fixture's own assertion
+/// ("FixtureReader exhausted") would panic rather than returning a typed
+/// error. Reaching `OpenDartError::MissingEntitlementReference` instead
+/// proves rejection happens strictly before any request.
+#[tokio::test]
+async fn empty_or_whitespace_only_entitlement_reference_fails_closed_before_any_request() {
+    for blank in ["", "   ", "\t\n"] {
+        let (_temp, store) = new_store();
+        let date = fixed_date();
+        let retrieved_at = fixed_retrieved_at();
+
+        let provider = OpenDartProvider::new(FixtureReader::new(vec![]));
+        let error = provider
+            .ingest_disclosure_index(
+                &store,
+                MARKET_KR,
+                &date,
+                retrieved_at,
+                FetchMode::Synthetic,
+                DisclosureListFilter::default(),
+                blank,
+            )
+            .await
+            .expect_err("a blank entitlement reference must fail closed");
+        assert!(
+            matches!(error, OpenDartError::MissingEntitlementReference),
+            "blank={blank:?}: expected MissingEntitlementReference, got {error:?}"
+        );
+        assert!(!store.provider_dir(PROVIDER_OPENDART, MARKET_KR).exists());
+        assert!(!store.manifest_path(PROVIDER_OPENDART, MARKET_KR).exists());
+
+        let provider = OpenDartProvider::new(FixtureReader::new(vec![]));
+        let error = provider
+            .ingest_entity_master(
+                &store,
+                MARKET_KR,
+                &date,
+                retrieved_at,
+                FetchMode::Synthetic,
+                blank,
+            )
+            .await
+            .expect_err("a blank entitlement reference must fail closed");
+        assert!(matches!(error, OpenDartError::MissingEntitlementReference));
+
+        let provider = OpenDartProvider::new(FixtureReader::new(vec![]));
+        let error = provider
+            .ingest_entity_profile(
+                &store,
+                MARKET_KR,
+                &date,
+                retrieved_at,
+                FetchMode::Synthetic,
+                "00000001",
+                blank,
+            )
+            .await
+            .expect_err("a blank entitlement reference must fail closed");
+        assert!(matches!(error, OpenDartError::MissingEntitlementReference));
     }
 }

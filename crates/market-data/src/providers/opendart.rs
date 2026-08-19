@@ -170,6 +170,13 @@ pub enum OpenDartError {
     /// ([`opendart_client::OpenDartClient`]) is ever allowed to add it —
     /// so this is a structural rejection, not a value-content scan.
     KeyLeakDetected,
+    /// The caller-supplied entitlement reference was empty or
+    /// whitespace-only. This is required, not optional: Stage5's own
+    /// production path requires an explicit entitlement reference before a
+    /// delivery may be treated as licensed data, and a Raw batch whose
+    /// data-use basis is unrecorded could never be admitted later. Fails
+    /// closed before any request is issued.
+    MissingEntitlementReference,
     /// A live OpenDART HTTP transport failure. Carries the coarse
     /// `opendart_client` error verbatim: that crate keeps its error type
     /// free of any URL, query string, or response body, so nothing more
@@ -233,6 +240,10 @@ impl std::fmt::Display for OpenDartError {
                     "caller-supplied query pair used the reserved `crtfc_key` parameter name"
                 )
             }
+            Self::MissingEntitlementReference => write!(
+                f,
+                "opendart ingest requires a non-empty entitlement reference"
+            ),
             Self::Transport(source) => write!(f, "opendart transport failure: {source}"),
             Self::Store(source) => write!(f, "opendart raw store failure: {source}"),
         }
@@ -265,6 +276,34 @@ fn sanitize_status(status: &str) -> String {
     } else {
         "UNDOCUMENTED_STATUS".to_owned()
     }
+}
+
+/// Validates a required entitlement reference: every ingest entry point in
+/// this module must be given one, and an empty or whitespace-only value
+/// fails closed here, before any request is issued. See
+/// [`OpenDartError::MissingEntitlementReference`] for why this is required
+/// rather than optional. Returns the original (untrimmed) value unchanged
+/// on success — only its whitespace-only-ness is judged, not its shape.
+fn require_entitlement_reference(value: &str) -> Result<&str, OpenDartError> {
+    if value.trim().is_empty() {
+        Err(OpenDartError::MissingEntitlementReference)
+    } else {
+        Ok(value)
+    }
+}
+
+/// Optional documented filters for `GET /api/list.json`: the `corp_code`
+/// (8-digit OpenDART entity code) and `bgn_de`/`end_de` (`YYYYMMDD`) search
+/// window bounds. All three are optional per the documented envelope, and
+/// are passed through as opaque query values, exactly like the
+/// `page_no`/`page_count` this adapter always sends — this module performs
+/// no additional shape validation on them beyond what already applies to
+/// any query value (they never carry the reserved `crtfc_key` name).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DisclosureListFilter<'a> {
+    pub corp_code: Option<&'a str>,
+    pub bgn_de: Option<&'a str>,
+    pub end_de: Option<&'a str>,
 }
 
 /// Outcome of one Raw disclosure ingest call.
@@ -347,6 +386,19 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
     /// succeeded would silently mask a result set that shifted mid-walk, so
     /// that case fails closed instead (see
     /// [`OpenDartError::UnexpectedEmptyMidWalk`]).
+    ///
+    /// `entitlement_reference` is required, not optional: Stage5's own
+    /// production path requires an explicit entitlement reference, and a
+    /// Raw batch whose data-use basis is unrecorded cannot be admitted
+    /// later. An empty or whitespace-only value fails closed with
+    /// [`OpenDartError::MissingEntitlementReference`] before any request is
+    /// issued.
+    // Signature is dictated by the required scope parameters this task
+    // adds (entitlement_reference) alongside the surface-specific search
+    // filter (`filter`); splitting further would obscure call sites more
+    // than the lint aids readability, matching this crate's existing
+    // precedent (see e.g. `providers::kis::KisProvider::fetch_pages`).
+    #[allow(clippy::too_many_arguments)]
     pub async fn ingest_disclosure_index(
         &self,
         store: &RawStore,
@@ -354,19 +406,31 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
         date: &TradingDate,
         retrieved_at: UtcTimestamp,
         mode: FetchMode,
+        filter: DisclosureListFilter<'_>,
+        entitlement_reference: &str,
     ) -> Result<OpenDartOutcome, OpenDartError> {
+        let entitlement_reference = require_entitlement_reference(entitlement_reference)?;
         let batch_id = BatchId::generate();
         let mut pages: Vec<(u32, RawEnvelope)> = Vec::new();
         let mut expected_total: Option<(u64, u32)> = None;
 
         for page_no in 1..=(DISCLOSURE_LIST_MAX_PAGES as u32) {
-            let visible_query = vec![
+            let mut visible_query = vec![
                 ("page_no".to_owned(), page_no.to_string()),
                 (
                     "page_count".to_owned(),
                     DISCLOSURE_LIST_PAGE_COUNT.to_string(),
                 ),
             ];
+            if let Some(corp_code) = filter.corp_code {
+                visible_query.push(("corp_code".to_owned(), corp_code.to_owned()));
+            }
+            if let Some(bgn_de) = filter.bgn_de {
+                visible_query.push(("bgn_de".to_owned(), bgn_de.to_owned()));
+            }
+            if let Some(end_de) = filter.end_de {
+                visible_query.push(("end_de".to_owned(), end_de.to_owned()));
+            }
             let bytes = self.reader.get(LIST_JSON_PATH, &visible_query).await?;
 
             match parse_list_page(&bytes)? {
@@ -423,7 +487,7 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
                             market,
                             date,
                             batch_id,
-                            entitlement_reference: None,
+                            entitlement_reference: Some(entitlement_reference),
                             mode,
                         };
                         let entry = store
@@ -447,6 +511,12 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
     /// exactly as received. If a JSON error body arrives instead (the
     /// documented error path), this fails closed with a typed error rather
     /// than storing it as if it were the archive.
+    ///
+    /// `entitlement_reference` is required, not optional: see
+    /// [`ingest_disclosure_index`](Self::ingest_disclosure_index) for the
+    /// rationale. An empty or whitespace-only value fails closed with
+    /// [`OpenDartError::MissingEntitlementReference`] before any request is
+    /// issued.
     pub async fn ingest_entity_master(
         &self,
         store: &RawStore,
@@ -454,7 +524,9 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
         date: &TradingDate,
         retrieved_at: UtcTimestamp,
         mode: FetchMode,
+        entitlement_reference: &str,
     ) -> Result<OpenDartOutcome, OpenDartError> {
+        let entitlement_reference = require_entitlement_reference(entitlement_reference)?;
         let visible_query: Vec<(String, String)> = Vec::new();
         let bytes = self.reader.get(CORP_CODE_XML_PATH, &visible_query).await?;
 
@@ -476,7 +548,7 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
             market,
             date,
             batch_id,
-            entitlement_reference: None,
+            entitlement_reference: Some(entitlement_reference),
             mode,
         };
         let entry = store
@@ -488,6 +560,18 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
     /// Raw-ingests `GET /api/company.json` for one `corp_code`: single-page,
     /// no continuation parameter sent. Rejects any pagination-like marker in
     /// the response and any documented status other than success.
+    ///
+    /// `entitlement_reference` is required, not optional: see
+    /// [`ingest_disclosure_index`](Self::ingest_disclosure_index) for the
+    /// rationale. An empty or whitespace-only value fails closed with
+    /// [`OpenDartError::MissingEntitlementReference`] before any request is
+    /// issued.
+    // Signature is dictated by the required scope parameters this task
+    // adds (entitlement_reference) alongside the surface-specific
+    // `corp_code`; splitting further would obscure call sites more than the
+    // lint aids readability, matching this crate's existing precedent (see
+    // e.g. `providers::kis::KisProvider::fetch_pages`).
+    #[allow(clippy::too_many_arguments)]
     pub async fn ingest_entity_profile(
         &self,
         store: &RawStore,
@@ -496,7 +580,9 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
         retrieved_at: UtcTimestamp,
         mode: FetchMode,
         corp_code: &str,
+        entitlement_reference: &str,
     ) -> Result<OpenDartOutcome, OpenDartError> {
+        let entitlement_reference = require_entitlement_reference(entitlement_reference)?;
         let visible_query = vec![("corp_code".to_owned(), corp_code.to_owned())];
         let bytes = self.reader.get(COMPANY_JSON_PATH, &visible_query).await?;
 
@@ -518,7 +604,7 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
             market,
             date,
             batch_id,
-            entitlement_reference: None,
+            entitlement_reference: Some(entitlement_reference),
             mode,
         };
         let entry = store

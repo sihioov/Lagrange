@@ -738,6 +738,7 @@ dependencies = [
  "domain",
  "kis-client",
  "market-data",
+ "opendart-client",
  "serde",
  "serde_json",
  "sqlx",
