@@ -1,0 +1,13 @@
+{
+  "name": "kind-capture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "KIND ETF disclosure capture stage. Deliberately NOT an npm workspace member: the root package.json lists only apps/*, so a normal root install does not pull Playwright or its browser download into dev/CI. Install here on demand.",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "dependencies": {
+    "playwright": "^1.56.0"
+  }
+}
