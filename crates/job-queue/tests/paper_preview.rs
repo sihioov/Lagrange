@@ -223,7 +223,10 @@ fn write_preview_bars(
     version: u32,
     rows: &[CuratedBar],
 ) {
-    let store = CurateStore::new(root.join("curated"));
+    // `load_recommendation_closes` takes the data root directly and lets
+    // `CurateStore` append the curated zone itself (see paper_preview.rs);
+    // fixtures must be written at the same path or the loader can't find them.
+    let store = CurateStore::new(root);
     let path = store.bars_path("kr", partition_instrument, 2026, version);
     write_bars(&path, rows).unwrap();
 }
@@ -314,7 +317,7 @@ fn close_loader_rejects_partition_identity_mismatch_and_malformed_parquet() {
     ));
 
     let malformed = tempfile::tempdir().unwrap();
-    let store = CurateStore::new(malformed.path().join("curated"));
+    let store = CurateStore::new(malformed.path());
     let path = store.bars_path("kr", "069500.KRX", 2026, 7);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, b"not parquet").unwrap();
