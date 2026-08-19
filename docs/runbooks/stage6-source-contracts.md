@@ -5,9 +5,15 @@ That ADR records the decisions; this file records the evidence they rest on, the
 gaps they must not paper over, and the checklist an operator has to clear before
 Step 2 can write an adapter.
 
-**Nothing here is an approved surface.** Every candidate is a proposal awaiting
-the approval `AGENTS.md` requires for any change to a method, path, host, or
-response contract.
+Approval state, as of 2026-08-19: the **OpenDART core** surface
+(`list.json`/`list.xml`, `corpCode.xml`, `company.json`) is approved for
+fixture-based Raw adapter work. **Every other surface here is deferred** and
+still awaits the approval `AGENTS.md` requires for any change to a method, path,
+host, or response contract. See the allowlist table at the end for the per-row
+state.
+
+No key has been issued for any surface, so no request has been sent to any of
+them.
 
 ## How this evidence was gathered
 
@@ -491,24 +497,29 @@ credentialed call, because read-only public fetching cannot settle it.
     non-commercial use and KRX 제11조③ post-termination use, interpreted against
     this project's stated personal-internal purpose.
 
-## Proposed read-only allowlist — awaiting approval
+## Read-only allowlist — approval state
 
-Documentation-confirmed paths, proposed for approval. Nothing here is approved,
-and nothing may be called before ADR-0004 D9's gate clears.
+Documentation-confirmed paths. The owner approved the **OpenDART core** on
+2026-08-19 for fixture-based Raw adapter work; everything else is **DEFERRED**
+and may not be called, registered for, or coded against.
+
+`APPROVED` here authorizes the request shape, the fixture-backed contract, and
+an operator-gated live path. It does not authorize a live call: no key has been
+issued, so no request has been sent to any of these surfaces.
 
 | source | surface | status |
 |---|---|---|
-| OpenDART | `GET /api/list.json` \| `/api/list.xml` | path, params, schema documented |
-| OpenDART | `GET /api/corpCode.xml` | documented; needed for checklist item 4 |
-| OpenDART | `GET /api/company.json` \| `.xml` | documented |
-| OpenDART | `GET /api/crDecsn`, `/api/piicDecsn`, `/api/cmpMgDecsn` | documented; applicability to ETF11 unresolved |
-| OpenDART | `GET /api/alotMatter` | documented; periodic realized amounts, limited use |
-| FSC mirror | `금융위원회_KRX상장종목정보` | dataset confirmed; exact endpoint needs checklist item 2 |
-| FSC mirror | `금융위원회_증권상품시세정보` (ETF operation) | dataset confirmed; exact endpoint needs checklist item 2 |
-| KRX Open API | `ETF 일별매매정보` | catalog entry confirmed; endpoint needs checklist item 1; prefer the FSC mirror per D3 |
-| KSD portal | `주식권리일정정보`, `주식배당정보` | datasets confirmed; endpoints need checklist item 6; KOGL Type 2 |
-| KIND | 상세검색, ETF disclosure, 관리종목, 매매거래정지 pages | operator-driven EXCEL export only, per D6 |
-| data.krx.co.kr | 이슈 통계 leaf pages for 신규상장 / 상장폐지 / 매매거래정지 / 관리종목 | operator-driven export only, per D6; leaf URLs unconfirmed |
+| OpenDART | `GET /api/list.json` \| `/api/list.xml` | **APPROVED** — path, params, schema documented |
+| OpenDART | `GET /api/corpCode.xml` | **APPROVED** — needed for checklist item 4 |
+| OpenDART | `GET /api/company.json` \| `.xml` | **APPROVED** — documented |
+| OpenDART | `GET /api/crDecsn`, `/api/piicDecsn`, `/api/cmpMgDecsn` | DEFERRED — applicability to ETF11 unresolved |
+| OpenDART | `GET /api/alotMatter` | DEFERRED — periodic realized amounts, limited use |
+| FSC mirror | `금융위원회_KRX상장종목정보` | DEFERRED — mirror-vs-origin decision open; endpoint needs checklist item 2 |
+| FSC mirror | `금융위원회_증권상품시세정보` (ETF operation) | DEFERRED — mirror-vs-origin decision open; endpoint needs checklist item 2 |
+| KRX Open API | `ETF 일별매매정보` | DEFERRED — endpoint needs checklist item 1; prefer the FSC mirror per D3 |
+| KSD portal | `주식권리일정정보`, `주식배당정보` | DEFERRED — blocked on the KOGL Type 2 entitlement decision |
+| KIND | 상세검색, ETF disclosure, 관리종목, 매매거래정지 pages | DEFERRED — operator-driven EXCEL export only, per D6 |
+| data.krx.co.kr | 이슈 통계 leaf pages for 신규상장 / 상장폐지 / 매매거래정지 / 관리종목 | DEFERRED — operator-driven export only, per D6; leaf URLs unconfirmed |
 | terms pages | KRX Open API 이용약관, data.krx.co.kr 이용약관, KOGL licence, OpenDART 약관 | re-check periodically; terms change |
 
 No candidate is proposed for merger, corporate split, stock split, or reverse

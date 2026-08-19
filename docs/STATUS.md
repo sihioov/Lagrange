@@ -76,7 +76,9 @@ Step 1을 문서 수준에서 완료했다. 구현·어댑터·신규 API 호출
 
 **권리 관계는 기록하되 결론내지 않는다.** KRX Open API 약관(2025-12-26 시행)은 비상업적 목적 한정(제6조②), 제3자 제공 금지(제11조②), 키당 1일 10,000회(제8조④)이며, **제11조③은 이용계약 종료 후 이미 제공받은 정보의 이용을 금지**해 immutable Raw 영구보존과 충돌한다. 같은 KRX 원천의 공공데이터포털 금융위 미러는 `이용허락범위: 제한 없음`, 무료이므로 해당 범주에서는 미러를 우선한다. KSD 계열 포털 데이터셋은 KOGL 제2유형(출처표시·상업적 이용금지)이다. 해석과 `entitlement_reference` 확정은 운영자 결정 사항이다.
 
-Stage5 계약 flag는 그대로 `vendor_snapshot=true`, `strict_pit=false`, `ready=false`다. Curated/DB publication/five-pin/추천·백테스트·Paper 연결은 계속 `BLOCKED`다. Step 2 진입에는 제안된 read-only allowlist 승인, 계정 등록 여부 결정, 라이선스 해석, 체크리스트 해소가 선행 조건이다.
+Stage5 계약 flag는 그대로 `vendor_snapshot=true`, `strict_pit=false`, `ready=false`다. Curated/DB publication/five-pin/추천·백테스트·Paper 연결은 계속 `BLOCKED`다.
+
+**부분 승인 (2026-08-19).** 소유자가 OpenDART 코어(`list.json`/`list.xml`, `corpCode.xml`, `company.json`)를 fixture 기반 Raw 어댑터 작업 범위로 승인했다. 나머지 allowlist 행, 모든 계정 등록, 라이선스 해석은 계속 보류다. 어떤 소스에도 key가 발급되지 않았으므로 실제 요청은 한 건도 발생하지 않았다. KRX 미러 vs 원본 선택, KSD 포함 여부, KOGL 제2유형·KRX 제11조③ `entitlement_reference`는 미결정 상태로 남는다.
 
 ---
 

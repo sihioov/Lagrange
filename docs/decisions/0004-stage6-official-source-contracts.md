@@ -1,6 +1,9 @@
 # ADR-0004: Stage6 official source contracts and day-granularity availability
 
-- **Status:** Proposed — pending operator approval of registrations, the read-only allowlist, and the licence interpretation
+- **Status:** Partially approved — the OpenDART core surface
+  (`list.json`/`list.xml`, `corpCode.xml`, `company.json`) was approved by the
+  owner on 2026-08-19 for fixture-based Raw adapter work. Every other allowlist
+  row, all registrations, and the licence interpretation remain pending.
 - **Date:** 2026-08-19
 - **Deciders:** Product owner (pending), implementation coordinator, Claude Opus 5 research coordination
 
