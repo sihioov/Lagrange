@@ -36,10 +36,12 @@ use crate::contract::{
 use crate::providers::kis::KR_ETF_CORE_SYMBOLS;
 use crate::storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};
 
-/// Version of the Stage4A intermediate schema and mapping.
-pub const RANGE_NORMALIZER: &str = "kis-daily-range-to-session-bars-v1";
-pub const RANGE_NORMALIZER_SCHEMA_VERSION: u32 = 1;
-pub const RANGE_NORMALIZED_SCHEMA_VERSION: u32 = 1;
+/// Version of the Stage4A intermediate schema and mapping. Version 2 adds
+/// canonical source-row hash/size fields; v1 batches are never replayed under
+/// the new deterministic identity.
+pub const RANGE_NORMALIZER: &str = "kis-daily-range-to-session-bars-v2";
+pub const RANGE_NORMALIZER_SCHEMA_VERSION: u32 = 2;
+pub const RANGE_NORMALIZED_SCHEMA_VERSION: u32 = 2;
 
 const APPROVED_CALENDAR_ID: &str = "xkrx-historical-session-dates";
 const APPROVED_LISTING_SNAPSHOT_ID: &str = "kr-etf-core-v1";
@@ -226,6 +228,12 @@ pub struct RangeNormalizationSourceRow {
     pub source_file_name: String,
     pub source_file_hash: ContentHash,
     pub source_file_size_bytes: u64,
+    /// Hash and serialized size of the exact canonical JSON `output2` row
+    /// retained by the normalizer.  This is deliberately separate from the
+    /// enclosing response hash so a later bridge can re-verify the row/file
+    /// link without trusting only the normalized bar values.
+    pub row_content_hash: ContentHash,
+    pub row_size_bytes: u64,
     pub source_query_start: TradingDate,
     pub source_query_end: TradingDate,
     pub symbol: String,
@@ -912,12 +920,15 @@ fn parse_range_rows(
             }
             validate_ohlcv_fields(row, &metadata.file_name)?;
             let canonical = canonical_bar(row, &metadata.file_name, &symbol, date);
+            let row_bytes = serde_json::to_vec(&Value::Object(row.clone()))?;
             let parsed = ParsedRangeBar {
                 value: canonical,
                 source: RangeNormalizationSourceRow {
                     source_file_name: metadata.file_name.clone(),
                     source_file_hash: metadata.content_hash.clone(),
                     source_file_size_bytes: metadata.size_bytes,
+                    row_content_hash: ContentHash::from_bytes(&row_bytes),
+                    row_size_bytes: row_bytes.len() as u64,
                     source_query_start: query_start,
                     source_query_end: query_end,
                     symbol: symbol.clone(),

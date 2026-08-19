@@ -2,17 +2,19 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread;
 
-use domain::{BatchId, TradingDate, UtcTimestamp};
+use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS_DAILY_RANGE, RequestMetadata, ResponseKind,
 };
 use market_data::providers::kis::KR_ETF_CORE_SYMBOLS;
 use market_data::range_normalize::{
-    ExpectedRangeSessions, RangeNormalizeError, normalize_kis_daily_range_batch,
+    ExpectedRangeSessions, RangeNormalizeError,
+    deterministic_range_normalized_batch_id_with_identity, normalize_kis_daily_range_batch,
 };
 use market_data::storage::{BatchSpec, ManifestEntry, RawStore};
 use market_data::{PublicationBundle, curation_inputs_from_raw};
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 const ENDPOINT: &str = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice";
 const NOW: &str = "2026-08-19T00:00:00Z";
@@ -116,6 +118,32 @@ fn rows_for(start: TradingDate, end: TradingDate) -> BTreeMap<&'static str, Vec<
         .collect()
 }
 
+#[test]
+fn v2_normalizer_identity_cannot_reuse_a_v1_batch_id() {
+    let root = tempfile::tempdir().unwrap();
+    let start = date("2020-01-31");
+    let (_raw, source) = fixture_source(root.path(), start, start, &rows_for(start, start));
+    let source_manifest_hash = ContentHash::from_bytes(&serde_json::to_vec(&source).unwrap());
+    let calendar_hash = ContentHash::from_bytes(b"calendar-v1");
+    let listing_hash = ContentHash::from_bytes(b"listing-v1");
+    let v2 = deterministic_range_normalized_batch_id_with_identity(
+        &source,
+        &source_manifest_hash,
+        start,
+        &calendar_hash,
+        &listing_hash,
+    );
+    let old_name = format!(
+        "provider=kis-daily-range-normalized\nnormalizer=kis-daily-range-to-session-bars-v1\nsource_batch={}\nsource_manifest_hash={}\ncalendar_hash={}\nlisting_snapshot_hash={}\nsession={start}",
+        source.batch_id, source_manifest_hash, calendar_hash, listing_hash
+    );
+    let v1 = BatchId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_URL, old_name.as_bytes()));
+    assert_ne!(
+        v2, v1,
+        "Stage4A v2 must not reuse a v1 deterministic identity"
+    );
+}
+
 fn fixture_multi_window(
     root: &std::path::Path,
     start: TradingDate,
@@ -182,7 +210,10 @@ fn normalizes_exact_fixed_universe_into_one_batch_per_approved_session() {
     assert!(!outputs[0].lineage.revision_evidence);
     assert!(!outputs[0].lineage.knowledge_time_evidence);
     let document: Value = serde_json::from_slice(&outputs[0].files[0].bytes).expect("document");
-    assert_eq!(document["schema_version"], 1);
+    assert_eq!(
+        document["schema_version"],
+        market_data::range_normalize::RANGE_NORMALIZED_SCHEMA_VERSION
+    );
     assert_eq!(document["dataset_kind"], "kis-daily-range-bars");
     assert_eq!(document["bars"].as_array().expect("bars").len(), 11);
     assert_eq!(document["pit"]["strict"], false);

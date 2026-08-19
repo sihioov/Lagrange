@@ -54,6 +54,7 @@ pub mod providers;
 pub mod publication;
 pub mod quality;
 pub mod range_normalize;
+pub mod range_to_canonical;
 pub mod redact;
 pub mod storage;
 pub mod validate;
@@ -142,5 +143,11 @@ pub use range_normalize::{
     RangeNormalizationSourceFile, RangeNormalizationSourceRow, RangeNormalizeError,
     deterministic_range_normalized_batch_id, deterministic_range_normalized_batch_id_with_identity,
     normalize_kis_daily_range, normalize_kis_daily_range_batch,
+};
+pub use range_to_canonical::{
+    NON_STRICT_PIT_POLICY_ID, RANGE_CANONICAL_BRIDGE_VERSION, REQUIRED_ACTION_KINDS, RangeAction,
+    RangeCanonicalBarCandidate, RangeCanonicalCandidate, RangeCanonicalError,
+    VerifiedRangeCanonicalEvidence, build_range_canonical_candidate,
+    load_verified_range_canonical_evidence,
 };
 pub use storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};
