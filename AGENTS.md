@@ -75,3 +75,105 @@ project.
   `koreainvestment/open-trading-api` repository, and
   `docs/kis_openapi_entiredocs_20260818_030007.xlsx`.  When they conflict, choose the narrowest
   fail-closed behavior and record the exact discrepancy in tests or a runbook.
+
+## OpenDART safety boundary (mandatory)
+
+Stage6 adds OpenDART (`opendart.fss.or.kr`) as a read-only disclosure-evidence source for the
+fixed 11 ETF universe.  The owner approved only the core surface below, on 2026-08-19, and only
+for fixture-backed Raw adapter work.  Approval covers the request shape, the fixture contract,
+and an operator-gated live path; it is not permission to send a live request.  No key has been
+issued, so no request has been sent.  Decisions and evidence live in
+`docs/decisions/0004-stage6-official-source-contracts.md` and
+`docs/runbooks/stage6-source-contracts.md`.
+
+### Allowed network surface
+
+Requests must be `GET` and must match one of these exact host/path pairs:
+
+- `opendart.fss.or.kr` — `/api/list.json` and `/api/list.xml` (disclosure search list)
+- `opendart.fss.or.kr` — `/api/corpCode.xml` (corp-code reference archive, a ZIP)
+- `opendart.fss.or.kr` — `/api/company.json` and `/api/company.xml` (company overview)
+
+Treat this as a deny-by-default allowlist, exactly as for KIS.  Changing a method, path, host, or
+response contract requires explicit user approval, current official OpenDART documentation, and
+focused tests.
+
+### Forbidden surface
+
+- Never call any other OpenDART endpoint.  `crDecsn`, `piicDecsn`, `cmpMgDecsn`, `alotMatter`, and
+  the original-document file API are explicitly DEFERRED, not allowed.
+- Never call `data.go.kr`, `apis.data.go.kr`, `openapi.krx.co.kr`, `data.krx.co.kr`,
+  `kind.krx.co.kr`, `seibro.or.kr`, or `api.seibro.or.kr` from code.  Those surfaces are deferred;
+  the KIND and Data Marketplace exports are operator-driven downloads, not automated collection.
+- Never register an account, request an API key, submit a form, or complete an identity check from
+  an agent session.  Those are owner actions.
+- The disclosure response kinds (`DisclosureIndex`, `DisclosureEntityMaster`,
+  `DisclosureEntityProfile`) are disclosure-source evidence.  They must never be admitted into the
+  EOD reference normalizer, the candidate path, or any publication kind set.
+
+### The API key is a query parameter — redact before persisting
+
+OpenDART authenticates with a `crtfc_key` **query parameter**, not a header.  Recorded request
+metadata is persisted into `batch.json` and the append-only manifest, so a naive adapter writes the
+key to disk permanently inside an immutable store.
+
+- The recorded query must never contain the `crtfc_key` value.  Redact or omit it where the request
+  metadata is constructed, not afterwards and not optionally.
+- Construct request metadata only through the redacting constructor; never let a caller assemble
+  metadata carrying a live key.
+- A test must assert that a sentinel key value appears in neither the stored bytes, nor
+  `batch.json`, nor the manifest JSONL.
+- As with KIS: never print, log, persist in Git, or place in diagnostics a key, token, response
+  body, or free-form provider message.  Errors are typed, never string-dumped provider output.
+
+### Rate, pagination, and validation rules
+
+- `list.json` / `list.xml` pagination is `page_no`-driven from 1, with `page_count` documented as
+  1–100 (default 10).  It is terminal when `page_no >= total_page`, or immediately when
+  `total_page` is 0.
+- The walk is bounded at ten pages, matching the KSD bound above.  Exceeding it fails closed.
+- `total_count` and `total_page` must be identical on every page of one query.  A mid-walk change
+  means the result set shifted and completeness cannot be proven: fail closed.
+- Identical response bytes for two different requested pages fails closed.
+- `corpCode.xml` and `company.json` are single-page.  Send no continuation field and reject any
+  pagination-like marker.  `corpCode.xml` must begin with the ZIP magic `PK\x03\x04`; an error JSON
+  body in its place fails closed instead of being stored as an archive.  The archive is stored
+  byte-for-byte and is not unzipped or parsed in the Raw stage.
+- Status `000` is success.  `013` is documented no-data and must be a typed empty outcome, distinct
+  from an error.  Any other status, a missing `status`, malformed JSON, or an undocumented shape
+  fails closed.
+- Without `corp_code`, the documented list search window is limited to three months.
+- `rcept_no` is opaque.  Validate it only as exactly 14 ASCII digits.  Never parse, slice, or infer
+  a date from it: the official documentation gives only a viewer-link example and never states that
+  its leading digits encode the receipt date, so deriving a date would fabricate point-in-time
+  evidence.
+- OpenDART terms art. 10(4) state that usage-count limits exist and are posted on the homepage.  The
+  actual number is not confirmed on any official page, and the widely cited 20,000-per-day figure
+  appears only in third-party material.  Do not encode an assumed quota; honor returned throttling
+  and keep retries bounded and classified.
+
+### Point-in-time limits — do not overclaim
+
+- `rcept_dt` is documented as `공시 접수일자(YYYYMMDD)`.  There is no time-bearing field anywhere in
+  the documented response schema, so OpenDART supports day granularity only.
+- No field links a correction filing to the original filing's `rcept_no`.  The `rm` field carries
+  advisory codes only — `정` means a later correction exists, `철` means the report is deemed
+  withdrawn.  Never present these as a structured lineage join.
+- A record date, payment date, listing date, or ex-rights date is never written to `available_at`.
+- Whether OpenDART covers the 11 ETFs at all is unresolved: `corp_cls` has no fund bucket, and only
+  collective-investment registration sub-types are documented under `펀드공시`.  Fixture tests prove
+  the `corp_code`/`stock_code` mapping machinery works; they do not establish coverage.  No code or
+  document may imply otherwise until the owner supplies a key or the real `corpCode.xml`.
+
+### Rights and source of truth
+
+- The FSS states the service is free in principle.  Terms art. 16(1) place copyright in the API
+  service and related programs with the FSS, and art. 23(1) disclaim accuracy and completeness of
+  disclosure content, which is the filer's responsibility.
+- No clause permitting or restricting indefinite retention or redistribution of API responses was
+  located.  That is a gap, not permission.  Keep the configured entitlement reference and hash, and
+  do not expose Raw or Curated data beyond the owner's confirmed rights.
+- Primary references are the current OpenDART developer guide pages under
+  `opendart.fss.or.kr/guide/`, plus `docs/runbooks/stage6-source-contracts.md` for the recorded
+  quotes and gaps.  When sources conflict, choose the narrowest fail-closed behavior and record the
+  exact discrepancy in tests or the runbook.
