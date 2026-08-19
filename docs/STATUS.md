@@ -80,7 +80,7 @@ Stage5 계약 flag는 그대로 `vendor_snapshot=true`, `strict_pit=false`, `rea
 
 **Step 2 착수 — OpenDART fixture 어댑터 (2026-08-19).** 승인된 OpenDART 코어에 대해 Raw-only 어댑터를 구현했다. `ResponseKind`에 `DisclosureIndex`/`DisclosureEntityMaster`/`DisclosureEntityProfile`을 추가했고(`5309ffa`), 이들은 `EOD`/`CANDIDATE`/`CANDIDATE_MASTER`/`ALL_RESPONSE_KINDS` 어디에도 포함되지 않으며 `validate::validate_response`가 명시적으로 거부한다 — `CandidateMaster` 선례와 동일하게 Raw-only 증거를 기존 파이프라인에서 격리한다. 어댑터(`cc268d5`)는 reader trait + fixture 구조로, **HTTP 클라이언트와 네트워크 I/O가 존재하지 않고 의존성 추가도 없다.** live reader는 credential reference 없이 생성 불가한 stub이며 항상 fail-closed다. key는 query parameter이므로 `RequestMetadata` 생성 지점 단 한 곳에서 리댁션하고, sentinel key가 stored bytes·`batch.json`·manifest에 도달하지 않음을 테스트로 증명한다. 페이지네이션은 10페이지 상한, `total_count`/`total_page` 불변, 동일 bytes 거부, `013`은 batch를 만들지 않는 typed empty다. `corpCode.xml`은 ZIP magic 검사 후 바이트 그대로 저장하며 압축을 풀거나 파싱하지 않는다. 게이트는 fmt/clippy `-D warnings` clean, `cargo test -p market-data` 315 passed. **key가 발급되지 않았으므로 실제 요청은 한 건도 발생하지 않았다.**
 
-전체 워크스페이스 `cargo test --workspace --no-fail-fast`는 1,692 passed / 21 failed다. 실패 3개 타깃(`collectors research_worker` 6건, `job-queue paper_preview` 3건, `job-queue recommendation_compute` 12건)은 변경 이전 커밋 `603f9c7`에서 동일한 타깃·동일한 건수로 재현되므로 **Stage6 변경과 무관한 기존 실패**다. parquet/curated close loader와 factor snapshot 계열이며 별도 조사 대상이다.
+전체 워크스페이스 실패 21건은 §0.9에서 진단·해소했다. 당시 기록: `cargo test --workspace --no-fail-fast` 1,692 passed / 21 failed, 실패 3개 타깃(`collectors research_worker` 6, `job-queue paper_preview` 3, `job-queue recommendation_compute` 12). 변경 이전 커밋 `603f9c7`에서 동일 재현되어 Stage6와 무관함을 확인했다.
 
 ### 0.7 Stage6 D4 판정 — OpenDART는 ETF11을 커버하지 않는다 (2026-08-20)
 
@@ -118,6 +118,22 @@ KIND 검색은 순수 HTTP로 구동할 수 없다. 검색 타깃(`method=search
 1. **TLS — 그대로 둔다** (ADR-0004 D10, option 3). 두 번째 TLS 백엔드를 도입하지 않으므로 단일 TLS 스택 규칙이 유지된다. OpenDART는 ETF11에 대해 documentation-only다. `opendart-client`·게이트 CLI·어댑터 계약은 fixture 검증 상태로 트리에 남기며 운영에서 도달 불가다 — 유지 비용이 없고, 발행사가 공시 대상인 개별주식 범위가 열리면 바로 쓸 수 있다.
 2. **entitlement reference 확정** — `opendart:tou-art16-art23:personal-internal:2026-08-20`. 소유자가 개인 내부용으로 기록했다. KOGL 제2유형과 KRX 제11조③ 제약 사실 자체는 기록으로 유지한다.
 3. **KIND 접근 방식 — 로컬 필터** (ADR-0004 D11). 사이트 팝업 상태를 재현하지 않고, ETF 전용 목록을 날짜 범위로 받아 `종목명`으로 로컬 필터한다. D6는 불변이므로 **KIND 대량·정기 수집은 계속 운영자 주도**이고 여기서 승인된 바 없다. 확정된 것은 수집이 승인될 때 쓸 *메커니즘*과, 항목 10·11·12를 답한 소량 브라우저 진단의 허용이다.
+
+### 0.9 기존 실패 21건 진단과 해소 (2026-08-20)
+
+Stage6와 무관한 별건이지만 저장소 자체 품질 기준(전체 스위트 통과)을 깨고 있었다. **원인은 3개이고 그중 둘이 같은 커밋에서 나왔다.**
+
+커밋 `f815f63`("attest cumulative KIS datasets end to end", 2026-08-19)이 프로덕션을 두 곳에서 바꾸면서 대응 테스트 fixture를 갱신하지 않았다. `f815f63`은 `603f9c7`의 조상이므로 Stage6 이전 결함이 맞다.
+
+1. **`job-queue paper_preview` 3건 — stale fixture, 수정 완료(`b18c982`).** `CurateStore::new(root)`는 root를 그대로 보관하고 `curated_dir()`가 `curated`를 붙인다. `f815f63`이 `load_recommendation_closes`·`attest_preview_dataset`을 bare root를 넘기도록 바꿨는데 테스트의 `write_preview_bars`가 계속 `root.join("curated")`를 넘겨서, fixture는 `root/curated/curated/...`에 쓰이고 프로덕션은 `root/curated/...`를 읽었다. `MissingPrice { instrument_id: "069500.KRX" }`는 실제 부재였다. 테스트 2줄 수정, 프로덕션·어서션 무변경.
+2. **`job-queue recommendation_compute` 12건 — 환경 + stale fixture, 수정 완료(`fb6d12e`).** 먼저 Phase-0 fixture 생성기가 `pyarrow` 없는 python으로 죽어 12건이 났다. 저장소 안 `nt/.venv`(pyarrow 25.0.0)를 `PYTHON=`으로 지정하면 **12건이 8건으로 바뀌며 전부 다른 오류**가 된다 — `manifest has no exact curated artifact references`. 즉 pyarrow는 해결책이 아니라 더 깊은 결함을 가리고 있었다. 실제 원인은 테스트가 `artifacts: Vec::new()`로 manifest를 만든 것이다. fixture가 자기가 쓴 curated 파일을 실제 크기·SHA-256·스키마로 열거하도록 고쳤다. 해시는 하드코딩하지 않고 디스크에서 유도한다 — attestation의 존재 의미가 manifest가 실제와 일치하는 것이기 때문이다.
+3. **`collectors research_worker` 6건 — 환경, 미해결.** `DATABASE_URL`이 없고 `127.0.0.1:55432`에 아무것도 없으며 docker 소켓 권한이 없다. 이 테스트들은 워크스페이스 다수가 쓰는 `ScratchDb::create() -> Option` 조용한 skip 관례를 따르지 않고 `.expect()`로 패닉한다. **QA PostgreSQL 제공이 필요하고 코드 변경 사항이 아니다.**
+
+**커버리지 함정 2건을 함께 잡았다.** 수정 과정에서 두 테스트가 *엉뚱한 이유로* 통과하게 됐다. `semantically_invalid_parquet_value_is_integrity`는 크기·해시 불일치가 attestation 층에서 `Integrity`를 만족시켜 의미 검사에 도달하지 못했다 — 손상 파일이 여전히 유효 parquet이고 스키마가 그대로이므로 재attest해서 리더 경로를 복원하고, **오류가 attestation 계열이 아님을 어서션으로 고정**했다(향후 short-circuit이 다시 테스트를 공허하게 만들 수 없게). `malformed_parquet_is_integrity_not_a_retryable_store_error`는 임의 바이트가 크기·해시·스키마를 모두 실패하므로 `f815f63` 이후 리더 도달이 원리적으로 불가하다 — `Integrity`는 여전히 옳은 결과이고 더 이른 실패가 의도된 계약이므로, **리더 경로를 더 이상 커버하지 않는다는 사실을 주석으로 남겼다.**
+
+**결과: 1,692 passed / 21 failed → 1,751 passed / 6 failed.** 남은 6건은 전부 `research_worker`의 DB 환경 의존이다. 어떤 테스트도 약화·삭제·`#[ignore]` 처리하지 않았고 프로덕션 코드는 변경하지 않았다.
+
+**남긴 지뢰 1건.** `paper_valuation.rs:362`와 `paper_execution.rs:683`은 `dataset_root.join("curated")`를 쓰고 대응 테스트 fixture도 double-join이라 읽기·쓰기가 자체 정합이므로 현재 실패하지 않는다. 그러나 한 크레이트에 `CurateStore` 관례가 두 개 공존하는 상태다. DB 없이 검증할 수 없어 손대지 않았다. 또한 `ScratchDb::create()`의 조용한 skip 때문에 이 호스트의 "1,751 passed"는 실제 커버리지를 과대표시한다.
 
 **부분 승인 (2026-08-19).** 소유자가 OpenDART 코어(`list.json`/`list.xml`, `corpCode.xml`, `company.json`)를 fixture 기반 Raw 어댑터 작업 범위로 승인했다. 나머지 allowlist 행, 모든 계정 등록, 라이선스 해석은 계속 보류다. 어떤 소스에도 key가 발급되지 않았으므로 실제 요청은 한 건도 발생하지 않았다. KRX 미러 vs 원본 선택, KSD 포함 여부, KOGL 제2유형·KRX 제11조③ `entitlement_reference`는 미결정 상태로 남는다.
 
