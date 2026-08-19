@@ -62,12 +62,14 @@ if [ -n "$existing_source_batch_id" ]; then
   [[ "$existing_source_batch_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ||
     die '--existing-source-batch-id must be a lowercase UUID'
   [ "$mode" = execute ] || die '--existing-source-batch-id is allowed only with --execute'
-  if [ "$state_file_flag_seen" -eq 1 ] && [ "$state_file" = "$default_state_file" ]; then
-    die 'explicit existing-source recovery must use a separate --state-file, not the default range-raw state'
-  elif [ -z "$state_file_from_env" ]; then
+  if [ "$state_file_flag_seen" -eq 1 ]; then
+    [ "$state_file" != "$default_state_file" ] ||
+      die 'explicit existing-source recovery must use a separate --state-file, not the default range-raw state'
+  elif [ -n "$state_file_from_env" ]; then
+    [ "$state_file" != "$default_state_file" ] ||
+      die 'explicit existing-source recovery must use a separate --state-file, not the default range-raw state'
+  else
     state_file="/var/lib/lagrange/state/range-raw/existing-${existing_source_batch_id}.tsv"
-  elif [ "$state_file" = "$default_state_file" ]; then
-    die 'explicit existing-source recovery must use a separate --state-file, not the default range-raw state'
   fi
 fi
 

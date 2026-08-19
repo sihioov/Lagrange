@@ -167,16 +167,19 @@ EOF
     done
     [ "$(wc -l <"$state_file")" -eq 1 ]
     grep -Fq "V2" "$state_file"
-    existing_state=${state_file%.tsv}-existing.tsv
+    env_state=${state_file%.tsv}-existing-env.tsv
+    explicit_state=${state_file%.tsv}-existing-explicit.tsv
     : >"$fake_log"
     recovery_output=$(LAGRANGE_CODE_COMMIT="$commit" \
       FAKE_DOCKER_LOG="$fake_log" \
-      LAGRANGE_RANGE_RAW_STATE="$existing_state" \
+      LAGRANGE_RANGE_RAW_STATE="$env_state" \
       bash "$repo/scripts/ops/kis-range-raw-backfill.sh" \
-        --env-file "$recovery_env_file" --start 2020-01-31 --end 2020-02-03 \
+        --env-file "$recovery_env_file" --state-file "$explicit_state" \
+        --start 2020-01-31 --end 2020-02-03 \
         --existing-source-batch-id 00000000-0000-0000-0000-000000000001 --execute)
     grep -Fq "\"reused_existing_source\":true" <<<"$recovery_output"
-    grep -Fq "V3" "$existing_state"
+    grep -Fq "V3" "$explicit_state"
+    [ ! -e "$env_state" ]
     grep -Fq -- "--profile range-raw-recovery" "$fake_log"
     grep -Fq -- "run --rm --no-deps research-range-raw-recovery" "$fake_log"
     if grep -Fq -- "run --rm --no-deps research-range-raw " "$fake_log"; then
