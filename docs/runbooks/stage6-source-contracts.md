@@ -527,6 +527,15 @@ credentialed call, because read-only public fetching cannot settle it.
    the ETF is not a disclosure entity. `KODEX` and `상장지수` match nothing. See
    ADR-0004 D4 for the consequences; the archive was read only, never unzipped
    into the Raw zone.
+
+   Evidence is pinned by hash rather than by a path in volatile storage. The
+   retrieved archive is held outside the repository at
+   `~/lagrange-evidence/opendart-corpcode-20260820.zip`, mode `0400`,
+   `sha256:10a904780661b2c4002632c46b6d431be184f6a1cd6abed4a6a4c14f33be651d`.
+   It carries no credential — the key appears nowhere in the archive, checked
+   directly. **Scope caveat:** this is one snapshot of a master file DART
+   regenerates. The finding is "as of the 2026-08-20 master file", not a claim
+   about every past or future edition.
 5. **OpenDART quota.** Find the actual posted numeric limit referenced by
    Art. 10(4), from the key-management dashboard or the homepage notice. Do not
    inherit the third-party figure.

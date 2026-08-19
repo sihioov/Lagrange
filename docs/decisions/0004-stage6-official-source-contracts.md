@@ -150,6 +150,12 @@ Consequences, which are larger than this one decision:
   the identity join for any future individual-stock scope, where issuers *are*
   disclosure entities.
 
+Scope of the claim: this is one snapshot of a master file DART regenerates, so
+the finding is "as of the 2026-08-20 master file" and not a statement about
+every edition. The archive is retained outside the repository and pinned by
+hash in the runbook's checklist item 4, so the measurement is re-checkable
+without spending another live request.
+
 The reading below is retained because it records what was knowable from
 documentation alone, and why the measurement was the deciding step.
 
