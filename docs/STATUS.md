@@ -47,7 +47,7 @@
 
 ### 0.5 다음 작업 계획 — 아직 구현 시작 전
 
-1. KSD/SEIBro·KRX Open API·OpenDART·KIND의 ETF11 read-only endpoint/파일, 이용 조건, 필드, 페이징, 수정·철회 의미를 공식 문서로 고정한다.
+1. **(문서화 완료 — 승인 대기, §0.6 참조)** KSD/SEIBro·KRX Open API·OpenDART·KIND의 ETF11 read-only endpoint/파일, 이용 조건, 필드, 페이징, 수정·철회 의미를 공식 문서로 고정한다.
 2. KSD/OpenDART부터 fixture 기반 immutable Raw 어댑터를 구현한다. exact request/source metadata, `retrieved_at`, content hash, pagination 완전성을 검증하고 실제 key가 필요한 호출은 별도 운영 gate로 둔다.
 3. KRX/KIND 근거로 ETF11 종목 identity와 유효구간을 구성하고 KIS 가격↔KRX 가격, KSD 이벤트↔KIND/OpenDART 공시를 교차검증한다.
 4. 효력일·공개시각·정정 계보가 충족된 이벤트만 canonical Curated로 변환한다. 누락·충돌·애매한 기업행사는 typed blocker로 중단한다.
@@ -55,7 +55,28 @@
 6. 승인된 DatasetManifest와 five-pin을 확정하고 DB publication 및 recommendation/backtest/Paper의 동일 exact pin 사용을 검증한다.
 7. release scope를 적용하고 Auth0/TLS/API/Web/worker/reverse-proxy health, 재부팅, 백업 복원을 최종 확인한다.
 
-실제 구현은 primary agent가 감독하고 GPT-5.6 Luna max 하위 에이전트가 수행한다. 단순 검토에는 Luna xhigh를 사용할 수 있다. 모든 편집과 커밋은 `/data/workspace/lagrange`의 `main`에서만 수행하며, 단계별 검토와 검증을 통과한 뒤 다음 단계로 이동한다.
+실제 구현은 coordinator agent가 총괄하고 Sonnet 5 하위 에이전트가 조사·구현을 수행한다. 조사 결과는 파일로 직접 쓰지 않고 coordinator가 조립하며, 커밋은 coordinator만 수행한다. 모든 편집과 커밋은 `/data/workspace/lagrange`의 `main`에서만 수행하며, 단계별 검토와 검증을 통과한 뒤 다음 단계로 이동한다.
+
+### 0.6 Stage6 Step 1 결과 — 공식 소스 계약 문서화 (2026-08-19)
+
+Step 1을 문서 수준에서 완료했다. 구현·어댑터·신규 API 호출·계정 등록·key 발급·allowlist 변경·DB 변경은 **하나도 수행하지 않았다**. 산출물은 두 개다.
+
+- `docs/decisions/0004-stage6-official-source-contracts.md` — 결정 기록 (Status: Proposed, 운영자 승인 대기)
+- `docs/runbooks/stage6-source-contracts.md` — 소스별 증거·인용·gap·운영자 검증 체크리스트 15항목
+
+조사 방법은 공개 문서 페이지 조회로 한정했다. 계정 등록·key 발급·인증 호출·data endpoint 호출·form 제출·로그인은 전부 하지 않았고, 모든 주장에 fetch URL을 붙였으며 확인하지 못한 것은 추론 대신 typed gap으로 남겼다. 결정을 좌우하는 8개 주장은 별도 적대적 검증 패스로 재확인했다.
+
+**§0.4의 전제 3건이 공식 문서와 어긋나므로 정정한다.**
+
+1. **KRX Open API는 상장 효력일·시장조치의 API 기준이 될 수 없다.** 서비스 카탈로그는 7개 분류 31개 항목의 단일 표이며, 상장·상장폐지·상장변경·관리종목·매매거래정지 endpoint가 없고 ETF용 `종목기본정보`도 없다(`종목기본정보`는 유가증권/코스닥/코넥스 주식만). `ETF 일별매매정보`는 `2010-01-04`부터 존재한다. 해당 범주는 `data.krx.co.kr` 이슈통계와 KIND의 공식 다운로드로만 얻을 수 있다.
+2. **OpenDART는 최초 공시 *시각*을 제공하지 않는다.** 공시검색 API 응답 15개 필드 중 `rcept_dt`는 `공시 접수일자(YYYYMMDD)`이며 시각 필드가 스키마 어디에도 없다. 정정→원공시를 잇는 구조화 필드도 없고 `rm` 필드의 `정`/`철` 자문 코드만 있다. 배당 *결정* 이벤트 API는 존재하지 않는다(DS002의 `배당에 관한 사항`은 정기보고서의 실현 금액 요약이다).
+3. **KSD 직접 연결은 KIS `ksdinfo`에 대한 독립 교차검증이 아니다.** 둘 다 KSD 원천이므로 비교는 중계 충실도 검증이다. KIS 가격↔KRX 가격도 동일하게 KRX 원천이므로 독립 관측이 아니다.
+
+**정정된 가용시점 원칙.** 어떤 공식 소스도 sub-day 공표시각을 문서화하지 않으므로 Stage6는 **일 단위**로 설계한다. 이는 상한이며 추정이 아니다 — 확인된 시각 소스가 나오면 `available_at`을 좁힐 수만 있고 넓힐 수는 없다. `금융위원회_KRX상장종목정보`가 명문화한 "기준일자 익영업일 13시 이후 갱신"은 **서비스 갱신 주기**이지 레코드별 knowledge-time이 아니므로, 이 근거로 admit된 데이터는 `strict_pit`이 아니라 `documented_cadence`로 표시한다. 기업행사는 KSD가 *무엇을*(일정·팩터), 공시 소스가 *언제 알 수 있었는지*를 제공하는 결합으로만 구성하고, 공시 근거 가용일이 없는 이벤트는 Raw에만 남긴다.
+
+**권리 관계는 기록하되 결론내지 않는다.** KRX Open API 약관(2025-12-26 시행)은 비상업적 목적 한정(제6조②), 제3자 제공 금지(제11조②), 키당 1일 10,000회(제8조④)이며, **제11조③은 이용계약 종료 후 이미 제공받은 정보의 이용을 금지**해 immutable Raw 영구보존과 충돌한다. 같은 KRX 원천의 공공데이터포털 금융위 미러는 `이용허락범위: 제한 없음`, 무료이므로 해당 범주에서는 미러를 우선한다. KSD 계열 포털 데이터셋은 KOGL 제2유형(출처표시·상업적 이용금지)이다. 해석과 `entitlement_reference` 확정은 운영자 결정 사항이다.
+
+Stage5 계약 flag는 그대로 `vendor_snapshot=true`, `strict_pit=false`, `ready=false`다. Curated/DB publication/five-pin/추천·백테스트·Paper 연결은 계속 `BLOCKED`다. Step 2 진입에는 제안된 read-only allowlist 승인, 계정 등록 여부 결정, 라이선스 해석, 체크리스트 해소가 선행 조건이다.
 
 ---
 
