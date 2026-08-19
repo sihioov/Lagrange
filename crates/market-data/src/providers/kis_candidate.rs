@@ -205,7 +205,10 @@ impl<R: KisRead> KisCandidateProvider<R> {
                 | ResponseKind::Reference
                 | ResponseKind::Calendar
                 | ResponseKind::CorporateActions
-                | ResponseKind::CandidateMaster => {
+                | ResponseKind::CandidateMaster
+                | ResponseKind::DisclosureIndex
+                | ResponseKind::DisclosureEntityMaster
+                | ResponseKind::DisclosureEntityProfile => {
                     return Err(ProviderError::UnsupportedKind(*kind));
                 }
             }

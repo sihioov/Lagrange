@@ -247,7 +247,12 @@ impl RollingCandidateProvider {
                     "source_revision": "rolling-sector-v1"
                 })).collect::<Vec<_>>()
             }),
-            ResponseKind::CandidateMaster => return Err(ProviderError::UnsupportedKind(kind)),
+            ResponseKind::CandidateMaster
+            | ResponseKind::DisclosureIndex
+            | ResponseKind::DisclosureEntityMaster
+            | ResponseKind::DisclosureEntityProfile => {
+                return Err(ProviderError::UnsupportedKind(kind));
+            }
         })
     }
 }

@@ -52,6 +52,8 @@ pub const PROVIDER_KIS_CANDIDATE: &str = "kis-candidate";
 /// Provider id for canonical candidate documents derived from
 /// [`PROVIDER_KIS_CANDIDATE`] wire responses.
 pub const PROVIDER_KIS_CANDIDATE_NORMALIZED: &str = "kis-candidate-normalized";
+/// Canonical provider id of the OpenDART disclosure connector.
+pub const PROVIDER_OPENDART: &str = "opendart";
 /// Canonical market id of the Korean market.
 pub const MARKET_KR: &str = "kr";
 
@@ -85,6 +87,21 @@ pub enum ResponseKind {
     /// candidate-source evidence and must never enter the EOD reference
     /// normalizer or publication path.
     CandidateMaster,
+    /// OpenDART `list.json` disclosure search bodies.
+    ///
+    /// This is disclosure-source evidence and must never enter the EOD,
+    /// candidate, or publication paths.
+    DisclosureIndex,
+    /// The OpenDART `corpCode.xml` ZIP archive body (entity master).
+    ///
+    /// This is disclosure-source evidence and must never enter the EOD,
+    /// candidate, or publication paths.
+    DisclosureEntityMaster,
+    /// OpenDART `company.json` company-overview bodies.
+    ///
+    /// This is disclosure-source evidence and must never enter the EOD,
+    /// candidate, or publication paths.
+    DisclosureEntityProfile,
 }
 
 impl ResponseKind {
@@ -101,6 +118,9 @@ impl ResponseKind {
             Self::IndexMembership => "index_membership",
             Self::SectorClassification => "sector_classification",
             Self::CandidateMaster => "candidate_master",
+            Self::DisclosureIndex => "disclosure_index",
+            Self::DisclosureEntityMaster => "disclosure_entity_master",
+            Self::DisclosureEntityProfile => "disclosure_entity_profile",
         }
     }
 
@@ -117,6 +137,9 @@ impl ResponseKind {
             "index_membership" => Some(Self::IndexMembership),
             "sector_classification" => Some(Self::SectorClassification),
             "candidate_master" => Some(Self::CandidateMaster),
+            "disclosure_index" => Some(Self::DisclosureIndex),
+            "disclosure_entity_master" => Some(Self::DisclosureEntityMaster),
+            "disclosure_entity_profile" => Some(Self::DisclosureEntityProfile),
             _ => None,
         }
     }
@@ -150,10 +173,23 @@ pub const CANDIDATE_RESPONSE_KINDS: [ResponseKind; 5] = [
 /// candidate document pipeline; candidate-master ZIPs are Raw-only evidence.
 pub const CANDIDATE_MASTER_RESPONSE_KINDS: [ResponseKind; 1] = [ResponseKind::CandidateMaster];
 
+/// The separate OpenDART disclosure-source scope.  It is kept out of
+/// [`EOD_RESPONSE_KINDS`], [`CANDIDATE_RESPONSE_KINDS`], and
+/// [`CANDIDATE_MASTER_RESPONSE_KINDS`] because disclosure bodies are
+/// Raw-only evidence and must never be admitted into the EOD, candidate, or
+/// publication paths.
+pub const DISCLOSURE_RESPONSE_KINDS: [ResponseKind; 3] = [
+    ResponseKind::DisclosureIndex,
+    ResponseKind::DisclosureEntityMaster,
+    ResponseKind::DisclosureEntityProfile,
+];
+
 /// All generic licensed response classes, in stable order. This list is a
 /// schema registry, not a promise that every provider bundle supplies every
-/// class. The Raw-only candidate-master scope has its own registry above and
-/// is intentionally not accepted by generic JSON candidate collectors.
+/// class. The Raw-only candidate-master and disclosure scopes have their own
+/// registries above and are intentionally not accepted by generic JSON
+/// candidate collectors; this list therefore stays exactly
+/// [`EOD_RESPONSE_KINDS`] plus [`CANDIDATE_RESPONSE_KINDS`].
 pub const ALL_RESPONSE_KINDS: [ResponseKind; 9] = [
     ResponseKind::Bars,
     ResponseKind::Reference,

@@ -331,7 +331,10 @@ impl PublicationBundle {
                 ResponseKind::Fundamentals => DataBatchKind::Fundamentals,
                 ResponseKind::IndexMembership => DataBatchKind::IndexMembership,
                 ResponseKind::SectorClassification => DataBatchKind::SectorClassification,
-                ResponseKind::CandidateMaster => {
+                ResponseKind::CandidateMaster
+                | ResponseKind::DisclosureIndex
+                | ResponseKind::DisclosureEntityMaster
+                | ResponseKind::DisclosureEntityProfile => {
                     return Err(PublicationError::UnsupportedManifestScope {
                         expected_scopes: "krx/kr or kis-normalized/kr",
                         provider: manifest.provider.clone(),

@@ -11,8 +11,9 @@ use std::fs;
 
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{
-    ALL_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR,
-    PROVIDER_KRX, ResponseKind,
+    ALL_RESPONSE_KINDS, CANDIDATE_MASTER_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS,
+    DISCLOSURE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KRX,
+    ResponseKind,
 };
 use market_data::provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
@@ -273,4 +274,50 @@ fn fetch_request_defaults_to_eod_and_allows_candidate_capabilities() {
         EOD_RESPONSE_KINDS.len() + CANDIDATE_RESPONSE_KINDS.len()
     );
     let _: KrxMode = KrxMode::Credentialed(CredentialRef::new("env:KRX_CREDENTIAL_REF"));
+}
+
+#[test]
+fn disclosure_response_kinds_are_held_out_of_eod_and_candidate_pipelines() {
+    let disclosure_kinds = [
+        ResponseKind::DisclosureIndex,
+        ResponseKind::DisclosureEntityMaster,
+        ResponseKind::DisclosureEntityProfile,
+    ];
+
+    for kind in disclosure_kinds {
+        assert!(
+            !EOD_RESPONSE_KINDS.contains(&kind),
+            "{kind} must not be admitted into EOD_RESPONSE_KINDS"
+        );
+        assert!(
+            !CANDIDATE_RESPONSE_KINDS.contains(&kind),
+            "{kind} must not be admitted into CANDIDATE_RESPONSE_KINDS"
+        );
+        assert!(
+            !CANDIDATE_MASTER_RESPONSE_KINDS.contains(&kind),
+            "{kind} must not be admitted into CANDIDATE_MASTER_RESPONSE_KINDS"
+        );
+    }
+
+    assert_eq!(DISCLOSURE_RESPONSE_KINDS.len(), disclosure_kinds.len());
+    for kind in disclosure_kinds {
+        assert!(
+            DISCLOSURE_RESPONSE_KINDS.contains(&kind),
+            "DISCLOSURE_RESPONSE_KINDS must contain {kind}"
+        );
+    }
+
+    // Raw-only evidence scopes are held out of the generic schema registry, the
+    // same way `CandidateMaster` is: a disclosure kind must never be reachable
+    // by iterating the generic registry.
+    for kind in disclosure_kinds {
+        assert!(
+            !ALL_RESPONSE_KINDS.contains(&kind),
+            "{kind} must not be admitted into ALL_RESPONSE_KINDS"
+        );
+    }
+    assert_eq!(
+        ALL_RESPONSE_KINDS.len(),
+        EOD_RESPONSE_KINDS.len() + CANDIDATE_RESPONSE_KINDS.len()
+    );
 }

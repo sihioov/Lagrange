@@ -209,6 +209,16 @@ pub fn validate_response(kind: ResponseKind, bytes: &[u8]) -> Result<(), Validat
                     .to_owned(),
             });
         }
+        ResponseKind::DisclosureIndex
+        | ResponseKind::DisclosureEntityMaster
+        | ResponseKind::DisclosureEntityProfile => {
+            return Err(ValidationError {
+                kind,
+                reason: "disclosure-source evidence is not accepted by the EOD/candidate \
+                    structural validator"
+                    .to_owned(),
+            });
+        }
     }
     Ok(())
 }
