@@ -69,6 +69,29 @@ data this project needs. OpenDART is `YYYYMMDD` with no time field. KSD/SEIBro
 public datasets expose schedule dates only. KIND showed date-only values on the
 disclosure documents sampled.
 
+**Amended 2026-08-20 — KIND supplies a minute-granular posting time, and D1
+tightens accordingly.** The gap below was closed by driving KIND in a real
+browser engine, which its search requires. The disclosure list carries a `시간`
+column holding `YYYY-MM-DD HH:MM` per disclosure. Three checks make it usable
+rather than incidental: the values **vary within one result page** (`16:11`
+alongside `16:09`), so it is a per-record value and not a constant or a render
+artifact; they are **present historically** — 15 of 15 rows in a 2020-03-31
+window carried a time, and our range starts 2020-01-31; and the range control
+accepts `2020-01-31`.
+
+So for KIND-sourced disclosures `available_at` may be minute-granular, which is
+exactly the tightening D1 anticipated and permits. What does **not** change: the
+prohibition on backdating from a record, payment, listing, or ex-rights date; and
+the treatment of feed data, where a documented refresh cadence still yields
+`documented_cadence` rather than `strict_pit` (D2). Two sources of imprecision
+remain recorded rather than assumed away — the timezone of the displayed value is
+not documented on the page, and correction *versions* are enumerable only at day
+granularity (see D4's KIND dependency and the runbook's item 11).
+
+The original day-granularity reasoning is kept below, because it is what the
+documentation alone supported and it explains why the browser check was the
+deciding step.
+
 Stage6 therefore designs for day granularity. Two things this decision does
 **not** do:
 

@@ -382,6 +382,29 @@ tracked at list level. On the sampled documents, only a textual notice appeared
 — with no machine-followable reference to the pre-correction filing. Whether
 such a field exists is a gap.
 
+### How KIND was actually inspected
+
+KIND's search cannot be driven over plain HTTP. The form page itself serves real
+HTML, and its search target is discoverable (`method=searchDetailsSub`,
+`forward=details_sub`), but the POST is refused with a generic
+`잠시 후 다시 이용해 주세요` page even with a session cookie — the endpoint needs
+state the page's JavaScript produces. Guessing at parameters was stopped rather
+than continued, since that probing is the automated-collection behaviour this
+document treats as prohibited.
+
+The findings recorded here were instead obtained by driving the site's **own**
+search control in a real browser engine (Playwright with headless Chromium,
+installed outside the repository under `~/tools/kind-probe`; the missing
+`libasound.so.2` was extracted into `~/tools/pwlibs` without root). That
+distinction matters: the page's `fnSearch()` was invoked rather than a
+reconstructed request, no export was downloaded, and no dataset was collected —
+only rendered table structure was read, a handful of page loads in total.
+
+ADR-0004 D6 is unchanged: bulk or scheduled collection stays operator-driven.
+What is established is that a browser engine is the only workable way to inspect
+this source, and that a small number of diagnostic page loads answered the
+questions that documentation could not.
+
 ### Rights
 
 KIND's footer links to KRX pages on `info.krx.co.kr`, not to KIND-specific
@@ -556,13 +579,32 @@ credentialed call, because read-only public fetching cannot settle it.
    documentation, establish whether the six `ksdinfo` endpoints relay KSD data
    and whether any response field carries an announcement time. This decides
    whether ADR-0004 D5 can be satisfied without a new source.
-10. **KIND receipt time.** Run a query on 상세검색 in a real browser and inspect
-    the results-table column headers for a time field. This is the open question
-    that could tighten ADR-0004 D1.
-11. **KIND correction linkage.** Open a known `[정정]` filing and record whether
-    a `관련공시` or original-`acptNo` reference exists in any followable form.
-12. **KIND date reach.** Confirm the date pickers on 상세검색, the ETF
-    disclosure page, and 관리종목 accept `2020-01-31` as a start date.
+10. ~~**KIND receipt time.**~~ **CLOSED 2026-08-20 — answer: yes, to the
+    minute.** KIND's search will not run over plain HTTP (the POST is refused
+    with a generic retry page even with a session cookie), so it was driven in a
+    real browser engine. The disclosure list's header row is
+    `번호 | 시간 | 회사명 | 공시제목 | 제출인 | 차트/주가`, and `시간` holds
+    `YYYY-MM-DD HH:MM` per disclosure. Verified as a real per-record value
+    rather than a constant: times differ within one page (`2020-03-31 16:11`
+    alongside `16:09`). Verified historically: 15 of 15 rows in a 2020-03-31
+    window carried a time. This tightens ADR-0004 D1 to minute granularity for
+    KIND-sourced disclosures. Two residual imprecisions are recorded, not
+    assumed away — the displayed value's timezone is not stated on the page, and
+    correction versions are enumerable only by date (item 11).
+11. **KIND correction linkage — PARTIALLY ANSWERED 2026-08-20.** The
+    disclosure viewer exposes the whole version chain in a `mainDoc` select:
+    the original plus each `[정정]` revision, each labelled with its date
+    (observed: `2025.11.05` → `11.14` → `11.25` → `12.04` → `12.17` →
+    `2026.01.22`). So a correction chain **is** enumerable, and ordered. Three
+    things are still open: the version labels carry **date only, no time**; no
+    `관련공시` hyperlink or original-`acptNo` reference was present; and an
+    `orgDiscls` ("기공시선택") select exists but was empty for the sampled
+    document, so its role is unknown. Remaining work is to establish whether the
+    version entries can be resolved to individual acceptance numbers.
+12. ~~**KIND date reach.**~~ **CLOSED 2026-08-20 — answer: yes.** The 상세검색
+    and ETF-disclosure range controls accept `2020-01-31`, and a 2020-Q1 query
+    returned 2020-03-31 rows, so the reach is real rather than merely accepted
+    by the input.
 13. **Export byte-stability.** For KIND and for `data.krx.co.kr`, run an
     identical query over a closed historical window on two different days,
     download both exports, and hash them. If a generation timestamp is embedded,
@@ -582,6 +624,17 @@ credentialed call, because read-only public fetching cannot settle it.
     row or omitted when there is no remark. The adapter fails closed with a
     typed `UndocumentedShape` on a mismatch rather than mis-parsing, so this is a
     first-use verification, not a correctness risk.
+17. **KIND per-issue filtering.** Neither typing a six-digit code into
+    `searchCorpName` nor setting the hidden `repIsuSrtCd` filtered the result
+    set — both returned the unfiltered first page, which is how an earlier
+    reading that "ETF11 resolves" turned out to be the unfiltered list's first
+    row rather than a match. The site's own issue-code popup evidently sets
+    further state that was not reproduced, and probing for it was stopped rather
+    than guessed at. **Design note that may make this moot:** the ETF-scoped
+    disclosure list is already restricted to ETF-type issues and carries 종목명
+    per row, so a date-ranged fetch filtered locally by name would serve the
+    pipeline without the popup at all. Confirm the intended approach before
+    building either.
 
 ## Read-only allowlist — approval state
 
