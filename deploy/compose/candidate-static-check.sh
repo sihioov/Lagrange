@@ -83,6 +83,7 @@ grep -Fq 'published candidate feed must contain exactly five items' "$analysis_u
   || die 'publication-time exact entitlement rechecks are incomplete'
 
 commit=0123456789abcdef0123456789abcdef01234567
-LAGRANGE_CODE_COMMIT=$commit docker compose --env-file "$env_file" -f "$compose" config --quiet
+LAGRANGE_CODE_COMMIT=$commit RANGE_RAW_BATCH_ID=compose-config-disabled \
+  docker compose --env-file "$env_file" -f "$compose" config --quiet
 
 echo 'CANDIDATE_STATIC: PASS'

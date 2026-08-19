@@ -264,7 +264,36 @@ pub async fn ingest_kis_daily_bars_range<R: KisRead>(
     now: UtcTimestamp,
     entitlement_reference: Option<&str>,
 ) -> Result<IngestOutcome, IngestError> {
-    let batch_id = BatchId::generate();
+    ingest_kis_daily_bars_range_with_batch_id(
+        store,
+        provider,
+        market,
+        start,
+        end,
+        now,
+        entitlement_reference,
+        BatchId::generate(),
+    )
+    .await
+}
+
+/// Same Raw-only range capture with an explicit caller-owned batch identity.
+///
+/// A guarded operator wrapper may persist this identity before starting a
+/// process and reuse it after interruption. Raw remains immutable: a retry
+/// with different bytes returns the normal store conflict rather than
+/// overwriting the original evidence.
+#[allow(clippy::too_many_arguments)]
+pub async fn ingest_kis_daily_bars_range_with_batch_id<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    market: &str,
+    start: TradingDate,
+    end: TradingDate,
+    now: UtcTimestamp,
+    entitlement_reference: Option<&str>,
+    batch_id: BatchId,
+) -> Result<IngestOutcome, IngestError> {
     let envelopes = provider
         .fetch_daily_bars_range(market, start, end, now, batch_id)
         .await?;

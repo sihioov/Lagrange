@@ -95,6 +95,10 @@ if [ "$mode" != plan ]; then
 fi
 
 compose() {
+  # The profile-gated range service is never started by this workflow, but
+  # Compose expands its interpolation even when the profile is inactive.
+  # Keep a non-secret config-only sentinel here; the isolated Stage5 wrapper
+  # always replaces it with its deterministic UUID before a range run.
   if [ "$scope" = infrastructure ]; then
     # Compose expands the complete file even when only infrastructure services
     # are selected. Keep deferred worker settings out of the operator env
@@ -107,9 +111,11 @@ compose() {
     BACKTEST_MAX_QUEUED_BACKTESTS=0 \
     BACKTEST_RECONCILE_GRACE_SECS=0 \
     BACKTEST_RECONCILE_INTERVAL_SECS=0 \
+    RANGE_RAW_BATCH_ID=compose-config-disabled \
       docker compose --env-file "$env_file" -f "$compose_file" "$@"
   else
-    docker compose --env-file "$env_file" -f "$compose_file" "$@"
+    RANGE_RAW_BATCH_ID=compose-config-disabled \
+      docker compose --env-file "$env_file" -f "$compose_file" "$@"
   fi
 }
 

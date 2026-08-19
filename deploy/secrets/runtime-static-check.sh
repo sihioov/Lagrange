@@ -25,7 +25,7 @@ if git check-ignore -q "$provision"; then
   die 'provisioner is unexpectedly ignored by Git'
 fi
 bash -n "$provision" || die "provisioner has shell syntax errors"
-grep -Fq -- '--scope infrastructure|serving-prereqs|backfill|release' "$provision" \
+grep -Fq -- '--scope infrastructure|serving-prereqs|backfill|range-raw|release' "$provision" \
   || die 'provisioner scope contract is absent'
 grep -Fq 'scope=$scope' "$provision" \
   || die 'provisioner must report the selected scope'
@@ -70,7 +70,7 @@ grep -Fq 'deploy/secrets/provision-runtime-secrets.sh' "$secrets_readme" \
   || die 'secret documentation must reference the provisioner'
 for service in reverse-proxy api-server db-role-bootstrap db-migrate postgres \
   research-schema-check research-worker recommendation-runner candidate-runner \
-  nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler; do
+  research-range-raw nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler; do
   grep -Fq "/$service/" "$compose" \
     || die "Compose is missing service-specific runtime path for $service"
 done
@@ -146,7 +146,9 @@ for expected in \
   'paper-scheduler db_admin_password db_admin_password 10001 10001 0440 yes' \
   'paper-scheduler db_audit_password db_audit_password 10001 10001 0440 yes' \
   'research-worker kis_app_key kis_app_key 10001 10001 0440 yes' \
-  'research-worker kis_app_secret kis_app_secret 10001 10001 0440 yes'; do
+  'research-worker kis_app_secret kis_app_secret 10001 10001 0440 yes' \
+  'research-range-raw kis_app_key kis_app_key 10001 10001 0440 yes' \
+  'research-range-raw kis_app_secret kis_app_secret 10001 10001 0440 yes'; do
   read -r service target source uid gid mode single_line <<<"$expected"
   grep -Eq "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]]+$target[[:space:]]+$source[[:space:]]+$uid[[:space:]]+$gid[[:space:]]+$mode[[:space:]]+$single_line$" "$provision" \
     || die "infrastructure provisioner inventory missing: $expected"

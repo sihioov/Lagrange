@@ -8,7 +8,8 @@
 # The infrastructure scope installs only the DB/bootstrap/schema copies needed
 # before KIS credentials or curated dataset approval; serving-prereqs stages the
 # non-KIS serving copies without starting anything; backfill adds the
-# research-worker KIS copies, and release installs the complete inventory.
+# research-worker KIS copies; range-raw installs only the isolated DB-free
+# Stage5 KIS pair; and release installs the complete inventory.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -25,7 +26,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage: deploy/secrets/provision-runtime-secrets.sh
-       [--scope infrastructure|serving-prereqs|backfill|release]
+       [--scope infrastructure|serving-prereqs|backfill|range-raw|release]
 
   --scope infrastructure
                     Install only PostgreSQL/bootstrap/schema runtime copies;
@@ -37,6 +38,8 @@ Usage: deploy/secrets/provision-runtime-secrets.sh
                     RESEARCH_*, entitlement, or dataset-pin values.
   --scope backfill  Add research-worker runtime copies for the pre-approval
                     KIS backfill.
+  --scope range-raw Install only the isolated research-range-raw KIS pair;
+                    no DB, Curated, Auth0, or TLS copies are created.
   --scope release   Install every Compose service secret (default).
 EOF
 }
@@ -44,7 +47,7 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --scope)
-      [ "$#" -ge 2 ] || die '--scope needs infrastructure, serving-prereqs, backfill, or release'
+      [ "$#" -ge 2 ] || die '--scope needs infrastructure, serving-prereqs, backfill, range-raw, or release'
       scope=$2
       shift 2
       ;;
@@ -53,8 +56,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$scope" in
-  infrastructure|serving-prereqs|backfill|release) ;;
-  *) die '--scope must be infrastructure, serving-prereqs, backfill, or release' ;;
+  infrastructure|serving-prereqs|backfill|range-raw|release) ;;
+  *) die '--scope must be infrastructure, serving-prereqs, backfill, range-raw, or release' ;;
 esac
 
 [ "$(id -u)" -eq 0 ] || die "must run as root to assign service UID ownership"
@@ -172,6 +175,10 @@ case "$scope" in
     add_copy research-worker db_research_password db_research_password 10001 10001 0440 yes
     add_copy research-worker kis_app_key kis_app_key 10001 10001 0440 yes
     add_copy research-worker kis_app_secret kis_app_secret 10001 10001 0440 yes
+    ;;
+  range-raw)
+    add_copy research-range-raw kis_app_key kis_app_key 10001 10001 0440 yes
+    add_copy research-range-raw kis_app_secret kis_app_secret 10001 10001 0440 yes
     ;;
   release)
     add_serving_copies

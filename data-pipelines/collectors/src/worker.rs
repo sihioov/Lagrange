@@ -20,13 +20,17 @@ use kis_client::{
     TokenManager, TokioSleeper,
 };
 use market_data::contract::{
-    FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, ResponseKind,
+    FetchMode, MARKET_KR, PROVIDER_KIS_DAILY_RANGE, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX,
+    ResponseKind,
 };
-use market_data::ingest::IngestRequest;
+use market_data::ingest::{IngestRequest, ingest_kis_daily_bars_range_with_batch_id};
 use market_data::normalize::NormalizeError;
 use market_data::provider::{EodProvider, KrxProvider, ProviderError, RecordedBundle};
-use market_data::providers::kis::KisProvider;
-use market_data::storage::{RawStore, StoreError};
+use market_data::providers::kis::{KR_ETF_CORE_SYMBOLS, KisProvider};
+use market_data::range_normalize::{
+    ExpectedRangeSessions, RangeNormalizeError, normalize_kis_daily_range_batch,
+};
+use market_data::storage::{ManifestEntry, RawStore, StoreError};
 use market_data::{
     CANDIDATE_RESPONSE_KINDS, CurateError, CurateRequest, CurateStore, curate_generation,
     curation_inputs_from_raw, curation_inputs_from_raw_entries, ingest_bundle_with_kinds,
@@ -59,6 +63,9 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(15);
 const CHILD_OUTPUT_LIMIT: u64 = 4096;
 const CHILD_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 const KIS_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const DAILY_RANGE_ENDPOINT: &str =
+    "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice";
+const DAILY_RANGE_TR_ID: &str = "FHKST03010100";
 const KIS_READ_QUOTA: Quota = Quota {
     capacity: 1,
     refill_per_sec: 1,
@@ -121,6 +128,8 @@ pub const WORKER_ENV_KEYS: &[&str] = &[
     "DB_PASSWORD_FILE",
     "KIS_APP_KEY_FILE",
     "KIS_APP_SECRET_FILE",
+    "LAGRANGE_CODE_COMMIT",
+    "RANGE_RAW_BATCH_ID",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,6 +246,8 @@ pub enum WorkerError {
     },
     #[error("research pipeline failed")]
     Pipeline(#[source] PipelineError),
+    #[error("KIS daily range normalization failed")]
+    RangeNormalize(#[source] RangeNormalizeError),
     #[error("candidate source pipeline failed")]
     CandidatePipeline(#[source] CandidatePipelineError),
     #[error("price curation failed")]
@@ -256,6 +267,10 @@ impl WorkerError {
                 FailureClass::Retryable
             }
             Self::Pipeline(source) => source.failure_class(),
+            Self::RangeNormalize(source) => match source {
+                RangeNormalizeError::Store(error) => store_failure_class(error),
+                _ => FailureClass::Permanent,
+            },
             Self::CandidatePipeline(CandidatePipelineError::Publish(source)) => {
                 if source.is_retryable() {
                     FailureClass::Retryable
@@ -326,6 +341,7 @@ impl WorkerError {
                 | crate::PipelineStage::Publish => WorkerPhase::Publication,
                 crate::PipelineStage::Ingest => WorkerPhase::Ingest,
             },
+            Self::RangeNormalize(_) => WorkerPhase::Ingest,
             Self::CandidatePipeline(_) | Self::Curation(_) => WorkerPhase::Publication,
         }
     }
@@ -335,6 +351,9 @@ impl WorkerError {
             Self::Pipeline(source) => source.batch_id(),
             Self::ChildFailure { batch_id, .. } => *batch_id,
             Self::Cycle { source, .. } => source.batch_id(),
+            Self::RangeNormalize(RangeNormalizeError::ExistingBatchConflict {
+                batch_id, ..
+            }) => Some(*batch_id),
             _ => None,
         }
     }
@@ -379,6 +398,7 @@ impl WorkerError {
                 file_name: Some(&diagnostic.file_name),
             }),
             Self::Pipeline(PipelineError::Normalize { source, .. }) => normalize_diagnostic(source),
+            Self::RangeNormalize(source) => Some(range_normalize_diagnostic(source)),
             Self::ChildFailure {
                 error_code,
                 endpoint,
@@ -399,6 +419,43 @@ impl WorkerError {
             Self::Cycle { source, .. } => source.safe_diagnostic(),
             _ => None,
         }
+    }
+}
+
+fn range_normalize_diagnostic(error: &RangeNormalizeError) -> WorkerDiagnostic<'static> {
+    let error_code = match error {
+        RangeNormalizeError::Store(source) => normalize_store_error_code(source),
+        RangeNormalizeError::UnsupportedScope { .. } => "KIS_RANGE_UNSUPPORTED_SCOPE",
+        RangeNormalizeError::UnsupportedMode => "KIS_RANGE_UNSUPPORTED_MODE",
+        RangeNormalizeError::InvalidExpectedSessions { .. } => {
+            "KIS_RANGE_SESSION_SELECTION_INVALID"
+        }
+        RangeNormalizeError::CalendarArtifact { .. } => "KIS_RANGE_CALENDAR_INVALID",
+        RangeNormalizeError::CalendarRangeOutOfBounds { .. } => "KIS_RANGE_CALENDAR_RANGE_INVALID",
+        RangeNormalizeError::SourceDateMismatch { .. } => "KIS_RANGE_SOURCE_DATE_MISMATCH",
+        RangeNormalizeError::MissingSourceFiles => "KIS_RANGE_SOURCE_FILES_MISSING",
+        RangeNormalizeError::UnexpectedSourceKind { .. } => "KIS_RANGE_SOURCE_KIND_INVALID",
+        RangeNormalizeError::UnexpectedEndpoint { .. } => "KIS_RANGE_ENDPOINT_INVALID",
+        RangeNormalizeError::InvalidQuery { .. } => "KIS_RANGE_QUERY_INVALID",
+        RangeNormalizeError::InvalidContinuation { .. } => "KIS_RANGE_CONTINUATION_INVALID",
+        RangeNormalizeError::Malformed { .. } => "KIS_RANGE_RESPONSE_MALFORMED",
+        RangeNormalizeError::InvalidField { .. } => "KIS_RANGE_FIELD_INVALID",
+        RangeNormalizeError::DateOutOfQuery { .. } => "KIS_RANGE_DATE_OUT_OF_QUERY",
+        RangeNormalizeError::ReversedOrder { .. } => "KIS_RANGE_ORDER_INVALID",
+        RangeNormalizeError::DuplicateRow { .. } => "KIS_RANGE_DUPLICATE_ROW",
+        RangeNormalizeError::ConflictingRow { .. } => "KIS_RANGE_CONFLICTING_ROW",
+        RangeNormalizeError::EvidenceSizeMismatch { .. } => "KIS_RANGE_EVIDENCE_SIZE_INVALID",
+        RangeNormalizeError::OutOfSession { .. } => "KIS_RANGE_OUT_OF_SESSION",
+        RangeNormalizeError::SessionCoverage { .. } => "KIS_RANGE_SESSION_COVERAGE_INVALID",
+        RangeNormalizeError::ExistingBatchConflict { .. } => "KIS_RANGE_BATCH_CONFLICT",
+        RangeNormalizeError::Serialization(_) => "KIS_RANGE_SERIALIZATION_FAILED",
+    };
+    WorkerDiagnostic {
+        error_code,
+        endpoint: None,
+        http_status: None,
+        response_kind: None,
+        file_name: None,
     }
 }
 
@@ -832,6 +889,20 @@ pub(crate) fn build_production_kis_provider(
             .ok_or(WorkerError::InvalidConfig {
                 key: "KIS_APP_SECRET_FILE",
             })?;
+    build_production_kis_provider_from_files(app_key_path, app_secret_path)
+}
+
+/// Build the live KIS read client from mounted credential paths only.
+///
+/// This intentionally does not accept `ResearchWorkerConfig`: that config
+/// carries database settings and is therefore unsuitable for the isolated
+/// historical Raw-only command. Credential values remain in
+/// `SystemCredentialSource` and are read by the token issuer/client only when
+/// the first request is made.
+fn build_production_kis_provider_from_files(
+    app_key_path: &Path,
+    app_secret_path: &Path,
+) -> Result<LiveKisProvider, WorkerError> {
     let app_key_ref = CredentialRef::file(app_key_path.to_string_lossy().into_owned());
     let app_secret_ref = CredentialRef::file(app_secret_path.to_string_lossy().into_owned());
 
@@ -1392,6 +1463,645 @@ pub async fn run_credentialed_backfill_session_dates_stream<W: io::Write>(
         processed = processed.saturating_add(1);
     }
     Ok(processed)
+}
+
+/// Captures and normalizes one bounded historical daily-bars range without
+/// opening a database or constructing a publication/Curated sink.
+///
+/// This is intentionally a separate CLI seam from the production EOD worker.
+/// It accepts only the fixed 11-ETF daily-itemchartprice capability, validates
+/// the embedded approved XKRX session selection, and leaves the result under
+/// the isolated Raw scopes `kis-daily-range` and
+/// `kis-daily-range-normalized`. The source remains a current vendor snapshot
+/// acquired at the recorded UTC time; this function never makes a strict PIT
+/// claim or fabricates adjusted prices/actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DailyRangeRawSummary {
+    pub source_batch_id: BatchId,
+    pub normalized_count: usize,
+    pub start: TradingDate,
+    pub end: TradingDate,
+}
+
+pub async fn run_credentialed_daily_range_raw_stream<W: io::Write>(
+    values: &HashMap<String, String>,
+    start: TradingDate,
+    end: TradingDate,
+    writer: &mut W,
+) -> Result<DailyRangeRawSummary, WorkerError> {
+    let config = DailyRangeRawConfig::from_map(values)?;
+    let expected =
+        ExpectedRangeSessions::approved_xkrx(start, end).map_err(WorkerError::RangeNormalize)?;
+    if expected.sessions.is_empty() {
+        return Err(WorkerError::InvalidConfig {
+            key: "daily-range-session-selection",
+        });
+    }
+    let store = RawStore::new(&config.raw_root);
+
+    // Reconcile the immutable source manifest first. A matching source range
+    // is reused verbatim, so a retry after a successful capture never creates
+    // another KIS batch or obtains another token. Any malformed matching
+    // evidence is passed to the normalizer and fails closed rather than being
+    // silently replaced by a fresh network capture.
+    let source = find_existing_daily_range_source(
+        &store,
+        start,
+        end,
+        config.entitlement_reference.as_str(),
+        config.batch_id,
+    )?;
+    let source = match source {
+        Some(source) => source,
+        None => {
+            let provider = build_production_kis_provider_from_files(
+                &config.app_key_file,
+                &config.app_secret_file,
+            )?;
+            ingest_kis_daily_bars_range_with_batch_id(
+                &store,
+                &provider,
+                MARKET_KR,
+                start,
+                end,
+                UtcTimestamp::now(),
+                Some(config.entitlement_reference.as_str()),
+                config.batch_id,
+            )
+            .await
+            .map_err(|source| WorkerError::Pipeline(PipelineError::Ingest { source }))?
+            .entry
+        }
+    };
+
+    if source.entitlement_reference.as_deref() != Some(config.entitlement_reference.as_str()) {
+        return Err(WorkerError::RangeNormalize(
+            RangeNormalizeError::ExistingBatchConflict {
+                batch_id: source.batch_id,
+                reason: "committed range source entitlement does not match the run identity"
+                    .to_owned(),
+            },
+        ));
+    }
+
+    let outcomes = normalize_kis_daily_range_batch(&store, &source, &expected)
+        .map_err(WorkerError::RangeNormalize)?;
+    for outcome in &outcomes {
+        serde_json::to_writer(
+            &mut *writer,
+            &BackfillItemWire {
+                status: "event",
+                event: "normalized",
+                phase: "raw_only_normalization",
+                batch_id: outcome.entry.batch_id,
+                target_date: outcome.session_date.to_iso(),
+            },
+        )
+        .map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Ingest,
+        })?;
+        writer.write_all(b"\n").map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Ingest,
+        })?;
+        writer.flush().map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Ingest,
+        })?;
+    }
+    Ok(DailyRangeRawSummary {
+        source_batch_id: source.batch_id,
+        normalized_count: outcomes.len(),
+        start,
+        end,
+    })
+}
+
+#[derive(Debug)]
+struct DailyRangeRawConfig {
+    raw_root: PathBuf,
+    entitlement_reference: String,
+    app_key_file: PathBuf,
+    app_secret_file: PathBuf,
+    batch_id: BatchId,
+}
+
+impl DailyRangeRawConfig {
+    fn from_map(values: &HashMap<String, String>) -> Result<Self, WorkerError> {
+        if required(values, "APP_ENV")? != "production"
+            || required(values, "RESEARCH_FETCH_MODE")? != "credentialed"
+        {
+            return Err(WorkerError::InvalidConfig {
+                key: "daily-range-environment",
+            });
+        }
+        let commit = required(values, "LAGRANGE_CODE_COMMIT")?;
+        if !is_git_commit(commit) {
+            return Err(WorkerError::InvalidConfig {
+                key: "LAGRANGE_CODE_COMMIT",
+            });
+        }
+        if values
+            .get("RESEARCH_CANDIDATE_ENABLED")
+            .map(String::as_str)
+            .unwrap_or("false")
+            != "false"
+        {
+            return Err(WorkerError::InvalidConfig {
+                key: "RESEARCH_CANDIDATE_ENABLED",
+            });
+        }
+        let raw_root = PathBuf::from(nonempty(values, "RESEARCH_RAW_ROOT")?);
+        if !raw_root.is_absolute() {
+            return Err(WorkerError::InvalidConfig {
+                key: "RESEARCH_RAW_ROOT",
+            });
+        }
+        let entitlement_reference = nonempty(values, "RESEARCH_ENTITLEMENT_REFERENCE")?.to_owned();
+        if entitlement_reference.len() > 256 {
+            return Err(WorkerError::InvalidConfig {
+                key: "RESEARCH_ENTITLEMENT_REFERENCE",
+            });
+        }
+        let app_key = PathBuf::from(nonempty(values, "KIS_APP_KEY_FILE")?);
+        let app_secret = PathBuf::from(nonempty(values, "KIS_APP_SECRET_FILE")?);
+        if !app_key.is_absolute() || !app_secret.is_absolute() {
+            return Err(WorkerError::InvalidConfig {
+                key: "KIS_APP_KEY_FILE",
+            });
+        }
+        // Validate shape without exposing values. The live client reads these
+        // files lazily through SystemCredentialSource on the first request.
+        read_nonempty_secret(
+            &|path: &Path| std::fs::read_to_string(path),
+            &app_key,
+            "KIS_APP_KEY_FILE",
+        )?;
+        read_nonempty_secret(
+            &|path: &Path| std::fs::read_to_string(path),
+            &app_secret,
+            "KIS_APP_SECRET_FILE",
+        )?;
+        let batch_id = nonempty(values, "RANGE_RAW_BATCH_ID")?
+            .parse()
+            .map_err(|_| WorkerError::InvalidConfig {
+                key: "RANGE_RAW_BATCH_ID",
+            })?;
+        Ok(Self {
+            raw_root,
+            entitlement_reference,
+            app_key_file: app_key,
+            app_secret_file: app_secret,
+            batch_id,
+        })
+    }
+}
+
+fn is_git_commit(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        && value.bytes().any(|byte| byte != b'0')
+}
+
+fn find_existing_daily_range_source(
+    store: &RawStore,
+    start: TradingDate,
+    end: TradingDate,
+    entitlement_reference: &str,
+    preferred_batch_id: BatchId,
+) -> Result<Option<market_data::storage::ManifestEntry>, WorkerError> {
+    let entries = store
+        .read_reconciled_manifest(PROVIDER_KIS_DAILY_RANGE, MARKET_KR)
+        .map_err(|source| WorkerError::Pipeline(PipelineError::Manifest { source }))?;
+    select_existing_daily_range_source(
+        entries,
+        start,
+        end,
+        entitlement_reference,
+        preferred_batch_id,
+    )
+}
+
+/// Selects an immutable range source before any provider construction. The
+/// preferred deterministic batch is authoritative even when its files are
+/// malformed; the downstream normalizer must surface that corruption rather
+/// than allowing a retry to create a second Raw batch. If state was lost, any
+/// other source with the same batch-level identity is a permanent conflict.
+fn select_existing_daily_range_source(
+    entries: Vec<ManifestEntry>,
+    start: TradingDate,
+    end: TradingDate,
+    entitlement_reference: &str,
+    preferred_batch_id: BatchId,
+) -> Result<Option<ManifestEntry>, WorkerError> {
+    if let Some(entry) = entries
+        .iter()
+        .find(|entry| entry.batch_id == preferred_batch_id)
+        .cloned()
+    {
+        return Ok(Some(entry));
+    }
+
+    let candidates: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            entry.provider == PROVIDER_KIS_DAILY_RANGE
+                && entry.market == MARKET_KR
+                && entry.mode == FetchMode::Credentialed
+                && entry.date == start
+                && entry.entitlement_reference.as_deref() == Some(entitlement_reference)
+                && range_manifest_entry_matches(entry, start, end)
+        })
+        .collect();
+    if let Some(entry) = candidates.first() {
+        return Err(WorkerError::RangeNormalize(
+            RangeNormalizeError::ExistingBatchConflict {
+                batch_id: entry.batch_id,
+                reason: if candidates.len() == 1 {
+                    "state identity is absent but an existing range source has another batch id"
+                        .to_owned()
+                } else {
+                    format!(
+                        "state identity is absent and {} existing range sources are ambiguous",
+                        candidates.len()
+                    )
+                },
+            },
+        ));
+    }
+    Ok(None)
+}
+
+fn range_manifest_entry_matches(
+    entry: &ManifestEntry,
+    start: TradingDate,
+    end: TradingDate,
+) -> bool {
+    // A committed but incomplete batch has no trustworthy request metadata;
+    // keep it as a conflict so state loss cannot turn it into a second fetch.
+    if entry.files.is_empty() {
+        return true;
+    }
+
+    let expected_symbols: BTreeSet<&str> = KR_ETF_CORE_SYMBOLS.iter().copied().collect();
+    let expected_query_keys: BTreeSet<&str> = [
+        "FID_COND_MRKT_DIV_CODE",
+        "FID_INPUT_ISCD",
+        "FID_INPUT_DATE_1",
+        "FID_INPUT_DATE_2",
+        "FID_PERIOD_DIV_CODE",
+        "FID_ORG_ADJ_PRC",
+    ]
+    .into_iter()
+    .collect();
+    let mut requested_symbols = BTreeSet::new();
+    let mut requested_windows = BTreeSet::new();
+    let mut maximum_end: Option<TradingDate> = None;
+    let mut saw_requested_range = false;
+    let mut saw_other_range = false;
+
+    for file in &entry.files {
+        if file.kind != ResponseKind::Bars {
+            // A range batch may contain bars only. An unexpected response is
+            // not silently ignored after state loss.
+            return true;
+        }
+
+        let query_value = |key: &str| {
+            file.request
+                .query
+                .iter()
+                .find(|(actual, _)| actual == key)
+                .map(|(_, value)| value.as_str())
+        };
+        let date1 = query_value("FID_INPUT_DATE_1").and_then(parse_compact_date);
+        let date2 = query_value("FID_INPUT_DATE_2").and_then(parse_compact_date);
+
+        // A fully identified window outside the requested range is a
+        // different source, not a candidate for this state identity. A
+        // malformed window whose first bound is the requested start remains
+        // a conflict, because refetching could create a second Raw batch.
+        match (date1, date2) {
+            (Some(actual_start), Some(actual_end)) if actual_start == start => {
+                if !(start..=end).contains(&actual_end) {
+                    saw_other_range = true;
+                    continue;
+                }
+                saw_requested_range = true;
+            }
+            (Some(_), Some(_)) => {
+                saw_other_range = true;
+                continue;
+            }
+            (Some(actual_start), None) if actual_start != start => {
+                saw_other_range = true;
+                continue;
+            }
+            _ => return true,
+        }
+
+        // Every requested window must carry exactly the six documented query
+        // keys and the original/unadjusted daily-bar values. Extra or
+        // duplicate keys are evidence corruption, not a reason to refetch.
+        if file.request.endpoint != DAILY_RANGE_ENDPOINT
+            || file.request.mode != FetchMode::Credentialed
+            || file.request.query.len() != expected_query_keys.len()
+        {
+            return true;
+        }
+        let actual_query_keys: BTreeSet<&str> = file
+            .request
+            .query
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect();
+        if actual_query_keys != expected_query_keys {
+            return true;
+        }
+        if query_value("FID_COND_MRKT_DIV_CODE") != Some("J")
+            || query_value("FID_PERIOD_DIV_CODE") != Some("D")
+            || query_value("FID_ORG_ADJ_PRC") != Some("1")
+        {
+            return true;
+        }
+
+        let Some(symbol) = query_value("FID_INPUT_ISCD") else {
+            return true;
+        };
+        if !expected_symbols.contains(symbol) {
+            // The fixed 11-symbol universe must be represented exactly; a
+            // symbol outside it is ambiguous and must not trigger a refetch.
+            return true;
+        }
+        requested_symbols.insert(symbol);
+        let Some(window_end) = date2 else {
+            return true;
+        };
+        if !requested_windows.insert((symbol, window_end)) {
+            return true;
+        }
+        maximum_end = Some(maximum_end.map_or(window_end, |current| current.max(window_end)));
+
+        let tr_cont_headers: Vec<_> = file
+            .request
+            .headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("tr_cont"))
+            .collect();
+        let tr_id_headers: Vec<_> = file
+            .request
+            .headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("tr_id"))
+            .collect();
+        if tr_cont_headers.len() != 1
+            || !tr_cont_headers[0].1.is_empty()
+            || tr_id_headers.len() != 1
+            || tr_id_headers[0].1 != DAILY_RANGE_TR_ID
+        {
+            return true;
+        }
+    }
+
+    // Do not mistake a different range for this one. If a batch mixes a
+    // requested-range window with another range, treat it as ambiguous.
+    if !saw_requested_range {
+        return false;
+    }
+    if saw_other_range || requested_symbols != expected_symbols || maximum_end != Some(end) {
+        return true;
+    }
+    true
+}
+
+fn parse_compact_date(value: &str) -> Option<TradingDate> {
+    if value.len() == 8 && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        TradingDate::parse(&format!(
+            "{}-{}-{}",
+            &value[0..4],
+            &value[4..6],
+            &value[6..8]
+        ))
+        .ok()
+    } else {
+        TradingDate::parse(value).ok()
+    }
+}
+
+#[cfg(test)]
+mod daily_range_source_selection_tests {
+    use super::*;
+    use domain::ContentHash;
+    use market_data::contract::RequestMetadata;
+    use market_data::storage::FileEntry;
+
+    fn entry(batch_id: BatchId, date: TradingDate, entitlement: &str) -> ManifestEntry {
+        ManifestEntry {
+            batch_id,
+            provider: PROVIDER_KIS_DAILY_RANGE.to_owned(),
+            market: MARKET_KR.to_owned(),
+            date,
+            retrieved_at: UtcTimestamp::parse_rfc3339("2026-08-19T00:00:00Z").unwrap(),
+            mode: FetchMode::Credentialed,
+            entitlement_reference: Some(entitlement.to_owned()),
+            files: Vec::new(),
+        }
+    }
+
+    fn entry_with_bounds(
+        batch_id: BatchId,
+        date: TradingDate,
+        entitlement: &str,
+        start: TradingDate,
+        end: TradingDate,
+    ) -> ManifestEntry {
+        let compact = |value: TradingDate| value.to_iso().replace('-', "");
+        let mut value = entry(batch_id, date, entitlement);
+        value.files.push(FileEntry {
+            kind: ResponseKind::Bars,
+            file_name: "symbol.json".to_owned(),
+            content_hash: ContentHash::from_bytes(b"{}"),
+            size_bytes: 2,
+            request: RequestMetadata {
+                endpoint: "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+                    .to_owned(),
+                query: vec![
+                    ("FID_INPUT_DATE_1".to_owned(), compact(start)),
+                    ("FID_INPUT_DATE_2".to_owned(), compact(end)),
+                ],
+                headers: vec![("tr_cont".to_owned(), String::new())],
+                mode: FetchMode::Credentialed,
+            },
+        });
+        value
+    }
+
+    fn valid_multi_window_entry(
+        batch_id: BatchId,
+        date: TradingDate,
+        entitlement: &str,
+        start: TradingDate,
+        middle: TradingDate,
+        end: TradingDate,
+    ) -> ManifestEntry {
+        let compact = |value: TradingDate| value.to_iso().replace('-', "");
+        let mut value = entry(batch_id, date, entitlement);
+        for symbol in KR_ETF_CORE_SYMBOLS {
+            for (window, window_end) in [(1, middle), (2, end)] {
+                let bytes = format!("{symbol}-{window}").into_bytes();
+                value.files.push(FileEntry {
+                    kind: ResponseKind::Bars,
+                    file_name: format!("daily-bars-range-window-{window}-{symbol}.json"),
+                    content_hash: ContentHash::from_bytes(&bytes),
+                    size_bytes: bytes.len() as u64,
+                    request: RequestMetadata {
+                        endpoint: DAILY_RANGE_ENDPOINT.to_owned(),
+                        query: vec![
+                            ("FID_COND_MRKT_DIV_CODE".to_owned(), "J".to_owned()),
+                            ("FID_INPUT_ISCD".to_owned(), symbol.to_owned()),
+                            ("FID_INPUT_DATE_1".to_owned(), compact(start)),
+                            ("FID_INPUT_DATE_2".to_owned(), compact(window_end)),
+                            ("FID_PERIOD_DIV_CODE".to_owned(), "D".to_owned()),
+                            ("FID_ORG_ADJ_PRC".to_owned(), "1".to_owned()),
+                        ],
+                        headers: vec![
+                            ("tr_id".to_owned(), DAILY_RANGE_TR_ID.to_owned()),
+                            ("tr_cont".to_owned(), String::new()),
+                        ],
+                        mode: FetchMode::Credentialed,
+                    },
+                });
+            }
+        }
+        value
+    }
+
+    #[test]
+    fn preferred_batch_is_reused_even_when_metadata_requires_normalizer_failure() {
+        let date = TradingDate::parse("2026-08-18").unwrap();
+        let preferred = BatchId::generate();
+        let other = BatchId::generate();
+        let selected = select_existing_daily_range_source(
+            vec![entry(other, date, "ent-1"), entry(preferred, date, "ent-1")],
+            date,
+            date,
+            "ent-1",
+            preferred,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(selected.batch_id, preferred);
+    }
+
+    #[test]
+    fn state_loss_with_one_other_exact_source_blocks_instead_of_refetching() {
+        let date = TradingDate::parse("2026-08-18").unwrap();
+        let other = BatchId::generate();
+        let error = select_existing_daily_range_source(
+            vec![entry_with_bounds(other, date, "ent-1", date, date)],
+            date,
+            date,
+            "ent-1",
+            BatchId::generate(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            WorkerError::RangeNormalize(RangeNormalizeError::ExistingBatchConflict { batch_id, .. })
+                if batch_id == other
+        ));
+    }
+
+    #[test]
+    fn state_loss_with_multiple_exact_sources_is_ambiguous_and_blocks() {
+        let date = TradingDate::parse("2026-08-18").unwrap();
+        let first = BatchId::generate();
+        let second = BatchId::generate();
+        let error = select_existing_daily_range_source(
+            vec![
+                entry_with_bounds(first, date, "ent-1", date, date),
+                entry_with_bounds(second, date, "ent-1", date, date),
+            ],
+            date,
+            date,
+            "ent-1",
+            BatchId::generate(),
+        )
+        .unwrap_err();
+        match error {
+            WorkerError::RangeNormalize(RangeNormalizeError::ExistingBatchConflict {
+                batch_id,
+                reason,
+            }) => {
+                assert_eq!(batch_id, first);
+                assert!(reason.contains("2 existing range sources"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn state_loss_with_multi_window_source_blocks_before_any_refetch() {
+        let start = TradingDate::parse("2020-01-31").unwrap();
+        let middle = TradingDate::parse("2020-02-02").unwrap();
+        let end = TradingDate::parse("2020-02-03").unwrap();
+        let other = BatchId::generate();
+        let error = select_existing_daily_range_source(
+            vec![valid_multi_window_entry(
+                other, start, "ent-1", start, middle, end,
+            )],
+            start,
+            end,
+            "ent-1",
+            BatchId::generate(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            WorkerError::RangeNormalize(RangeNormalizeError::ExistingBatchConflict {
+                batch_id, ..
+            }) if batch_id == other
+        ));
+    }
+
+    #[test]
+    fn no_exact_source_allows_the_preferred_batch_to_be_fetched_once() {
+        let date = TradingDate::parse("2026-08-18").unwrap();
+        assert!(
+            select_existing_daily_range_source(
+                vec![entry(BatchId::generate(), date, "different-entitlement")],
+                date,
+                date,
+                "ent-1",
+                BatchId::generate(),
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_different_range_is_not_treated_as_an_exact_state_loss_candidate() {
+        let date = TradingDate::parse("2026-08-18").unwrap();
+        let other_end = TradingDate::parse("2026-08-19").unwrap();
+        assert!(
+            select_existing_daily_range_source(
+                vec![entry_with_bounds(
+                    BatchId::generate(),
+                    date,
+                    "ent-1",
+                    date,
+                    other_end,
+                )],
+                date,
+                date,
+                "ent-1",
+                BatchId::generate(),
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
 }
 
 struct CredentialedIngestContext<'a> {

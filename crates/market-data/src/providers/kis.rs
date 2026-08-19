@@ -33,6 +33,11 @@ const CALENDAR_TR_ID: &str = "CTCA0903R";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaginationPolicy {
     SinglePage,
+    /// The historical daily-range contract is terminal-page-only. Any
+    /// non-empty response continuation marker or continuation-like body field
+    /// is permanently rejected because the Raw contract does not preserve a
+    /// resumable cursor for this endpoint.
+    StrictSinglePage,
     /// KSD schedule responses follow the endpoint-specific official GitHub
     /// sample: an initial blank `tr_cont`, followed by `N` only when the
     /// response header is exactly `M`. `F` and every other marker are terminal.
@@ -336,7 +341,7 @@ impl<R: KisRead> KisProvider<R> {
                     DAILY_BARS_PATH,
                     DAILY_BARS_TR_ID,
                     query,
-                    PaginationPolicy::SinglePage,
+                    PaginationPolicy::StrictSinglePage,
                     &mut envelopes,
                 )
                 .await?;
@@ -490,6 +495,18 @@ impl<R: KisRead> KisProvider<R> {
                 body,
                 continuation: marker,
             } = reply;
+
+            if pagination == PaginationPolicy::StrictSinglePage
+                && (marker.as_deref().is_some_and(|value| !value.is_empty())
+                    || body_has_continuation_marker(&body))
+            {
+                return Err(pagination_error(
+                    kind,
+                    path,
+                    "BROKER_PAGINATION_UNSUPPORTED",
+                    "strict single-page response carried continuation metadata",
+                ));
+            }
 
             // A repeated opaque body is the broker returning the same page
             // again. Stop before retaining either page so a bad continuation
@@ -723,6 +740,37 @@ fn validate_daily_bars_range_envelope(
         row_count: dates.len(),
         oldest: dates.iter().next().copied(),
         dates,
+    })
+}
+
+/// FHKST03010100 is accepted only as one terminal response.  The transport
+/// header is checked above; this body scan rejects the common KIS cursor
+/// spellings as well, without treating arbitrary output2 row fields as
+/// pagination metadata. Empty/missing markers are terminal and allowed.
+fn body_has_continuation_marker(bytes: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return true;
+    };
+    let Some(object) = value.as_object() else {
+        return true;
+    };
+    object.iter().any(|(key, value)| {
+        let normalized = key.to_ascii_lowercase();
+        let looks_like_cursor = normalized.contains("ctx")
+            || normalized.contains("cts")
+            || normalized.contains("continu")
+            || normalized == "next"
+            || normalized == "has_more"
+            || normalized == "more";
+        looks_like_cursor
+            && match value {
+                Value::Null => false,
+                Value::String(text) => !text.is_empty(),
+                Value::Bool(flag) => *flag,
+                Value::Number(number) => number.as_u64().is_none_or(|value| value != 0),
+                Value::Array(items) => !items.is_empty(),
+                Value::Object(map) => !map.is_empty(),
+            }
     })
 }
 

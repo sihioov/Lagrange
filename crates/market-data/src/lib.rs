@@ -97,7 +97,7 @@ pub use curate::{
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,
     ingest_kis_bundle, ingest_kis_candidate_bundle, ingest_kis_candidate_bundle_with_kinds,
-    ingest_kis_daily_bars_range,
+    ingest_kis_daily_bars_range, ingest_kis_daily_bars_range_with_batch_id,
 };
 pub use instrument_master::{
     AliasNamespace, Instrument, InstrumentAlias, InstrumentMaster, ListingReason, MasterError,

@@ -73,7 +73,8 @@ docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavaila
 bash "$script_dir/validate-production-config.sh" --scope "$scope" --env-file "$env_file"
 
 compose() {
-  docker compose --env-file "$env_file" -f "$compose_file" "$@"
+  RANGE_RAW_BATCH_ID=compose-config-disabled \
+    docker compose --env-file "$env_file" -f "$compose_file" "$@"
 }
 
 compose config --quiet || die 'Compose interpolation/config validation failed'

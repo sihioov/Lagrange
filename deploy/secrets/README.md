@@ -50,6 +50,15 @@
 # and path inventory before its first write; existing runtime targets may be
 # idempotently replaced. It deliberately does not generate credentials.
 
+For the isolated Stage5 historical daily-range capture, use
+`--scope range-raw` after KIS credentials and the read-only entitlement
+reference are available. This scope installs only the two
+`research-range-raw/kis_app_{key,secret}` copies at `10001:10001` mode `0440`;
+it does not require or install PostgreSQL, Auth0, TLS, Curated, or ordinary
+`research-worker` runtime files. The Stage5 wrapper validates this scope and
+passes a deterministic `RANGE_RAW_BATCH_ID`; it remains Raw-only and does not
+start the ordinary worker daemon.
+
 ## Database role credentials and cursor key
 
 The PostgreSQL administrator credential and the migration-owner credential are

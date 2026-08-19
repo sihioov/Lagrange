@@ -176,6 +176,20 @@ timeout variables.
 | `DB_PASSWORD_FILE` | required | path to a readable file containing a nonempty DB password |
 | `KIS_APP_KEY_FILE` | credentialed mode only | path to a readable file containing the KIS app key |
 | `KIS_APP_SECRET_FILE` | credentialed mode only | path to a readable file containing the KIS app secret |
+| `LAGRANGE_CODE_COMMIT` | range Raw mode only | exact 40-character lowercase build commit; never inferred by the binary |
+| `RANGE_RAW_BATCH_ID` | range Raw mode required | deterministic UUID batch identity persisted by the guarded wrapper and reused after an interrupted capture |
+
+The isolated Stage5 historical range command is
+`research-worker --range-raw --start YYYY-MM-DD --end YYYY-MM-DD`. It accepts
+only production/credentialed mode, the fixed 11-ETF
+`inquire-daily-itemchartprice` capability, and the approved embedded XKRX
+session artifact. It does not read DB settings, create a pool, call the
+ordinary worker daemon, publish, curate, or access account/order endpoints.
+Use `scripts/ops/kis-range-raw-backfill.sh` for its plan/preflight/execute
+gates; the command's output remains an acquisition-time vendor snapshot and
+is not a READY or strict PIT dataset. One process-owned token manager normally
+issues one OAuth token POST within its lifetime; expiry/retry may require a
+later issue, so this is not an at-most-once guarantee.
 
 `DB_PASSWORD_FILE`, `KIS_APP_KEY_FILE`, and `KIS_APP_SECRET_FILE` are paths, not
 secret values. The worker reads each file during configuration validation,

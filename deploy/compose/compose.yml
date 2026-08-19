@@ -18,10 +18,10 @@
 # Every long-lived service below runs its checked-in production entrypoint.
 # Build contexts point at Dockerfiles with digest-pinned base images; one-shot
 # bootstrap/migration/schema services fail closed before serving workloads.
-# The API and backtest-runner images embed the exact 40-hex Git commit in their
-# OCI revision labels and runtime ENV. CI must supply LAGRANGE_CODE_COMMIT at
-# build time; Compose intentionally does not override those image-baked values
-# later.
+# The API, research-worker, and backtest-runner images embed the exact 40-hex
+# Git commit in their OCI revision labels and runtime ENV. CI must supply
+# LAGRANGE_CODE_COMMIT at build time; Compose intentionally does not override
+# those image-baked values later.
 
 name: lagrange-station
 
@@ -486,6 +486,8 @@ services:
     build:
       context: ../..
       dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     entrypoint: ["/usr/local/bin/research-worker"]
     init: true
     restart: unless-stopped
@@ -497,6 +499,10 @@ services:
     cpus: "2"
     mem_limit: 4g
     environment:
+      # Also passed to the isolated Raw-only range CLI. The CLI refuses to
+      # start unless this process-local value is the exact immutable build
+      # commit; it is never a secret and is not inferred inside the container.
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
       # Production Compose requires an explicit environment selection. The
       # deterministic fixture is available only through an explicit
       # nonproduction override, e.g. RESEARCH_APP_ENV=qa together with
@@ -558,6 +564,56 @@ services:
         condition: service_completed_successfully
       research-schema-check:
         condition: service_completed_successfully
+
+  # ------------------------------------------------------------------
+  # research-range-raw — explicitly invoked Stage5 Raw-only historical
+  # range job. It is profile-gated and has no DB secret, DB dependency,
+  # restart policy, healthcheck, Curated mount, or daemon lifecycle. The
+  # dedicated service exists so a range run cannot accidentally enter the
+  # ordinary EOD/publication worker path.
+  # ------------------------------------------------------------------
+  research-range-raw:
+    profiles: ["range-raw"]
+    image: lagrange-station-research-range-raw:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    entrypoint: ["/usr/local/bin/research-worker"]
+    init: true
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging: *default-logging
+    cpus: "2"
+    mem_limit: 4g
+    environment:
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+      APP_ENV: ${RESEARCH_APP_ENV:?RESEARCH_APP_ENV must be explicitly set to production}
+      RESEARCH_FETCH_MODE: credentialed
+      RESEARCH_RAW_ROOT: /data
+      RESEARCH_ENTITLEMENT_REFERENCE: ${RESEARCH_ENTITLEMENT_REFERENCE:?RESEARCH_ENTITLEMENT_REFERENCE must identify the exact active data-use contract}
+      RESEARCH_CANDIDATE_ENABLED: "false"
+      RANGE_RAW_BATCH_ID: ${RANGE_RAW_BATCH_ID:?RANGE_RAW_BATCH_ID must be the deterministic Stage5 source batch UUID}
+      KIS_APP_KEY_FILE: /run/secrets/kis_app_key
+      KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret
+    secrets:
+      - source: research_range_raw_kis_app_key
+        target: kis_app_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_range_raw_kis_app_secret
+        target: kis_app_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
+    networks:
+      - range-raw-egress
 
   # ------------------------------------------------------------------
   # recommendation-runner — fixed 11-ETF target generation and opt-in Paper
@@ -1057,6 +1113,10 @@ secrets:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-worker/kis_app_key
   research_kis_app_secret:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-worker/kis_app_secret
+  research_range_raw_kis_app_key:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-range-raw/kis_app_key
+  research_range_raw_kis_app_secret:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/research-range-raw/kis_app_secret
   recommendation_db_worker_password:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/recommendation-runner/db_worker_password
   candidate_db_worker_password:
@@ -1080,6 +1140,8 @@ secrets:
 #   backend     has egress — api-server (Auth0), research-worker (KIS),
 #               paper-scheduler (queue). The profile-gated live-node-owner
 #               uses network_mode:none and has no external dependency.
+#   range-raw-egress — dedicated Stage5 KIS-only egress; no PostgreSQL/backend
+#               attachment is possible for the isolated historical job.
 #   backtest-iso internal:true — nt-backtest-worker-1/2 + postgres ONLY.
 #               No default route => no internet for backtest workers.
 # ----------------------------------------------------------------------
@@ -1088,6 +1150,9 @@ networks:
     driver: bridge
     internal: true
   backend:
+    driver: bridge
+    internal: false
+  range-raw-egress:
     driver: bridge
     internal: false
   backtest-iso:

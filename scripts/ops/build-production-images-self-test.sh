@@ -129,6 +129,7 @@ LAGRANGE_CODE_COMMIT="$commit" \
   >"$out_dir/allowed-workbook.out"
 grep -Fq 'PRODUCTION_IMAGE_BUILD_PREFLIGHT: PASS' "$out_dir/allowed-workbook.out"
 rm -f -- "$repo_dir/docs/kis_openapi_entiredocs_20260818_030007.xlsx"
+: >"$docker_log"
 
 if LAGRANGE_CODE_COMMIT=not-a-commit \
   bash "$helper" --preflight --compose-file "$compose_file" --env-file "$env_file" \

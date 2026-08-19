@@ -26,13 +26,14 @@ pub use sink::{
     PostgresPublicationSink, PublicationSink, PublicationState, PublishOutcome, SinkError,
 };
 pub use worker::{
-    AppEnvironment, ChildResponseContext, DatabaseConfig, HealthFailure, HealthStatus,
-    HealthcheckConfig, ProductionWorkerComponentFactory, RecoveryObserver, ResearchBackend,
-    ResearchWorker, ResearchWorkerConfig, SecretValue, WORKER_ENV_KEYS, WaitOutcome,
-    WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent, WorkerEventClass,
+    AppEnvironment, ChildResponseContext, DailyRangeRawSummary, DatabaseConfig, HealthFailure,
+    HealthStatus, HealthcheckConfig, ProductionWorkerComponentFactory, RecoveryObserver,
+    ResearchBackend, ResearchWorker, ResearchWorkerConfig, SecretValue, WORKER_ENV_KEYS,
+    WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent, WorkerEventClass,
     WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome, bootstrap_worker,
     bootstrap_worker_with, build_postgres_pool, candidate_healthcheck, current_kst_date,
     healthcheck, next_run_delay, publication_age, retry_delay,
-    run_credentialed_backfill_session_dates_stream, run_internal_ingest, run_internal_recovery,
-    run_internal_recovery_page_stream, run_internal_recovery_stream, validate_synthetic_policy,
+    run_credentialed_backfill_session_dates_stream, run_credentialed_daily_range_raw_stream,
+    run_internal_ingest, run_internal_recovery, run_internal_recovery_page_stream,
+    run_internal_recovery_stream, validate_synthetic_policy,
 };

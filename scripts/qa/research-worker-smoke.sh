@@ -134,12 +134,13 @@ compose_config_json() {
     # Static and functional smoke coverage is an explicit QA fixture run;
     # production Compose itself requires RESEARCH_APP_ENV from the operator.
     LAGRANGE_CODE_COMMIT="$static_commit" \
+    RANGE_RAW_BATCH_ID=compose-config-disabled \
     RESEARCH_APP_ENV=qa \
     RESEARCH_FETCH_MODE=synthetic \
       docker compose -f "$compose_file" config --format json
   elif command -v powershell.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
     compose_windows="$(wslpath -w "$compose_file")"
-    LAGRANGE_CODE_COMMIT="$static_commit" RESEARCH_APP_ENV=qa RESEARCH_FETCH_MODE=synthetic \
+    LAGRANGE_CODE_COMMIT="$static_commit" RANGE_RAW_BATCH_ID=compose-config-disabled RESEARCH_APP_ENV=qa RESEARCH_FETCH_MODE=synthetic \
       powershell.exe -NoProfile -NonInteractive -Command "& docker compose -f '$compose_windows' config --format json"
   else
     fail 'Docker Compose CLI is required for semantic static validation'

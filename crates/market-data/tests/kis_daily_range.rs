@@ -28,6 +28,8 @@ struct FixtureReader {
     first_page_rows: Option<usize>,
     reverse_first_page: bool,
     duplicate_first_page: bool,
+    continuation_marker: Option<String>,
+    body_continuation_marker: Option<(String, String)>,
 }
 
 impl FixtureReader {
@@ -38,6 +40,8 @@ impl FixtureReader {
             first_page_rows: None,
             reverse_first_page: false,
             duplicate_first_page: false,
+            continuation_marker: None,
+            body_continuation_marker: None,
         }
     }
 
@@ -48,6 +52,8 @@ impl FixtureReader {
             first_page_rows: Some(rows),
             reverse_first_page: false,
             duplicate_first_page: false,
+            continuation_marker: None,
+            body_continuation_marker: None,
         }
     }
 
@@ -58,6 +64,8 @@ impl FixtureReader {
             first_page_rows: Some(MAX_DAILY_BAR_OBSERVATIONS),
             reverse_first_page: true,
             duplicate_first_page: false,
+            continuation_marker: None,
+            body_continuation_marker: None,
         }
     }
 
@@ -68,7 +76,21 @@ impl FixtureReader {
             first_page_rows: None,
             reverse_first_page: false,
             duplicate_first_page: true,
+            continuation_marker: None,
+            body_continuation_marker: None,
         }
+    }
+
+    fn with_continuation_marker(marker: &str) -> Self {
+        let mut reader = Self::new(false);
+        reader.continuation_marker = Some(marker.to_owned());
+        reader
+    }
+
+    fn with_body_continuation_marker(key: &str) -> Self {
+        let mut reader = Self::new(false);
+        reader.body_continuation_marker = Some((key.to_owned(), "cursor".to_owned()));
+        reader
     }
 }
 
@@ -132,8 +154,14 @@ impl KisRead for FixtureReader {
             });
         }
         Ok(MarketDataReply {
-            body: daily_body(symbol, &rows),
-            continuation: Some("F".to_owned()),
+            body: daily_body(
+                symbol,
+                &rows,
+                self.body_continuation_marker
+                    .as_ref()
+                    .map(|(key, value)| (key.as_str(), value.as_str())),
+            ),
+            continuation: self.continuation_marker.clone(),
         })
     }
 }
@@ -167,7 +195,11 @@ impl ParseDigits for TradingDate {
     }
 }
 
-fn daily_body(symbol: &str, dates: &[TradingDate]) -> Vec<u8> {
+fn daily_body(
+    symbol: &str,
+    dates: &[TradingDate],
+    continuation_marker: Option<(&str, &str)>,
+) -> Vec<u8> {
     let rows = dates
         .iter()
         .map(|date| {
@@ -182,14 +214,19 @@ fn daily_body(symbol: &str, dates: &[TradingDate]) -> Vec<u8> {
             })
         })
         .collect::<Vec<_>>();
-    serde_json::to_vec(&json!({
+    let mut body = json!({
         "rt_cd": "0",
         "msg_cd": "MCA00000",
         "msg1": "",
         "output1": {"stck_shrn_iscd": symbol},
         "output2": rows
-    }))
-    .expect("fixture JSON")
+    });
+    if let Some((key, value)) = continuation_marker {
+        body.as_object_mut()
+            .expect("fixture body object")
+            .insert(key.to_owned(), json!(value));
+    }
+    serde_json::to_vec(&body).expect("fixture JSON")
 }
 
 #[tokio::test]
@@ -226,6 +263,55 @@ async fn range_uses_oldest_date_minus_one_without_tr_continuation() {
     );
     assert_eq!(MAX_DAILY_BAR_OBSERVATIONS, 100);
     assert_eq!(MAX_DAILY_BAR_WINDOWS, 1_024);
+}
+
+#[tokio::test]
+async fn range_rejects_nonempty_terminal_continuation_headers_m_n_f_unknown_and_whitespace() {
+    for marker in ["M", "N", "F", "X", " "] {
+        let provider = KisProvider::kr_etf_core(FixtureReader::with_continuation_marker(marker));
+        let error = provider
+            .fetch_daily_bars_range(
+                MARKET_KR,
+                TradingDate::parse("2020-01-01").expect("start"),
+                TradingDate::parse("2020-01-31").expect("end"),
+                UtcTimestamp::parse_rfc3339(NOW).expect("timestamp"),
+                BatchId::generate(),
+            )
+            .await
+            .expect_err("strict single-page range must reject continuation metadata");
+        assert!(
+            error.to_string().contains("BROKER_PAGINATION_UNSUPPORTED"),
+            "marker {marker:?}: {error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn range_rejects_nonempty_terminal_body_continuation_keys_case_insensitively() {
+    for key in [
+        "ctx_area_fk",
+        "CTS",
+        "continuation",
+        "NEXT",
+        "MoRe",
+        "has_more",
+    ] {
+        let provider = KisProvider::kr_etf_core(FixtureReader::with_body_continuation_marker(key));
+        let error = provider
+            .fetch_daily_bars_range(
+                MARKET_KR,
+                TradingDate::parse("2020-01-01").expect("start"),
+                TradingDate::parse("2020-01-31").expect("end"),
+                UtcTimestamp::parse_rfc3339(NOW).expect("timestamp"),
+                BatchId::generate(),
+            )
+            .await
+            .expect_err("strict single-page range must reject body continuation metadata");
+        assert!(
+            error.to_string().contains("BROKER_PAGINATION_UNSUPPORTED"),
+            "body key {key:?}: {error}"
+        );
+    }
 }
 
 #[tokio::test]

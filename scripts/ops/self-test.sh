@@ -15,9 +15,132 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   build-production-images.sh build-production-images-static-check.sh \
   build-production-images-self-test.sh deploy-production-release.sh \
   run-production-backup.sh install-production-backup.sh \
-  production-ops-static-check.sh production-ops-self-test.sh; do
+  production-ops-static-check.sh production-ops-self-test.sh \
+  kis-range-raw-backfill.sh; do
   bash -n "$ops/$script"
 done
+
+range_env="$out_dir/range-raw.env"
+printf 'LAGRANGE_CODE_COMMIT=%s\nRESEARCH_ENTITLEMENT_REFERENCE=fixture-stage5\n' \
+  "$(git -C "$root" rev-parse HEAD)" >"$range_env"
+range_plan=$(bash "$ops/kis-range-raw-backfill.sh" \
+  --env-file "$range_env" --start 2020-01-31 --end 2020-02-03 --plan)
+grep -Fq 'KIS_RANGE_RAW_PLAN mode=plan' <<<"$range_plan"
+grep -Fq 'PLAN_ONLY: no Docker, KIS, secret read, file write, or state write made' <<<"$range_plan"
+
+# Exercise the Stage5 execute gate against a throw-away clean Git fixture and
+# a fake Docker CLI. This proves the wrapper's state ordering and image
+# revision/ENV checks without starting Docker or making a KIS request. The
+# fixture is committed locally so the production dirty-tree guard is tested
+# with the same exact HEAD/commit contract as an operator run.
+if command -v fakeroot >/dev/null 2>&1; then
+  range_fixture="$out_dir/range-execute-fixture"
+  mkdir -p "$range_fixture/repo"
+  chmod 0700 "$range_fixture"
+  while IFS= read -r -d '' path; do
+    mkdir -p "$range_fixture/repo/$(dirname -- "$path")"
+    cp -p -- "$root/$path" "$range_fixture/repo/$path"
+  done < <(git -C "$root" ls-files -co --exclude-standard -z)
+  git -C "$range_fixture/repo" init -q
+  git -C "$range_fixture/repo" config user.email self-test@example.invalid
+  git -C "$range_fixture/repo" config user.name stage5-self-test
+  git -C "$range_fixture/repo" add -A
+  git -C "$range_fixture/repo" commit -qm stage5-self-test
+  range_commit=$(git -C "$range_fixture/repo" rev-parse HEAD)
+  range_source="$range_fixture/source"
+  range_runtime="$range_fixture/runtime"
+  range_state="$range_fixture/state/range.tsv"
+  range_env_file="$range_fixture/compose.env"
+  range_fake_bin="$range_fixture/bin"
+  mkdir -p "$range_source" "$range_fake_bin"
+  printf '%s' stage5-fixture-app-key >"$range_source/kis_app_key"
+  printf '%s' stage5-fixture-app-secret >"$range_source/kis_app_secret"
+  chmod 0600 "$range_source/kis_app_key" "$range_source/kis_app_secret"
+  cat >"$range_env_file" <<EOF
+LAGRANGE_DATA_DIR=$range_fixture/data
+LAGRANGE_RUNTIME_SECRET_DIR=$range_runtime
+LAGRANGE_SECRET_SOURCE_DIR=$range_source
+RESEARCH_APP_ENV=production
+RESEARCH_FETCH_MODE=credentialed
+RESEARCH_CANDIDATE_ENABLED=false
+RESEARCH_ENTITLEMENT_REFERENCE=fixture-stage5
+LAGRANGE_CODE_COMMIT=$range_commit
+EOF
+  chmod 0600 "$range_env_file"
+  cat >"$range_fake_bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = compose ]; then
+  shift
+  command_name=
+  for argument in "$@"; do
+    case "$argument" in
+      version|config|ps|images|build|run) command_name=$argument; break ;;
+    esac
+  done
+  case "$command_name" in
+    version) echo 'Docker Compose version v2.99.0-self-test' ;;
+    config|build|ps) ;;
+    images) echo stage5-self-test-image ;;
+    run)
+      printf '%s\n' '{"status":"ok","phase":"raw_only_normalization","outcome":"daily_range_normalized","vendor_snapshot":true,"strict_pit":false,"ready":false,"publication":false,"curated":false,"db":false,"source_batch_id":"00000000-0000-0000-0000-000000000001","normalized_count":11,"normalized_start":"2020-01-31","normalized_end":"2020-02-03"}'
+      ;;
+    *) echo "unexpected fake compose command: $command_name" >&2; exit 97 ;;
+  esac
+elif [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+  target=${5:-${3:-}}
+  [ "$target" = "lagrange-station-research-range-raw:${LAGRANGE_CODE_COMMIT}" ] || {
+    echo "unexpected image provenance target: $target" >&2
+    exit 98
+  }
+  format=${4:-}
+  if [[ "$format" == *org.opencontainers.image.revision* ]]; then
+    printf '%s\n' "$LAGRANGE_CODE_COMMIT"
+  else
+    printf 'LAGRANGE_CODE_COMMIT=%s\n' "$LAGRANGE_CODE_COMMIT"
+  fi
+else
+  echo 'unexpected fake docker invocation' >&2
+  exit 98
+fi
+EOF
+  chmod 0755 "$range_fake_bin/docker"
+  if ! PATH="$range_fake_bin:$PATH" fakeroot bash -c '
+    set -euo pipefail
+    source_dir=$1
+    runtime_dir=$2
+    env_file=$3
+    state_file=$4
+    repo=$5
+    ops=$6
+    commit=$7
+    PATH=$8:$PATH
+    LAGRANGE_SECRET_SOURCE_DIR="$source_dir" \
+      LAGRANGE_RUNTIME_SECRET_DIR="$runtime_dir" \
+      bash "$repo/deploy/secrets/provision-runtime-secrets.sh" --scope range-raw >/dev/null
+    output=$(LAGRANGE_CODE_COMMIT="$commit" \
+      KIS_RANGE_RAW_CONFIRM=I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS \
+      LAGRANGE_RANGE_RAW_STATE="$state_file" \
+      bash "$repo/scripts/ops/kis-range-raw-backfill.sh" \
+        --env-file "$env_file" --start 2020-01-31 --end 2020-02-03 --execute)
+    grep -Fq "KIS_RANGE_RAW: PASS" <<<"$output"
+    for flag in "vendor_snapshot\":true" "strict_pit\":false" "ready\":false" \
+      "publication\":false" "curated\":false" "db\":false" "source_batch_id" \
+      "normalized_count" "normalized_start" "normalized_end"; do
+      grep -Fq "$flag" <<<"$output"
+    done
+    [ "$(wc -l <"$state_file")" -eq 1 ]
+    grep -Fq "V2" "$state_file"
+  ' _ "$range_source" "$range_runtime" "$range_env_file" "$range_state" \
+      "$range_fixture/repo" "$ops" "$range_commit" "$range_fake_bin" \
+      >"$out_dir/range-execute.out" 2>&1; then
+    cat "$out_dir/range-execute.out" >&2
+    echo 'self-test: Stage5 fake-Docker execute fixture failed' >&2
+    exit 1
+  fi
+else
+  echo 'OPS_SELF_TEST: fakeroot unavailable; Stage5 fake-Docker execute fixture skipped' >&2
+fi
 bash "$root/deploy/secrets/runtime-static-check.sh" >/dev/null
 bash "$root/deploy/secrets/provision-runtime-secrets.sh" --help >/dev/null
 bash "$root/deploy/systemd/paper-runner-static-check.sh" >/dev/null

@@ -7,9 +7,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use collectors::{
-    HealthcheckConfig, RecoveryPosition, WORKER_ENV_KEYS, WaitOutcome, WorkerControl, WorkerError,
-    WorkerEvent, WorkerObserver, WorkerRunOutcome, bootstrap_worker, build_postgres_pool,
-    candidate_healthcheck, healthcheck, run_credentialed_backfill_session_dates_stream,
+    DailyRangeRawSummary, HealthcheckConfig, RecoveryPosition, WORKER_ENV_KEYS, WaitOutcome,
+    WorkerControl, WorkerError, WorkerEvent, WorkerObserver, WorkerRunOutcome, bootstrap_worker,
+    build_postgres_pool, candidate_healthcheck, healthcheck,
+    run_credentialed_backfill_session_dates_stream, run_credentialed_daily_range_raw_stream,
     run_internal_ingest, run_internal_recovery_page_stream,
 };
 use domain::{TradingDate, UtcTimestamp};
@@ -19,6 +20,7 @@ use tokio::sync::{Mutex, watch};
 const USAGE: &str = "\
 research-worker [--once --date YYYY-MM-DD]
 research-worker --backfill-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
+research-worker --range-raw --start YYYY-MM-DD --end YYYY-MM-DD
 research-worker healthcheck
 research-worker --help
 
@@ -31,6 +33,10 @@ enum Command {
     Daemon,
     Once(TradingDate),
     BackfillSessionDates(Vec<TradingDate>),
+    DailyRangeRaw {
+        start: TradingDate,
+        end: TradingDate,
+    },
     Healthcheck,
     Help,
     InternalRecover(RecoveryPosition),
@@ -75,6 +81,26 @@ struct SuccessRecord {
     has_more: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     per_universe: Option<BTreeMap<String, Vec<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vendor_snapshot: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strict_pit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ready: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    publication: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    curated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    db: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_batch_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normalized_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normalized_start: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normalized_end: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -147,7 +173,7 @@ async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match parse_args(&args) {
         Ok(command) => command,
-        Err(error) => return report_error(&error, None),
+        Err(error) => return report_error(&error, None, false),
     };
     if matches!(command, Command::Help) {
         print!("{USAGE}");
@@ -155,11 +181,13 @@ async fn main() -> ExitCode {
     }
 
     let target_date = command_target_date(&command);
+    let range_raw = matches!(&command, Command::DailyRangeRaw { .. });
     let values = environment_map();
     let result = match command {
         Command::Healthcheck => run_healthcheck(&values).await,
         Command::Once(date) => run_once(&values, date).await,
         Command::BackfillSessionDates(dates) => run_backfill_session_dates(&values, &dates).await,
+        Command::DailyRangeRaw { start, end } => run_daily_range_raw(&values, start, end).await,
         Command::Daemon => run_daemon(&values).await,
         Command::InternalRecover(after) => run_internal_recover(&values, after).await,
         Command::InternalIngest(date, now) => run_internal_collect(&values, date, now).await,
@@ -173,7 +201,11 @@ async fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
-        Err(error) => report_error(&error, target_date.or_else(|| error.target_date())),
+        Err(error) => report_error(
+            &error,
+            target_date.or_else(|| error.target_date()),
+            range_raw,
+        ),
     }
 }
 
@@ -185,6 +217,7 @@ fn command_target_date(command: &Command) -> Option<TradingDate> {
         | Command::Healthcheck
         | Command::Help
         | Command::InternalRecover(_) => None,
+        Command::DailyRangeRaw { start, .. } => Some(*start),
     }
 }
 
@@ -211,6 +244,18 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
                 .map_err(|_| WorkerError::InvalidConfig { key: "--date" })
         }
         [flag, dates] if flag == "--backfill-session-dates" => parse_session_dates(dates),
+        [mode, start_flag, start, end_flag, end]
+            if mode == "--range-raw" && start_flag == "--start" && end_flag == "--end" =>
+        {
+            let start = TradingDate::parse(start)
+                .map_err(|_| WorkerError::InvalidConfig { key: "--start" })?;
+            let end =
+                TradingDate::parse(end).map_err(|_| WorkerError::InvalidConfig { key: "--end" })?;
+            if end < start {
+                return Err(WorkerError::InvalidConfig { key: "--range-raw" });
+            }
+            Ok(Command::DailyRangeRaw { start, end })
+        }
         _ => Err(WorkerError::InvalidConfig { key: "arguments" }),
     }
 }
@@ -339,6 +384,53 @@ async fn run_backfill_session_dates(
         snapshot_high_water: None,
         has_more: None,
         per_universe: None,
+        vendor_snapshot: None,
+        strict_pit: None,
+        ready: None,
+        publication: None,
+        curated: None,
+        db: None,
+        source_batch_id: None,
+        normalized_count: None,
+        normalized_start: None,
+        normalized_end: None,
+    })
+}
+
+async fn run_daily_range_raw(
+    values: &HashMap<String, String>,
+    start: TradingDate,
+    end: TradingDate,
+) -> Result<SuccessRecord, WorkerError> {
+    let stdout = std::io::stdout();
+    let mut writer = stdout.lock();
+    let summary: DailyRangeRawSummary =
+        run_credentialed_daily_range_raw_stream(values, start, end, &mut writer).await?;
+    Ok(SuccessRecord {
+        status: "ok",
+        phase: "raw_only_normalization",
+        outcome: "daily_range_normalized",
+        batch_id: Some(summary.source_batch_id.to_string()),
+        date: Some(start.to_iso()),
+        newest_eod_at: None,
+        age_seconds: None,
+        cursor: None,
+        snapshot_high_water: None,
+        has_more: Some(false),
+        per_universe: Some(BTreeMap::from([(
+            "etf_sessions".to_owned(),
+            vec![summary.normalized_count.to_string(), summary.end.to_iso()],
+        )])),
+        vendor_snapshot: Some(true),
+        strict_pit: Some(false),
+        ready: Some(false),
+        publication: Some(false),
+        curated: Some(false),
+        db: Some(false),
+        source_batch_id: Some(summary.source_batch_id.to_string()),
+        normalized_count: Some(summary.normalized_count),
+        normalized_start: Some(summary.start.to_iso()),
+        normalized_end: Some(summary.end.to_iso()),
     })
 }
 
@@ -387,6 +479,16 @@ async fn run_healthcheck(values: &HashMap<String, String>) -> Result<SuccessReco
         snapshot_high_water: None,
         has_more: None,
         per_universe,
+        vendor_snapshot: None,
+        strict_pit: None,
+        ready: None,
+        publication: None,
+        curated: None,
+        db: None,
+        source_batch_id: None,
+        normalized_count: None,
+        normalized_start: None,
+        normalized_end: None,
     })
 }
 
@@ -412,6 +514,16 @@ async fn run_internal_recover(
         ),
         has_more: Some(page.has_more),
         per_universe: None,
+        vendor_snapshot: None,
+        strict_pit: None,
+        ready: None,
+        publication: None,
+        curated: None,
+        db: None,
+        source_batch_id: None,
+        normalized_count: None,
+        normalized_start: None,
+        normalized_end: None,
     })
 }
 
@@ -433,6 +545,16 @@ async fn run_internal_collect(
         snapshot_high_water: None,
         has_more: None,
         per_universe: None,
+        vendor_snapshot: None,
+        strict_pit: None,
+        ready: None,
+        publication: None,
+        curated: None,
+        db: None,
+        source_batch_id: None,
+        normalized_count: None,
+        normalized_start: None,
+        normalized_end: None,
     })
 }
 
@@ -454,13 +576,31 @@ fn run_record(outcome: WorkerRunOutcome, date: Option<TradingDate>) -> SuccessRe
         snapshot_high_water: None,
         has_more: None,
         per_universe: None,
+        vendor_snapshot: None,
+        strict_pit: None,
+        ready: None,
+        publication: None,
+        curated: None,
+        db: None,
+        source_batch_id: None,
+        normalized_count: None,
+        normalized_start: None,
+        normalized_end: None,
     }
 }
 
-fn report_error(error: &WorkerError, target_date: Option<TradingDate>) -> ExitCode {
-    let provider = match std::env::var("RESEARCH_FETCH_MODE").as_deref() {
-        Ok("credentialed") => "KIS-NORMALIZED",
-        _ => "KRX",
+fn report_error(
+    error: &WorkerError,
+    target_date: Option<TradingDate>,
+    range_raw: bool,
+) -> ExitCode {
+    let provider = if range_raw {
+        "KIS-DAILY-RANGE-NORMALIZED"
+    } else {
+        match std::env::var("RESEARCH_FETCH_MODE").as_deref() {
+            Ok("credentialed") => "KIS-NORMALIZED",
+            _ => "KRX",
+        }
     };
     let record = error_record(error, target_date, provider);
     println!(
@@ -523,6 +663,7 @@ fn error_code(error: &WorkerError) -> String {
         WorkerError::Database { .. } => "DATABASE_UNAVAILABLE",
         WorkerError::Unhealthy { .. } => "UNHEALTHY",
         WorkerError::Pipeline(_) => "PIPELINE_FAILED",
+        WorkerError::RangeNormalize(_) => "KIS_RANGE_NORMALIZE_FAILED",
         WorkerError::CandidatePipeline(_) => "CANDIDATE_PIPELINE_FAILED",
         WorkerError::Curation(_) => "PRICE_CURATION_FAILED",
         WorkerError::ChildIo { .. } => "HELPER_IO_FAILED",
@@ -606,5 +747,71 @@ mod tests {
                 parse_args(&["--backfill-session-dates".to_owned(), value.to_owned(),]).is_err()
             );
         }
+    }
+
+    #[test]
+    fn range_raw_argument_requires_ordered_inclusive_bounds() {
+        let command = parse_args(&[
+            "--range-raw".to_owned(),
+            "--start".to_owned(),
+            "2020-01-31".to_owned(),
+            "--end".to_owned(),
+            "2020-02-03".to_owned(),
+        ])
+        .expect("range raw arguments");
+        assert!(matches!(
+            command,
+            Command::DailyRangeRaw { start, end }
+                if start == TradingDate::parse("2020-01-31").unwrap()
+                    && end == TradingDate::parse("2020-02-03").unwrap()
+        ));
+        assert!(
+            parse_args(&[
+                "--range-raw".to_owned(),
+                "--start".to_owned(),
+                "2020-02-03".to_owned(),
+                "--end".to_owned(),
+                "2020-01-31".to_owned(),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn range_raw_success_record_is_explicitly_non_publishable_vendor_snapshot() {
+        let record = SuccessRecord {
+            status: "ok",
+            phase: "raw_only_normalization",
+            outcome: "daily_range_normalized",
+            batch_id: Some("00000000-0000-0000-0000-000000000001".to_owned()),
+            date: Some("2020-01-31".to_owned()),
+            newest_eod_at: None,
+            age_seconds: None,
+            cursor: None,
+            snapshot_high_water: None,
+            has_more: Some(false),
+            per_universe: None,
+            vendor_snapshot: Some(true),
+            strict_pit: Some(false),
+            ready: Some(false),
+            publication: Some(false),
+            curated: Some(false),
+            db: Some(false),
+            source_batch_id: Some("00000000-0000-0000-0000-000000000001".to_owned()),
+            normalized_count: Some(11),
+            normalized_start: Some("2020-01-31".to_owned()),
+            normalized_end: Some("2020-02-03".to_owned()),
+        };
+        let value = serde_json::to_value(record).expect("success record serializes");
+        assert_eq!(value["vendor_snapshot"], true);
+        assert_eq!(value["strict_pit"], false);
+        assert_eq!(value["ready"], false);
+        assert_eq!(value["publication"], false);
+        assert_eq!(value["curated"], false);
+        assert_eq!(value["db"], false);
+        assert_eq!(value["source_batch_id"], value["batch_id"]);
+        assert_eq!(value["normalized_count"], 11);
+        assert_eq!(value["normalized_start"], "2020-01-31");
+        assert_eq!(value["normalized_end"], "2020-02-03");
     }
 }

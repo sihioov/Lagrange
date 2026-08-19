@@ -19,12 +19,100 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   build-production-images.sh build-production-images-static-check.sh \
   build-production-images-self-test.sh deploy-production-release.sh \
   run-production-backup.sh install-production-backup.sh \
-  production-ops-static-check.sh production-ops-self-test.sh; do
+  production-ops-static-check.sh production-ops-self-test.sh \
+  kis-range-raw-backfill.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
   bash -n "$path" || die "$script has shell syntax errors"
 done
+
+range_raw="$ops/kis-range-raw-backfill.sh"
+grep -Fq 'KIS_RANGE_RAW_CONFIRM=I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS' "$range_raw" \
+  || die 'Stage5 range raw execute confirmation missing'
+grep -Fq 'research-range-raw' "$range_raw" \
+  || die 'Stage5 must use the dedicated range-raw Compose service'
+grep -Fq 'run --rm --no-deps research-range-raw' "$range_raw" \
+  || die 'Stage5 must run one isolated no-deps container'
+grep -Fq 'research-worker daemon is running' "$range_raw" \
+  || die 'Stage5 daemon overlap guard missing'
+grep -Fq 'read_reconciled_manifest' "$root/data-pipelines/collectors/src/worker.rs" \
+  || die 'Stage5 must reconcile/reuse committed Raw before refetch'
+grep -Fq 'LAGRANGE_CODE_COMMIT' "$range_raw" \
+  || die 'Stage5 code commit provenance guard missing'
+worker_dockerfile="$root/data-pipelines/collectors/Dockerfile"
+grep -Fq 'ARG LAGRANGE_CODE_COMMIT' "$worker_dockerfile" \
+  || die 'research-worker image must accept an exact commit build argument'
+grep -Fq 'org.opencontainers.image.revision' "$worker_dockerfile" \
+  || die 'research-worker image OCI revision provenance is missing'
+grep -Fq "grep -Eq '^[0-9a-f]{40}$'" "$worker_dockerfile" \
+  || die 'research-worker image must validate the exact lowercase commit shape'
+grep -Fq 'write_state RUNNING' "$range_raw" \
+  || die 'Stage5 must persist its source BatchId before the container/network step'
+grep -Fq 'RANGE_RAW_BATCH_ID="$stored_batch_id" compose run' "$range_raw" \
+  || die 'Stage5 must pass the persisted source BatchId into the one-shot'
+grep -Fq 'stored_batch_id=$(python3' "$range_raw" \
+  || die 'Stage5 source BatchId must be deterministic rather than random'
+grep -Fq 'uuid.uuid5' "$range_raw" \
+  || die 'Stage5 deterministic UUIDv5 derivation is missing'
+grep -Fq 'verify_image_provenance' "$range_raw" \
+  || die 'Stage5 image provenance gate is missing'
+grep -Fq 'lagrange-station-research-range-raw:${commit}' "$range_raw" \
+  || die 'Stage5 must inspect the immutable commit-tagged range image directly'
+grep -Fq 'image: lagrange-station-research-range-raw:' "$root/deploy/compose/compose.yml" \
+  || die 'Stage5 Compose service must have an immutable commit-tagged image name'
+if grep -Fq 'compose images -q research-range-raw' "$range_raw"; then
+  die 'Stage5 must not resolve provenance through a mutable Compose image lookup'
+fi
+grep -Fq 'org.opencontainers.image.revision' "$range_raw" \
+  || die 'Stage5 image OCI revision inspection is missing'
+grep -Fq 'image_commit' "$range_raw" \
+  || die 'Stage5 image LAGRANGE_CODE_COMMIT inspection is missing'
+grep -Fq 'ensure_state_directory' "$range_raw" \
+  || die 'Stage5 state directory hardening is missing'
+grep -Fq 'ensure_protected_state_file' "$range_raw" \
+  || die 'Stage5 state/lock protected-file hardening is missing'
+grep -Fq 'verify_lock_fd_identity' "$range_raw" \
+  || die 'Stage5 state lock FD identity check is missing'
+grep -Fq 'verify_state_file_identity' "$range_raw" \
+  || die 'Stage5 state FD identity check is missing'
+grep -Fq 'range-raw-egress' "$root/deploy/compose/compose.yml" \
+  || die 'Stage5 dedicated egress network is missing'
+grep -Fq 'networks:' "$root/deploy/compose/compose.yml" \
+  || die 'Compose network contract is missing'
+range_service_block=$(awk '
+  $0 == "  research-range-raw:" { inside=1; print; next }
+  inside && $0 ~ /^  [^[:space:]][^:]*:/ { exit }
+  inside { print }
+' "$root/deploy/compose/compose.yml")
+grep -Fq '      - range-raw-egress' <<<"$range_service_block" \
+  || die 'Stage5 service is not attached to its dedicated egress network'
+if grep -Fq '      - backend' <<<"$range_service_block"; then
+  die 'Stage5 service must not attach to the ordinary backend network'
+fi
+if grep -Fq 'depends_on:' <<<"$range_service_block"; then
+  die 'Stage5 service must not depend on PostgreSQL or another Compose service'
+fi
+state_line=$(grep -nF 'write_state RUNNING' "$range_raw" | head -n1 | cut -d: -f1)
+build_line=$(grep -nF 'compose build --pull=false research-range-raw' "$range_raw" | head -n1 | cut -d: -f1)
+run_line=$(grep -nF 'RANGE_RAW_BATCH_ID="$stored_batch_id" compose run' "$range_raw" | head -n1 | cut -d: -f1)
+[ -n "$state_line" ] && [ -n "$build_line" ] && [ "$state_line" -lt "$build_line" ] \
+  || die 'Stage5 must write RUNNING state before image build/network work'
+[ -n "$run_line" ] && [ "$build_line" -lt "$run_line" ] \
+  || die 'Stage5 must invoke the one-shot only after its image build'
+grep -Fq 'args:' "$root/deploy/compose/compose.yml" \
+  || die 'Compose build argument blocks are missing'
+grep -Fq 'kis-daily-range-to-session-bars-v2' "$range_raw" \
+  || die 'Stage5 normalizer identity missing'
+grep -Fq 'strict PIT' "$range_raw" \
+  || die 'Stage5 non-PIT limitation missing'
+stage5_doc="$root/docs/runbooks/kis-range-raw-stage5.md"
+[ -f "$stage5_doc" ] || die 'Stage5 runbook is missing'
+grep -Fq 'research-range-raw' "$stage5_doc" || die 'Stage5 runbook service boundary missing'
+grep -Fq 'cannot claim strict historical PIT' "$stage5_doc" \
+  || die 'Stage5 runbook PIT limitation missing'
+grep -Fq 'Any non-empty continuation marker' "$stage5_doc" \
+  || die 'Stage5 runbook pagination limitation missing'
 
 bash "$ops/build-production-images-static-check.sh" >/dev/null ||
   die 'production image build static check failed'
@@ -272,7 +360,7 @@ grep -Fq -- '--preflight must run as root' "$ops/provision-linux.sh" || die 'pro
 grep -Fq 'must not traverse a symlink' "$ops/provision-linux.sh" || die 'provision ancestor symlink fence missing'
 grep -Fq 'service user is not a member of service group' "$ops/provision-linux.sh" || die 'service group membership fence missing'
 grep -Fq 'BLOCKED_EXTERNAL' "$ops/validate-production-config.sh" || die 'config blocker contract missing'
-grep -Fq -- '--scope infrastructure|serving-prereqs|backfill|release' "$ops/validate-production-config.sh" || die 'config scope contract missing'
+grep -Fq -- '--scope infrastructure|serving-prereqs|backfill|range-raw|release' "$ops/validate-production-config.sh" || die 'config scope contract missing'
 grep -Fq -- 'validation must run as root to inspect protected production paths' "$ops/validate-production-config.sh" \
   || die 'config validator root guard missing'
 grep -Fq 'LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"' "$ops/validate-production-config.sh" \

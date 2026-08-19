@@ -1,0 +1,81 @@
+# KIS historical daily-bars Stage5 (Raw-only)
+
+Stage5 is an isolated intermediate operation for the fixed 11 ETF symbols. It
+captures the official KIS `FHKST03010100`
+`/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice` response
+under `provider=kis-daily-range`, then runs the Stage4A v2 session normalizer
+under `provider=kis-daily-range-normalized`.
+
+The operation is deliberately not the EOD worker path. Its dedicated
+`research-range-raw` Compose service has only the KIS app-key/app-secret
+runtime mounts and the Raw data mount. It has no DB password, DB dependency,
+Curated mount, publication sink, healthcheck, or restart policy. It makes no
+reference-price, holiday, corporate-action, candidate, account, or order
+request. The result is an acquisition-time current vendor snapshot: KIS does
+not provide availability, revision, or knowledge-time evidence here, so this
+operation cannot claim strict historical PIT and must not backdate `available_at`.
+
+## Gates and resume
+
+The wrapper defaults to a local plan:
+
+```sh
+scripts/ops/kis-range-raw-backfill.sh \
+  --start 2020-01-31 --end 2020-02-03 --plan
+```
+
+`--preflight` validates the isolated range-raw production configuration and Compose
+expansion without building or starting anything. `--execute` requires the
+explicit process-local confirmation:
+
+```sh
+sudo env LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)" \
+  KIS_RANGE_RAW_CONFIRM=I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS \
+  scripts/ops/kis-range-raw-backfill.sh \
+  --start 2020-01-31 --end 2020-02-03 --execute
+```
+
+The wrapper refuses to run while the ordinary `research-worker` daemon is
+running. It takes a protected root-owned lock and writes an atomic state
+identity binding the date range, fixed universe, source/normalized scopes,
+Stage4A v2 normalizer, code commit, and an entitlement hash. State contains no
+secret or response body. The state record's source `BatchId` is durably written
+before the image build or one-shot invocation; a crash can therefore resume
+with the same source identity. The worker image is built with the exact
+40-hex `LAGRANGE_CODE_COMMIT`, validated in the Dockerfile, and records it in
+the OCI revision label and runtime environment. The worker first reconciles the immutable Raw
+manifest. If an exact range/entitlement source batch already exists, it is
+reused and normalized without another KIS request; a new source batch is
+created only when no matching immutable evidence exists. A failed run may be
+resumed with the same identity. If the state record is lost, an existing
+different batch for the exact range/entitlement is a permanent conflict; the
+wrapper never guesses or refetches it. A valid multi-window source may contain
+several windows per symbol, but every window must use the exact daily endpoint,
+TR, credentialed mode, six documented query keys, `date1=start`, a bounded
+`date2`, and an empty `tr_cont`; the fixed 11-symbol set must be complete and
+at least one window must end at the requested `end`. If state is lost and this
+conflict is reported, the operator must restore the protected state record or
+review/quarantine the existing Raw batch before retrying; do not delete evidence
+or fetch a replacement batch.
+
+The process emits one machine-readable completion record with
+`vendor_snapshot=true`, `strict_pit=false`, `ready=false`,
+`publication=false`, `curated=false`, and `db=false`, together with the
+source batch ID and normalized count/range. These flags are an explicit
+non-publishable contract, not dataset approval.
+
+The KIS daily endpoint is bounded manually at 100 rows per request. It uses
+fixed `date1`, moves each next `date2` to the preceding response's oldest
+civil date minus one day, and rejects gaps/overlaps/out-of-range rows. The
+request uses original prices (`FID_ORG_ADJ_PRC=1`) and never uses `tr_cont`.
+One process-owned token manager is used for the run; normally it makes one
+OAuth token POST within that token's lifetime, but the contract does not claim
+an absolute at-most-once issuance under expiry/retry.
+Any non-empty continuation marker or continuation-like body field is a
+permanent single-page contract failure; multi-page continuation is not
+implemented because the raw contract does not preserve an approved cursor.
+
+Successful Stage5 output is still not a production-ready dataset. Calendar
+session completeness, listing intervals, action evidence/mapping, lineage
+review, canonical publication, Curated generation, dataset approval, and
+recommendation/backtest/Paper pins remain separate future gates.

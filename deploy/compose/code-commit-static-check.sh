@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Static contract check for immutable API and backtest image provenance.
+# Static contract check for immutable API, research-worker, and backtest image
+# provenance.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 compose="$root/deploy/compose/compose.yml"
 dockerfile="$root/crates/api-server/Dockerfile"
+worker_dockerfile="$root/data-pipelines/collectors/Dockerfile"
 backtest_dockerfile="$root/crates/job-queue/Dockerfile.backtest-runner"
 env_example="$root/deploy/compose/.env.example"
 
@@ -15,9 +17,10 @@ die() {
 
 [ -f "$compose" ] || die "missing Compose file"
 [ -f "$dockerfile" ] || die "missing API Dockerfile"
+[ -f "$worker_dockerfile" ] || die "missing research-worker Dockerfile"
 [ -f "$backtest_dockerfile" ] || die "missing backtest-runner Dockerfile"
 [ -f "$env_example" ] || die "missing Compose env example"
-for image_dockerfile in "$dockerfile" "$backtest_dockerfile"; do
+for image_dockerfile in "$dockerfile" "$worker_dockerfile" "$backtest_dockerfile"; do
   grep -Fq 'ARG LAGRANGE_CODE_COMMIT' "$image_dockerfile" \
     || die "$image_dockerfile must declare LAGRANGE_CODE_COMMIT"
   grep -Fq "grep -Eq '^[0-9a-f]{40}$'" "$image_dockerfile" \
@@ -30,8 +33,8 @@ done
 grep -Fq 'STOPSIGNAL SIGTERM' "$backtest_dockerfile" \
   || die 'backtest-runner image must deliver SIGTERM to its supervisor'
 build_arg_count=$(grep -Fc 'LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?' "$compose")
-[ "$build_arg_count" -ge 3 ] \
-  || die 'Compose must pass the required commit to API and both backtest images'
+[ "$build_arg_count" -ge 5 ] \
+  || die 'Compose must pass the required commit to API, workers, and both backtest images'
 grep -Fq 'export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"' "$env_example" \
   || die 'env example must document the exact CI commit command'
 
@@ -73,11 +76,13 @@ done
 command -v docker >/dev/null 2>&1 || die 'Docker Compose CLI is required'
 valid_commit=0123456789abcdef0123456789abcdef01234567
 if ! LAGRANGE_CODE_COMMIT="$valid_commit" \
+  RANGE_RAW_BATCH_ID=compose-config-disabled \
   RESEARCH_APP_ENV=production RESEARCH_FETCH_MODE=credentialed \
   docker compose --env-file "$env_example" -f "$compose" config --quiet; then
   die 'Compose rejected a valid 40-hex CI commit'
 fi
 if env -u LAGRANGE_CODE_COMMIT \
+  RANGE_RAW_BATCH_ID=compose-config-disabled \
   RESEARCH_APP_ENV=production RESEARCH_FETCH_MODE=credentialed \
   docker compose --env-file "$env_example" -f "$compose" config --quiet \
   >/tmp/lagrange-code-commit-missing.out 2>&1; then
