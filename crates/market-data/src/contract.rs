@@ -36,6 +36,10 @@ pub const PROVIDER_KIS: &str = "kis";
 /// expects one target date per delivery until a range-aware normalizer is
 /// approved.
 pub const PROVIDER_KIS_DAILY_RANGE: &str = "kis-daily-range";
+/// Provider scope for the Stage4A, bars-only intermediate derived from a
+/// bounded daily-range capture.  This scope is intentionally not accepted by
+/// the EOD publication or Curated contracts.
+pub const PROVIDER_KIS_DAILY_RANGE_NORMALIZED: &str = "kis-daily-range-normalized";
 /// Provider id for the provider-neutral canonical batch derived from KIS wire
 /// responses. The wire batch remains under [`PROVIDER_KIS`] forever.
 pub const PROVIDER_KIS_NORMALIZED: &str = "kis-normalized";

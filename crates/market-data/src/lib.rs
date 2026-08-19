@@ -53,6 +53,7 @@ pub mod provider;
 pub mod providers;
 pub mod publication;
 pub mod quality;
+pub mod range_normalize;
 pub mod redact;
 pub mod storage;
 pub mod validate;
@@ -76,8 +77,9 @@ pub use candidate_normalize::{
 pub use contract::{
     ALL_RESPONSE_KINDS, CANDIDATE_MASTER_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS,
     EOD_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CANDIDATE,
-    PROVIDER_KIS_CANDIDATE_NORMALIZED, PROVIDER_KIS_DAILY_RANGE, PROVIDER_KIS_NORMALIZED,
-    PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
+    PROVIDER_KIS_CANDIDATE_NORMALIZED, PROVIDER_KIS_DAILY_RANGE,
+    PROVIDER_KIS_DAILY_RANGE_NORMALIZED, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, RawEnvelope,
+    RequestMetadata, ResponseKind, StoredFile,
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{
@@ -134,5 +136,11 @@ pub use quality::{
     AdminApproval, ApprovalAudit, DataUse, DataUseDenial, ExclusionRecord, FreshnessPolicy,
     IssueCode, OptionalExclusion, QualityError, QualityGate, QualityIssue, QualityPolicy,
     QualityReport, Severity, apply_approval,
+};
+pub use range_normalize::{
+    ExpectedRangeSessions, RangeNormalizationLineage, RangeNormalizationOutcome,
+    RangeNormalizationSourceFile, RangeNormalizationSourceRow, RangeNormalizeError,
+    deterministic_range_normalized_batch_id, deterministic_range_normalized_batch_id_with_identity,
+    normalize_kis_daily_range, normalize_kis_daily_range_batch,
 };
 pub use storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};
