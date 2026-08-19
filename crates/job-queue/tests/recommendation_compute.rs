@@ -10,7 +10,10 @@ use job_queue::recommendation::compute::{
 use job_queue::recommendation::input::{AttestedDataset, AttestedDatasetStatus};
 use job_queue::resolver::ResolvedConfig;
 use market_data::curate::schema::{read_adjusted_bars, read_bars, write_adjusted_bars, write_bars};
-use market_data::{Capability, CurateStore, DatasetManifest, dataset_manifest_hash};
+use market_data::{
+    ADJUSTED_BARS_SCHEMA_ID, BARS_SCHEMA_ID, CORPORATE_ACTIONS_SCHEMA_ID, Capability, CurateStore,
+    CuratedArtifactRef, DatasetManifest, TOTAL_RETURN_BARS_SCHEMA_ID, dataset_manifest_hash,
+};
 use serde_json::json;
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -226,6 +229,102 @@ fn clone_symbol_for_qa(store_root: &Path, source_symbol: &str, destination_symbo
     }
 }
 
+/// Walk the curated `bars/` and `corporate_actions/` trees under `store` and
+/// derive the exact [`CuratedArtifactRef`] set for `version` from the bytes
+/// actually on disk: real relative path, real size, real SHA-256, and the
+/// schema id inferred from the file's own name. Nothing here is hardcoded --
+/// production's `verify_artifacts` requires the manifest to describe reality,
+/// so this test-side attestation must derive from the same reality.
+fn curated_artifacts_for_version(store: &CurateStore, version: u32) -> Vec<CuratedArtifactRef> {
+    let curated_root = store.root().join("curated");
+    let mut artifacts = Vec::new();
+    for zone in ["bars", "corporate_actions"] {
+        let zone_root = curated_root.join(zone);
+        if zone_root.is_dir() {
+            collect_curated_artifacts(&curated_root, &zone_root, version, false, &mut artifacts);
+        }
+    }
+    artifacts.sort_by(|a, b| a.path.cmp(&b.path));
+    artifacts
+}
+
+fn collect_curated_artifacts(
+    curated_root: &Path,
+    directory: &Path,
+    version: u32,
+    inside_version: bool,
+    artifacts: &mut Vec<CuratedArtifactRef>,
+) {
+    let version_component = format!("version={version}");
+    for entry in std::fs::read_dir(directory).expect("read curated artifact directory") {
+        let entry = entry.expect("read curated artifact entry");
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if path.is_dir() {
+            collect_curated_artifacts(
+                curated_root,
+                &path,
+                version,
+                inside_version || name == version_component,
+                artifacts,
+            );
+            continue;
+        }
+        if !inside_version {
+            continue;
+        }
+        let schema = match name.as_str() {
+            "bars.parquet" => BARS_SCHEMA_ID,
+            "adjusted_bars.parquet" => ADJUSTED_BARS_SCHEMA_ID,
+            "total_return_bars.parquet" => TOTAL_RETURN_BARS_SCHEMA_ID,
+            "corporate_actions.parquet" => CORPORATE_ACTIONS_SCHEMA_ID,
+            other => panic!("unrecognized curated artifact file name: {other}"),
+        };
+        let bytes = std::fs::read(&path).expect("read curated artifact bytes");
+        let relative = path
+            .strip_prefix(curated_root)
+            .expect("curated artifact path is under the curated root")
+            .to_str()
+            .expect("curated artifact path is valid UTF-8")
+            .to_owned();
+        artifacts.push(CuratedArtifactRef {
+            path: relative,
+            sha256: ContentHash::from_bytes(&bytes),
+            size_bytes: bytes.len() as u64,
+            schema: schema.to_owned(),
+        });
+    }
+}
+
+/// Re-derive and persist the manifest's artifact attestation from whatever
+/// the curated tree actually contains right now, and keep `qa.pin`'s pinned
+/// hash in lock-step. Tests that mutate the curated tree after constructing
+/// the QA dataset (removing, moving, or re-adding files) must call this
+/// before the next `compute_close`: production now attests the manifest's
+/// artifact set against the live tree on every call (`CurateStore::
+/// verify_artifacts`), so a manifest left describing the pre-mutation tree
+/// would fail closed for the wrong reason (a stale attestation) instead of
+/// exercising the behavior the test actually targets.
+fn resync_manifest_artifacts(qa: &mut QaDataset) {
+    let store = CurateStore::new(&qa.pin.storage_path);
+    let dataset_id = DatasetId::parse(&qa.pin.dataset_id).expect("QA dataset id");
+    let mut manifest = store
+        .read_dataset_manifest(&dataset_id, qa.pin.curated_version)
+        .expect("read QA manifest")
+        .expect("QA manifest exists");
+    manifest.artifacts = curated_artifacts_for_version(&store, manifest.version);
+    manifest.content_hash = dataset_manifest_hash(&manifest).expect("resync QA manifest hash");
+    store
+        .write_dataset_manifest(&manifest)
+        .expect("rewrite QA manifest with resynced artifacts");
+    qa.pin.manifest_sha256 = manifest
+        .content_hash
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("content hash has sha256 prefix")
+        .to_owned();
+}
+
 fn qa_only_fixed_universe_dataset() -> QaDataset {
     let repo = repo_root();
     let temp = tempfile::Builder::new()
@@ -264,6 +363,7 @@ fn qa_only_fixed_universe_dataset() -> QaDataset {
     // recommendation seam must still exercise a real, self-hashed manifest,
     // so this temp-only fixture attests the cloned partitions explicitly.
     let curate_store = CurateStore::new(&store);
+    let artifacts = curated_artifacts_for_version(&curate_store, 2);
     let manifest = DatasetManifest {
         dataset_id: DatasetId::parse("krx_eod_bars").expect("QA dataset id"),
         version: 2,
@@ -271,7 +371,7 @@ fn qa_only_fixed_universe_dataset() -> QaDataset {
         created_at: UtcTimestamp::parse_rfc3339("2021-01-29T06:30:00Z")
             .expect("QA manifest timestamp"),
         source_batches: Vec::new(),
-        artifacts: Vec::new(),
+        artifacts,
         bar_count: 11 * 260,
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"placeholder"),
@@ -389,11 +489,12 @@ fn bounded_dynamic_factor_ids_compute_a_real_snapshot() {
 
 #[test]
 fn close_omits_null_factor_values() {
-    let qa = qa_only_fixed_universe_dataset();
+    let mut qa = qa_only_fixed_universe_dataset();
     let universe = fixed_universe();
     let short_history =
         Path::new(&qa.pin.storage_path).join("curated/bars/market=kr/symbol=153130.KRX/year=2020");
     std::fs::remove_dir_all(short_history).expect("shorten one QA-only member's history");
+    resync_manifest_artifacts(&mut qa);
     let requirements = StrategyRequirements {
         factor_ids: vec!["return_6m".to_owned()],
         minimum_lookback_sessions: 126,
@@ -412,7 +513,7 @@ fn close_omits_null_factor_values() {
 
 #[test]
 fn close_rejects_an_incomplete_fixed_universe_and_future_rows() {
-    let qa = qa_only_fixed_universe_dataset();
+    let mut qa = qa_only_fixed_universe_dataset();
     let universe = fixed_universe();
     let requirements = StrategyRequirements {
         factor_ids: vec!["vol_120".to_owned()],
@@ -420,6 +521,7 @@ fn close_rejects_an_incomplete_fixed_universe_and_future_rows() {
     };
     let missing = Path::new(&qa.pin.storage_path).join("curated/bars/market=kr/symbol=153130.KRX");
     std::fs::remove_dir_all(&missing).expect("remove one QA-only member");
+    resync_manifest_artifacts(&mut qa);
     let error = compute_close(
         &qa.pin,
         &universe,
@@ -431,6 +533,7 @@ fn close_rejects_an_incomplete_fixed_universe_and_future_rows() {
     assert_eq!(error.class(), ErrorClass::DataBlocked);
 
     clone_symbol_for_qa(Path::new(&qa.pin.storage_path), "069500.KRX", "153130.KRX");
+    resync_manifest_artifacts(&mut qa);
     let error = compute_close(
         &qa.pin,
         &universe,
@@ -489,7 +592,7 @@ fn close_attests_the_pinned_manifest_before_reading_factors() {
 
 #[test]
 fn membership_discovery_is_scoped_to_the_attested_curated_version() {
-    let qa = qa_only_fixed_universe_dataset();
+    let mut qa = qa_only_fixed_universe_dataset();
     let market = Path::new(&qa.pin.storage_path).join("curated/bars/market=kr");
     let source = market.join("symbol=069500.KRX");
     let unrelated = market.join("symbol=999999.KRX");
@@ -520,6 +623,7 @@ fn membership_discovery_is_scoped_to_the_attested_curated_version() {
         )
         .expect("move one member outside the attested version");
     }
+    resync_manifest_artifacts(&mut qa);
     let error = compute_close(
         &qa.pin,
         &fixed_universe(),
@@ -535,7 +639,7 @@ fn membership_discovery_is_scoped_to_the_attested_curated_version() {
 
 #[test]
 fn global_lookback_counts_prior_sessions_and_short_members_still_yield_null() {
-    let qa = qa_only_fixed_universe_dataset();
+    let mut qa = qa_only_fixed_universe_dataset();
     let as_of = TradingDate::parse("2021-01-29").unwrap();
     let error = compute_close(
         &qa.pin,
@@ -553,6 +657,7 @@ fn global_lookback_counts_prior_sessions_and_short_members_still_yield_null() {
     let short_history =
         Path::new(&qa.pin.storage_path).join("curated/bars/market=kr/symbol=153130.KRX/year=2020");
     std::fs::remove_dir_all(short_history).expect("shorten one QA-only member's history");
+    resync_manifest_artifacts(&mut qa);
     let computed = compute_close(
         &qa.pin,
         &fixed_universe(),
@@ -596,6 +701,12 @@ fn malformed_parquet_is_integrity_not_a_retryable_store_error() {
     let adjusted = Path::new(&qa.pin.storage_path)
         .join("curated/bars/market=kr/symbol=069500.KRX/year=2021/version=2/adjusted_bars.parquet");
     std::fs::write(adjusted, b"not parquet").expect("corrupt QA parquet");
+    // Not re-attested, unlike the semantic-corruption test below: arbitrary bytes
+    // can never satisfy artifact verification (size, hash, and schema all fail),
+    // so since f815f63 this case is caught at the attestation layer rather than by
+    // the Parquet reader. Integrity is still the correct and asserted outcome —
+    // failing earlier is the intended contract — but the reader path is no longer
+    // what this test exercises.
     let error = compute_close(
         &qa.pin,
         &fixed_universe(),
@@ -611,10 +722,11 @@ fn malformed_parquet_is_integrity_not_a_retryable_store_error() {
 
 #[test]
 fn missing_required_adjusted_component_is_data_blocked() {
-    let qa = qa_only_fixed_universe_dataset();
+    let mut qa = qa_only_fixed_universe_dataset();
     let adjusted = Path::new(&qa.pin.storage_path)
         .join("curated/bars/market=kr/symbol=069500.KRX/year=2021/version=2/adjusted_bars.parquet");
     std::fs::remove_file(adjusted).expect("remove required adjusted component");
+    resync_manifest_artifacts(&mut qa);
     let error = compute_close(
         &qa.pin,
         &fixed_universe(),
@@ -630,7 +742,7 @@ fn missing_required_adjusted_component_is_data_blocked() {
 
 #[test]
 fn semantically_invalid_parquet_value_is_integrity() {
-    let qa = qa_only_fixed_universe_dataset();
+    let mut qa = qa_only_fixed_universe_dataset();
     let adjusted = Path::new(&qa.pin.storage_path)
         .join("curated/bars/market=kr/symbol=069500.KRX/year=2021/version=2/adjusted_bars.parquet");
     let python = std::env::var_os("PYTHON").unwrap_or_else(|| "python".into());
@@ -648,6 +760,13 @@ fn semantically_invalid_parquet_value_is_integrity() {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    // Re-attest deliberately. The corrupted file is still a *valid* Parquet with
+    // an unchanged schema, so re-attesting it lets artifact verification pass and
+    // the read reach the semantic check this test is named for. Without the
+    // resync the size/hash mismatch would satisfy the assertion at the
+    // attestation layer instead, and the test would stop covering the reader.
+    resync_manifest_artifacts(&mut qa);
+
     let error = compute_close(
         &qa.pin,
         &fixed_universe(),
@@ -659,6 +778,15 @@ fn semantically_invalid_parquet_value_is_integrity() {
     )
     .expect_err("semantic Parquet corruption is not retryable I/O");
     assert_eq!(error.class(), ErrorClass::Integrity, "{error:?}");
+    // Pin the layer, not just the class. The resync above exists so the failure
+    // comes from reading the value; if artifact attestation ever short-circuits
+    // this again, the class assertion alone would still pass and the test would
+    // quietly stop covering what it is named for.
+    let rendered = format!("{error:?}");
+    assert!(
+        !rendered.contains("artifact attestation"),
+        "expected the semantic read to fail, not artifact attestation: {rendered}"
+    );
 }
 
 #[tokio::test]
