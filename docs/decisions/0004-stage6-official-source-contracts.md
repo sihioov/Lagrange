@@ -348,10 +348,27 @@ range and filter locally by `종목명`**, since that list is already restricted
 ETF-type issues and carries the name per row. This avoids depending on
 undocumented popup state, and it is the owner's chosen direction.
 
-What this does **not** change: D6 stands, so bulk or scheduled collection from
-KIND remains operator-driven and is not approved here. What is settled is the
-*mechanism* to use when collection is approved, plus permission for the low-volume
-browser-engine diagnostics that answered items 10, 11, and 12.
+**Amended 2026-08-20: browser-driven KIND collection is approved.** The owner
+approved option (A) — automated collection through the site's own controls in a
+browser engine, at low volume, never a reconstructed request. This supersedes
+D6's operator-driven restriction **for KIND only**; D6 continues to govern
+`data.krx.co.kr`, whose terms carry an explicit automated-collection
+prohibition that KIND's own linked legal notice does not.
+
+The risk the owner accepted, recorded plainly: whether the Data Marketplace
+anti-automation clause reaches KIND is unresolved. KIND's own legal notice
+prohibits unauthorized reproduction and redistribution but says nothing about
+automation, and KIND serves no `robots.txt`. Collection therefore stays
+deliberately modest — the site's own search control, low request volume, no
+parameter probing — and this decision is revisited if KIND publishes a clause of
+its own.
+
+Because KIND has no API, the request that Raw records is a **browser
+interaction**, which D6 already anticipated for official downloadable artifacts:
+the exact bytes, the interaction that produced them, the retrieval time, and a
+content hash. The hash is computed by the ingesting Rust path from the bytes on
+disk, never accepted from the browser step, so the capture stage cannot
+misreport what it retrieved.
 
 ## Consequences
 

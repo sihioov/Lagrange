@@ -348,7 +348,7 @@ This matches the §0.4 premise that KIND need not be an API.
 | purpose | page | export | operator controls |
 |---|---|---|---|
 | detailed disclosure search | `https://kind.krx.co.kr/disclosure/details.do?method=searchDetailsMain` | EXCEL | 기간 date range, market, security type (includes ETF and 주권), disclosure-type checkboxes including `정정공시 요구`, company name/code |
-| ETF-scoped disclosure list | `https://kind.krx.co.kr/disclosure/disclosurebystocktype.do?method=searchDisclosureByStockTypeEtf` | EXCEL | stock name, report name, 기간 |
+| ETF-scoped disclosure list | `https://kind.krx.co.kr/disclosure/disclosurebystocktype.do?method=searchDisclosureByStockTypeEtf` | **no EXCEL export** (corrected 2026-08-20); the search response itself is the artifact | 기간, and a per-issue field that does not filter |
 | administrative issue (관리종목) | `https://kind.krx.co.kr/investwarn/adminissue.do?method=searchAdminIssueList` | EXCEL | market (전체/유가증권/코스닥), stock name |
 | trading halt (매매거래정지) | `https://kind.krx.co.kr/investwarn/tradinghaltissue.do?method=searchTradingHaltIssueMain` | EXCEL | market, stock name |
 | listed-company roster | `https://kind.krx.co.kr/corpgeneral/corpList.do?method=loadInitPage` | EXCEL | corporate/market classifications |
@@ -381,6 +381,49 @@ tracked at list level. On the sampled documents, only a textual notice appeared
 `본 공시는 공시내용 기재 불충분 등의 사유로 한국거래소 정정요구를 받은 사항입니다`
 — with no machine-followable reference to the pre-correction filing. Whether
 such a field exists is a gap.
+
+### The KIND Raw artifact — settled 2026-08-20
+
+Measured with the site's own search control, so the design rests on observation
+rather than assumption.
+
+**There is no EXCEL export on the ETF-scoped disclosure page.** Enumerating every
+link, button, and input on it turns up exactly one export-like control,
+`뷰어다운로드`, which opens a document-viewer popup. An earlier research pass
+reported an EXCEL button here; that is **corrected** — it does not exist on this
+page.
+
+**The artifact is the search response itself, and it is byte-stable.** When
+`fnSearch()` runs, the page issues:
+
+```
+POST https://kind.krx.co.kr/disclosure/disclosurebystocktype.do
+method=searchDisclosureByStockTypeEtfSub&forward=disclosurebystocktype_etf_sub
+&currentPageSize=15&pageIndex=1&orderMode=1&orderStat=D&etfIsuSrtCd=&…
+```
+
+For a closed historical window that response was **13,085 bytes with an
+identical SHA-256 across two separate runs**, and it carries both the `시간`
+label and the per-disclosure times. So the official server bytes are hashable
+immutable Raw, obtained through the site's own request rather than a
+reconstructed one — which is exactly what ADR-0004 D11 requires.
+
+**Raw stores the response unfiltered.** Three attempts at per-issue filtering all
+returned the unfiltered page: `searchCorpName` with a code, the hidden
+`repIsuSrtCd`, and the ETF page's own `etfIsuSrtCd` (the field exists and can be
+set, but the page evidently needs companion state its popup supplies). Probing
+stopped there. This costs nothing, because filtering belongs after Raw anyway:
+the list is already restricted to ETF-type issues and carries `종목명` per row, so
+selection happens at normalization, where it is reversible and auditable. Storing
+the complete official response is the better lineage in any case — Raw is
+provider bytes, not a projection of them.
+
+**Consequence for the ingest path.** The capture stage is necessarily a browser,
+so the hash must not be trusted from it: the ingesting Rust path recomputes the
+SHA-256 from the bytes on disk and records the interaction (URL, the form fields
+the page sent, retrieval time) as the request metadata. Pagination is
+`pageIndex` at `currentPageSize=15`, so a date range spans multiple responses,
+each one its own Raw file.
 
 ### How KIND was actually inspected
 
@@ -641,7 +684,12 @@ credentialed call, because read-only public fetching cannot settle it.
     per row, so a date-ranged fetch filtered locally by name would serve the
     pipeline without the popup at all. Confirm the intended approach before
     building either. **Direction chosen 2026-08-20: local filtering** (ADR-0004
-    D11). The popup will not be reproduced.
+    D11). The popup will not be reproduced. A third attempt was made and failed:
+    the ETF page's own `etfIsuSrtCd` field exists and can be set, but the page
+    still returns the unfiltered list, so it needs companion state the popup
+    supplies. Probing stopped at three attempts. **This item is now closed as
+    won't-do rather than open** — filtering after Raw is both sufficient and
+    better lineage.
 
 ## Read-only allowlist — approval state
 
@@ -664,7 +712,7 @@ issued, so no request has been sent to any of these surfaces.
 | FSC mirror | `금융위원회_증권상품시세정보` (ETF operation) | DEFERRED — mirror-vs-origin decision open; endpoint needs checklist item 2 |
 | KRX Open API | `ETF 일별매매정보` | DEFERRED — endpoint needs checklist item 1; prefer the FSC mirror per D3 |
 | KSD portal | `주식권리일정정보`, `주식배당정보` | DEFERRED — blocked on the KOGL Type 2 entitlement decision |
-| KIND | 상세검색, ETF disclosure, 관리종목, 매매거래정지 pages | DEFERRED — operator-driven EXCEL export only, per D6 |
+| KIND | 상세검색, ETF disclosure, 관리종목, 매매거래정지 pages | **APPROVED 2026-08-20** — browser-driven collection through the site's own controls, low volume, no reconstructed requests (ADR-0004 D11) |
 | data.krx.co.kr | 이슈 통계 leaf pages for 신규상장 / 상장폐지 / 매매거래정지 / 관리종목 | DEFERRED — operator-driven export only, per D6; leaf URLs unconfirmed |
 | terms pages | KRX Open API 이용약관, data.krx.co.kr 이용약관, KOGL licence, OpenDART 약관 | re-check periodically; terms change |
 
