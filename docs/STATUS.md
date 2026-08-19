@@ -135,6 +135,20 @@ Stage6와 무관한 별건이지만 저장소 자체 품질 기준(전체 스위
 
 **남긴 지뢰 1건.** `paper_valuation.rs:362`와 `paper_execution.rs:683`은 `dataset_root.join("curated")`를 쓰고 대응 테스트 fixture도 double-join이라 읽기·쓰기가 자체 정합이므로 현재 실패하지 않는다. 그러나 한 크레이트에 `CurateStore` 관례가 두 개 공존하는 상태다. DB 없이 검증할 수 없어 손대지 않았다. 또한 `ScratchDb::create()`의 조용한 skip 때문에 이 호스트의 "1,751 passed"는 실제 커버리지를 과대표시한다.
 
+### 0.10 KIND 수집 파이프라인 완성과 Stage6 첫 Raw 배치 (2026-08-20)
+
+소유자가 브라우저 구동 KIND 수집을 승인해(ADR-0004 D11) 파이프라인을 완성하고 **Stage6의 첫 immutable Raw 배치를 실제로 생성했다.**
+
+**구조**는 두 단계로 나눴다. 캡처 단계는 필연적으로 브라우저이므로 신뢰하지 않는다 — `data-pipelines/kind-capture/`(Node/Playwright)가 사이트 자체 `fnSearch()`·`fnPageGo()`를 구동해 응답 바이트와 상호작용 기록만 staging에 쓰고, Rust ingest 경로가 **디스크 바이트에서 해시를 재계산**한다. `CapturedPage`에 해시 필드가 아예 없어 캡처 단계가 해시를 주장할 코드 경로가 없다. `kind-capture`는 **npm workspaces 멤버가 아니므로**(root는 `apps/*`만 나열) root install이 Playwright와 브라우저를 dev/CI로 끌어오지 않는다.
+
+**라이브 실행으로 확정한 사실.** 페이지네이션은 페이지 자체 `fnPageGo`이고, **마지막 페이지를 넘기면 KIND가 `pageIndex`를 clamp해 최종 페이지를 반복 반환한다.** 첫 버전이 이 반복을 9개 잡았으므로 종료 조건을 "이전 응답과 바이트 동일"로 고쳐 40 → 정확히 32페이지가 됐다(해석 없는 순수 바이트 비교, ingest 쪽 중복 거부와 같은 기준). `2020-02-03..2020-02-07` 창에서 공시 473건 = 31페이지×15 + 마지막 8행이다. 하루 약 95건이므로 **약 6일이면 40페이지 상한**이라, 백필은 5일 단위 창을 권고한다.
+
+**바이트 안정성이 세션을 넘어 확인됐다** — 독립 실행 2회에서 32/32 페이지 바이트 동일. 재캡처를 이전 배치와 대조할 수 있다.
+
+**첫 배치**: `9dfacd13-1f07-4b5f-8004-cf6b11c1518b`, `provider=kind-disclosure/market=kr`, 32파일, manifest 1행, `ResponseKind::DisclosureIndex`, endpoint `kind.disclosure.etf.list.v1`, entitlement `kind:krx-legal-notice:personal-internal:2026-08-20`. 검증: 저장 파일 32개가 staging 바이트와 전부 동일, page-0001의 재계산 해시가 캡처 시점에 독립 관측한 값과 일치, manifest의 header는 빈 목록, credential 형태 문자열 검색 0건. Raw 루트는 저장소의 `data/`(gitignore 대상)이며 **운영 루트가 아니다** — sudo 제약 때문이고 운영 이관은 별도 판단 사항이다.
+
+**아직 하지 않은 것**: 정규화·Curated 승격·DB publication·five-pin. Raw는 필터 없이 공식 응답 전체를 보존하며, `종목명` 선택은 되돌릴 수 있는 정규화 단계의 일이다(D11).
+
 **부분 승인 (2026-08-19).** 소유자가 OpenDART 코어(`list.json`/`list.xml`, `corpCode.xml`, `company.json`)를 fixture 기반 Raw 어댑터 작업 범위로 승인했다. 나머지 allowlist 행, 모든 계정 등록, 라이선스 해석은 계속 보류다. 어떤 소스에도 key가 발급되지 않았으므로 실제 요청은 한 건도 발생하지 않았다. KRX 미러 vs 원본 선택, KSD 포함 여부, KOGL 제2유형·KRX 제11조③ `entitlement_reference`는 미결정 상태로 남는다.
 
 ---
