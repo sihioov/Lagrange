@@ -2186,6 +2186,7 @@ dependencies = [
  "encoding_rs",
  "fs2",
  "kis-client",
+ "opendart-client",
  "parquet",
  "serde",
  "serde_json",

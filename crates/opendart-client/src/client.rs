@@ -179,6 +179,18 @@ impl<T: Transport> ClientCore<T> {
 /// fetch bytes with [`OpenDartClient::get`]. That is the entire surface --
 /// there is no way to bypass the path allowlist, no way to supply
 /// `crtfc_key` yourself, and no way to reach the transport layer directly.
+/// Hand-written so a credential-holding client is debug-printable without a
+/// path to printing the credential. Never derived: the inner
+/// `Box<dyn CredentialSource>` has no `Debug` bound, and adding one would
+/// invite an implementation that renders the key.
+impl std::fmt::Debug for OpenDartClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenDartClient")
+            .field("credentials", &"<redacted>")
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct OpenDartClient {
     core: ClientCore<LiveTransport>,
 }

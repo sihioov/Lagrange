@@ -23,18 +23,24 @@
 //! separate manifest-append step in the happy path) -> a typed
 //! [`OpenDartOutcome`].
 //!
-//! # The API key is a query parameter
+//! # The API key is a query parameter — and never enters this crate
 //!
 //! Unlike KIS, which sends credentials in headers, OpenDART authenticates
 //! with a **`crtfc_key` query parameter**. [`RequestMetadata::query`] is
 //! persisted into `batch.json` and into the append-only manifest, so a naive
 //! adapter would write the key to disk permanently inside an immutable
-//! store. [`OpenDartProvider`] is the *only* place this module ever builds a
-//! [`RequestMetadata`] value (see `redacted_metadata`), and that constructor
-//! always redacts the key to a fixed placeholder before the metadata is
-//! recorded — never optionally, never later. It also scans every caller
-//! supplied query value against the configured key via
-//! [`crate::redact::Redactor`] and fails closed if a leak is detected.
+//! store. This module never holds or constructs a live `crtfc_key` value at
+//! all: [`opendart_client::OpenDartClient`] reads the credential itself and
+//! appends it to the outgoing query, *after* this module has finished
+//! building the query it passes to [`OpenDartRead::get`]. [`OpenDartProvider`]
+//! is the *only* place this module ever builds a [`RequestMetadata`] value
+//! (see `redacted_metadata`), and that constructor always records a fixed
+//! placeholder in place of the (absent) key — never optionally, never later
+//! — because the live request the transport sends does carry the parameter
+//! and the manifest should say so. `redacted_metadata` also fails closed
+//! with a structural guard: any caller-supplied query pair literally named
+//! `crtfc_key` is rejected, since only the transport is ever allowed to add
+//! one.
 
 use std::future::Future;
 
@@ -42,8 +48,6 @@ use domain::{BatchId, TradingDate, UtcTimestamp};
 use serde_json::Value;
 
 use crate::contract::{FetchMode, PROVIDER_OPENDART, RawEnvelope, RequestMetadata, ResponseKind};
-use crate::provider::CredentialRef;
-use crate::redact::Redactor;
 use crate::storage::{BatchSpec, ManifestEntry, RawStore, StoreError};
 
 /// The OpenDART query parameter carrying the credential. Its value must
@@ -81,13 +85,21 @@ const STATUS_SUCCESS: &str = "000";
 /// the first page of a walk).
 const STATUS_NO_DATA: &str = "013";
 
-/// Async read seam for OpenDART HTTP GETs. Implemented by fixtures in tests;
-/// no implementation in this crate performs live network I/O (see
-/// [`OpenDartLiveReader`]).
+/// Async read seam for OpenDART HTTP GETs. Implemented by fixtures in
+/// tests, and for live traffic by [`opendart_client::OpenDartClient`]
+/// (implemented in that crate, not here — see the impl below).
+///
+/// The `Debug` supertrait is retained: a credential-holding transport is
+/// debug-printable *safely* — [`opendart_client::OpenDartClient`] implements
+/// `Debug` by hand and renders its credential as a placeholder — so keeping
+/// the bound costs nothing and preserves diagnosability of whatever reader a
+/// caller supplies.
 pub trait OpenDartRead: std::fmt::Debug + Send + Sync {
-    /// Issues one GET against `path` with `query` (already including the
-    /// live `crtfc_key`, added by [`OpenDartProvider`]) and returns the raw
-    /// response bytes, unparsed.
+    /// Issues one GET against `path` with `query`. `query` carries **no**
+    /// credential — the implementation is responsible for appending
+    /// `crtfc_key` itself, after this trait's caller has already finished
+    /// building and redacting `query`. Returns the raw response bytes,
+    /// unparsed.
     fn get(
         &self,
         path: &str,
@@ -95,35 +107,22 @@ pub trait OpenDartRead: std::fmt::Debug + Send + Sync {
     ) -> impl Future<Output = Result<Vec<u8>, OpenDartError>> + Send;
 }
 
-/// Placeholder credentialed OpenDART reader.
+/// Live OpenDART reader: the `opendart-client` transport, wired directly as
+/// this module's [`OpenDartRead`]. `market-data` never holds or constructs a
+/// `crtfc_key` value; [`opendart_client::OpenDartClient`] reads the
+/// credential itself (see that crate's credential handling) and appends it
+/// to the outgoing query only after this module has finished building and
+/// redacting `query`.
 ///
-/// No live OpenDART HTTP client exists in this pass: no network I/O, no new
-/// dependency. This type exists only so a future credentialed transport has
-/// a fixed construction shape — it cannot be built without an explicit
-/// [`CredentialRef`] — while every call fails closed with
-/// [`OpenDartError::NotConfigured`] rather than attempting any I/O.
-#[derive(Debug)]
-pub struct OpenDartLiveReader {
-    _credential: CredentialRef,
-}
-
-impl OpenDartLiveReader {
-    /// Requires an explicit credential reference; there is no zero-argument
-    /// or `Default` constructor.
-    pub fn new(credential: CredentialRef) -> Self {
-        Self {
-            _credential: credential,
-        }
-    }
-}
-
-impl OpenDartRead for OpenDartLiveReader {
-    async fn get(
-        &self,
-        _path: &str,
-        _query: &[(String, String)],
-    ) -> Result<Vec<u8>, OpenDartError> {
-        Err(OpenDartError::NotConfigured)
+/// [`opendart_client::OpenDartTransportError`] is deliberately coarse (a
+/// failure class plus, at most, a numeric status) precisely so it is safe to
+/// carry across a crate boundary; this impl maps it onto
+/// [`OpenDartError::Transport`] verbatim rather than inventing detail.
+impl OpenDartRead for opendart_client::OpenDartClient {
+    async fn get(&self, path: &str, query: &[(String, String)]) -> Result<Vec<u8>, OpenDartError> {
+        opendart_client::OpenDartClient::get(self, path, query)
+            .await
+            .map_err(OpenDartError::Transport)
     }
 }
 
@@ -132,8 +131,6 @@ impl OpenDartRead for OpenDartLiveReader {
 /// bytes or a free-form provider message (see `sanitize_status`).
 #[derive(Debug)]
 pub enum OpenDartError {
-    /// No live OpenDART client is configured (see [`OpenDartLiveReader`]).
-    NotConfigured,
     /// Response bytes were not valid JSON where JSON was required.
     MalformedJson,
     /// Valid JSON, but it did not match any documented shape for this
@@ -168,9 +165,16 @@ pub enum OpenDartError {
     NotAZipArchive,
     /// The response body was empty where content was required.
     EmptyBody,
-    /// A defensive redaction scan found the configured key value where only
-    /// the redacted placeholder should ever appear.
+    /// A caller-supplied query pair was itself named `crtfc_key`. Callers
+    /// must never supply this parameter — only the live transport
+    /// ([`opendart_client::OpenDartClient`]) is ever allowed to add it —
+    /// so this is a structural rejection, not a value-content scan.
     KeyLeakDetected,
+    /// A live OpenDART HTTP transport failure. Carries the coarse
+    /// `opendart_client` error verbatim: that crate keeps its error type
+    /// free of any URL, query string, or response body, so nothing more
+    /// specific is safe to add here.
+    Transport(opendart_client::OpenDartTransportError),
     /// The immutable Raw store rejected this batch/manifest write.
     Store(StoreError),
 }
@@ -178,7 +182,6 @@ pub enum OpenDartError {
 impl std::fmt::Display for OpenDartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotConfigured => write!(f, "no live OpenDART client is configured"),
             Self::MalformedJson => write!(f, "opendart response was not valid JSON"),
             Self::UndocumentedShape => {
                 write!(f, "opendart response did not match any documented shape")
@@ -225,8 +228,12 @@ impl std::fmt::Display for OpenDartError {
             }
             Self::EmptyBody => write!(f, "opendart response body was empty"),
             Self::KeyLeakDetected => {
-                write!(f, "opendart request metadata failed the redaction scan")
+                write!(
+                    f,
+                    "caller-supplied query pair used the reserved `crtfc_key` parameter name"
+                )
             }
+            Self::Transport(source) => write!(f, "opendart transport failure: {source}"),
             Self::Store(source) => write!(f, "opendart raw store failure: {source}"),
         }
     }
@@ -235,6 +242,7 @@ impl std::fmt::Display for OpenDartError {
 impl std::error::Error for OpenDartError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Transport(source) => Some(source),
             Self::Store(source) => Some(source),
             _ => None,
         }
@@ -268,65 +276,46 @@ pub enum OpenDartOutcome {
     Empty,
 }
 
-/// Credentialed OpenDART disclosure adapter.
+/// OpenDART disclosure adapter.
 ///
-/// Holds the live `crtfc_key` value for exactly as long as it takes to build
-/// outgoing requests. Every [`RequestMetadata`] this type builds is redacted
-/// (see `redacted_metadata`) before it ever reaches [`RawEnvelope`],
-/// `batch.json`, or the manifest.
+/// Never holds, constructs, or receives a live `crtfc_key` value — that
+/// credential lives entirely on the other side of [`OpenDartRead::get`],
+/// inside [`opendart_client::OpenDartClient`]. Every [`RequestMetadata`]
+/// this type builds is redacted (see `redacted_metadata`) before it ever
+/// reaches [`RawEnvelope`], `batch.json`, or the manifest.
 pub struct OpenDartProvider<R: OpenDartRead> {
     reader: R,
-    crtfc_key: String,
 }
 
 impl<R: OpenDartRead> std::fmt::Debug for OpenDartProvider<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenDartProvider")
-            .field("reader", &self.reader)
-            .field("crtfc_key", &"[REDACTED]")
-            .finish()
+        // Deliberately opaque: `OpenDartRead` carries no `Debug` supertrait
+        // (a live transport has no obligation to be debug-printable), so
+        // this impl neither requires nor prints anything about `R`.
+        f.debug_struct("OpenDartProvider").finish_non_exhaustive()
     }
 }
 
 impl<R: OpenDartRead> OpenDartProvider<R> {
-    /// `crtfc_key` is the live credential value. It is stored only to build
-    /// outgoing requests and is never present in anything this type returns
-    /// or stores.
-    pub fn new(reader: R, crtfc_key: impl Into<String>) -> Self {
-        Self {
-            reader,
-            crtfc_key: crtfc_key.into(),
-        }
+    pub fn new(reader: R) -> Self {
+        Self { reader }
     }
 
-    fn redactor(&self) -> Redactor {
-        Redactor::new().with_secrets([self.crtfc_key.clone()])
-    }
-
-    /// The query actually sent over the wire: `visible` plus the live key.
-    fn live_query(&self, visible: &[(String, String)]) -> Vec<(String, String)> {
-        let mut query = visible.to_vec();
-        query.push((CRTFC_KEY_PARAM.to_owned(), self.crtfc_key.clone()));
-        query
-    }
-
-    /// The **only** place this module builds a [`RequestMetadata`]. The live
-    /// key never enters `query`: a fixed placeholder is recorded instead.
-    /// Defensively scans every caller-supplied `visible` value against the
-    /// configured key via [`Redactor`] and fails closed if it finds a leak
-    /// (for example, a caller accidentally passing the key itself as a
-    /// non-secret filter value).
+    /// The **only** place this module builds a [`RequestMetadata`]. No live
+    /// `crtfc_key` value is ever available here to redact: a fixed
+    /// placeholder is recorded in its place, because the live request the
+    /// transport sends does carry the parameter and the manifest should say
+    /// so. Fails closed with a structural guard if any caller-supplied
+    /// `visible` pair is itself named `crtfc_key` — callers must never
+    /// supply that parameter; only the transport is ever allowed to add it.
     fn redacted_metadata(
         &self,
         endpoint: &str,
         visible: &[(String, String)],
         mode: FetchMode,
     ) -> Result<RequestMetadata, OpenDartError> {
-        let redactor = self.redactor();
-        for (key, value) in visible {
-            if !redactor.is_clean(key) || !redactor.is_clean(value) {
-                return Err(OpenDartError::KeyLeakDetected);
-            }
+        if visible.iter().any(|(key, _)| key == CRTFC_KEY_PARAM) {
+            return Err(OpenDartError::KeyLeakDetected);
         }
         let mut query: Vec<(String, String)> = visible.to_vec();
         query.push((
@@ -378,8 +367,7 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
                     DISCLOSURE_LIST_PAGE_COUNT.to_string(),
                 ),
             ];
-            let live_query = self.live_query(&visible_query);
-            let bytes = self.reader.get(LIST_JSON_PATH, &live_query).await?;
+            let bytes = self.reader.get(LIST_JSON_PATH, &visible_query).await?;
 
             match parse_list_page(&bytes)? {
                 ListPageOutcome::Empty => {
@@ -468,8 +456,7 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
         mode: FetchMode,
     ) -> Result<OpenDartOutcome, OpenDartError> {
         let visible_query: Vec<(String, String)> = Vec::new();
-        let live_query = self.live_query(&visible_query);
-        let bytes = self.reader.get(CORP_CODE_XML_PATH, &live_query).await?;
+        let bytes = self.reader.get(CORP_CODE_XML_PATH, &visible_query).await?;
 
         validate_zip_or_documented_error(&bytes)?;
 
@@ -511,8 +498,7 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
         corp_code: &str,
     ) -> Result<OpenDartOutcome, OpenDartError> {
         let visible_query = vec![("corp_code".to_owned(), corp_code.to_owned())];
-        let live_query = self.live_query(&visible_query);
-        let bytes = self.reader.get(COMPANY_JSON_PATH, &live_query).await?;
+        let bytes = self.reader.get(COMPANY_JSON_PATH, &visible_query).await?;
 
         validate_single_page_json(&bytes)?;
 
@@ -713,5 +699,63 @@ fn validate_zip_or_documented_error(bytes: &[u8]) -> Result<(), OpenDartError> {
             None => Err(OpenDartError::MissingStatus),
         },
         _ => Err(OpenDartError::NotAZipArchive),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reader that must never actually be called: these tests exercise
+    /// `redacted_metadata` directly, before any `OpenDartRead::get` call
+    /// would happen.
+    #[derive(Debug)]
+    struct UnreachableReader;
+
+    impl OpenDartRead for UnreachableReader {
+        async fn get(
+            &self,
+            _path: &str,
+            _query: &[(String, String)],
+        ) -> Result<Vec<u8>, OpenDartError> {
+            panic!("UnreachableReader::get must never be called by these tests");
+        }
+    }
+
+    /// `redacted_metadata`'s structural guard: a caller-supplied query pair
+    /// literally named `crtfc_key` is rejected before it can ever reach a
+    /// [`RequestMetadata`].
+    ///
+    /// No public `ingest_*` entry point on [`OpenDartProvider`] can actually
+    /// construct such a pair -- every `visible` query this module builds
+    /// uses a hardcoded parameter name (`page_no`, `page_count`,
+    /// `corp_code`) -- so this guard is unreachable from the public API by
+    /// construction. That unreachability is itself the strongest form of
+    /// "no `crtfc_key` path exists in `market-data`"; this unit test reaches
+    /// past the public API to prove the guard still fires on its own terms,
+    /// and would catch a regression if some future `ingest_*` method ever
+    /// let a caller choose a query pair's name.
+    #[test]
+    fn redacted_metadata_rejects_a_caller_supplied_crtfc_key_pair() {
+        let provider = OpenDartProvider::new(UnreachableReader);
+        let visible = vec![(CRTFC_KEY_PARAM.to_owned(), "irrelevant".to_owned())];
+
+        let result = provider.redacted_metadata("test.endpoint", &visible, FetchMode::Synthetic);
+
+        assert!(matches!(result, Err(OpenDartError::KeyLeakDetected)));
+    }
+
+    /// The guard checks the pair's *name*, not its value: this module holds
+    /// no configured key for a value to collide with, so a value that
+    /// merely looks like a key is not a leak. Only the reserved parameter
+    /// name `crtfc_key` triggers the guard.
+    #[test]
+    fn redacted_metadata_allows_a_query_value_that_merely_resembles_a_key() {
+        let provider = OpenDartProvider::new(UnreachableReader);
+        let visible = vec![("corp_code".to_owned(), CRTFC_KEY_PARAM.to_owned())];
+
+        let result = provider.redacted_metadata("test.endpoint", &visible, FetchMode::Synthetic);
+
+        assert!(result.is_ok());
     }
 }
