@@ -319,6 +319,40 @@ because each changes a standing rule or an invariant:
 
 Given D4, option 3 costs almost nothing today. The choice is the owner's.
 
+**Resolved 2026-08-20: option 3.** The owner chose to leave the live path
+blocked and treat OpenDART as documentation-only for ETF11. No second TLS
+backend is introduced, so the one-TLS-stack rule stands unchanged. The
+`opendart-client` transport, the gated CLI, and the adapter contract remain in
+the tree, fixture-tested and unreachable in production — they cost nothing to
+keep and are ready if individual-stock scope later makes this surface useful,
+where issuers *are* disclosure entities. Should that happen, this decision is
+reopened rather than worked around.
+
+### D11: KIND is reached by its own controls, and filtered locally
+
+D4 makes KIND the ETF11 disclosure authority, and the D1 amendment shows its
+list carries what `available_at` needs. Two access facts shape how it is used.
+
+KIND cannot be driven over plain HTTP. The search target is discoverable, but the
+POST is refused because the endpoint depends on state the page's JavaScript
+produces. Reconstructing that state by trial is exactly the probing this project
+treats as prohibited, so the rule is: **KIND is exercised through its own search
+control in a browser engine, never through a reconstructed request.** That is how
+the D1 amendment's evidence was gathered.
+
+Per-issue filtering does not work by supplying a code — neither the visible name
+field nor the hidden issue-code field filters, and an early reading that "ETF11
+resolves" was the unfiltered list's first row. Rather than reproduce the site's
+issue-code popup, the intended design is **fetch the ETF-scoped list over a date
+range and filter locally by `종목명`**, since that list is already restricted to
+ETF-type issues and carries the name per row. This avoids depending on
+undocumented popup state, and it is the owner's chosen direction.
+
+What this does **not** change: D6 stands, so bulk or scheduled collection from
+KIND remains operator-driven and is not approved here. What is settled is the
+*mechanism* to use when collection is approved, plus permission for the low-volume
+browser-engine diagnostics that answered items 10, 11, and 12.
+
 ## Consequences
 
 - Stage5 data keeps `vendor_snapshot=true`, `strict_pit=false`, `ready=false`.

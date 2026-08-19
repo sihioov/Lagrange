@@ -614,9 +614,15 @@ credentialed call, because read-only public fetching cannot settle it.
     site-provided export counts as `무단` automated collection under
     `data.krx.co.kr` 제10조②, and whether that clause governs KIND. Until
     decided, ADR-0004 D6 keeps this category operator-driven.
-15. **Licence sign-off.** Record an `entitlement_reference` covering KOGL Type 2
-    non-commercial use and KRX 제11조③ post-termination use, interpreted against
-    this project's stated personal-internal purpose.
+15. ~~**Licence sign-off.**~~ **CLOSED 2026-08-20.** The owner recorded the use
+    as personal and internal, so the licence question does not block progress.
+    The `entitlement_reference` in use for OpenDART is
+    `opendart:tou-art16-art23:personal-internal:2026-08-20`, owner-endorsed —
+    read as source, basis (terms art. 16 copyright and art. 23 no-warranty),
+    purpose, and date of record. The underlying constraints stay recorded above,
+    unchanged, because they would govern again if the purpose ever changed: KOGL
+    Type 2 non-commercial on the KSD portal datasets, and KRX 제11조③
+    post-termination use.
 16. **First real `list.json` and `company.json` response.** With a key issued,
     capture one real response per surface and confirm the adapter's shape
     assumptions against it: whether the four envelope integers arrive as JSON
@@ -634,7 +640,8 @@ credentialed call, because read-only public fetching cannot settle it.
     disclosure list is already restricted to ETF-type issues and carries 종목명
     per row, so a date-ranged fetch filtered locally by name would serve the
     pipeline without the popup at all. Confirm the intended approach before
-    building either.
+    building either. **Direction chosen 2026-08-20: local filtering** (ADR-0004
+    D11). The popup will not be reproduced.
 
 ## Read-only allowlist — approval state
 
