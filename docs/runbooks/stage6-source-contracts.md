@@ -648,11 +648,15 @@ credentialed call, because read-only public fetching cannot settle it.
     and ETF-disclosure range controls accept `2020-01-31`, and a 2020-Q1 query
     returned 2020-03-31 rows, so the reach is real rather than merely accepted
     by the input.
-13. **Export byte-stability.** For KIND and for `data.krx.co.kr`, run an
-    identical query over a closed historical window on two different days,
-    download both exports, and hash them. If a generation timestamp is embedded,
-    define the normalization step before the artifact is treated as hashable
-    immutable Raw.
+13. **Export byte-stability.** **KIND half CLOSED 2026-08-20, by a different
+    route than expected:** the ETF-scoped page has no export at all, so the
+    artifact is the search response itself, and that was measured byte-stable —
+    two independent captures of `2020-02-03..2020-02-07` produced 32 of 32 pages
+    byte-identical, so no normalization step is needed before hashing. The
+    `data.krx.co.kr` half remains open: for that site, run an identical query over
+    a closed window on two different days, download both exports, and hash them;
+    if a generation timestamp is embedded, define the normalization step before
+    treating the artifact as hashable immutable Raw.
 14. **Automated-collection question.** Decide whether scripted use of a
     site-provided export counts as `무단` automated collection under
     `data.krx.co.kr` 제10조②, and whether that clause governs KIND. Until
@@ -666,6 +670,15 @@ credentialed call, because read-only public fetching cannot settle it.
     unchanged, because they would govern again if the purpose ever changed: KOGL
     Type 2 non-commercial on the KSD portal datasets, and KRX 제11조③
     post-termination use.
+
+    A second reference is now in use, for KIND:
+    `kind:krx-legal-notice:personal-internal:2026-08-20`, recorded in the first
+    KIND Raw batch's manifest row. It follows the pattern the owner endorsed for
+    OpenDART — source, basis, purpose, date — but the string itself was minted
+    here rather than supplied, so treat it as **provisional and replaceable at the
+    owner's word**. Its basis is KIND's own linked KRX legal notice, which
+    prohibits unauthorized reproduction and redistribution and carries no
+    automated-collection clause (see ADR-0004 D11 for the accepted risk).
 16. **First real `list.json` and `company.json` response.** With a key issued,
     capture one real response per surface and confirm the adapter's shape
     assumptions against it: whether the four envelope integers arrive as JSON

@@ -147,6 +147,10 @@ Stage6와 무관한 별건이지만 저장소 자체 품질 기준(전체 스위
 
 **첫 배치**: `9dfacd13-1f07-4b5f-8004-cf6b11c1518b`, `provider=kind-disclosure/market=kr`, 32파일, manifest 1행, `ResponseKind::DisclosureIndex`, endpoint `kind.disclosure.etf.list.v1`, entitlement `kind:krx-legal-notice:personal-internal:2026-08-20`. 검증: 저장 파일 32개가 staging 바이트와 전부 동일, page-0001의 재계산 해시가 캡처 시점에 독립 관측한 값과 일치, manifest의 header는 빈 목록, credential 형태 문자열 검색 0건. Raw 루트는 저장소의 `data/`(gitignore 대상)이며 **운영 루트가 아니다** — sudo 제약 때문이고 운영 이관은 별도 판단 사항이다.
 
+**증거 보존.** 이 배치를 만든 staging을 저장소 밖 `~/lagrange-evidence/kind-staging-20260820/`(읽기 전용)에 보존했다. rollup `sha256:38aa2172f7e19a84de56f31410f47ff20d3843cc63edcd30c4b40a8f2e12ab87`(`capture.json` + 32 페이지의 해시 목록을 다시 해시한 값)로 캡처 전체를 한 줄로 고정하며, 보존본 32개가 커밋된 배치와 바이트 동일함을 확인했다. 결함이 있던 40페이지 시행분은 혼동을 막기 위해 삭제했다.
+
+**배치 날짜 의미에 주의.** manifest row의 `date`는 **취득일**(`2026-08-19`)이고 데이터가 덮는 기간(`2020-02-03..2020-02-07`)이 아니다. 커버리지 구간은 기록된 form field(`fromDate`/`toDate`)에만 존재하며 일급 필드가 아니다. 즉 배치를 날짜로 열거하는 하류 단계는 취득일을 보게 된다 — Raw delivery 날짜로는 올바르지만, 백필 시 2020년 데이터 배치들이 모두 취득일을 갖는다는 뜻이므로 정규화 단계에서 커버리지를 명시적으로 다뤄야 한다.
+
 **아직 하지 않은 것**: 정규화·Curated 승격·DB publication·five-pin. Raw는 필터 없이 공식 응답 전체를 보존하며, `종목명` 선택은 되돌릴 수 있는 정규화 단계의 일이다(D11).
 
 **부분 승인 (2026-08-19).** 소유자가 OpenDART 코어(`list.json`/`list.xml`, `corpCode.xml`, `company.json`)를 fixture 기반 Raw 어댑터 작업 범위로 승인했다. 나머지 allowlist 행, 모든 계정 등록, 라이선스 해석은 계속 보류다. 어떤 소스에도 key가 발급되지 않았으므로 실제 요청은 한 건도 발생하지 않았다. KRX 미러 vs 원본 선택, KSD 포함 여부, KOGL 제2유형·KRX 제11조③ `entitlement_reference`는 미결정 상태로 남는다.
