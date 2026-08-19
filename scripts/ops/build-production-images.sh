@@ -141,7 +141,15 @@ check_inputs() {
   status=$(git -c "safe.directory=$root" -C "$root" \
     status --porcelain=v1 --untracked-files=all 2>/dev/null) ||
     die 'cannot inspect build root worktree status'
-  [ -z "$status" ] || die 'build root worktree is not clean (tracked or untracked changes present)'
+  while IFS= read -r status_line; do
+    [ -z "$status_line" ] && continue
+    # Keep parity with immutable release packaging: this operator-supplied
+    # official workbook is the sole untracked exception and is not part of
+    # any Docker build context. Every tracked change or other untracked file
+    # still fails closed.
+    [ "$status_line" = '?? docs/kis_openapi_entiredocs_20260818_030007.xlsx' ] ||
+      die 'build root worktree is not clean (tracked or unapproved untracked changes present)'
+  done <<<"$status"
 }
 
 print_plan() {

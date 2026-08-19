@@ -24,6 +24,8 @@ grep -Fq "rev-parse --verify 'HEAD^{commit}'" "$script" \
   || die 'build HEAD provenance check missing'
 grep -Fq 'status --porcelain=v1 --untracked-files=all' "$script" \
   || die 'tracked/untracked clean-worktree check missing'
+grep -Fq '?? docs/kis_openapi_entiredocs_20260818_030007.xlsx' "$script" \
+  || die 'official workbook must be the sole untracked build exception'
 grep -Fq 'does not match the build root HEAD' "$script" \
   || die 'commit mismatch failure missing'
 grep -Fq 'docker compose --env-file' "$script" || die 'Compose env-file invocation missing'

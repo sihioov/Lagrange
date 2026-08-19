@@ -121,6 +121,15 @@ grep -Fq 'worktree is not clean' "$out_dir/dirty.out"
 [ ! -s "$docker_log" ]
 rm -f -- "$repo_dir/untracked.fixture"
 
+mkdir -p "$repo_dir/docs"
+printf 'official workbook fixture\n' \
+  >"$repo_dir/docs/kis_openapi_entiredocs_20260818_030007.xlsx"
+LAGRANGE_CODE_COMMIT="$commit" \
+  bash "$helper" --preflight --compose-file "$compose_file" --env-file "$env_file" \
+  >"$out_dir/allowed-workbook.out"
+grep -Fq 'PRODUCTION_IMAGE_BUILD_PREFLIGHT: PASS' "$out_dir/allowed-workbook.out"
+rm -f -- "$repo_dir/docs/kis_openapi_entiredocs_20260818_030007.xlsx"
+
 if LAGRANGE_CODE_COMMIT=not-a-commit \
   bash "$helper" --preflight --compose-file "$compose_file" --env-file "$env_file" \
   >"$out_dir/invalid.out" 2>&1; then
