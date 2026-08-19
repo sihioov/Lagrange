@@ -203,7 +203,7 @@ validate_secret_value() {
 }
 
 validate_import_file() {
-  local metadata source_mode source_mode_bits byte_count
+  local metadata source_mode source_mode_bits byte_count line_count
 
   safe_path "$import_file" 'legacy Auth0 secret source'
   if [ ! -e "$import_file" ]; then
@@ -225,6 +225,12 @@ validate_import_file() {
     die 'cannot inspect legacy Auth0 secret source length'
   [ "$byte_count" -gt 0 ] ||
     die 'legacy Auth0 secret source must not be empty'
+  line_count=$(wc -l <"$import_file" 2>/dev/null) ||
+    die 'cannot inspect legacy Auth0 secret source line endings'
+  [ "$line_count" -eq 0 ] ||
+    die 'legacy Auth0 secret source must be one non-empty line without CR, LF, or whitespace'
+  ! LC_ALL=C grep -Fq $'\r' -- "$import_file" ||
+    die 'legacy Auth0 secret source must be one non-empty line without CR, LF, or whitespace'
   ! LC_ALL=C grep -q '[[:space:]]' -- "$import_file" ||
     die 'legacy Auth0 secret source must be one non-empty line without CR, LF, or whitespace'
   ! LC_ALL=C grep -q '[^[:print:]]' -- "$import_file" ||
@@ -288,6 +294,8 @@ check_existing_target() {
     return 0
   elif [ "$byte_count" -eq 0 ]; then
     report_check_failure "$target_name" 'must not be empty'
+  elif [ "$(wc -l <"$target")" -ne 0 ] || LC_ALL=C grep -Fq $'\r' -- "$target"; then
+    report_check_failure "$target_name" 'must be one non-empty line without CR, LF, or whitespace'
   elif LC_ALL=C grep -q '[[:space:]]' -- "$target"; then
     report_check_failure "$target_name" 'must be one non-empty line without CR, LF, or whitespace'
   elif LC_ALL=C grep -q '[^[:print:]]' -- "$target"; then

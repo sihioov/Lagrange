@@ -345,6 +345,24 @@ Raw/normalized/DB/Curated 증거를 검토하고 immutable
 dataset version과 five-pin을 승인한다. 이어서 Auth0/TLS와 serving runtime
 secret을 provision하고 full release validator/Compose를 실행한다.
 
+백필 상태와 Raw/Curated 산출물을 한 번에 검토할 때는 별도의 로컬 보고서를
+사용한다. 이 보고서는 승인이나 DB 쓰기를 수행하지 않고, V3 상태의 모든 날짜가
+`PUBLISHED`인지, `kis`/`kis-normalized` Raw manifest가 요청 범위를 덮는지,
+Curated manifest가 선언한 파일의 크기·SHA-256·Parquet magic이 맞는지만 확인한다.
+DB `READY`, entitlement 승인, 다섯 pin은 의도적으로 `NOT_CHECKED`로 남긴다.
+
+```sh
+scripts/ops/backfill-review-report.sh --start 2020-01-01 --end 2026-08-18 \
+  --state-file /var/lib/lagrange/data/backfill/etf-2020-01-01-to-2026-08-18-<commit>.tsv \
+  --data-root /var/lib/lagrange/data --check
+```
+
+`CURATED_CANDIDATE_FOUND_UNAPPROVED`가 출력되어도 출시 승인이 아니다. 이후
+operator-attestation 런북의 `register-dataset-version.sh --plan/--check/--apply`
+절차로 정확한 artifact set, DB lineage, ACTIVE entitlement를 다시 확인하고,
+성공한 apply의 다섯 pin만 release 환경에 입력한다. 상태/Raw coverage가 부족하거나
+Curated artifact가 불일치하면 보고서는 non-zero로 중단한다.
+
 ```bash
 sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
   scripts/ops/validate-production-config.sh \

@@ -22,7 +22,9 @@ before Compose can reinterpret a value.
 | `validate-production-config.sh` | strict `--scope release` validation (root-only read-only inspection) | `--scope infrastructure` checks only DB/bootstrap/runtime inputs; `--scope serving-prereqs` checks all non-KIS serving source/runtime copies without RESEARCH/KIS/dataset inputs; `--scope backfill` adds KIS worker inputs; no network/API call; missing values are `BLOCKED_EXTERNAL` |
 | `compose-release.sh` | `--scope release --plan` (root-only; it invokes the validator) | `--scope infrastructure --apply` bootstraps PostgreSQL/roles/migrations/Raw/schema without KIS, Auth0/TLS, dataset pins, or worker/API start; `--scope backfill --apply` additionally builds the research-worker image without starting its daemon; release scope starts serving after approval |
 | `backfill-production.sh` | `--plan` | `--execute` is root-only because it validates protected production secrets, then calls only the read-only research worker after an explicit guard; it does not require future dataset pins |
+| `install-kis-backfill-timer.sh` | `--dry-run` | root-only `--apply` installs one immutable-release daily 03:15 KST timer, enables but does not start it, and refuses installation at/after the current day's boundary; only deferred/retryable exits are timer-success, while permanent failures halt auto-resume |
 | `post-backfill-health.sh` | `--scope backfill --plan` | `--check` is root-only because it validates protected production secrets, then runs the existing research-worker EOD freshness health gate; no KIS call |
+| `backfill-review-report.sh` | `--start DATE --end DATE --state-file PATH --plan` | `--check` reads only the V3 backfill state, Raw manifest indexes, and curated artifact bytes; it never registers READY or claims DB/entitlement approval |
 | `self-test.sh` | static/no-infrastructure tests | none |
 
 Production execution is intentionally split into infrastructure, optional serving
@@ -42,7 +44,8 @@ pre-staging, data, and serving approvals:
    `deploy/secrets/provision-runtime-secrets.sh --scope backfill`, then
    `compose-release.sh --scope backfill --apply`, then
    the bounded ETF `research-worker --backfill-range` backfill command), followed by the
-   dependency-free worker healthcheck, curated dataset approval, and
+   dependency-free worker healthcheck, the local non-approving
+   `backfill-review-report.sh` handoff, curated dataset approval, and
 5. the full
    serving release (`compose-release.sh --scope release --apply`).
 
@@ -50,6 +53,17 @@ No script enables Compose `live`, asks for a KIS account/order credential, or
 calls an order endpoint. KOSPI200/KOSDAQ150 candidate backfill is a separate
 blocked workflow until its credentialed candidate bridge and entitlement are
 available. See [`docs/runbooks/kis-production-backfill.md`](../../docs/runbooks/kis-production-backfill.md).
+
+For a multi-year ETF range, install the recurring backfill timer only after
+reviewing its dry-run and immutable release path. It runs once daily at 03:15
+KST with `--auto-resume`; the installer refuses `--apply` at or after 03:15 KST
+because a `Persistent=true` timer could otherwise catch up immediately when an
+operator starts it. The installer enables the timer but never starts the timer
+or service. Exit 74 (retryable) and 75 (the exact
+`KIS_CALENDAR_SNAPSHOT_MISS`) are expected timer-success outcomes; exit 1 is a
+permanent/manual-review halt and the next automatic run is blocked until an
+operator reruns without `--auto-resume`. See
+[`docs/runbooks/kis-backfill-resume.md`](../../docs/runbooks/kis-backfill-resume.md).
 
 Exact release layout and rollback plus disk-bounded encrypted backup and
 restore-verification installation are documented in

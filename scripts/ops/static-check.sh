@@ -12,7 +12,9 @@ grep -Fq 'uses Compose interpolation, quote, escape' "$ops/lib/dotenv.sh" \
 
 for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
   provision-crypto-secrets.sh provision-kis-credentials.sh validate-production-config.sh compose-release.sh \
-  backfill-production.sh post-backfill-health.sh self-test.sh renew-tailscale-tls.sh \
+  backfill-production.sh install-kis-backfill-timer.sh backfill-resume-self-test.sh \
+  post-backfill-health.sh backfill-review-report.sh \
+  backfill-review-report-self-test.sh self-test.sh renew-tailscale-tls.sh \
   install-tailscale-tls-renewal.sh tailscale-tls-self-test.sh \
   build-production-images.sh build-production-images-static-check.sh \
   build-production-images-self-test.sh deploy-production-release.sh \
@@ -310,6 +312,20 @@ grep -Fq 'run --rm --no-deps research-worker healthcheck' "$ops/post-backfill-he
   || die 'post-backfill gate must avoid dependency restarts'
 grep -Fq 'does not require a worker daemon' "$ops/post-backfill-health.sh" \
   || die 'post-backfill gate must not require a worker daemon'
+review_report="$ops/backfill-review-report.sh"
+grep -Fq 'CURATED_CANDIDATE_FOUND_UNAPPROVED' "$review_report" \
+  || die 'backfill review report must remain explicitly non-approving'
+grep -Fq 'DB_READY=NOT_CHECKED' "$review_report" \
+  || die 'backfill review report must not claim database readiness'
+grep -Fq 'PLAN_ONLY: no production file read, write, or external service action made' \
+  "$review_report" || die 'backfill review plan must be local-only'
+for forbidden in docker psql curl wget tailscale systemctl; do
+  if grep -Eiq "^[^#]*$forbidden" "$review_report"; then
+    die "backfill review report must not invoke $forbidden"
+  fi
+done
+[ "$(stat -c '%a' "$review_report")" = 755 ] \
+  || die 'backfill-review-report.sh must have exact mode 0755'
 grep -Fq 'PLAN_ONLY: no KIS call' "$ops/backfill-production.sh" || die 'backfill must default to no-call plan'
 grep -Fq 'KOSPI200/KOSDAQ150 credentialed candidate bridge' "$ops/backfill-production.sh" || die 'candidate blocker missing'
 grep -Fq 'LAGRANGE_BACKFILL_STATE_V3' "$ops/backfill-production.sh" || die 'backfill state identity schema missing'
@@ -343,6 +359,33 @@ grep -Fq 'os.fsync(state.fileno())' "$ops/lib/backfill-progress.py" \
 grep -Fq 'record.get("phase") == "canonical_publication"' \
   "$ops/lib/backfill-progress.py" \
   || die 'backfill progress must distinguish canonical EOD from final Curated recovery'
+grep -Fq 'KIS_CALENDAR_SNAPSHOT_MISS' "$ops/lib/backfill-progress.py" \
+  || die 'backfill progress must identify the only deferred calendar error'
+grep -Fq 'DEFERRED_EXIT = 75' "$ops/lib/backfill-progress.py" \
+  || die 'backfill deferred exit contract missing'
+grep -Fq 'automatic resume is blocked' "$ops/backfill-production.sh" \
+  || die 'backfill automatic permanent-error halt missing'
+grep -Fq 'check_auto_resume_state' "$ops/backfill-production.sh" \
+  || die 'backfill automatic resume state gate missing'
+grep -Fq 'printf '\''%s\\tFAILED\\t%s'\'' "$date" "$run_identity"' \
+  "$ops/backfill-production.sh" && die 'backfill must not mark every untouched pending date failed'
+grep -Fq 'OnCalendar=*-*-* 03:15:00 Asia/Seoul' "$ops/install-kis-backfill-timer.sh" \
+  || die 'recurring KIS backfill timer schedule missing'
+grep -Fq 'network-online.target' "$ops/install-kis-backfill-timer.sh" \
+  || die 'KIS backfill timer network ordering missing'
+grep -Fq -- '--auto-resume' "$ops/install-kis-backfill-timer.sh" \
+  || die 'KIS backfill timer auto-resume flag missing'
+grep -Fq 'service=not-started' "$ops/install-kis-backfill-timer.sh" \
+  || die 'KIS backfill installer must not start the service'
+grep -Fq 'SuccessExitStatus=74 75' "$ops/install-kis-backfill-timer.sh" \
+  || die 'KIS backfill expected retry/deferred exit contract missing'
+grep -Fq 'apply_window_is_open' "$ops/install-kis-backfill-timer.sh" \
+  || die 'KIS backfill installer schedule safety gate missing'
+grep -Fq -- '--apply is allowed only before 03:15:00 Asia/Seoul' \
+  "$ops/install-kis-backfill-timer.sh" \
+  || die 'KIS backfill installer must reject catch-up-prone late installation'
+grep -Fq 'KIS_BACKFILL_TIMER_TEST_NOW' "$ops/install-kis-backfill-timer.sh" \
+  || die 'KIS backfill timer boundary test hook missing'
 if grep -Eq 'compose[^#]*--profile[[:space:]]+live|--profile[[:space:]]+live' "$ops"/*.sh; then
   die 'operator workflow must not enable the live profile'
 fi

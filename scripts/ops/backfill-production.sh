@@ -13,6 +13,7 @@ start_date=
 end_date=
 universes=etf
 mode=plan
+auto_resume=0
 
 usage() {
   cat <<'EOF'
@@ -35,6 +36,11 @@ the next date, the worker stops fail-closed without issuing a second calendar
 request; rerun the same state after review to advance the snapshot window. The
 state identity binds only pre-run inputs; the curated dataset
 pin is produced and approved after this command, so it is never required here.
+
+--auto-resume is reserved for the recurring systemd timer. It permits a fresh
+run, an interrupted RUNNING state, RETRYABLE errors, and the exact
+KIS_CALENDAR_SNAPSHOT_MISS deferred state. It refuses every other FAILED state
+until an operator explicitly reruns without --auto-resume.
 EOF
 }
 
@@ -59,6 +65,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --plan) mode=plan; shift ;;
     --execute) mode=execute; shift ;;
+    --auto-resume) auto_resume=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -145,7 +152,8 @@ check_state_path() {
 
 validate_state() {
   local expected_header=$'LAGRANGE_BACKFILL_STATE_V3\t'"$run_identity"
-  local line number=0 state_date state_status state_id extra
+  local line number=0 state_date state_status state_id state_code
+  declare -A last_status=()
   while IFS= read -r line || [ -n "$line" ]; do
     number=$((number + 1))
     if [ "$number" -eq 1 ]; then
@@ -153,18 +161,68 @@ validate_state() {
         blocked "backfill state has a stale/foreign schema or run identity; use a new state path"
       continue
     fi
-    IFS=$'\t' read -r state_date state_status state_id extra <<<"$line"
-    [ "$line" = "$state_date$(printf '\t')$state_status$(printf '\t')$state_id" ] ||
+    IFS=$'\t' read -r -a fields <<<"$line"
+    [ "${#fields[@]}" -ge 3 ] && [ "${#fields[@]}" -le 4 ] ||
       blocked "backfill state line $number is malformed"
-    [[ "$state_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] ||
-      blocked "backfill state line $number has an invalid date"
-    case "$state_status" in RUNNING|PUBLISHED|FAILED) ;; *)
-      blocked "backfill state line $number has an invalid status" ;;
-    esac
+    state_date=${fields[0]}
+    state_status=${fields[1]}
+    state_id=${fields[2]}
+    state_code=${fields[3]:-}
     [ "$state_id" = "$run_identity" ] ||
       blocked "backfill state line $number has a foreign run identity"
+    [[ "$state_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] ||
+      blocked "backfill state line $number has an invalid date"
+    [[ "$state_date" < "$start_date" || "$state_date" > "$end_date" ]] &&
+      blocked "backfill state line $number is outside the requested date range"
+    case "$state_status" in
+      RUNNING|PUBLISHED)
+        [ "${#fields[@]}" -eq 3 ] && [ -z "$state_code" ] ||
+          blocked "backfill state line $number has an unexpected error code"
+        ;;
+      FAILED)
+        if [ "${#fields[@]}" -eq 4 ]; then
+          [[ "$state_code" =~ ^[A-Z][A-Z0-9_]{0,63}$ ]] ||
+            blocked "backfill state line $number has an invalid error code"
+        elif [ "${#fields[@]}" -ne 3 ]; then
+          blocked "backfill state line $number is malformed"
+        fi
+        ;;
+      DEFERRED|RETRYABLE)
+        [ "${#fields[@]}" -eq 4 ] ||
+          blocked "backfill state line $number requires an error code"
+        [[ "$state_code" =~ ^[A-Z][A-Z0-9_]{0,63}$ ]] ||
+          blocked "backfill state line $number has an invalid error code"
+        ;;
+      *)
+        blocked "backfill state line $number has an invalid status" ;;
+    esac
+    if [ "${last_status[$state_date]:-}" = PUBLISHED ] && [ "$state_status" != PUBLISHED ]; then
+      blocked "backfill state line $number contradicts an already published date"
+    fi
+    last_status[$state_date]=$state_status
   done <"$state_file"
   [ "$number" -gt 0 ] || blocked 'backfill state is unexpectedly empty'
+}
+
+check_auto_resume_state() {
+  [ "$auto_resume" -eq 1 ] || return 0
+  local last_line last_status last_code
+  # A freshly initialized V3 state contains only its identity header.  The
+  # first timer invocation is allowed to start the bounded range.
+  [ "$(wc -l <"$state_file")" -eq 1 ] && return 0
+  last_line=$(tail -n 1 -- "$state_file")
+  IFS=$'\t' read -r -a fields <<<"$last_line"
+  last_status=${fields[1]:-}
+  last_code=${fields[3]:-}
+  case "$last_status" in
+    RUNNING|PUBLISHED|DEFERRED|RETRYABLE) ;;
+    FAILED)
+      blocked "automatic resume is blocked by permanent/unknown failure${last_code:+ ($last_code)}; review state and rerun without --auto-resume"
+      ;;
+    *)
+      blocked 'automatic resume requires a validated resumable state'
+      ;;
+  esac
 }
 
 if [ "$mode" = execute ]; then
@@ -194,7 +252,13 @@ if [ "$mode" = execute ]; then
   exec 9>>"$state_lock" || die "cannot open backfill state lock: $state_lock"
   flock -n 9 || blocked 'another backfill execution already holds the state lock'
 
-  : >>"$state_file"
+  if [ -e "$state_file" ]; then
+    [ "$(stat -c '%u:%g:%a' "$state_file")" = 0:0:600 ] ||
+      blocked 'backfill state must be root:root mode 0600'
+  else
+    (umask 077; : >>"$state_file")
+    chmod 0600 -- "$state_file"
+  fi
   check_state_path "$state_file" backfill-state
 
   code_commit=$(dotenv_effective_get LAGRANGE_CODE_COMMIT)
@@ -217,6 +281,7 @@ EOF
     printf 'LAGRANGE_BACKFILL_STATE_V3\t%s\n' "$run_identity" >>"$state_file"
   fi
   validate_state
+  check_auto_resume_state
 fi
 
 if [ "$mode" = plan ] && ! dotenv_validate_shell_overrides; then
@@ -305,19 +370,28 @@ done
 # The worker flushes one allowlisted, body-free event after each date reaches
 # durable publication. Validate the exact inclusive sequence and fsync each
 # corresponding state append so a later date failure cannot erase progress.
+progress_rc=0
 if "${compose[@]}" run --rm --no-deps research-worker \
   --backfill-range --start "$start_date" --end "$end_date" | \
   python3 "$script_dir/lib/backfill-progress.py" \
-    "$state_file" "$run_identity" "$start_date" "$end_date"
-then
-  :
+    "$state_file" "$run_identity" "$start_date" "$end_date"; then
+  progress_rc=0
 else
-  for date in "${pending_dates[@]}"; do
-    if ! grep -Fqx "$date$published_suffix" "$state_file"; then
-      printf '%s\tFAILED\t%s\n' "$date" "$run_identity" >>"$state_file"
-    fi
-  done
-  echo 'BACKFILL_STOPPED range failed (rerun resumes idempotently after operator review)' >&2
-  exit 1
+  progress_rc=$?
 fi
+case "$progress_rc" in
+  0) ;;
+  75)
+    echo 'BACKFILL_DEFERRED code=KIS_CALENDAR_SNAPSHOT_MISS (next recurring run may advance the calendar window)' >&2
+    exit 75
+    ;;
+  74)
+    echo 'BACKFILL_RETRYABLE (next recurring run may retry after operator review)' >&2
+    exit 74
+    ;;
+  *)
+    echo 'BACKFILL_STOPPED range failed; automatic resume is blocked until operator review' >&2
+    exit 1
+    ;;
+esac
 echo 'BACKFILL: PASS'

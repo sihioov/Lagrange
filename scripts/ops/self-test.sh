@@ -8,7 +8,9 @@ trap 'rm -rf -- "$out_dir"' EXIT
 
 for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.sh \
   provision-crypto-secrets.sh provision-kis-credentials.sh validate-production-config.sh compose-release.sh \
-  backfill-production.sh post-backfill-health.sh renew-tailscale-tls.sh \
+  backfill-production.sh install-kis-backfill-timer.sh backfill-resume-self-test.sh \
+  post-backfill-health.sh backfill-review-report.sh \
+  backfill-review-report-self-test.sh renew-tailscale-tls.sh \
   install-tailscale-tls-renewal.sh tailscale-tls-self-test.sh \
   build-production-images.sh build-production-images-static-check.sh \
   build-production-images-self-test.sh deploy-production-release.sh \
@@ -25,6 +27,8 @@ bash "$root/scripts/qa/recommendation-runner-smoke.sh" --static-only >/dev/null
 bash "$ops/static-check.sh" >/dev/null
 bash "$ops/tailscale-tls-self-test.sh" >/dev/null
 bash "$ops/build-production-images-self-test.sh" >/dev/null
+bash "$ops/backfill-review-report-self-test.sh" >/dev/null
+bash "$ops/backfill-resume-self-test.sh" >/dev/null
 python3 - "$ops/lib/backfill-progress.py" <<'PY'
 import pathlib
 import sys
