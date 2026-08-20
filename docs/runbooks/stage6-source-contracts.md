@@ -455,6 +455,20 @@ that needed disambiguating.
 `0402` alone accounts for almost all of it: the bulk of ETF disclosure traffic is
 routine 기타시장안내 and 괴리율 notices, not point-in-time evidence.
 
+**The narrow set was checked for completeness before being trusted.** ETFs pay
+분배금, not 배당, and there is no ETF 분배금 disclosure type — only ETN has one
+(`2010`). Type `0113 배당` returns **0** for ETFs, so selecting it proves nothing.
+The distribution evidence turned out to live inside a type already selected:
+`0303 권리락/배당락/기준가격` returns 414 for ETF/2020, of which **367 are
+`ETF 분배락 기준가격 안내`**. Composition checks out — `0303` 414 + `0321` 73 +
+`0350` 9 plus a small remainder sums to the 525 total.
+
+Widening from six to seventeen types (adding halt/resume, the 매매거래정지 family,
+`0364 ETF 투자유의종목`, 소속부/업종/매매방식 변경, 상장폐지결정, 분할, 분할/합병)
+returned the **same 525** for 2020: those types simply do not fire for ETFs in that
+year. The wider set is kept anyway, since it costs nothing and is more robust in a
+year where one of them does.
+
 **Consequence — narrow at the source, and use 상세검색 rather than the ETF-scoped
 page.** At ~1.4 relevant disclosures a day, one 40-page capture covers well over a
 year, so the whole range needs roughly **6 captures, ~230 requests, ~20 minutes**
