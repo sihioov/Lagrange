@@ -153,6 +153,27 @@ Stage6와 무관한 별건이지만 저장소 자체 품질 기준(전체 스위
 
 **아직 하지 않은 것**: 정규화·Curated 승격·DB publication·five-pin. Raw는 필터 없이 공식 응답 전체를 보존하며, `종목명` 선택은 되돌릴 수 있는 정규화 단계의 일이다(D11).
 
+### 0.11 KIND 정규화와 현재 상태 (2026-08-20)
+
+**정규화가 실데이터로 동작한다.** `crates/market-data/src/kind_normalize.rs`가 KIND Raw 배치를 공시별 observation으로 파싱하고, `provider=kind-disclosure-normalized` 스코프에 원본 배치에서 결정론적으로 유도한 배치 id로 기록한다. 실측: Raw `9dfacd13-1f07-4b5f-8004-cf6b11c1518b`(32페이지) → 정규화 `576fa1b2-5ebb-5e0e-9a15-0ab35ca2287a`, **473 observations**, seq 473→1 누락 0.
+
+**파서 계약은 아티팩트에서 나왔고, 그 구분이 재작성 비용을 치렀다.** 첫 버전은 표 헤더를 `<th>`에서 읽어 fixture 11개를 통과한 뒤 실제 첫 페이지에서 즉시 실패했다. 저장된 바이트에는 `<th>`가 없다 — 헤더 행이 비어 있고 컬럼명은 클라이언트 스크립트가 주입하므로, 앞서 관찰한 헤더는 브라우저 DOM에만 있었다. fixture가 렌더된 페이지를 흉내내고 코드가 그 fixture에 맞춰진 것이다. 계약을 `<table summary>` 속성으로 옮기고 fixture를 실제 마크업으로 재작성했다. **테스트 통과가 현실을 증명하지 않으며, 실배치 실행 전까지 완료가 아니다.**
+
+**버려지던 식별자 두 개를 살렸다.** 각 행이 `openDisclsViewer('...')`로 **공시 접수번호(14자리)** 를 담는다 — **정정 체인으로 가는 조인 키**이며 D5 요구사항이자 체크리스트 11번의 대상이다. KIND 내부 종목 키도 보존하되 KRX 코드로 오인되지 않게 타입명·doc으로 못 박았다. **접수번호에서 날짜를 파생하지 않는다** — 구조가 문서화되지 않았으므로 파생하면 PIT 증거 조작이며 OpenDART `rcept_no`와 동일 규칙이다.
+
+**timezone은 아는 것만 주장한다.** 지역 시각 원본을 그대로 보존하고 instant는 `Asia/Seoul` 가정을 명시적으로 기록한 채 유도한다(`2020-02-07 14:46` → `2020-02-07T05:46:00Z`, `AssumedAsiaSeoul`). 가정이 붙지 않은 instant를 낼 경로가 없어 확인 시 이력을 다시 쓰지 않고 유도만 고칠 수 있다.
+
+**instrument identity는 차단이고 근거가 강해졌다.** 저장된 바이트에 6자리 KRX 코드가 없다(KIND 내부 키만). `seed_universe` 이름은 placeholder이고 universe 설정은 이름을 KRX에서 해석한다고 적어두며 **KRX는 DEFERRED**다. 실배치 202개 이름 중 `KODEX 200`·`KODEX 200ESG`·`KODEX 200TR`·`KODEX 200가치저변동`·`KODEX 200선물인버스2X`가 함께 있어 **접두어가 겹치므로 이름 매칭이 구조적으로 모호**하다. `InstrumentIdentity::Unresolved { reason }`가 유일한 변형이고 이유를 데이터로 담는다.
+
+파싱은 모든 규칙에서 fail-closed다 — summary 불일치, 셀 개수, 시각 파싱, 빈 종목명·제목, 비정수 `번호`, 배치 전체의 `번호` 누락, 두 식별자 결측·형식오류, 행 0개 — 하나라도 실패하면 아무것도 쓰지 않는다.
+
+### 0.12 2026-08-20 종료 시점 상태
+
+- 커밋 30건(`99fb8e9`~`1f592a9`). **`main`에서 직접 작업했고 다른 브랜치에 이 커밋들이 없다.** `origin/main` 대비 **99 ahead / 0 behind**(분기 없음)이며 **push하지 않았다** — 이전 69개 커밋의 미push 상태도 그대로다.
+- 게이트: fmt·clippy `-D warnings` clean, `market-data` **347 통과**. 워크스페이스 **1,751 통과 / 6 실패**이고 남은 6건은 `research_worker`의 QA PostgreSQL 환경 의존이다(코드 결함 아님).
+- 승인 범위: OpenDART 코어(documentation-only, D10으로 live 차단), KIND 브라우저 구동 수집. KRX 미러 vs 원본, KSD 포함 여부는 계속 DEFERRED.
+- 다음에 승인 없이 가능한 것: **정정 체인 추적**(접수번호 조인 키 확보). 소유자 결정 필요: identity 해석(KRX), 백필 요청 예산, KSD. 환경 필요: QA PostgreSQL, push 여부.
+
 **부분 승인 (2026-08-19).** 소유자가 OpenDART 코어(`list.json`/`list.xml`, `corpCode.xml`, `company.json`)를 fixture 기반 Raw 어댑터 작업 범위로 승인했다. 나머지 allowlist 행, 모든 계정 등록, 라이선스 해석은 계속 보류다. 어떤 소스에도 key가 발급되지 않았으므로 실제 요청은 한 건도 발생하지 않았다. KRX 미러 vs 원본 선택, KSD 포함 여부, KOGL 제2유형·KRX 제11조③ `entitlement_reference`는 미결정 상태로 남는다.
 
 ---
