@@ -400,8 +400,13 @@ smoke가 생략해 source row의 instrument FK를 만족하지 못한 것이다.
 immutable synthetic Raw의 reference hash·batch id·retrieval instant·calendar first
 session·instrument master에서 인자를 유도해 `research_writer`의 좁은
 `register_candidate_instrument` definer를 publication 전에 호출하도록 보완했다.
-공식 KIS XLSX, provider, browser, 외부 DB에는 접근하지 않았다. 최종 functional green
-판정은 이 보완을 push한 다음 GitHub research-smoke 결과로만 내린다.
+보완 commit `e1c3b4b`의 CI run `32400065805`는 policy, format, strict Clippy,
+web, workspace 전체 테스트, PostgreSQL migration/role boundary와 required aggregate를
+모두 통과했다. 같은 commit의 research-smoke run `32400065786`도 static PASS,
+`research-worker`/`candidate-runner` release image build, 실제 synthetic price/source
+publication과 두 universe candidate feed를 거쳐 최종 `RESEARCH_WORKER_SMOKE:
+functional PASS`로 종료했다. 이전 `CANDIDATE_PIPELINE_FAILED`는 재현되지 않았다.
+공식 KIS XLSX는 계속 untracked로 제외했고 provider/browser/live API 호출은 없었다.
 
 **결정 뒤에도 남은 외부 입력.** 다음 세 항목은 추측해서 진행하지 않는다.
 
