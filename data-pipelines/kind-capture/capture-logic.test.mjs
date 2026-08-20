@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  CAPTURE_CONFIRM,
   CAPTURE_RESPONSE,
   TERMINATION,
   ISSUED_PAGE_STATUS,
@@ -12,6 +13,7 @@ import {
   createCaptureState,
   createPendingTaskTracker,
   issueCapturePage,
+  isCalendarDate,
   isExpectedCaptureRequest,
   isExpectedResponseUrl,
   isCleanTermination,
@@ -22,6 +24,7 @@ import {
   trackPendingTask,
   terminationForAdvance,
   waitForCapturedPage,
+  validateCaptureCliArgs,
 } from './capture-logic.mjs';
 
 function page(body) {
@@ -34,6 +37,37 @@ const expected = Object.freeze({
   pageIndex: 1,
 });
 const RESPONSE_URL = 'https://kind.krx.co.kr/disclosure/disclosurebystocktype.do';
+
+test('CLI validation requires the exact operator confirmation before browser launch', () => {
+  const valid = {
+    from: expected.fromDate,
+    to: expected.toDate,
+    out: '/tmp/kind-staging',
+    confirm: CAPTURE_CONFIRM,
+  };
+  assert.deepEqual(validateCaptureCliArgs(valid), {
+    ok: true,
+    value: { ...valid, maxPages: 40 },
+  });
+
+  for (const [key, value, error] of [
+    ['confirm', undefined, 'invalid_confirmation'],
+    ['confirm', 'yes', 'invalid_confirmation'],
+    ['from', '2026-02-30', 'invalid_from'],
+    ['to', '2026-13-01', 'invalid_to'],
+    ['from', '2020-02-08', 'invalid_date_range'],
+    ['max-pages', '41', 'invalid_max_pages'],
+  ]) {
+    assert.deepEqual(validateCaptureCliArgs({ ...valid, [key]: value }), { ok: false, error });
+  }
+});
+
+test('calendar validation accepts real leap days and rejects impossible dates', () => {
+  assert.equal(isCalendarDate('2024-02-29'), true);
+  for (const value of ['2023-02-29', '2026-02-30', '2026-04-31', '2026-13-01']) {
+    assert.equal(isCalendarDate(value), false, value);
+  }
+});
 
 function formFields({ fromDate = expected.fromDate, toDate = expected.toDate, pageIndex = expected.pageIndex, extra = '' } = {}) {
   return [

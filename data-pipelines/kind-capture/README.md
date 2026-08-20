@@ -34,10 +34,13 @@ into a user directory and point `LD_LIBRARY_PATH` at it.
 ## Capture
 
 ```sh
-node capture.mjs --from 2020-02-03 --to 2020-02-07 --out /path/to/staging
+node capture.mjs --from 2020-02-03 --to 2020-02-07 --out /path/to/staging \
+  --confirm KIND_ETF_DISCLOSURE_CAPTURE
 ```
 
-It refuses to write into a non-empty directory, because one staging directory
+The exact confirmation value is an operator gate, not standing approval for a
+new collection. Run the command only inside a separately approved date range
+and request budget. It refuses to write into a non-empty directory, because one staging directory
 maps 1:1 onto one Raw batch and mixing two captures would corrupt that
 correspondence. Pagination uses the page's own `fnPageGo`. It accepts only one
 terminal condition as complete: after advancing, KIND returns bytes identical
@@ -64,19 +67,22 @@ It also records, per page, the `page_index`, file name, `retrieved_at` instant,
 and `form_fields`: ordered, URL-decoded pairs from the page's POST body. Pairs
 rather than an object preserve repeated field names and their order.
 
-## Chunk the date range
+## Historical volume observations; no current collection budget
 
 Measured on 2020-02-03..2020-02-07: 473 disclosures, 32 pages at 15 rows per
 page, and the last page correctly partial at 8 rows. That is roughly 95
 disclosures per calendar day for the whole ETF universe, so ~6 days fills the
 40-page bound.
 
-Capture in windows of about **5 days** to stay under it. A full
-2020-01-31..present backfill is therefore a few hundred captures, each its own
-staging directory and its own Raw batch. The bound is deliberate: the capture
-probes one page past the configured stored-page bound. A duplicate probe proves
-an exactly-40-page capture complete; a distinct probe writes
-`page_bound_reached` and exits non-zero rather than silently truncating.
+Do not use that historical average as an operating window. A later approved
+`2026-08-15..2026-08-19` pilot exceeded the 40-page bound and terminated
+`page_bound_reached`, so even five calendar days is not a safe current-volume
+bound. That one-shot pilot authorization is consumed. Any additional capture,
+including a narrower window or full backfill, requires explicit approval of the
+date range, request budget, and retention location. The capture still probes one
+page past the configured stored-page bound: a duplicate probe proves an
+exactly-40-page capture complete; a distinct probe writes `page_bound_reached`
+and exits non-zero rather than silently truncating.
 
 Past the last page KIND clamps `pageIndex` and re-serves the final page, so the
 capture stops only when a response is byte-identical to its predecessor and

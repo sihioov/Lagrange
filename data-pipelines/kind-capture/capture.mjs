@@ -18,11 +18,12 @@
 //
 // Usage:
 //   node capture.mjs --from 2020-02-03 --to 2020-02-07 --out /path/to/staging
-//                    [--max-pages 40]
+//                    --confirm KIND_ETF_DISCLOSURE_CAPTURE [--max-pages 40]
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  CAPTURE_CONFIRM,
   TERMINATION,
   classifyReceivedPage,
   closeCaptureState,
@@ -37,6 +38,7 @@ import {
   trackPendingTask,
   terminationForAdvance,
   waitForCapturedPage,
+  validateCaptureCliArgs,
 } from './capture-logic.mjs';
 
 const ENTRY_URL =
@@ -44,29 +46,40 @@ const ENTRY_URL =
 // Mirrors KIND_DISCLOSURE_MAX_PAGES in crates/market-data/src/providers/kind.rs.
 // The Rust side enforces it too; this is a courtesy bound, not the guarantee.
 const DEFAULT_MAX_PAGES = 40;
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function usage(msg) {
-  console.error(`${msg}\n\nusage: node capture.mjs --from YYYY-MM-DD --to YYYY-MM-DD --out DIR [--max-pages N]`);
+  console.error(
+    `${msg}\n\nusage: node capture.mjs --from YYYY-MM-DD --to YYYY-MM-DD --out DIR ` +
+      `--confirm ${CAPTURE_CONFIRM} [--max-pages N]`,
+  );
   process.exit(2);
 }
 
 function parseArgs(argv) {
+  if (argv.length % 2 !== 0) usage('each option must have one value');
   const a = {};
+  const known = new Set(['from', 'to', 'out', 'confirm', 'max-pages']);
   for (let i = 0; i < argv.length; i += 2) {
     const k = argv[i];
     const v = argv[i + 1];
     if (!k?.startsWith('--') || v === undefined) usage(`malformed argument near "${k ?? ''}"`);
-    a[k.slice(2)] = v;
+    const key = k.slice(2);
+    if (!known.has(key) || Object.hasOwn(a, key)) usage('unknown or repeated option');
+    a[key] = v;
   }
-  if (!DATE.test(a.from ?? '')) usage('--from must be YYYY-MM-DD');
-  if (!DATE.test(a.to ?? '')) usage('--to must be YYYY-MM-DD');
-  if (!a.out) usage('--out is required');
-  const maxPages = a['max-pages'] ? Number(a['max-pages']) : DEFAULT_MAX_PAGES;
-  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > DEFAULT_MAX_PAGES) {
-    usage(`--max-pages must be an integer in 1..=${DEFAULT_MAX_PAGES}`);
+  const checked = validateCaptureCliArgs(a, DEFAULT_MAX_PAGES);
+  if (!checked.ok) {
+    const messages = {
+      invalid_from: '--from must be YYYY-MM-DD',
+      invalid_to: '--to must be YYYY-MM-DD',
+      invalid_date_range: '--from must be on or before --to',
+      invalid_out: '--out is required',
+      invalid_confirmation: `--confirm must equal ${CAPTURE_CONFIRM}`,
+      invalid_max_pages: `--max-pages must be an integer in 1..=${DEFAULT_MAX_PAGES}`,
+    };
+    usage(messages[checked.error] ?? 'invalid command line');
   }
-  return { from: a.from, to: a.to, out: a.out, maxPages };
+  return checked.value;
 }
 
 const { from, to, out, maxPages } = parseArgs(process.argv.slice(2));

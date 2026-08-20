@@ -5,6 +5,53 @@ export const TERMINATION = Object.freeze({
   NO_RESPONSE: 'no_response',
 });
 
+export const CAPTURE_CONFIRM = 'KIND_ETF_DISCLOSURE_CAPTURE';
+
+const CAPTURE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function isCalendarDate(value) {
+  if (!CAPTURE_DATE.test(value ?? '')) return false;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  if (month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= daysInMonth[month - 1];
+}
+
+// Keep the operator gate in a side-effect-free helper so tests can prove that
+// invalid invocations are rejected before capture.mjs launches a browser.
+export function validateCaptureCliArgs(options, defaultMaxPages = 40) {
+  if (!options || typeof options !== 'object') return { ok: false, error: 'invalid_options' };
+  if (!isCalendarDate(options.from)) return { ok: false, error: 'invalid_from' };
+  if (!isCalendarDate(options.to)) return { ok: false, error: 'invalid_to' };
+  if (options.from > options.to) return { ok: false, error: 'invalid_date_range' };
+  if (typeof options.out !== 'string' || options.out.length === 0) {
+    return { ok: false, error: 'invalid_out' };
+  }
+  if (options.confirm !== CAPTURE_CONFIRM) {
+    return { ok: false, error: 'invalid_confirmation' };
+  }
+
+  const maxPages = options['max-pages'] === undefined
+    ? defaultMaxPages
+    : Number(options['max-pages']);
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > defaultMaxPages) {
+    return { ok: false, error: 'invalid_max_pages' };
+  }
+  return {
+    ok: true,
+    value: {
+      from: options.from,
+      to: options.to,
+      out: options.out,
+      maxPages,
+      confirm: options.confirm,
+    },
+  };
+}
+
 // A response is admitted only when its request form is the one expected by
 // the current browser action.  A duplicate response with the same request
 // metadata and bytes is harmless; every other duplicate is ambiguous.
