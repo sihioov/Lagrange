@@ -24,6 +24,7 @@ use crate::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_DAILY_RANGE,
     PROVIDER_KIS_DAILY_RANGE_NORMALIZED, ResponseKind, StoredFile,
 };
+use crate::normalize::bonus_split_factor_from_percent;
 use crate::providers::kis::KR_ETF_CORE_SYMBOLS;
 use crate::range_normalize::{
     RANGE_NORMALIZED_SCHEMA_VERSION, RANGE_NORMALIZER, RANGE_NORMALIZER_SCHEMA_VERSION,
@@ -1353,9 +1354,8 @@ fn parse_bonus_action(
             reason: "bonus action fix_rate is not an exact decimal".to_owned(),
         }
     })?;
-    let split_factor = rate
-        .checked_add(&FixedPoint::parse("1").expect("one"))
-        .map_err(|_| RangeCanonicalError::ActionEvidence {
+    let split_factor =
+        bonus_split_factor_from_percent(rate).map_err(|_| RangeCanonicalError::ActionEvidence {
             reason: "bonus action split factor overflows".to_owned(),
         })?;
     if split_factor <= FixedPoint::parse("1").expect("one") {

@@ -2,8 +2,11 @@
 //! get, list, latest, items; idempotent replay; ownership isolation.
 
 mod common;
+#[path = "../../../tests/support/curated_fixture.rs"]
+mod curated_fixture;
 use axum::http::StatusCode;
 use common::{Harness, status};
+use curated_fixture::attest_curated_artifacts;
 use domain::{ContentHash, DatasetId, InstrumentId, UtcTimestamp};
 use job_queue::recommendation::child::TargetChildPaths;
 use job_queue::recommendation::compute::AttestedUniverse;
@@ -141,8 +144,8 @@ fn qa_dataset(artifact_root: &Path) -> QaDataset {
         "phase0 fixture generator failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let root = artifact_root.join("recommendation-phase0/curated");
-    copy_python_project(&generated.join("curated"), &root);
+    let root = artifact_root.join("recommendation-phase0");
+    copy_python_project(&generated.join("curated"), &root.join("curated"));
     let market = root.join("curated/bars/market=kr");
     for member in FIXED_UNIVERSE_MEMBERS {
         if !market.join(format!("symbol={member}")).exists() {
@@ -156,7 +159,7 @@ fn qa_dataset(artifact_root: &Path) -> QaDataset {
         capability: Capability::PriceReturnOnly,
         created_at: UtcTimestamp::parse_rfc3339("2021-01-29T06:30:00Z").expect("timestamp"),
         source_batches: Vec::new(),
-        artifacts: Vec::new(),
+        artifacts: attest_curated_artifacts(&store, 2),
         bar_count: 11 * 260,
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"placeholder"),

@@ -532,11 +532,7 @@ fn validate_runner_paths(paths: &RunnerPaths) -> Result<(), String> {
     validate_existing_directory(&paths.dataset_root, "dataset root")?;
     validate_existing_directory(&paths.dataset_root.join("curated"), "dataset curated root")?;
     validate_existing_directory(
-        &paths.dataset_root.join("curated/curated"),
-        "dataset curated data root",
-    )?;
-    validate_existing_directory(
-        &paths.dataset_root.join("curated/curated/bars"),
+        &paths.dataset_root.join("curated/bars"),
         "dataset bars zone",
     )?;
     validate_existing_directory(&paths.artifacts_root, "artifacts root")?;
@@ -1091,7 +1087,7 @@ mod tests {
     fn path_validation_requires_dataset_shape_and_writable_artifacts() {
         let root = tempfile::tempdir().unwrap();
         let dataset = root.path().join("dataset");
-        std::fs::create_dir_all(dataset.join("curated/curated/bars")).unwrap();
+        std::fs::create_dir_all(dataset.join("curated/bars")).unwrap();
         let artifacts = root.path().join("artifacts");
         std::fs::create_dir(&artifacts).unwrap();
         let nt = root.path().join("nt");

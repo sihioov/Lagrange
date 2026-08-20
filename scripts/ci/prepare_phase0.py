@@ -37,12 +37,12 @@ def prepare(root: Path) -> dict[str, object]:
     root.mkdir(parents=True, exist_ok=True)
     rows = synth_data.generate_curated_rows()
     phase0_dataset.materialize_curated_zone(
-        rows, root / "curated", version=synth_data.CURATED_VERSION
+        rows, root, version=synth_data.CURATED_VERSION
     )
     counts: dict[str, int] = {}
     paths = sorted(
         root.glob(
-            "curated/curated/bars/market=kr/"
+            "curated/bars/market=kr/"
             f"symbol=*/year=*/version={synth_data.CURATED_VERSION}/bars.parquet"
         )
     )

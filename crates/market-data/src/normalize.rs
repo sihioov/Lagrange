@@ -1048,13 +1048,11 @@ fn normalize_kis_action_row(
         });
     };
 
-    // KIS documents `fix_rate` as the confirmed bonus allocation rate.  The
-    // canonical split factor is the old share plus the newly allocated share
-    // rate: 5% bonus => 1.05 new shares per old share.  Keep the decimal exact
-    // through FixedPoint; no floating-point conversion is used.
-    let split_factor = rate
-        .checked_add(&FixedPoint::parse("1").expect("one"))
-        .map_err(|error| NormalizeError::InvalidField {
+    // KIS documents `fix_rate` as a percentage (for example `100.00` means a
+    // 100% bonus allocation). The canonical split factor is the old share plus
+    // that percentage: 5% => 1.05, 100% => 2. Keep the conversion exact.
+    let split_factor =
+        bonus_split_factor_from_percent(rate).map_err(|error| NormalizeError::InvalidField {
             kind,
             file_name: file_name.to_owned(),
             field: "fix_rate".to_owned(),
@@ -1074,6 +1072,14 @@ fn normalize_kis_action_row(
         ("available_at", Value::String(retrieved_at.to_rfc3339())),
     ]));
     Ok(Some((key, canonical)))
+}
+
+pub(crate) fn bonus_split_factor_from_percent(
+    rate_percent: FixedPoint,
+) -> Result<FixedPoint, domain::DomainError> {
+    let allocation =
+        rate_percent.checked_mul(&FixedPoint::parse("0.01").expect("exact percent multiplier"))?;
+    allocation.checked_add(&FixedPoint::parse("1").expect("one"))
 }
 
 fn required_kis_date(

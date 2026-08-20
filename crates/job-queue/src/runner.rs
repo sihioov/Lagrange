@@ -1600,7 +1600,7 @@ async fn recheck_canonical_provenance(
          WHERE backtest_runs.id = $1
            AND backtest_runs.owner_user_id = $2
            AND backtest_runs.job_id = $3
-         FOR UPDATE",
+         FOR UPDATE OF backtest_runs",
     )
     .bind(canonical.id)
     .bind(claim.job.owner_user_id)

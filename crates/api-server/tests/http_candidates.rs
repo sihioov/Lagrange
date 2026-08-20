@@ -784,7 +784,8 @@ async fn credentialed_rolling_raw_reaches_real_http_and_exact_entitlement_gate()
         "INSERT INTO data_entitlements
          (id,contract_document_sha256,contract_reference,status,covered_datasets,
           covered_uses,effective_from,effective_until,managed_by)
-         VALUES ($1,repeat('9',64),$2,'ACTIVE',$3,'[\"candidate\"]'::jsonb,
+         VALUES ($1,repeat('9',64),$2,'ACTIVE',$3,
+                 '[\"dataset\",\"factor\",\"recommendation\",\"candidate\",\"backtest\",\"report\",\"benchmark\",\"paper_view\",\"payload\",\"download\"]'::jsonb,
                  DATE '2020-01-01',DATE '2030-12-31',$4)",
     )
     .bind(ROLLING_ENTITLEMENT_ID)

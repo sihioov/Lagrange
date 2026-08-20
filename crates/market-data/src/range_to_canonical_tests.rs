@@ -362,7 +362,7 @@ fn action_entry_with_response_marker(
                     "sht_cd": "069500",
                     "record_date": DATE,
                     "right_dt": DATE,
-                    "fix_rate": "0.05"
+                    "fix_rate": "5"
                 }])
             } else {
                 json!([])

@@ -2,6 +2,8 @@
 #[allow(dead_code)]
 mod candidate_rolling_provider;
 mod common;
+#[path = "../../../tests/support/curated_fixture.rs"]
+mod curated_fixture;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,6 +16,7 @@ use collectors::{
     prepare_candidate_batch, publish_candidate_batch,
 };
 use common::ScratchDb;
+use curated_fixture::attest_curated_artifacts;
 use domain::{ContentHash, DatasetId, InstrumentId, TradingDate, UtcTimestamp};
 use job_queue::candidate::{
     CandidateOutcome, CandidateRunnerConfig, CandidateRunnerPaths, CandidateScheduleError,
@@ -161,7 +164,7 @@ fn candidate_dataset() -> CandidateDataset {
         "phase0 generator failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let root = generated.join("curated");
+    let root = generated;
     for (index, member) in MEMBERS.iter().enumerate() {
         clone_symbol(&root, SOURCE_SYMBOLS[index % SOURCE_SYMBOLS.len()], member);
     }
@@ -188,7 +191,7 @@ fn candidate_dataset() -> CandidateDataset {
         capability: Capability::PriceReturnOnly,
         created_at: timestamp(RETRIEVED),
         source_batches: Vec::new(),
-        artifacts: Vec::new(),
+        artifacts: attest_curated_artifacts(&store, 2),
         bar_count: u64::try_from(MEMBERS.len() * 260).expect("fixture bar count fits u64"),
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"candidate-placeholder"),

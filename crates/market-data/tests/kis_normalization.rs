@@ -895,7 +895,7 @@ fn bonus_issue_filters_by_record_date_and_preserves_later_right_date() {
                 "record_date": "20260814",
                 "sht_cd": "069500",
                 "isin_name": "KODEX 200",
-                "fix_rate": "0.05",
+                "fix_rate": "100.00",
                 "right_dt": "20260818",
                 "odd_pay_dt": "20260828",
                 "list_date": "20260818",
@@ -917,8 +917,8 @@ fn bonus_issue_filters_by_record_date_and_preserves_later_right_date() {
     assert_eq!(action["type"], "split");
     assert_eq!(action["ex_date"], "2026-08-18");
     assert_eq!(action["record_date"], "2026-08-14");
-    assert_eq!(action["split_factor"], "1.05");
-    assert_eq!(action["ratio"], "1.05:1");
+    assert_eq!(action["split_factor"], "2.0000");
+    assert_eq!(action["ratio"], "2.0000:1");
     assert_eq!(action["available_at"], RETRIEVED_AT);
     assert!(action.get("announced_at").is_none());
     assert_eq!(
@@ -1085,7 +1085,7 @@ fn normalized_bonus_action_curates_with_retrieval_availability_only() {
             "output1": [{
                 "record_date": "20260814",
                 "sht_cd": "069500",
-                "fix_rate": "0.05",
+                "fix_rate": "5",
                 "right_dt": "20260814"
             }]
         }))
@@ -1135,7 +1135,7 @@ fn malformed_bonus_row_is_not_dropped_by_universe_filter() {
             "output1": [{
                 "record_date": "not-a-date",
                 "sht_cd": "000001",
-                "fix_rate": "0.05",
+                "fix_rate": "5",
                 "right_dt": "20260814"
             }]
         }))

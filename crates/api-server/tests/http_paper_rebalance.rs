@@ -1,9 +1,12 @@
 //! Actor-scoped recommendation-to-Paper rebalance preview HTTP contract.
 
 mod common;
+#[path = "../../../tests/support/curated_fixture.rs"]
+mod curated_fixture;
 
 use axum::http::StatusCode;
 use common::{Harness, actor_pool};
+use curated_fixture::attest_curated_artifacts;
 use domain::{ContentHash, Currency, DatasetId, InstrumentId, Price, TradingDate, UtcTimestamp};
 use job_queue::paper_preview::{PreviewRunOutcome, run_preview_once};
 use job_queue::{JobQueue, QueueConfig};
@@ -173,7 +176,7 @@ async fn finish_preview_on(
     let preview_id = Uuid::parse_str(created["id"].as_str().unwrap()).unwrap();
 
     let data = tempfile::tempdir().unwrap();
-    let store = CurateStore::new(data.path().join("curated"));
+    let store = CurateStore::new(data.path());
     let instrument = InstrumentId::parse("069500.KRX").unwrap();
     let price = Price::parse("10000").unwrap();
     write_bars(
@@ -203,7 +206,7 @@ async fn finish_preview_on(
         capability: Capability::PriceReturnOnly,
         created_at: UtcTimestamp::parse_rfc3339("2026-08-12T07:00:00Z").unwrap(),
         source_batches: Vec::new(),
-        artifacts: Vec::new(),
+        artifacts: attest_curated_artifacts(&store, 2),
         bar_count: 1,
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"placeholder"),

@@ -1,10 +1,13 @@
 mod common;
+#[path = "../../../tests/support/curated_fixture.rs"]
+mod curated_fixture;
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use chrono::NaiveDate;
 use common::ScratchDb;
+use curated_fixture::attest_curated_artifacts;
 use domain::{
     ContentHash, Currency, DatasetId, InstrumentId, Money, Price, Quantity, TradingDate,
     UtcTimestamp, Weight,
@@ -201,7 +204,7 @@ fn curated_bar(instrument_id: &str, date: &str, close: &str, close_at: &str) -> 
     CuratedBar {
         instrument_id: instrument(instrument_id),
         trading_date: TradingDate::parse(date).unwrap(),
-        market_open_ts: UtcTimestamp::parse_rfc3339("2026-05-08T00:00:00Z").unwrap(),
+        market_open_ts: UtcTimestamp::parse_rfc3339(&format!("{date}T00:00:00Z")).unwrap(),
         market_close_ts: UtcTimestamp::parse_rfc3339(close_at).unwrap(),
         open: price,
         high: price,
@@ -211,7 +214,7 @@ fn curated_bar(instrument_id: &str, date: &str, close: &str, close_at: &str) -> 
         trading_value: Some(1),
         currency: Currency::KRW,
         source: "qa".into(),
-        ingested_at: UtcTimestamp::parse_rfc3339("2026-05-08T07:00:00Z").unwrap(),
+        ingested_at: UtcTimestamp::parse_rfc3339(&format!("{date}T07:00:00Z")).unwrap(),
         batch_id: "00000000-0000-0000-0000-000000000001".parse().unwrap(),
         raw_hash: ContentHash::from_bytes(b"paper-preview"),
     }
@@ -396,6 +399,10 @@ struct WorkerFixture {
 }
 
 async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
+    seed_worker_fixture_with_bar_date(db, "2026-05-08").await
+}
+
+async fn seed_worker_fixture_with_bar_date(db: &ScratchDb, bar_date: &str) -> WorkerFixture {
     let directory = tempfile::tempdir().unwrap();
     write_preview_bars(
         directory.path(),
@@ -403,19 +410,19 @@ async fn seed_worker_fixture(db: &ScratchDb) -> WorkerFixture {
         7,
         &[curated_bar(
             "069500.KRX",
-            "2026-05-08",
+            bar_date,
             "10000",
-            "2026-05-08T06:30:00Z",
+            &format!("{bar_date}T06:30:00Z"),
         )],
     );
-    let store = CurateStore::new(directory.path().join("curated"));
+    let store = CurateStore::new(directory.path());
     let manifest = DatasetManifest {
         dataset_id: DatasetId::parse("krx_eod_bars").unwrap(),
         version: 7,
         capability: Capability::PriceReturnOnly,
         created_at: UtcTimestamp::parse_rfc3339("2026-05-08T07:00:00Z").unwrap(),
         source_batches: Vec::new(),
-        artifacts: Vec::new(),
+        artifacts: attest_curated_artifacts(&store, 7),
         bar_count: 1,
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"placeholder"),
@@ -727,7 +734,7 @@ async fn corrupted_attested_manifest_never_publishes_preview() {
         return;
     };
     let fixture = seed_worker_fixture(&db).await;
-    let store = CurateStore::new(fixture.dataset_root.join("curated"));
+    let store = CurateStore::new(&fixture.dataset_root);
     let manifest_path = store
         .dataset_dir(&DatasetId::parse("krx_eod_bars").unwrap(), 7)
         .join("manifest.json");
@@ -1048,13 +1055,11 @@ async fn missing_close_fails_preview_permanently_without_outputs() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = seed_worker_fixture(&db).await;
-    let path = missing_close_deletion_path(&fixture.dataset_root);
-    assert!(
-        path.is_file(),
-        "the missing-close test must delete the fixture's written bar file"
-    );
-    std::fs::remove_file(path).unwrap();
+    // Keep the Parquet file and its manifest attestation internally valid, but
+    // omit the requested 2026-05-08 observation. Deleting the attested file
+    // would correctly exercise artifact-integrity failure before the close
+    // reader, which is a different contract.
+    let fixture = seed_worker_fixture_with_bar_date(&db, "2026-05-07").await;
     let worker = sqlx::PgPool::connect(&db.role_url("worker")).await.unwrap();
     let queue = preview_queue(worker.clone());
     let outcome = run_preview_once(

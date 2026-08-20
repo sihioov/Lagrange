@@ -675,17 +675,54 @@ continuation policy, a ten-page bound, and fail-closed handling of repeated
 bytes. Only bonus-issue is auto-normalized today; other non-empty types stop the
 pipeline.
 
+#### Official `bonus-issue` workbook contract — verified 2026-08-20
+
+The repository-local official KIS workbook
+`docs/kis_openapi_entiredocs_20260818_030007.xlsx` was inspected offline. It is
+intentionally untracked and was neither modified nor added to Git. The exact
+file inspected is pinned as
+`sha256:993672501204722da88ebc30753d73406b33b23b83db8ac6670e4d83903fbac3`.
+Sheet `예탁원정보(무상증자일정)` (`domestic-stock-144`) specifies:
+
+- live-only `GET /uapi/domestic-stock/v1/ksdinfo/bonus-issue`, TR ID
+  `HHKDB669101C0`; the mock environment does not support it;
+- request fields `CTS` (blank), `F_DT`, `T_DT`, and optional `SHT_CD`;
+- response fields `record_date`, `sht_cd`, `isin_name`, `fix_rate`,
+  `odd_rec_price`, `right_dt`, `odd_pay_dt`, `list_date`,
+  `tot_issue_stk_qty`, `issue_stk_qty`, and `stk_kind`;
+- `fix_rate` is a percentage, not a fractional multiplier. Official examples
+  include `50.00`, `100.00`, `1000.0`, and `3900.0`; therefore a 100% bonus
+  maps to the canonical split factor `2`, not `101`;
+- `odd_pay_dt` may be blank or a displayed date range such as
+  `YYYY/MM/DD ~ YYYY/MM/DD`, so it is not a strict `YYYYMMDD` field.
+
+The sheet describes this information as supplied by Korea Securities
+Depository. It contains no announcement/publication timestamp, revision ID,
+predecessor/supersedes link, correction lineage, or ISIN code (only the display
+field `isin_name`). Thus KIS can establish the event schedule and factor, but
+cannot by itself establish disclosure availability or correction lineage. The
+normalizer continues to use verified retrieval time as the only availability
+evidence and cannot promote the event to Curated/PIT without a deterministic
+KIND relation.
+
+The workbook says that request/response `tr_cont` cannot be used for a next
+lookup. This conflicts with the current official GitHub sample recorded in the
+KIS backfill runbook. Per the existing approved contract, the sample's narrow,
+bounded KSD continuation rule remains authoritative; the discrepancy is not
+generalized to any other endpoint.
+
 | dimension | keep KIS `ksdinfo` | add direct KSD/SEIBro |
 |---|---|---|
-| independence | endpoint naming indicates KSD-origin data relayed by the broker — **inferred, not confirmed** | same origin, so neither corroborates the other independently |
-| availability timestamp | unconfirmed; not checked in the KSD-scoped pass | confirmed absent in visible fields (above) |
+| independence | official workbook confirms `bonus-issue` is KSD-supplied; the other five categories were not inferred | same origin, so neither corroborates the other independently |
+| availability timestamp | `bonus-issue` documented response has none; the other five categories remain unchecked | confirmed absent in visible fields (above) |
 | field completeness | one category normalized, five fail closed | dividend plus combined rights schedule only; merger/split/reverse-split absent |
 | rights | KIS own-asset use, no redistribution — already recorded | KOGL Type 2, non-commercial, separate permission for commercial use |
 | implementation cost | already implemented, rate-limited, allowlisted | new registration, allowlist, parsing, and fail-closed logic |
 
-Unresolved for the operator: whether `ksdinfo` is literally a KSD relay, and
-whether `ksdinfo` responses carry any announcement timestamp. Neither was
-checked — the KSD-scoped pass fetched no KIS page. This is checklist item 9.
+The workbook closes the earlier documentation question: `bonus-issue` is
+KSD-supplied and its documented response has no announcement timestamp or
+lineage field. This conclusion comes from the official workbook; no KIS live
+request was made for this review.
 
 ## Operator verification checklist
 
@@ -742,10 +779,15 @@ credentialed call, because read-only public fetching cannot settle it.
    in a JS-capable browser and record the legal notice, specifically any
    automated-collection clause; then inspect the ETF distribution pages for
    field structure.
-9. **KIS `ksdinfo` lineage and timestamps.** From current official KIS
-   documentation, establish whether the six `ksdinfo` endpoints relay KSD data
-   and whether any response field carries an announcement time. This decides
-   whether ADR-0004 D5 can be satisfied without a new source.
+9. ~~**KIS `ksdinfo` lineage and timestamps.**~~ **CLOSED FOR THE APPROVED
+   `bonus-issue` PILOT 2026-08-20 — answer: KSD-supplied schedule, no
+   availability or lineage field.** The official workbook sheet
+   `예탁원정보(무상증자일정)` explicitly describes KSD-supplied information and
+   documents only schedule/factor fields. It contains no announcement time,
+   revision ID, predecessor, supersedes, or correction link. ADR-0004 D5
+   therefore still requires a deterministic KIND relation. The other five
+   `ksdinfo` categories remain outside this pilot and were not inferred from
+   the bonus-issue sheet.
 10. ~~**KIND receipt time.**~~ **CLOSED 2026-08-20 — answer: yes, to the
     minute.** KIND's search will not run over plain HTTP (the POST is refused
     with a generic retry page even with a session cookie), so it was driven in a

@@ -1,10 +1,13 @@
 mod common;
+#[path = "../../../tests/support/curated_fixture.rs"]
+mod curated_fixture;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 use chrono::NaiveDate;
+use curated_fixture::attest_curated_artifacts;
 use domain::{BatchId, ContentHash, DatasetId, InstrumentId, UtcTimestamp};
 use job_queue::recommendation::child::TargetChildPaths;
 use job_queue::recommendation::input::{DatasetPin, RecommendationPayload};
@@ -206,7 +209,7 @@ fn qa_dataset() -> QaDataset {
         "QA generator failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let root = generated.join("curated");
+    let root = generated;
     let market = root.join("curated/bars/market=kr");
     for member in MEMBERS {
         if !market.join(format!("symbol={member}")).exists() {
@@ -220,7 +223,7 @@ fn qa_dataset() -> QaDataset {
         capability: Capability::PriceReturnOnly,
         created_at: UtcTimestamp::parse_rfc3339("2021-01-29T06:30:00Z").unwrap(),
         source_batches: Vec::new(),
-        artifacts: Vec::new(),
+        artifacts: attest_curated_artifacts(&store, 2),
         bar_count: 11 * 260,
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"placeholder"),
@@ -1663,7 +1666,7 @@ async fn real_worker_and_uv_publish_all_five_shipped_strategies() {
         capability: Capability::PriceReturnOnly,
         created_at: UtcTimestamp::parse_rfc3339("2021-01-29T06:30:00Z").unwrap(),
         source_batches,
-        artifacts: Vec::new(),
+        artifacts: attest_curated_artifacts(&CurateStore::new(&qa.root), 2),
         bar_count: 11 * 260,
         action_count: 0,
         content_hash: ContentHash::from_bytes(b"placeholder"),

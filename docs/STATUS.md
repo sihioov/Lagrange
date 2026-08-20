@@ -2,7 +2,8 @@
 
 **최신 기준일: 2026년 8월 20일 (2026-08-20).** §0.1~§0.12는
 운영·Stage6 진행 당시의 날짜별 스냅샷이고, 현재 개발 worktree의 권위 있는
-remediation 상태와 다음 작업은 §0.13~§0.14다. 이후 §1부터는 설계 목표와
+remediation 상태와 다음 작업은 §0.13~§0.14다. 현재 `main` 상태와 최신 KIS
+명세 보정은 §0.14 끝부분을 우선한다. 이후 §1부터는 설계 목표와
 08-17 이전 게이트·구현 이력을 보존한 기록이다. 과거의 "미설치", "KIS
 credential 없음", "초기 백필 미완료" 같은 문장은 당시에는 사실이었지만
 현재 상태를 뜻하지 않는다. 코드가 바뀌면 게이트와 판정은 다시 실행해
@@ -247,15 +248,19 @@ binaries compile. This is not a READY, point-in-time, or full-workspace-green
 claim: the DB-required runtime gate is red and the one observed viewer
 does not prove a multi-version correction chain.
 
-**개발 worktree.** canonical repository는 Git remote 기준 `Lagrange`다. 현재
-worktree는 `/data/worktrees/3puw275b/ordinary-blobfish`, 브랜치는
-`unspecified-task`다. 이 correction feature commit의 parent는 remediation
-`90ac83d`다. 직접 병합 전 로컬 `main`의 `f78d033`은 공통 조상 `5b12e0f`에서 갈라진
-Stage6 review 문서 commit이었으므로, 기존 `main` worktree에서 non-fast-forward
-병합해 review 문서와 remediation 계열을 함께 보존한다. 새 worktree나 별도
-remediation 브랜치는 만들지 않고 history도 재작성하지 않는다.
+**현재 저장소 상태.** canonical repository는 Git remote 기준 `Lagrange`다.
+reviewed direct-main merge는
+`3ebc288e128b7a08a8434d6293a2b03a1347e1a9`로 완료됐고, 확인 시점의
+`main`과 `origin/main`은 같은 커밋을 가리킨다. 기존
+`/data/workspace/lagrange` worktree에서 직접 병합했으며 새 worktree나 새 브랜치를
+만들지 않았다. 최신 direct-main CI run `32362557843`에서 policy, format, web,
+Clippy는 통과했고 PostgreSQL integration과 workspace test는 baseline과 같은
+DB-backed 실패 집합(각각 6개와 31개 test name)으로 실패했다. 따라서 정적·오프라인
+게이트는 green이지만 전체 workspace green이나 production READY는 아니다. 공식 KIS
+XLSX는 계속 의도적으로 untracked이며 수정·삭제·커밋하지 않는다.
 
-**Remediation 완료와 환경 검증을 구분한다.** F1~F8/low 코드·문서 보완,
+**Historical remediation-branch comparison — 아래 direct-main CI 보정으로
+superseded.** F1~F8/low 코드·문서 보완,
 focused offline suites, fmt, strict clippy, diff check, 9개 mutation gate는 이미
 완료했다. locked Python environment는 위와 같이 복구됐다. 로컬 QA PostgreSQL은
 **BLOCKED_ENV**지만 원격 CI에서는 DB-backed gate가 실제 실행됐고 실패했으므로,
@@ -264,9 +269,10 @@ focused offline suites, fmt, strict clippy, diff check, 9개 mutation gate는 �
 이번 branch run `32358404560` 역시 같은 세 job이 red였다. Sanitized log 대조에서
 workspace의 실패 test-name 집합 31개와 PostgreSQL `paper_preview` 실패 test-name
 6개가 baseline과 동일했다. F4 경로 수정은 `missing_close`의 기존 ENOENT를 제거했지만
-그 뒤의 expected-outcome assertion도 실패한다. 이번 diff에는 관련 runtime source,
-SQL migration, DB deployment 변경이 없으므로 Stage6 회귀 근거는 없지만, entitlement와
-fixture state의 근본 원인은 아직 확정하지 않았다.
+그 뒤의 expected-outcome assertion도 실패했다. 당시 diff에는 관련 runtime source,
+SQL migration, DB deployment 변경이 없었으므로 Stage6 회귀 근거는 없었지만,
+entitlement와 fixture state의 근본 원인은 아직 확정하지 못했다. 이후 원인과 현재
+보정은 아래 `Direct-main CI baseline 보정 진행 상태`에 기록한다.
 
 환경 검증을 수행할 때는 CI와 같은 Python 3.12, `pyarrow==25.0.0`,
 `uv==0.12.1`, `uv sync --project nt --locked`, Phase 0 fixture, disposable QA
@@ -319,14 +325,51 @@ body에 target handler가 없어 `missing_target`으로 종료했고 viewer 파�
 이후 list capture CLI도 correction capture와 마찬가지로 exact operator confirmation을
 browser launch 전에 요구하며, impossible calendar date를 양쪽 CLI에서 거절한다.
 
+**KIS `bonus-issue` 공식 명세 보정.** 로컬 공식 XLSX의
+`예탁원정보(무상증자일정)` sheet를 오프라인 검토했다. `fix_rate`는 소수 비율이
+아니라 퍼센트이므로 canonical split factor는 정확한 십진수 연산
+`1 + fix_rate * 0.01`로 계산한다. 기존 구현의 `1 + fix_rate`는 공식 예시
+`100.00`을 factor `101`로 만들 수 있어 수정했고, `100.00 -> 2.0000` focused
+회귀 테스트가 통과했다. 같은 명세는 이 데이터가 KSD 제공 일정임을 확인하지만
+공표시각, revision/predecessor/supersedes, correction lineage, 기계 판독 ISIN code는
+제공하지 않는다. 따라서 KIS retrieval time만 availability로 유지하며 deterministic
+KIND relation 전에는 Curated/PIT 승격이 계속 차단된다. 이 검토에서 KIS/provider
+요청은 하지 않았다.
+
+**Direct-main CI baseline 보정 진행 상태.** run `32362557843`은 아래 저장소 내부
+회귀를 구체적으로 노출했다. 현재 worktree에서 다음을 보정했다.
+
+- backtest publication recheck의 `LEFT JOIN ... FOR UPDATE`는 nullable join 쪽까지
+  잠그지 않도록 `FOR UPDATE OF backtest_runs`로 한정했다;
+- Phase-0 생성기, runner path preflight, factor reader가 각각 다르게 사용하던
+  `curated/curated` 이중 경로를 `data root/curated` 단일 계약으로 통일했다;
+- cumulative artifact attestation 도입 뒤 빈 `artifacts`를 유지하던 candidate,
+  recommendation, Paper QA manifest는 실제 Parquet bytes/path/size/schema/SHA-256에서
+  exact artifact set을 만들도록 공용 test helper로 갱신했다;
+- Paper fixture의 manifest 경로 이중 join을 제거했고, missing-close 테스트는
+  attested 파일 삭제가 아니라 유효한 manifest 아래 요청일 행 부재를 구성해 실제
+  close-reader 분기를 검증하도록 했다;
+- `price_dataset_entitlement_is_valid(uuid,text,date,date)`를 5개 인자로 호출하던
+  stale collector 호출을 4개 인자 계약으로 맞췄고, credentialed candidate fixture의
+  required uses와 recovery fixture의 instrument FK seed를 보완했다.
+
+이 변경 뒤 `scripts.ci.test_prepare_phase0` 3/3,
+`scripts.ci.test_ci_contract` 6/6, `recommendation_compute` 16/16,
+backtest path focused test 1/1, `market-data` 357/357, `cargo fmt --check`,
+`git diff --check`, workspace all-target/all-feature `--no-run`이 통과했다.
+다만 이 호스트는 `DATABASE_URL`이 없고 Docker daemon socket 접근이 거부되므로
+DB-backed runtime suite는 아직 재실행하지 못했다. 따라서 위 run의 red 판정을
+green으로 소급하지 않으며, 후속 CI의 disposable QA PostgreSQL에서 동일 실패 집합이
+실제로 닫혔는지 확인해야 한다.
+
 **결정 뒤에도 남은 외부 입력.** 다음 세 항목은 추측해서 진행하지 않는다.
 
 - FSC mirror: owner registration/key, official 활용가이드, entitlement, 과거 query
   semantics를 확정한다. 11종목의 code/name/효력 구간이 해소되기 전에는 fuzzy name
   join을 금지한다.
-- KIS `bonus-issue`: current official field/lineage documentation과 KIND availability
-  relation을 확정한다. 다른 `ksdinfo` event와 direct KSD/KSD portal은 이번 결정에
-  포함되지 않는다.
+- KIS `bonus-issue`: 공식 field/unit과 lineage 부재는 로컬 KIS XLSX 검토로
+  확정했다. 이제 남은 것은 KIND availability와의 deterministic relation이다.
+  다른 `ksdinfo` event와 direct KSD/KSD portal은 이번 결정에 포함되지 않는다.
 - KIND 추가 수집: 이번 1회 pilot 승인은 소비됐다. 전체 백필 추정 약 475
   captures/15,200 requests/20시간은 계속 승인 밖이며, 추가 window·요청 예산·보존
   위치는 다시 명시적으로 승인한다.

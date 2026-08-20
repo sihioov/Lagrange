@@ -41,7 +41,7 @@ class PreparePhase0Tests(unittest.TestCase):
             self.assertEqual(summary["total_bars"], 780)
             paths = sorted(
                 root.glob(
-                    "curated/curated/bars/market=kr/"
+                    "curated/bars/market=kr/"
                     "symbol=*/year=*/version=*/bars.parquet"
                 )
             )

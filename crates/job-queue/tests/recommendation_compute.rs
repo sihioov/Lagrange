@@ -356,7 +356,7 @@ fn qa_only_fixed_universe_dataset() -> QaDataset {
     // QA_ONLY_SYNTHETIC: Phase-0 contains three seed ETFs. Clone one of its
     // deterministic partitions under the remaining canonical ids only in
     // this temp root, so production still fails closed on incomplete data.
-    let store = generated.join("curated");
+    let store = generated;
     let market = store.join("curated/bars/market=kr");
     for member in MEMBERS {
         let destination = market.join(format!("symbol={member}"));

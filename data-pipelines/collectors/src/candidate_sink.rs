@@ -715,8 +715,7 @@ impl PostgresCandidateSourceSink {
                 SELECT 1 FROM candidate_price_publications
                  WHERE first_session <= $1 AND last_session >= $1
                    AND public.price_dataset_entitlement_is_valid(
-                       entitlement_id, license_ref, 'krx_eod_bars',
-                       first_session, last_session)
+                       entitlement_id, license_ref, first_session, last_session)
             )",
         )
         .bind(date(as_of))

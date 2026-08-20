@@ -23,6 +23,7 @@ use market_data::ingest::{IngestError, IngestRequest, ingest_bundle};
 use market_data::provider::{
     CredentialRef, EodProvider, FetchRequest, KrxProvider, ProviderError, RecordedBundle,
 };
+use market_data::providers::kis::KR_ETF_CORE_SYMBOLS;
 use market_data::publication::{PublicationBundle, PublicationError};
 use market_data::storage::{RawStore, StoreError};
 use sqlx::PgPool;
@@ -50,6 +51,17 @@ fn request(at: &str) -> IngestRequest {
 }
 
 async fn seed_candidate_entitlement(pool: &PgPool) {
+    for symbol in KR_ETF_CORE_SYMBOLS {
+        sqlx::query(
+            "INSERT INTO instruments (id,symbol,venue,currency)
+             VALUES ($1,$2,'KRX','KRW') ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(format!("{symbol}.KRX"))
+        .bind(symbol)
+        .execute(pool)
+        .await
+        .expect("candidate price fixture instrument");
+    }
     sqlx::query(
         "INSERT INTO data_entitlements
          (contract_document_sha256,contract_reference,status,covered_datasets,

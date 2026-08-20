@@ -472,6 +472,27 @@ was not called. This proves that a five-day window is not a safe current-volume
 bound; it proves no correction relation. The diagnostic staging remains under
 `/tmp` and enters neither Git nor Raw publication.
 
+### D13: KIS `bonus-issue` uses percentage units and has no availability lineage
+
+The official KIS workbook
+`docs/kis_openapi_entiredocs_20260818_030007.xlsx` was reviewed offline and
+pinned by SHA-256 in the runbook. Its `예탁원정보(무상증자일정)` sheet resolves the
+approved pilot's field semantics:
+
+- `fix_rate` is a percentage. The canonical factor is
+  `1 + (fix_rate * 0.01)` using exact decimal arithmetic; it is not
+  `1 + fix_rate`;
+- the endpoint is live-only, read-only KSD-supplied schedule data;
+- the documented response has no announcement/publication time, revision ID,
+  predecessor/supersedes relation, correction lineage, or machine-readable
+  ISIN code.
+
+This fixes a normalization error but does not advance the production gate.
+KIS retrieval time remains the only defensible `available_at` for this source,
+and the event cannot become disclosure-backed Curated/PIT evidence until an
+approved deterministic KIND relation exists. No provider request was made and
+no network surface was widened by this decision.
+
 ## Consequences
 
 - Stage5 data keeps `vendor_snapshot=true`, `strict_pit=false`, `ready=false`.
