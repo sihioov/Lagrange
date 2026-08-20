@@ -425,6 +425,48 @@ the page sent, retrieval time) as the request metadata. Pagination is
 `pageIndex` at `currentPageSize=15`, so a date range spans multiple responses,
 each one its own Raw file.
 
+### Backfill volume — measured 2026-08-20, and the surface choice it settles
+
+A full-range backfill from the ETF-scoped page would be ~475 captures, ~15,200
+requests, ~20 hours of browser time. ADR-0004 D11 approved collection at **low
+volume**, and 15,200 requests is not low volume, so the volume was measured
+before committing to it rather than after.
+
+Two measurements, both through the site's own controls on 상세검색
+(`details.do`), which carries a 유가증권구분 selector (`securities`, ETF = `5`)
+and the disclosure-type checkboxes the ETF-scoped page lacks:
+
+| query | window | count |
+|---|---|---|
+| ETF, all disclosure types | 2020 full year | **10,313** (~28/day) |
+| ETF, type `0402` only (기타공시 ETF) | 2020 full year | 9,778 |
+| ETF, six point-in-time types | 2020 full year | **525** (~1.4/day) |
+
+The six: `0321` 신규/추가/변경/재상장, `0328` 상장폐지, `0350` 관리종목,
+`0303` 권리락/배당락/기준가격, `0428` 상호변경, `0113` 배당.
+
+The checkbox path is **proven to reach the query**, not assumed: a control type
+(`0402`) returned 9,778 against a 10,313 baseline, so the filter demonstrably
+changes the result set. Without that control a zero result would have been
+ambiguous between "no such events" and "the filter never applied" — and the first
+narrow attempt did return zero for a five-day window, which is exactly the case
+that needed disambiguating.
+
+`0402` alone accounts for almost all of it: the bulk of ETF disclosure traffic is
+routine 기타시장안내 and 괴리율 notices, not point-in-time evidence.
+
+**Consequence — narrow at the source, and use 상세검색 rather than the ETF-scoped
+page.** At ~1.4 relevant disclosures a day, one 40-page capture covers well over a
+year, so the whole range needs roughly **6 captures, ~230 requests, ~20 minutes**
+instead of 475 captures and 15,200 requests. That is a ~60x reduction and it keeps
+the low-volume commitment D11 was granted on.
+
+Also recorded: the two surfaces do **not** return the same set. For
+`2020-02-03..2020-02-07` the ETF-scoped page reported 473 disclosures while
+상세검색 with 유가증권구분=ETF reported 66. Both are in the approved allowlist row,
+but they are differently scoped, so a capture must record which surface produced
+it — the endpoint id and the form fields already do.
+
 ### How KIND was actually inspected
 
 KIND's search cannot be driven over plain HTTP. The form page itself serves real
