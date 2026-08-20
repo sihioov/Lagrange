@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "provider": "kis",
+  "entitlement_id": "ent_kis_personal_owner_20260821",
+  "contract_document": {
+    "document_hash": {
+      "algorithm": "SHA-256",
+      "hex": "b888942df6b03d7920c404610ce21f1f3bc54e44c5647519a28e6ae6c68dad36"
+    },
+    "document_reference": "repo://docs/decisions/0005-kis-personal-use-entitlement.md"
+  },
+  "covered_datasets": [
+    "krx_eod_bars",
+    "krx_instruments",
+    "krx_calendar",
+    "krx_market_status",
+    "krx_investor_flows",
+    "krx_fundamentals",
+    "krx_kospi200_membership",
+    "krx_kosdaq150_membership",
+    "krx_sector_classification"
+  ],
+  "covered_uses": [
+    "dataset",
+    "factor",
+    "recommendation",
+    "candidate",
+    "backtest",
+    "report",
+    "benchmark",
+    "paper_view",
+    "payload",
+    "download"
+  ],
+  "covered_users": ["usr_owner"],
+  "effective_from": "2020-01-31",
+  "effective_until": "9999-12-31",
+  "lifecycle": "ACTIVE"
+}

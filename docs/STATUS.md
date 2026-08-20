@@ -33,6 +33,17 @@ credential 없음", "초기 백필 미완료" 같은 문장은 당시에는 사�
 
 현재는 운영 기반과 KIS 가격 수집·정규화까지 준비됐지만 **production READY 출시는 아니다**. KIS가 반환한 과거 가격은 수집 시점 vendor snapshot이며, 과거 시점의 종목 상태·기업행사 공개시각·정정/철회 계보를 단독으로 증명하지 못한다. 이 상태에서 five-pin을 만들거나 추천·백테스트·Paper에 연결하면 미래정보 참조 금지 원칙을 위반할 수 있으므로 fail-closed를 유지한다.
 
+**KIS 권리 판정 갱신(2026-08-21).** 소유자가 이 시스템을 개인 단독으로
+사용하며 승인된 KIS read-only 데이터의 조회·보존·가공에 필요한 권리가 있음을
+확정했다. 다중 사용자 기능이 코드에 남아 있어도 실제 승인 범위는 소유자 1명뿐이며,
+그 기능의 존재를 이유로 KIS entitlement를 다시 질문하거나 외부 blocker로 되돌리지
+않는다. 결정문과 해시 고정 metadata는 ADR-0005 및
+`configs/data-rights/kis.entitlement.json`에 기록했다. 이 결정은 데이터 권리만
+해소한다. KIS credential은 소유자가 앞서 등록한 기존 App Key/App Secret을 보호된
+secret 경로에서 재사용하며 새 키 등록·발급을 다시 요구하지 않는다. 남은 운영 단계는
+기존 secret의 경로·권한 확인과 runtime copy, 실제 endpoint 검증, PIT 교차검증,
+backfill, DatasetManifest/five-pin과 운영 배포다.
+
 실거래는 별도 후속 프로젝트다. 계좌·잔고·주문·정정·취소·체결·주문 WebSocket과 Compose `live` profile은 계속 금지한다.
 
 ### 0.4 Stage6 공식 데이터 통합 초기 계획 — §0.6 이후 정정됨
@@ -408,6 +419,11 @@ publication과 두 universe candidate feed를 거쳐 최종 `RESEARCH_WORKER_SMO
 functional PASS`로 종료했다. 이전 `CANDIDATE_PIPELINE_FAILED`는 재현되지 않았다.
 공식 KIS XLSX는 계속 untracked로 제외했고 provider/browser/live API 호출은 없었다.
 
+**KIS entitlement 갱신(2026-08-21).** 개인 단독 사용 권리는 소유자 확정으로
+해소됐고 앞으로 재질문하지 않는다. `kis:owner-attestation:personal-single-user:2026-08-21`
+결정문을 SHA-256으로 고정한 ACTIVE metadata에는 `usr_owner` 한 명만 포함했다.
+Member-visible KR-derived surface와 Live는 이 결정에 포함되지 않는다.
+
 **결정 뒤에도 남은 외부 입력.** 다음 세 항목은 추측해서 진행하지 않는다.
 
 - FSC mirror: owner registration/key, official 활용가이드, entitlement, 과거 query
@@ -467,6 +483,12 @@ ETF11 critical path가 아니므로 개별주식 범위가 별도 승인되지 �
 | 장애 주입 (failures) | Phase 2 15개 + Phase 3 15개, **30개 전부 PASS** | **`PASS`** | — |
 | PITR 복구 (restore) | 실제 백업 생성 → 격리 타깃 복구 → 검증 | **`PASS`** (`verdict: SUCCESS`) | — (복원 완료) |
 | **종합 (F3)** | — | **`BLOCKED_EXTERNAL`** | E1/X1/X2 (외부 조달만 남음; E2 Auth0는 해소) |
+
+위 표는 2026-08-17 실행의 역사 증거다. 2026-08-21 소유자 결정으로 KIS
+개인 단독 사용 entitlement는 해소됐으며, 추가 계약·5인 사용 권리 확인을 다시
+요청하지 않는다. 다음 게이트 재실행에서는 새 ACTIVE KIS metadata로 E1을
+재평가한다. X1/X2는 별도 Live 프로젝트의 조건이지 read-only 출시에 필요한 조건이
+아니다.
 
 **이 08-17 게이트 범위에서 코드나 로컬 실행 환경 때문에 막힌 항목은 없다.** 실제 `pg_basebackup`, WAL 7개, 목표 LSN `0/5000028`을 사용한 격리 복구에서 목표 시점 80행, 이후 행 0, provenance 3행, secret marker 0건, 파일 해시 불일치 0건을 확인했다. Phase 2 복원 실패 드릴 6개를 포함한 장애 주입은 양 단계 모두 15/15다. 판정 아티팩트는 `.omo/evidence/`의 10:22~10:25 UTC 실행본이며 gitignore 대상이므로 이 호스트에만 존재한다.
 
@@ -789,20 +811,22 @@ DB의 FORCE RLS 소유권 정책은 완화하지 않았다. 공유 GET/조회성
 | 8 | paper-runner·recommendation-runner 배포 서비스 활성화 | **운영자** | ◐ 배포 계약/preflight 완료, 운영 secret·volume·systemd 설치 대기(§2.12) |
 | 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ✅ **완료** — 스위트 5/5 통과(§2.8), phase1 게이트가 **E2 PASS**를 발행(§2.10) |
 | 10 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
-| 11 | KIS broker entitlement·실제 provider endpoint/credential / KIS 실계좌 | **외부 조달·운영자 provisioning** | ⛔ 현재 저장소만으로 완료 불가 |
+| 11 | KIS 실제 provider endpoint / 기존 credential 재사용 / KIS 실계좌 | **운영자 provisioning / 별도 Live 범위** | ◐ 개인 단독 사용 entitlement는 08-21 해소. 기존 등록 KIS 키를 보호된 secret 경로에서 재사용하며 새 키를 요구하지 않는다. read-only endpoint 검증은 운영 작업이고 실계좌는 별도 Live 프로젝트다 |
 | 12 | KOSPI200/KOSDAQ150 개별주식 후보 연구 vertical | **코드 작업** | ✅ **완료·독립 리뷰 OK** (§2.9, `ac97970`~`8c5ef9d`) |
 
-Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연구의 저장소 내부 이음매는 완료됐다. KIS provider wiring은 완료됐지만 production credential/endpoint/권리/운영 backfill/dataset pin은 외부 잔여 작업이다. **전체 게이트 재실행도 완료됐으므로(§2.12), 다음 순서는 외부 조달과 운영 호스트 provisioning이다. 권리·자격증명 없이 Member/Live를 활성화하지 않는다.**
+Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연구의 저장소 내부 이음매는 완료됐다. KIS 개인 단독 사용 권리는 해소됐고 provider wiring과 기존 credential도 있다. 남은 것은 보호된 secret 경로·runtime copy 확인, production endpoint 검증, 운영 backfill과 dataset pin이다. **새 KIS 키를 요구하지 않는다. 다음 순서는 운영 호스트 provisioning이며, 실제 승인 범위는 계속 소유자 한 명이다. Member/Live를 활성화하지 않는다.**
 
 ### 4.1 소유자만 할 수 있는 것 — 외부 조달
 
 | 항목 | 구체적으로 |
 |---|---|
-| **E1** KIS broker data-rights/entitlement + 실제 공급자 | 초대 사용자 5명 + 파생 분석물을 포괄하는 실제 계약/사용허가 metadata, KIS HTTP/token/provider wiring, 실제 endpoint/credential, `research_writer` role·secret·Raw volume 운영자 provisioning과 초기 backfill/dataset pin. 현재 저장소에는 synthetic fixture와 wiring/발행 이음매만 있고 real feed는 live가 아님. `configs/data-rights/`는 여전히 placeholder뿐 |
+| **E1** KIS data-rights/entitlement | **해소(08-21):** 개인 단독 사용 권리를 소유자가 확정했다. ADR-0005와 해시 고정 `configs/data-rights/kis.entitlement.json`이 ACTIVE이며 `usr_owner`만 포함한다. 다중 사용자 권리를 다시 묻지 않는다. 기존 등록 KIS credential을 재사용하고 새 키를 요구하지 않는다. 실제 endpoint 검증, DB entitlement 등록, Raw volume, 초기 backfill/dataset pin은 별도 운영 provisioning이다 |
 | **E2** Auth0 테넌트 | **해소(08-17):** 테넌트 선택·confidential client 배선(08-12, §3.9), Linux 호스트 secret 배치와 실 테넌트 vendor 스위트 5/5 통과(§2.8)에 이어, phase1 게이트가 **E2 = PASS**를 발행했다(§2.10). 이 항목은 더 이상 외부 조달 대기가 아니다 |
-| **X1/X2** KIS 실계좌 | 실거래 자격증명 + 소액 실주문 증거 (변동 없음) |
+| **X1/X2** KIS 실계좌 | 별도 Live 프로젝트의 조건. read-only 개인용 출시에 필요하지 않으며 현재 범위에서 계속 비활성 |
 
-이 3건이 없는 동안 게이트는 `BLOCKED_EXTERNAL`이며 **그것이 합격 조건이다. 위조해서 APPROVED에 도달하는 것은 금지** — 닫히는 쪽으로 실패하는 것 자체가 게이트의 존재 이유다. 한국 데이터 권리가 끝내 안 오면 계획의 답은 Member 접근 연기다, 시장 변경이 아니라.
+KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다. 과거 E1 판정은 역사
+증거로 유지하고 새 metadata를 사용해 게이트를 재실행한다. Member 접근과 Live는
+권리 추정으로 넓히지 않고 명시적으로 비활성 상태를 유지한다.
 
 ### 4.2 소유자 결정 대기 2건
 
@@ -812,10 +836,10 @@ Paper 엔진·추천 파이프라인·Paper 연계와 multi-universe 후보 연�
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
 1. ~~**`phase1-gate.sh` native Linux 이식.**~~ **완료 (2026-08-17, `5b3f832`, §2.10)** — WSL 가드·PATH·`CARGO_TARGET_DIR`·DB 포트를 정리했고, 이식 과정에서 드러난 거짓 PASS 3건도 함께 닫았다. pyarrow 전제는 이 게이트에는 해당하지 않는다(추천 계산 경로의 문제이며 phase1 검사는 `prepare_phase0.py`를 부르지 않는다).
-2. ~~**전체 게이트 재실행.**~~ **완료 (2026-08-17, `61af2bb`, §2.12)** — Phase 1/2/3, 양 단계 failures, 실제 PITR, 종합 F3를 재실행했다. 내부 검사는 모두 통과했고 최종 판정은 외부 권리·실계좌 때문에 `BLOCKED_EXTERNAL`이다. F1/F2/F4 판정문은 여전히 사람 재검토가 필요하다.
+2. ~~**전체 게이트 재실행.**~~ **완료 (2026-08-17, `61af2bb`, §2.12)** — Phase 1/2/3, 양 단계 failures, 실제 PITR, 종합 F3를 재실행했다. 당시 판정은 외부 권리·실계좌 때문에 `BLOCKED_EXTERNAL`이었다. 권리 판정은 2026-08-21에 해소됐고 실계좌는 read-only 범위 밖이다. F1/F2/F4 판정문은 여전히 사람 재검토가 필요하다.
 3. **리밸런싱 미리보기 UI.** §2.5의 백엔드 계약은 완료됐지만 화면과 Live 주문은 범위 밖이다.
 4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
-5. **실제 KIS provider와 운영 원천 활성화.** KIS credential/token/endpoint를 운영 secret으로 provisioning하고 broker entitlement metadata, `research_writer`, migration, Raw volume을 검증한 뒤 KIS calendar/EOD/instrument/corporate-action 원천을 공급한다. 고정 ETF 백필 후 후보 bridge와 KOSPI200/KOSDAQ150 source set은 별도 승인한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
+5. **실제 KIS provider와 운영 원천 활성화.** 새 credential을 발급하지 않고 기존 등록 KIS App Key/App Secret의 보호된 source/runtime secret을 검증한다. 이후 token/endpoint를 확인하고 확정된 entitlement metadata를 운영 DB에 등록한 뒤 `research_writer`, migration, Raw volume을 검증해 KIS calendar/EOD/instrument/corporate-action 원천을 공급한다. 고정 ETF 백필 후 후보 bridge와 KOSPI200/KOSDAQ150 source set은 별도 승인한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 
 **작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다.
 

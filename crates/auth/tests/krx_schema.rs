@@ -1,4 +1,5 @@
-//! Smoke tests for `configs/data-rights/krx.schema.json` and its redacted example.
+//! Smoke tests for the redacted KRX schema/example and the owner-approved KIS
+//! personal-use entitlement record.
 //!
 //! Full schema validation of instances is performed by the Python `jsonschema`
 //! gate in the Todo 5 evidence (see `.omo/evidence/task-5-lagrange-station-implementation.json`);
@@ -7,6 +8,8 @@
 
 use std::fs;
 
+use sha2::{Digest, Sha256};
+
 const SCHEMA_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../configs/data-rights/krx.schema.json"
@@ -14,6 +17,14 @@ const SCHEMA_PATH: &str = concat!(
 const EXAMPLE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../configs/data-rights/krx.entitlement.example.json"
+);
+const KIS_ENTITLEMENT_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../configs/data-rights/kis.entitlement.json"
+);
+const KIS_ATTESTATION_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../docs/decisions/0005-kis-personal-use-entitlement.md"
 );
 
 fn read(path: &str) -> String {
@@ -115,4 +126,27 @@ fn covered_uses_match_the_rust_registry() {
             "dev use {dev_use} must not be an entitlement use"
         );
     }
+}
+
+#[test]
+fn kis_entitlement_is_active_owner_only_and_binds_the_attestation() {
+    let raw = read(KIS_ENTITLEMENT_PATH);
+    let metadata: serde_json::Value =
+        serde_json::from_str(&raw).expect("KIS entitlement must be valid JSON");
+
+    assert_eq!(metadata["provider"], "kis");
+    assert_eq!(metadata["lifecycle"], "ACTIVE");
+    assert_eq!(metadata["covered_users"], serde_json::json!(["usr_owner"]));
+    assert_eq!(
+        metadata["contract_document"]["document_reference"],
+        "repo://docs/decisions/0005-kis-personal-use-entitlement.md"
+    );
+
+    let attestation = fs::read(KIS_ATTESTATION_PATH)
+        .unwrap_or_else(|e| panic!("missing KIS owner attestation: {e}"));
+    let attestation_hash = hex::encode(Sha256::digest(&attestation));
+    assert_eq!(
+        metadata["contract_document"]["document_hash"]["hex"], attestation_hash,
+        "KIS entitlement hash must bind the committed owner attestation"
+    );
 }
