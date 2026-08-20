@@ -63,27 +63,25 @@ while IFS= read -r dockerfile; do
     'COPY crates ./crates' \
     'COPY data-pipelines/collectors ./data-pipelines/collectors' \
     'COPY apps/api-server/auth ./apps/api-server/auth' \
-    'COPY tests/integration/migration-contract ./tests/integration/migration-contract'; do
+    'COPY tests/integration/migration-contract ./tests/integration/migration-contract' \
+    'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json' \
+    'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json' \
+    'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json' \
+    'COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json'; do
     grep -Fq -- "$copy_contract" "$dockerfile" ||
       die "Rust workspace Dockerfile is missing required copy contract: $dockerfile ($copy_contract)"
   done
 done < <(find "$root" -type f \( -name Dockerfile -o -name 'Dockerfile.*' \) \
   -not -path "$root/.git/*" -print | sort)
 
-# The isolated range worker compiles market-data's approved-evidence and XKRX
-# loaders with include_bytes!. Keep those exact immutable inputs in the
-# production build context; a successful local workspace build must not hide
-# a missing Docker COPY contract.
+# Every Rust workspace image can compile market-data, whose approved-evidence
+# and XKRX loaders use include_bytes!. The loop above requires those exact
+# immutable inputs in every Cargo builder; the collector additionally copies
+# the fixed universe as one exact file.
 collector_dockerfile="$root/data-pipelines/collectors/Dockerfile"
-for range_copy in \
-  'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json' \
-  'COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml' \
-  'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json' \
-  'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json' \
-  'COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json'; do
-  grep -Fq -- "$range_copy" "$collector_dockerfile" \
-    || die "range worker Dockerfile is missing immutable input copy: $range_copy"
-done
+universe_copy='COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml'
+grep -Fq -- "$universe_copy" "$collector_dockerfile" \
+  || die "range worker Dockerfile is missing immutable input copy: $universe_copy"
 for range_context in \
   '!configs/evidence/kis-range-canonical-approved-manifests.json' \
   '!data/calendars/xkrx/calendar.json' \

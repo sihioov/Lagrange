@@ -10,7 +10,11 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY data-pipelines/collectors ./data-pipelines/collectors
+COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
 COPY configs/universes ./configs/universes
+COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json
+COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json
+COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json
 COPY apps/api-server/auth ./apps/api-server/auth
 COPY tests/integration/migration-contract ./tests/integration/migration-contract
 

@@ -30,6 +30,14 @@ done
 
 grep -Fq -- '--bin candidate-runner' "$dockerfile" || die 'image does not build candidate-runner'
 grep -Fq '/usr/local/bin/candidate-runner' "$dockerfile" || die 'image does not install candidate-runner'
+for embedded_copy in \
+  'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json' \
+  'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json' \
+  'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json' \
+  'COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json'; do
+  grep -Fq -- "$embedded_copy" "$dockerfile" \
+    || die "candidate image is missing compile-time market-data input: $embedded_copy"
+done
 grep -Fq '  candidate-runner:' "$compose" || die 'Compose service is absent'
 grep -Fq 'entrypoint: ["/usr/local/bin/candidate-runner"]' "$compose" || die 'wrong candidate entrypoint'
 grep -Fq 'CANDIDATE_DATA_ROOT: /data' "$compose" \

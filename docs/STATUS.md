@@ -376,6 +376,18 @@ functional config에 공급하도록 수정했다. CI contract 6/6, Bash static/
 Compose/PowerShell 실행은 후속 CI 증거를 사용한다. 전체 green 최종 판정도 후속
 `main` CI와 research-smoke가 이 변경을 실제 실행한 결과로만 내린다.
 
+후속 commit `6e8dfbf`의 CI run `32392991765`는 policy, format, web, strict
+Clippy, workspace 전체 테스트, PostgreSQL migration/role boundary와 aggregate
+required job까지 모두 통과했다. 같은 push의 research-smoke run `32392991751`는
+앞선 Compose interpolation 오류를 지나 image build까지 진행했지만,
+candidate-runner builder에서 `market-data`가 `include_bytes!`로 요구하는 tracked
+XKRX calendar 3개와 승인 manifest 1개를 해당 Dockerfile이 복사하지 않아 실패했다.
+`.dockerignore`는 이미 이 네 파일만 정확히 허용하고 있었으므로 build-context 범위를
+넓히지 않고, `market-data`를 컴파일할 수 있는 모든 production Rust Dockerfile에 네
+exact `COPY`를 추가했다. Research smoke와 production-image static/self-test도 이
+계약을 검사한다. 로컬 static/self-test는 통과했고 실제 Docker release build의 최종
+판정은 다음 `main` research-smoke 결과로만 내린다.
+
 **결정 뒤에도 남은 외부 입력.** 다음 세 항목은 추측해서 진행하지 않는다.
 
 - FSC mirror: owner registration/key, official 활용가이드, entitlement, 과거 query

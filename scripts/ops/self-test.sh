@@ -20,15 +20,23 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   bash -n "$ops/$script"
 done
 
-range_worker_dockerfile="$root/data-pipelines/collectors/Dockerfile"
-for range_copy in \
+while IFS= read -r dockerfile; do
+  if ! grep -Eq '^[[:space:]]*RUN[[:space:]].*cargo[[:space:]]+build([[:space:]]|$)' "$dockerfile"; then
+    continue
+  fi
+  for embedded_copy in \
   'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json' \
-  'COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml' \
   'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json' \
   'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json' \
   'COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json'; do
-  grep -Fq -- "$range_copy" "$range_worker_dockerfile"
-done
+    grep -Fq -- "$embedded_copy" "$dockerfile"
+  done
+done < <(find "$root" -type f \( -name Dockerfile -o -name 'Dockerfile.*' \) \
+  -not -path "$root/.git/*" -print | sort)
+range_worker_dockerfile="$root/data-pipelines/collectors/Dockerfile"
+grep -Fq -- \
+  'COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml' \
+  "$range_worker_dockerfile"
 for range_context in \
   '!configs/evidence/kis-range-canonical-approved-manifests.json' \
   '!data/calendars/xkrx/calendar.json' \

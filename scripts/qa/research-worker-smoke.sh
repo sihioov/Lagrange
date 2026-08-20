@@ -5,6 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 compose_file="$root/deploy/compose/compose.yml"
 dockerfile="$root/data-pipelines/collectors/Dockerfile"
+candidate_dockerfile="$root/crates/job-queue/Dockerfile"
 dockerignore="$root/.dockerignore"
 gitattributes="$root/.gitattributes"
 schema_sql="$root/deploy/compose/research-schema-check.sql"
@@ -49,11 +50,13 @@ contains() { grep -Fq -- "$2" <<<"$1" || fail "$3 missing required value: $2"; }
 validator_self_tests() (
   test_root="$(mktemp -d "$root/.research-validator.XXXXXX")"
   trap 'rm -rf -- "$test_root"' EXIT
-  mkdir -p "$test_root/scripts/qa" "$test_root/deploy/compose" "$test_root/deploy/secrets" "$test_root/data-pipelines/collectors"
+  mkdir -p "$test_root/scripts/qa" "$test_root/deploy/compose" "$test_root/deploy/secrets" \
+    "$test_root/data-pipelines/collectors" "$test_root/crates/job-queue"
   cp "$BASH_SOURCE" "$test_root/scripts/qa/research-worker-smoke.sh"
   cp "$read_only_fsync_probe" "$test_root/scripts/qa/read-only-fsync.rs"
   cp "$compose_file" "$test_root/deploy/compose/compose.yml"
   cp "$dockerfile" "$test_root/data-pipelines/collectors/Dockerfile"
+  cp "$candidate_dockerfile" "$test_root/crates/job-queue/Dockerfile"
   cp "$schema_sql" "$test_root/deploy/compose/research-schema-check.sql"
   if [ -f "$dockerignore" ]; then cp "$dockerignore" "$test_root/.dockerignore"; fi
   if [ -f "$gitattributes" ]; then cp "$gitattributes" "$test_root/.gitattributes"; fi
@@ -256,6 +259,7 @@ PY
 validate_compose
 
 [ -f "$dockerfile" ] || fail "missing worker Dockerfile: $dockerfile"
+[ -f "$candidate_dockerfile" ] || fail "missing candidate Dockerfile: $candidate_dockerfile"
 [ -f "$dockerignore" ] || fail "missing Docker build-context policy: $dockerignore"
 [ -f "$schema_sql" ] || fail "missing tracked schema gate: $schema_sql"
 [ -f "$gitattributes" ] || fail "missing .gitattributes"
@@ -270,6 +274,16 @@ printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+rust:1\.97\.1-alpine@
 printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+alpine:3\.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d[[:space:]]*$' || fail 'Dockerfile missing the approved digest-pinned Alpine runtime'
 contains "$docker_text" 'cargo build --locked --release --package collectors --bin research-worker' 'Dockerfile'
 contains "$docker_text" 'ENTRYPOINT ["/usr/local/bin/research-worker"]' 'Dockerfile'
+for build_dockerfile in "$dockerfile" "$candidate_dockerfile"; do
+  build_text="$(<"$build_dockerfile")"
+  for embedded_copy in \
+    'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json' \
+    'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json' \
+    'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json' \
+    'COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json'; do
+    contains "$build_text" "$embedded_copy" "${build_dockerfile#$root/}"
+  done
+done
 from_count=0
 while IFS= read -r line; do
   from_count=$((from_count + 1))

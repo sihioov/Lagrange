@@ -12,6 +12,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $composeFile = Join-Path $root 'deploy/compose/compose.yml'
 $dockerfile = Join-Path $root 'data-pipelines/collectors/Dockerfile'
+$candidateDockerfile = Join-Path $root 'crates/job-queue/Dockerfile'
 $dockerignore = Join-Path $root '.dockerignore'
 $gitattributes = Join-Path $root '.gitattributes'
 $schemaSqlFile = Join-Path $root 'deploy/compose/research-schema-check.sql'
@@ -41,13 +42,15 @@ function Invoke-ValidatorSelfTests {
     $testRoot = Join-Path ([IO.Path]::GetTempPath()) "lagrange-research-validator-$([guid]::NewGuid().ToString('N'))"
     try {
         foreach ($directory in @(
-            'scripts/qa', 'deploy/compose', 'deploy/secrets', 'data-pipelines/collectors'
+            'scripts/qa', 'deploy/compose', 'deploy/secrets', 'data-pipelines/collectors',
+            'crates/job-queue'
         )) { New-Item -ItemType Directory -Path (Join-Path $testRoot $directory) -Force | Out-Null }
         Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $testRoot 'scripts/qa/research-worker-smoke.ps1')
         Copy-Item -LiteralPath (Join-Path $root 'scripts/qa/research-worker-smoke.sh') -Destination (Join-Path $testRoot 'scripts/qa/research-worker-smoke.sh')
         Copy-Item -LiteralPath $readOnlyFsyncProbe -Destination (Join-Path $testRoot 'scripts/qa/read-only-fsync.rs')
         Copy-Item -LiteralPath $composeFile -Destination (Join-Path $testRoot 'deploy/compose/compose.yml')
         Copy-Item -LiteralPath $dockerfile -Destination (Join-Path $testRoot 'data-pipelines/collectors/Dockerfile')
+        Copy-Item -LiteralPath $candidateDockerfile -Destination (Join-Path $testRoot 'crates/job-queue/Dockerfile')
         Copy-Item -LiteralPath $schemaSqlFile -Destination (Join-Path $testRoot 'deploy/compose/research-schema-check.sql')
         if (Test-Path -LiteralPath $dockerignore) {
             Copy-Item -LiteralPath $dockerignore -Destination (Join-Path $testRoot '.dockerignore')
@@ -298,6 +301,7 @@ function Invoke-StaticChecks {
     }
 
     if (-not (Test-Path -LiteralPath $dockerfile)) { throw "missing worker Dockerfile: $dockerfile" }
+    if (-not (Test-Path -LiteralPath $candidateDockerfile)) { throw "missing candidate Dockerfile: $candidateDockerfile" }
     if (-not (Test-Path -LiteralPath $dockerignore)) { throw "missing Docker build-context policy: $dockerignore" }
     if (-not (Test-Path -LiteralPath $readOnlyFsyncProbe)) { throw "missing read-only fsync probe: $readOnlyFsyncProbe" }
     if (-not (Test-Path -LiteralPath $secretExample)) { throw "missing research DB secret example: $secretExample" }
@@ -317,6 +321,17 @@ function Invoke-StaticChecks {
     }
     Assert-Contains $dockerText 'cargo build --locked --release --package collectors --bin research-worker' 'Dockerfile'
     Assert-Contains $dockerText 'ENTRYPOINT ["/usr/local/bin/research-worker"]' 'Dockerfile'
+    foreach ($buildDockerfile in @($dockerfile, $candidateDockerfile)) {
+        $buildText = Get-Content -Raw -LiteralPath $buildDockerfile
+        foreach ($embeddedCopy in @(
+            'COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json',
+            'COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json',
+            'COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json',
+            'COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json'
+        )) {
+            Assert-Contains $buildText $embeddedCopy $buildDockerfile
+        }
+    }
     $fromLines = @($dockerText -split "`r?`n" | Where-Object { $_ -match '(?i)^FROM\s+' })
     if ($fromLines.Count -eq 0) { throw 'Dockerfile has no FROM instructions' }
     foreach ($line in $fromLines) {

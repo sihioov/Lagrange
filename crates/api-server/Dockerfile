@@ -8,7 +8,11 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
 COPY configs/universes ./configs/universes
+COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json
+COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json
+COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json
 # api-server's production auth router is a workspace package dependency;
 # keep its manifest and source in the dependency build context.
 COPY apps/api-server/auth ./apps/api-server/auth
