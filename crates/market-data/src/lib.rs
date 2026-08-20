@@ -48,6 +48,7 @@ pub mod entitlement;
 pub mod freshness;
 pub mod ingest;
 pub mod instrument_master;
+pub mod kind_normalize;
 pub mod normalize;
 pub mod provider;
 pub mod providers;
@@ -78,9 +79,10 @@ pub use candidate_normalize::{
 pub use contract::{
     ALL_RESPONSE_KINDS, CANDIDATE_MASTER_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS,
     DISCLOSURE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KIND_DISCLOSURE,
-    PROVIDER_KIS, PROVIDER_KIS_CANDIDATE, PROVIDER_KIS_CANDIDATE_NORMALIZED,
-    PROVIDER_KIS_DAILY_RANGE, PROVIDER_KIS_DAILY_RANGE_NORMALIZED, PROVIDER_KIS_NORMALIZED,
-    PROVIDER_KRX, PROVIDER_OPENDART, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
+    PROVIDER_KIND_DISCLOSURE_NORMALIZED, PROVIDER_KIS, PROVIDER_KIS_CANDIDATE,
+    PROVIDER_KIS_CANDIDATE_NORMALIZED, PROVIDER_KIS_DAILY_RANGE,
+    PROVIDER_KIS_DAILY_RANGE_NORMALIZED, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, PROVIDER_OPENDART,
+    RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{
@@ -102,6 +104,12 @@ pub use ingest::{
 pub use instrument_master::{
     AliasNamespace, Instrument, InstrumentAlias, InstrumentMaster, ListingReason, MasterError,
     seed_universe,
+};
+pub use kind_normalize::{
+    InstrumentIdentity, KindDisclosureObservation, KindNormalizationLineage,
+    KindNormalizationOutcome, KindNormalizationSourceFile, KindNormalizeError, RequiredField,
+    RowLocation, TimezoneAssumption, deterministic_kind_disclosure_normalized_batch_id,
+    normalize_kind_disclosure_batch, parse_kind_disclosure_pages,
 };
 pub use normalize::{
     NormalizationLineage, NormalizationOutcome, NormalizationSourceFile, NormalizeError,

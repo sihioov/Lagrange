@@ -64,6 +64,15 @@ pub const PROVIDER_OPENDART: &str = "opendart";
 /// two are unrelated disclosure sources with independent batches, even
 /// though they share [`ResponseKind::DisclosureIndex`].
 pub const PROVIDER_KIND_DISCLOSURE: &str = "kind-disclosure";
+/// Provider id for the provider-neutral canonical batch derived from
+/// [`PROVIDER_KIND_DISCLOSURE`] HTML pages: one observation per disclosure
+/// row, with the source `번호`/`시간`/`종목명`/`공시제목`/`제출인` fields
+/// parsed out. The wire batch remains under [`PROVIDER_KIND_DISCLOSURE`]
+/// forever. Instrument identity is deliberately left unresolved on every
+/// observation (see [`crate::kind_normalize`]): there is no authoritative
+/// ETF11 name-to-code mapping in this repository, and KRX (the only
+/// candidate source) is a deferred decision.
+pub const PROVIDER_KIND_DISCLOSURE_NORMALIZED: &str = "kind-disclosure-normalized";
 /// Canonical market id of the Korean market.
 pub const MARKET_KR: &str = "kr";
 
