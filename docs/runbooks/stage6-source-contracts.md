@@ -5,27 +5,31 @@ That ADR records the decisions; this file records the evidence they rest on, the
 gaps they must not paper over, and the checklist an operator has to clear before
 Step 2 can write an adapter.
 
-Approval state, as of 2026-08-19: the **OpenDART core** surface
-(`list.json`/`list.xml`, `corpCode.xml`, `company.json`) is approved for
-fixture-based Raw adapter work. **Every other surface here is deferred** and
-still awaits the approval `AGENTS.md` requires for any change to a method, path,
-host, or response contract. See the allowlist table at the end for the per-row
-state.
+**Historical approval snapshot — 2026-08-19.** The **OpenDART core** surface
+(`list.json`/`list.xml`, `corpCode.xml`, `company.json`) was approved for
+fixture-based Raw adapter work. **Every other surface here was deferred** and
+awaited the approval `AGENTS.md` requires for any change to a method, path,
+host, or response contract. This snapshot is retained as history; see the
+allowlist table at the end for the current per-row state.
 
-As of 2026-08-20 the owner has supplied an OpenDART key. **Exactly one live
-request has been made against any surface in this document**: a single
+**Current state — 2026-08-20.** The owner supplied an OpenDART key and approved
+the live observation needed to settle ETF coverage. **Exactly one request using
+the owner-supplied key has been made**: a single
 `GET /api/corpCode.xml`, whose purpose and result are recorded in checklist
-item 4 below. No other surface has been contacted, and no key exists for any of
-them.
+item 4 below. No other OpenDART API surface has been contacted, and the key
+value and all response bodies are intentionally absent from this runbook. KIND
+D11 is approved for browser-driven collection, and its capture → immutable Raw →
+normalization path is implemented. KRX, FSC, KSD, the full KIND backfill, and
+ETF11 identity decisions remain deferred.
 
 ## How this evidence was gathered
 
-Research ran on 2026-08-19 as four source-scoped passes plus one adversarial
-verification pass, all read-only:
+**Historical research snapshot — 2026-08-19.** Research ran as four
+source-scoped passes plus one adversarial verification pass, all read-only:
 
 - public documentation pages only, fetched over HTTP;
 - no account registration, no API-key request, no authenticated call, no
-  data-endpoint call, no form submission, no login;
+  data-endpoint call, no form submission, no login in that snapshot;
 - every claim carries the URL it was fetched from; anything not confirmed from a
   fetched page is a typed gap below rather than an inference.
 
@@ -287,12 +291,11 @@ choice is the owner's.
 
 ### The `.xml` surface returns XML errors, with HTTP 200
 
-`[verified]` A deliberately invalid key against `/api/corpCode.xml` returned
-**HTTP 200** with an XML envelope, not JSON:
-
-```xml
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?><result><status>010</status><message>...</message></result>
-```
+`[verified]` Before the owner key was supplied, a deliberately invalid
+non-owner credential diagnostic against `/api/corpCode.xml` established that
+the endpoint returns **HTTP 200** with an XML status envelope rather than JSON.
+The response bytes and provider message are intentionally not reproduced here;
+only the documented status code and envelope kind are retained.
 
 Two consequences. The transport cannot detect this from the status line, so
 validation must, and status `010` is the documented "unregistered key" code. The
@@ -310,13 +313,24 @@ coverage question, which needs a key.
 
 ### ETF coverage
 
-Unresolved. `corp_cls` has only `Y`(유가) / `K`(코스닥) / `N`(코넥스) /
-`E`(기타) — no fund bucket. `pblntf_ty` does include `G: 펀드공시`, but its only
-documented sub-codes are `G001`–`G003`, all collective-investment-securities
-registration statements. The structured securities-registration group (DS006)
-excludes collective investment securities. The corp-code field is described as
+**Historical documentation gap — 2026-08-19 (superseded by the 2026-08-20
+observation below).** `corp_cls` had only `Y`(유가) / `K`(코스닥) / `N`(코넥스)
+/ `E`(기타), with no fund bucket. `pblntf_ty` did include `G: 펀드공시`, but
+its only documented sub-codes were `G001`–`G003`, all
+collective-investment-securities registration statements. The structured
+securities-registration group (DS006) excluded collective investment
+securities. The corp-code field was described as
 `공시대상회사의 고유번호(8자리)` without defining whether an investment trust
-qualifies.
+qualified.
+
+**Resolved 2026-08-20.** With the owner-supplied key, exactly one
+`GET /api/corpCode.xml` observation found 118,714 entities, 3,984 non-empty
+`stock_code` values, and none of the eleven ETF short codes. Listed-company
+controls in the same archive resolved, so this is a measured absence rather
+than an inferred schema gap. OpenDART therefore has no ETF11 use: the approved
+core fixture contract remains available for future disclosure-entity scopes,
+while D10 blocks its in-process live path for now. The key value and response
+body are not recorded here.
 
 ### Rights and quota
 
@@ -336,10 +350,14 @@ permission.
 
 ### No public API
 
-No documented programmatic API exists on `kind.krx.co.kr`. Every page inspected
-— main, 공시통합검색, 상세검색, 관리종목, ETF disclosure, 상장법인목록 — exposed
-a human-facing HTML search form with an `EXCEL` export button. No developer
-portal, no key issuance, no API documentation link. `robots.txt` returns 404.
+No documented programmatic API exists on `kind.krx.co.kr`. The inspected pages
+expose human-facing HTML search forms, but export availability is page-specific:
+the detailed-search, administrative-issue, trading-halt, and listed-company
+pages expose the `EXCEL` controls recorded in the table below, while the
+ETF-scoped disclosure list was verified on 2026-08-20 to have **no `EXCEL`
+export**. No export is inferred for a KIND page that is not explicitly listed.
+There is no developer portal, no key issuance, and no API documentation link.
+`robots.txt` returns 404.
 
 This matches the §0.4 premise that KIND need not be an API.
 
@@ -347,40 +365,61 @@ This matches the §0.4 premise that KIND need not be an API.
 
 | purpose | page | export | operator controls |
 |---|---|---|---|
-| detailed disclosure search | `https://kind.krx.co.kr/disclosure/details.do?method=searchDetailsMain` | EXCEL | 기간 date range, market, security type (includes ETF and 주권), disclosure-type checkboxes including `정정공시 요구`, company name/code |
+| detailed disclosure search | `https://kind.krx.co.kr/disclosure/details.do?method=searchDetailsMain` | EXCEL (observed) | 기간 date range, market, security type (includes ETF and 주권), disclosure-type checkboxes including `정정공시 요구`, company name/code |
 | ETF-scoped disclosure list | `https://kind.krx.co.kr/disclosure/disclosurebystocktype.do?method=searchDisclosureByStockTypeEtf` | **no EXCEL export** (corrected 2026-08-20); the search response itself is the artifact | 기간, and a per-issue field that does not filter |
-| administrative issue (관리종목) | `https://kind.krx.co.kr/investwarn/adminissue.do?method=searchAdminIssueList` | EXCEL | market (전체/유가증권/코스닥), stock name |
-| trading halt (매매거래정지) | `https://kind.krx.co.kr/investwarn/tradinghaltissue.do?method=searchTradingHaltIssueMain` | EXCEL | market, stock name |
-| listed-company roster | `https://kind.krx.co.kr/corpgeneral/corpList.do?method=loadInitPage` | EXCEL | corporate/market classifications |
+| administrative issue (관리종목) | `https://kind.krx.co.kr/investwarn/adminissue.do?method=searchAdminIssueList` | EXCEL (observed) | market (전체/유가증권/코스닥), stock name |
+| trading halt (매매거래정지) | `https://kind.krx.co.kr/investwarn/tradinghaltissue.do?method=searchTradingHaltIssueMain` | EXCEL (observed) | market, stock name |
+| listed-company roster | `https://kind.krx.co.kr/corpgeneral/corpList.do?method=loadInitPage` | EXCEL (observed) | corporate/market classifications |
 
 No dedicated standalone export page was found for new/changed listings or for
 issue name changes; those appear to be reachable only through the
 disclosure-type filters on 상세검색.
 
+The `export` column is an observation of the named page only. It is not a
+site-wide KIND capability claim; the ETF disclosure response is the observed
+Raw artifact, not an Excel download.
+
 ### ETF coverage
 
-Confirmed at the type level: an ETF-scoped disclosure page exists, and the
-상세검색 security-type filter lists ETF alongside 주권. **None of the 11 short
-codes was individually queried** — that needs the AJAX form, which read-only
-static fetching cannot drive.
+**Historical static-fetch finding — 2026-08-19.** An ETF-scoped disclosure page
+existed, and the 상세검색 security-type filter listed ETF alongside 주권.
+**None of the 11 short codes was individually queried** in that pass because
+static fetching could not drive the AJAX form.
+
+**Current D11 scope — 2026-08-20.** The ETF-scoped list is captured through the
+site's own browser controls, but per-issue popup filtering is intentionally not
+reproduced. Raw keeps the complete response and normalization filters locally
+by `종목명`; this does not claim that any ETF11 identity has been resolved.
 
 ### Timestamp granularity
 
-Two disclosure-viewer documents were sampled. Both showed calendar dates only
+**Historical static-fetch sample — 2026-08-19 (superseded by D11).** Two
+disclosure-viewer documents were sampled. Both showed calendar dates only
 (`신규상장 (2025.09.26)`; version dates `2025.11.05`, `2026.01.22`) with no
-hour, minute, or timezone. This is a **two-document sample**, not a
-system-wide conclusion: a receipt time may exist in a results-table column that
-static fetching cannot render. Recorded as a gap.
+hour, minute, or timezone. This was a **two-document sample**, not a
+system-wide conclusion: a receipt time could exist in a results-table column
+that static fetching could not render. It was recorded as a gap at that time.
+
+**Current D11 observation — 2026-08-20.** The ETF-scoped results table carries
+`시간` as `YYYY-MM-DD HH:MM` per disclosure and varies within a page, so
+disclosure-list `available_at` is minute-granular. The page does not document a
+timezone; normalization therefore records the explicit `AssumedAsiaSeoul`
+assumption. Correction-version entries remain date-only (see item 11), so this
+minute value is not fabricated for a version entry.
 
 ### Correction linkage
 
-Partial evidence. The integrated-search results list uses a `정정있음` marker,
-and 상세검색 has a `정정공시 요구` category filter, so correction status is
-tracked at list level. On the sampled documents, only a textual notice appeared
-—
+**Historical static-fetch finding — 2026-08-19 (superseded/qualified by item
+11).** The integrated-search results list used a `정정있음` marker, and 상세검색
+had a `정정공시 요구` category filter, so correction status was tracked at list
+level. On the sampled documents, only a textual notice appeared —
 `본 공시는 공시내용 기재 불충분 등의 사유로 한국거래소 정정요구를 받은 사항입니다`
 — with no machine-followable reference to the pre-correction filing. Whether
-such a field exists is a gap.
+such a field existed was a gap in that static pass.
+
+The current browser observation is recorded in item 11: the version chain is
+enumerable and ordered, but version labels are date-only and no original
+acceptance-number reference was exposed.
 
 ### The KIND Raw artifact — settled 2026-08-20
 
@@ -424,6 +463,37 @@ SHA-256 from the bytes on disk and records the interaction (URL, the form fields
 the page sent, retrieval time) as the request metadata. Pagination is
 `pageIndex` at `currentPageSize=15`, so a date range spans multiple responses,
 each one its own Raw file.
+
+### Amendment — capture-completeness contract (2026-08-20)
+
+The browser capture and Rust ingest now share an explicit completeness
+contract. This amendment resolves a review finding in the capture boundary; it
+does not change D11's browser-only access mechanism, the entitlement boundary,
+or the historical observations above. No live provider call was made for this
+remediation.
+
+- Every `capture.json` requires `termination` with exactly one of
+  `clamped_duplicate`, `page_bound_reached`, `advance_control_missing`, or
+  `no_response`. Only `clamped_duplicate` is complete.
+- For the initial search and every later page, capture waits once, invokes the
+  same site control exactly once more if no response was captured, then waits
+  once more. Two missed waits are `no_response`; loss of the page control is
+  `advance_control_missing`.
+- The configured stored-page limit is at most 40. Capture makes one additional
+  probe after the configured limit: bytes identical to the last stored page are
+  `clamped_duplicate`; distinct bytes are `page_bound_reached`. The probe page
+  is never staged as a stored page.
+- Every incomplete outcome is retained only as diagnostic staging and exits
+  non-zero. `kind-raw` rejects missing, unknown, or incomplete termination
+  before Raw storage, and `market-data` independently rejects an incomplete
+  termination before any batch commit. Old staging without `termination` must
+  be recaptured; immutable batches are not rewritten.
+- `form_fields` records ordered, URL-decoded name/value pairs, preserving
+  repeated names and order. It is not a byte-exact copy of the encoded POST
+  body.
+- A table's leading `번호` remains unsuitable as a result total, especially on
+  상세검색. Completeness is established only by the capture termination
+  contract; no total is inferred from that cell.
 
 ### Backfill volume — a retracted measurement, and what actually holds
 
@@ -486,18 +556,21 @@ state the page's JavaScript produces. Guessing at parameters was stopped rather
 than continued, since that probing is the automated-collection behaviour this
 document treats as prohibited.
 
-The findings recorded here were instead obtained by driving the site's **own**
-search control in a real browser engine (Playwright with headless Chromium,
-installed outside the repository under `~/tools/kind-probe`; the missing
-`libasound.so.2` was extracted into `~/tools/pwlibs` without root). That
-distinction matters: the page's `fnSearch()` was invoked rather than a
-reconstructed request, no export was downloaded, and no dataset was collected —
-only rendered table structure was read, a handful of page loads in total.
+**D11 diagnostic snapshot — 2026-08-20.** The findings were obtained by
+driving the site's **own** search control in a real browser engine (Playwright
+with headless Chromium, installed outside the repository under
+`~/tools/kind-probe`; the missing `libasound.so.2` was extracted into
+`~/tools/pwlibs` without root). That distinction mattered: the page's
+`fnSearch()` was invoked rather than a reconstructed request, no export was
+downloaded, and no dataset was collected — only rendered table structure was
+read, a handful of page loads in total.
 
-ADR-0004 D6 is unchanged: bulk or scheduled collection stays operator-driven.
-What is established is that a browser engine is the only workable way to inspect
-this source, and that a small number of diagnostic page loads answered the
-questions that documentation could not.
+**Current state — 2026-08-20.** D11 supersedes D6's operator-only restriction
+for the approved low-volume KIND browser path: capture records the site's own
+responses, Rust ingest commits immutable Raw, and normalization is implemented.
+The capture remains browser-driven and never reconstructs requests. D6 still
+governs `data.krx.co.kr` and any unapproved bulk/scheduled path; the full KIND
+backfill budget and ETF11 identity remain deferred.
 
 ### Rights
 
@@ -683,7 +756,8 @@ credentialed call, because read-only public fetching cannot settle it.
     alongside `16:09`). Verified historically: 15 of 15 rows in a 2020-03-31
     window carried a time. This tightens ADR-0004 D1 to minute granularity for
     KIND-sourced disclosures. Two residual imprecisions are recorded, not
-    assumed away — the displayed value's timezone is not stated on the page, and
+    assumed away — the displayed value's timezone is not stated on the page, so
+    normalization records the explicit `AssumedAsiaSeoul` assumption, and
     correction versions are enumerable only by date (item 11).
 11. **KIND correction linkage — PARTIALLY ANSWERED 2026-08-20.** The
     disclosure viewer exposes the whole version chain in a `mainDoc` select:
@@ -711,7 +785,8 @@ credentialed call, because read-only public fetching cannot settle it.
 14. **Automated-collection question.** Decide whether scripted use of a
     site-provided export counts as `무단` automated collection under
     `data.krx.co.kr` 제10조②, and whether that clause governs KIND. Until
-    decided, ADR-0004 D6 keeps this category operator-driven.
+    decided, ADR-0004 D6 keeps the `data.krx.co.kr` category operator-driven;
+    D11 governs only the approved low-volume KIND browser path.
 15. ~~**Licence sign-off.**~~ **CLOSED 2026-08-20.** The owner recorded the use
     as personal and internal, so the licence question does not block progress.
     The `entitlement_reference` in use for OpenDART is
@@ -730,13 +805,14 @@ credentialed call, because read-only public fetching cannot settle it.
     owner's word**. Its basis is KIND's own linked KRX legal notice, which
     prohibits unauthorized reproduction and redistribution and carries no
     automated-collection clause (see ADR-0004 D11 for the accepted risk).
-16. **First real `list.json` and `company.json` response.** With a key issued,
-    capture one real response per surface and confirm the adapter's shape
-    assumptions against it: whether the four envelope integers arrive as JSON
-    numbers or strings (both are accepted), and whether `rm` is present on every
-    row or omitted when there is no remark. The adapter fails closed with a
-    typed `UndocumentedShape` on a mismatch rather than mis-parsing, so this is a
-    first-use verification, not a correctness risk.
+16. **First real `list.json` and `company.json` response — deferred/blocked.**
+    The OpenDART core fixture contract is approved, but D4 establishes no ETF11
+    use and D10 blocks the in-process live path. If individual-stock scope is
+    approved later, capture one real response per surface and confirm whether
+    the four envelope integers arrive as JSON numbers or strings (both are
+    accepted), and whether `rm` is present on every row or omitted when there is
+    no remark. The adapter fails closed with a typed `UndocumentedShape` on a
+    mismatch rather than mis-parsing.
 17. **KIND per-issue filtering.** Neither typing a six-digit code into
     `searchCorpName` nor setting the hidden `repIsuSrtCd` filtered the result
     set — both returned the unfiltered first page, which is how an earlier
@@ -757,26 +833,35 @@ credentialed call, because read-only public fetching cannot settle it.
 
 ## Read-only allowlist — approval state
 
-Documentation-confirmed paths. The owner approved the **OpenDART core** on
-2026-08-19 for fixture-based Raw adapter work; everything else is **DEFERRED**
-and may not be called, registered for, or coded against.
+**Current state — 2026-08-20.** The OpenDART core remains approved for its
+fixture-backed contract, but D4 establishes no ETF11 use and D10 blocks the
+in-process live path. KIND D11 is approved for the low-volume browser path and
+its capture → Raw → normalization implementation is present. KRX, FSC, KSD,
+`data.krx.co.kr`, the full KIND backfill, and ETF11 identity remain deferred.
+The 2026-08-19 approval snapshot above is retained as historical evidence, not
+as the current table state.
 
-`APPROVED` here authorizes the request shape, the fixture-backed contract, and
-an operator-gated live path. It does not authorize a live call: no key has been
-issued, so no request has been sent to any of these surfaces.
+`APPROVED` here authorizes only the listed request shape, fixture-backed
+contract, and any explicitly stated operator-gated path. It does not add an
+endpoint or imply ETF11 applicability. The owner-supplied OpenDART key is not
+recorded; exactly one external `corpCode.xml` observation is recorded above,
+while D10 blocks the in-process path. KIND approval is through the site's own
+browser controls and does not authorize reconstructed requests or unbounded
+backfill.
 
 | source | surface | status |
 |---|---|---|
-| OpenDART | `GET /api/list.json` \| `/api/list.xml` | **APPROVED** — path, params, schema documented |
-| OpenDART | `GET /api/corpCode.xml` | **APPROVED** — needed for checklist item 4 |
-| OpenDART | `GET /api/company.json` \| `.xml` | **APPROVED** — documented |
-| OpenDART | `GET /api/crDecsn`, `/api/piicDecsn`, `/api/cmpMgDecsn` | DEFERRED — applicability to ETF11 unresolved |
-| OpenDART | `GET /api/alotMatter` | DEFERRED — periodic realized amounts, limited use |
+| OpenDART | `GET /api/list.json` \| `/api/list.xml` | **APPROVED** — fixture contract; no ETF11 use (D4), in-process live path blocked (D10) |
+| OpenDART | `GET /api/corpCode.xml` | **APPROVED** — one external observation settled checklist item 4; no ETF11 use (D4), in-process live path blocked (D10) |
+| OpenDART | `GET /api/company.json` \| `.xml` | **APPROVED** — fixture contract; no ETF11 use (D4), in-process live path blocked (D10) |
+| OpenDART | `GET /api/crDecsn`, `/api/piicDecsn`, `/api/cmpMgDecsn` | **DEFERRED / NOT ALLOWED** — outside the approved core; D4 establishes no ETF11 use |
+| OpenDART | `GET /api/alotMatter` | **DEFERRED / NOT ALLOWED** — outside the approved core; D4 establishes no ETF11 use |
 | FSC mirror | `금융위원회_KRX상장종목정보` | DEFERRED — mirror-vs-origin decision open; endpoint needs checklist item 2 |
 | FSC mirror | `금융위원회_증권상품시세정보` (ETF operation) | DEFERRED — mirror-vs-origin decision open; endpoint needs checklist item 2 |
 | KRX Open API | `ETF 일별매매정보` | DEFERRED — endpoint needs checklist item 1; prefer the FSC mirror per D3 |
 | KSD portal | `주식권리일정정보`, `주식배당정보` | DEFERRED — blocked on the KOGL Type 2 entitlement decision |
-| KIND | 상세검색, ETF disclosure, 관리종목, 매매거래정지 pages | **APPROVED 2026-08-20** — browser-driven collection through the site's own controls, low volume, no reconstructed requests (ADR-0004 D11) |
+| KIND | ETF-scoped disclosure list and related correction-evidence viewer flow | **APPROVED 2026-08-20** — browser-driven through the site's own controls, low volume, no reconstructed requests (ADR-0004 D11); ETF disclosure capture → Raw → normalization is the implemented path |
+| KIND | 상세검색, 관리종목, 매매거래정지, and every other page/endpoint | **DEFERRED / NOT ALLOWED** — outside the exact D11 exception |
 | data.krx.co.kr | 이슈 통계 leaf pages for 신규상장 / 상장폐지 / 매매거래정지 / 관리종목 | DEFERRED — operator-driven export only, per D6; leaf URLs unconfirmed |
 | terms pages | KRX Open API 이용약관, data.krx.co.kr 이용약관, KOGL licence, OpenDART 약관 | re-check periodically; terms change |
 

@@ -55,6 +55,11 @@ pub enum OpenDartTransportError {
     #[error("no response arrived before the configured timeout elapsed")]
     TimedOut,
 
+    /// A request failed without a response, but the HTTP client could not
+    /// establish that it was never sent or that it timed out. Not retried.
+    #[error("request failed without a response")]
+    Indeterminate,
+
     /// A response arrived but its body could not be read to completion.
     /// Not retried: the request reached the server.
     #[error("response body could not be read to completion")]
@@ -116,6 +121,7 @@ mod tests {
             OpenDartTransportError::ClientBuildFailed,
             OpenDartTransportError::NeverSent,
             OpenDartTransportError::TimedOut,
+            OpenDartTransportError::Indeterminate,
             OpenDartTransportError::UnreadableBody,
             OpenDartTransportError::Redirected { status: 301 },
             OpenDartTransportError::Redirected { status: 308 },
@@ -141,6 +147,7 @@ mod tests {
                 OpenDartTransportError::ClientBuildFailed => {}
                 OpenDartTransportError::NeverSent => {}
                 OpenDartTransportError::TimedOut => {}
+                OpenDartTransportError::Indeterminate => {}
                 OpenDartTransportError::UnreadableBody => {}
                 OpenDartTransportError::Redirected { .. } => {}
                 OpenDartTransportError::UnexpectedStatus { .. } => {}

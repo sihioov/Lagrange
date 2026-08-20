@@ -272,16 +272,19 @@ async fn run(raw_args: &[String]) -> Result<(), CliError> {
 /// `--plan` makes no request: there is no code path from here to
 /// [`opendart_client::OpenDartClient`] at all.
 fn run_plan(args: &ParsedArgs, raw_root: &str, entitlement_reference: &str) {
-    println!("surface: {}", args.surface.as_str());
-    println!("path: {}", args.surface.path());
-    println!("endpoint: {}", args.surface.endpoint_id());
-    println!("raw_root: {raw_root}");
-    println!("entitlement_reference: {entitlement_reference}");
-    println!(
-        "query_parameter_names: {}",
-        args.surface.query_parameter_names(args).join(", ")
-    );
-    println!("no request was made (--plan)");
+    print!("{}", render_plan(args, raw_root, entitlement_reference));
+}
+
+/// Renders the exact safe `--plan` output. Query parameter *names* are shown
+/// for operator review, while parsed query values never enter this string.
+fn render_plan(args: &ParsedArgs, raw_root: &str, entitlement_reference: &str) -> String {
+    format!(
+        "surface: {}\npath: {}\nendpoint: {}\nraw_root: {raw_root}\nentitlement_reference: {entitlement_reference}\nquery_parameter_names: {}\nno request was made (--plan)\n",
+        args.surface.as_str(),
+        args.surface.path(),
+        args.surface.endpoint_id(),
+        args.surface.query_parameter_names(args).join(", "),
+    )
 }
 
 async fn run_execute(
@@ -678,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn query_parameter_names_never_include_values() {
+    fn query_parameter_names_follow_list_optional_filters() {
         let parsed = parse_args(&args(&[
             "--surface",
             "list",
@@ -694,8 +697,52 @@ mod tests {
         assert!(names.contains(&"bgn_de"));
         assert!(!names.contains(&"end_de"));
         assert!(names.contains(&CRTFC_KEY_PARAM));
-        // Names only: the actual corp_code value must never appear here.
-        assert!(!names.contains(&"00126380"));
+    }
+
+    #[test]
+    fn plan_output_includes_safe_fields_but_never_query_values() {
+        const CORP_CODE_SENTINEL: &str = "00126380";
+        const BGN_DE_SENTINEL: &str = "20260101";
+        const END_DE_SENTINEL: &str = "20260201";
+        let parsed = parse_args(&args(&[
+            "--surface",
+            "list",
+            "--corp-code",
+            CORP_CODE_SENTINEL,
+            "--bgn-de",
+            BGN_DE_SENTINEL,
+            "--end-de",
+            END_DE_SENTINEL,
+            "--plan",
+        ]))
+        .expect("valid list plan args");
+
+        let output = render_plan(
+            &parsed,
+            "/synthetic/raw-root",
+            "vault://synthetic-entitlements/opendart-test-only.pdf",
+        );
+
+        for expected in [
+            "surface: list",
+            "path: /api/list.json",
+            "endpoint: opendart.disclosure.list.v1",
+            "raw_root: /synthetic/raw-root",
+            "entitlement_reference: vault://synthetic-entitlements/opendart-test-only.pdf",
+            "query_parameter_names: page_no, page_count, corp_code, bgn_de, end_de, crtfc_key",
+            "no request was made (--plan)",
+        ] {
+            assert!(
+                output.contains(expected),
+                "plan output omitted {expected:?}"
+            );
+        }
+        for value in [CORP_CODE_SENTINEL, BGN_DE_SENTINEL, END_DE_SENTINEL] {
+            assert!(
+                !output.contains(value),
+                "plan output leaked query value {value:?}: {output}"
+            );
+        }
     }
 
     #[test]

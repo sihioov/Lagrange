@@ -109,6 +109,12 @@ focused tests.
 - Never call `data.go.kr`, `apis.data.go.kr`, `openapi.krx.co.kr`, `data.krx.co.kr`,
   `kind.krx.co.kr`, `seibro.or.kr`, or `api.seibro.or.kr` from code.  Those surfaces are deferred;
   the KIND and Data Marketplace exports are operator-driven downloads, not automated collection.
+- **Sole KIND exception (owner-approved ADR-0004 D11, 2026-08-20):** the existing
+  `data-pipelines/kind-capture` path may drive KIND's own browser controls for low-volume,
+  operator-gated ETF disclosure and correction-evidence capture.  It must not reconstruct or send
+  direct HTTP requests, and it grants no permission to another KIND page or endpoint.  Bulk,
+  scheduled, or full-history KIND capture remains forbidden until the owner explicitly approves a
+  request budget and retention scope.
 - Never register an account, request an API key, submit a form, or complete an identity check from
   an agent session.  Those are owner actions.
 - The disclosure response kinds (`DisclosureIndex`, `DisclosureEntityMaster`,

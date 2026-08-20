@@ -39,22 +39,30 @@ node capture.mjs --from 2020-02-03 --to 2020-02-07 --out /path/to/staging
 
 It refuses to write into a non-empty directory, because one staging directory
 maps 1:1 onto one Raw batch and mixing two captures would corrupt that
-correspondence. Pagination uses the page's own `fnPageGo`, stopping when a
-request yields nothing new — the terminal condition is observed, not guessed.
-Page indices must come out contiguous from 1; the Rust side enforces that too.
+correspondence. Pagination uses the page's own `fnPageGo`. It accepts only one
+terminal condition as complete: after advancing, KIND returns bytes identical
+to the preceding page because it clamped `pageIndex` past the final page. Each
+requested page gets one bounded retry; a missing control, two missed responses,
+or a distinct response beyond the configured page bound leaves diagnostic
+staging behind but exits non-zero. Page indices must come out contiguous from
+1; the Rust side enforces that too.
 
 Output:
 
 ```
 staging/
-  capture.json      # source, entry url, requested range, and per-page metadata
+  capture.json      # source, range, required termination, and per-page metadata
   page-0001.html    # exact response bytes, unmodified
   page-0002.html
 ```
 
-`capture.json` records, per page, the `page_index`, the file name, the
-`retrieved_at` instant, and `form_fields` — the form fields the page itself sent,
-in order, so a reader can see exactly which request produced these bytes.
+`capture.json` has a required `termination` value: `clamped_duplicate`,
+`page_bound_reached`, `advance_control_missing`, or `no_response`.
+Only `clamped_duplicate` is complete and accepted by `kind-raw`; every other
+value is retained only as incomplete staging and is rejected before Raw storage.
+It also records, per page, the `page_index`, file name, `retrieved_at` instant,
+and `form_fields`: ordered, URL-decoded pairs from the page's POST body. Pairs
+rather than an object preserve repeated field names and their order.
 
 ## Chunk the date range
 
@@ -65,13 +73,15 @@ disclosures per calendar day for the whole ETF universe, so ~6 days fills the
 
 Capture in windows of about **5 days** to stay under it. A full
 2020-01-31..present backfill is therefore a few hundred captures, each its own
-staging directory and its own Raw batch. The bound is deliberate: it is better to
-stop and be told than to silently truncate a result set.
+staging directory and its own Raw batch. The bound is deliberate: the capture
+probes one page past the configured stored-page bound. A duplicate probe proves
+an exactly-40-page capture complete; a distinct probe writes
+`page_bound_reached` and exits non-zero rather than silently truncating.
 
 Past the last page KIND clamps `pageIndex` and re-serves the final page, so the
-capture stops when a response is byte-identical to its predecessor and discards
-that duplicate. The comparison is on bytes alone — this stage never reads the
-body.
+capture stops only when a response is byte-identical to its predecessor and
+discards that duplicate. The comparison is on bytes alone — this stage never
+reads the body.
 
 Verified byte-stable across independent runs: two separate captures of the same
 window produced **32 of 32 pages byte-identical**, so the artifact hashes

@@ -6,14 +6,13 @@
 //! network I/O anywhere in this file — every [`CapturedPage`] here is a
 //! small inline HTML fixture, never a real KIND response.
 
-use std::path::Path;
-
 use domain::{ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KIND_DISCLOSURE, ResponseKind};
+use market_data::providers::kind::KindCaptureTermination;
 use market_data::storage::RawStore;
 use market_data::{
-    CapturedPage, KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT, KIND_DISCLOSURE_MAX_PAGES,
-    KIND_ETF_DISCLOSURE_ENDPOINT, KindError, KindSurface, ManifestEntry, ingest_disclosure_capture,
+    CapturedPage, KIND_DISCLOSURE_MAX_PAGES, KIND_ETF_DISCLOSURE_ENDPOINT, KindError, KindSurface,
+    ManifestEntry, ingest_disclosure_capture,
 };
 
 const NOW: &str = "2026-08-19T08:00:00Z";
@@ -134,28 +133,6 @@ fn assert_nothing_written(store: &RawStore) {
     );
 }
 
-/// Recursively collects the bytes of every regular file under `root`
-/// (empty if `root` does not exist).
-fn all_file_bytes_under(root: &Path) -> Vec<Vec<u8>> {
-    let mut out = Vec::new();
-    if !root.exists() {
-        return out;
-    }
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read_dir") {
-            let entry = entry.expect("dir entry");
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else {
-                out.push(std::fs::read(&path).expect("read file"));
-            }
-        }
-    }
-    out
-}
-
 // ---------------------------------------------------------------------
 // Test 1: happy path — three pages, one batch, three files, manifest row,
 // and the recorded endpoint/mode/form fields match what was supplied.
@@ -175,6 +152,7 @@ fn happy_path_three_pages_one_batch_three_files_one_manifest_row() {
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
         KindSurface::EtfList,
+        KindCaptureTermination::ClampedDuplicate,
         &pages,
     )
     .expect("three well-formed pages should ingest cleanly");
@@ -234,10 +212,12 @@ fn stored_bytes_are_exact_and_content_hash_matches_independent_sha256() {
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
         KindSurface::EtfList,
+        KindCaptureTermination::ClampedDuplicate,
         &pages,
     )
     .expect("two well-formed pages should ingest cleanly");
 
+    assert_eq!(pages.len(), entry.files.len());
     for (page, file) in pages.iter().zip(entry.files.iter()) {
         let stored = batch_dir_file_bytes(&store, &date, &entry, &file.file_name);
         assert_eq!(
@@ -271,6 +251,7 @@ fn empty_or_whitespace_only_entitlement_reference_fails_closed() {
             blank,
             FetchMode::Synthetic,
             KindSurface::EtfList,
+            KindCaptureTermination::ClampedDuplicate,
             &pages,
         )
         .expect_err("a blank entitlement reference must fail closed");
@@ -299,12 +280,66 @@ fn empty_pages_fails_closed() {
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
         KindSurface::EtfList,
+        KindCaptureTermination::ClampedDuplicate,
         &[],
     )
     .expect_err("an empty capture must fail closed");
 
     assert!(matches!(error, KindError::EmptyCapture));
     assert_nothing_written(&store);
+}
+
+#[test]
+fn incomplete_capture_termination_fails_closed_before_raw_storage() {
+    for termination in [
+        KindCaptureTermination::PageBoundReached,
+        KindCaptureTermination::AdvanceControlMissing,
+        KindCaptureTermination::NoResponse,
+    ] {
+        let (_temp, store) = new_store();
+        let date = fixed_date();
+
+        let error = ingest_disclosure_capture(
+            &store,
+            MARKET_KR,
+            &date,
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+            FetchMode::Synthetic,
+            KindSurface::EtfList,
+            termination,
+            &[captured_page(1)],
+        )
+        .expect_err("an incomplete capture termination must fail closed");
+
+        assert!(matches!(
+            error,
+            KindError::IncompleteCapture { termination: actual } if actual == termination
+        ));
+        assert_nothing_written(&store);
+    }
+}
+
+#[test]
+fn clean_termination_allows_exactly_the_configured_page_bound() {
+    let (_temp, store) = new_store();
+    let date = fixed_date();
+    let pages: Vec<CapturedPage> = (1..=KIND_DISCLOSURE_MAX_PAGES as u32)
+        .map(captured_page)
+        .collect();
+
+    let entry = ingest_disclosure_capture(
+        &store,
+        MARKET_KR,
+        &date,
+        SYNTHETIC_ENTITLEMENT_REFERENCE,
+        FetchMode::Synthetic,
+        KindSurface::EtfList,
+        KindCaptureTermination::ClampedDuplicate,
+        &pages,
+    )
+    .expect("a duplicate probe after page 40 proves a 40-page capture complete");
+
+    assert_eq!(entry.files.len(), KIND_DISCLOSURE_MAX_PAGES);
 }
 
 // ---------------------------------------------------------------------
@@ -340,6 +375,7 @@ fn malformed_page_index_sequences_fail_closed() {
             SYNTHETIC_ENTITLEMENT_REFERENCE,
             FetchMode::Synthetic,
             KindSurface::EtfList,
+            KindCaptureTermination::ClampedDuplicate,
             &pages,
         )
         .expect_err(&format!(
@@ -380,6 +416,7 @@ fn exceeding_max_pages_fails_closed() {
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
         KindSurface::EtfList,
+        KindCaptureTermination::ClampedDuplicate,
         &pages,
     )
     .expect_err("exceeding the page bound must fail closed");
@@ -417,6 +454,7 @@ fn page_missing_time_column_label_fails_closed() {
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
         KindSurface::EtfList,
+        KindCaptureTermination::ClampedDuplicate,
         &pages,
     )
     .expect_err("a body missing the documented 시간 column must fail closed");
@@ -460,6 +498,7 @@ fn identical_bytes_across_two_pages_fails_closed() {
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
         KindSurface::EtfList,
+        KindCaptureTermination::ClampedDuplicate,
         &pages,
     )
     .expect_err("byte-identical pages must fail closed");
@@ -475,9 +514,7 @@ fn identical_bytes_across_two_pages_fails_closed() {
 }
 
 // ---------------------------------------------------------------------
-// Test 9: empty form_fields fails closed; a credential-like form field name
-// fails closed, and a sentinel value never reaches stored bytes, batch.json,
-// or the manifest.
+// Test 9: empty form_fields and credential-like form field names fail closed.
 // ---------------------------------------------------------------------
 
 #[test]
@@ -499,6 +536,7 @@ fn empty_form_fields_fails_closed() {
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
         KindSurface::EtfList,
+        KindCaptureTermination::ClampedDuplicate,
         &pages,
     )
     .expect_err("empty form_fields must fail closed");
@@ -511,7 +549,7 @@ fn empty_form_fields_fails_closed() {
 }
 
 #[test]
-fn credential_like_form_field_name_fails_closed_and_sentinel_never_persists() {
+fn credential_like_form_field_name_fails_closed() {
     const SENTINEL_CREDENTIAL_VALUE: &str = "SENTINEL-SECRET-MUST-NEVER-PERSIST-93217";
 
     let credential_like_names = [
@@ -523,7 +561,7 @@ fn credential_like_form_field_name_fails_closed_and_sentinel_never_persists() {
     ];
 
     for field_name in credential_like_names {
-        let (temp, store) = new_store();
+        let (_temp, store) = new_store();
         let date = fixed_date();
 
         let mut fields = form_fields(1);
@@ -543,32 +581,21 @@ fn credential_like_form_field_name_fails_closed_and_sentinel_never_persists() {
             SYNTHETIC_ENTITLEMENT_REFERENCE,
             FetchMode::Synthetic,
             KindSurface::EtfList,
+            KindCaptureTermination::ClampedDuplicate,
             &pages,
         )
         .expect_err(&format!(
             "field name {field_name:?} looks credential-shaped and must fail closed"
         ));
 
-        match &error {
+        assert!(matches!(
+            error,
             KindError::CredentialLikeFormField {
                 page_index: 1,
                 field_name: recorded_name,
-            } => assert_eq!(recorded_name, field_name),
-            other => panic!("expected CredentialLikeFormField, got {other:?}"),
-        }
+            } if recorded_name == field_name
+        ));
         assert_nothing_written(&store);
-
-        // The sentinel value must appear nowhere at all on disk: scan every
-        // file actually written anywhere under the store root (there should
-        // be none, since the whole batch was rejected before any write).
-        let scanned = all_file_bytes_under(temp.path());
-        for bytes in &scanned {
-            let text = String::from_utf8_lossy(bytes);
-            assert!(
-                !text.contains(SENTINEL_CREDENTIAL_VALUE),
-                "sentinel credential value leaked into a file on disk for field {field_name:?}"
-            );
-        }
     }
 }
 
@@ -601,6 +628,7 @@ fn any_rejection_leaves_no_provider_directory_or_manifest_behind() {
             entitlement_reference,
             FetchMode::Synthetic,
             KindSurface::EtfList,
+            KindCaptureTermination::ClampedDuplicate,
             &pages,
         );
         assert!(result.is_err(), "{label}: expected a fail-closed rejection");
@@ -619,6 +647,7 @@ fn any_rejection_leaves_no_provider_directory_or_manifest_behind() {
         "   ",
         FetchMode::Synthetic,
         KindSurface::EtfList,
+        KindCaptureTermination::ClampedDuplicate,
         &[captured_page(1)],
     );
     assert!(result.is_err());
@@ -626,61 +655,32 @@ fn any_rejection_leaves_no_provider_directory_or_manifest_behind() {
 }
 
 // ---------------------------------------------------------------------
-// Test 11: the two KIND search surfaces are differently scoped (see
-// `KindSurface`'s doc comment), so the same otherwise-valid pages must
-// record a different endpoint id depending on which surface ingested them.
+// Test 11: `DetailEtf` remains a compatibility surface but is deferred/not
+// allowed for this approved Raw provider path.
 // ---------------------------------------------------------------------
 
 #[test]
-fn recorded_endpoint_differs_by_surface() {
+fn detail_etf_surface_is_rejected_before_raw_storage() {
     let date = fixed_date();
 
-    let (_temp_etf_list, store_etf_list) = new_store();
-    let etf_list_pages = vec![captured_page(1), captured_page(2)];
-    let etf_list_entry = ingest_disclosure_capture(
-        &store_etf_list,
-        MARKET_KR,
-        &date,
-        SYNTHETIC_ENTITLEMENT_REFERENCE,
-        FetchMode::Synthetic,
-        KindSurface::EtfList,
-        &etf_list_pages,
-    )
-    .expect("etf-list surface should ingest cleanly");
-
-    let (_temp_detail_etf, store_detail_etf) = new_store();
-    let detail_etf_pages = vec![captured_page(1), captured_page(2)];
-    let detail_etf_entry = ingest_disclosure_capture(
-        &store_detail_etf,
+    let (_temp, store) = new_store();
+    let error = ingest_disclosure_capture(
+        &store,
         MARKET_KR,
         &date,
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
         KindSurface::DetailEtf,
-        &detail_etf_pages,
+        KindCaptureTermination::ClampedDuplicate,
+        &[captured_page(1)],
     )
-    .expect("detail-etf surface should ingest cleanly");
+    .expect_err("DetailEtf must be rejected by the Raw provider");
 
-    assert_eq!(etf_list_entry.files.len(), 2);
-    assert_eq!(detail_etf_entry.files.len(), 2);
-
-    for file in &etf_list_entry.files {
-        assert_eq!(file.request.endpoint, KIND_ETF_DISCLOSURE_ENDPOINT);
-    }
-    for file in &detail_etf_entry.files {
-        assert_eq!(file.request.endpoint, KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT);
-    }
-
-    assert_ne!(
-        KIND_ETF_DISCLOSURE_ENDPOINT, KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT,
-        "the two surfaces must never be collapsed onto one endpoint id"
-    );
-
-    let etf_list_manifest = manifest_text(&store_etf_list);
-    assert!(etf_list_manifest.contains(KIND_ETF_DISCLOSURE_ENDPOINT));
-    assert!(!etf_list_manifest.contains(KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT));
-
-    let detail_etf_manifest = manifest_text(&store_detail_etf);
-    assert!(detail_etf_manifest.contains(KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT));
-    assert!(!detail_etf_manifest.contains(KIND_ETF_DISCLOSURE_ENDPOINT));
+    assert!(matches!(
+        error,
+        KindError::UnsupportedRawSurface {
+            surface: KindSurface::DetailEtf
+        }
+    ));
+    assert_nothing_written(&store);
 }

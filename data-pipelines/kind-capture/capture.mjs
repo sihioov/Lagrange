@@ -22,10 +22,25 @@
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  TERMINATION,
+  classifyReceivedPage,
+  closeCaptureState,
+  createCaptureState,
+  createPendingTaskTracker,
+  issueCapturePage,
+  isCleanTermination,
+  matchIssuedCaptureRequest,
+  recordIssuedResponse,
+  settlePendingTasks,
+  startCapture,
+  trackPendingTask,
+  terminationForAdvance,
+  waitForCapturedPage,
+} from './capture-logic.mjs';
 
 const ENTRY_URL =
   'https://kind.krx.co.kr/disclosure/disclosurebystocktype.do?method=searchDisclosureByStockTypeEtf';
-const RESPONSE_MATCH = /disclosurebystocktype\.do/;
 // Mirrors KIND_DISCLOSURE_MAX_PAGES in crates/market-data/src/providers/kind.rs.
 // The Rust side enforces it too; this is a courtesy bound, not the guarantee.
 const DEFAULT_MAX_PAGES = 40;
@@ -54,26 +69,6 @@ function parseArgs(argv) {
   return { from: a.from, to: a.to, out: a.out, maxPages };
 }
 
-// Ordered form fields exactly as the page sent them. Kept as pairs rather than an
-// object so repeated names survive and the recorded order matches the request.
-function parseFormFields(postData) {
-  return (postData || '')
-    .split('&')
-    .filter(Boolean)
-    .map((pair) => {
-      const i = pair.indexOf('=');
-      const raw = i === -1 ? [pair, ''] : [pair.slice(0, i), pair.slice(i + 1)];
-      const dec = (s) => {
-        try {
-          return decodeURIComponent(s.replace(/\+/g, ' '));
-        } catch {
-          return s;
-        }
-      };
-      return [dec(raw[0]), dec(raw[1])];
-    });
-}
-
 const { from, to, out, maxPages } = parseArgs(process.argv.slice(2));
 
 // Never write into a populated directory: a staging dir maps 1:1 onto one Raw
@@ -88,35 +83,45 @@ const browser = await chromium.launch();
 const ctx = await browser.newContext({ locale: 'ko-KR', timezoneId: 'Asia/Seoul' });
 const page = await ctx.newPage();
 
-/** @type {Map<number, {body: Buffer, retrievedAt: string, formFields: [string,string][]}>} */
-const captured = new Map();
-let capturing = false;
+const captureState = createCaptureState({ fromDate: from, toDate: to });
+const { captured } = captureState;
+const pendingResponseTasks = createPendingTaskTracker();
 
-page.on('response', async (res) => {
-  if (!capturing) return;
+page.on('response', (res) => {
+  if (!captureState.active) return;
   if (res.request().method() !== 'POST') return;
-  if (!RESPONSE_MATCH.test(res.url())) return;
-  let body;
-  try {
-    body = await res.body();
-  } catch {
-    return; // body no longer retrievable; the page-count check below will notice
-  }
+  const url = res.url();
   const postData = res.request().postData() || '';
-  const m = postData.match(/(?:^|&)pageIndex=(\d+)/);
-  if (!m) return;
-  const pageIndex = Number(m[1]);
-  if (captured.has(pageIndex)) return; // first response for a page wins
-  captured.set(pageIndex, {
-    body,
-    retrievedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-    formFields: parseFormFields(postData),
-  });
+  // Identify the issued page at response-event time, before reading the body.
+  // This prevents an unissued page from becoming admissible merely because a
+  // later page was issued while its body read was pending.
+  const issuedRequest = matchIssuedCaptureRequest(captureState, { url, postData });
+  if (!issuedRequest) return;
+  trackPendingTask(
+    pendingResponseTasks,
+    (async () => {
+      let body;
+      try {
+        body = await res.body();
+      } catch {
+        return; // body no longer retrievable; the page-count check below will notice
+      }
+      // The contract remains issued while pagination advances, so this late
+      // body is compared with the already stored response for its own page.
+      recordIssuedResponse(captureState, issuedRequest, {
+        body,
+        retrievedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      });
+    })(),
+  );
 });
 
 let exitCode = 0;
 try {
   await page.goto(ENTRY_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  // The delay gives the entry page time to render its controls. It is not a
+  // correctness barrier: late default responses are rejected by the exact
+  // request predicate below.
   await page.waitForTimeout(2500);
 
   for (const [sel, val] of [['#fromDate', from], ['#toDate', to]]) {
@@ -126,15 +131,30 @@ try {
     await el.type(val, { delay: 12 });
   }
 
-  // Only the explicit search is captured; the entry page fires its own default
-  // search on load, which is not the query being recorded.
-  capturing = true;
+  // Arm the response listener for the exact page-1 request. The entry page's
+  // own default search may still be in flight, so time ordering is not used as
+  // the correctness proof.
+  if (!startCapture(captureState) || !issueCapturePage(captureState, 1)) {
+    throw new Error('could not issue initial capture page');
+  }
   await page.evaluate(() => {
     if (typeof fnSearch !== 'function') throw new Error('fnSearch missing');
     fnSearch();
   });
-  await page.waitForTimeout(6000);
-  if (!captured.has(1)) throw new Error('no response captured for page 1');
+  const initialReceived = await waitForCapturedPage(
+    captured,
+    1,
+    () => page.waitForTimeout(6000),
+    () =>
+      page.evaluate(() => {
+        if (typeof fnSearch !== 'function') throw new Error('fnSearch missing during retry');
+        fnSearch();
+      }),
+    () => captureState.failure !== null,
+    () => settlePendingTasks(pendingResponseTasks),
+  );
+  const initialTasksSettled = await settlePendingTasks(pendingResponseTasks);
+  let termination = initialReceived && initialTasksSettled && !captureState.failure ? null : TERMINATION.NO_RESPONSE;
 
   // Advance with the page's own paging function. The terminal condition is
   // observed, not guessed, and it is a pure byte comparison rather than any
@@ -142,8 +162,14 @@ try {
   // the final page again, so a response identical to its predecessor means the
   // end was already reached. That duplicate is discarded — keeping it would also
   // trip the ingest side's own duplicate-bytes rejection.
-  for (let next = 2; next <= maxPages; next += 1) {
-    const before = captured.size;
+  // `maxPages` counts stored pages. Request one additional page to observe
+  // whether the last stored page is clamped, without admitting a page beyond
+  // the configured bound into staging.
+  for (let next = 2; termination === null && next <= maxPages + 1; next += 1) {
+    if (!issueCapturePage(captureState, next)) {
+      termination = TERMINATION.NO_RESPONSE;
+      break;
+    }
     const moved = await page.evaluate((n) => {
       if (typeof fnPageGo === 'function') {
         fnPageGo(n);
@@ -156,14 +182,57 @@ try {
       }
       return null;
     }, next);
-    if (!moved) break;
-    await page.waitForTimeout(4500);
-    if (captured.size === before || !captured.has(next)) break;
-    if (captured.get(next).body.equals(captured.get(next - 1).body)) {
-      captured.delete(next);
+    termination = terminationForAdvance(moved);
+    if (termination !== null) {
       break;
     }
+    let retryMoved = true;
+    const received = await waitForCapturedPage(
+      captured,
+      next,
+      () => page.waitForTimeout(4500),
+      async () => {
+        retryMoved = await page.evaluate((n) => {
+          if (typeof fnPageGo === 'function') {
+            fnPageGo(n);
+            return 'fnPageGo';
+          }
+          const a = [...document.querySelectorAll('a')].find((x) => (x.innerText || '').trim() === String(n));
+          if (a) {
+            a.click();
+            return 'anchor';
+          }
+          return null;
+        }, next);
+      },
+      () => captureState.failure !== null,
+      () => settlePendingTasks(pendingResponseTasks),
+    );
+    const pageTasksSettled = await settlePendingTasks(pendingResponseTasks);
+    if (!pageTasksSettled) {
+      termination = TERMINATION.NO_RESPONSE;
+      break;
+    }
+    if (!retryMoved) {
+      termination = TERMINATION.ADVANCE_CONTROL_MISSING;
+      break;
+    }
+    if (!received || captureState.failure) {
+      termination = TERMINATION.NO_RESPONSE;
+      break;
+    }
+    termination = classifyReceivedPage({ captured, pageIndex: next, maxPages });
   }
+
+  const finalTasksSettled = await settlePendingTasks(pendingResponseTasks);
+  if (!finalTasksSettled || captureState.failure) {
+    termination = TERMINATION.NO_RESPONSE;
+  }
+  closeCaptureState(captureState);
+
+  // The loop always resolves one of the explicit outcomes. Keep this guard
+  // fail-closed if a future edit changes that invariant.
+  if (termination === null) throw new Error('page walk ended without a termination state');
 
   const indices = [...captured.keys()].sort((x, y) => x - y);
   // The Rust side rejects gaps; fail here too rather than stage a bad capture.
@@ -192,6 +261,7 @@ try {
         entry_url: ENTRY_URL,
         surface: 'etf-disclosure-list',
         requested_range: { from, to },
+        termination,
         pages,
       },
       null,
@@ -199,9 +269,20 @@ try {
     )}\n`,
   );
 
-  console.log(`captured ${pages.length} page(s) for ${from}..${to}`);
+  if (!isCleanTermination(termination)) {
+    console.error(
+      `capture incomplete (${termination}): staged ${pages.length} page(s) for ${from}..${to}; do not ingest`,
+    );
+    exitCode = 1;
+  } else {
+    console.log(`captured ${pages.length} page(s) for ${from}..${to}`);
+  }
   for (const p of pages) console.log(`  ${p.file}  pageIndex=${p.page_index}  retrieved_at=${p.retrieved_at}`);
-  console.log(`staged in ${out}; ingest with the kind-raw CLI, which recomputes every hash`);
+  console.log(
+    isCleanTermination(termination)
+      ? `staged in ${out}; ingest with the kind-raw CLI, which recomputes every hash`
+      : `incomplete staging retained in ${out} for diagnosis; kind-raw will reject it`,
+  );
 } catch (error) {
   console.error(`capture failed: ${error && error.message ? error.message : error}`);
   exitCode = 1;

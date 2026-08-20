@@ -52,6 +52,14 @@ use crate::storage::{BatchSpec, ManifestEntry, RawStore, StoreError};
 /// Documented endpoint id for the KIND ETF disclosure-search capture surface
 /// (`POST disclosurebystocktype.do`, `method=searchDisclosureByStockTypeEtfSub`).
 pub const KIND_ETF_DISCLOSURE_ENDPOINT: &str = "kind.disclosure.etf.list.v1";
+/// Exact browser entry URL approved for the ETF-scoped disclosure-list
+/// capture. The browser stage repeats this literal in its staging metadata;
+/// the Rust boundary remains the authoritative admission check.
+pub const KIND_ETF_DISCLOSURE_ENTRY_URL: &str = "https://kind.krx.co.kr/disclosure/disclosurebystocktype.do?method=searchDisclosureByStockTypeEtf";
+/// The exact `method` value observed in the ETF disclosure-list request.
+pub const KIND_ETF_DISCLOSURE_METHOD: &str = "searchDisclosureByStockTypeEtfSub";
+/// The exact `forward` value observed in the ETF disclosure-list request.
+pub const KIND_ETF_DISCLOSURE_FORWARD: &str = "disclosurebystocktype_etf_sub";
 /// Documented endpoint id for the KIND 상세검색 (`details.do`) capture
 /// surface, filtered to the ETF security type and disclosure-type filters.
 pub const KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT: &str = "kind.disclosure.detail.etf.v1";
@@ -63,10 +71,56 @@ pub const KIND_DISCLOSURE_PAGE_SIZE: u32 = 15;
 /// pagination claim can never be proven complete.
 pub const KIND_DISCLOSURE_MAX_PAGES: usize = 40;
 
-/// Which KIND search surface produced a capture. The two are differently
-/// scoped — the same window yields 473 disclosures on the ETF-scoped page and
-/// 66 on 상세검색 with the ETF security type — so a batch records which one it
-/// came from rather than treating them as interchangeable.
+/// Why the browser capture stage stopped its KIND page walk. Only a duplicate
+/// response after advancing past the final page proves that the result set was
+/// complete; every other value is an incomplete staging result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KindCaptureTermination {
+    /// KIND clamped a request beyond the final page and returned the prior
+    /// page's exact bytes. This is the sole complete capture outcome.
+    ClampedDuplicate,
+    /// A distinct page arrived after the configured stored-page bound.
+    PageBoundReached,
+    /// Neither KIND's paging function nor its numeric page anchor was found.
+    AdvanceControlMissing,
+    /// A requested page did not arrive after the bounded retry.
+    NoResponse,
+}
+
+impl KindCaptureTermination {
+    /// The required string value written in the browser stage's
+    /// `capture.json`.
+    pub const fn staging_id(self) -> &'static str {
+        match self {
+            Self::ClampedDuplicate => "clamped_duplicate",
+            Self::PageBoundReached => "page_bound_reached",
+            Self::AdvanceControlMissing => "advance_control_missing",
+            Self::NoResponse => "no_response",
+        }
+    }
+
+    /// Parses an exact `capture.json` termination identifier.
+    pub fn parse_staging_id(value: &str) -> Option<Self> {
+        [
+            Self::ClampedDuplicate,
+            Self::PageBoundReached,
+            Self::AdvanceControlMissing,
+            Self::NoResponse,
+        ]
+        .into_iter()
+        .find(|termination| termination.staging_id() == value)
+    }
+
+    /// Whether this termination proves a complete page walk.
+    pub const fn is_complete(self) -> bool {
+        matches!(self, Self::ClampedDuplicate)
+    }
+}
+
+/// Which KIND search surface a capture names. `DetailEtf` remains a known
+/// discriminator for historical/normalization compatibility, but only the
+/// ETF-scoped list is admitted to this Raw provider; see
+/// [`KindSurface::ensure_raw_admitted`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KindSurface {
     /// The ETF-scoped disclosure-search list surface (`POST
@@ -87,12 +141,24 @@ impl KindSurface {
         }
     }
 
-    /// The documented endpoint id recorded on every [`RequestMetadata`] a
-    /// capture from this surface produces.
+    /// The endpoint id associated with this compatibility surface. Raw ingest
+    /// calls [`KindSurface::ensure_raw_admitted`] before this is recorded, so
+    /// the DetailEtf endpoint cannot enter a new Raw batch.
     pub const fn endpoint_id(self) -> &'static str {
         match self {
             Self::EtfList => KIND_ETF_DISCLOSURE_ENDPOINT,
             Self::DetailEtf => KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT,
+        }
+    }
+
+    /// Checks whether this compatibility surface is admitted to the current
+    /// Raw provider. `DetailEtf` remains parseable for historical data and
+    /// normalization compatibility, but it is deferred/not allowed for this
+    /// capture-to-Raw path.
+    pub fn ensure_raw_admitted(self) -> Result<(), KindError> {
+        match self {
+            Self::EtfList => Ok(()),
+            Self::DetailEtf => Err(KindError::UnsupportedRawSurface { surface: self }),
         }
     }
 
@@ -145,12 +211,18 @@ pub struct CapturedPage {
 /// is a closed, structured shape.
 #[derive(Debug)]
 pub enum KindError {
+    /// The surface is known for compatibility but is outside the owner-
+    /// approved ETF-scoped Raw admission scope.
+    UnsupportedRawSurface { surface: KindSurface },
     /// The caller-supplied entitlement reference was empty or
     /// whitespace-only. Required, not optional, before any capture is
     /// admitted as licensed evidence.
     MissingEntitlementReference,
     /// `pages` was empty: there is nothing to ingest.
     EmptyCapture,
+    /// The browser capture did not observe the only terminal condition that
+    /// proves completeness. This is rejected before any Raw-store work.
+    IncompleteCapture { termination: KindCaptureTermination },
     /// `pages` claimed more pages than [`KIND_DISCLOSURE_MAX_PAGES`].
     TooManyPages { max_pages: usize, actual: usize },
     /// `page_index` values did not start at 1 and increase by exactly one:
@@ -183,11 +255,21 @@ pub enum KindError {
 impl std::fmt::Display for KindError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnsupportedRawSurface { surface } => write!(
+                f,
+                "kind raw ingestion does not admit surface {}",
+                surface.staging_id()
+            ),
             Self::MissingEntitlementReference => write!(
                 f,
                 "kind disclosure capture ingest requires a non-empty entitlement reference"
             ),
             Self::EmptyCapture => write!(f, "kind disclosure capture had no pages"),
+            Self::IncompleteCapture { termination } => write!(
+                f,
+                "kind disclosure capture ended as {}; only clamped_duplicate may be ingested",
+                termination.staging_id()
+            ),
             Self::TooManyPages { max_pages, actual } => write!(
                 f,
                 "kind disclosure capture claimed {actual} pages, exceeding the bound of {max_pages}"
@@ -338,10 +420,14 @@ fn validate_form_fields(page: &CapturedPage) -> Result<(), KindError> {
 /// `entitlement_reference` is required, not optional, and an empty or
 /// whitespace-only value fails closed before any page is examined.
 ///
-/// `surface` identifies which KIND search surface produced `pages` — the two
-/// are differently scoped (see [`KindSurface`]), so its
-/// [`KindSurface::endpoint_id`] is what gets recorded on every page's
-/// [`RequestMetadata::endpoint`], not a single shared constant.
+/// `surface` identifies which approved KIND search surface produced `pages`;
+/// the closed [`KindSurface::ensure_raw_admitted`] gate prevents deferred
+/// compatibility surfaces from reaching [`KindSurface::endpoint_id`] or Raw
+/// storage.
+// Keep the capture/Raw contract fields explicit instead of hiding them in a
+// request struct: callers must visibly supply the completion termination that
+// authorizes immutable Raw storage.
+#[allow(clippy::too_many_arguments)]
 pub fn ingest_disclosure_capture(
     store: &RawStore,
     market: &str,
@@ -349,9 +435,17 @@ pub fn ingest_disclosure_capture(
     entitlement_reference: &str,
     mode: FetchMode,
     surface: KindSurface,
+    termination: KindCaptureTermination,
     pages: &[CapturedPage],
 ) -> Result<ManifestEntry, KindError> {
+    // Keep this as the first gate: a known-but-deferred surface must not reach
+    // any Raw validation or store preparation, even if another input is also
+    // malformed.
+    surface.ensure_raw_admitted()?;
     let entitlement_reference = require_entitlement_reference(entitlement_reference)?;
+    if !termination.is_complete() {
+        return Err(KindError::IncompleteCapture { termination });
+    }
     validate_page_sequence(pages)?;
 
     let batch_id = BatchId::generate();

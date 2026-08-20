@@ -21,6 +21,7 @@
 
 use domain::{TradingDate, UtcTimestamp};
 use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KIND_DISCLOSURE_NORMALIZED};
+use market_data::providers::kind::KindCaptureTermination;
 use market_data::storage::RawStore;
 use market_data::{
     CapturedPage, InstrumentIdentity, KindNormalizeError, KindSurface, ManifestEntry,
@@ -160,24 +161,44 @@ fn well_formed_row(number: u64, time: &str, issue_name: &str, title: &str, filer
 /// Assembles one page's full HTML fragment: the real KIND result table
 /// shape — a `summary` attribute, an empty `<thead><tr>`, and `<tbody>` data
 /// rows. No `<th>` cell anywhere, matching the real stored bytes.
-fn page_html(summary: &str, rows: &[String]) -> Vec<u8> {
+fn page_html_with_placeholder(
+    summary: &str,
+    placeholder_row: Option<&str>,
+    rows: &[String],
+) -> Vec<u8> {
     let mut html = format!(
         r#"<table class="list type-00 tmt30" summary="{summary}">
 <caption>목록</caption>
 <colgroup></colgroup>
 <thead>
-<tr class="first" id="title-contents">
-</tr>
-</thead>
-<tbody>
 "#
     );
+    if let Some(placeholder_row) = placeholder_row {
+        html.push_str(placeholder_row);
+        html.push('\n');
+    }
+    html.push_str("</thead>\n<tbody>\n");
     for row in rows {
         html.push_str(row);
         html.push('\n');
     }
     html.push_str("</tbody>\n</table>");
     html.into_bytes()
+}
+
+fn page_html(summary: &str, rows: &[String]) -> Vec<u8> {
+    page_html_with_placeholder(
+        summary,
+        Some(
+            r#"<tr class="first" id="title-contents">
+</tr>"#,
+        ),
+        rows,
+    )
+}
+
+fn page_html_without_placeholder(summary: &str, rows: &[String]) -> Vec<u8> {
+    page_html_with_placeholder(summary, None, rows)
 }
 
 /// A well-formed single page: the documented `summary` contract with the
@@ -207,6 +228,7 @@ fn ingest_pages(store: &RawStore, pages: &[Vec<u8>]) -> ManifestEntry {
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
         KindSurface::EtfList,
+        KindCaptureTermination::ClampedDuplicate,
         &captured,
     )
     .expect("well-formed capture ingest must succeed")
@@ -464,6 +486,91 @@ fn summary_listing_different_or_reordered_columns_fails_closed() {
         assert!(
             matches!(error, KindNormalizeError::UnsupportedHeader { .. }),
             "expected UnsupportedHeader for {bad_summary:?}, got {error:?}"
+        );
+        assert_nothing_normalized_was_written(&store);
+    }
+}
+
+#[test]
+fn missing_placeholder_on_first_or_later_page_fails_closed() {
+    let first_page_rows = [
+        well_formed_row(
+            490,
+            "2026-08-19 09:00",
+            "SYNTHETIC ETF 490",
+            "SYNTHETIC DISCLOSURE 490",
+            "SYNTHETIC FILER",
+        ),
+        well_formed_row(
+            489,
+            "2026-08-19 09:00",
+            "SYNTHETIC ETF 489",
+            "SYNTHETIC DISCLOSURE 489",
+            "SYNTHETIC FILER",
+        ),
+    ];
+    let preceding_page_rows = [well_formed_row(
+        490,
+        "2026-08-19 09:00",
+        "SYNTHETIC ETF 490",
+        "SYNTHETIC DISCLOSURE 490",
+        "SYNTHETIC FILER",
+    )];
+    let later_page_rows = [well_formed_row(
+        489,
+        "2026-08-19 09:01",
+        "SYNTHETIC ETF 489",
+        "SYNTHETIC DISCLOSURE 489",
+        "SYNTHETIC FILER",
+    )];
+
+    for pages in [
+        vec![page_html_without_placeholder(
+            KIND_SUMMARY,
+            &first_page_rows,
+        )],
+        vec![
+            well_formed_page(&preceding_page_rows),
+            page_html_without_placeholder(KIND_SUMMARY, &later_page_rows),
+        ],
+    ] {
+        let (_temp, store) = new_store();
+        let source = ingest_pages(&store, &pages);
+        let error = normalize_kind_disclosure_batch(&store, &source)
+            .expect_err("a missing placeholder must fail the entire batch");
+        assert!(
+            matches!(error, KindNormalizeError::InvalidPlaceholderRow { .. }),
+            "expected InvalidPlaceholderRow, got {error:?}"
+        );
+        assert_nothing_normalized_was_written(&store);
+    }
+}
+
+#[test]
+fn placeholder_with_td_or_th_cells_fails_closed() {
+    let rows = [well_formed_row(
+        490,
+        "2026-08-19 09:00",
+        "SYNTHETIC ETF 490",
+        "SYNTHETIC DISCLOSURE 490",
+        "SYNTHETIC FILER",
+    )];
+    for placeholder_row in [
+        r#"<tr id="title-contents"><td></td></tr>"#,
+        r#"<tr id="title-contents"><th></th></tr>"#,
+        r#"<tr id="title-contents"><td>unterminated</tr>"#,
+        r#"<tr id="title-contents"><th>unterminated</tr>"#,
+    ] {
+        let (_temp, store) = new_store();
+        let source = ingest_one_page(
+            &store,
+            page_html_with_placeholder(KIND_SUMMARY, Some(placeholder_row), &rows),
+        );
+        let error = normalize_kind_disclosure_batch(&store, &source)
+            .expect_err("a placeholder containing a cell must fail the entire batch");
+        assert!(
+            matches!(error, KindNormalizeError::InvalidPlaceholderRow { .. }),
+            "expected InvalidPlaceholderRow, got {error:?}"
         );
         assert_nothing_normalized_was_written(&store);
     }

@@ -120,11 +120,10 @@ impl CredentialSource for SystemCredentialSource {
                 CredentialError::FileUnreadable
             }
         })?;
-        // "Trim trailing whitespace and newlines" -- `trim_end` covers both,
-        // and a whitespace-only file collapses to "" here (every byte in it
-        // is trailing whitespace), so the emptiness check below also
-        // catches "whitespace-only".
-        let trimmed = contents.trim_end();
+        // Trim surrounding formatting whitespace and newlines. A
+        // whitespace-only file collapses to "" here, so the emptiness check
+        // below also catches that case.
+        let trimmed = contents.trim();
         if trimmed.is_empty() {
             return Err(CredentialError::FileEmpty);
         }
@@ -214,13 +213,13 @@ mod tests {
     }
 
     #[test]
-    fn trailing_newline_is_trimmed() {
+    fn surrounding_whitespace_is_trimmed() {
         let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("key.txt");
         const SENTINEL: &str = "sk-lagrange-test-sentinel-0f9c";
-        std::fs::write(&path, format!("{SENTINEL}\n")).unwrap();
-        let var = "OPENDART_TEST_TRAILING_NEWLINE";
+        std::fs::write(&path, format!(" \t{SENTINEL}\n ")).unwrap();
+        let var = "OPENDART_TEST_SURROUNDING_WHITESPACE";
         set_env(var, path.to_str().unwrap());
         let source = SystemCredentialSource::new(var);
         let secret = source.load().expect("file has a value");

@@ -755,7 +755,71 @@ async fn disclosure_index_multi_page_walk_terminates_and_records_page_sequence()
 }
 
 // ---------------------------------------------------------------------
-// Test 6: total_count/total_page changing mid-walk fails closed.
+// Test 6: response page identity must match the requested page even when
+// jitter makes duplicate-byte detection inapplicable.
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn disclosure_index_response_page_mismatch_fails_closed_before_storage() {
+    let (_temp, store) = new_store();
+    let date = fixed_date();
+    let retrieved_at = fixed_retrieved_at();
+
+    let first_page = list_page_body(
+        "000",
+        1,
+        2,
+        2,
+        vec![list_row(
+            "00000001",
+            "SYNTHETIC CORP A",
+            "",
+            "20260101000001",
+        )],
+    );
+    // This is page 1 again, but a changed message makes the bytes different
+    // from the first response. Byte-identity detection alone cannot prove the
+    // server ignored the requested page 2.
+    let jittered_page_one = json!({
+        "status": "000",
+        "message": "SYNTHETIC response jitter",
+        "page_no": "1",
+        "page_count": "100",
+        "total_count": "2",
+        "total_page": "2",
+        "list": [list_row("00000001", "SYNTHETIC CORP A", "", "20260101000001")],
+    })
+    .to_string()
+    .into_bytes();
+    let reader = FixtureReader::new(vec![first_page, jittered_page_one]);
+    let provider = OpenDartProvider::new(reader.clone());
+
+    let error = provider
+        .ingest_disclosure_index(
+            &store,
+            MARKET_KR,
+            &date,
+            retrieved_at,
+            FetchMode::Synthetic,
+            DisclosureListFilter::default(),
+            SYNTHETIC_ENTITLEMENT_REFERENCE,
+        )
+        .await
+        .expect_err("a response identifying page 1 for requested page 2 must fail closed");
+
+    assert!(matches!(
+        error,
+        OpenDartError::ResponsePageMismatch {
+            requested: 2,
+            response: 1
+        }
+    ));
+    assert_eq!(reader.page_no_sequence(), vec![1, 2]);
+    assert!(!store.provider_dir(PROVIDER_OPENDART, MARKET_KR).exists());
+}
+
+// ---------------------------------------------------------------------
+// Test 7: total_count/total_page changing mid-walk fails closed.
 // ---------------------------------------------------------------------
 
 #[tokio::test]

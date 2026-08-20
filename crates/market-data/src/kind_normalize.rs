@@ -202,6 +202,10 @@ pub enum KindNormalizeError {
         expected: &'static [&'static str],
         actual: Vec<String>,
     },
+    #[error(
+        "kind disclosure page {file_name} is missing its required empty <thead> placeholder row or that row contains cells"
+    )]
+    InvalidPlaceholderRow { file_name: String },
     #[error("kind disclosure row {location} has {actual} cells, expected {expected}")]
     RowCellCountMismatch {
         location: RowLocation,
@@ -603,6 +607,24 @@ fn extract_cells_raw(row_html: &str) -> Vec<&str> {
     cells
 }
 
+/// Whether a row contains a syntactically delimited `<td>` or `<th>` opening
+/// tag. Unlike [`extract_cells_raw`], this does not require a matching close
+/// tag: the placeholder contract rejects a cell opening even in malformed
+/// markup, rather than silently discarding that row.
+fn has_cell_opening_tag(row_html: &str) -> bool {
+    let bytes = row_html.as_bytes();
+    for needle in [b"<td".as_slice(), b"<th".as_slice()] {
+        let mut pos = 0usize;
+        while let Some(open_start) = find_ascii_ci(bytes, needle, pos) {
+            if ends_tag_name(bytes.get(open_start + 3).copied()) {
+                return true;
+            }
+            pos = open_start + 3;
+        }
+    }
+    false
+}
+
 /// The literal text of one `<a>`'s opening tag, plus its inner text.
 struct AnchorParts<'a> {
     /// The opening tag's literal text, e.g. `<a ... title='ACE 200'>` — used
@@ -871,16 +893,26 @@ fn parse_page(
     validate_table_summary(file_name, table.opening_tag)?;
 
     let rows = extract_rows(table.inner);
-    let mut rows_iter = rows.into_iter();
+    let (placeholder_row, data_rows) =
+        rows.split_first()
+            .ok_or_else(|| KindNormalizeError::InvalidPlaceholderRow {
+                file_name: file_name.to_owned(),
+            })?;
     // The first `<tr>` is always the `<thead>` placeholder row. Real KIND
     // markup ships it empty (`<tr id="title-contents"></tr>`) — the column
     // labels live only in the table's `summary` attribute, already
     // validated above, never in `<th>` cells (see the module-level docs).
-    // It is simply discarded here, never inspected.
-    rows_iter.next();
+    // Do not discard it until proving it is that empty placeholder. Otherwise
+    // a first data row could be silently omitted while the surviving sequence
+    // still appears valid.
+    if has_cell_opening_tag(placeholder_row) {
+        return Err(KindNormalizeError::InvalidPlaceholderRow {
+            file_name: file_name.to_owned(),
+        });
+    }
 
     let mut observations = Vec::new();
-    for (row_index, row_html) in rows_iter.enumerate() {
+    for (row_index, row_html) in data_rows.iter().enumerate() {
         let location = RowLocation {
             file_name: file_name.to_owned(),
             row_index,
