@@ -234,7 +234,7 @@ class WorkflowContractTests(unittest.TestCase):
             script,
         )
         self.assertIn("ledger_state=", script)
-        self.assertIn('if [ "$ledger_state" != "9" ]', script)
+        self.assertIn('if [ "$ledger_state" != "10" ]', script)
         self.assertIn("candidate_source_evidence()", script)
         self.assertIn("krx_kosdaq150_membership", script)
         self.assertIn("candidate_before=", script)

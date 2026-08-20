@@ -32,6 +32,13 @@ const MEMBERS: [&str; 11] = [
     "132030.KRX",
 ];
 
+/// Stable fragments emitted when `CurateStore::verify_artifacts` rejects a
+/// manifest-referenced artifact before a Parquet reader is reached.
+const ARTIFACT_ATTESTATION_MARKERS: [&str; 2] = [
+    "malformed dataset manifest (artifact ",
+    "manifest reference",
+];
+
 fn config(strategy_id: &str, config: serde_json::Value) -> ResolvedConfig {
     ResolvedConfig {
         strategy_id: strategy_id.to_owned(),
@@ -696,7 +703,7 @@ fn unavailable_dataset_paths_are_transient_without_message_parsing() {
 }
 
 #[test]
-fn malformed_parquet_is_integrity_not_a_retryable_store_error() {
+fn malformed_parquet_fails_artifact_attestation_as_integrity() {
     let qa = qa_only_fixed_universe_dataset();
     let adjusted = Path::new(&qa.pin.storage_path)
         .join("curated/bars/market=kr/symbol=069500.KRX/year=2021/version=2/adjusted_bars.parquet");
@@ -718,6 +725,13 @@ fn malformed_parquet_is_integrity_not_a_retryable_store_error() {
     )
     .expect_err("malformed immutable bytes are an integrity failure");
     assert_eq!(error.class(), ErrorClass::Integrity, "{error:?}");
+    let rendered = format!("{error:?}");
+    for marker in ARTIFACT_ATTESTATION_MARKERS {
+        assert!(
+            rendered.contains(marker),
+            "expected immutable bytes to fail artifact attestation via {marker:?}: {rendered}"
+        );
+    }
 }
 
 #[test]
@@ -783,10 +797,12 @@ fn semantically_invalid_parquet_value_is_integrity() {
     // this again, the class assertion alone would still pass and the test would
     // quietly stop covering what it is named for.
     let rendered = format!("{error:?}");
-    assert!(
-        !rendered.contains("artifact attestation"),
-        "expected the semantic read to fail, not artifact attestation: {rendered}"
-    );
+    for marker in ARTIFACT_ATTESTATION_MARKERS {
+        assert!(
+            !rendered.contains(marker),
+            "expected the semantic read to fail, not artifact attestation marker {marker:?}: {rendered}"
+        );
+    }
 }
 
 #[tokio::test]

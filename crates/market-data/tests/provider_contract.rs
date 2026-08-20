@@ -282,6 +282,7 @@ fn disclosure_response_kinds_are_held_out_of_eod_and_candidate_pipelines() {
         ResponseKind::DisclosureIndex,
         ResponseKind::DisclosureEntityMaster,
         ResponseKind::DisclosureEntityProfile,
+        ResponseKind::DisclosureVersionMembership,
     ];
 
     for kind in disclosure_kinds {

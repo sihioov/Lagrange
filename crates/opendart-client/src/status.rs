@@ -40,8 +40,9 @@ pub fn is_retryable_status(class: StatusClass) -> bool {
 
 /// Only a connect failure that proves the request never reached the server
 /// is retryable. A timeout may have already reached the server; an
-/// unreadable body definitely did -- retrying either risks a duplicate
-/// side effect on OpenDART's end, so both are terminal.
+/// indeterminate request failure cannot prove otherwise; and an unreadable
+/// body definitely did -- retrying any of those risks a duplicate side effect
+/// on OpenDART's end, so they are terminal.
 pub fn is_retryable_failure(failure: Failure) -> bool {
     matches!(failure, Failure::NeverSent)
 }
@@ -82,6 +83,7 @@ mod tests {
     fn never_sent_is_retryable_but_other_failures_are_not() {
         assert!(is_retryable_failure(Failure::NeverSent));
         assert!(!is_retryable_failure(Failure::TimedOut));
+        assert!(!is_retryable_failure(Failure::Indeterminate));
         assert!(!is_retryable_failure(Failure::UnreadableBody));
     }
 }

@@ -505,7 +505,8 @@ fn dataset_for(kind: ResponseKind) -> Option<&'static str> {
         | ResponseKind::CandidateMaster
         | ResponseKind::DisclosureIndex
         | ResponseKind::DisclosureEntityMaster
-        | ResponseKind::DisclosureEntityProfile => None,
+        | ResponseKind::DisclosureEntityProfile
+        | ResponseKind::DisclosureVersionMembership => None,
     }
 }
 

@@ -334,7 +334,8 @@ impl PublicationBundle {
                 ResponseKind::CandidateMaster
                 | ResponseKind::DisclosureIndex
                 | ResponseKind::DisclosureEntityMaster
-                | ResponseKind::DisclosureEntityProfile => {
+                | ResponseKind::DisclosureEntityProfile
+                | ResponseKind::DisclosureVersionMembership => {
                     return Err(PublicationError::UnsupportedManifestScope {
                         expected_scopes: "krx/kr or kis-normalized/kr",
                         provider: manifest.provider.clone(),

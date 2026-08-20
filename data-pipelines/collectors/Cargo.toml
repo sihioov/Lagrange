@@ -10,6 +10,7 @@ market-data = { path = "../../crates/market-data" }
 domain = { path = "../../crates/domain" }
 kis-client = { path = "../../crates/kis-client" }
 opendart-client = { path = "../../crates/opendart-client" }
+rustix = { version = "1.1", features = ["fs"] }
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 serde = { version = "1.0", features = ["derive"] }

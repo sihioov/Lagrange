@@ -211,7 +211,8 @@ pub fn validate_response(kind: ResponseKind, bytes: &[u8]) -> Result<(), Validat
         }
         ResponseKind::DisclosureIndex
         | ResponseKind::DisclosureEntityMaster
-        | ResponseKind::DisclosureEntityProfile => {
+        | ResponseKind::DisclosureEntityProfile
+        | ResponseKind::DisclosureVersionMembership => {
             return Err(ValidationError {
                 kind,
                 reason: "disclosure-source evidence is not accepted by the EOD/candidate \

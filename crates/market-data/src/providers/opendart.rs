@@ -150,6 +150,9 @@ pub enum OpenDartError {
     /// `total_count`/`total_page` changed between pages of one walk — the
     /// result set shifted mid-walk and completeness cannot be proven.
     InconsistentPagination,
+    /// A `list.json` response identified a different page from the one the
+    /// adapter requested, so page completeness cannot be proven.
+    ResponsePageMismatch { requested: u32, response: u32 },
     /// A `013` (no-data) response arrived at a page after at least one page
     /// of this same walk already succeeded. Resolving this to a clean empty
     /// outcome would mask a result set that shifted mid-walk, so it fails
@@ -217,6 +220,13 @@ impl std::fmt::Display for OpenDartError {
             Self::InconsistentPagination => {
                 write!(f, "opendart total_count/total_page changed mid-walk")
             }
+            Self::ResponsePageMismatch {
+                requested,
+                response,
+            } => write!(
+                f,
+                "opendart response identified page {response}, but requested page was {requested}"
+            ),
             Self::UnexpectedEmptyMidWalk { page_no } => write!(
                 f,
                 "opendart returned no-data status at page {page_no} after prior pages already succeeded"
@@ -340,9 +350,9 @@ pub struct OpenDartProvider<R: OpenDartRead> {
 
 impl<R: OpenDartRead> std::fmt::Debug for OpenDartProvider<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Deliberately opaque: `OpenDartRead` carries no `Debug` supertrait
-        // (a live transport has no obligation to be debug-printable), so
-        // this impl neither requires nor prints anything about `R`.
+        // Deliberately opaque even though `OpenDartRead` is `Debug`: a live
+        // reader may safely redact its own credential, but this provider does
+        // not need to render any reader details to remain diagnosable.
         f.debug_struct("OpenDartProvider").finish_non_exhaustive()
     }
 }
@@ -453,6 +463,7 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
                     return Err(OpenDartError::UnexpectedEmptyMidWalk { page_no });
                 }
                 ListPageOutcome::Page {
+                    response_page_no,
                     total_count,
                     total_page,
                 } => {
@@ -471,6 +482,13 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
                                 duplicate_of: *seen_page_no,
                             });
                         }
+                    }
+
+                    if response_page_no != page_no {
+                        return Err(OpenDartError::ResponsePageMismatch {
+                            requested: page_no,
+                            response: response_page_no,
+                        });
                     }
 
                     let request = self.redacted_metadata(
@@ -633,11 +651,18 @@ impl<R: OpenDartRead> OpenDartProvider<R> {
 enum ListPageOutcome {
     /// `status=013`: documented no-data.
     Empty,
-    /// `status=000`: a validated page, with its pagination totals.
-    Page { total_count: u64, total_page: u32 },
+    /// `status=000`: a validated page, with its response identity and
+    /// pagination totals.
+    Page {
+        response_page_no: u32,
+        total_count: u64,
+        total_page: u32,
+    },
 }
 
-/// Validates one `list.json` response body against the documented envelope:
+/// Validates one `list.json` response body against the documented envelope and
+/// retains its success-envelope page identity for the walk to compare against
+/// the page it requested:
 /// `status`, `message`, `page_no`, `page_count`, `total_count`,
 /// `total_page`, and a `list` array of rows with `corp_cls`, `corp_name`,
 /// `corp_code`, `stock_code`, `report_nm`, `rcept_no`, `flr_nm`, `rcept_dt`,
@@ -659,10 +684,8 @@ fn parse_list_page(bytes: &[u8]) -> Result<ListPageOutcome, OpenDartError> {
             let total_count = documented_envelope_u64(object, "total_count")?;
             let total_page: u32 = u32::try_from(documented_envelope_u64(object, "total_page")?)
                 .map_err(|_| OpenDartError::UndocumentedShape)?;
-            // Presence/type of `page_no` and `page_count` is validated even
-            // though this adapter tracks the *requested* page itself; an
-            // envelope missing them is an undocumented shape.
-            documented_envelope_u64(object, "page_no")?;
+            let response_page_no: u32 = u32::try_from(documented_envelope_u64(object, "page_no")?)
+                .map_err(|_| OpenDartError::UndocumentedShape)?;
             documented_envelope_u64(object, "page_count")?;
 
             let rows = object
@@ -674,6 +697,7 @@ fn parse_list_page(bytes: &[u8]) -> Result<ListPageOutcome, OpenDartError> {
             }
 
             Ok(ListPageOutcome::Page {
+                response_page_no,
                 total_count,
                 total_page,
             })

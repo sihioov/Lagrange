@@ -38,6 +38,7 @@ pub(crate) struct HttpResponse {
 pub(crate) enum Failure {
     NeverSent,
     TimedOut,
+    Indeterminate,
     UnreadableBody,
 }
 
@@ -47,7 +48,21 @@ pub(crate) fn classify(failure: Failure) -> OpenDartTransportError {
     match failure {
         Failure::NeverSent => OpenDartTransportError::NeverSent,
         Failure::TimedOut => OpenDartTransportError::TimedOut,
+        Failure::Indeterminate => OpenDartTransportError::Indeterminate,
         Failure::UnreadableBody => OpenDartTransportError::UnreadableBody,
+    }
+}
+
+/// Reduces the two safe `reqwest::Error` classification signals to one coarse
+/// request failure. A connect signal takes precedence because it proves the
+/// request never left the process, even if it was caused by a connect timeout.
+fn classify_send_error(is_connect: bool, is_timeout: bool) -> Failure {
+    if is_connect {
+        Failure::NeverSent
+    } else if is_timeout {
+        Failure::TimedOut
+    } else {
+        Failure::Indeterminate
     }
 }
 
@@ -112,11 +127,7 @@ impl Transport for LiveTransport {
                 // `e` -- most importantly its own `Display`, which would
                 // render the full keyed URL -- is discarded right here; it
                 // is never captured into a `String` or logged.
-                return Err(if e.is_connect() {
-                    Failure::NeverSent
-                } else {
-                    Failure::TimedOut
-                });
+                return Err(classify_send_error(e.is_connect(), e.is_timeout()));
             }
         };
         let status = response.status().as_u16();
@@ -143,9 +154,21 @@ mod tests {
             OpenDartTransportError::TimedOut
         );
         assert_eq!(
+            classify(Failure::Indeterminate),
+            OpenDartTransportError::Indeterminate
+        );
+        assert_eq!(
             classify(Failure::UnreadableBody),
             OpenDartTransportError::UnreadableBody
         );
+    }
+
+    #[test]
+    fn send_error_signals_preserve_only_proven_never_sent_failures() {
+        assert_eq!(classify_send_error(true, true), Failure::NeverSent);
+        assert_eq!(classify_send_error(true, false), Failure::NeverSent);
+        assert_eq!(classify_send_error(false, true), Failure::TimedOut);
+        assert_eq!(classify_send_error(false, false), Failure::Indeterminate);
     }
 
     #[test]

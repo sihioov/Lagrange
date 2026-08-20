@@ -28,13 +28,15 @@ documentation". This ADR records what four source-scoped research passes and one
 adversarial verification pass could and could not confirm from official
 documentation on 2026-08-19, and the decisions that follow.
 
-Method constraints, so the evidence trail is legible: research consulted public
-documentation pages only. No account was registered, no API key was requested,
-no authenticated call and no data-endpoint call was made, and no form was
-submitted. Every claim carries a fetched URL; anything not confirmed from a
-fetched page is recorded as a typed gap rather than inferred. The per-source
-endpoint tables, verbatim quotes, verification verdicts, gaps, and the operator
-checklist live in `docs/runbooks/stage6-source-contracts.md`.
+**Historical research snapshot — 2026-08-19.** To keep the original evidence
+trail legible, that pass consulted public documentation pages only. No account
+was registered, no API key was requested, no authenticated call and no
+data-endpoint call was made, and no form was submitted. Every claim carries a
+fetched URL; anything not confirmed from a fetched page is recorded as a typed
+gap rather than inferred. The later owner-approved observations are recorded
+in D4, D10, and D11. The per-source endpoint tables, verbatim quotes,
+verification verdicts, gaps, and the operator checklist live in
+`docs/runbooks/stage6-source-contracts.md`.
 
 ## Revised premises
 
@@ -62,12 +64,15 @@ official documentation. They are corrected here rather than silently redefined.
 
 ## Decisions
 
-### D1: `available_at` is day-granular in Stage6, and that is a ceiling, not an estimate
+### D1: `available_at` is source-granular in Stage6; the day-granular baseline was later tightened for KIND
 
-No official source examined documents a sub-day publication timestamp for the
-data this project needs. OpenDART is `YYYYMMDD` with no time field. KSD/SEIBro
-public datasets expose schedule dates only. KIND showed date-only values on the
-disclosure documents sampled.
+**Historical public-document conclusion — 2026-08-19 (superseded for KIND by
+D11 on 2026-08-20).** No official source examined at that time documented a
+sub-day publication timestamp for the data this project needs. OpenDART was
+`YYYYMMDD` with no time field. KSD/SEIBro public datasets exposed schedule
+dates only. The KIND disclosure documents sampled in that documentation-only
+pass showed date-only values. This conclusion is retained as evidence of what
+the public documentation supported then; it is not the current KIND observation.
 
 **Amended 2026-08-20 — KIND supplies a minute-granular posting time, and D1
 tightens accordingly.** The gap below was closed by driving KIND in a real
@@ -79,26 +84,30 @@ artifact; they are **present historically** — 15 of 15 rows in a 2020-03-31
 window carried a time, and our range starts 2020-01-31; and the range control
 accepts `2020-01-31`.
 
-So for KIND-sourced disclosures `available_at` may be minute-granular, which is
-exactly the tightening D1 anticipated and permits. What does **not** change: the
-prohibition on backdating from a record, payment, listing, or ex-rights date; and
-the treatment of feed data, where a documented refresh cadence still yields
-`documented_cadence` rather than `strict_pit` (D2). Two sources of imprecision
-remain recorded rather than assumed away — the timezone of the displayed value is
-not documented on the page, and correction *versions* are enumerable only at day
-granularity (see D4's KIND dependency and the runbook's item 11).
+So for KIND-sourced disclosure-list records `available_at` may be
+minute-granular, which is exactly the tightening D1 anticipated and permits.
+Because the page does not document a timezone, normalization records the
+explicit `AssumedAsiaSeoul` assumption alongside the displayed local value; it
+does not claim that timezone as provider metadata. Correction *version*
+entries remain enumerable only at day granularity, so no minute timestamp is
+fabricated for a version (see D11 and the runbook's item 11). What does **not**
+change: the prohibition on backdating from a record, payment, listing, or
+ex-rights date; and the treatment of feed data, where a documented refresh
+cadence still yields `documented_cadence` rather than `strict_pit` (D2).
 
-The original day-granularity reasoning is kept below, because it is what the
-documentation alone supported and it explains why the browser check was the
-deciding step.
+The original day-granularity reasoning is kept below as the **historical
+2026-08-19 public-document record**, because it explains why the browser check
+was the deciding step. D11 supersedes its KIND-specific open question.
 
-Stage6 therefore designs for day granularity. Two things this decision does
-**not** do:
+**Historical 2026-08-19 baseline (superseded for KIND by D11):** Stage6
+therefore designed for day granularity. Two things this decision did **not** do:
 
 - It does not claim sub-day precision is unavailable in the disclosure system as
-  a whole. Two questions remain open — whether KIND's results-table carries a
-  receipt time column, and whether the DART web viewer shows a submission time
-  the Open API does not expose. These are gaps, not confirmed absences.
+  a whole. At that date, two questions remained open — whether KIND's
+  results-table carried a receipt time column, and whether the DART web viewer
+  showed a submission time the Open API did not expose. D11 later answered the
+  KIND question for disclosure-list rows; the DART viewer question remains a
+  gap, not a confirmed absence.
 - It does not permit loosening later. A confirmed time source may only tighten
   `available_at`. Nothing may widen it.
 
@@ -166,9 +175,10 @@ Consequences, which are larger than this one decision:
 - **KIND becomes the only viable disclosure-date authority for ETF11.** That is
   now a dependency, not a preference.
 - D5's "KSD event plus a disclosure-backed availability date" therefore rests
-  entirely on KIND, whose posting-time granularity is unconfirmed beyond
-  date-only and whose correction linkage is unverified. Those were runbook gaps;
-  they are now on the critical path.
+  entirely on KIND. D11 confirms minute-granular list times with the explicit
+  `AssumedAsiaSeoul` normalization assumption; correction versions remain
+  date-only and their acceptance-number linkage is still only partially
+  resolved. The remaining correction work is on the critical path.
 - `corpCode.xml` keeps standing value as the evidence for this negative, and as
   the identity join for any future individual-stock scope, where issuers *are*
   disclosure entities.
@@ -277,18 +287,26 @@ hash, as the raw zone already models. Code does not widen the recorded
 entitlement scope, and a source whose licence has not been signed off does not
 become admissible by being technically reachable.
 
-### D9: No allowlist change, no adapter, and no new call until approval
+### D9: Historical Step1 gate and the post-approval implementation boundary
 
 `AGENTS.md` requires explicit user approval, current official documentation, and
 focused tests before a method, path, host, or response contract changes. The
 Stage6 plan requires passing per-step review before advancing.
 
-Step 1 therefore ends at documentation. It creates no adapter, calls no
-endpoint, registers no account, requests no key, changes no allowlist, and
-touches no database. Every candidate surface in the runbook is a **proposal**.
-The proposed allowlist, the four registrations (public data portal, OpenDART,
-KRX Data Marketplace, KSD portal), and the licence interpretation are the
-operator's decisions.
+**Historical Step1 gate — 2026-08-19 (superseded by the 2026-08-20 approval and
+implementation amendments).** Step 1 therefore ended at documentation. It
+created no adapter, called no endpoint, registered no account, requested no
+key, changed no allowlist, and touched no database. Every candidate surface in
+the runbook was a **proposal**. The proposed allowlist, the four registrations
+(public data portal, OpenDART, KRX Data Marketplace, KSD portal), and the
+licence interpretation were the operator's decisions.
+
+**Current state — 2026-08-20.** The OpenDART core fixture contract remains
+approved, but D4 establishes that it has no ETF11 use and D10 blocks its
+in-process live path. D11 is approved for browser-driven KIND collection, and
+the capture → immutable Raw → normalization path is implemented. KRX, FSC,
+KSD, the full KIND backfill budget, and ETF11 identity decisions remain
+deferred; these statuses do not widen any allowlist.
 
 Live and order scope is unchanged and remains forbidden.
 
@@ -350,10 +368,14 @@ undocumented popup state, and it is the owner's chosen direction.
 
 **Amended 2026-08-20: browser-driven KIND collection is approved.** The owner
 approved option (A) — automated collection through the site's own controls in a
-browser engine, at low volume, never a reconstructed request. This supersedes
-D6's operator-driven restriction **for KIND only**; D6 continues to govern
-`data.krx.co.kr`, whose terms carry an explicit automated-collection
-prohibition that KIND's own linked legal notice does not.
+browser engine, at low volume, never a reconstructed request. The sole approved
+scope is the existing ETF-scoped disclosure-list capture and the related
+correction-evidence viewer flow; it does not approve 상세검색, 관리종목,
+매매거래정지, another KIND page, or a direct endpoint. This supersedes D6's
+operator-driven restriction only for that exact D11 scope. D6 continues to
+govern `data.krx.co.kr`, whose terms carry an explicit automated-collection
+prohibition that KIND's own linked legal notice does not, and every other KIND
+surface remains deferred until separately approved.
 
 The risk the owner accepted, recorded plainly: whether the Data Marketplace
 anti-automation clause reaches KIND is unresolved. KIND's own legal notice
@@ -369,6 +391,86 @@ the exact bytes, the interaction that produced them, the retrieval time, and a
 content hash. The hash is computed by the ingesting Rust path from the bytes on
 disk, never accepted from the browser step, so the capture stage cannot
 misreport what it retrieved.
+
+**Implementation amendment 2026-08-20 — capture completeness is a required
+Raw-admission fact.** `capture.json` records one closed termination value:
+`clamped_duplicate`, `page_bound_reached`, `advance_control_missing`, or
+`no_response`. The only complete value is `clamped_duplicate`, observed when a
+request beyond the final page returns byte-identical bytes. Each requested page
+gets two bounded waits separated by exactly one reinvocation of the same
+site-provided control. At a configured stored-page bound of at most 40, one
+additional probe distinguishes an identical terminal response from a distinct
+page that proves truncation; the probe itself is not stored. The latter three
+outcomes remain diagnostic staging, exit non-zero, and are rejected by both
+`kind-raw` and the Raw provider before commit. A staging directory missing this
+fact must be recaptured, not admitted by inference. This is an integrity rule
+inside the approved browser interaction; it does not widen D11's collection
+approval, rights position, or any other source allowlist.
+
+**Amendment — approved ETF correction-viewer observation (2026-08-20).** The new
+own-controls-only `capture-correction.mjs` path was exercised for `2020-02-07`
+with list-anchor acceptance `20200207000058`. It fills a single-day range, calls
+the site's `fnSearch` initially and at most once again, verifies the exact page-1
+POST response and handler, waits read-only for DOM readiness, installs a
+page-scoped popup waiter only after readiness, then performs a final atomic
+recheck and site-node click. It validates the exact viewer origin/path and
+reserves a no-replace output directory, writes the rendered DOM through its
+pinned descriptor, and commits `capture.json` last as the consumer admission
+marker. It does not construct
+or send direct HTTP requests, navigate directly to the viewer, paginate, bulk/schedule/full-history
+capture, record queries, or log bodies/provider prose. Node tests are 35/35.
+
+The observation is structural only: the exact response was 12,852 bytes with 13
+form fields; the target handler occurred four times with exactly one distinct
+raw value. The rendered snapshot was 24,886 bytes and had exactly one
+`mainDoc` select. Option 0 had an explicit empty value; its prompt is ignored as
+non-evidence. The sole real option had
+raw value `20200207000081|Y`, acceptance token `20200207000081`, and label date
+`2020.02.07`. The list anchor and
+option acceptance are different values. This proves only option-level acceptance
+resolution and ordered membership shape. It does not prove equality, join,
+predecessor, supersedes, withdrawal, time, or timezone semantics; `|Y` remains
+opaque beyond this exact observed shape. Preserve both acceptances separately,
+keep dates date-only, and never derive dates from IDs. One entry is not an actual
+multi-version correction chain. The historical non-ETF direct-viewer sample does
+not authorize ETF implementation, and `20251204000324` is rejected for lacking
+ETF-list provenance.
+
+The Rust boundary stores the rendered `viewer.html` under the distinct
+disclosure-only `DisclosureVersionMembership` scope and normalizes only ordered
+membership. `response_diagnostics.body_size` is the exact ETF-list response
+size, not the viewer size; both artifacts have independent one-MiB bounds. The
+real staging pair passes the CLI's read-only `--plan` and a one-shot strict
+parser/Raw ingest into a new `/tmp` root. No observed value is promoted into a
+predecessor, supersedes, withdrawal, time, or timezone claim.
+
+### D12: Owner selects the narrow source directions; missing contracts still block implementation
+
+On 2026-08-20 the owner selected three narrow directions: use the FSC
+`금융위원회_KRX상장종목정보` mirror rather than the KRX Open API as the intended
+ETF11 identity authority; restrict the first KIS event scope to `bonus-issue`;
+and permit one five-calendar-day KIND ETF-list pilot. These are scope decisions,
+not credentials, entitlement conclusions, or blanket network approvals.
+
+The FSC path remains fail-closed until the owner supplies the official guide's
+exact host, path, method, fields, pagination, terminal/error contract, a portal
+key through the approved secret path, an entitlement reference/hash, and two
+past-reference-date observations of one ISIN that settle historical-query
+semantics. No fuzzy identity join is permitted. The KIS decision does not widen
+the existing read allowlist: only the already listed `bonus-issue` event is in
+the pilot, and it cannot gain a disclosure-backed `available_at` or Curated/PIT
+status until a deterministic KIND relation is evidenced.
+
+The one KIND pilot used `2026-08-15..2026-08-19`. Its page 41 probe was distinct,
+so the 40 stored pages terminated `page_bound_reached` and were not ingested.
+Offline classification of the captured portion found two correction-marked,
+exact-handler opaque acceptances, `20260819000134` and `20260819000124`. Exactly
+one follow-up viewer capture was attempted, for the first acceptance and the
+single date `2026-08-19`; its exact response contained no target handler and it
+terminated `missing_target` without a viewer artifact. The second acceptance
+was not called. This proves that a five-day window is not a safe current-volume
+bound; it proves no correction relation. The diagnostic staging remains under
+`/tmp` and enters neither Git nor Raw publication.
 
 ## Consequences
 
@@ -395,10 +497,12 @@ misreport what it retrieved.
 
 ## Production gate
 
-Stage6 Step 1 delivers documentation only. Curated publication, DB publication,
-five-pin, recommendation, backtest, and Paper connection stay `BLOCKED`.
+**Historical Step1 gate — 2026-08-19 (retained as history, superseded by the
+2026-08-20 amendments).** Stage6 Step 1 delivered documentation only. Curated
+publication, DB publication, five-pin, recommendation, backtest, and Paper
+connection stayed `BLOCKED`.
 
-Advancing to Step 2 requires, from the operator:
+The historical advancement condition required, from the operator:
 
 1. approval of the proposed read-only allowlist in
    `docs/runbooks/stage6-source-contracts.md`;
@@ -408,3 +512,12 @@ Advancing to Step 2 requires, from the operator:
    `entitlement_reference`; and
 4. resolution of the operator-verification checklist items that Step 2's
    adapters depend on.
+
+**Current gate state — 2026-08-20.** The OpenDART core fixture contract is
+approved but has no ETF11 use (D4), and its in-process live path is blocked by
+D10. KIND D11 is approved and capture → Raw → normalization is implemented.
+KRX/FSC/KSD surfaces, the backfill budget, and ETF11 identity remain deferred.
+The Stage5 contract flags are unchanged — `vendor_snapshot=true`,
+`strict_pit=false`, `ready=false` — and Curated/publication/five-pin and
+downstream recommendation, backtest, and Paper connections remain `BLOCKED`
+pending those decisions.

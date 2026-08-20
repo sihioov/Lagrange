@@ -250,7 +250,8 @@ impl RollingCandidateProvider {
             ResponseKind::CandidateMaster
             | ResponseKind::DisclosureIndex
             | ResponseKind::DisclosureEntityMaster
-            | ResponseKind::DisclosureEntityProfile => {
+            | ResponseKind::DisclosureEntityProfile
+            | ResponseKind::DisclosureVersionMembership => {
                 return Err(ProviderError::UnsupportedKind(kind));
             }
         })

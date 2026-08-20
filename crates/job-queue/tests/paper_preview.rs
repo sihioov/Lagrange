@@ -231,6 +231,38 @@ fn write_preview_bars(
     write_bars(&path, rows).unwrap();
 }
 
+fn missing_close_deletion_path(dataset_root: &std::path::Path) -> std::path::PathBuf {
+    CurateStore::new(dataset_root).bars_path("kr", "069500.KRX", 2026, 7)
+}
+
+#[test]
+fn missing_close_deletion_path_matches_fixture_writer_without_db() {
+    let directory = tempfile::tempdir().unwrap();
+    write_preview_bars(
+        directory.path(),
+        "069500.KRX",
+        7,
+        &[curated_bar(
+            "069500.KRX",
+            "2026-05-08",
+            "10000",
+            "2026-05-08T06:30:00Z",
+        )],
+    );
+
+    let deletion_path = missing_close_deletion_path(directory.path());
+    assert!(
+        deletion_path.is_file(),
+        "the deletion target must be the bar file written by the fixture"
+    );
+    let doubled_path =
+        CurateStore::new(directory.path().join("curated")).bars_path("kr", "069500.KRX", 2026, 7);
+    assert!(
+        !doubled_path.exists(),
+        "the fixture must not create a curated/curated bars path"
+    );
+}
+
 #[test]
 fn close_loader_reads_exact_raw_close_from_the_attested_version() {
     let directory = tempfile::tempdir().unwrap();
@@ -1017,11 +1049,10 @@ async fn missing_close_fails_preview_permanently_without_outputs() {
         return;
     };
     let fixture = seed_worker_fixture(&db).await;
-    let path = CurateStore::new(fixture.dataset_root.join("curated")).bars_path(
-        "kr",
-        "069500.KRX",
-        2026,
-        7,
+    let path = missing_close_deletion_path(&fixture.dataset_root);
+    assert!(
+        path.is_file(),
+        "the missing-close test must delete the fixture's written bar file"
     );
     std::fs::remove_file(path).unwrap();
     let worker = sqlx::PgPool::connect(&db.role_url("worker")).await.unwrap();

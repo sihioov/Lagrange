@@ -269,6 +269,16 @@ mod tests {
         }
     }
 
+    struct AlwaysIndeterminate {
+        calls: AtomicU32,
+    }
+    impl Transport for AlwaysIndeterminate {
+        async fn send(&self, _request: &HttpRequest) -> Result<HttpResponse, Failure> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(Failure::Indeterminate)
+        }
+    }
+
     struct AlwaysServerError {
         calls: AtomicU32,
     }
@@ -365,6 +375,20 @@ mod tests {
         let result = core.get("/api/list.json", &[]).await;
         assert_eq!(result.unwrap_err(), OpenDartTransportError::NeverSent);
         assert_eq!(core.transport.calls.load(Ordering::SeqCst), 1 + MAX_RETRIES);
+    }
+
+    #[tokio::test]
+    async fn indeterminate_failure_is_terminal_with_no_retry() {
+        let core = ClientCore::new(
+            AlwaysIndeterminate {
+                calls: AtomicU32::new(0),
+            },
+            Box::new(FixedCredential),
+            test_config(),
+        );
+        let result = core.get("/api/list.json", &[]).await;
+        assert_eq!(result.unwrap_err(), OpenDartTransportError::Indeterminate);
+        assert_eq!(core.transport.calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

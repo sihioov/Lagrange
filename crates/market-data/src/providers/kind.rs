@@ -45,13 +45,22 @@
 use domain::{BatchId, TradingDate, UtcTimestamp};
 
 use crate::contract::{
-    FetchMode, PROVIDER_KIND_DISCLOSURE, RawEnvelope, RequestMetadata, ResponseKind,
+    FetchMode, PROVIDER_KIND_DISCLOSURE, PROVIDER_KIND_DISCLOSURE_CORRECTION, RawEnvelope,
+    RequestMetadata, ResponseKind,
 };
 use crate::storage::{BatchSpec, ManifestEntry, RawStore, StoreError};
 
 /// Documented endpoint id for the KIND ETF disclosure-search capture surface
 /// (`POST disclosurebystocktype.do`, `method=searchDisclosureByStockTypeEtfSub`).
 pub const KIND_ETF_DISCLOSURE_ENDPOINT: &str = "kind.disclosure.etf.list.v1";
+/// Exact browser entry URL approved for the ETF-scoped disclosure-list
+/// capture. The browser stage repeats this literal in its staging metadata;
+/// the Rust boundary remains the authoritative admission check.
+pub const KIND_ETF_DISCLOSURE_ENTRY_URL: &str = "https://kind.krx.co.kr/disclosure/disclosurebystocktype.do?method=searchDisclosureByStockTypeEtf";
+/// The exact `method` value observed in the ETF disclosure-list request.
+pub const KIND_ETF_DISCLOSURE_METHOD: &str = "searchDisclosureByStockTypeEtfSub";
+/// The exact `forward` value observed in the ETF disclosure-list request.
+pub const KIND_ETF_DISCLOSURE_FORWARD: &str = "disclosurebystocktype_etf_sub";
 /// Documented endpoint id for the KIND 상세검색 (`details.do`) capture
 /// surface, filtered to the ETF security type and disclosure-type filters.
 pub const KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT: &str = "kind.disclosure.detail.etf.v1";
@@ -63,10 +72,89 @@ pub const KIND_DISCLOSURE_PAGE_SIZE: u32 = 15;
 /// pagination claim can never be proven complete.
 pub const KIND_DISCLOSURE_MAX_PAGES: usize = 40;
 
-/// Which KIND search surface produced a capture. The two are differently
-/// scoped — the same window yields 473 disclosures on the ETF-scoped page and
-/// 66 on 상세검색 with the ETF security type — so a batch records which one it
-/// came from rather than treating them as interchangeable.
+/// Exact browser entry URL for the one owner-approved correction/version
+/// viewer capture surface. The browser stage must navigate to this URL and
+/// the Rust boundary repeats the literal check before any Raw bytes are
+/// written.
+pub const KIND_CORRECTION_ENTRY_URL: &str = "https://kind.krx.co.kr/disclosure/disclosurebystocktype.do?method=searchDisclosureByStockTypeEtf";
+/// Stable endpoint id recorded in `RequestMetadata` for the correction
+/// viewer. It is intentionally distinct from the Raw provider id.
+pub const KIND_CORRECTION_VIEWER_ENDPOINT: &str = "kind.disclosure.correction.viewer.v1";
+/// Staging `surface` identifier for the rendered correction/version viewer.
+pub const KIND_CORRECTION_SURFACE: &str = "etf-disclosure-correction-viewer";
+/// The only accepted rendered artifact for this surface.
+pub const KIND_CORRECTION_ARTIFACT_KIND: &str = "rendered_dom_snapshot";
+/// The only accepted viewer origin path (the query string is intentionally
+/// opaque and is not persisted as an asserted semantic).
+pub const KIND_CORRECTION_VIEWER_ORIGIN_PATH: &str = "/common/disclsviewer.do";
+/// The only accepted completion value for a correction capture.
+pub const KIND_CORRECTION_TERMINATION: &str = "viewer_loaded";
+/// The only accepted completion stage for a correction capture.
+pub const KIND_CORRECTION_TERMINATION_STAGE: &str = "viewer";
+/// The only accepted file name in a complete correction staging directory.
+pub const KIND_CORRECTION_VIEWER_FILE: &str = "viewer.html";
+/// Maximum bytes admitted for a rendered correction viewer snapshot.
+pub const MAX_KIND_CORRECTION_VIEWER_BYTES: u64 = 1024 * 1024;
+/// Maximum bytes admitted for the exact ETF-list response used to resolve the
+/// correction anchor. The response itself is not persisted by this surface;
+/// only this bounded diagnostic size crosses the staging boundary.
+pub const MAX_KIND_CORRECTION_RESPONSE_BODY_BYTES: u64 = 1024 * 1024;
+/// Maximum bytes admitted for correction `capture.json` metadata. This is a
+/// staging guard only; the metadata is never stored as provider evidence.
+pub const MAX_KIND_CORRECTION_METADATA_BYTES: u64 = 64 * 1024;
+/// Maximum diagnostic counter accepted from untrusted capture metadata.
+pub const MAX_KIND_CORRECTION_DIAGNOSTIC_COUNT: u64 = 1_000_000;
+
+/// Why the browser capture stage stopped its KIND page walk. Only a duplicate
+/// response after advancing past the final page proves that the result set was
+/// complete; every other value is an incomplete staging result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KindCaptureTermination {
+    /// KIND clamped a request beyond the final page and returned the prior
+    /// page's exact bytes. This is the sole complete capture outcome.
+    ClampedDuplicate,
+    /// A distinct page arrived after the configured stored-page bound.
+    PageBoundReached,
+    /// Neither KIND's paging function nor its numeric page anchor was found.
+    AdvanceControlMissing,
+    /// A requested page did not arrive after the bounded retry.
+    NoResponse,
+}
+
+impl KindCaptureTermination {
+    /// The required string value written in the browser stage's
+    /// `capture.json`.
+    pub const fn staging_id(self) -> &'static str {
+        match self {
+            Self::ClampedDuplicate => "clamped_duplicate",
+            Self::PageBoundReached => "page_bound_reached",
+            Self::AdvanceControlMissing => "advance_control_missing",
+            Self::NoResponse => "no_response",
+        }
+    }
+
+    /// Parses an exact `capture.json` termination identifier.
+    pub fn parse_staging_id(value: &str) -> Option<Self> {
+        [
+            Self::ClampedDuplicate,
+            Self::PageBoundReached,
+            Self::AdvanceControlMissing,
+            Self::NoResponse,
+        ]
+        .into_iter()
+        .find(|termination| termination.staging_id() == value)
+    }
+
+    /// Whether this termination proves a complete page walk.
+    pub const fn is_complete(self) -> bool {
+        matches!(self, Self::ClampedDuplicate)
+    }
+}
+
+/// Which KIND search surface a capture names. `DetailEtf` remains a known
+/// discriminator for historical/normalization compatibility, but only the
+/// ETF-scoped list is admitted to this Raw provider; see
+/// [`KindSurface::ensure_raw_admitted`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KindSurface {
     /// The ETF-scoped disclosure-search list surface (`POST
@@ -87,12 +175,24 @@ impl KindSurface {
         }
     }
 
-    /// The documented endpoint id recorded on every [`RequestMetadata`] a
-    /// capture from this surface produces.
+    /// The endpoint id associated with this compatibility surface. Raw ingest
+    /// calls [`KindSurface::ensure_raw_admitted`] before this is recorded, so
+    /// the DetailEtf endpoint cannot enter a new Raw batch.
     pub const fn endpoint_id(self) -> &'static str {
         match self {
             Self::EtfList => KIND_ETF_DISCLOSURE_ENDPOINT,
             Self::DetailEtf => KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT,
+        }
+    }
+
+    /// Checks whether this compatibility surface is admitted to the current
+    /// Raw provider. `DetailEtf` remains parseable for historical data and
+    /// normalization compatibility, but it is deferred/not allowed for this
+    /// capture-to-Raw path.
+    pub fn ensure_raw_admitted(self) -> Result<(), KindError> {
+        match self {
+            Self::EtfList => Ok(()),
+            Self::DetailEtf => Err(KindError::UnsupportedRawSurface { surface: self }),
         }
     }
 
@@ -145,12 +245,18 @@ pub struct CapturedPage {
 /// is a closed, structured shape.
 #[derive(Debug)]
 pub enum KindError {
+    /// The surface is known for compatibility but is outside the owner-
+    /// approved ETF-scoped Raw admission scope.
+    UnsupportedRawSurface { surface: KindSurface },
     /// The caller-supplied entitlement reference was empty or
     /// whitespace-only. Required, not optional, before any capture is
     /// admitted as licensed evidence.
     MissingEntitlementReference,
     /// `pages` was empty: there is nothing to ingest.
     EmptyCapture,
+    /// The browser capture did not observe the only terminal condition that
+    /// proves completeness. This is rejected before any Raw-store work.
+    IncompleteCapture { termination: KindCaptureTermination },
     /// `pages` claimed more pages than [`KIND_DISCLOSURE_MAX_PAGES`].
     TooManyPages { max_pages: usize, actual: usize },
     /// `page_index` values did not start at 1 and increase by exactly one:
@@ -176,6 +282,21 @@ pub enum KindError {
     /// silently scrubbed. Only the field's name is carried here, never its
     /// value.
     CredentialLikeFormField { page_index: u32, field_name: String },
+    /// A correction-viewer metadata field did not match the exact approved
+    /// browser-capture contract. Only the field name crosses this boundary;
+    /// untrusted values are deliberately not rendered in diagnostics.
+    InvalidCorrectionMetadata { field: &'static str },
+    /// A correction viewer diagnostic counter was zero or exceeded the
+    /// bounded metadata contract.
+    InvalidCorrectionDiagnostics { field: &'static str },
+    /// The correction viewer was not strict UTF-8. Raw must fail closed
+    /// rather than commit bytes the typed normalizer cannot inspect.
+    CorrectionMalformedUtf8,
+    /// The correction viewer body did not satisfy the exact `mainDoc`
+    /// ordered-option contract.
+    CorrectionViewerInvalid {
+        reason: crate::kind_correction_normalize::KindCorrectionViewerError,
+    },
     /// The immutable Raw store rejected this batch/manifest write.
     Store(StoreError),
 }
@@ -183,11 +304,21 @@ pub enum KindError {
 impl std::fmt::Display for KindError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnsupportedRawSurface { surface } => write!(
+                f,
+                "kind raw ingestion does not admit surface {}",
+                surface.staging_id()
+            ),
             Self::MissingEntitlementReference => write!(
                 f,
                 "kind disclosure capture ingest requires a non-empty entitlement reference"
             ),
             Self::EmptyCapture => write!(f, "kind disclosure capture had no pages"),
+            Self::IncompleteCapture { termination } => write!(
+                f,
+                "kind disclosure capture ended as {}; only clamped_duplicate may be ingested",
+                termination.staging_id()
+            ),
             Self::TooManyPages { max_pages, actual } => write!(
                 f,
                 "kind disclosure capture claimed {actual} pages, exceeding the bound of {max_pages}"
@@ -224,6 +355,20 @@ impl std::fmt::Display for KindError {
                 f,
                 "kind disclosure capture page {page_index} carried a credential-like form field name {field_name:?}"
             ),
+            Self::InvalidCorrectionMetadata { field } => write!(
+                f,
+                "kind correction capture metadata field {field} does not match the approved contract"
+            ),
+            Self::InvalidCorrectionDiagnostics { field } => write!(
+                f,
+                "kind correction capture diagnostic {field} is outside the bounded positive contract"
+            ),
+            Self::CorrectionMalformedUtf8 => {
+                f.write_str("kind correction viewer bytes are not valid UTF-8")
+            }
+            Self::CorrectionViewerInvalid { reason } => {
+                write!(f, "kind correction viewer failed validation: {reason}")
+            }
             Self::Store(source) => write!(f, "kind disclosure raw store failure: {source}"),
         }
     }
@@ -233,9 +378,46 @@ impl std::error::Error for KindError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Store(source) => Some(source),
+            Self::CorrectionViewerInvalid { reason } => Some(reason),
             _ => None,
         }
     }
+}
+
+/// Diagnostic counters recorded by the browser capture stage. `body_size` is
+/// the exact ETF-list response size used to resolve the anchor, not the size
+/// of `viewer.html`. The list response is not retained by this surface; the
+/// rendered viewer is stored and bounded independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KindCorrectionResponseDiagnostics {
+    pub body_size: u64,
+    pub form_field_count: u64,
+    pub target_handler_occurrences: u64,
+}
+
+/// One complete, already-captured KIND correction/version viewer.
+///
+/// This type intentionally contains no network client and no browser handle.
+/// All fields are untrusted staging metadata and are validated again by
+/// [`ingest_correction_capture`] immediately before the one atomic Raw-store
+/// call. The viewer bytes are kept byte-for-byte; no lossy UTF-8 conversion is
+/// permitted at this boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KindCorrectionCapture {
+    pub source: String,
+    pub entry_url: String,
+    pub surface: String,
+    pub requested_from: TradingDate,
+    pub requested_to: TradingDate,
+    pub anchor_acceptance_number: String,
+    pub viewer_origin_path: String,
+    pub artifact_kind: String,
+    pub retrieved_at: UtcTimestamp,
+    pub termination: String,
+    pub termination_stage: String,
+    pub response_diagnostics: KindCorrectionResponseDiagnostics,
+    pub file_name: String,
+    pub viewer_bytes: Vec<u8>,
 }
 
 /// Validates a required entitlement reference: an empty or whitespace-only
@@ -338,10 +520,14 @@ fn validate_form_fields(page: &CapturedPage) -> Result<(), KindError> {
 /// `entitlement_reference` is required, not optional, and an empty or
 /// whitespace-only value fails closed before any page is examined.
 ///
-/// `surface` identifies which KIND search surface produced `pages` — the two
-/// are differently scoped (see [`KindSurface`]), so its
-/// [`KindSurface::endpoint_id`] is what gets recorded on every page's
-/// [`RequestMetadata::endpoint`], not a single shared constant.
+/// `surface` identifies which approved KIND search surface produced `pages`;
+/// the closed [`KindSurface::ensure_raw_admitted`] gate prevents deferred
+/// compatibility surfaces from reaching [`KindSurface::endpoint_id`] or Raw
+/// storage.
+// Keep the capture/Raw contract fields explicit instead of hiding them in a
+// request struct: callers must visibly supply the completion termination that
+// authorizes immutable Raw storage.
+#[allow(clippy::too_many_arguments)]
 pub fn ingest_disclosure_capture(
     store: &RawStore,
     market: &str,
@@ -349,9 +535,17 @@ pub fn ingest_disclosure_capture(
     entitlement_reference: &str,
     mode: FetchMode,
     surface: KindSurface,
+    termination: KindCaptureTermination,
     pages: &[CapturedPage],
 ) -> Result<ManifestEntry, KindError> {
+    // Keep this as the first gate: a known-but-deferred surface must not reach
+    // any Raw validation or store preparation, even if another input is also
+    // malformed.
+    surface.ensure_raw_admitted()?;
     let entitlement_reference = require_entitlement_reference(entitlement_reference)?;
+    if !termination.is_complete() {
+        return Err(KindError::IncompleteCapture { termination });
+    }
     validate_page_sequence(pages)?;
 
     let batch_id = BatchId::generate();
@@ -405,5 +599,178 @@ pub fn ingest_disclosure_capture(
     };
     store
         .store_batch(&spec, &envelopes)
+        .map_err(KindError::Store)
+}
+
+fn require_correction_ascii_digits(value: &str) -> bool {
+    value.len() == 14 && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn validate_correction_capture_metadata(capture: &KindCorrectionCapture) -> Result<(), KindError> {
+    if capture.source != "kind.krx.co.kr" {
+        return Err(KindError::InvalidCorrectionMetadata { field: "source" });
+    }
+    if capture.entry_url != KIND_CORRECTION_ENTRY_URL {
+        return Err(KindError::InvalidCorrectionMetadata { field: "entry_url" });
+    }
+    if capture.surface != KIND_CORRECTION_SURFACE {
+        return Err(KindError::InvalidCorrectionMetadata { field: "surface" });
+    }
+    if capture.requested_from > capture.requested_to {
+        return Err(KindError::InvalidCorrectionMetadata {
+            field: "requested_range",
+        });
+    }
+    if !require_correction_ascii_digits(&capture.anchor_acceptance_number) {
+        return Err(KindError::InvalidCorrectionMetadata {
+            field: "anchor_acceptance_number",
+        });
+    }
+    if capture.viewer_origin_path != KIND_CORRECTION_VIEWER_ORIGIN_PATH {
+        return Err(KindError::InvalidCorrectionMetadata {
+            field: "viewer_origin_path",
+        });
+    }
+    if capture.artifact_kind != KIND_CORRECTION_ARTIFACT_KIND {
+        return Err(KindError::InvalidCorrectionMetadata {
+            field: "artifact_kind",
+        });
+    }
+    if capture.termination != KIND_CORRECTION_TERMINATION {
+        return Err(KindError::InvalidCorrectionMetadata {
+            field: "termination",
+        });
+    }
+    if capture.termination_stage != KIND_CORRECTION_TERMINATION_STAGE {
+        return Err(KindError::InvalidCorrectionMetadata {
+            field: "termination_stage",
+        });
+    }
+    if capture.file_name != KIND_CORRECTION_VIEWER_FILE {
+        return Err(KindError::InvalidCorrectionMetadata { field: "file" });
+    }
+    let actual = capture.viewer_bytes.len() as u64;
+    if actual == 0 || actual > MAX_KIND_CORRECTION_VIEWER_BYTES {
+        return Err(KindError::InvalidCorrectionMetadata {
+            field: "viewer.html",
+        });
+    }
+    if capture.response_diagnostics.body_size == 0
+        || capture.response_diagnostics.body_size > MAX_KIND_CORRECTION_RESPONSE_BODY_BYTES
+    {
+        return Err(KindError::InvalidCorrectionDiagnostics { field: "body_size" });
+    }
+    for (field, value) in [
+        (
+            "form_field_count",
+            capture.response_diagnostics.form_field_count,
+        ),
+        (
+            "target_handler_occurrences",
+            capture.response_diagnostics.target_handler_occurrences,
+        ),
+    ] {
+        if value == 0 || value > MAX_KIND_CORRECTION_DIAGNOSTIC_COUNT {
+            return Err(KindError::InvalidCorrectionDiagnostics { field });
+        }
+    }
+    if std::str::from_utf8(&capture.viewer_bytes).is_err() {
+        return Err(KindError::CorrectionMalformedUtf8);
+    }
+    Ok(())
+}
+
+/// Raw-ingests one complete, operator-gated KIND correction/version viewer.
+///
+/// The function performs no network work. It validates every metadata field,
+/// the bounded exact body, and the strict `mainDoc` option contract before a
+/// single immutable Raw-store call. The output is deliberately a separate
+/// provider/response-kind scope from the KIND disclosure list and is never
+/// accepted by EOD, candidate, or publication paths.
+#[allow(clippy::too_many_arguments)]
+pub fn ingest_correction_capture(
+    store: &RawStore,
+    market: &str,
+    date: &TradingDate,
+    entitlement_reference: &str,
+    mode: FetchMode,
+    capture: &KindCorrectionCapture,
+) -> Result<ManifestEntry, KindError> {
+    let entitlement_reference = require_entitlement_reference(entitlement_reference)?;
+    validate_correction_capture_metadata(capture)?;
+    let parsed = crate::kind_correction_normalize::parse_kind_correction_viewer(
+        &capture.viewer_bytes,
+        &capture.anchor_acceptance_number,
+    )
+    .map_err(|reason| KindError::CorrectionViewerInvalid { reason })?;
+    if parsed.is_empty() {
+        return Err(KindError::CorrectionViewerInvalid {
+            reason: crate::kind_correction_normalize::KindCorrectionViewerError::ZeroVersions,
+        });
+    }
+
+    let batch_id = BatchId::generate();
+    let query = vec![
+        ("source".to_owned(), capture.source.clone()),
+        ("entry_url".to_owned(), capture.entry_url.clone()),
+        ("surface".to_owned(), capture.surface.clone()),
+        (
+            "requested_from".to_owned(),
+            capture.requested_from.to_string(),
+        ),
+        ("requested_to".to_owned(), capture.requested_to.to_string()),
+        (
+            "anchor_acceptance_number".to_owned(),
+            capture.anchor_acceptance_number.clone(),
+        ),
+        (
+            "viewer_origin_path".to_owned(),
+            capture.viewer_origin_path.clone(),
+        ),
+        ("artifact_kind".to_owned(), capture.artifact_kind.clone()),
+        ("termination".to_owned(), capture.termination.clone()),
+        (
+            "termination_stage".to_owned(),
+            capture.termination_stage.clone(),
+        ),
+        (
+            "body_size".to_owned(),
+            capture.response_diagnostics.body_size.to_string(),
+        ),
+        (
+            "form_field_count".to_owned(),
+            capture.response_diagnostics.form_field_count.to_string(),
+        ),
+        (
+            "target_handler_occurrences".to_owned(),
+            capture
+                .response_diagnostics
+                .target_handler_occurrences
+                .to_string(),
+        ),
+    ];
+    let envelope = RawEnvelope::new(
+        batch_id,
+        ResponseKind::DisclosureVersionMembership,
+        KIND_CORRECTION_VIEWER_FILE,
+        capture.viewer_bytes.clone(),
+        capture.retrieved_at,
+        RequestMetadata {
+            endpoint: KIND_CORRECTION_VIEWER_ENDPOINT.to_owned(),
+            query,
+            headers: Vec::new(),
+            mode,
+        },
+    );
+    let spec = BatchSpec {
+        provider: PROVIDER_KIND_DISCLOSURE_CORRECTION,
+        market,
+        date,
+        batch_id,
+        entitlement_reference: Some(entitlement_reference),
+        mode,
+    };
+    store
+        .store_batch(&spec, std::slice::from_ref(&envelope))
         .map_err(KindError::Store)
 }

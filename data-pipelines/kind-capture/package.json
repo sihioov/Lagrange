@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=24 <25"
   },
+  "scripts": {
+    "test": "node --test capture-logic.test.mjs correction-capture-logic.test.mjs"
+  },
   "dependencies": {
     "playwright": "^1.56.0"
   }

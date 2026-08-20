@@ -1,6 +1,12 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준일: 2026년 8월 19일 (2026-08-19).** 현재 권위 있는 운영 스냅샷은 바로 아래 §0이다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현 이력을 보존한 기록이다. 과거의 "미설치", "KIS credential 없음", "초기 백필 미완료" 같은 문장은 당시에는 사실이었지만 현재 상태를 뜻하지 않는다. 코드가 바뀌면 게이트와 판정은 다시 실행해 갱신해야 한다.
+**최신 기준일: 2026년 8월 20일 (2026-08-20).** §0.1~§0.12는
+운영·Stage6 진행 당시의 날짜별 스냅샷이고, 현재 개발 worktree의 권위 있는
+remediation 상태와 다음 작업은 §0.13~§0.14다. 이후 §1부터는 설계 목표와
+08-17 이전 게이트·구현 이력을 보존한 기록이다. 과거의 "미설치", "KIS
+credential 없음", "초기 백필 미완료" 같은 문장은 당시에는 사실이었지만
+현재 상태를 뜻하지 않는다. 코드가 바뀌면 게이트와 판정은 다시 실행해
+갱신해야 한다.
 
 ## 0. 2026-08-19 현재 운영 스냅샷
 
@@ -28,7 +34,7 @@
 
 실거래는 별도 후속 프로젝트다. 계좌·잔고·주문·정정·취소·체결·주문 WebSocket과 Compose `live` profile은 계속 금지한다.
 
-### 0.4 Stage6 공식 데이터 통합 결정
+### 0.4 Stage6 공식 데이터 통합 초기 계획 — §0.6 이후 정정됨
 
 사용 목적은 개인 내부용으로 진행한다. 데이터는 API에서 DB로 직접 넣지 않고 다음 경계를 지킨다.
 
@@ -45,7 +51,10 @@
 
 초기 범위는 고정 ETF 11종목, 시작일 `2020-01-31`이다. KIS는 주 가격, KRX는 가격 교차검증과 시장 효력일, KIND/OpenDART는 공개·정정 시각, KSD/SEIBro는 권리·행사 세부 기준으로 사용한다. record date·지급일·상장일·권리락일을 `available_at`으로 소급하지 않는다.
 
-### 0.5 다음 작업 계획 — 아직 구현 시작 전
+### 0.5 Stage6 초기 작업 계획 — 현재 상태는 §0.13~§0.14
+
+아래 목록은 Stage6 구현 전의 historical baseline이다. 완료 여부와 정정된
+source 역할은 §0.6~§0.14를 따른다.
 
 1. **(문서화 완료 — 승인 대기, §0.6 참조)** KSD/SEIBro·KRX Open API·OpenDART·KIND의 ETF11 read-only endpoint/파일, 이용 조건, 필드, 페이징, 수정·철회 의미를 공식 문서로 고정한다.
 2. KSD/OpenDART부터 fixture 기반 immutable Raw 어댑터를 구현한다. exact request/source metadata, `retrieved_at`, content hash, pagination 완전성을 검증하고 실제 key가 필요한 호출은 별도 운영 gate로 둔다.
@@ -91,7 +100,7 @@ Stage5 계약 flag는 그대로 `vendor_snapshot=true`, `strict_pit=false`, `rea
 - 같은 파일의 대조군 `005930`·`000660`·`035420`는 모두 확인되므로 방법론 실패가 아니라 실제 부재다.
 - `자산운용`을 포함하는 법인은 458개 존재하지만 **전부 `stock_code`가 없다** — 공시 제출인은 운용사이고 ETF 자체는 공시 대상 법인이 아니다. `KODEX`·`상장지수`는 0건이다.
 
-따라서 **`list.json`과 `company.json`은 `corp_code` 기반이므로 ETF11에 쓸 수 없다.** ADR-0004 D4가 확정됐고, 그 파급은 다음과 같다: ETF11의 공시일 근거는 **KIND만 남으며**, 이는 선호가 아니라 의존이다. D5의 "KSD 이벤트 + 공시 근거 가용일" 결합이 전적으로 KIND에 의존하게 되고, KIND의 게시 시각 granularity와 정정 연계는 아직 미확인이므로 **그 gap들이 critical path로 올라왔다**(체크리스트 10·11번). `corpCode.xml` 자체는 이 부재의 증거로, 그리고 발행사가 공시 대상인 개별주식 범위에서는 identity join으로 계속 가치가 있다.
+따라서 **`list.json`과 `company.json`은 `corp_code` 기반이므로 ETF11에 쓸 수 없다.** ADR-0004 D4가 확정됐고, 그 시점에는 ETF11의 공시일 근거로 **KIND만 남아** 게시 시각 granularity와 정정 연계 gap이 critical path로 올라왔다. 게시 시각은 바로 다음 §0.8에서 분 단위로 해소됐고, 정정 체인 추적은 §0.14의 다음 작업으로 남는다. `corpCode.xml` 자체는 이 부재의 증거로, 그리고 발행사가 공시 대상인 개별주식 범위에서는 identity join으로 계속 가치가 있다.
 
 **live 경로 차단 — rustls 비호환 (ADR-0004 D10).** `opendart.fss.or.kr`은 TLS 1.2만 지원하고 순방향 비밀성이 없는 static RSA 암호군(`AES128-GCM-SHA256`)을 선택하며, ECDHE로 제한하면 handshake failure로 거부한다. rustls는 순방향 비밀성 없는 키교환을 구현하지 않으므로, 워크스페이스의 단일 TLS 스택 정책 아래서 in-process 전송 계층은 이 호스트에 도달할 수 없다. 인증서 체인 자체는 정상(GlobalSign Root CA - R3, SAN에 `opendart.fss.or.kr` 포함)이므로 신뢰 문제가 아니라 암호군 비호환이다. 위 `corpCode.xml` 취득은 그래서 **진단 목적의 외부 도구 조회**였고 immutable Raw 배치를 만들지 않았다. 두 번째 TLS 스택 도입은 명시된 단일 스택 규칙을 바꾸는 결정이라 소유자 판단으로 남긴다. D4 결과 때문에 이 표면의 ETF11 용도가 사라졌으므로 차단의 실질 비용은 거의 없다.
 
@@ -167,14 +176,167 @@ Stage6와 무관한 별건이지만 저장소 자체 품질 기준(전체 스위
 
 파싱은 모든 규칙에서 fail-closed다 — summary 불일치, 셀 개수, 시각 파싱, 빈 종목명·제목, 비정수 `번호`, 배치 전체의 `번호` 누락, 두 식별자 결측·형식오류, 행 0개 — 하나라도 실패하면 아무것도 쓰지 않는다.
 
-### 0.12 2026-08-20 종료 시점 상태
+### 0.12 2026-08-20 종료 시점 상태 — remediation 이전 스냅샷
 
 - 커밋 30건(`99fb8e9`~`1f592a9`). **`main`에서 직접 작업했고 다른 브랜치에 이 커밋들이 없다.** `origin/main` 대비 **99 ahead / 0 behind**(분기 없음)이며 **push하지 않았다** — 이전 69개 커밋의 미push 상태도 그대로다.
-- 게이트: fmt·clippy `-D warnings` clean, `market-data` **347 통과**. 워크스페이스 **1,751 통과 / 6 실패**이고 남은 6건은 `research_worker`의 QA PostgreSQL 환경 의존이다(코드 결함 아님).
+- 당시 게이트: fmt·clippy `-D warnings` clean, `market-data` **347 통과**. 워크스페이스 **1,751 통과 / 6 실패**이고 남은 6건은 `research_worker`의 QA PostgreSQL 환경 의존이다(코드 결함 아님). 이 결과는 아래 remediation closure gate의 현재 상태를 뜻하지 않는다.
 - 승인 범위: OpenDART 코어(documentation-only, D10으로 live 차단), KIND 브라우저 구동 수집. KRX 미러 vs 원본, KSD 포함 여부는 계속 DEFERRED.
 - 다음에 승인 없이 가능한 것: **정정 체인 추적**(접수번호 조인 키 확보). 소유자 결정 필요: identity 해석(KRX), 백필 요청 예산, KSD. 환경 필요: QA PostgreSQL, push 여부.
 
-**부분 승인 (2026-08-19).** 소유자가 OpenDART 코어(`list.json`/`list.xml`, `corpCode.xml`, `company.json`)를 fixture 기반 Raw 어댑터 작업 범위로 승인했다. 나머지 allowlist 행, 모든 계정 등록, 라이선스 해석은 계속 보류다. 어떤 소스에도 key가 발급되지 않았으므로 실제 요청은 한 건도 발생하지 않았다. KRX 미러 vs 원본 선택, KSD 포함 여부, KOGL 제2유형·KRX 제11조③ `entitlement_reference`는 미결정 상태로 남는다.
+### 0.13 Stage6 disclosure review 보완 완료 상태 (2026-08-20)
+
+`f78d033`의 Stage6 disclosure review에 대한 코드·문서 보완을 반영했다.
+이는 fixture 기반 및 로컬 검증이며, 이 보완 작업에서 live provider를 호출하지
+않았다. 기존의 OpenDART ETF11 비식별 결론, KIS read-only 안전 경계, 권리·
+entitlement의 미해결 공백은 변경하지 않는다.
+
+| 항목 | 해소 내용 | 상태 |
+|---|---|---|
+| F1 | KIND `capture.json`에 필수 `termination` 4종을 기록한다. `clamped_duplicate`만 clean이고, 각 페이지는 두 bounded wait와 그 사이 한 번의 동일 control 재호출을 거친다. configured max(최대 40) 뒤 extra probe의 identical response만 clean이며 distinct response는 incomplete다. 실제 response는 exact HTTPS host/path와 decoded `method`/`forward`/date/page contract로 발행된 페이지에 귀속하고, 늦은 중복의 bytes/ordered fields가 다르거나 body task가 bounded wait 안에 끝나지 않으면 fail-closed한다. `kind-raw`와 `market-data`는 incomplete/missing/unknown termination을 Raw commit 전에 거부한다. termination 없는 옛 staging은 recapture한다. | 해소 |
+| F2 | 첫 `<tr>`이 cell 없는 placeholder인지 raw opening `<td>`/`<th>` 기준으로 검사한다. placeholder 누락·정상/미종결 cell 모두 typed whole-batch failure이며 Raw HTML은 error에 담지 않는다. | 해소 |
+| F3 | KIND Raw integrity test는 zip 전에 collection cardinality를 고정한다. credential-like field-name test는 각 이름의 exact typed rejection과 zero-write를 검증하며 value redaction 증거로 주장하지 않는다. | 해소 |
+| F4 | Paper preview missing-close fixture의 bars deletion root를 writer와 같은 dataset root로 고치고, DB 없는 path regression test를 추가했다. 기존 manifest double-join 관례는 건드리지 않았다. | 코드·비DB 검증 해소; QA DB gate는 아래 환경 차단 |
+| F5 | untrusted KIND staging에서 symlink·non-regular file·oversize page를 typed failure로 거부하고 page read를 1 MiB로 제한했다. | 해소 |
+| F6 | OpenDART `list.json`의 response `page_no`를 requested page와 비교해 mismatch를 manifest 전에 fail-closed한다. 기존 duplicate-byte guard도 유지한다. | 해소 |
+| F7 | OpenDART `--plan`은 실제 renderer가 만드는 text를 검사하며, query parameter value가 출력되지 않음을 sentinel으로 검증한다. | 해소 |
+| F8 | arbitrary malformed Parquet bytes는 reader가 아니라 artifact attestation에서 Integrity가 되는 실제 도달 계약에 맞게 test명·assertion을 정렬했다. | 해소 |
+| low: transport | connect/timeout/other send failure를 구분하되 원 `reqwest` error는 formatting·저장을 하지 않는 typed coarse classification으로 유지했다. | 해소 |
+| low: credential | credential file의 앞뒤 whitespace를 canonicalize하고 empty-after-trim을 거부한다. | 해소 |
+| low: OpenDART Debug | `OpenDartRead: Debug`와 맞지 않던 stale comment를 바로잡았고 reader details는 계속 출력하지 않는다. | 해소 |
+| low: KIND provenance | `form_fields`를 duplicate name과 순서를 보존하는 ordered URL-decoded pairs로 명시하고 encoded POST body byte fidelity 주장을 제거했다. | 해소 |
+
+**현재 검증.** Node capture logic **20 passed**; collectors `kind-raw`
+**31 passed**, `opendart-raw` **10 passed**; market-data KIND normalization
+**17 passed**, KIND Raw **14 passed**, OpenDART Raw **24 passed**;
+opendart-client **32 passed**; F4의 DB 없는 deletion-path regression test가
+passed했다. `pyarrow==25`가 pin된 환경에서 F8 malformed/semantic Parquet 두
+focused test와 `recommendation_compute` 전체 **16 passed**, locked child 환경의
+`recommendation_child` **17 passed**도 확인했다.
+workspace `cargo fmt --check`, all-target/all-feature clippy `-D warnings`,
+`git diff --check`가 모두 clean이고, `market-data` 전체 suite도 passed했다.
+
+**아직 green으로 주장하지 않는 항목.** full workspace suite를 실행했으며,
+대부분의 target은 passed했지만 QA PostgreSQL 의존 target이 남았다. collectors
+`research_worker`는 62 passed / 6 failed이고 여섯 실패 모두
+`DATABASE_URL` unset 및 Docker socket permission denied로 QA PostgreSQL을
+준비할 수 없어 **BLOCKED_ENV**다. 따라서 F4의 DB 없는 regression과
+`paper_preview` 전체 22 passed는 확인했어도, DB-gated preview-worker 경로는
+early return되어 실제 QA DB 증거가 아니다. Python 환경은 `uv 0.12.1`, Python
+3.12.13에서 `uv sync --project nt --locked`로 복구했고 `pyarrow==25.0.0`을
+포함한 locked 의존성을 사용해 `recommendation_compute` 16/16과
+`recommendation_child` 17/17을 통과했다. 이 호스트에는 PostgreSQL 실행 파일과
+활성 service가 없고, `/var/run/docker.sock`은 root:docker `0660`인데 현재 사용자가
+docker group이 아니어서 접근이 거부된다. 권한을 우회하지 않았으므로 QA DB gate는
+계속 **BLOCKED_ENV**다. QA PostgreSQL을 갖춘 full workspace 재실행 전에는 전체
+green으로 기록하지 않는다.
+
+**2026-08-19 당시의 부분 승인 기록.** 소유자가 OpenDART 코어(`list.json`/`list.xml`, `corpCode.xml`, `company.json`)를 fixture 기반 Raw 어댑터 작업 범위로 승인했다. 나머지 allowlist 행, 모든 계정 등록, 라이선스 해석은 계속 보류였다. 당시에는 어떤 소스에도 key가 발급되지 않아 실제 요청이 없었다. 이후의 key·단일 live `corpCode.xml` 관측과 ETF11 결론은 §0.7 및 ADR-0004 D4를 따른다. KRX 미러 vs 원본 선택, KSD 포함 여부, KOGL 제2유형·KRX 제11조③ `entitlement_reference`의 미결정 기록은 유지한다.
+
+### 0.14 Remediation 이후 현재 worktree와 다음 작업 (2026-08-20)
+
+Remediation commit `90ac83d` and correction commit `460c942` were pushed on
+`origin/unspecified-task`. Draft PR #1 was opened only to obtain CI evidence;
+the owner subsequently selected reviewed direct-main delivery rather than a PR
+merge. Python-focused gates are green. The local host still cannot provide QA
+PostgreSQL, while the remote DB-backed gates ran and remained red as described
+below. The correction-viewer capture, separate Raw
+ingest, and ordered-membership normalizer are implemented in the current change
+set. Node tests are 37/37, the Rust correction normalizer tests are 5/5, the Raw
+CLI tests are 16/16, workspace strict Clippy is clean, and all workspace test
+binaries compile. This is not a READY, point-in-time, or full-workspace-green
+claim: the DB-required runtime gate is red and the one observed viewer
+does not prove a multi-version correction chain.
+
+**개발 worktree.** canonical repository는 Git remote 기준 `Lagrange`다. 현재
+worktree는 `/data/worktrees/3puw275b/ordinary-blobfish`, 브랜치는
+`unspecified-task`다. 이 correction feature commit의 parent는 remediation
+`90ac83d`다. 직접 병합 전 로컬 `main`의 `f78d033`은 공통 조상 `5b12e0f`에서 갈라진
+Stage6 review 문서 commit이었으므로, 기존 `main` worktree에서 non-fast-forward
+병합해 review 문서와 remediation 계열을 함께 보존한다. 새 worktree나 별도
+remediation 브랜치는 만들지 않고 history도 재작성하지 않는다.
+
+**Remediation 완료와 환경 검증을 구분한다.** F1~F8/low 코드·문서 보완,
+focused offline suites, fmt, strict clippy, diff check, 9개 mutation gate는 이미
+완료했다. locked Python environment는 위와 같이 복구됐다. 로컬 QA PostgreSQL은
+**BLOCKED_ENV**지만 원격 CI에서는 DB-backed gate가 실제 실행됐고 실패했으므로,
+전체 workspace green을 주장하지 않는다. 원격 `main`의 기존 `5b12e0f` CI run
+`32325584155`도 policy, PostgreSQL integration, workspace-tests job이 red였으며,
+이번 branch run `32358404560` 역시 같은 세 job이 red였다. Sanitized log 대조에서
+workspace의 실패 test-name 집합 31개와 PostgreSQL `paper_preview` 실패 test-name
+6개가 baseline과 동일했다. F4 경로 수정은 `missing_close`의 기존 ENOENT를 제거했지만
+그 뒤의 expected-outcome assertion도 실패한다. 이번 diff에는 관련 runtime source,
+SQL migration, DB deployment 변경이 없으므로 Stage6 회귀 근거는 없지만, entitlement와
+fixture state의 근본 원인은 아직 확정하지 않았다.
+
+환경 검증을 수행할 때는 CI와 같은 Python 3.12, `pyarrow==25.0.0`,
+`uv==0.12.1`, `uv sync --project nt --locked`, Phase 0 fixture, disposable QA
+PostgreSQL 순서를 따른다. 성공 조건은 `recommendation_child` 17/17,
+`research_worker` DB-required 6개 통과, F4 DB test가 early return 없이
+`PAPER_PREVIEW_CLOSE_MISSING`/permanent failure/zero-output assertion까지 도달하고
+`cargo test --workspace --locked --no-fail-fast`가 0으로 끝나는 것이다.
+
+Remediation은 commit으로 닫혔다. 현재 correction feature는 focused
+offline gate와 실제 캡처의 read-only `--plan`, 새 `/tmp` Raw 루트를 사용한
+one-shot ingest/parser 검증까지 통과했다. 최종 독립 감사도 HIGH/MEDIUM 0건으로
+닫혔다. 실제 viewer bytes나 임시 Raw는 Git에 추가하지 않았다. Branch CI의 policy
+failure는 기존 계약 불일치(`research-worker-smoke.sh`의 migration ledger 10 대 테스트
+기대값 9)였고, 기대값을 실제 migration 수 10으로 맞춘 focused test는 6/6을
+통과했다. DB-backed run은 `paper_preview`를 포함한 실패를 실제 노출했으므로 후속 QA
+closure가 필요하지만, 이번 Stage6 focused review에서 새 HIGH/MEDIUM 회귀는 남지 않았다.
+
+**KIND correction ordered-membership 구현.** 승인된 KIND correction-viewer 관찰은 list-anchor
+acceptance `20200207000058`과 option raw value `20200207000081|Y`를 별도로
+해소했을 뿐이다. 14자리 option
+acceptance token은 `20200207000081`이다. 실제 다중 버전 correction chain을
+증명하지 않는다. Rust ingest·normalizer·tests는
+이 두 값을 별도로 보존하며, equality/join,
+predecessor/supersedes/withdrawal, time/timezone 의미는 추론하지 않는다.
+`|Y`는 opaque로 둔다. 번호에서 날짜를 파생하지 않고, 재구성 HTTP 요청이나
+popup-state probing은 금지한다. 잘못된 후보 `20251204000324`는 ETF-list
+provenance가 없어 거부됐다. 다음 증거 작업은 owner-gated 저빈도 범위에서 실제
+복수 option을 가진 ETF viewer 표본을 확보할 수 있을 때만 진행하며, 그 전에는
+“chain 추적 완료”나 predecessor/supersedes 관계를 주장하지 않는다.
+
+**2026-08-20 소유자 결정과 bounded pilot 결과.** 소유자는 FSC mirror를 ETF11
+authoritative identity 방향으로 선택하고, KIS event pilot은 `bonus-issue`에만
+한정하며, KIND는 한 번의 5-calendar-day 저빈도 pilot만 승인했다. 이 선택은 FSC
+endpoint 호출 허가가 아니다. 공식 활용가이드의 exact host/path/method/schema,
+registration/key, entitlement reference/hash, 동일 ISIN의 두 과거 기준일 semantics가
+확정되기 전에는 FSC adapter나 network call을 만들지 않는다. KIS bonus issue도
+KIND availability와 deterministic relation이 없으면 기존 source evidence를 넘어
+Curated/PIT로 승격하지 않는다.
+
+KIND pilot은 종료된 창 `2026-08-15..2026-08-19`를 own-controls capture로 정확히
+한 번 실행했다. 40 stored pages 뒤 extra probe가 distinct response를 반환해
+`page_bound_reached`로 종료했으므로 전체 staging은 incomplete이며 Raw ingest하지
+않았다. 임시 staging의 captured portion을 오프라인 분류해 correction 표시와 exact
+handler를 가진 opaque acceptance `20260819000134`, `20260819000124` 두 개를 찾았다.
+첫 후보만 `2026-08-19` 단일 날짜 correction capture로 한 번 확인했지만 exact response
+body에 target handler가 없어 `missing_target`으로 종료했고 viewer 파일은 생성되지
+않았다. 두 번째 후보는 호출하지 않았다. 이 결과는 최근 구간에서 5일 창도 안전한
+상한이 아니며 더 좁은 window 승인이 필요하다는 운영 근거일 뿐, correction chain
+근거가 아니다. 모든 staging은 `/tmp`에만 있고 Git/Raw/DB에 들어가지 않았다.
+이후 list capture CLI도 correction capture와 마찬가지로 exact operator confirmation을
+browser launch 전에 요구하며, impossible calendar date를 양쪽 CLI에서 거절한다.
+
+**결정 뒤에도 남은 외부 입력.** 다음 세 항목은 추측해서 진행하지 않는다.
+
+- FSC mirror: owner registration/key, official 활용가이드, entitlement, 과거 query
+  semantics를 확정한다. 11종목의 code/name/효력 구간이 해소되기 전에는 fuzzy name
+  join을 금지한다.
+- KIS `bonus-issue`: current official field/lineage documentation과 KIND availability
+  relation을 확정한다. 다른 `ksdinfo` event와 direct KSD/KSD portal은 이번 결정에
+  포함되지 않는다.
+- KIND 추가 수집: 이번 1회 pilot 승인은 소비됐다. 전체 백필 추정 약 475
+  captures/15,200 requests/20시간은 계속 승인 밖이며, 추가 window·요청 예산·보존
+  위치는 다시 명시적으로 승인한다.
+
+위 결정과 KIND 정정 관계가 확보된 뒤에만 identity/event cross-validation,
+fail-closed Curated 후보, pilot backfill, DatasetManifest/DB publication/five-pin,
+recommendation/backtest/Paper 연결 순서로 진행한다. 그 전까지 계약은 계속
+`vendor_snapshot=true`, `strict_pit=false`, `ready=false`다. OpenDART TLS는
+ETF11 critical path가 아니므로 개별주식 범위가 별도 승인되지 않는 한 다음
+작업에 포함하지 않는다.
 
 ---
 

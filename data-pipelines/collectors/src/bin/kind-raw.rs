@@ -9,10 +9,9 @@
 //! in `market_data::providers::kind`; this file does not duplicate any of
 //! it.
 //!
-//! `capture.json`'s `surface` field must name one of the two approved KIND
-//! search surfaces (see [`market_data::KindSurface`]) — they are differently
-//! scoped, so which one produced a given capture is recorded on the batch
-//! rather than collapsed onto a single endpoint id.
+//! `capture.json`'s `surface` field must name the approved ETF-scoped KIND
+//! search surface (see [`market_data::KindSurface`]). `DetailEtf` remains a
+//! compatibility discriminator but is deferred/not allowed for Raw ingest.
 //!
 //! # Why this is gated
 //!
@@ -59,6 +58,12 @@ use std::process::ExitCode;
 
 use chrono::Datelike;
 use domain::{TradingDate, UtcTimestamp};
+#[cfg(test)]
+use market_data::providers::kind::KIND_ETF_DISCLOSURE_ENDPOINT;
+use market_data::providers::kind::{
+    KIND_ETF_DISCLOSURE_ENTRY_URL, KIND_ETF_DISCLOSURE_FORWARD, KIND_ETF_DISCLOSURE_METHOD,
+    KindCaptureTermination,
+};
 use market_data::{
     CapturedPage, FetchMode, KindError, KindSurface, MARKET_KR, ManifestEntry, RawStore,
     ingest_disclosure_capture,
@@ -92,17 +97,18 @@ const CONFIRM_LITERAL: &str = "I_UNDERSTAND_READ_ONLY_KIND_INGEST";
 
 /// The one capture source this CLI accepts.
 const EXPECTED_SOURCE: &str = "kind.krx.co.kr";
-/// The staging `surface` id for [`KindSurface::EtfList`]. Test-only: the CLI
-/// itself accepts either known surface id via
-/// [`KindSurface::parse_staging_id`], not a single expected literal.
+/// The staging `surface` id for the one owner-approved Raw surface.
 #[cfg(test)]
 const EXPECTED_SURFACE: &str = KindSurface::EtfList.staging_id();
-/// The staging `surface` id for [`KindSurface::DetailEtf`]. See
-/// [`EXPECTED_SURFACE`].
+/// Compatibility-only staging id; `load_staging` must reject it before any
+/// page file/body processing.
 #[cfg(test)]
 const EXPECTED_SURFACE_DETAIL_ETF: &str = KindSurface::DetailEtf.staging_id();
 const CAPTURE_JSON_FILE_NAME: &str = "capture.json";
 const HTML_EXTENSION: &str = "html";
+/// Maximum accepted size for one untrusted staged response page. Observed
+/// KIND pages are roughly 11–13 KiB; 1 MiB leaves ample protocol headroom.
+const MAX_CAPTURED_PAGE_BYTES: u64 = 1024 * 1024;
 
 /// `capture.json`'s `requested_range` object.
 #[derive(Debug, Deserialize)]
@@ -129,8 +135,10 @@ struct CapturePageRecord {
 #[derive(Debug, Deserialize)]
 struct CaptureJson {
     source: String,
+    entry_url: String,
     surface: String,
     requested_range: RequestedRange,
+    termination: String,
     pages: Vec<CapturePageRecord>,
 }
 
@@ -148,8 +156,28 @@ enum StagingError {
     MalformedCaptureJson(serde_json::Error),
     UnsafeFileName(String),
     UnsupportedSurface(String),
+    UnsupportedRawSurface(KindSurface),
     UnsupportedSource(String),
+    UnsupportedEntryUrl,
+    UnsupportedTermination(String),
+    IncompleteTermination(KindCaptureTermination),
     EmptyPages,
+    InvalidRequestedRangeDate {
+        field: &'static str,
+    },
+    ReversedRequestedRange,
+    MissingFormField {
+        page_index: u32,
+        field: &'static str,
+    },
+    DuplicateFormField {
+        page_index: u32,
+        field: &'static str,
+    },
+    MismatchedFormField {
+        page_index: u32,
+        field: &'static str,
+    },
     InvalidRetrievedAt {
         page_index: u32,
         message: String,
@@ -177,11 +205,48 @@ impl fmt::Display for StagingError {
                 KindSurface::EtfList.staging_id(),
                 KindSurface::DetailEtf.staging_id()
             ),
+            Self::UnsupportedRawSurface(surface) => write!(
+                f,
+                "surface {} is known for compatibility but is not admitted to KIND Raw ingest",
+                surface.staging_id()
+            ),
             Self::UnsupportedSource(value) => write!(
                 f,
                 "unsupported source {value:?} (expected {EXPECTED_SOURCE:?})"
             ),
+            Self::UnsupportedEntryUrl => write!(
+                f,
+                "capture entry_url is not the exact approved ETF disclosure-list URL"
+            ),
+            Self::UnsupportedTermination(value) => {
+                write!(f, "unsupported capture termination {value:?}")
+            }
+            Self::IncompleteTermination(termination) => write!(
+                f,
+                "capture termination {} is incomplete; only clamped_duplicate may be ingested",
+                termination.staging_id()
+            ),
             Self::EmptyPages => write!(f, "{CAPTURE_JSON_FILE_NAME} listed no pages"),
+            Self::InvalidRequestedRangeDate { field } => {
+                write!(f, "requested_range.{field} is not a valid YYYY-MM-DD date")
+            }
+            Self::ReversedRequestedRange => {
+                write!(
+                    f,
+                    "requested_range.from must not be after requested_range.to"
+                )
+            }
+            Self::MissingFormField { page_index, field } => write!(
+                f,
+                "page {page_index} is missing required form field {field:?}"
+            ),
+            Self::DuplicateFormField { page_index, field } => {
+                write!(f, "page {page_index} has duplicate form field {field:?}")
+            }
+            Self::MismatchedFormField { page_index, field } => write!(
+                f,
+                "page {page_index} has a form field {field:?} that does not match capture metadata"
+            ),
             Self::InvalidRetrievedAt {
                 page_index,
                 message,
@@ -223,6 +288,21 @@ enum CliError {
         file: String,
         source: std::io::Error,
     },
+    PageMetadata {
+        file: String,
+        source: std::io::Error,
+    },
+    PageSymlink {
+        file: String,
+    },
+    PageNotRegular {
+        file: String,
+    },
+    PageTooLarge {
+        file: String,
+        max_bytes: u64,
+        actual_bytes: u64,
+    },
     Ingest(KindError),
 }
 
@@ -244,6 +324,23 @@ impl fmt::Display for CliError {
             Self::PageRead { file, source } => {
                 write!(f, "failed to read page file {file:?}: {source}")
             }
+            Self::PageMetadata { file, source } => {
+                write!(f, "failed to inspect page file {file:?}: {source}")
+            }
+            Self::PageSymlink { file } => {
+                write!(f, "page file {file:?} must not be a symlink")
+            }
+            Self::PageNotRegular { file } => {
+                write!(f, "page file {file:?} must be a regular file")
+            }
+            Self::PageTooLarge {
+                file,
+                max_bytes,
+                actual_bytes,
+            } => write!(
+                f,
+                "page file {file:?} is {actual_bytes} bytes, exceeding the {max_bytes}-byte limit"
+            ),
             Self::Ingest(source) => write!(f, "{source}"),
         }
     }
@@ -272,7 +369,7 @@ fn run(raw_args: &[String]) -> Result<(), CliError> {
     let raw_root = required_env(RAW_ROOT_ENV_VAR)?;
     let entitlement_reference = required_env(ENTITLEMENT_REFERENCE_ENV_VAR)?;
 
-    let (capture, surface) = load_staging(&args.staging).map_err(CliError::Staging)?;
+    let (capture, surface, termination) = load_staging(&args.staging).map_err(CliError::Staging)?;
 
     match args.action {
         Action::Plan => {
@@ -294,6 +391,7 @@ fn run(raw_args: &[String]) -> Result<(), CliError> {
                 &args.staging,
                 capture,
                 surface,
+                termination,
                 raw_root,
                 entitlement_reference,
             )
@@ -352,16 +450,130 @@ fn check_no_stray_html_files(
     Ok(())
 }
 
+/// Validates the staged search window using the same ISO date contract as the
+/// browser capture arguments, and rejects an inverted range before any page
+/// metadata or body is considered.
+fn validate_requested_range(range: &RequestedRange) -> Result<(), StagingError> {
+    let from = parse_requested_date(&range.from, "from")?;
+    let to = parse_requested_date(&range.to, "to")?;
+    if from > to {
+        return Err(StagingError::ReversedRequestedRange);
+    }
+    Ok(())
+}
+
+fn parse_requested_date(value: &str, field: &'static str) -> Result<TradingDate, StagingError> {
+    let bytes = value.as_bytes();
+    let exact_shape = bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit());
+    if !exact_shape {
+        return Err(StagingError::InvalidRequestedRangeDate { field });
+    }
+    TradingDate::parse(value).map_err(|_| StagingError::InvalidRequestedRangeDate { field })
+}
+
+/// Requires exactly one value for a form field and compares it to the
+/// capture-level/page-level contract. Missing, duplicated, and mismatched
+/// values are all fail-closed metadata errors; the values themselves never
+/// enter an error message.
+fn validate_required_form_field(
+    page: &CapturePageRecord,
+    field: &'static str,
+    expected: &str,
+) -> Result<(), StagingError> {
+    let mut values = page
+        .form_fields
+        .iter()
+        .filter(|(name, _)| name == field)
+        .map(|(_, value)| value.as_str());
+    let Some(value) = values.next() else {
+        return Err(StagingError::MissingFormField {
+            page_index: page.page_index,
+            field,
+        });
+    };
+    if values.next().is_some() {
+        return Err(StagingError::DuplicateFormField {
+            page_index: page.page_index,
+            field,
+        });
+    }
+    if value != expected {
+        return Err(StagingError::MismatchedFormField {
+            page_index: page.page_index,
+            field,
+        });
+    }
+    Ok(())
+}
+
+/// An observed field is checked when present, but absence is allowed. This is
+/// important for fields that vary with KIND's rendered form; the loader must
+/// not invent a requirement for a field the capture did not observe.
+fn validate_optional_exact_form_field(
+    page: &CapturePageRecord,
+    field: &'static str,
+    expected: &str,
+) -> Result<(), StagingError> {
+    let mut values = page
+        .form_fields
+        .iter()
+        .filter(|(name, _)| name == field)
+        .map(|(_, value)| value.as_str());
+    let Some(value) = values.next() else {
+        return Ok(());
+    };
+    if values.next().is_some() {
+        return Err(StagingError::DuplicateFormField {
+            page_index: page.page_index,
+            field,
+        });
+    }
+    if value != expected {
+        return Err(StagingError::MismatchedFormField {
+            page_index: page.page_index,
+            field,
+        });
+    }
+    Ok(())
+}
+
+/// Validates the browser-observed request metadata. Date, page-index, method,
+/// and forward fields are required because together they bind each stored
+/// response to the approved ETF-list request. The optional surface field is
+/// exact-checked when the browser records it.
+fn validate_page_form_fields(
+    page: &CapturePageRecord,
+    requested_range: &RequestedRange,
+    surface: KindSurface,
+) -> Result<(), StagingError> {
+    validate_required_form_field(page, "fromDate", &requested_range.from)?;
+    validate_required_form_field(page, "toDate", &requested_range.to)?;
+    let expected_page_index = page.page_index.to_string();
+    validate_required_form_field(page, "pageIndex", &expected_page_index)?;
+    validate_required_form_field(page, "method", KIND_ETF_DISCLOSURE_METHOD)?;
+    validate_required_form_field(page, "forward", KIND_ETF_DISCLOSURE_FORWARD)?;
+    validate_optional_exact_form_field(page, "surface", surface.staging_id())?;
+    Ok(())
+}
+
 /// Reads and validates `dir/capture.json` plus `dir`'s file listing. Never
 /// opens a page's HTML file — see the module doc comment. This is the one
 /// function both `--plan` and `--execute` call to make sense of a staging
 /// directory.
 ///
 /// Returns the parsed [`CaptureJson`] alongside the [`KindSurface`] its
-/// `surface` field named — `capture.json`'s `surface` must name one of the
-/// two approved surfaces (see [`KindSurface::parse_staging_id`]), anything
-/// else is rejected as [`StagingError::UnsupportedSurface`].
-fn load_staging(dir: &Path) -> Result<(CaptureJson, KindSurface), StagingError> {
+/// `surface` field named. Known compatibility surfaces are parsed first, then
+/// the Raw admission gate rejects every surface except [`KindSurface::EtfList`]
+/// before page-file processing.
+fn load_staging(
+    dir: &Path,
+) -> Result<(CaptureJson, KindSurface, KindCaptureTermination), StagingError> {
     let capture_path = dir.join(CAPTURE_JSON_FILE_NAME);
     let raw = std::fs::read_to_string(&capture_path).map_err(|source| StagingError::Io {
         path: capture_path.clone(),
@@ -372,8 +584,20 @@ fn load_staging(dir: &Path) -> Result<(CaptureJson, KindSurface), StagingError> 
 
     let surface = KindSurface::parse_staging_id(&capture.surface)
         .ok_or_else(|| StagingError::UnsupportedSurface(capture.surface.clone()))?;
+    surface
+        .ensure_raw_admitted()
+        .map_err(|_| StagingError::UnsupportedRawSurface(surface))?;
     if capture.source != EXPECTED_SOURCE {
         return Err(StagingError::UnsupportedSource(capture.source));
+    }
+    if capture.entry_url != KIND_ETF_DISCLOSURE_ENTRY_URL {
+        return Err(StagingError::UnsupportedEntryUrl);
+    }
+    validate_requested_range(&capture.requested_range)?;
+    let termination = KindCaptureTermination::parse_staging_id(&capture.termination)
+        .ok_or_else(|| StagingError::UnsupportedTermination(capture.termination.clone()))?;
+    if !termination.is_complete() {
+        return Err(StagingError::IncompleteTermination(termination));
     }
     if capture.pages.is_empty() {
         return Err(StagingError::EmptyPages);
@@ -381,6 +605,7 @@ fn load_staging(dir: &Path) -> Result<(CaptureJson, KindSurface), StagingError> 
 
     let mut referenced_file_names: BTreeSet<String> = BTreeSet::new();
     for page in &capture.pages {
+        validate_page_form_fields(page, &capture.requested_range, surface)?;
         validate_page_file_name(&page.file)?;
         UtcTimestamp::parse_rfc3339(&page.retrieved_at).map_err(|source| {
             StagingError::InvalidRetrievedAt {
@@ -393,16 +618,41 @@ fn load_staging(dir: &Path) -> Result<(CaptureJson, KindSurface), StagingError> 
 
     check_no_stray_html_files(dir, &referenced_file_names)?;
 
-    Ok((capture, surface))
+    Ok((capture, surface, termination))
 }
 
 /// Reads every page's bytes from disk exactly as they are (no transform)
 /// and assembles the [`CapturedPage`] list [`ingest_disclosure_capture`]
 /// expects. Only ever called from `--execute`; `--plan` never calls this.
+/// The checks protect a static staging tree. Concurrent replacement between
+/// metadata inspection and the read is outside this patch's threat model; that
+/// would require platform-specific fd-based `O_NOFOLLOW` and bounded reads.
 fn build_captured_pages(dir: &Path, capture: &CaptureJson) -> Result<Vec<CapturedPage>, CliError> {
     let mut pages = Vec::with_capacity(capture.pages.len());
     for page in &capture.pages {
         let path = dir.join(&page.file);
+        let metadata =
+            std::fs::symlink_metadata(&path).map_err(|source| CliError::PageMetadata {
+                file: page.file.clone(),
+                source,
+            })?;
+        if metadata.file_type().is_symlink() {
+            return Err(CliError::PageSymlink {
+                file: page.file.clone(),
+            });
+        }
+        if !metadata.file_type().is_file() {
+            return Err(CliError::PageNotRegular {
+                file: page.file.clone(),
+            });
+        }
+        if metadata.len() > MAX_CAPTURED_PAGE_BYTES {
+            return Err(CliError::PageTooLarge {
+                file: page.file.clone(),
+                max_bytes: MAX_CAPTURED_PAGE_BYTES,
+                actual_bytes: metadata.len(),
+            });
+        }
         let bytes = std::fs::read(&path).map_err(|source| CliError::PageRead {
             file: page.file.clone(),
             source,
@@ -455,6 +705,7 @@ fn run_execute(
     staging_dir: &Path,
     capture: CaptureJson,
     surface: KindSurface,
+    termination: KindCaptureTermination,
     raw_root: String,
     entitlement_reference: String,
 ) -> Result<(), CliError> {
@@ -472,6 +723,7 @@ fn run_execute(
         &entitlement_reference,
         FetchMode::Credentialed,
         surface,
+        termination,
         &pages,
     )
     .map_err(CliError::Ingest)?;
@@ -580,7 +832,7 @@ mod tests {
 
     fn page_snippet(index: u32, file: &str) -> String {
         format!(
-            r#"{{ "page_index": {index}, "file": "{file}", "retrieved_at": "2026-08-19T23:16:09Z", "form_fields": [["method", "searchDisclosureByStockTypeEtfSub"], ["pageIndex", "{index}"]] }}"#
+            r#"{{ "page_index": {index}, "file": "{file}", "retrieved_at": "2026-08-19T23:16:09Z", "form_fields": [["method", "searchDisclosureByStockTypeEtfSub"], ["forward", "disclosurebystocktype_etf_sub"], ["fromDate", "2020-02-03"], ["toDate", "2020-02-07"], ["pageIndex", "{index}"]] }}"#
         )
     }
 
@@ -588,9 +840,10 @@ mod tests {
         format!(
             r#"{{
   "source": "{source}",
-  "entry_url": "https://kind.krx.co.kr/disclosure/disclosurebystocktype.do?method=searchDisclosureByStockTypeEtf",
+  "entry_url": "{KIND_ETF_DISCLOSURE_ENTRY_URL}",
   "surface": "{surface}",
   "requested_range": {{ "from": "2020-02-03", "to": "2020-02-07" }},
+  "termination": "clamped_duplicate",
   "pages": [{pages_json}]
 }}"#
         )
@@ -738,36 +991,70 @@ mod tests {
         assert!(matches!(error, StagingError::UnsupportedSource(s) if s == "kind.krx.co.kr.evil"));
     }
 
+    #[test]
+    fn unknown_or_wrong_entry_url_is_rejected_before_page_processing() {
+        for entry_url in [
+            "https://kind.krx.co.kr/disclosure/details.do",
+            "https://example.invalid/not-kind",
+        ] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let json = capture_json_full(
+                EXPECTED_SURFACE,
+                EXPECTED_SOURCE,
+                &page_snippet(1, "page-0001.html"),
+            )
+            .replace(KIND_ETF_DISCLOSURE_ENTRY_URL, entry_url);
+            write_capture_json(temp.path(), &json);
+            // No page file: the URL gate must fire before any page-file read.
+
+            let error = load_staging(temp.path()).expect_err("wrong entry_url must be rejected");
+            assert!(matches!(error, StagingError::UnsupportedEntryUrl));
+        }
+    }
+
     // -----------------------------------------------------------------
-    // 3b. Both approved staging surface ids are accepted and map to the
-    //     expected endpoint id; anything else is rejected.
+    // 3b. The approved staging surface is accepted; the compatibility-only
+    //     DetailEtf id is rejected before any page file is processed.
     // -----------------------------------------------------------------
 
     #[test]
-    fn both_known_surface_ids_are_accepted_and_map_to_expected_endpoint() {
-        let cases = [
-            (EXPECTED_SURFACE, KindSurface::EtfList),
-            (EXPECTED_SURFACE_DETAIL_ETF, KindSurface::DetailEtf),
-        ];
+    fn etf_list_surface_is_accepted() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let json = capture_json_full(
+            EXPECTED_SURFACE,
+            EXPECTED_SOURCE,
+            &page_snippet(1, "page-0001.html"),
+        );
+        write_capture_json(temp.path(), &json);
+        write_page_file(temp.path(), "page-0001.html", "A");
 
-        for (surface_id, expected_surface) in cases {
-            let temp = tempfile::tempdir().expect("tempdir");
-            let json = capture_json_full(
-                surface_id,
-                EXPECTED_SOURCE,
-                &page_snippet(1, "page-0001.html"),
-            );
-            write_capture_json(temp.path(), &json);
-            write_page_file(temp.path(), "page-0001.html", "A");
+        let (_capture, surface, termination) =
+            load_staging(temp.path()).expect("ETF-list surface must be accepted");
+        assert_eq!(surface, KindSurface::EtfList);
+        assert_eq!(surface.endpoint_id(), KIND_ETF_DISCLOSURE_ENDPOINT);
+        assert_eq!(termination, KindCaptureTermination::ClampedDuplicate);
+    }
 
-            let (_capture, surface) = load_staging(temp.path())
-                .unwrap_or_else(|error| panic!("{surface_id:?} must be accepted: {error}"));
-            assert_eq!(
-                surface, expected_surface,
-                "{surface_id:?} must parse into {expected_surface:?}"
-            );
-            assert_eq!(surface.endpoint_id(), expected_surface.endpoint_id());
-        }
+    #[test]
+    fn detail_etf_surface_is_rejected_before_page_processing_for_plan_and_execute() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let json = capture_json_full(
+            EXPECTED_SURFACE_DETAIL_ETF,
+            EXPECTED_SOURCE,
+            &page_snippet(1, "page-0001.html"),
+        );
+        write_capture_json(temp.path(), &json);
+        // A directory would fail execute-only page processing if the surface
+        // gate were placed too late. `load_staging` must reject first, which
+        // is also the gate used by --plan.
+        std::fs::create_dir(temp.path().join("page-0001.html"))
+            .expect("create sentinel page directory");
+
+        let error = load_staging(temp.path()).expect_err("DetailEtf must be rejected");
+        assert!(matches!(
+            error,
+            StagingError::UnsupportedRawSurface(KindSurface::DetailEtf)
+        ));
     }
 
     #[test]
@@ -797,6 +1084,55 @@ mod tests {
 
         let error = load_staging(temp.path()).expect_err("empty pages must be rejected");
         assert!(matches!(error, StagingError::EmptyPages));
+    }
+
+    #[test]
+    fn missing_or_unknown_capture_termination_is_rejected() {
+        let missing = tempfile::tempdir().expect("tempdir");
+        let json = r#"{
+  "source": "kind.krx.co.kr",
+  "surface": "etf-disclosure-list",
+  "requested_range": { "from": "2020-02-03", "to": "2020-02-07" },
+  "pages": []
+}"#;
+        write_capture_json(missing.path(), json);
+        let error = load_staging(missing.path()).expect_err("missing termination must be rejected");
+        assert!(matches!(error, StagingError::MalformedCaptureJson(_)));
+
+        let unknown = tempfile::tempdir().expect("tempdir");
+        let json = capture_json_full(EXPECTED_SURFACE, EXPECTED_SOURCE, "")
+            .replace("clamped_duplicate", "future_terminal");
+        write_capture_json(unknown.path(), &json);
+        let error = load_staging(unknown.path()).expect_err("unknown termination must be rejected");
+        assert!(
+            matches!(error, StagingError::UnsupportedTermination(value) if value == "future_terminal")
+        );
+    }
+
+    #[test]
+    fn incomplete_capture_termination_is_rejected_before_page_processing() {
+        for (value, expected) in [
+            (
+                "page_bound_reached",
+                KindCaptureTermination::PageBoundReached,
+            ),
+            (
+                "advance_control_missing",
+                KindCaptureTermination::AdvanceControlMissing,
+            ),
+            ("no_response", KindCaptureTermination::NoResponse),
+        ] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let json = capture_json_full(EXPECTED_SURFACE, EXPECTED_SOURCE, "")
+                .replace("clamped_duplicate", value);
+            write_capture_json(temp.path(), &json);
+
+            let error = load_staging(temp.path())
+                .expect_err("incomplete termination must be rejected before empty pages");
+            assert!(
+                matches!(error, StagingError::IncompleteTermination(actual) if actual == expected)
+            );
+        }
     }
 
     // -----------------------------------------------------------------
@@ -852,6 +1188,22 @@ mod tests {
         assert!(matches!(error, StagingError::MalformedCaptureJson(_)));
     }
 
+    #[test]
+    fn capture_json_missing_entry_url_is_rejected_as_malformed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let json = r#"{
+  "source": "kind.krx.co.kr",
+  "surface": "etf-disclosure-list",
+  "requested_range": { "from": "2020-02-03", "to": "2020-02-07" },
+  "termination": "clamped_duplicate",
+  "pages": []
+}"#;
+        write_capture_json(temp.path(), json);
+
+        let error = load_staging(temp.path()).expect_err("missing entry_url must be rejected");
+        assert!(matches!(error, StagingError::MalformedCaptureJson(_)));
+    }
+
     // -----------------------------------------------------------------
     // 7. A valid staging directory parses into the expected CapturedPage
     //    values.
@@ -864,10 +1216,11 @@ mod tests {
         write_page_file(temp.path(), "page-0001.html", "PAGE-1");
         write_page_file(temp.path(), "page-0002.html", "PAGE-2");
 
-        let (capture, surface) =
+        let (capture, surface, termination) =
             load_staging(temp.path()).expect("valid staging directory must load");
         assert_eq!(capture.pages.len(), 2);
         assert_eq!(surface, KindSurface::EtfList);
+        assert_eq!(termination, KindCaptureTermination::ClampedDuplicate);
 
         let pages = build_captured_pages(temp.path(), &capture).expect("bytes must be readable");
         assert_eq!(pages.len(), 2);
@@ -881,12 +1234,302 @@ mod tests {
 
         for page in &pages {
             let names: Vec<&str> = page.form_fields.iter().map(|(n, _)| n.as_str()).collect();
-            assert_eq!(names, vec!["method", "pageIndex"]);
+            assert_eq!(
+                names,
+                vec!["method", "forward", "fromDate", "toDate", "pageIndex"]
+            );
         }
     }
 
+    #[test]
+    fn requested_range_and_page_indices_bind_exactly_to_form_fields() {
+        type FormFieldCase = (&'static str, fn(String) -> String, bool, &'static str);
+        let cases: [FormFieldCase; 7] = [
+            (
+                "from_mismatch",
+                |json: String| {
+                    json.replace(
+                        "\"fromDate\", \"2020-02-03\"",
+                        "\"fromDate\", \"2020-02-04\"",
+                    )
+                },
+                false,
+                "fromDate",
+            ),
+            (
+                "to_mismatch",
+                |json: String| {
+                    json.replace("\"toDate\", \"2020-02-07\"", "\"toDate\", \"2020-02-08\"")
+                },
+                false,
+                "toDate",
+            ),
+            (
+                "page_index_mismatch",
+                |json: String| json.replace("\"pageIndex\", \"1\"", "\"pageIndex\", \"2\""),
+                false,
+                "pageIndex",
+            ),
+            (
+                "page_index_duplicate",
+                |json: String| {
+                    json.replace(
+                        "[\"pageIndex\", \"1\"]",
+                        "[\"pageIndex\", \"1\"], [\"pageIndex\", \"1\"]",
+                    )
+                },
+                true,
+                "pageIndex",
+            ),
+            (
+                "method_mismatch",
+                |json: String| {
+                    json.replace(
+                        "searchDisclosureByStockTypeEtfSub",
+                        "searchDisclosureByStockTypeEtfOther",
+                    )
+                },
+                false,
+                "method",
+            ),
+            (
+                "forward_mismatch",
+                |json: String| {
+                    json.replace(
+                        "disclosurebystocktype_etf_sub",
+                        "disclosurebystocktype_other",
+                    )
+                },
+                false,
+                "forward",
+            ),
+            (
+                "surface_discriminator_mismatch",
+                |json: String| {
+                    json.replace(
+                        "[\"pageIndex\", \"1\"]",
+                        "[\"pageIndex\", \"1\"], [\"surface\", \"etf-detail\"]",
+                    )
+                },
+                false,
+                "surface",
+            ),
+        ];
+
+        for (label, mutate, duplicate, expected_field) in cases {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let json = mutate(capture_json_full(
+                EXPECTED_SURFACE,
+                EXPECTED_SOURCE,
+                &page_snippet(1, "page-0001.html"),
+            ));
+            write_capture_json(temp.path(), &json);
+            let error = load_staging(temp.path()).expect_err(label);
+            match (error, duplicate) {
+                (StagingError::MismatchedFormField { page_index, field }, false) => {
+                    assert_eq!(page_index, 1, "{label}: page index");
+                    assert_eq!(field, expected_field, "{label}: field");
+                }
+                (StagingError::DuplicateFormField { page_index, field }, true) => {
+                    assert_eq!(page_index, 1, "{label}: page index");
+                    assert_eq!(field, expected_field, "{label}: field");
+                }
+                (other, _) => panic!("{label}: unexpected error {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn required_form_fields_cannot_be_missing_and_optional_surface_is_not_invented() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let json = capture_json_full(
+            EXPECTED_SURFACE,
+            EXPECTED_SOURCE,
+            &page_snippet(1, "page-0001.html").replace("[\"fromDate\", \"2020-02-03\"], ", ""),
+        );
+        write_capture_json(temp.path(), &json);
+        let error = load_staging(temp.path()).expect_err("missing fromDate must be rejected");
+        assert!(matches!(
+            error,
+            StagingError::MissingFormField {
+                page_index: 1,
+                field: "fromDate"
+            }
+        ));
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let json = capture_json_full(
+            EXPECTED_SURFACE,
+            EXPECTED_SOURCE,
+            &page_snippet(1, "page-0001.html")
+                .replace("[\"method\", \"searchDisclosureByStockTypeEtfSub\"], ", ""),
+        );
+        write_capture_json(temp.path(), &json);
+        let error = load_staging(temp.path()).expect_err("missing method must be rejected");
+        assert!(matches!(
+            error,
+            StagingError::MissingFormField {
+                page_index: 1,
+                field: "method"
+            }
+        ));
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let json = capture_json_full(
+            EXPECTED_SURFACE,
+            EXPECTED_SOURCE,
+            &page_snippet(1, "page-0001.html"),
+        );
+        write_capture_json(temp.path(), &json);
+        let (_capture, surface, termination) =
+            load_staging(temp.path()).expect("absent optional surface is allowed");
+        assert_eq!(surface, KindSurface::EtfList);
+        assert_eq!(termination, KindCaptureTermination::ClampedDuplicate);
+    }
+
+    #[test]
+    fn requested_range_date_format_and_order_are_fail_closed() {
+        let malformed = capture_json_full(
+            EXPECTED_SURFACE,
+            EXPECTED_SOURCE,
+            &page_snippet(1, "page-0001.html"),
+        )
+        .replace("\"from\": \"2020-02-03\"", "\"from\": \"2020-2-3\"");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_capture_json(temp.path(), &malformed);
+        let error = load_staging(temp.path()).expect_err("malformed date must be rejected");
+        assert!(matches!(
+            error,
+            StagingError::InvalidRequestedRangeDate { field: "from" }
+        ));
+
+        let reversed = capture_json_full(
+            EXPECTED_SURFACE,
+            EXPECTED_SOURCE,
+            &page_snippet(1, "page-0001.html"),
+        )
+        .replace("\"from\": \"2020-02-03\"", "\"from\": \"2020-02-08\"");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_capture_json(temp.path(), &reversed);
+        let error = load_staging(temp.path()).expect_err("reversed range must be rejected");
+        assert!(matches!(error, StagingError::ReversedRequestedRange));
+    }
+
     // -----------------------------------------------------------------
-    // 8. The plan path writes nothing.
+    // 8. Execute-only page file safety checks.
+    // -----------------------------------------------------------------
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_reader_rejects_a_symlinked_page_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_capture_json(
+            temp.path(),
+            &capture_json_full(
+                EXPECTED_SURFACE,
+                EXPECTED_SOURCE,
+                &page_snippet(1, "page-0001.html"),
+            ),
+        );
+        std::fs::write(temp.path().join("target"), b"not a page").expect("write target");
+        std::os::unix::fs::symlink("target", temp.path().join("page-0001.html"))
+            .expect("create symlink");
+
+        let (capture, _, _) =
+            load_staging(temp.path()).expect("plan-time parse must not open page");
+        let error = match build_captured_pages(temp.path(), &capture) {
+            Err(error) => error,
+            Ok(_) => panic!("execute reader must reject a symlink"),
+        };
+        assert!(matches!(error, CliError::PageSymlink { file } if file == "page-0001.html"));
+    }
+
+    #[test]
+    fn execute_reader_rejects_a_non_regular_page_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_capture_json(
+            temp.path(),
+            &capture_json_full(
+                EXPECTED_SURFACE,
+                EXPECTED_SOURCE,
+                &page_snippet(1, "page-0001.html"),
+            ),
+        );
+        std::fs::create_dir(temp.path().join("page-0001.html")).expect("create directory");
+
+        let (capture, _, _) =
+            load_staging(temp.path()).expect("directory is not opened by staging parse");
+        let error = match build_captured_pages(temp.path(), &capture) {
+            Err(error) => error,
+            Ok(_) => panic!("execute reader must reject a directory"),
+        };
+        assert!(matches!(error, CliError::PageNotRegular { file } if file == "page-0001.html"));
+    }
+
+    #[test]
+    fn execute_reader_rejects_a_sparse_page_larger_than_the_limit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_capture_json(
+            temp.path(),
+            &capture_json_full(
+                EXPECTED_SURFACE,
+                EXPECTED_SOURCE,
+                &page_snippet(1, "page-0001.html"),
+            ),
+        );
+        std::fs::File::create(temp.path().join("page-0001.html"))
+            .expect("create sparse page")
+            .set_len(MAX_CAPTURED_PAGE_BYTES + 1)
+            .expect("extend sparse page");
+
+        let (capture, _, _) = load_staging(temp.path()).expect("staging parse must not read bytes");
+        let error = match build_captured_pages(temp.path(), &capture) {
+            Err(error) => error,
+            Ok(_) => panic!("execute reader must reject an oversized page before reading it"),
+        };
+        assert!(matches!(
+            error,
+            CliError::PageTooLarge {
+                file,
+                max_bytes: MAX_CAPTURED_PAGE_BYTES,
+                actual_bytes,
+            } if file == "page-0001.html" && actual_bytes == MAX_CAPTURED_PAGE_BYTES + 1
+        ));
+    }
+
+    #[test]
+    fn execute_reader_accepts_a_page_at_the_exact_size_limit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_capture_json(
+            temp.path(),
+            &capture_json_full(
+                EXPECTED_SURFACE,
+                EXPECTED_SOURCE,
+                &page_snippet(1, "page-0001.html"),
+            ),
+        );
+        let path = temp.path().join("page-0001.html");
+        std::fs::write(
+            &path,
+            b"<table><tr><th>\xEC\x8B\x9C\xEA\xB0\x84</th></tr></table>",
+        )
+        .expect("write page");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open page")
+            .set_len(MAX_CAPTURED_PAGE_BYTES)
+            .expect("extend page to exact limit");
+
+        let (capture, _, _) = load_staging(temp.path()).expect("valid staging directory must load");
+        let pages = build_captured_pages(temp.path(), &capture)
+            .expect("an exactly-limit regular page must be readable");
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].bytes.len() as u64, MAX_CAPTURED_PAGE_BYTES);
+    }
+
+    // -----------------------------------------------------------------
+    // 9. The plan path writes nothing and never opens page bodies.
     // -----------------------------------------------------------------
 
     #[test]
@@ -898,7 +1541,7 @@ mod tests {
         write_page_file(staging.path(), "page-0001.html", "PAGE-1");
         write_page_file(staging.path(), "page-0002.html", "PAGE-2");
 
-        let (capture, surface) =
+        let (capture, surface, _termination) =
             load_staging(staging.path()).expect("valid staging directory must load");
         run_plan(
             staging.path(),
@@ -914,6 +1557,39 @@ mod tests {
         assert!(
             entries.is_empty(),
             "the plan path must never write into the raw root"
+        );
+    }
+
+    #[test]
+    fn plan_path_does_not_open_a_referenced_page_body() {
+        let staging = tempfile::tempdir().expect("staging tempdir");
+        let raw_root = tempfile::tempdir().expect("raw root tempdir");
+        write_capture_json(
+            staging.path(),
+            &capture_json_full(
+                EXPECTED_SURFACE,
+                EXPECTED_SOURCE,
+                &page_snippet(1, "page-0001.html"),
+            ),
+        );
+        std::fs::create_dir(staging.path().join("page-0001.html"))
+            .expect("create non-regular page entry");
+
+        let (capture, surface, _) =
+            load_staging(staging.path()).expect("plan-time staging parse must not open the page");
+        run_plan(
+            staging.path(),
+            &capture,
+            surface,
+            &raw_root.path().display().to_string(),
+            "vault://test-entitlements/kind-test-only.pdf",
+        );
+        assert!(
+            std::fs::read_dir(raw_root.path())
+                .expect("read raw root")
+                .next()
+                .is_none(),
+            "the plan path must not write into the raw root"
         );
     }
 
