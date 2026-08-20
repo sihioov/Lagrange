@@ -12,8 +12,8 @@ use domain::{ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KIND_DISCLOSURE, ResponseKind};
 use market_data::storage::RawStore;
 use market_data::{
-    CapturedPage, KIND_DISCLOSURE_MAX_PAGES, KIND_ETF_DISCLOSURE_ENDPOINT, KindError,
-    ManifestEntry, ingest_etf_disclosure_capture,
+    CapturedPage, KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT, KIND_DISCLOSURE_MAX_PAGES,
+    KIND_ETF_DISCLOSURE_ENDPOINT, KindError, KindSurface, ManifestEntry, ingest_disclosure_capture,
 };
 
 const NOW: &str = "2026-08-19T08:00:00Z";
@@ -168,12 +168,13 @@ fn happy_path_three_pages_one_batch_three_files_one_manifest_row() {
 
     let pages = vec![captured_page(1), captured_page(2), captured_page(3)];
 
-    let entry = ingest_etf_disclosure_capture(
+    let entry = ingest_disclosure_capture(
         &store,
         MARKET_KR,
         &date,
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
+        KindSurface::EtfList,
         &pages,
     )
     .expect("three well-formed pages should ingest cleanly");
@@ -226,12 +227,13 @@ fn stored_bytes_are_exact_and_content_hash_matches_independent_sha256() {
 
     let pages = vec![captured_page(1), captured_page(2)];
 
-    let entry = ingest_etf_disclosure_capture(
+    let entry = ingest_disclosure_capture(
         &store,
         MARKET_KR,
         &date,
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
+        KindSurface::EtfList,
         &pages,
     )
     .expect("two well-formed pages should ingest cleanly");
@@ -262,12 +264,13 @@ fn empty_or_whitespace_only_entitlement_reference_fails_closed() {
         let date = fixed_date();
         let pages = vec![captured_page(1)];
 
-        let error = ingest_etf_disclosure_capture(
+        let error = ingest_disclosure_capture(
             &store,
             MARKET_KR,
             &date,
             blank,
             FetchMode::Synthetic,
+            KindSurface::EtfList,
             &pages,
         )
         .expect_err("a blank entitlement reference must fail closed");
@@ -289,12 +292,13 @@ fn empty_pages_fails_closed() {
     let (_temp, store) = new_store();
     let date = fixed_date();
 
-    let error = ingest_etf_disclosure_capture(
+    let error = ingest_disclosure_capture(
         &store,
         MARKET_KR,
         &date,
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
+        KindSurface::EtfList,
         &[],
     )
     .expect_err("an empty capture must fail closed");
@@ -329,12 +333,13 @@ fn malformed_page_index_sequences_fail_closed() {
             })
             .collect();
 
-        let error = ingest_etf_disclosure_capture(
+        let error = ingest_disclosure_capture(
             &store,
             MARKET_KR,
             &date,
             SYNTHETIC_ENTITLEMENT_REFERENCE,
             FetchMode::Synthetic,
+            KindSurface::EtfList,
             &pages,
         )
         .expect_err(&format!(
@@ -368,12 +373,13 @@ fn exceeding_max_pages_fails_closed() {
         .map(captured_page)
         .collect();
 
-    let error = ingest_etf_disclosure_capture(
+    let error = ingest_disclosure_capture(
         &store,
         MARKET_KR,
         &date,
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
+        KindSurface::EtfList,
         &pages,
     )
     .expect_err("exceeding the page bound must fail closed");
@@ -404,12 +410,13 @@ fn page_missing_time_column_label_fails_closed() {
         form_fields: form_fields(1),
     }];
 
-    let error = ingest_etf_disclosure_capture(
+    let error = ingest_disclosure_capture(
         &store,
         MARKET_KR,
         &date,
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
+        KindSurface::EtfList,
         &pages,
     )
     .expect_err("a body missing the documented 시간 column must fail closed");
@@ -446,12 +453,13 @@ fn identical_bytes_across_two_pages_fails_closed() {
         },
     ];
 
-    let error = ingest_etf_disclosure_capture(
+    let error = ingest_disclosure_capture(
         &store,
         MARKET_KR,
         &date,
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
+        KindSurface::EtfList,
         &pages,
     )
     .expect_err("byte-identical pages must fail closed");
@@ -484,12 +492,13 @@ fn empty_form_fields_fails_closed() {
         form_fields: vec![],
     }];
 
-    let error = ingest_etf_disclosure_capture(
+    let error = ingest_disclosure_capture(
         &store,
         MARKET_KR,
         &date,
         SYNTHETIC_ENTITLEMENT_REFERENCE,
         FetchMode::Synthetic,
+        KindSurface::EtfList,
         &pages,
     )
     .expect_err("empty form_fields must fail closed");
@@ -527,12 +536,13 @@ fn credential_like_form_field_name_fails_closed_and_sentinel_never_persists() {
             form_fields: fields,
         }];
 
-        let error = ingest_etf_disclosure_capture(
+        let error = ingest_disclosure_capture(
             &store,
             MARKET_KR,
             &date,
             SYNTHETIC_ENTITLEMENT_REFERENCE,
             FetchMode::Synthetic,
+            KindSurface::EtfList,
             &pages,
         )
         .expect_err(&format!(
@@ -584,12 +594,13 @@ fn any_rejection_leaves_no_provider_directory_or_manifest_behind() {
         let (_temp, store) = new_store();
         let date = fixed_date();
 
-        let result = ingest_etf_disclosure_capture(
+        let result = ingest_disclosure_capture(
             &store,
             MARKET_KR,
             &date,
             entitlement_reference,
             FetchMode::Synthetic,
+            KindSurface::EtfList,
             &pages,
         );
         assert!(result.is_err(), "{label}: expected a fail-closed rejection");
@@ -601,14 +612,75 @@ fn any_rejection_leaves_no_provider_directory_or_manifest_behind() {
     // entitlement check specifically, not for some other reason.
     let (_temp, store) = new_store();
     let date = fixed_date();
-    let result = ingest_etf_disclosure_capture(
+    let result = ingest_disclosure_capture(
         &store,
         MARKET_KR,
         &date,
         "   ",
         FetchMode::Synthetic,
+        KindSurface::EtfList,
         &[captured_page(1)],
     );
     assert!(result.is_err());
     assert_nothing_written(&store);
+}
+
+// ---------------------------------------------------------------------
+// Test 11: the two KIND search surfaces are differently scoped (see
+// `KindSurface`'s doc comment), so the same otherwise-valid pages must
+// record a different endpoint id depending on which surface ingested them.
+// ---------------------------------------------------------------------
+
+#[test]
+fn recorded_endpoint_differs_by_surface() {
+    let date = fixed_date();
+
+    let (_temp_etf_list, store_etf_list) = new_store();
+    let etf_list_pages = vec![captured_page(1), captured_page(2)];
+    let etf_list_entry = ingest_disclosure_capture(
+        &store_etf_list,
+        MARKET_KR,
+        &date,
+        SYNTHETIC_ENTITLEMENT_REFERENCE,
+        FetchMode::Synthetic,
+        KindSurface::EtfList,
+        &etf_list_pages,
+    )
+    .expect("etf-list surface should ingest cleanly");
+
+    let (_temp_detail_etf, store_detail_etf) = new_store();
+    let detail_etf_pages = vec![captured_page(1), captured_page(2)];
+    let detail_etf_entry = ingest_disclosure_capture(
+        &store_detail_etf,
+        MARKET_KR,
+        &date,
+        SYNTHETIC_ENTITLEMENT_REFERENCE,
+        FetchMode::Synthetic,
+        KindSurface::DetailEtf,
+        &detail_etf_pages,
+    )
+    .expect("detail-etf surface should ingest cleanly");
+
+    assert_eq!(etf_list_entry.files.len(), 2);
+    assert_eq!(detail_etf_entry.files.len(), 2);
+
+    for file in &etf_list_entry.files {
+        assert_eq!(file.request.endpoint, KIND_ETF_DISCLOSURE_ENDPOINT);
+    }
+    for file in &detail_etf_entry.files {
+        assert_eq!(file.request.endpoint, KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT);
+    }
+
+    assert_ne!(
+        KIND_ETF_DISCLOSURE_ENDPOINT, KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT,
+        "the two surfaces must never be collapsed onto one endpoint id"
+    );
+
+    let etf_list_manifest = manifest_text(&store_etf_list);
+    assert!(etf_list_manifest.contains(KIND_ETF_DISCLOSURE_ENDPOINT));
+    assert!(!etf_list_manifest.contains(KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT));
+
+    let detail_etf_manifest = manifest_text(&store_detail_etf);
+    assert!(detail_etf_manifest.contains(KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT));
+    assert!(!detail_etf_manifest.contains(KIND_ETF_DISCLOSURE_ENDPOINT));
 }

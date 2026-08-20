@@ -3,11 +3,16 @@
 //! Reads a **capture staging directory** already produced by a separate
 //! browser-capture stage (`capture.json` plus one HTML file per page) and
 //! commits it as one immutable Raw batch via
-//! [`market_data::ingest_etf_disclosure_capture`]. This binary owns argument
+//! [`market_data::ingest_disclosure_capture`]. This binary owns argument
 //! parsing, environment validation, staging-directory parsing, and output
 //! formatting only — every content/sequencing/credential rule already lives
 //! in `market_data::providers::kind`; this file does not duplicate any of
 //! it.
+//!
+//! `capture.json`'s `surface` field must name one of the two approved KIND
+//! search surfaces (see [`market_data::KindSurface`]) — they are differently
+//! scoped, so which one produced a given capture is recorded on the batch
+//! rather than collapsed onto a single endpoint id.
 //!
 //! # Why this is gated
 //!
@@ -22,7 +27,7 @@
 //! [`ENTITLEMENT_REFERENCE_ENV_VAR`] to be set and non-empty.
 //!
 //! `--plan` never opens a page's HTML file and never constructs a
-//! [`RawStore`] or calls [`ingest_etf_disclosure_capture`] — see
+//! [`RawStore`] or calls [`ingest_disclosure_capture`] — see
 //! [`run_plan`], which only ever receives an already-parsed [`CaptureJson`]
 //! and prints from it. Loading that structure ([`load_staging`]) itself only
 //! reads `capture.json` and the staging directory's file listing; it never
@@ -55,8 +60,8 @@ use std::process::ExitCode;
 use chrono::Datelike;
 use domain::{TradingDate, UtcTimestamp};
 use market_data::{
-    CapturedPage, FetchMode, KindError, MARKET_KR, ManifestEntry, RawStore,
-    ingest_etf_disclosure_capture,
+    CapturedPage, FetchMode, KindError, KindSurface, MARKET_KR, ManifestEntry, RawStore,
+    ingest_disclosure_capture,
 };
 use serde::Deserialize;
 
@@ -85,10 +90,17 @@ const CONFIRM_ENV_VAR: &str = "KIND_CONFIRM";
 /// The exact literal `KIND_CONFIRM` must equal for `--execute` to run.
 const CONFIRM_LITERAL: &str = "I_UNDERSTAND_READ_ONLY_KIND_INGEST";
 
-/// The one surface this CLI ingests. See the module doc comment.
-const EXPECTED_SURFACE: &str = "etf-disclosure-list";
 /// The one capture source this CLI accepts.
 const EXPECTED_SOURCE: &str = "kind.krx.co.kr";
+/// The staging `surface` id for [`KindSurface::EtfList`]. Test-only: the CLI
+/// itself accepts either known surface id via
+/// [`KindSurface::parse_staging_id`], not a single expected literal.
+#[cfg(test)]
+const EXPECTED_SURFACE: &str = KindSurface::EtfList.staging_id();
+/// The staging `surface` id for [`KindSurface::DetailEtf`]. See
+/// [`EXPECTED_SURFACE`].
+#[cfg(test)]
+const EXPECTED_SURFACE_DETAIL_ETF: &str = KindSurface::DetailEtf.staging_id();
 const CAPTURE_JSON_FILE_NAME: &str = "capture.json";
 const HTML_EXTENSION: &str = "html";
 
@@ -161,7 +173,9 @@ impl fmt::Display for StagingError {
             ),
             Self::UnsupportedSurface(value) => write!(
                 f,
-                "unsupported surface {value:?} (expected {EXPECTED_SURFACE:?})"
+                "unsupported surface {value:?} (expected {:?} or {:?})",
+                KindSurface::EtfList.staging_id(),
+                KindSurface::DetailEtf.staging_id()
             ),
             Self::UnsupportedSource(value) => write!(
                 f,
@@ -258,11 +272,17 @@ fn run(raw_args: &[String]) -> Result<(), CliError> {
     let raw_root = required_env(RAW_ROOT_ENV_VAR)?;
     let entitlement_reference = required_env(ENTITLEMENT_REFERENCE_ENV_VAR)?;
 
-    let capture = load_staging(&args.staging).map_err(CliError::Staging)?;
+    let (capture, surface) = load_staging(&args.staging).map_err(CliError::Staging)?;
 
     match args.action {
         Action::Plan => {
-            run_plan(&args.staging, &capture, &raw_root, &entitlement_reference);
+            run_plan(
+                &args.staging,
+                &capture,
+                surface,
+                &raw_root,
+                &entitlement_reference,
+            );
             Ok(())
         }
         Action::Execute => {
@@ -270,7 +290,13 @@ fn run(raw_args: &[String]) -> Result<(), CliError> {
             if confirm != CONFIRM_LITERAL {
                 return Err(CliError::InvalidConfirm);
             }
-            run_execute(&args.staging, capture, raw_root, entitlement_reference)
+            run_execute(
+                &args.staging,
+                capture,
+                surface,
+                raw_root,
+                entitlement_reference,
+            )
         }
     }
 }
@@ -330,7 +356,12 @@ fn check_no_stray_html_files(
 /// opens a page's HTML file — see the module doc comment. This is the one
 /// function both `--plan` and `--execute` call to make sense of a staging
 /// directory.
-fn load_staging(dir: &Path) -> Result<CaptureJson, StagingError> {
+///
+/// Returns the parsed [`CaptureJson`] alongside the [`KindSurface`] its
+/// `surface` field named — `capture.json`'s `surface` must name one of the
+/// two approved surfaces (see [`KindSurface::parse_staging_id`]), anything
+/// else is rejected as [`StagingError::UnsupportedSurface`].
+fn load_staging(dir: &Path) -> Result<(CaptureJson, KindSurface), StagingError> {
     let capture_path = dir.join(CAPTURE_JSON_FILE_NAME);
     let raw = std::fs::read_to_string(&capture_path).map_err(|source| StagingError::Io {
         path: capture_path.clone(),
@@ -339,9 +370,8 @@ fn load_staging(dir: &Path) -> Result<CaptureJson, StagingError> {
     let capture: CaptureJson =
         serde_json::from_str(&raw).map_err(StagingError::MalformedCaptureJson)?;
 
-    if capture.surface != EXPECTED_SURFACE {
-        return Err(StagingError::UnsupportedSurface(capture.surface));
-    }
+    let surface = KindSurface::parse_staging_id(&capture.surface)
+        .ok_or_else(|| StagingError::UnsupportedSurface(capture.surface.clone()))?;
     if capture.source != EXPECTED_SOURCE {
         return Err(StagingError::UnsupportedSource(capture.source));
     }
@@ -363,11 +393,11 @@ fn load_staging(dir: &Path) -> Result<CaptureJson, StagingError> {
 
     check_no_stray_html_files(dir, &referenced_file_names)?;
 
-    Ok(capture)
+    Ok((capture, surface))
 }
 
 /// Reads every page's bytes from disk exactly as they are (no transform)
-/// and assembles the [`CapturedPage`] list [`ingest_etf_disclosure_capture`]
+/// and assembles the [`CapturedPage`] list [`ingest_disclosure_capture`]
 /// expects. Only ever called from `--execute`; `--plan` never calls this.
 fn build_captured_pages(dir: &Path, capture: &CaptureJson) -> Result<Vec<CapturedPage>, CliError> {
     let mut pages = Vec::with_capacity(capture.pages.len());
@@ -390,16 +420,18 @@ fn build_captured_pages(dir: &Path, capture: &CaptureJson) -> Result<Vec<Capture
 }
 
 /// Prints exactly what would be ingested and returns without ever
-/// constructing a [`RawStore`] or calling [`ingest_etf_disclosure_capture`]
+/// constructing a [`RawStore`] or calling [`ingest_disclosure_capture`]
 /// — there is no code path from here to a write of any kind.
 fn run_plan(
     staging_dir: &Path,
     capture: &CaptureJson,
+    surface: KindSurface,
     raw_root: &str,
     entitlement_reference: &str,
 ) {
     println!("staging: {}", staging_dir.display());
     println!("surface: {}", capture.surface);
+    println!("endpoint: {}", surface.endpoint_id());
     println!(
         "requested_range: {} to {}",
         capture.requested_range.from, capture.requested_range.to
@@ -422,6 +454,7 @@ fn run_plan(
 fn run_execute(
     staging_dir: &Path,
     capture: CaptureJson,
+    surface: KindSurface,
     raw_root: String,
     entitlement_reference: String,
 ) -> Result<(), CliError> {
@@ -432,12 +465,13 @@ fn run_execute(
     let date = TradingDate::new(today.year(), today.month(), today.day())
         .expect("the system clock's current UTC date is always a valid calendar date");
 
-    let entry = ingest_etf_disclosure_capture(
+    let entry = ingest_disclosure_capture(
         &store,
         MARKET_KR,
         &date,
         &entitlement_reference,
         FetchMode::Credentialed,
+        surface,
         &pages,
     )
     .map_err(CliError::Ingest)?;
@@ -705,6 +739,53 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
+    // 3b. Both approved staging surface ids are accepted and map to the
+    //     expected endpoint id; anything else is rejected.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn both_known_surface_ids_are_accepted_and_map_to_expected_endpoint() {
+        let cases = [
+            (EXPECTED_SURFACE, KindSurface::EtfList),
+            (EXPECTED_SURFACE_DETAIL_ETF, KindSurface::DetailEtf),
+        ];
+
+        for (surface_id, expected_surface) in cases {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let json = capture_json_full(
+                surface_id,
+                EXPECTED_SOURCE,
+                &page_snippet(1, "page-0001.html"),
+            );
+            write_capture_json(temp.path(), &json);
+            write_page_file(temp.path(), "page-0001.html", "A");
+
+            let (_capture, surface) = load_staging(temp.path())
+                .unwrap_or_else(|error| panic!("{surface_id:?} must be accepted: {error}"));
+            assert_eq!(
+                surface, expected_surface,
+                "{surface_id:?} must parse into {expected_surface:?}"
+            );
+            assert_eq!(surface.endpoint_id(), expected_surface.endpoint_id());
+        }
+    }
+
+    #[test]
+    fn unknown_surface_id_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let json = capture_json_full(
+            "some-other-surface",
+            EXPECTED_SOURCE,
+            &page_snippet(1, "page-0001.html"),
+        );
+        write_capture_json(temp.path(), &json);
+        write_page_file(temp.path(), "page-0001.html", "A");
+
+        let error = load_staging(temp.path()).expect_err("unknown surface must be rejected");
+        assert!(matches!(error, StagingError::UnsupportedSurface(s) if s == "some-other-surface"));
+    }
+
+    // -----------------------------------------------------------------
     // 4. Empty `pages` array.
     // -----------------------------------------------------------------
 
@@ -783,8 +864,10 @@ mod tests {
         write_page_file(temp.path(), "page-0001.html", "PAGE-1");
         write_page_file(temp.path(), "page-0002.html", "PAGE-2");
 
-        let capture = load_staging(temp.path()).expect("valid staging directory must load");
+        let (capture, surface) =
+            load_staging(temp.path()).expect("valid staging directory must load");
         assert_eq!(capture.pages.len(), 2);
+        assert_eq!(surface, KindSurface::EtfList);
 
         let pages = build_captured_pages(temp.path(), &capture).expect("bytes must be readable");
         assert_eq!(pages.len(), 2);
@@ -815,10 +898,12 @@ mod tests {
         write_page_file(staging.path(), "page-0001.html", "PAGE-1");
         write_page_file(staging.path(), "page-0002.html", "PAGE-2");
 
-        let capture = load_staging(staging.path()).expect("valid staging directory must load");
+        let (capture, surface) =
+            load_staging(staging.path()).expect("valid staging directory must load");
         run_plan(
             staging.path(),
             &capture,
+            surface,
             &raw_root.path().display().to_string(),
             "vault://test-entitlements/kind-test-only.pdf",
         );

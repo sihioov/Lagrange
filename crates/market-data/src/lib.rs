@@ -111,8 +111,9 @@ pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
 };
 pub use providers::kind::{
-    CapturedPage, KIND_DISCLOSURE_MAX_PAGES, KIND_DISCLOSURE_PAGE_SIZE,
-    KIND_ETF_DISCLOSURE_ENDPOINT, KindError, ingest_etf_disclosure_capture,
+    CapturedPage, KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT, KIND_DISCLOSURE_MAX_PAGES,
+    KIND_DISCLOSURE_PAGE_SIZE, KIND_ETF_DISCLOSURE_ENDPOINT, KindError, KindSurface,
+    ingest_disclosure_capture,
 };
 pub use providers::kis::{
     KR_ETF_CORE_SYMBOLS, KisProvider, KisRead, MAX_DAILY_BAR_OBSERVATIONS, MAX_DAILY_BAR_WINDOWS,

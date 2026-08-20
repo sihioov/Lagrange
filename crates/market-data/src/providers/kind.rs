@@ -15,7 +15,7 @@
 //! Pipeline shape: caller-supplied [`CapturedPage`]s -> this module's own
 //! validation -> [`RawStore::store_batch`] (one atomic call that persists
 //! the batch and appends its manifest row) -> a [`ManifestEntry`]. Nothing
-//! is written unless every page validates; see [`ingest_etf_disclosure_capture`].
+//! is written unless every page validates; see [`ingest_disclosure_capture`].
 //!
 //! [`crate::contract::ResponseKind::DisclosureIndex`] is reused rather than
 //! given a new variant: a KIND disclosure search-index page and an OpenDART
@@ -52,6 +52,9 @@ use crate::storage::{BatchSpec, ManifestEntry, RawStore, StoreError};
 /// Documented endpoint id for the KIND ETF disclosure-search capture surface
 /// (`POST disclosurebystocktype.do`, `method=searchDisclosureByStockTypeEtfSub`).
 pub const KIND_ETF_DISCLOSURE_ENDPOINT: &str = "kind.disclosure.etf.list.v1";
+/// Documented endpoint id for the KIND 상세검색 (`details.do`) capture
+/// surface, filtered to the ETF security type and disclosure-type filters.
+pub const KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT: &str = "kind.disclosure.detail.etf.v1";
 /// The page's own `fnSearch()` request always sends `currentPageSize=15`.
 pub const KIND_DISCLOSURE_PAGE_SIZE: u32 = 15;
 /// Hard walk bound: a capture claiming more pages than this fails closed
@@ -59,6 +62,48 @@ pub const KIND_DISCLOSURE_PAGE_SIZE: u32 = 15;
 /// bound (`DISCLOSURE_LIST_MAX_PAGES`) for the same reason — an unbounded
 /// pagination claim can never be proven complete.
 pub const KIND_DISCLOSURE_MAX_PAGES: usize = 40;
+
+/// Which KIND search surface produced a capture. The two are differently
+/// scoped — the same window yields 473 disclosures on the ETF-scoped page and
+/// 66 on 상세검색 with the ETF security type — so a batch records which one it
+/// came from rather than treating them as interchangeable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KindSurface {
+    /// The ETF-scoped disclosure-search list surface (`POST
+    /// disclosurebystocktype.do`, `method=searchDisclosureByStockTypeEtfSub`).
+    EtfList,
+    /// The 상세검색 (`details.do`) surface, filtered to the ETF security type
+    /// and disclosure-type filters.
+    DetailEtf,
+}
+
+impl KindSurface {
+    /// The value that identifies this surface in a staging `capture.json`'s
+    /// `surface` field.
+    pub const fn staging_id(self) -> &'static str {
+        match self {
+            Self::EtfList => "etf-disclosure-list",
+            Self::DetailEtf => "etf-pit-disclosure-search",
+        }
+    }
+
+    /// The documented endpoint id recorded on every [`RequestMetadata`] a
+    /// capture from this surface produces.
+    pub const fn endpoint_id(self) -> &'static str {
+        match self {
+            Self::EtfList => KIND_ETF_DISCLOSURE_ENDPOINT,
+            Self::DetailEtf => KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT,
+        }
+    }
+
+    /// Parses a staging `capture.json`'s `surface` field into a
+    /// [`KindSurface`], or `None` if it names neither known surface.
+    pub fn parse_staging_id(s: &str) -> Option<Self> {
+        [Self::EtfList, Self::DetailEtf]
+            .into_iter()
+            .find(|surface| surface.staging_id() == s)
+    }
+}
 
 /// The `시간` (per-disclosure timestamp) column label every captured page's
 /// decoded body must contain. This is the entire reason KIND is the chosen
@@ -276,8 +321,9 @@ fn validate_form_fields(page: &CapturedPage) -> Result<(), KindError> {
     Ok(())
 }
 
-/// Raw-ingests one already-captured KIND ETF disclosure-search date range:
-/// one batch, one file per page (`page-0001.html`, `page-0002.html`, ...).
+/// Raw-ingests one already-captured KIND disclosure-search date range from
+/// one [`KindSurface`]: one batch, one file per page (`page-0001.html`,
+/// `page-0002.html`, ...).
 ///
 /// Validates every page before writing anything: page-index sequencing and
 /// bound (see [`validate_page_sequence`]), then, per page, non-empty
@@ -291,12 +337,18 @@ fn validate_form_fields(page: &CapturedPage) -> Result<(), KindError> {
 ///
 /// `entitlement_reference` is required, not optional, and an empty or
 /// whitespace-only value fails closed before any page is examined.
-pub fn ingest_etf_disclosure_capture(
+///
+/// `surface` identifies which KIND search surface produced `pages` — the two
+/// are differently scoped (see [`KindSurface`]), so its
+/// [`KindSurface::endpoint_id`] is what gets recorded on every page's
+/// [`RequestMetadata::endpoint`], not a single shared constant.
+pub fn ingest_disclosure_capture(
     store: &RawStore,
     market: &str,
     date: &TradingDate,
     entitlement_reference: &str,
     mode: FetchMode,
+    surface: KindSurface,
     pages: &[CapturedPage],
 ) -> Result<ManifestEntry, KindError> {
     let entitlement_reference = require_entitlement_reference(entitlement_reference)?;
@@ -319,7 +371,7 @@ pub fn ingest_etf_disclosure_capture(
         }
 
         let request = RequestMetadata {
-            endpoint: KIND_ETF_DISCLOSURE_ENDPOINT.to_owned(),
+            endpoint: surface.endpoint_id().to_owned(),
             query: page.form_fields.clone(),
             headers: Vec::new(),
             mode,
