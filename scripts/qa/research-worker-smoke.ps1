@@ -23,6 +23,9 @@ if ([string]::IsNullOrWhiteSpace($env:LAGRANGE_CODE_COMMIT)) {
 $env:RESEARCH_APP_ENV = 'qa'
 $env:RESEARCH_FETCH_MODE = 'synthetic'
 $env:RESEARCH_CANDIDATE_ENABLED = 'true'
+if ([string]::IsNullOrWhiteSpace($env:RANGE_RAW_BATCH_ID)) {
+    $env:RANGE_RAW_BATCH_ID = '00000000-0000-0000-0000-000000000001'
+}
 if ([string]::IsNullOrWhiteSpace($env:BACKTEST_MIN_FREE_BYTES)) { $env:BACKTEST_MIN_FREE_BYTES = '1073741824' }
 if ([string]::IsNullOrWhiteSpace($env:BACKTEST_MAX_QUEUED_BACKTESTS)) { $env:BACKTEST_MAX_QUEUED_BACKTESTS = '1000' }
 if ([string]::IsNullOrWhiteSpace($env:BACKTEST_RECONCILE_GRACE_SECS)) { $env:BACKTEST_RECONCILE_GRACE_SECS = '900' }
@@ -272,7 +275,7 @@ function Invoke-StaticChecks {
     if (-not (Test-Path -LiteralPath $schemaSqlFile)) { throw "missing tracked schema gate: $schemaSqlFile" }
     $schemaSql = Get-Content -Raw -LiteralPath $schemaSqlFile
     foreach ($required in @(
-        '_sqlx_migrations', 'version IN (22, 23, 24, 25, 33, 34, 35)', 'convalidated',
+        '_sqlx_migrations', 'version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46, 47)', 'convalidated',
         'pg_get_constraintdef', 'format_type', 'attnotnull', 'attidentity',
         'pg_get_expr', 'storage_path', 'EXCEPT',
         'data_batches_source_file_uq', 'trading_calendar_versions_source_lookup_idx',

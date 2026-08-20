@@ -139,14 +139,13 @@ def run_golden(args: argparse.Namespace) -> tuple[object, dict, dict]:
     from nautilus_trader.backtest.node import BacktestNode
 
     data_root = Path(args.data_root)
-    curated_root = data_root / "curated"
     catalog_path = data_root / "catalog"
 
     rows = synth_data.generate_curated_rows()
     phase0_dataset.materialize_curated_zone(
-        rows, curated_root, version=synth_data.CURATED_VERSION
+        rows, data_root, version=synth_data.CURATED_VERSION
     )
-    catalog = _catalog_builder.build_catalog(curated_root, catalog_path)
+    catalog = _catalog_builder.build_catalog(data_root, catalog_path)
     catalog_obj = ParquetDataCatalog(path=str(catalog_path))
     materialize_quotes(catalog_obj, rows, args.slippage_bps)
 

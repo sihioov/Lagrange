@@ -49,7 +49,7 @@ def build_dataset(data_root: Path) -> Path:
     synth, runner = _load_phase0()
     rows = synth.generate_curated_rows()
     runner.phase0_dataset.materialize_curated_zone(
-        rows, data_root / "curated", version=synth.CURATED_VERSION
+        rows, data_root, version=synth.CURATED_VERSION
     )
     return data_root
 
@@ -104,7 +104,7 @@ def test_v2_decimal_prices_reach_quote_materialization_as_raw_scale4(tmp_path):
     from backtest_worker.simulate import _read_curated_rows
 
     dataset = build_dataset(tmp_path / "dataset")
-    rows = _read_curated_rows(dataset / "curated")
+    rows = _read_curated_rows(dataset)
     first = next(
         row
         for row in rows

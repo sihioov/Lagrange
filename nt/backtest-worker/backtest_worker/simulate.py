@@ -37,7 +37,7 @@ def _fmt_ts(date_str: str, suffix: str) -> str:
     return f"{date_str}T{suffix}"
 
 
-def _read_curated_rows(curated_root: Path) -> list[dict[str, Any]]:
+def _read_curated_rows(data_root: Path) -> list[dict[str, Any]]:
     import pyarrow.parquet as pq
 
     catalog_builder = importlib.import_module("custom-data.catalog_builder")
@@ -45,7 +45,7 @@ def _read_curated_rows(curated_root: Path) -> list[dict[str, Any]]:
     # Phase-0 layout: build_catalog treats its argument as the DATA root and
     # reads <data_root>/curated/bars/... (materialized that way by the phase-0
     # runner); mirror it exactly so both readers agree.
-    bars_dir = curated_root / "curated" / "bars"
+    bars_dir = data_root / "curated" / "bars"
     if not bars_dir.is_dir():
         raise SimulateError(f"curated bars zone missing: {bars_dir}")
     rows: list[dict[str, Any]] = []
@@ -141,15 +141,14 @@ def _run_backtest(request: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     from nautilus_trader.trading.config import ImportableStrategyConfig
 
     dataset_path = Path(request["dataset_path"])
-    curated_root = dataset_path / "curated"
     catalog_dir = run_dir / "catalog"
 
-    rows = _read_curated_rows(curated_root)
+    rows = _read_curated_rows(dataset_path)
     rows = _apply_window(rows, request.get("start_date"), request.get("end_date"))
     instruments = sorted({row["instrument_id"] for row in rows})
 
     builder = importlib.import_module("custom-data.catalog_builder")
-    builder.build_catalog(curated_root, catalog_dir)
+    builder.build_catalog(dataset_path, catalog_dir)
     catalog = ParquetDataCatalog(path=str(catalog_dir))
     slippage_bps = int(request.get("slippage_bps", 10))
     _materialize_quotes(catalog, rows, slippage_bps)

@@ -178,12 +178,12 @@ def PENDING_TARGET_WINDOW_PROOF(close_ts: int, open_ts: int) -> bool:
     return close_ts < open_ts
 
 
-def _read_curated_rows(curated_root: Path) -> list[dict[str, Any]]:
+def _read_curated_rows(data_root: Path) -> list[dict[str, Any]]:
     """Reads every bars partition (read-only) plus its adjustment factors.
 
     Partition layout: data/curated/bars/market={m}/symbol={s}/year={y}/version={v}/.
     """
-    bars_dir = curated_root / "curated" / "bars"
+    bars_dir = data_root / "curated" / "bars"
     if not bars_dir.is_dir():
         raise CatalogBuilderError(f"curated bars zone missing: {bars_dir}")
     bars_paths = sorted(bars_dir.rglob("bars.parquet"))
@@ -275,13 +275,13 @@ def catalog_content_hash(events: list[Any], equities: list[dict[str, Any]]) -> s
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
-def build_catalog(curated_root: Path, catalog_path: Path) -> dict[str, Any]:
+def build_catalog(data_root: Path, catalog_path: Path) -> dict[str, Any]:
     """Builds the NT catalog at `catalog_path` from the read-only curated zone.
 
     Returns {"content_hash", "event_count", "instruments", "classes",
     "data_versions"} for callers and the manifest.
     """
-    rows = _read_curated_rows(curated_root)
+    rows = _read_curated_rows(data_root)
     events = build_events_from_curated(rows)
 
     instruments = sorted({str(e.instrument_id) for e in events})

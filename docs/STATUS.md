@@ -1,6 +1,6 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준일: 2026년 8월 20일 (2026-08-20).** §0.1~§0.12는
+**최신 기준일: 2026년 8월 21일 (2026-08-21).** §0.1~§0.12는
 운영·Stage6 진행 당시의 날짜별 스냅샷이고, 현재 개발 worktree의 권위 있는
 remediation 상태와 다음 작업은 §0.13~§0.14다. 현재 `main` 상태와 최신 KIS
 명세 보정은 §0.14 끝부분을 우선한다. 이후 §1부터는 설계 목표와
@@ -233,14 +233,14 @@ green으로 기록하지 않는다.
 
 **2026-08-19 당시의 부분 승인 기록.** 소유자가 OpenDART 코어(`list.json`/`list.xml`, `corpCode.xml`, `company.json`)를 fixture 기반 Raw 어댑터 작업 범위로 승인했다. 나머지 allowlist 행, 모든 계정 등록, 라이선스 해석은 계속 보류였다. 당시에는 어떤 소스에도 key가 발급되지 않아 실제 요청이 없었다. 이후의 key·단일 live `corpCode.xml` 관측과 ETF11 결론은 §0.7 및 ADR-0004 D4를 따른다. KRX 미러 vs 원본 선택, KSD 포함 여부, KOGL 제2유형·KRX 제11조③ `entitlement_reference`의 미결정 기록은 유지한다.
 
-### 0.14 Remediation 이후 현재 worktree와 다음 작업 (2026-08-20)
+### 0.14 Remediation 이후 현재 worktree와 다음 작업 (2026-08-21)
 
 Remediation commit `90ac83d` and correction commit `460c942` were pushed on
 `origin/unspecified-task`. Draft PR #1 was opened only to obtain CI evidence;
 the owner subsequently selected reviewed direct-main delivery rather than a PR
 merge. Python-focused gates are green. The local host still cannot provide QA
-PostgreSQL, while the remote DB-backed gates ran and remained red as described
-below. The correction-viewer capture, separate Raw
+PostgreSQL. Direct-main correction `7966e72`의 GitHub PostgreSQL integration은
+green으로 전환됐고, workspace test는 아래의 두 후속 원인 11건만 남겼다. The correction-viewer capture, separate Raw
 ingest, and ordered-membership normalizer are implemented in the current change
 set. Node tests are 37/37, the Rust correction normalizer tests are 5/5, the Raw
 CLI tests are 16/16, workspace strict Clippy is clean, and all workspace test
@@ -250,13 +250,14 @@ does not prove a multi-version correction chain.
 
 **현재 저장소 상태.** canonical repository는 Git remote 기준 `Lagrange`다.
 reviewed direct-main merge는
-`3ebc288e128b7a08a8434d6293a2b03a1347e1a9`로 완료됐고, 확인 시점의
-`main`과 `origin/main`은 같은 커밋을 가리킨다. 기존
+`3ebc288e128b7a08a8434d6293a2b03a1347e1a9`로 완료됐고 첫 CI 보정
+`7966e72585a27820b789220a5c85830771d5ac93`도 `main`에 직접 push했다. 기존
 `/data/workspace/lagrange` worktree에서 직접 병합했으며 새 worktree나 새 브랜치를
-만들지 않았다. 최신 direct-main CI run `32362557843`에서 policy, format, web,
-Clippy는 통과했고 PostgreSQL integration과 workspace test는 baseline과 같은
-DB-backed 실패 집합(각각 6개와 31개 test name)으로 실패했다. 따라서 정적·오프라인
-게이트는 green이지만 전체 workspace green이나 production READY는 아니다. 공식 KIS
+만들지 않았다. `7966e72`의 CI run `32390587037`에서 policy, format, web,
+Clippy, PostgreSQL integration은 통과했고 workspace test만 11건 실패했다.
+별도 research-smoke run `32390587409`는 profile-gated range service의 필수
+`RANGE_RAW_BATCH_ID`를 functional Compose config에 공급하지 않아 실패했다.
+따라서 해당 시점에는 전체 workspace green이나 production READY를 주장하지 않는다. 공식 KIS
 XLSX는 계속 의도적으로 untracked이며 수정·삭제·커밋하지 않는다.
 
 **Historical remediation-branch comparison — 아래 direct-main CI 보정으로
@@ -357,10 +358,23 @@ KIND relation 전에는 Curated/PIT 승격이 계속 차단된다. 이 검토에
 `scripts.ci.test_ci_contract` 6/6, `recommendation_compute` 16/16,
 backtest path focused test 1/1, `market-data` 357/357, `cargo fmt --check`,
 `git diff --check`, workspace all-target/all-feature `--no-run`이 통과했다.
-다만 이 호스트는 `DATABASE_URL`이 없고 Docker daemon socket 접근이 거부되므로
-DB-backed runtime suite는 아직 재실행하지 못했다. 따라서 위 run의 red 판정을
-green으로 소급하지 않으며, 후속 CI의 disposable QA PostgreSQL에서 동일 실패 집합이
-실제로 닫혔는지 확인해야 한다.
+이후 run `32390587037`에서 기존 31개 workspace 실패 중 20개와 PostgreSQL
+integration 6개가 닫혔다. 남은 workspace 실패 11개는 (1) Python isolated
+worker/golden 경로가 `data_root/curated/bars`에 `curated`를 다시 붙인 backtest 8개,
+(2) candidate 실행 역할 `worker`에 읽기 전용
+`price_dataset_entitlement_is_valid(uuid,text,date,date)` 실행 권한이 없어
+`CANDIDATE_INPUT_UNAVAILABLE`로 닫힌 candidate/API 3개였다. Python 경로 계약을
+`data_root` 기준으로 통일했고, 적용된 0046을 수정하지 않고 가역적 0047 migration으로
+그 Boolean attestation 함수만 `worker`에 위임했다. `app`/`admin`/`audit_writer`와
+직접 entitlement table 접근은 계속 거부한다. 로컬 focused 검증은 Python 35/35,
+candidate runner 2/2, candidate HTTP 9/9, migration contract 28/28을 통과했다.
+
+Research smoke의 별도 interpolation 결함도 production Compose의 필수값 계약을
+완화하지 않고 Bash/PowerShell QA 스크립트가 동일한 deterministic non-secret UUID를
+functional config에 공급하도록 수정했다. CI contract 6/6, Bash static/self-test,
+문법 검사는 통과했다. 이 호스트는 Docker daemon과 PowerShell이 없어 functional
+Compose/PowerShell 실행은 후속 CI 증거를 사용한다. 전체 green 최종 판정도 후속
+`main` CI와 research-smoke가 이 변경을 실제 실행한 결과로만 내린다.
 
 **결정 뒤에도 남은 외부 입력.** 다음 세 항목은 추측해서 진행하지 않는다.
 

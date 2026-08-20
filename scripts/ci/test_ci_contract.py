@@ -202,12 +202,20 @@ class WorkflowContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         for fixture in (
+            'RANGE_RAW_BATCH_ID="${RANGE_RAW_BATCH_ID:-00000000-0000-0000-0000-000000000001}"',
             'BACKTEST_MIN_FREE_BYTES="${BACKTEST_MIN_FREE_BYTES:-1073741824}"',
             'BACKTEST_MAX_QUEUED_BACKTESTS="${BACKTEST_MAX_QUEUED_BACKTESTS:-1000}"',
             'BACKTEST_RECONCILE_GRACE_SECS="${BACKTEST_RECONCILE_GRACE_SECS:-900}"',
             'BACKTEST_RECONCILE_INTERVAL_SECS="${BACKTEST_RECONCILE_INTERVAL_SECS:-60}"',
         ):
             self.assertIn(fixture, script)
+        powershell_script = (
+            ROOT / "scripts" / "qa" / "research-worker-smoke.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "$env:RANGE_RAW_BATCH_ID = '00000000-0000-0000-0000-000000000001'",
+            powershell_script,
+        )
         self.assertIn("provision-runtime-secrets.sh|runtime-static-check.sh", script)
         self.assertNotIn("README.md|.gitignore|*.example|*.sh", script)
         self.assertIn("rc build research-worker candidate-runner", script)
@@ -234,7 +242,7 @@ class WorkflowContractTests(unittest.TestCase):
             script,
         )
         self.assertIn("ledger_state=", script)
-        self.assertIn('if [ "$ledger_state" != "10" ]', script)
+        self.assertIn('if [ "$ledger_state" != "11" ]', script)
         self.assertIn("candidate_source_evidence()", script)
         self.assertIn("krx_kosdaq150_membership", script)
         self.assertIn("candidate_before=", script)

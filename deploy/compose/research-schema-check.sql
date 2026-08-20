@@ -8,8 +8,8 @@ DECLARE
 BEGIN
   IF to_regclass('public._sqlx_migrations') IS NULL
      OR (SELECT count(*) FROM _sqlx_migrations
-         WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46) AND success) <> 10 THEN
-    RAISE EXCEPTION 'successful SQLx migrations 22-25, 33-35, 42, 45, and 46 are required';
+         WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46, 47) AND success) <> 11 THEN
+    RAISE EXCEPTION 'successful SQLx migrations 22-25, 33-35, 42, and 45-47 are required';
   END IF;
 
   IF NOT EXISTS (
@@ -139,6 +139,14 @@ BEGIN
           'research_writer', 'public.block_candidate_raw_batch_for_inactive_rights(uuid,text,text,text,text,date,date,date)', 'EXECUTE')
      OR NOT has_function_privilege(
           'research_writer', 'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE')
+     OR NOT has_function_privilege(
+          'worker', 'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE')
+     OR has_function_privilege(
+          'app', 'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE')
+     OR has_function_privilege(
+          'admin', 'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE')
+     OR has_function_privilege(
+          'audit_writer', 'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE')
      OR NOT has_function_privilege(
           'research_writer', 'public.resolve_price_dataset_entitlement(text,date,date)', 'EXECUTE')
      OR NOT has_function_privilege(

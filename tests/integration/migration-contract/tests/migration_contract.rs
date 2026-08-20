@@ -146,6 +146,12 @@ const CANDIDATE_PRICE_REVALIDATION_UP_SQL: &str =
     include_str!("../../../../migrations/0046_candidate_price_rights_revalidation.up.sql");
 const CANDIDATE_PRICE_REVALIDATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0046_candidate_price_rights_revalidation.down.sql");
+const CANDIDATE_WORKER_PRICE_ATTESTATION_UP_SQL: &str = include_str!(
+    "../../../../migrations/0047_candidate_worker_price_entitlement_attestation.up.sql"
+);
+const CANDIDATE_WORKER_PRICE_ATTESTATION_DOWN_SQL: &str = include_str!(
+    "../../../../migrations/0047_candidate_worker_price_entitlement_attestation.down.sql"
+);
 const CANDIDATE_SCHEDULE_RS: &str =
     include_str!("../../../../crates/job-queue/src/candidate/schedule.rs");
 const CANDIDATE_RUNNER_RS: &str =
@@ -414,6 +420,27 @@ async fn candidate_vertical_roles_rls_and_rollback_are_fail_closed() {
     let result = async {
         MIGRATOR.run(&owner).await?;
 
+        let price_attestation_privileges: (bool, bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT
+                has_function_privilege('worker',
+                  'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE'),
+                has_function_privilege('research_writer',
+                  'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE'),
+                has_function_privilege('app',
+                  'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE'),
+                has_function_privilege('admin',
+                  'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE'),
+                has_function_privilege('audit_writer',
+                  'public.price_dataset_entitlement_is_valid(uuid,text,date,date)', 'EXECUTE')",
+        )
+        .fetch_one(&owner)
+        .await?;
+        assert_eq!(
+            price_attestation_privileges,
+            (true, true, false, false, false),
+            "price entitlement attestation must be limited to worker and research_writer"
+        );
+
         let privileges: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
             "SELECT
                 has_table_privilege('research_writer', 'public.dataset_versions', 'SELECT'),
@@ -618,6 +645,28 @@ fn candidate_price_revalidation_is_exact_and_append_only() {
     assert!(
         CANDIDATE_PRICE_REVALIDATION_DOWN_SQL.contains("covered_uses @> '[\"candidate\"]'::jsonb")
     );
+}
+
+#[test]
+fn candidate_worker_price_attestation_grant_is_narrow_and_reversible() {
+    for token in [
+        "GRANT EXECUTE ON FUNCTION",
+        "public.price_dataset_entitlement_is_valid(uuid, text, date, date)",
+        "TO worker",
+    ] {
+        assert!(
+            CANDIDATE_WORKER_PRICE_ATTESTATION_UP_SQL.contains(token),
+            "0047 up is missing worker price-attestation token {token}"
+        );
+    }
+    assert!(!CANDIDATE_WORKER_PRICE_ATTESTATION_UP_SQL.contains("TO PUBLIC"));
+    assert!(!CANDIDATE_WORKER_PRICE_ATTESTATION_UP_SQL.contains("ON TABLE"));
+    assert!(CANDIDATE_WORKER_PRICE_ATTESTATION_DOWN_SQL.contains("REVOKE EXECUTE ON FUNCTION"));
+    assert!(
+        CANDIDATE_WORKER_PRICE_ATTESTATION_DOWN_SQL
+            .contains("public.price_dataset_entitlement_is_valid(uuid, text, date, date)")
+    );
+    assert!(CANDIDATE_WORKER_PRICE_ATTESTATION_DOWN_SQL.contains("FROM worker"));
 }
 
 async fn reopen_price_raw_batch(
@@ -3991,7 +4040,7 @@ fn recommendation_pipeline_migration_is_tracked() {
 #[test]
 fn tracked_research_schema_gate_is_fail_closed_and_migrations_bound_locks() {
     for token in [
-        "version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46)",
+        "version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46, 47)",
         "convalidated",
         "pg_get_constraintdef",
         "format_type",
@@ -4074,7 +4123,7 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         assert!(
             missing_required
                 .to_string()
-                .contains("successful SQLx migrations 22-25, 33-35, 42, 45, and 46 are required")
+                .contains("successful SQLx migrations 22-25, 33-35, 42, and 45-47 are required")
         );
         sqlx::query("UPDATE _sqlx_migrations SET success = true WHERE version = 33")
             .execute(&owner)

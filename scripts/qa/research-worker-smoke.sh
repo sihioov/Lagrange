@@ -22,6 +22,10 @@ export CANDIDATE_APP_ENV=qa
 export RESEARCH_FETCH_MODE=synthetic
 export RESEARCH_CANDIDATE_ENABLED=true
 export RESEARCH_ENTITLEMENT_REFERENCE="${RESEARCH_ENTITLEMENT_REFERENCE:-REPLACE_WITH_EXACT_CONTRACT_REFERENCE}"
+# The functional smoke resolves the complete Compose model before it starts a
+# service subset. Keep the profile-gated Stage5 range input required in
+# Compose, while supplying a deterministic non-secret UUID for this QA run.
+export RANGE_RAW_BATCH_ID="${RANGE_RAW_BATCH_ID:-00000000-0000-0000-0000-000000000001}"
 # The research smoke resolves the complete production Compose model even
 # though it starts only research services. Supply deterministic QA values for
 # the independent backtest capacity/reconciler contract so interpolation
@@ -134,13 +138,13 @@ compose_config_json() {
     # Static and functional smoke coverage is an explicit QA fixture run;
     # production Compose itself requires RESEARCH_APP_ENV from the operator.
     LAGRANGE_CODE_COMMIT="$static_commit" \
-    RANGE_RAW_BATCH_ID=compose-config-disabled \
+    RANGE_RAW_BATCH_ID="$RANGE_RAW_BATCH_ID" \
     RESEARCH_APP_ENV=qa \
     RESEARCH_FETCH_MODE=synthetic \
       docker compose -f "$compose_file" config --format json
   elif command -v powershell.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
     compose_windows="$(wslpath -w "$compose_file")"
-    LAGRANGE_CODE_COMMIT="$static_commit" RANGE_RAW_BATCH_ID=compose-config-disabled RESEARCH_APP_ENV=qa RESEARCH_FETCH_MODE=synthetic \
+    LAGRANGE_CODE_COMMIT="$static_commit" RANGE_RAW_BATCH_ID="$RANGE_RAW_BATCH_ID" RESEARCH_APP_ENV=qa RESEARCH_FETCH_MODE=synthetic \
       powershell.exe -NoProfile -NonInteractive -Command "& docker compose -f '$compose_windows' config --format json"
   else
     fail 'Docker Compose CLI is required for semantic static validation'
@@ -279,7 +283,7 @@ done
 if grep -Eq '^!scripts(/|$)' "$dockerignore"; then fail 'QA fsync probe must remain outside the worker build context'; fi
 grep -Eq '^scripts/qa/\*\.sh[[:space:]]+text[[:space:]]+eol=lf[[:space:]]*$' "$gitattributes" || fail 'scripts/qa shell scripts must be forced to LF by .gitattributes'
 schema_text="$(<"$schema_sql")"
-for token in _sqlx_migrations 'version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46)' convalidated \
+for token in _sqlx_migrations 'version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46, 47)' convalidated \
   pg_get_constraintdef format_type attnotnull attidentity pg_get_expr storage_path EXCEPT \
   data_batches_source_file_uq trading_calendar_versions_source_lookup_idx \
   indisunique indisvalid indisready indislive relrowsecurity research_writer candidate_universe_registry \
@@ -529,9 +533,9 @@ done < <(find "$root/migrations" -maxdepth 1 -type f -name '*.up.sql' | sort)
 ledger_state="$(
   dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T postgres \
     psql -X -qAt -v ON_ERROR_STOP=1 -U lagrange -d lagrange \
-    -c "SELECT count(*) FILTER (WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46) AND success) FROM public._sqlx_migrations"
+    -c "SELECT count(*) FILTER (WHERE version IN (22, 23, 24, 25, 33, 34, 35, 42, 45, 46, 47) AND success) FROM public._sqlx_migrations"
 )" || fail 'migration ledger verification query failed'
-if [ "$ledger_state" != "10" ]; then
+if [ "$ledger_state" != "11" ]; then
   fail "migration ledger mismatch after applying migrations: $ledger_state"
 fi
 

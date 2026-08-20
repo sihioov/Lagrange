@@ -56,7 +56,7 @@ def _adjusted_table(rows: list[dict]) -> pa.Table:
     return pa.Table.from_pylist(rows, schema=schema)
 
 
-def materialize_curated_zone(rows: list[dict], curated_root: Path, *, version: int) -> None:
+def materialize_curated_zone(rows: list[dict], data_root: Path, *, version: int) -> None:
     """Write deterministic curated Parquet partitions in the Phase 0 layout."""
     bars_table = _bars_table(rows)
     adj_table = _adjusted_table(
@@ -74,7 +74,7 @@ def materialize_curated_zone(rows: list[dict], curated_root: Path, *, version: i
             [r["instrument_id"] == iid and r["trading_date"][:4] == year for r in rows]
         )
         part = (
-            curated_root
+            data_root
             / "curated"
             / "bars"
             / "market=kr"
