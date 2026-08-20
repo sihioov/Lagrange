@@ -388,6 +388,21 @@ exact `COPY`를 추가했다. Research smoke와 production-image static/self-tes
 계약을 검사한다. 로컬 static/self-test는 통과했고 실제 Docker release build의 최종
 판정은 다음 `main` research-smoke 결과로만 내린다.
 
+후속 commit `d409fcd`의 CI run `32396309662`도 required job을 포함해 전부
+통과했다. 같은 push의 research-smoke run `32396309756`에서는 앞선 네 파일의
+Docker build-context 결함이 닫혀 `research-worker`와 `candidate-runner` release
+image가 모두 빌드됐다. 그 다음 실제 one-shot에서 candidate source publication이
+`CANDIDATE_PIPELINE_FAILED`로 닫혔다. 원인은 synthetic entitlement가 주석과 달리
+`candidate` use만 가지고 있어 가격 publication이 먼저 권리 부족으로 BLOCKED가
+됐고, worker가 의도적으로 자동 수행하지 않는 Raw-reference instrument registration도
+smoke가 생략해 source row의 instrument FK를 만족하지 못한 것이다. 운영 경계를
+완화하지 않고, smoke entitlement에 가격의 네 exact downstream use를 추가하고,
+immutable synthetic Raw의 reference hash·batch id·retrieval instant·calendar first
+session·instrument master에서 인자를 유도해 `research_writer`의 좁은
+`register_candidate_instrument` definer를 publication 전에 호출하도록 보완했다.
+공식 KIS XLSX, provider, browser, 외부 DB에는 접근하지 않았다. 최종 functional green
+판정은 이 보완을 push한 다음 GitHub research-smoke 결과로만 내린다.
+
 **결정 뒤에도 남은 외부 입력.** 다음 세 항목은 추측해서 진행하지 않는다.
 
 - FSC mirror: owner registration/key, official 활용가이드, entitlement, 과거 query

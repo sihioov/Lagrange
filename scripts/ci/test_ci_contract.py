@@ -222,6 +222,17 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("candidate-runner --once", script)
         self.assertIn("candidate_feed_evidence", script)
         self.assertIn(
+            '["dataset","recommendation","candidate","backtest","paper_view"]',
+            script,
+        )
+        self.assertIn("manual_reference_evidence", script)
+        self.assertIn("public.register_candidate_instrument(", script)
+        self.assertIn("candidate_instrument_registration_state", script)
+        self.assertLess(
+            script.index("candidate_instrument_registration_state="),
+            script.index("candidate_one_shot()"),
+        )
+        self.assertIn(
             "2|2|kospi200,kosdaq150|2|10|kospi200:5,kosdaq150:5",
             script,
         )

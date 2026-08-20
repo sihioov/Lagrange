@@ -626,7 +626,7 @@ VALUES (
   :'entitlement_ref',
   'ACTIVE',
   '["krx_eod_bars","krx_investor_flows","krx_market_status","krx_fundamentals","krx_kospi200_membership","krx_kosdaq150_membership","krx_sector_classification"]'::jsonb,
-  '["candidate"]'::jsonb,
+  '["dataset","recommendation","candidate","backtest","paper_view"]'::jsonb,
   DATE '2019-01-01',
   DATE '2030-12-31',
   '00000000-0000-4000-8000-000000000042'::uuid
@@ -970,6 +970,113 @@ direct_manifest="$raw_root/raw/manifests/provider=krx/market=kr/manifest.jsonl"
 [ ! -e "$raw_root/raw/raw" ] || fail 'Raw evidence was nested under <data>/raw/raw'
 manual_manifest="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"])')" || fail 'manual collectors output was not valid JSON'
 [ "$(cd "$(dirname "$manual_manifest")" && pwd)/$(basename "$manual_manifest")" = "$(cd "$(dirname "$direct_manifest")" && pwd)/$(basename "$direct_manifest")" ] || fail "manual --root manifest mismatch: $manual_manifest"
+manual_batch_id="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["batch_id"])')" || fail 'manual collectors output omitted batch_id'
+
+# Candidate instruments are an explicit Raw-reference approval boundary and
+# the worker deliberately does not auto-register them. Derive every argument
+# from this immutable synthetic delivery, then exercise only the narrow
+# research_writer definer before price/source publication is attempted.
+mapfile -t manual_reference_evidence < <(python3 - \
+  "$direct_manifest" "$manual_batch_id" "$eod_smoke_bundle" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest_path = pathlib.Path(sys.argv[1])
+batch_id = sys.argv[2]
+bundle = pathlib.Path(sys.argv[3])
+entries = [
+    json.loads(line)
+    for line in manifest_path.read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+matches = [entry for entry in entries if entry.get("batch_id") == batch_id]
+if len(matches) != 1:
+    raise SystemExit("manual Raw manifest does not contain one exact batch")
+entry = matches[0]
+references = [item for item in entry.get("files", []) if item.get("kind") == "reference"]
+if len(references) != 1:
+    raise SystemExit("manual Raw batch does not contain one reference file")
+reference_sha256 = references[0].get("content_hash", "")
+if not reference_sha256.startswith("sha256:") or len(reference_sha256) != 71:
+    raise SystemExit("manual Raw reference hash is not canonical")
+calendar = json.loads((bundle / "calendar-response.json").read_text(encoding="utf-8"))
+sessions = [item.get("date") for item in calendar.get("sessions", [])]
+if not sessions or any(not value for value in sessions):
+    raise SystemExit("manual Raw calendar has no exact sessions")
+reference = json.loads((bundle / "reference-response.json").read_text(encoding="utf-8"))
+instruments = []
+for item in reference.get("instruments", []):
+    instrument_id = item.get("symbol")
+    symbol, separator, venue = instrument_id.rpartition(".") if isinstance(instrument_id, str) else ("", "", "")
+    asset_class = {"equity-etf": "ETF", "etf": "ETF", "equity": "EQUITY"}.get(item.get("kind"))
+    if separator != "." or venue != "KRX" or not symbol or asset_class is None or not item.get("name"):
+        raise SystemExit("manual Raw reference instrument is not candidate-registerable")
+    instruments.append(
+        {
+            "instrument_id": instrument_id,
+            "symbol": symbol,
+            "name": item["name"],
+            "asset_class": asset_class,
+        }
+    )
+if len(instruments) != 6:
+    raise SystemExit("manual Raw reference instrument count drifted")
+print(reference_sha256.removeprefix("sha256:"))
+print(entry["retrieved_at"])
+print(min(sessions))
+print(json.dumps(instruments, ensure_ascii=False, separators=(",", ":")))
+PY
+)
+[ "${#manual_reference_evidence[@]}" -eq 4 ] || fail 'manual Raw reference evidence extraction failed'
+manual_reference_sha256="${manual_reference_evidence[0]}"
+manual_retrieved_at="${manual_reference_evidence[1]}"
+manual_listed_at="${manual_reference_evidence[2]}"
+manual_instrument_catalog="${manual_reference_evidence[3]}"
+research_password="$(<"$research_secret")"
+candidate_instrument_registration_state="$(
+  dkr compose -p "$project" -f "$(hostpath "$compose_file")" exec -T \
+    -e "PGPASSWORD=$research_password" postgres \
+    psql -X -qAt -v ON_ERROR_STOP=1 -h 127.0.0.1 -U research_writer -d lagrange \
+      -v entitlement_id="$resolved_entitlement" \
+      -v entitlement_ref="$RESEARCH_ENTITLEMENT_REFERENCE" \
+      -v entitlement_date='2020-01-31' \
+      -v reference_sha256="$manual_reference_sha256" \
+      -v source_revision="$manual_batch_id" \
+      -v retrieved_at="$manual_retrieved_at" \
+      -v listed_at="$manual_listed_at" \
+      -v instrument_catalog="$manual_instrument_catalog" <<'SQL'
+WITH fixture AS MATERIALIZED (
+  SELECT item.instrument_id, item.symbol, item.name, item.asset_class
+    FROM jsonb_to_recordset(:'instrument_catalog'::jsonb) AS item(
+      instrument_id text,
+      symbol text,
+      name text,
+      asset_class text
+    )
+), registered AS MATERIALIZED (
+  SELECT public.register_candidate_instrument(
+           fixture.instrument_id,
+           fixture.symbol,
+           fixture.name,
+           fixture.asset_class,
+           :'listed_at'::date,
+           :'entitlement_id'::uuid,
+           :'entitlement_ref',
+           :'entitlement_date'::date,
+           :'reference_sha256',
+           :'source_revision',
+           :'retrieved_at'::timestamptz
+         ) AS inserted
+    FROM fixture
+)
+SELECT concat(count(*) FILTER (WHERE inserted), '|', count(*))
+  FROM registered;
+SQL
+)" || fail 'research_writer could not register exact Raw reference instruments'
+unset research_password
+[ "$candidate_instrument_registration_state" = '6|6' ] \
+  || fail "candidate Raw reference registration drifted: $candidate_instrument_registration_state"
 rc run --rm --no-deps research-raw-init || fail 'research-raw-init failed'
 rc run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 research-worker -ec '
   manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=krx/market=kr/manifest.jsonl"
@@ -989,7 +1096,6 @@ if ! recovery_output="$(rc run --rm --no-deps -e RESEARCH_CANDIDATE_ENABLED=fals
   rc logs --no-color postgres >&2 || true
   fail 'research-worker did not recover the EOD startup orphan'
 fi
-manual_batch_id="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["batch_id"])')" || fail 'manual collectors output omitted batch_id'
 rc run --rm --no-deps --entrypoint /bin/sh --user 10001:10001 \
   -e "EXPECTED_BATCH_ID=$manual_batch_id" research-worker -ec '
   manifest="$RESEARCH_RAW_ROOT/raw/manifests/provider=krx/market=kr/manifest.jsonl"
