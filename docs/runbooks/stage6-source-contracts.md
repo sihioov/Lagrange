@@ -848,7 +848,9 @@ credentialed call, because read-only public fetching cannot settle it.
 **Current state — 2026-08-20.** The OpenDART core remains approved for its
 fixture-backed contract, but D4 establishes no ETF11 use and D10 blocks the
 in-process live path. KIND D11 is approved for the low-volume browser path and
-its capture → Raw → normalization implementation is present. KRX, FSC, KSD,
+its capture → Raw → normalization implementation is present. The FSC listing
+mirror is the selected identity direction but remains not allowed pending its
+exact contract and owner inputs. KRX, other FSC surfaces, KSD,
 `data.krx.co.kr`, the full KIND backfill, and ETF11 identity remain deferred.
 The 2026-08-19 approval snapshot above is retained as historical evidence, not
 as the current table state.
@@ -868,7 +870,7 @@ backfill.
 | OpenDART | `GET /api/company.json` \| `.xml` | **APPROVED** — fixture contract; no ETF11 use (D4), in-process live path blocked (D10) |
 | OpenDART | `GET /api/crDecsn`, `/api/piicDecsn`, `/api/cmpMgDecsn` | **DEFERRED / NOT ALLOWED** — outside the approved core; D4 establishes no ETF11 use |
 | OpenDART | `GET /api/alotMatter` | **DEFERRED / NOT ALLOWED** — outside the approved core; D4 establishes no ETF11 use |
-| FSC mirror | `금융위원회_KRX상장종목정보` | DEFERRED — mirror-vs-origin decision open; endpoint needs checklist item 2 |
+| FSC mirror | `금융위원회_KRX상장종목정보` | **SELECTED DIRECTION / NOT YET ALLOWED** — owner chose the mirror for ETF11 identity, but exact endpoint/schema, registration/key, entitlement, and historical-query semantics remain missing |
 | FSC mirror | `금융위원회_증권상품시세정보` (ETF operation) | DEFERRED — mirror-vs-origin decision open; endpoint needs checklist item 2 |
 | KRX Open API | `ETF 일별매매정보` | DEFERRED — endpoint needs checklist item 1; prefer the FSC mirror per D3 |
 | KSD portal | `주식권리일정정보`, `주식배당정보` | DEFERRED — blocked on the KOGL Type 2 entitlement decision |

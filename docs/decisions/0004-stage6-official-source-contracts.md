@@ -444,6 +444,34 @@ real staging pair passes the CLI's read-only `--plan` and a one-shot strict
 parser/Raw ingest into a new `/tmp` root. No observed value is promoted into a
 predecessor, supersedes, withdrawal, time, or timezone claim.
 
+### D12: Owner selects the narrow source directions; missing contracts still block implementation
+
+On 2026-08-20 the owner selected three narrow directions: use the FSC
+`금융위원회_KRX상장종목정보` mirror rather than the KRX Open API as the intended
+ETF11 identity authority; restrict the first KIS event scope to `bonus-issue`;
+and permit one five-calendar-day KIND ETF-list pilot. These are scope decisions,
+not credentials, entitlement conclusions, or blanket network approvals.
+
+The FSC path remains fail-closed until the owner supplies the official guide's
+exact host, path, method, fields, pagination, terminal/error contract, a portal
+key through the approved secret path, an entitlement reference/hash, and two
+past-reference-date observations of one ISIN that settle historical-query
+semantics. No fuzzy identity join is permitted. The KIS decision does not widen
+the existing read allowlist: only the already listed `bonus-issue` event is in
+the pilot, and it cannot gain a disclosure-backed `available_at` or Curated/PIT
+status until a deterministic KIND relation is evidenced.
+
+The one KIND pilot used `2026-08-15..2026-08-19`. Its page 41 probe was distinct,
+so the 40 stored pages terminated `page_bound_reached` and were not ingested.
+Offline classification of the captured portion found two correction-marked,
+exact-handler opaque acceptances, `20260819000134` and `20260819000124`. Exactly
+one follow-up viewer capture was attempted, for the first acceptance and the
+single date `2026-08-19`; its exact response contained no target handler and it
+terminated `missing_target` without a viewer artifact. The second acceptance
+was not called. This proves that a five-day window is not a safe current-volume
+bound; it proves no correction relation. The diagnostic staging remains under
+`/tmp` and enters neither Git nor Raw publication.
+
 ## Consequences
 
 - Stage5 data keeps `vendor_snapshot=true`, `strict_pit=false`, `ready=false`.

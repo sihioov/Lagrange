@@ -234,35 +234,39 @@ green으로 기록하지 않는다.
 
 ### 0.14 Remediation 이후 현재 worktree와 다음 작업 (2026-08-20)
 
-Remediation commit `90ac83d` remains local; it has not been pushed and no PR has
-been opened. Python-focused gates are green, while the QA PostgreSQL-dependent
-gate remains environment-blocked. The correction-viewer capture, separate Raw
+Remediation commit `90ac83d` and correction commit `460c942` were pushed on
+`origin/unspecified-task`. Draft PR #1 was opened only to obtain CI evidence;
+the owner subsequently selected reviewed direct-main delivery rather than a PR
+merge. Python-focused gates are green. The local host still cannot provide QA
+PostgreSQL, while the remote DB-backed gates ran and remained red as described
+below. The correction-viewer capture, separate Raw
 ingest, and ordered-membership normalizer are implemented in the current change
-set. Node tests are 35/35, the Rust correction normalizer tests are 5/5, the Raw
+set. Node tests are 37/37, the Rust correction normalizer tests are 5/5, the Raw
 CLI tests are 16/16, workspace strict Clippy is clean, and all workspace test
 binaries compile. This is not a READY, point-in-time, or full-workspace-green
-claim: the DB-required runtime gate remains blocked and the one observed viewer
+claim: the DB-required runtime gate is red and the one observed viewer
 does not prove a multi-version correction chain.
 
 **개발 worktree.** canonical repository는 Git remote 기준 `Lagrange`다. 현재
 worktree는 `/data/worktrees/3puw275b/ordinary-blobfish`, 브랜치는
 `unspecified-task`다. 이 correction feature commit의 parent는 remediation
-`90ac83d`다. 로컬 `main`의 `f78d033`은 이 계열에 포함되지 않으며, 두 브랜치는
-공통 조상 `5b12e0f`에서 각각 remediation과
-Stage6 review 문서 commit으로 갈라진 형제 계열이다. 현재 worktree는 이미 독립 작업
-브랜치이므로 새 worktree나 별도 remediation 브랜치로 이동하지 않는다. review
-문서 포함 여부는 commit 구성 문제이지 branch 변경의 선행 조건이 아니다. 보완
-변경은 branch나 worktree 이동 없이 로컬 remediation commit `90ac83d`로 묶였고,
-그 위에 KIND correction feature commit을 별도로 둔다. 원격 push와 PR은
-별도 사용자 승인 전 수행하지 않으며 history를 재작성하지 않는다.
+`90ac83d`다. 직접 병합 전 로컬 `main`의 `f78d033`은 공통 조상 `5b12e0f`에서 갈라진
+Stage6 review 문서 commit이었으므로, 기존 `main` worktree에서 non-fast-forward
+병합해 review 문서와 remediation 계열을 함께 보존한다. 새 worktree나 별도
+remediation 브랜치는 만들지 않고 history도 재작성하지 않는다.
 
 **Remediation 완료와 환경 검증을 구분한다.** F1~F8/low 코드·문서 보완,
 focused offline suites, fmt, strict clippy, diff check, 9개 mutation gate는 이미
-완료했다. 같은 offline closure gate를 다른 branch에서 다시 실행할 필요는 없다.
-locked Python environment는 위와 같이 복구됐다. 남은 full workspace 차단은 QA
-PostgreSQL 하나이며 **BLOCKED_ENV**다. 이는 remediation 코드 완료를 되돌리는 새
-결함이나 commit 전 필수 코드 작업이 아니다. 전체 workspace green 또는 merge
-gate를 주장할 때 CI나 동등 환경에서 별도로 닫는다.
+완료했다. locked Python environment는 위와 같이 복구됐다. 로컬 QA PostgreSQL은
+**BLOCKED_ENV**지만 원격 CI에서는 DB-backed gate가 실제 실행됐고 실패했으므로,
+전체 workspace green을 주장하지 않는다. 원격 `main`의 기존 `5b12e0f` CI run
+`32325584155`도 policy, PostgreSQL integration, workspace-tests job이 red였으며,
+이번 branch run `32358404560` 역시 같은 세 job이 red였다. Sanitized log 대조에서
+workspace의 실패 test-name 집합 31개와 PostgreSQL `paper_preview` 실패 test-name
+6개가 baseline과 동일했다. F4 경로 수정은 `missing_close`의 기존 ENOENT를 제거했지만
+그 뒤의 expected-outcome assertion도 실패한다. 이번 diff에는 관련 runtime source,
+SQL migration, DB deployment 변경이 없으므로 Stage6 회귀 근거는 없지만, entitlement와
+fixture state의 근본 원인은 아직 확정하지 않았다.
 
 환경 검증을 수행할 때는 CI와 같은 Python 3.12, `pyarrow==25.0.0`,
 `uv==0.12.1`, `uv sync --project nt --locked`, Phase 0 fixture, disposable QA
@@ -271,13 +275,14 @@ PostgreSQL 순서를 따른다. 성공 조건은 `recommendation_child` 17/17,
 `PAPER_PREVIEW_CLOSE_MISSING`/permanent failure/zero-output assertion까지 도달하고
 `cargo test --workspace --locked --no-fail-fast`가 0으로 끝나는 것이다.
 
-Remediation은 이미 로컬 commit으로 닫혔다. 현재 correction feature는 focused
+Remediation은 commit으로 닫혔다. 현재 correction feature는 focused
 offline gate와 실제 캡처의 read-only `--plan`, 새 `/tmp` Raw 루트를 사용한
 one-shot ingest/parser 검증까지 통과했다. 최종 독립 감사도 HIGH/MEDIUM 0건으로
-닫혔으며 이 문서와 함께 별도 로컬 commit을 형성한다. 실제 viewer bytes나 임시
-Raw는 Git에 추가하지 않았다. 환경-backed gate는
-PR CI의 authoritative gate로도 실행할 수 있다. 원격 push나 PR 발행은 별도 사용자
-승인 전에는 하지 않는다.
+닫혔다. 실제 viewer bytes나 임시 Raw는 Git에 추가하지 않았다. Branch CI의 policy
+failure는 기존 계약 불일치(`research-worker-smoke.sh`의 migration ledger 10 대 테스트
+기대값 9)였고, 기대값을 실제 migration 수 10으로 맞춘 focused test는 6/6을
+통과했다. DB-backed run은 `paper_preview`를 포함한 실패를 실제 노출했으므로 후속 QA
+closure가 필요하지만, 이번 Stage6 focused review에서 새 HIGH/MEDIUM 회귀는 남지 않았다.
 
 **KIND correction ordered-membership 구현.** 승인된 KIND correction-viewer 관찰은 list-anchor
 acceptance `20200207000058`과 option raw value `20200207000081|Y`를 별도로
@@ -292,16 +297,39 @@ provenance가 없어 거부됐다. 다음 증거 작업은 owner-gated 저빈도
 복수 option을 가진 ETF viewer 표본을 확보할 수 있을 때만 진행하며, 그 전에는
 “chain 추적 완료”나 predecessor/supersedes 관계를 주장하지 않는다.
 
-**소유자 결정 뒤에만 가능한 작업.** 다음 세 결정은 추측해서 진행하지 않는다.
+**2026-08-20 소유자 결정과 bounded pilot 결과.** 소유자는 FSC mirror를 ETF11
+authoritative identity 방향으로 선택하고, KIS event pilot은 `bonus-issue`에만
+한정하며, KIND는 한 번의 5-calendar-day 저빈도 pilot만 승인했다. 이 선택은 FSC
+endpoint 호출 허가가 아니다. 공식 활용가이드의 exact host/path/method/schema,
+registration/key, entitlement reference/hash, 동일 ISIN의 두 과거 기준일 semantics가
+확정되기 전에는 FSC adapter나 network call을 만들지 않는다. KIS bonus issue도
+KIND availability와 deterministic relation이 없으면 기존 source evidence를 넘어
+Curated/PIT로 승격하지 않는다.
 
-- ETF11 authoritative identity: FSC mirror와 KRX 원본 중 선택, 등록/key,
-  entitlement, 과거 query semantics를 확정한다. 11종목의 code/name/효력 구간이
-  해소되기 전에는 fuzzy name join을 금지한다.
-- KSD/KIS `ksdinfo`: KOGL 제2유형·source contract·지원 행사 범위와 KIND 공시
-  availability join 방식을 확정한다. 근거가 부족한 행사는 Raw-only다.
-- KIND 전체 백필 budget: 현재 추정 약 475 captures/15,200 requests/20시간은
-  기존 low-volume 승인을 벗어나므로 window·요청 예산·보존 위치를 명시적으로
-  승인한다.
+KIND pilot은 종료된 창 `2026-08-15..2026-08-19`를 own-controls capture로 정확히
+한 번 실행했다. 40 stored pages 뒤 extra probe가 distinct response를 반환해
+`page_bound_reached`로 종료했으므로 전체 staging은 incomplete이며 Raw ingest하지
+않았다. 임시 staging의 captured portion을 오프라인 분류해 correction 표시와 exact
+handler를 가진 opaque acceptance `20260819000134`, `20260819000124` 두 개를 찾았다.
+첫 후보만 `2026-08-19` 단일 날짜 correction capture로 한 번 확인했지만 exact response
+body에 target handler가 없어 `missing_target`으로 종료했고 viewer 파일은 생성되지
+않았다. 두 번째 후보는 호출하지 않았다. 이 결과는 최근 구간에서 5일 창도 안전한
+상한이 아니며 더 좁은 window 승인이 필요하다는 운영 근거일 뿐, correction chain
+근거가 아니다. 모든 staging은 `/tmp`에만 있고 Git/Raw/DB에 들어가지 않았다.
+이후 list capture CLI도 correction capture와 마찬가지로 exact operator confirmation을
+browser launch 전에 요구하며, impossible calendar date를 양쪽 CLI에서 거절한다.
+
+**결정 뒤에도 남은 외부 입력.** 다음 세 항목은 추측해서 진행하지 않는다.
+
+- FSC mirror: owner registration/key, official 활용가이드, entitlement, 과거 query
+  semantics를 확정한다. 11종목의 code/name/효력 구간이 해소되기 전에는 fuzzy name
+  join을 금지한다.
+- KIS `bonus-issue`: current official field/lineage documentation과 KIND availability
+  relation을 확정한다. 다른 `ksdinfo` event와 direct KSD/KSD portal은 이번 결정에
+  포함되지 않는다.
+- KIND 추가 수집: 이번 1회 pilot 승인은 소비됐다. 전체 백필 추정 약 475
+  captures/15,200 requests/20시간은 계속 승인 밖이며, 추가 window·요청 예산·보존
+  위치는 다시 명시적으로 승인한다.
 
 위 결정과 KIND 정정 관계가 확보된 뒤에만 identity/event cross-validation,
 fail-closed Curated 후보, pilot backfill, DatasetManifest/DB publication/five-pin,
