@@ -48,6 +48,7 @@ pub mod entitlement;
 pub mod freshness;
 pub mod ingest;
 pub mod instrument_master;
+pub mod kind_correction_normalize;
 pub mod kind_normalize;
 pub mod normalize;
 pub mod provider;
@@ -79,6 +80,7 @@ pub use candidate_normalize::{
 pub use contract::{
     ALL_RESPONSE_KINDS, CANDIDATE_MASTER_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS,
     DISCLOSURE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KIND_DISCLOSURE,
+    PROVIDER_KIND_DISCLOSURE_CORRECTION, PROVIDER_KIND_DISCLOSURE_CORRECTION_NORMALIZED,
     PROVIDER_KIND_DISCLOSURE_NORMALIZED, PROVIDER_KIS, PROVIDER_KIS_CANDIDATE,
     PROVIDER_KIS_CANDIDATE_NORMALIZED, PROVIDER_KIS_DAILY_RANGE,
     PROVIDER_KIS_DAILY_RANGE_NORMALIZED, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, PROVIDER_OPENDART,
@@ -105,6 +107,13 @@ pub use instrument_master::{
     AliasNamespace, Instrument, InstrumentAlias, InstrumentMaster, ListingReason, MasterError,
     seed_universe,
 };
+pub use kind_correction_normalize::{
+    KindCorrectionMembership, KindCorrectionNormalizationLineage,
+    KindCorrectionNormalizationOutcome, KindCorrectionNormalizationSourceFile,
+    KindCorrectionVersion, KindCorrectionViewerError,
+    deterministic_kind_correction_normalized_batch_id, normalize_kind_correction_batch,
+    parse_kind_correction_membership, parse_kind_correction_viewer,
+};
 pub use kind_normalize::{
     InstrumentIdentity, KindDisclosureObservation, KindNormalizationLineage,
     KindNormalizationOutcome, KindNormalizationSourceFile, KindNormalizeError, RequiredField,
@@ -119,9 +128,15 @@ pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
 };
 pub use providers::kind::{
-    CapturedPage, KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT, KIND_DISCLOSURE_MAX_PAGES,
-    KIND_DISCLOSURE_PAGE_SIZE, KIND_ETF_DISCLOSURE_ENDPOINT, KindError, KindSurface,
-    ingest_disclosure_capture,
+    CapturedPage, KIND_CORRECTION_ARTIFACT_KIND, KIND_CORRECTION_ENTRY_URL,
+    KIND_CORRECTION_SURFACE, KIND_CORRECTION_TERMINATION, KIND_CORRECTION_TERMINATION_STAGE,
+    KIND_CORRECTION_VIEWER_ENDPOINT, KIND_CORRECTION_VIEWER_FILE,
+    KIND_CORRECTION_VIEWER_ORIGIN_PATH, KIND_DETAIL_ETF_DISCLOSURE_ENDPOINT,
+    KIND_DISCLOSURE_MAX_PAGES, KIND_DISCLOSURE_PAGE_SIZE, KIND_ETF_DISCLOSURE_ENDPOINT,
+    KindCorrectionCapture, KindCorrectionResponseDiagnostics, KindError, KindSurface,
+    MAX_KIND_CORRECTION_DIAGNOSTIC_COUNT, MAX_KIND_CORRECTION_METADATA_BYTES,
+    MAX_KIND_CORRECTION_RESPONSE_BODY_BYTES, MAX_KIND_CORRECTION_VIEWER_BYTES,
+    ingest_correction_capture, ingest_disclosure_capture,
 };
 pub use providers::kis::{
     KR_ETF_CORE_SYMBOLS, KisProvider, KisRead, MAX_DAILY_BAR_OBSERVATIONS, MAX_DAILY_BAR_WINDOWS,

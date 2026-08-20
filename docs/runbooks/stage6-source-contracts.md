@@ -759,16 +759,28 @@ credentialed call, because read-only public fetching cannot settle it.
     assumed away — the displayed value's timezone is not stated on the page, so
     normalization records the explicit `AssumedAsiaSeoul` assumption, and
     correction versions are enumerable only by date (item 11).
-11. **KIND correction linkage — PARTIALLY ANSWERED 2026-08-20.** The
-    disclosure viewer exposes the whole version chain in a `mainDoc` select:
-    the original plus each `[정정]` revision, each labelled with its date
-    (observed: `2025.11.05` → `11.14` → `11.25` → `12.04` → `12.17` →
-    `2026.01.22`). So a correction chain **is** enumerable, and ordered. Three
-    things are still open: the version labels carry **date only, no time**; no
-    `관련공시` hyperlink or original-`acptNo` reference was present; and an
-    `orgDiscls` ("기공시선택") select exists but was empty for the sampled
-    document, so its role is unknown. Remaining work is to establish whether the
-    version entries can be resolved to individual acceptance numbers.
+11. **KIND correction linkage — option-level resolution only, 2026-08-20.**
+    The approved ETF observation used list-anchor acceptance `20200207000058`.
+    The exact page-1 response was validated, and the rendered viewer had exactly
+    one `mainDoc` select: option 0 had an explicit empty value (its rendered
+    prompt is not evidence), and the sole real option had raw value
+    `20200207000081|Y`, acceptance token
+    `20200207000081`, and label date `2020.02.07`.
+    The four identical target handlers were accepted; a distinct same-acceptance
+    handler would fail closed. The list anchor and option acceptance are not
+    equal, so no equality, join, predecessor, supersedes, withdrawal, time, or
+    timezone semantics may be inferred. `|Y` is opaque beyond this exact shape.
+    This proves option-level acceptance resolution and ordered membership shape,
+    not an actual multi-version correction chain. Preserve anchor and option
+    acceptance separately, keep dates date-only, and never derive dates from IDs.
+    The historical non-ETF direct-viewer sample is not sufficient for ETF
+    implementation; `20251204000324` was rejected because it lacks ETF-list
+    provenance. Rust Raw ingest and the ordered-membership normalizer now retain
+    the two acceptances separately, validate the exact `|Y` option shape, and
+    reject lineage semantics; focused tests, the real staging `--plan`, and one
+    strict ingest into a new `/tmp` Raw root pass. No captured bytes enter Git.
+    An actual multi-version ETF viewer observation remains evidence work, not a
+    parser inference.
 12. ~~**KIND date reach.**~~ **CLOSED 2026-08-20 — answer: yes.** The 상세검색
     and ETF-disclosure range controls accept `2020-01-31`, and a 2020-Q1 query
     returned 2020-03-31 rows, so the reach is real rather than merely accepted

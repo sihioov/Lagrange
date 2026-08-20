@@ -407,6 +407,43 @@ fact must be recaptured, not admitted by inference. This is an integrity rule
 inside the approved browser interaction; it does not widen D11's collection
 approval, rights position, or any other source allowlist.
 
+**Amendment — approved ETF correction-viewer observation (2026-08-20).** The new
+own-controls-only `capture-correction.mjs` path was exercised for `2020-02-07`
+with list-anchor acceptance `20200207000058`. It fills a single-day range, calls
+the site's `fnSearch` initially and at most once again, verifies the exact page-1
+POST response and handler, waits read-only for DOM readiness, installs a
+page-scoped popup waiter only after readiness, then performs a final atomic
+recheck and site-node click. It validates the exact viewer origin/path and
+reserves a no-replace output directory, writes the rendered DOM through its
+pinned descriptor, and commits `capture.json` last as the consumer admission
+marker. It does not construct
+or send direct HTTP requests, navigate directly to the viewer, paginate, bulk/schedule/full-history
+capture, record queries, or log bodies/provider prose. Node tests are 35/35.
+
+The observation is structural only: the exact response was 12,852 bytes with 13
+form fields; the target handler occurred four times with exactly one distinct
+raw value. The rendered snapshot was 24,886 bytes and had exactly one
+`mainDoc` select. Option 0 had an explicit empty value; its prompt is ignored as
+non-evidence. The sole real option had
+raw value `20200207000081|Y`, acceptance token `20200207000081`, and label date
+`2020.02.07`. The list anchor and
+option acceptance are different values. This proves only option-level acceptance
+resolution and ordered membership shape. It does not prove equality, join,
+predecessor, supersedes, withdrawal, time, or timezone semantics; `|Y` remains
+opaque beyond this exact observed shape. Preserve both acceptances separately,
+keep dates date-only, and never derive dates from IDs. One entry is not an actual
+multi-version correction chain. The historical non-ETF direct-viewer sample does
+not authorize ETF implementation, and `20251204000324` is rejected for lacking
+ETF-list provenance.
+
+The Rust boundary stores the rendered `viewer.html` under the distinct
+disclosure-only `DisclosureVersionMembership` scope and normalizes only ordered
+membership. `response_diagnostics.body_size` is the exact ETF-list response
+size, not the viewer size; both artifacts have independent one-MiB bounds. The
+real staging pair passes the CLI's read-only `--plan` and a one-shot strict
+parser/Raw ingest into a new `/tmp` root. No observed value is promoted into a
+predecessor, supersedes, withdrawal, time, or timezone claim.
+
 ## Consequences
 
 - Stage5 data keeps `vendor_snapshot=true`, `strict_pit=false`, `ready=false`.

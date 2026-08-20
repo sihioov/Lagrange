@@ -234,15 +234,27 @@ green으로 기록하지 않는다.
 
 ### 0.14 Remediation 이후 현재 worktree와 다음 작업 (2026-08-20)
 
+Remediation commit `90ac83d` remains local; it has not been pushed and no PR has
+been opened. Python-focused gates are green, while the QA PostgreSQL-dependent
+gate remains environment-blocked. The correction-viewer capture, separate Raw
+ingest, and ordered-membership normalizer are implemented in the current change
+set. Node tests are 35/35, the Rust correction normalizer tests are 5/5, the Raw
+CLI tests are 16/16, workspace strict Clippy is clean, and all workspace test
+binaries compile. This is not a READY, point-in-time, or full-workspace-green
+claim: the DB-required runtime gate remains blocked and the one observed viewer
+does not prove a multi-version correction chain.
+
 **개발 worktree.** canonical repository는 Git remote 기준 `Lagrange`다. 현재
 worktree는 `/data/worktrees/3puw275b/ordinary-blobfish`, 브랜치는
-`unspecified-task`, HEAD는 `5b12e0f`다. 로컬 `main`의 `f78d033`은 이 HEAD에
-Stage6 review 문서만 추가한 직계 후손이다. 현재 worktree는 이미 독립 작업
+`unspecified-task`다. 이 correction feature commit의 parent는 remediation
+`90ac83d`다. 로컬 `main`의 `f78d033`은 이 계열에 포함되지 않으며, 두 브랜치는
+공통 조상 `5b12e0f`에서 각각 remediation과
+Stage6 review 문서 commit으로 갈라진 형제 계열이다. 현재 worktree는 이미 독립 작업
 브랜치이므로 새 worktree나 별도 remediation 브랜치로 이동하지 않는다. review
 문서 포함 여부는 commit 구성 문제이지 branch 변경의 선행 조건이 아니다. 보완
-변경은 동일한 reviewed set(22 tracked file + 3 new file)으로 검증했고, branch나
-worktree 이동 없이 현재 브랜치의 로컬 remediation commit으로 묶는다. 원격 push와
-PR은 별도 사용자 승인 전 수행하지 않으며 history를 재작성하지 않는다.
+변경은 branch나 worktree 이동 없이 로컬 remediation commit `90ac83d`로 묶였고,
+그 위에 KIND correction feature commit을 별도로 둔다. 원격 push와 PR은
+별도 사용자 승인 전 수행하지 않으며 history를 재작성하지 않는다.
 
 **Remediation 완료와 환경 검증을 구분한다.** F1~F8/low 코드·문서 보완,
 focused offline suites, fmt, strict clippy, diff check, 9개 mutation gate는 이미
@@ -259,20 +271,26 @@ PostgreSQL 순서를 따른다. 성공 조건은 `recommendation_child` 17/17,
 `PAPER_PREVIEW_CLOSE_MISSING`/permanent failure/zero-output assertion까지 도달하고
 `cargo test --workspace --locked --no-fail-fast`가 0으로 끝나는 것이다.
 
-현재 브랜치에서 ADR/runbook historical 문구를 정리한 뒤 reviewed file list를
-stage·commit할 수 있다. 환경-backed gate는 commit 전 로컬에서 실행하거나 PR
-CI의 authoritative gate로 실행할 수 있다. 원격 push나 PR 발행은 별도 사용자
-승인 전에는 하지 않는다. 이미 한 dirty tree로 합쳐진 F1~F8을 기계적으로
-파일별 분할해 중간 commit을 깨뜨리지 않는다.
+Remediation은 이미 로컬 commit으로 닫혔다. 현재 correction feature는 focused
+offline gate와 실제 캡처의 read-only `--plan`, 새 `/tmp` Raw 루트를 사용한
+one-shot ingest/parser 검증까지 통과했다. 최종 독립 감사도 HIGH/MEDIUM 0건으로
+닫혔으며 이 문서와 함께 별도 로컬 commit을 형성한다. 실제 viewer bytes나 임시
+Raw는 Git에 추가하지 않았다. 환경-backed gate는
+PR CI의 authoritative gate로도 실행할 수 있다. 원격 push나 PR 발행은 별도 사용자
+승인 전에는 하지 않는다.
 
-**그 다음 Stage6 작업.** 새 source 승인 없이 착수 가능한 첫 기능은 KIND
-정정 체인 추적이다. 기존 14자리 acceptance number를 join key로 유지하고,
-`mainDoc` version entry가 개별 acceptance number로 해소되는지만 fixture와 typed
-model로 증명한다. 번호에서 날짜를 파생하지 않고, date-only version·timezone
-미문서화·해소 불가 관계는 typed unresolved로 남긴다. 재구성 HTTP 요청이나
-popup-state probing은 금지한다. 시작 전에 ADR/runbook에 남은 Step 1 현재형,
-OpenDART key 미발급, KIND 미승인 같은 historical 문구를 현행/과거로
-구분해 정합화한다.
+**KIND correction ordered-membership 구현.** 승인된 KIND correction-viewer 관찰은 list-anchor
+acceptance `20200207000058`과 option raw value `20200207000081|Y`를 별도로
+해소했을 뿐이다. 14자리 option
+acceptance token은 `20200207000081`이다. 실제 다중 버전 correction chain을
+증명하지 않는다. Rust ingest·normalizer·tests는
+이 두 값을 별도로 보존하며, equality/join,
+predecessor/supersedes/withdrawal, time/timezone 의미는 추론하지 않는다.
+`|Y`는 opaque로 둔다. 번호에서 날짜를 파생하지 않고, 재구성 HTTP 요청이나
+popup-state probing은 금지한다. 잘못된 후보 `20251204000324`는 ETF-list
+provenance가 없어 거부됐다. 다음 증거 작업은 owner-gated 저빈도 범위에서 실제
+복수 option을 가진 ETF viewer 표본을 확보할 수 있을 때만 진행하며, 그 전에는
+“chain 추적 완료”나 predecessor/supersedes 관계를 주장하지 않는다.
 
 **소유자 결정 뒤에만 가능한 작업.** 다음 세 결정은 추측해서 진행하지 않는다.
 

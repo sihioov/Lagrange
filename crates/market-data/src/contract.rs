@@ -73,6 +73,17 @@ pub const PROVIDER_KIND_DISCLOSURE: &str = "kind-disclosure";
 /// ETF11 name-to-code mapping in this repository, and KRX (the only
 /// candidate source) is a deferred decision.
 pub const PROVIDER_KIND_DISCLOSURE_NORMALIZED: &str = "kind-disclosure-normalized";
+/// Provider id for the KIND browser-captured correction/version viewer.
+///
+/// This is deliberately separate from [`PROVIDER_KIND_DISCLOSURE`]: the
+/// correction viewer is a different browser surface and its rendered
+/// `mainDoc` options are ordered disclosure evidence, not the ETF disclosure
+/// search index.
+pub const PROVIDER_KIND_DISCLOSURE_CORRECTION: &str = "kind-disclosure-correction";
+/// Provider id for the typed ordered-membership document derived from a KIND
+/// correction/version viewer capture. This remains disclosure evidence only.
+pub const PROVIDER_KIND_DISCLOSURE_CORRECTION_NORMALIZED: &str =
+    "kind-disclosure-correction-normalized";
 /// Canonical market id of the Korean market.
 pub const MARKET_KR: &str = "kr";
 
@@ -125,6 +136,10 @@ pub enum ResponseKind {
     /// This is disclosure-source evidence and must never enter the EOD,
     /// candidate, or publication paths.
     DisclosureEntityProfile,
+    /// A rendered KIND correction/version viewer whose `mainDoc` options are
+    /// preserved as ordered disclosure-evidence membership. This is not an
+    /// EOD corporate-action or publication input.
+    DisclosureVersionMembership,
 }
 
 impl ResponseKind {
@@ -144,6 +159,7 @@ impl ResponseKind {
             Self::DisclosureIndex => "disclosure_index",
             Self::DisclosureEntityMaster => "disclosure_entity_master",
             Self::DisclosureEntityProfile => "disclosure_entity_profile",
+            Self::DisclosureVersionMembership => "disclosure_version_membership",
         }
     }
 
@@ -163,6 +179,7 @@ impl ResponseKind {
             "disclosure_index" => Some(Self::DisclosureIndex),
             "disclosure_entity_master" => Some(Self::DisclosureEntityMaster),
             "disclosure_entity_profile" => Some(Self::DisclosureEntityProfile),
+            "disclosure_version_membership" => Some(Self::DisclosureVersionMembership),
             _ => None,
         }
     }
@@ -196,15 +213,16 @@ pub const CANDIDATE_RESPONSE_KINDS: [ResponseKind; 5] = [
 /// candidate document pipeline; candidate-master ZIPs are Raw-only evidence.
 pub const CANDIDATE_MASTER_RESPONSE_KINDS: [ResponseKind; 1] = [ResponseKind::CandidateMaster];
 
-/// The separate OpenDART disclosure-source scope.  It is kept out of
-/// [`EOD_RESPONSE_KINDS`], [`CANDIDATE_RESPONSE_KINDS`], and
-/// [`CANDIDATE_MASTER_RESPONSE_KINDS`] because disclosure bodies are
-/// Raw-only evidence and must never be admitted into the EOD, candidate, or
-/// publication paths.
-pub const DISCLOSURE_RESPONSE_KINDS: [ResponseKind; 3] = [
+/// The separate disclosure-source scope (OpenDART and KIND correction-viewer
+/// evidence). It is kept out of [`EOD_RESPONSE_KINDS`],
+/// [`CANDIDATE_RESPONSE_KINDS`], and [`CANDIDATE_MASTER_RESPONSE_KINDS`]
+/// because disclosure bodies are Raw-only evidence and must never be admitted
+/// into the EOD, candidate, or publication paths.
+pub const DISCLOSURE_RESPONSE_KINDS: [ResponseKind; 4] = [
     ResponseKind::DisclosureIndex,
     ResponseKind::DisclosureEntityMaster,
     ResponseKind::DisclosureEntityProfile,
+    ResponseKind::DisclosureVersionMembership,
 ];
 
 /// All generic licensed response classes, in stable order. This list is a

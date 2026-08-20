@@ -99,3 +99,101 @@ Collection stays deliberately modest: the site's own control, low request volume
 no parameter probing. ADR-0004 D11 records the accepted risk — whether the KRX
 Data Marketplace anti-automation clause reaches KIND is unresolved, since KIND's
 own legal notice does not carry one.
+
+## Correction-evidence viewer (one acceptance)
+
+This is a separate, operator-gated capture. Run exactly one acceptance number:
+
+```sh
+node capture-correction.mjs --from 2020-02-03 --to 2020-02-07 \
+  --acceptance 20200207000058 --out /path/to/staging \
+  --confirm KIND_CORRECTION_EVIDENCE_CAPTURE
+```
+
+`--out` must be a new path. Its existing parent must be a real, non-symlink
+directory; an existing empty output directory is rejected. Capture atomically
+reserves the final directory name with an exclusive `mkdir`, pins that directory
+to a no-follow descriptor, and never replaces an existing path. A directory
+without `capture.json` is an uncommitted capture and the Rust consumer rejects it.
+
+The operator gate covers the low-volume D11 exception. The script uses the
+ETF disclosure entry page and KIND's own date/search controls, then accepts an
+exact `openDisclsViewer('<acceptance>','')` anchor only when it is unique in
+the exact requested-range page-1 POST body has been read and validated as
+strict UTF-8 and at most 1 MiB. Repeated nodes are admitted only when they
+carry one identical raw handler value; a distinct handler for the same
+acceptance fails closed. Default,
+malformed, other-range, oversize, invalid-UTF-8, or still-pending response
+bodies do not authorize DOM attribution. It never constructs or directly
+navigates to a viewer URL, sends a reconstructed HTTP request, opens detailed
+search or another page, or paginates. A missing or duplicate target is
+incomplete and exits non-zero.
+
+The anchor opens the viewer through the opener page's popup event. The
+popup is admitted only for HTTPS `kind.krx.co.kr` path
+`/common/disclsviewer.do` without userinfo, port, or hash; browser-generated
+query semantics are opaque and are not recorded. Completion requires exactly
+one rendered `select` whose `id` or `name` is `mainDoc` and which has at least
+one option. An empty `mainDoc` is incomplete. The CLI rejects non-calendar
+dates and a reversed range.
+
+Complete staging contains `viewer.html` as the exact UTF-8 bytes of the
+rendered DOM serialization, labelled `artifact_kind: rendered_dom_snapshot`;
+these are not HTTP response bytes. The live anchor is matched by its exact
+`onclick` string again in the same page task that clicks it; a live missing,
+duplicate, or changed target fails closed. `capture.json` records the requested
+range, acceptance, origin path, termination, and `file` only for
+`viewer_loaded`. Complete viewer and metadata files are staged through
+the pinned output descriptor. `viewer.html` is written first and `capture.json`
+last as the consumer commit marker. Parent and output device/inode identities
+are checked immediately before and after that marker; a metadata finalization
+failure removes only this invocation's known files and its still-identical
+reserved directory.
+Missing target, duplicate target, no response, no popup, invalid viewer URL,
+or missing/duplicate/empty `mainDoc` are retained as closed incomplete outcomes.
+
+### Approved observation (2026-08-20)
+
+The path was exercised for the single-day range `2020-02-07` with list-anchor
+acceptance `20200207000058`. It uses only the ETF entry page and the site's own
+controls: `fnSearch` runs initially and at most once more; the exact page-1 POST
+response and handler are verified; readiness is read-only; the popup waiter is
+page-scoped and installed only after readiness; and the final recheck plus click
+is atomic. The viewer origin/path is exact-checked and the rendered DOM snapshot
+and metadata are committed through the exclusive output directory described
+above. No direct/reconstructed HTTP, direct viewer
+goto, pagination, bulk/scheduled/full-history capture, query recording, or
+body/provider-prose logging is allowed.
+
+The 35 Node tests pass. The exact response was 12,852 bytes with 13 form fields;
+the target handler occurred four times but had exactly one distinct raw value.
+The rendered snapshot was 24,886 bytes. It contains exactly one
+`mainDoc` select: option 0 has an explicit empty value (its rendered prompt is
+not treated as evidence), and the sole real option has
+raw value `20200207000081|Y`, acceptance token `20200207000081`, and label date
+`2020.02.07`. The list anchor and
+option acceptance must remain separate. This proves option-level acceptance
+resolution and ordered membership shape only; it does not prove a correction
+chain or any equality/join, predecessor, supersedes, withdrawal, time, or
+timezone semantics. `|Y` is opaque beyond this exact observed shape. Dates remain
+date-only and must never be derived from IDs. The prior non-ETF direct-viewer
+sample is not an ETF implementation basis; `20251204000324` lacked ETF-list
+provenance and was rejected.
+
+Playwright initially lacked `libasound.so.2`; the existing user-space
+`/home/l1nnx/tools/pwlibs` library was supplied through process-only
+`LD_LIBRARY_PATH`, with no system installation or privilege change. Failed
+captures were safe incomplete metadata-only outcomes. The persistent
+`missing_target` cause was a response tracker that omitted the expected
+acceptance; passing the CLI acceptance and validating the response expectation
+fixed it. The resulting viewer HTML remains only under `/tmp` and must not enter
+Git. Rust Raw ingest and ordered-membership normalization are implemented. The
+list-response diagnostic size and rendered-viewer size are independently
+bounded because they describe different artifacts; the real staging directory
+passes the Rust CLI's read-only `--plan`, and a one-shot execute against a new
+`/tmp` Raw root confirms the actual viewer passes the strict parser and atomic
+Raw ingest. Rust staging reads are anchored to one opened directory/file
+descriptor set; capture publication similarly anchors both the existing parent
+and its exclusively reserved final directory, with `capture.json` written last
+as the admission marker. Neither the viewer nor the
+temporary Raw data enters Git.
