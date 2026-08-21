@@ -634,6 +634,61 @@ join으로 *쓰고* 있었기 때문에 수정 전에도 후에도 스위트가 
 exit 1로만 실패해 원인 파악이 늦었다. §5의 함정 표와 같은 계열이며, `TMPDIR`을 `/data`로
 옮기는 것만으로는 부족하다 — cargo/rustc가 일부 경로에서 `/tmp`을 직접 쓴다.
 
+### 0.18 §0.17 독립 리뷰와 결함 8건 수정 (2026-08-22)
+
+§0.17의 네 커밋을 커밋별 독립 적대적 리뷰에 걸었다. **세 리뷰 모두
+PASS-WITH-FINDINGS였고 MAJOR 6건이 나왔다.** 리뷰를 돌리지 않았으면 전부 출시에
+실려 갔을 것들이다. 수정 커밋 `733aca2`, `e16b9da`, `0b34b9f`, 그리고 CI 수정 `f1117fb`.
+
+**가장 중요한 발견 — 미래정보 가드가 실행된 적이 없었다 (`733aca2`).**
+`crates/job-queue/src/factor_series.rs:591`이 `data/phase0/curated`에 다시
+`curated/bars/...`를 붙여 존재할 수 없는 경로를 검사했다. `phase0_root()`가 항상 `None`을
+반환해 **테스트 4개가 아무것도 단언하지 않고 반환**했고, 그중 둘은 bare `return`이라 출력에서
+통과와 구분조차 되지 않았다. 그 4개에 `a_factor_value_does_not_change_when_later_bars_exist`
+— 주석 스스로 "설계 전체가 딛고 선 속성… 팩터가 trailing이 아니게 되면 하류 어떤 단언도
+알아채지 못하는 방식으로 시리즈 전체가 미래정보에 오염된다"고 적은 가드 — 가 포함돼 있었다.
+**§0.16 A와 정확히 같은 결함 계열이고, §0.14가 "factor reader를 커버했다"고 적은 그 파일이다**
+(`:254/285/368/475`는 고쳤고 `:591`을 놓쳤다). 넷 다 이제 실행되고 전부 통과하므로 뒤에
+숨은 결함은 없었다 — 가드가 꺼져 있었을 뿐이다. 증거는 실행 시간이다: 이전 `0.00s`에 SKIP
+2줄, 이후 `0.08s`에 SKIP 0줄.
+
+**Stage4B 조립기가 로드 불가능한 패키지를 쓸 수 있었다 (`0b34b9f`).** §0.17이 "로드 불가능한
+패키지는 애초에 써지지 않는다"고 적었는데 **거짓이었다.** writer가 `load_action_evidence`는
+부르고 짝인 `validate_actions`를 부르지 않았다. 둘은 의도적으로 갈라져 있다 — 앞은 nonempty
+non-bonus 응답을 `RangeAction::Unsupported`로 **받아들이고**, 뒤가 그걸 거부한다. 그래서
+writer가 해시를 출력하고, 소유자가 그 해시를 승인 목록에 커밋하고, 그제서야 로더가 거부하는
+경로가 열려 있었다. 저장소에 단 하나뿐인 수작업 게이트 아티팩트에 **영구히 죽은 pin**을 남기는
+것이며 원칙 5가 막으려는 바로 그 일이다. whole-market 범위에서 dividend가 nonempty인 것은
+거의 확실하므로 예외 경로가 아니라 주 경로였다. 배치 매처에도 같은 불일치가 있었다 — 로더는
+정확히 7파일을 요구하는데 매처는 "7종류 식별"만 봐서 8파일짜리 일일 EOD 번들이 후보가 됐고,
+유효한 7파일 배치와 나란히 있으면 **둘 다 ambiguous로 거부**했다. 둘 다 수정 전 실패하는
+테스트로 재현했다.
+
+**Paper 페이지가 무관한 권한 하나로 전체가 닫혔다 (`e16b9da`).** §0.17이 추가한
+`getRecommendationRuns()`가 페이지의 `Promise.all`에 들어갔는데, 이 엔드포인트만 `recommendation`
+use이고 나머지는 전부 `paper_view`다. 즉 선택적 드롭다운 하나가 거부되면 보유·성과·parity·
+lineage·알림이 **전부** blocked 셸로 대체됐다. 리뷰어가 probe 테스트로 실증했다. 또한 섹션이
+`can_manage`(레코드 소유)로 게이트됐는데 엔드포인트 3개는 Owner **역할**을 요구한다 — member도
+자기 Paper 계좌를 만들 수 있으므로 **5명 중 4명에게 전 기능이 403**이었을 것이다. 계좌 전환 시
+이전 계좌의 READY 미리보기가 Apply 활성 상태로 남는 문제도 함께 닫았다.
+
+**CI가 첫 실행에서 빨갛게 났고 즉시 고쳤다 (`f1117fb`).** `python-tests` job이 Phase 0 골든
+테스트 3건에서 실패했다. 그 테스트들이 manifest에 pin된 code commit을 `git rev-parse`로
+해석하는데 그 커밋(`9f319ca`)이 HEAD보다 236커밋 뒤라 `actions/checkout` 기본 depth-1
+클론에는 없다. **드리프트가 아니라 클론 아티팩트를 검사하고 있었다.** `--depth 1` 클론에서
+동일 실패를 재현하고 같은 클론을 `--unshallow`하니 통과하는 것으로 확정했다. `fetch-depth: 0`.
+
+**리뷰가 확인해준 것도 기록한다.** 승인 목록 게이트는 뚫리지 않았다(`#[cfg(test)]` 핀 로더 유지,
+매니페스트 구조체 비공개 유지, 승인 목록 무변경). 미리보기 UI의 zod 스키마 7개는 openapi.json과
+필드 단위로 정확히 일치하고, 정밀 소수 문자열이 `number`로 변환되는 곳은 한 군데도 없다.
+§0.17 A의 가드 테스트 2개는 **양방향 모두** load-bearing임이 변이 테스트로 증명됐다 —
+특히 프로덕션과 픽스처를 함께 뒤집는 경우를 잡는 것은 `!doubled.exists()` 단언 하나뿐이다.
+
+**최종 검증 (전체 재실행).** `cargo fmt`/`git diff --check`/workspace clippy `-D warnings`
+PASS. `cargo test --workspace`는 환경 요인 6건(`research_worker`, QA `DATABASE_URL` 부재)만
+실패하며 개수 불변. web `lint`/`typecheck`/`build` clean, **86/86**(75→86). pytest **357
+passed / 2 skipped**. CI contract 7/7. **GitHub Actions `main` 전 job green.**
+
 ---
 
 ## 1. 목표 — 이 시스템은 무엇인가
