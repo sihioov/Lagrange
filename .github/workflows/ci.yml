@@ -34,6 +34,11 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.2
       - run: bash scripts/check-pins.sh
+      - name: Verify committed lockfiles
+        run: |
+          for lf in Cargo.lock package-lock.json; do
+            [ -f "$lf" ] || { echo "missing committed lockfile $lf"; exit 1; }
+          done
       - run: bash scripts/validate-foundation.sh
       - run: bash deploy/db/integration-validation/static-check.sh
       - run: bash deploy/db/integration-validation/validate.sh --self-test
@@ -98,6 +103,22 @@ jobs:
       - if: always()
         run: docker compose -f deploy/qa/qa-db.compose.yml down -v --remove-orphans
 
+  python-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check --no-cache-dir pyarrow==25.0.0 uv==0.12.1
+      - run: uv sync --project nt --locked
+      - run: python scripts/ci/prepare_phase0.py --root data/phase0
+      - run: uv run --project nt pytest -q
+      - run: bash scripts/backup/tests/test-validate-policy.sh
+
   postgres-integration-validation:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -132,7 +153,16 @@ jobs:
 
   required:
     if: always()
-    needs: [policy, format, clippy, web, workspace-tests, postgres-integration-validation]
+    needs:
+      [
+        policy,
+        format,
+        clippy,
+        web,
+        workspace-tests,
+        python-tests,
+        postgres-integration-validation,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -143,6 +173,7 @@ jobs:
           CLIPPY_RESULT: ${{ needs.clippy.result }}
           WEB_RESULT: ${{ needs.web.result }}
           TEST_RESULT: ${{ needs.workspace-tests.result }}
+          PYTHON_TEST_RESULT: ${{ needs.python-tests.result }}
           POSTGRES_VALIDATION_RESULT: ${{ needs.postgres-integration-validation.result }}
         run: |
           test "$POLICY_RESULT" = success
@@ -150,4 +181,5 @@ jobs:
           test "$CLIPPY_RESULT" = success
           test "$WEB_RESULT" = success
           test "$TEST_RESULT" = success
+          test "$PYTHON_TEST_RESULT" = success
           test "$POSTGRES_VALIDATION_RESULT" = success

@@ -88,6 +88,7 @@ class WorkflowContractTests(unittest.TestCase):
                 "clippy",
                 "web",
                 "workspace-tests",
+                "python-tests",
                 "postgres-integration-validation",
                 "required",
             },
@@ -175,6 +176,7 @@ class WorkflowContractTests(unittest.TestCase):
                 "clippy",
                 "web",
                 "workspace-tests",
+                "python-tests",
                 "postgres-integration-validation",
             },
         )
@@ -190,6 +192,79 @@ class WorkflowContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertRegex(qa_compose, r"image:\s+postgres@sha256:[0-9a-f]{64}")
+
+    def test_verify_all_gates_have_ci_counterparts(self) -> None:
+        # Every hard gate declared by scripts/verify-all.sh ("Every gate is a
+        # hard gate") must have a counterpart somewhere in the CI workflows.
+        # verify-all.sh itself is not wired into any workflow (running it
+        # serially would re-run fmt/clippy/cargo-test and blow past CI's
+        # per-job timeouts), so CI re-implements its gates piecemeal. That
+        # split invites silent drift: a gate can be removed from ci.yml
+        # without anyone noticing verify-all.sh still promises it.
+        #
+        # Each row pairs a marker unique to one verify-all.sh gate with the
+        # CI text that provides equivalent coverage. If a CI step providing
+        # that coverage is deleted, the corresponding assertIn fails.
+        verify_all_path = ROOT / "scripts" / "verify-all.sh"
+        verify_all = verify_all_path.read_text(encoding="utf-8")
+        ci_path, _ = load_workflow("ci.yml")
+        ci_text = ci_path.read_text(encoding="utf-8")
+
+        gates = [
+            ('bash "$root/scripts/check-pins.sh"', "bash scripts/check-pins.sh"),
+            (
+                "for lf in Cargo.lock package-lock.json; do",
+                "for lf in Cargo.lock package-lock.json; do",
+            ),
+            (
+                'bash "$root/scripts/validate-foundation.sh"',
+                "bash scripts/validate-foundation.sh",
+            ),
+            ("cargo fmt --all --check", "cargo fmt --all -- --check"),
+            (
+                "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+                "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+            ),
+            ("cargo test --workspace", "cargo test --workspace --locked --no-fail-fast"),
+            (
+                "npm run lint --workspaces --if-present",
+                "npm run lint --workspace @lagrange/web",
+            ),
+            (
+                "npm run typecheck --workspaces --if-present",
+                "npm run typecheck --workspace @lagrange/web",
+            ),
+            ("npm test --workspaces --if-present", "npm test --workspace @lagrange/web"),
+            ("uv run --project nt pytest -q", "uv run --project nt pytest -q"),
+            (
+                'bash "$root/scripts/backup/tests/test-validate-policy.sh"',
+                "bash scripts/backup/tests/test-validate-policy.sh",
+            ),
+        ]
+
+        # If a gate is added to (or removed from) verify-all.sh without a
+        # matching update to the table above, the step count diverges and
+        # this catches it before the per-gate assertions even run.
+        step_count = len(re.findall(r'echo "\[\$step\]', verify_all))
+        self.assertEqual(
+            step_count,
+            len(gates),
+            "scripts/verify-all.sh gate count changed; update the gate/CI "
+            "mapping in test_verify_all_gates_have_ci_counterparts",
+        )
+
+        for verify_marker, ci_marker in gates:
+            self.assertIn(
+                verify_marker,
+                verify_all,
+                f"gate marker no longer found in scripts/verify-all.sh: {verify_marker!r}",
+            )
+            self.assertIn(
+                ci_marker,
+                ci_text,
+                "scripts/verify-all.sh gate has no CI counterpart "
+                f"(missing from ci.yml): {ci_marker!r}",
+            )
 
     def test_smoke_runs_only_the_existing_functional_script(self) -> None:
         path, smoke = load_workflow("research-smoke.yml")
