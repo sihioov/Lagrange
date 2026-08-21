@@ -588,7 +588,7 @@ mod tests {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()?
             .parent()?
-            .join("data/phase0/curated");
+            .join("data/phase0");
         root.join("curated/bars/market=kr").is_dir().then_some(root)
     }
 
@@ -709,6 +709,7 @@ mod tests {
     #[test]
     fn the_series_covers_exactly_the_rebalance_dates() {
         let Some(root) = phase0_root() else {
+            eprintln!("SKIP: data/phase0 has not been generated");
             return;
         };
         let shape = dataset_shape(&root).expect("shape");
@@ -736,6 +737,7 @@ mod tests {
         // names both numbers so an operator can see it is the DATA that is
         // short, not the strategy that is broken.
         let Some(root) = phase0_root() else {
+            eprintln!("SKIP: data/phase0 has not been generated");
             return;
         };
         let shape = dataset_shape(&root).expect("shape");

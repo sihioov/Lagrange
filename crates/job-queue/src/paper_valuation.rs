@@ -462,7 +462,12 @@ mod tests {
 
         let closes = session_closes(&root, &state, date, &canceled)
             .expect("session_closes must read the path the real writer produces");
-        assert_eq!(closes.get(&instrument_id), Some(&close));
+        assert_eq!(
+            closes.get(&instrument_id),
+            Some(&close),
+            "the close must come from the fixture the real writer layout produces, \
+             not a curated/curated path that never exists"
+        );
 
         let doubled = CurateStore::new(root.join("curated")).bars_path(
             MARKET,
