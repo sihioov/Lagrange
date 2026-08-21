@@ -1,10 +1,11 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준일: 2026년 8월 21일 (2026-08-21).** §0.1~§0.12는
+**최신 기준 시각: 2026-08-21T21:29:09+09:00 (Asia/Seoul).** §0.1~§0.12는
 운영·Stage6 진행 당시의 날짜별 스냅샷이고, 현재 개발 worktree의 권위 있는
-remediation 상태와 다음 작업은 §0.13~§0.15다. 현재 `main` 상태와 공식 소스
-수집기의 최신 구현·검증·운영 순서는 §0.15를 우선한다. 이후 §1부터는 설계 목표와
-08-17 이전 게이트·구현 이력을 보존한 기록이다. 과거의 "미설치", "KIS
+remediation 상태와 다음 작업은 §0.13~§0.16다. 현재 `main` 상태와 공식 소스
+수집기의 최신 구현·검증·운영 순서는 §0.15를 우선한다. §0.16은 그 순서를 바꾸지
+않는 독립 read-only 검토 기록이며 미해결 코드·검증 인프라 항목 3건을 남긴다.
+이후 §1부터는 설계 목표와 08-17 이전 게이트·구현 이력을 보존한 기록이다. 과거의 "미설치", "KIS
 credential 없음", "초기 백필 미완료" 같은 문장은 당시에는 사실이었지만
 현재 상태를 뜻하지 않는다. 코드가 바뀌면 게이트와 판정은 다시 실행해
 갱신해야 한다.
@@ -521,6 +522,66 @@ freshness 확인, (4) 별도 operator 확인 아래 ETF11 KIS action-range 최�
 승격, (6) DatasetManifest·DB publication·five-pin 후 recommendation/backtest/Paper
 연결이다. FSC 상장종목 미러나 OpenDART를 ETF11 identity 경로로 다시 열지 않는다.
 
+### 0.16 독립 read-only 검토 — 미해결 항목 3건 (2026-08-21)
+
+§0.15 이후 상태(`06937a8`, `main` = `origin/main`)를 대상으로 한 독립 검토다.
+**provider·브라우저·운영 DB·systemd·CI를 호출하지 않았고 코드도 변경하지 않았다.**
+이 검토 환경에서는 shell이 동작하지 않아 확인 수단이 파일 직접 읽기뿐이었다.
+따라서 어떤 테스트·게이트도 실행하지 않았으며 green·READY·PIT 주장을 하지
+않는다. 아래 3건은 문서 교차검증과 해당 파일 직접 확인으로만 뒷받침된다. 전체
+트리에 대한 `TODO`/`unimplemented!` 전수 조사는 검색 도구 부재로 수행하지
+못했으므로 이 3건이 미해결 항목의 전부라고 주장하지 않는다.
+
+**A. `CurateStore` 이중 경로가 Paper 런타임에 남아 있다 — §0.9의 지뢰 미해소.**
+계약은 `crates/market-data/src/curate.rs:260-265`에 명시돼 있다 —
+`CurateStore::new(root)`의 `root`는 `data/` 루트이고 `bars_path()`가 `curated`를
+스스로 붙인다. 그런데 `crates/job-queue/src/paper_valuation.rs:362`
+(`session_closes`)와 `crates/job-queue/src/paper_execution.rs:683`
+(`session_opens`)는 계속 `CurateStore::new(dataset_root.join("curated"))`를 쓴다.
+호출자가 넘기는 `dataset_root`가 `data/` 루트라면 두 경로는
+`dataset_root/curated/curated/...`를 읽는다. §0.14의 경로 통일은 Phase-0 생성기·
+runner path preflight·factor reader·Paper fixture manifest를 대상으로 했고 이 두
+런타임 호출부는 포함하지 않았다. 대응 테스트 fixture도 같은 이중 join이라 읽기·
+쓰기가 자체 정합이므로 **현재 CI green은 이 자리를 덮지 않는다.** 두 함수는 Paper
+체결·종가 평가 경로이므로, 통일된 writer가 만든 실제 curated 트리를 처음 읽는
+시점에 `MissingPrice`/`MissingMark`로 닫힐 수 있다. DB와 실데이터가 없어
+재현하지 않았고 코드도 고치지 않았다. **§0.15 (3)에서 실데이터가 들어오면 재현
+가능하며 (6)의 Paper 연결 전에 닫아야 한다.**
+
+**B. 리밸런싱 미리보기 UI 부재를 확인했다 — §4 항목 7 유효.** 백엔드 표면은
+존재한다(`POST /paper/accounts/{id}/recommendation-previews`,
+`GET .../{preview_id}`, `POST .../apply`). 그러나
+`apps/web/app/(authenticated)/paper/page.tsx`는 holdings·performance·parity·
+lineage·bind·notifications만 조립하고 preview를 호출하는 코드가 없다. 따라서
+소유자가 추천을 Paper에 적용하기 전 미리보기를 화면에서 확인할 경로가 아직 없다.
+§2.5가 기록한 "UI와 Live 주문은 포함하지 않는다"는 `06937a8` 기준으로도 그대로다.
+
+**C. CI가 Python 스위트를 실행하지 않는다 — 탐지 공백.**
+`.github/workflows/ci.yml`의 `workspace-tests`는 `pyarrow==25.0.0`/`uv==0.12.1`
+설치와 `uv sync --project nt --locked`로 환경만 구성한 뒤
+`cargo test --workspace --locked --no-fail-fast`만 실행한다. `pytest` 스텝이 두
+workflow 어디에도 없다. 즉 `nt/*/tests/`와 `tests/golden/`(Phase 0 게이트, 5전략
+robustness 골든)은 CI 밖이다. 반면 `scripts/verify-all.sh`는 스스로를
+"CI / clean containers" 용도로 선언하고 "Every gate is a hard gate"라 적으면서
+10단계에 `uv run --project nt pytest -q`, 11단계에 백업 정책 테스트를 포함한다 —
+그런데 **어느 workflow도 이 스크립트를 호출하지 않고 CI가 부분집합을 따로
+재구현했다.** 미래정보 참조 금지가 §14 위험표 1순위인 저장소에서 골든 회귀가
+자동 탐지되지 않는다는 뜻이다. 함께 관찰한 것: `research-smoke.yml`은 `push`/
+`workflow_dispatch` 전용이고 `ci.yml`의 `required` 집계에 없으므로 PR을 막지
+못한다. `scripts/qa/`의 `phase1|phase2|phase3-gate.sh`, `full-system-gate.sh`,
+`failure-suite.sh`, `nginx-hardening.sh`와 `deploy/nginx/auth-route-static-check.sh`,
+`deploy/systemd/*-static-check.sh`, `deploy/secrets/runtime-static-check.sh`는 두
+workflow에서 직접 참조되지 않는다(다른 스크립트를 통한 간접 호출까지 배제하지는
+않았다). `research-worker-smoke.sh`의 `wsl`/`wslpath` 분기는 §2.8이 지적한 뒤에도
+남아 있다.
+
+**출시 판정에 대한 영향.** A·B·C 어느 것도 §0.15의 순서나 계약 flag를 바꾸지
+않는다. 판정은 계속 `vendor_snapshot=true`, `strict_pit=false`, `ready=false`다.
+A는 (6) 이전에 닫을 항목, B는 사용자 가시 기능의 잔여 항목, C는 게이트가 아니라
+탐지 수단의 공백이다. 또한 **§2.1 표는 2026-08-17 실행의 역사 증거이며, 08-21
+ADR-0005의 ACTIVE KIS metadata로 E1을 재평가한 게이트 재실행은 아직 수행되지
+않았다** — 이 재실행은 소유자 결정을 요구하지 않는 유일한 순수 실행 항목이다.
+
 ---
 
 ## 1. 목표 — 이 시스템은 무엇인가
@@ -919,7 +980,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
 5. **실제 KIS provider와 운영 원천 활성화.** 새 credential을 발급하지 않고 기존 등록 KIS App Key/App Secret의 보호된 source/runtime secret을 검증한다. 이후 token/endpoint를 확인하고 확정된 entitlement metadata를 운영 DB에 등록한 뒤 `research_writer`, migration, Raw volume을 검증해 KIS calendar/EOD/instrument/corporate-action 원천을 공급한다. 고정 ETF 백필 후 후보 bridge와 KOSPI200/KOSDAQ150 source set은 별도 승인한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 
-**작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다.
+**작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다. §0.16의 A(Paper 런타임 `CurateStore` 이중 경로)와 C(CI가 Python 스위트를 실행하지 않음)도 함께 남아 있다 — A는 §0.15 (6) 이전에 닫고, C는 게이트가 아니라 탐지 수단의 공백이다.
 
 ### 4.4 Phase 4 잔여
 
