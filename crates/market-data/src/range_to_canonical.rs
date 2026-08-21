@@ -784,7 +784,7 @@ fn read_artifact(
     root: &Path,
     artifact: &EvidenceArtifactRef,
 ) -> Result<Vec<u8>, RangeCanonicalError> {
-    if artifact.schema_version != 1 || artifact.size_bytes == 0 {
+    if artifact.schema_version != EVIDENCE_PACKAGE_SCHEMA_VERSION || artifact.size_bytes == 0 {
         return Err(RangeCanonicalError::EvidenceArtifact {
             path: artifact.path.clone(),
             reason: "unsupported schema or empty artifact".to_owned(),
@@ -2142,9 +2142,11 @@ fn is_initial_action_page(file: &FileEntry) -> bool {
     continuations.as_slice() == [""]
 }
 
-/// Finds the one immutable Raw KIS batch whose files provide exactly one
-/// initial-page response for each of the seven KSD action classes over
-/// `[range_start, range_end]`, and returns the corresponding evidence refs.
+/// Finds the one immutable Raw KIS batch whose files are exactly the seven
+/// initial-page KSD action responses over `[range_start, range_end]` — one
+/// per class, and nothing else — and returns the corresponding evidence
+/// refs.  A batch that merely *contains* those seven responses is not a
+/// candidate, because the loader can never accept it.
 /// Fails closed (as [`RangeCanonicalError::MissingActionEvidence`]) when zero
 /// or more than one Raw batch qualifies, so a package can never silently pin
 /// an arbitrary or ambiguous action batch.
@@ -2156,7 +2158,15 @@ fn find_matching_action_evidence(
     let entries = raw.read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)?;
     let mut candidates: Vec<Vec<EvidenceActionRef>> = Vec::new();
     for entry in &entries {
-        if entry.mode != FetchMode::Credentialed {
+        // `load_action_evidence` requires the pinned batch to hold exactly
+        // one file per KSD class and nothing else, so a batch with extra
+        // files -- the daily EOD bundle, or a paginated KSD range batch --
+        // can never be loaded.  Mirroring that constraint here keeps such a
+        // batch out of the candidate set entirely, instead of letting it be
+        // selected and then rejected, or counted toward ambiguity against a
+        // batch that is genuinely loadable.
+        if entry.mode != FetchMode::Credentialed || entry.files.len() != REQUIRED_ACTION_KINDS.len()
+        {
             continue;
         }
         let mut chosen: BTreeMap<&'static str, &FileEntry> = BTreeMap::new();
@@ -2205,11 +2215,131 @@ fn find_matching_action_evidence(
     }
 }
 
-fn create_and_verify_package_dir(out_dir: &Path) -> Result<PathBuf, RangeCanonicalError> {
-    fs::create_dir_all(out_dir).map_err(|_| RangeCanonicalError::UnsafeEvidencePath {
-        path: out_dir.display().to_string(),
-    })?;
-    safe_package_root(out_dir)
+fn sync_directory(path: &Path) -> Result<(), RangeCanonicalError> {
+    fs::File::open(path)
+        .and_then(|handle| handle.sync_all())
+        .map_err(|error| RangeCanonicalError::EvidencePackage {
+            reason: format!("failed to sync directory {}: {error}", path.display()),
+        })
+}
+
+/// A staging directory that becomes the caller's package directory only on
+/// one atomic rename.
+///
+/// Two properties matter here.  First, the whole parent chain of `out_dir` is
+/// proven absolute and symlink-free *before* anything is created: directory
+/// creation follows symlinks while [`safe_package_root`] rejects them, so
+/// checking afterwards would already have created a directory outside the
+/// intended tree.  Second, every artifact is assembled under a sibling
+/// staging path, so a failure partway through the four writes leaves no
+/// partial package at `out_dir` for a reviewer to mistake for a complete one
+/// and no half-written directory to block a retry.
+struct PackageStaging {
+    staging: PathBuf,
+    target: PathBuf,
+    parent: PathBuf,
+    committed: bool,
+}
+
+impl PackageStaging {
+    fn create(out_dir: &Path, unique: BatchId) -> Result<Self, RangeCanonicalError> {
+        let unsafe_out = || RangeCanonicalError::UnsafeEvidencePath {
+            path: out_dir.display().to_string(),
+        };
+        if out_dir.as_os_str().is_empty() || !out_dir.is_absolute() {
+            return Err(unsafe_out());
+        }
+        let (Some(parent), Some(name)) = (out_dir.parent(), out_dir.file_name()) else {
+            return Err(unsafe_out());
+        };
+        // Only the final component may be created, and only after its whole
+        // ancestry is verified.  A missing intermediate directory is an
+        // operator error, not something to materialize silently.
+        let parent = safe_package_root(parent)?;
+        let target = parent.join(name);
+        match fs::symlink_metadata(&target) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(unsafe_out());
+                }
+                if fs::read_dir(&target)
+                    .map_err(|_| unsafe_out())?
+                    .next()
+                    .is_some()
+                {
+                    return Err(RangeCanonicalError::EvidencePackage {
+                        reason: format!(
+                            "package directory {} already exists and is not empty",
+                            target.display()
+                        ),
+                    });
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(unsafe_out()),
+        }
+
+        let staging = parent.join(format!(".{unique}.evidence-package.partial"));
+        fs::create_dir(&staging).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                RangeCanonicalError::EvidencePackage {
+                    reason: format!(
+                        "staging directory {} already exists; remove the residue of an \
+                         interrupted run before retrying",
+                        staging.display()
+                    ),
+                }
+            } else {
+                RangeCanonicalError::UnsafeEvidencePath {
+                    path: staging.display().to_string(),
+                }
+            }
+        })?;
+        let staging = match safe_package_root(&staging) {
+            Ok(root) => root,
+            Err(error) => {
+                let _ = fs::remove_dir(&staging);
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            staging,
+            target,
+            parent,
+            committed: false,
+        })
+    }
+
+    fn root(&self) -> &Path {
+        &self.staging
+    }
+
+    /// Publishes the assembled package.  The staging directory is fsynced so
+    /// its entries are durable, renamed onto `target`, and the parent is then
+    /// fsynced so the rename itself is durable.  A parent-sync failure after
+    /// the rename is still reported as an error, but the published directory
+    /// is complete and is deliberately not removed.
+    fn commit(mut self) -> Result<(), RangeCanonicalError> {
+        sync_directory(&self.staging)?;
+        fs::rename(&self.staging, &self.target).map_err(|error| {
+            RangeCanonicalError::EvidencePackage {
+                reason: format!("failed to publish {}: {error}", self.target.display()),
+            }
+        })?;
+        self.committed = true;
+        sync_directory(&self.parent)
+    }
+}
+
+impl Drop for PackageStaging {
+    fn drop(&mut self) {
+        if !self.committed {
+            // Best effort.  The staging path is one this type created inside
+            // a verified, symlink-free parent and is never the caller's own
+            // `out_dir`, so this cannot remove caller-supplied data.
+            let _ = fs::remove_dir_all(&self.staging);
+        }
+    }
 }
 
 fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), RangeCanonicalError> {
@@ -2242,7 +2372,7 @@ fn write_evidence_artifact(
         path: name.to_owned(),
         sha256: ContentHash::from_bytes(bytes),
         size_bytes: bytes.len() as u64,
-        schema_version: 1,
+        schema_version: EVIDENCE_PACKAGE_SCHEMA_VERSION,
     })
 }
 
@@ -2255,12 +2385,17 @@ fn write_evidence_artifact(
 /// seven KSD action files are discovered from the immutable Raw KIS batch
 /// that exactly covers this session's range (never caller-selected). The
 /// action coverage is also verified end-to-end via [`load_action_evidence`]
-/// before the package is written, so the returned hash is proven loadable —
-/// not merely schema-shaped — by the same acceptance path
-/// [`load_verified_range_canonical_evidence`] runs afterward.
+/// *and* its paired [`validate_actions`] — the second is what rejects action
+/// content the first deliberately admits — so the returned hash is proven
+/// loadable, not merely schema-shaped: every check
+/// [`load_verified_range_canonical_evidence`] runs afterward has already run
+/// here, on the same Raw store and the same evidence bytes. What it cannot
+/// prove is that the bytes on disk stay unchanged between the two calls; the
+/// loader re-reads and re-hashes them for exactly that reason.
 ///
-/// This function has no authority to approve its own output: the returned
-/// [`ContentHash`] must still be reviewed and committed to
+/// Exactly one check is deliberately left unsatisfied, because this function
+/// has no authority over it: the returned [`ContentHash`] must still be
+/// reviewed and committed to
 /// `configs/evidence/kis-range-canonical-approved-manifests.json` by an
 /// operator before [`load_verified_range_canonical_evidence`] will accept it.
 pub fn write_evidence_package(
@@ -2327,17 +2462,29 @@ pub fn write_evidence_package(
     )?;
     // Fully exercise the same acceptance path the loader will run later, so
     // a package that fails to load can never be written in the first place.
-    load_action_evidence(
+    // `load_action_evidence` is deliberately permissive about content -- a
+    // nonempty non-bonus KSD response becomes `RangeAction::Unsupported` and
+    // loads fine -- so the paired `validate_actions` call is what actually
+    // rejects action content the loader will refuse.  Running only the first
+    // would print a hash for a package that can never load, and an approved
+    // hash for an unloadable package is permanently dead gate evidence.
+    let coverage = load_action_evidence(
         raw,
         &action_refs,
         document.lineage.source_start,
         document.lineage.source_end,
     )?;
+    validate_actions(
+        &coverage,
+        document.lineage.source_start,
+        document.lineage.source_end,
+        normalized_entry.date,
+    )?;
 
-    let out_root = create_and_verify_package_dir(out_dir)?;
-    let calendar = write_evidence_artifact(&out_root, "schedule.json", schedule_bytes)?;
-    let listing_ref = write_evidence_artifact(&out_root, "listing.json", listing_bytes)?;
-    let pit_ref = write_evidence_artifact(&out_root, "pit.json", pit_policy_bytes)?;
+    let staging = PackageStaging::create(out_dir, normalized_entry.batch_id)?;
+    let calendar = write_evidence_artifact(staging.root(), "schedule.json", schedule_bytes)?;
+    let listing_ref = write_evidence_artifact(staging.root(), "listing.json", listing_bytes)?;
+    let pit_ref = write_evidence_artifact(staging.root(), "pit.json", pit_policy_bytes)?;
 
     let manifest = EvidencePackageManifest {
         schema_version: EVIDENCE_PACKAGE_SCHEMA_VERSION,
@@ -2353,7 +2500,8 @@ pub fn write_evidence_package(
         actions: action_refs,
     };
     let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
-    write_new_file(&out_root.join("manifest.json"), &manifest_bytes)?;
+    write_new_file(&staging.root().join("manifest.json"), &manifest_bytes)?;
+    staging.commit()?;
     Ok(ContentHash::from_bytes(&manifest_bytes))
 }
 

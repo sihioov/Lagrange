@@ -353,8 +353,69 @@ fn action_entry_with_response_marker(
     tr_cont: Option<Option<&str>>,
 ) -> ManifestEntry {
     let id = BatchId::from_uuid(Uuid::new_v4());
+    let envelopes = action_envelopes(id, bonus, body_marker, tr_cont, None);
+    store_action_batch(raw, id, envelopes)
+}
+
+/// The seven initial-page KSD responses where `kind` (never `bonus-issue`)
+/// carries one nonempty row.  `load_action_evidence` is deliberately
+/// permissive about content and maps such a row to
+/// `RangeAction::Unsupported`; only `validate_actions` rejects it.
+fn action_entry_with_nonempty_unsupported(raw: &RawStore, kind: &str) -> ManifestEntry {
+    let id = BatchId::from_uuid(Uuid::new_v4());
+    let envelopes = action_envelopes(id, false, None, None, Some(kind));
+    store_action_batch(raw, id, envelopes)
+}
+
+/// The seven KSD responses plus one unrelated bars file, exactly as the
+/// daily EOD bundle stores them.  `load_action_evidence` requires the
+/// pinned Raw batch to hold exactly seven files, so this batch can never be
+/// loaded and must therefore never be selected as action evidence.
+fn action_entry_with_extra_file(raw: &RawStore) -> ManifestEntry {
+    let id = BatchId::from_uuid(Uuid::new_v4());
+    let mut envelopes = action_envelopes(id, false, None, None, None);
+    let bytes = serde_json::to_vec(&json!({
+        "rt_cd": "0",
+        "output1": {"stck_shrn_iscd": "069500"},
+        "output2": []
+    }))
+    .unwrap();
+    envelopes.push(RawEnvelope::new(
+        id,
+        ResponseKind::Bars,
+        "daily-bars-eod-069500.json".to_owned(),
+        bytes,
+        timestamp(ACQUIRED),
+        source_request("069500"),
+    ));
+    store_action_batch(raw, id, envelopes)
+}
+
+fn store_action_batch(raw: &RawStore, id: BatchId, envelopes: Vec<RawEnvelope>) -> ManifestEntry {
     let date = date();
-    let envelopes = REQUIRED_ACTION_KINDS
+    raw.store_batch(
+        &BatchSpec {
+            provider: PROVIDER_KIS,
+            market: MARKET_KR,
+            date: &date,
+            batch_id: id,
+            entitlement_reference: Some("test-entitlement"),
+            mode: FetchMode::Credentialed,
+        },
+        &envelopes,
+    )
+    .unwrap()
+}
+
+fn action_envelopes(
+    id: BatchId,
+    bonus: bool,
+    body_marker: Option<(&str, &str)>,
+    tr_cont: Option<Option<&str>>,
+    nonempty_unsupported: Option<&str>,
+) -> Vec<RawEnvelope> {
+    let date = date();
+    REQUIRED_ACTION_KINDS
         .iter()
         .map(|kind| {
             let output = if bonus && *kind == "bonus-issue" {
@@ -363,6 +424,12 @@ fn action_entry_with_response_marker(
                     "record_date": DATE,
                     "right_dt": DATE,
                     "fix_rate": "5"
+                }])
+            } else if nonempty_unsupported == Some(*kind) {
+                json!([{
+                    "sht_cd": "069500",
+                    "record_date": DATE,
+                    "right_dt": DATE
                 }])
             } else {
                 json!([])
@@ -395,19 +462,7 @@ fn action_entry_with_response_marker(
                 request,
             )
         })
-        .collect::<Vec<_>>();
-    raw.store_batch(
-        &BatchSpec {
-            provider: PROVIDER_KIS,
-            market: MARKET_KR,
-            date: &date,
-            batch_id: id,
-            entitlement_reference: Some("test-entitlement"),
-            mode: FetchMode::Credentialed,
-        },
-        &envelopes,
-    )
-    .unwrap()
+        .collect::<Vec<_>>()
 }
 
 fn write_package(
@@ -845,6 +900,272 @@ fn write_evidence_package_fails_closed_on_listing_lineage_mismatch() {
         result,
         Err(RangeCanonicalError::MissingListingMasterEvidence { .. })
     ));
+    assert!(!out_dir.exists() || fs::read_dir(&out_dir).unwrap().next().is_none());
+}
+
+/// `load_action_evidence` accepts a nonempty non-`bonus-issue` KSD response
+/// by mapping it to `RangeAction::Unsupported`; only `validate_actions`
+/// rejects it, and the pin loader runs both.  A writer that ran only the
+/// first would print a `manifest_sha256` for a package the loader can never
+/// accept, and that hash — once reviewed and committed to the approved
+/// registry — would be permanently dead gate evidence.  A whole-market KSD
+/// dividend response is nonempty for almost any multi-day range, so this is
+/// the expected shape of real data, not an edge case.
+#[test]
+fn write_evidence_package_refuses_a_nonempty_unsupported_action_response() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let _actions = action_entry_with_nonempty_unsupported(&raw, "dividend");
+
+    let package_root = TempDir::new().unwrap();
+    let out_dir = package_root.path().join("pkg");
+    let result = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &pit_policy_bytes(),
+        &out_dir,
+    );
+    assert!(
+        matches!(&result, Err(RangeCanonicalError::UnsupportedAction { kind }) if kind == "dividend"),
+        "unexpected writer outcome: {result:?}"
+    );
+    assert!(!out_dir.exists() || fs::read_dir(&out_dir).unwrap().next().is_none());
+}
+
+/// Two Raw batches that both cover the range exactly must never be resolved
+/// silently: the writer has no authority to choose which one a reviewer will
+/// approve.
+#[test]
+fn write_evidence_package_refuses_an_ambiguous_action_batch_pin() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let _first = action_entry(&raw, false);
+    let _second = action_entry(&raw, false);
+
+    let package_root = TempDir::new().unwrap();
+    let out_dir = package_root.path().join("pkg");
+    let result = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &pit_policy_bytes(),
+        &out_dir,
+    );
+    assert!(
+        matches!(
+            &result,
+            Err(RangeCanonicalError::MissingActionEvidence { .. })
+        ),
+        "unexpected writer outcome: {result:?}"
+    );
+    assert!(!out_dir.exists() || fs::read_dir(&out_dir).unwrap().next().is_none());
+}
+
+/// A batch holding the seven KSD responses plus anything else — the daily
+/// EOD bundle, or a paginated KSD range batch — can never be loaded, because
+/// `load_action_evidence` requires the pinned batch to hold exactly seven
+/// files.  The writer must therefore not treat it as a candidate at all.
+#[test]
+fn write_evidence_package_ignores_an_action_batch_with_an_extra_file() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let bundle = action_entry_with_extra_file(&raw);
+    assert_eq!(bundle.files.len(), REQUIRED_ACTION_KINDS.len() + 1);
+
+    let package_root = TempDir::new().unwrap();
+    let out_dir = package_root.path().join("pkg");
+    let result = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &pit_policy_bytes(),
+        &out_dir,
+    );
+    assert!(
+        matches!(
+            &result,
+            Err(RangeCanonicalError::MissingActionEvidence { .. })
+        ),
+        "unexpected writer outcome: {result:?}"
+    );
+    assert!(!out_dir.exists() || fs::read_dir(&out_dir).unwrap().next().is_none());
+}
+
+/// Directory creation follows symlinks while `safe_package_root` rejects
+/// them, so the parent chain must be verified before anything is created.
+/// Checking afterwards would already have created a directory outside the
+/// intended tree.
+#[test]
+fn write_evidence_package_creates_nothing_under_a_symlinked_out_parent() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let _actions = action_entry(&raw, false);
+
+    let package_root = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    let staging_link = package_root.path().join("staging");
+    std::os::unix::fs::symlink(elsewhere.path(), &staging_link).unwrap();
+    let out_dir = staging_link.join("pkg");
+
+    let result = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &pit_policy_bytes(),
+        &out_dir,
+    );
+    assert!(
+        matches!(&result, Err(RangeCanonicalError::UnsafeEvidencePath { .. })),
+        "unexpected writer outcome: {result:?}"
+    );
+    assert!(fs::read_dir(elsewhere.path()).unwrap().next().is_none());
+}
+
+/// The package directory is published by renaming the staging directory onto
+/// it, so an `--out` the operator has already created (empty) must still
+/// work, while a non-empty one must fail closed rather than be merged into.
+#[test]
+fn an_existing_empty_out_dir_is_published_and_a_nonempty_one_is_refused() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let _actions = action_entry(&raw, false);
+
+    let package_root = TempDir::new().unwrap();
+    let out_dir = package_root.path().join("pkg");
+    fs::create_dir(&out_dir).unwrap();
+    let manifest_hash = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &pit_policy_bytes(),
+        &out_dir,
+    )
+    .unwrap();
+    load_with_approved_pin_for_test(&raw, &normalized, &out_dir, &manifest_hash).unwrap();
+
+    // The same `--out` is now non-empty, so a second run must refuse it
+    // instead of writing beside or over the first package.
+    let result = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &pit_policy_bytes(),
+        &out_dir,
+    );
+    assert!(
+        matches!(&result, Err(RangeCanonicalError::EvidencePackage { .. })),
+        "unexpected writer outcome: {result:?}"
+    );
+    let mut names = fs::read_dir(&out_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(
+        names,
+        ["listing.json", "manifest.json", "pit.json", "schedule.json"]
+    );
+}
+
+/// A failure after the first artifact is written must leave no partial
+/// package at `--out`, and no residue that would make an otherwise valid
+/// retry into the same `--out` fail on `create_new`.
+#[test]
+fn a_failed_write_leaves_no_residue_and_a_retry_into_the_same_out_dir_succeeds() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let _actions = action_entry(&raw, false);
+
+    let package_root = TempDir::new().unwrap();
+    let out_dir = package_root.path().join("pkg");
+    // Fails only at the PIT approval, i.e. after the schedule and listing
+    // evidence has already been fully validated.
+    let mut rejected_pit: Value = serde_json::from_slice(&pit_policy_bytes()).unwrap();
+    rejected_pit["approved"] = json!(false);
+    let result = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &serde_json::to_vec(&rejected_pit).unwrap(),
+        &out_dir,
+    );
+    assert!(
+        matches!(
+            &result,
+            Err(RangeCanonicalError::NonStrictPitNotApproved { .. })
+        ),
+        "unexpected writer outcome: {result:?}"
+    );
+    assert!(!out_dir.exists());
+    assert!(fs::read_dir(package_root.path()).unwrap().next().is_none());
+
+    let manifest_hash = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &pit_policy_bytes(),
+        &out_dir,
+    )
+    .unwrap();
+    load_with_approved_pin_for_test(&raw, &normalized, &out_dir, &manifest_hash).unwrap();
+}
+
+/// The likely real layout: one dedicated seven-file KSD range batch beside a
+/// daily EOD bundle whose single-day KSD calls match the same range.  Only
+/// the seven-file batch is loadable, so exactly one candidate exists and the
+/// pin must resolve to it rather than being reported as ambiguous.
+#[test]
+fn write_evidence_package_pins_the_seven_file_batch_beside_an_eod_bundle() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let seven = action_entry(&raw, false);
+    let bundle = action_entry_with_extra_file(&raw);
+    assert_ne!(seven.batch_id, bundle.batch_id);
+
+    let package_root = TempDir::new().unwrap();
+    let out_dir = package_root.path().join("pkg");
+    let manifest_hash = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &pit_policy_bytes(),
+        &out_dir,
+    )
+    .unwrap();
+
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(out_dir.join("manifest.json")).unwrap()).unwrap();
+    let actions = manifest["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), REQUIRED_ACTION_KINDS.len());
+    let expected = serde_json::to_value(seven.batch_id).unwrap();
+    for action in actions {
+        assert_eq!(action["raw_batch_id"], expected);
+    }
+    load_with_approved_pin_for_test(&raw, &normalized, &out_dir, &manifest_hash).unwrap();
 }
 
 #[test]

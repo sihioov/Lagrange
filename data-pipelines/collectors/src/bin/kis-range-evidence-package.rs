@@ -40,6 +40,13 @@ fn main() -> ExitCode {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
     }
+    // A bare invocation is a misuse, not a help request, so it keeps a
+    // failure exit code -- but `missing_raw_root` is useless to a reader who
+    // has not seen the option list yet.
+    if argv.is_empty() {
+        eprintln!("{USAGE}");
+        return ExitCode::FAILURE;
+    }
 
     match parse_args(&argv).and_then(run) {
         Ok(()) => ExitCode::SUCCESS,
@@ -101,8 +108,13 @@ fn find_normalized_entry(
     raw: &RawStore,
     normalized_batch_id: BatchId,
 ) -> Result<ManifestEntry, Failure> {
+    // The reconciled read, never `read_manifest`: the latter also exposes
+    // durable orphan batches from a crashed normalize run, whose batch id the
+    // append-only manifest has not attested.  A package must never pin one,
+    // because the owner would then be approving a gate pin that names a batch
+    // no manifest line ever committed.
     let entries = raw
-        .read_manifest(PROVIDER_KIS_DAILY_RANGE_NORMALIZED, MARKET_KR)
+        .read_reconciled_manifest(PROVIDER_KIS_DAILY_RANGE_NORMALIZED, MARKET_KR)
         .map_err(|_| Failure("normalized_manifest_read_failed"))?;
     let mut matches = entries
         .into_iter()
