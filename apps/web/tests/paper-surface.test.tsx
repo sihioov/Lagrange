@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PaperPage from "@/app/(authenticated)/paper/page";
-import { RebalancePreviewOutcome } from "@/components/paper/paper-rebalance-preview";
+import {
+  MAX_POLL_ATTEMPTS,
+  RebalancePreviewOutcome,
+  rebalancePollDelay,
+  settledPreviewState,
+} from "@/components/paper/paper-rebalance-preview";
 import { paperDictionary } from "@/lib/i18n/dictionaries/paper";
 import {
   defaultAccount,
@@ -40,6 +45,7 @@ function succeededRun() {
     id: RUN_ID,
     provenance: {},
     status: "SUCCEEDED",
+    strategy_config_id: CONFIG_ID,
     trigger_kind: "MANUAL",
   };
 }
@@ -183,6 +189,13 @@ type PaperFixture = {
   readonly notifications?: unknown[];
   readonly parity?: unknown;
   readonly recommendationRuns?: unknown[];
+  /**
+   * Emulates the `recommendation` entitlement being refused. That use is a
+   * different entitlement from the `paper_view` one every other fetch on this
+   * page needs, so it must be able to fail on its own.
+   */
+  readonly recommendationRunsProblem?: { readonly code: string; readonly status: number };
+  readonly role?: "member" | "owner";
 };
 
 function syntheticPaperApi(fixture: PaperFixture = {}): typeof fetch {
@@ -202,9 +215,17 @@ function syntheticPaperApi(fixture: PaperFixture = {}): typeof fetch {
       updated_at: "2026-02-02T00:30:00Z",
     },
   ];
+  const role = fixture.role ?? "owner";
   return async (input, init) => {
     const request = new Request(input, init);
     const { pathname } = new URL(request.url);
+    if (pathname === "/api/v1/auth/session") {
+      return Response.json({
+        expires_at_secs: 2_000_000_000,
+        role,
+        user_id: "00000000-0000-4000-8000-000000000001",
+      });
+    }
     if (pathname === "/api/v1/paper/accounts") {
       return Response.json({ has_more: false, items: accounts, next_cursor: null });
     }
@@ -286,6 +307,19 @@ function syntheticPaperApi(fixture: PaperFixture = {}): typeof fetch {
       });
     }
     if (pathname === "/api/v1/recommendations/runs") {
+      const problem = fixture.recommendationRunsProblem;
+      if (problem !== undefined) {
+        return Response.json(
+          {
+            error: {
+              code: problem.code,
+              message: "The recommendation entitlement is not active for this session.",
+              request_id: "request-component-paper",
+            },
+          },
+          { status: problem.status },
+        );
+      }
       return Response.json({
         has_more: false,
         items: fixture.recommendationRuns ?? [succeededRun()],
@@ -431,14 +465,86 @@ describe("paper product surface", () => {
     expect(markup).not.toContain("Rebalancing preview");
   });
 
+  it("keeps the paper data on screen when the recommendation entitlement is refused", async () => {
+    // Given — `recommendation` is a different entitlement from `paper_view`.
+    vi.stubGlobal(
+      "fetch",
+      syntheticPaperApi({
+        recommendationRunsProblem: { code: "DATA_ENTITLEMENT_REQUIRED", status: 403 },
+      }),
+    );
+
+    // When
+    const markup = renderToStaticMarkup(await PaperPage());
+
+    // Then — only the preview section degrades; nothing else is withheld.
+    expect(markup).not.toContain("Paper data is blocked");
+    expect(markup).toContain("10042180.0000");
+    expect(markup).toContain("Fill model difference");
+    expect(markup).toContain("EXECUTED");
+    expect(markup).toContain("Paper session 2026-02-02 completed");
+    expect(markup).toContain("Rebalancing preview");
+    expect(markup).toContain("No completed recommendation run is available to preview yet.");
+  });
+
   it("renders the rebalance preview section for an owner with a completed run", async () => {
     // Given / When
     const markup = renderToStaticMarkup(await PaperPage());
 
-    // Then
+    // Then — the option names the strategy the run was produced under.
     expect(markup).toContain("Rebalancing preview");
     expect(markup).toContain("Recommendation run");
-    expect(markup).toContain(RUN_ID.slice(0, 8));
+    expect(markup).toContain(`2026-01-30 · dual_momentum@2.3.1 · ${RUN_ID.slice(0, 8)}`);
+  });
+
+  it("withholds the preview section from a Member who owns the account record", async () => {
+    // Given — `can_manage` is record ownership; the endpoints need the Owner role.
+    vi.stubGlobal("fetch", syntheticPaperApi({ role: "member" }));
+
+    // When
+    const markup = renderToStaticMarkup(await PaperPage());
+
+    // Then — every action in that section would 403, so it is not offered.
+    expect(markup).not.toContain("Rebalancing preview");
+    expect(markup).not.toContain("Create preview");
+    // The bind form has no role check on the server and stays available.
+    expect(markup).toContain("Bind strategy");
+  });
+
+  it("omits runs the active binding did not produce", async () => {
+    // Given — the server answers 400 BINDING_REQUIRED for a foreign run.
+    vi.stubGlobal(
+      "fetch",
+      syntheticPaperApi({
+        recommendationRuns: [
+          { ...succeededRun(), strategy_config_id: "00000000-0000-4000-8000-000000000109" },
+        ],
+      }),
+    );
+
+    // When
+    const markup = renderToStaticMarkup(await PaperPage());
+
+    // Then
+    expect(markup).toContain("Rebalancing preview");
+    expect(markup).toContain("No completed recommendation run is available to preview yet.");
+    expect(markup).not.toContain(`<option value="${RUN_ID}"`);
+  });
+
+  it("omits every run while the account has no active binding", async () => {
+    // Given — a run with no strategy_config_id must not match "no binding".
+    vi.stubGlobal(
+      "fetch",
+      syntheticPaperApi({
+        recommendationRuns: [{ ...succeededRun(), strategy_config_id: null }],
+      }),
+    );
+
+    // When
+    const markup = renderToStaticMarkup(await PaperPage());
+
+    // Then
+    expect(markup).toContain("No completed recommendation run is available to preview yet.");
   });
 });
 
@@ -449,6 +555,7 @@ describe("rebalance preview outcome", () => {
     // Given / When
     const markup = renderToStaticMarkup(
       <RebalancePreviewOutcome
+        applyError={null}
         applying={false}
         onApply={() => undefined}
         preview={readyPreview()}
@@ -469,6 +576,7 @@ describe("rebalance preview outcome", () => {
     // Given / When
     const markup = renderToStaticMarkup(
       <RebalancePreviewOutcome
+        applyError={null}
         applying={false}
         onApply={() => undefined}
         preview={failedPreview()}
@@ -483,15 +591,96 @@ describe("rebalance preview outcome", () => {
     expect(markup).toContain("Dataset was blocked for this session.");
   });
 
+  it("labels both definition lists with their existing captions", () => {
+    // Given / When
+    const markup = renderToStaticMarkup(
+      <RebalancePreviewOutcome
+        applyError={null}
+        applying={false}
+        onApply={() => undefined}
+        preview={readyPreview()}
+        t={t}
+      />,
+    );
+
+    // Then
+    expect(markup).toContain('<h3 id="paper-rebalance-totals-title">Preview totals</h3>');
+    expect(markup).toContain('aria-labelledby="paper-rebalance-totals-title"');
+    expect(markup).toContain('<h3 id="paper-rebalance-lineage-title">Preview lineage</h3>');
+    expect(markup).toContain('aria-labelledby="paper-rebalance-lineage-title"');
+    // The indicative warning still precedes every number.
+    expect(markup.indexOf("Indicative only")).toBeLessThan(markup.indexOf("Preview totals"));
+    expect(markup.indexOf("Indicative only")).toBeLessThan(markup.indexOf("10000000.0000"));
+  });
+
+  it("gives the Apply button an accessible name containing its visible label", () => {
+    // Given / When
+    const markup = renderToStaticMarkup(
+      <RebalancePreviewOutcome
+        applyError={null}
+        applying={false}
+        onApply={() => undefined}
+        preview={readyPreview()}
+        t={t}
+      />,
+    );
+
+    // Then — WCAG 2.5.3: no aria-label may displace the visible text.
+    expect(markup).not.toContain("Apply rebalance preview");
+    expect(markup).toContain('<button class="primary-action" type="button">Apply preview</button>');
+  });
+
+  it("keeps the preview on screen when applying it failed", () => {
+    // Given
+    const stale = "Preview token no longer matches the account state.";
+
+    // When
+    const markup = renderToStaticMarkup(
+      <RebalancePreviewOutcome
+        applyError={stale}
+        applying={false}
+        onApply={() => undefined}
+        preview={readyPreview()}
+        t={t}
+      />,
+    );
+
+    // Then — the plan and a live Apply survive the failure.
+    expect(markup).toContain("Apply failed");
+    expect(markup).toContain(stale);
+    expect(markup).toContain("069500.KRX");
+    expect(markup).not.toContain('class="primary-action" disabled=""');
+  });
+
+  it("refuses Apply on a READY preview that carries no result", () => {
+    // Given — nothing is disclosed, so nothing may be applied.
+    const resultless = readyPreview({ result: undefined });
+
+    // When
+    const markup = renderToStaticMarkup(
+      <RebalancePreviewOutcome
+        applyError={null}
+        applying={false}
+        onApply={() => undefined}
+        preview={resultless}
+        t={t}
+      />,
+    );
+
+    // Then
+    expect(markup).not.toContain("Indicative only");
+    expect(markup).toContain('class="primary-action" disabled=""');
+  });
+
   it("disables Apply when the preview has no preview_token", () => {
     // Given
     const withoutToken = readyPreview({ preview_token: null });
-    const disabledAttribute =
-      'aria-label="Apply rebalance preview" class="primary-action" disabled=""';
+    const disabledAttribute = 'class="primary-action" disabled=""';
 
     // When
     const disabledMarkup = renderToStaticMarkup(
       <RebalancePreviewOutcome
+        applyError={null}
         applying={false}
         onApply={() => undefined}
         preview={withoutToken}
@@ -500,6 +689,7 @@ describe("rebalance preview outcome", () => {
     );
     const enabledMarkup = renderToStaticMarkup(
       <RebalancePreviewOutcome
+        applyError={null}
         applying={false}
         onApply={() => undefined}
         preview={readyPreview()}
@@ -535,5 +725,35 @@ describe("paper contract helpers", () => {
     } as never);
     expect(reason).toContain("dataset_version");
     expect(reason).toContain("no parity claim is possible");
+  });
+});
+
+describe("rebalance preview polling schedule", () => {
+  it("grows to the 8s plateau and never exceeds it", () => {
+    expect(rebalancePollDelay(0)).toBe(500);
+    expect(rebalancePollDelay(1)).toBe(1_000);
+    expect(rebalancePollDelay(2)).toBe(2_000);
+    expect(rebalancePollDelay(3)).toBe(4_000);
+    expect(rebalancePollDelay(4)).toBe(8_000);
+    expect(rebalancePollDelay(MAX_POLL_ATTEMPTS)).toBe(8_000);
+    expect(rebalancePollDelay(1_000)).toBe(8_000);
+  });
+
+  it("caps the attempt budget so polling cannot run forever", () => {
+    expect(MAX_POLL_ATTEMPTS).toBe(12);
+  });
+
+  it("treats APPLIED as terminal rather than something still computing", () => {
+    // Given / When / Then
+    expect(settledPreviewState(readyPreview())).toEqual({
+      kind: "ready",
+      preview: readyPreview(),
+    });
+    expect(settledPreviewState(failedPreview())?.kind).toBe("failed");
+    // APPLIED is the server's last word: polling it would spend the whole
+    // budget and then report a timeout contradicting the status just read.
+    expect(settledPreviewState(readyPreview({ status: "APPLIED" }))?.kind).toBe("already-applied");
+    expect(settledPreviewState(readyPreview({ status: "PENDING" }))).toBeNull();
+    expect(settledPreviewState(readyPreview({ status: "RUNNING" }))).toBeNull();
   });
 });

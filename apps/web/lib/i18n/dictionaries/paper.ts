@@ -95,8 +95,8 @@ export type PaperDictionary = {
   readonly parityAriaLabel: (status: string) => string;
   readonly parityTitle: string;
   readonly performanceTitle: string;
-  readonly rebalanceApplyAriaLabel: string;
   readonly rebalanceApplyButton: string;
+  readonly rebalanceApplyFailedTitle: string;
   readonly rebalanceAppliedMessage: (effectiveDate: string) => string;
   readonly rebalanceApplyingButton: string;
   readonly rebalanceAvailableCashLabel: string;
@@ -255,8 +255,8 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     parityAriaLabel: (status) => `Paper parity ${status}`,
     parityTitle: "Backtest parity",
     performanceTitle: "Daily performance",
-    rebalanceApplyAriaLabel: "Apply rebalance preview",
     rebalanceApplyButton: "Apply preview",
+    rebalanceApplyFailedTitle: "Apply failed",
     rebalanceAppliedMessage: (effectiveDate) =>
       `Applied. A pending target now targets the ${effectiveDate} session.`,
     rebalanceApplyingButton: "Applying preview",
@@ -414,8 +414,8 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     parityAriaLabel: (status) => `모의투자 정합성 ${status}`,
     parityTitle: "백테스트 정합성",
     performanceTitle: "일일 성과",
-    rebalanceApplyAriaLabel: "리밸런싱 미리보기 적용",
     rebalanceApplyButton: "미리보기 적용",
+    rebalanceApplyFailedTitle: "적용 실패",
     rebalanceAppliedMessage: (effectiveDate) =>
       `적용되었습니다. 대기 중인 목표가 ${effectiveDate} 세션을 대상으로 합니다.`,
     rebalanceApplyingButton: "미리보기 적용 중",

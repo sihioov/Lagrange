@@ -11,6 +11,7 @@ import { PaperRebalancePreview } from "@/components/paper/paper-rebalance-previe
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
+import { getServerSession } from "@/lib/api/server-session";
 import { type PaperDictionary, paperDictionary } from "@/lib/i18n/dictionaries/paper";
 import { getLocale } from "@/lib/i18n/server";
 import {
@@ -63,7 +64,7 @@ export default async function PaperPage({ searchParams }: PaperPageProps = {}) {
   const t = paperDictionary[locale];
   try {
     const api = await getProductApi();
-    const accounts = await api.getPaperAccounts();
+    const [apiSession, accounts] = await Promise.all([getServerSession(), api.getPaperAccounts()]);
     const requestedAccount = (await searchParams)?.account;
     const account =
       accounts.items.find((candidate) => candidate.id === requestedAccount) ??
@@ -92,7 +93,14 @@ export default async function PaperPage({ searchParams }: PaperPageProps = {}) {
         api.getPaperOrders(account.id),
         api.getStrategyConfigs(),
         api.getNotifications(),
-        api.getRecommendationRuns(),
+        // The runs listing is the only fetch on this page behind the
+        // `recommendation` entitlement rather than `paper_view`. Leaving it in
+        // the all-or-nothing settlement would let one refused optional dropdown
+        // withhold holdings, performance, parity, lineage and notifications, so
+        // it degrades to "no runs" on its own instead.
+        api
+          .getRecommendationRuns()
+          .catch(() => ({ has_more: false, items: [], next_cursor: null })),
       ]);
 
     const session = latestSession(lineage);
@@ -102,6 +110,22 @@ export default async function PaperPage({ searchParams }: PaperPageProps = {}) {
     }
 
     const activeBinding = lineage.bindings.find((binding) => binding.active);
+    // The server refuses a preview whose run was not produced by the account's
+    // active binding (400 BINDING_REQUIRED), so an unbound account offers none.
+    const previewableRuns =
+      activeBinding === undefined
+        ? []
+        : recommendationRuns.items
+            .filter(
+              (run) =>
+                run.status === "SUCCEEDED" &&
+                run.strategy_config_id === activeBinding.strategy_config_id,
+            )
+            .map((run) => ({
+              asOf: run.as_of,
+              id: run.id,
+              strategyLabel: `${activeBinding.strategy_id}@${activeBinding.strategy_version}`,
+            }));
     const bindable = configs.items.map((config) => ({
       id: config.id,
       label: `${config.strategy_id}@${config.strategy_version}`,
@@ -169,12 +193,17 @@ export default async function PaperPage({ searchParams }: PaperPageProps = {}) {
             />
           </section>
         )}
-        {!account.can_manage ? null : (
+        {!account.can_manage || apiSession.role !== "owner" ? null : (
+          // `can_manage` is record ownership; the three preview endpoints
+          // additionally require the platform Owner role and answer a Member
+          // with 403. `PaperBindForm` above is correctly gated on `can_manage`
+          // alone because `bind-strategy` carries no such role check.
           <PaperRebalancePreview
             accountId={account.id}
-            runs={recommendationRuns.items
-              .filter((run) => run.status === "SUCCEEDED")
-              .map((run) => ({ asOf: run.as_of, id: run.id }))}
+            // Remount on account change: a READY preview and its token belong
+            // to exactly one account and must not survive a switch.
+            key={account.id}
+            runs={previewableRuns}
           />
         )}
         <PaperNotifications notifications={notifications.items} t={t} />

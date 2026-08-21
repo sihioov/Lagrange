@@ -30,6 +30,12 @@ export function rebalancePollDelay(attempt: number): number {
 }
 
 type PreviewState =
+  | { readonly kind: "already-applied"; readonly preview: RebalancePreviewModel }
+  | {
+      readonly kind: "apply-error";
+      readonly message: string;
+      readonly preview: RebalancePreviewModel;
+    }
   | { readonly kind: "applied"; readonly applied: AppliedRebalancePreviewModel }
   | { readonly kind: "applying"; readonly preview: RebalancePreviewModel }
   | { readonly kind: "creating" }
@@ -40,9 +46,32 @@ type PreviewState =
   | { readonly kind: "ready"; readonly preview: RebalancePreviewModel }
   | { readonly kind: "timed-out"; readonly preview: RebalancePreviewModel };
 
+/**
+ * The settled state a preview status maps to, or `null` while it is still
+ * being computed and the caller should keep polling.
+ *
+ * APPLIED is terminal: the preview has already been turned into a pending
+ * target and the server will never move it again. Polling it would burn the
+ * whole attempt budget and then report a timeout that contradicts the status
+ * it just read.
+ */
+export function settledPreviewState(preview: RebalancePreviewModel): PreviewState | null {
+  if (preview.status === "READY") {
+    return { kind: "ready", preview };
+  }
+  if (preview.status === "FAILED") {
+    return { kind: "failed", preview };
+  }
+  if (preview.status === "APPLIED") {
+    return { kind: "already-applied", preview };
+  }
+  return null;
+}
+
 export type RecommendationRunOption = {
   readonly asOf: string;
   readonly id: string;
+  readonly strategyLabel: string;
 };
 
 export type PaperRebalancePreviewProps = {
@@ -80,7 +109,8 @@ export function RebalancePreviewDetails({
         <p>{t.rebalanceIndicativeWarningMessage}</p>
       </div>
 
-      <dl className="definition-grid">
+      <h3 id="paper-rebalance-totals-title">{t.rebalanceTotalsCaption}</h3>
+      <dl aria-labelledby="paper-rebalance-totals-title" className="definition-grid">
         <dt>{t.rebalanceEquityLabel}</dt>
         <dd>{result.equity}</dd>
         <dt>{t.rebalanceCashBeforeLabel}</dt>
@@ -163,7 +193,8 @@ export function RebalancePreviewDetails({
         </tbody>
       </table>
 
-      <dl className="definition-grid">
+      <h3 id="paper-rebalance-lineage-title">{t.rebalanceLineageCaption}</h3>
+      <dl aria-labelledby="paper-rebalance-lineage-title" className="definition-grid">
         <dt>{t.rebalanceLineageRecommendationRun}</dt>
         <dd>{result.lineage.recommendation_run_id}</dd>
         <dt>{t.rebalanceLineageTargetPortfolio}</dt>
@@ -188,6 +219,8 @@ export function RebalancePreviewDetails({
 }
 
 export type RebalancePreviewOutcomeProps = {
+  /** A failed apply attempt, kept beside the still-usable preview. */
+  readonly applyError: string | null;
   readonly applying: boolean;
   readonly onApply: () => void;
   readonly preview: RebalancePreviewModel;
@@ -203,12 +236,21 @@ export type RebalancePreviewOutcomeProps = {
  * state machine to get there.
  */
 export function RebalancePreviewOutcome({
+  applyError,
   applying,
   onApply,
   preview,
   t,
 }: RebalancePreviewOutcomeProps) {
-  const applyDisabled = preview.status !== "READY" || preview.preview_token === null || applying;
+  // `result === undefined` renders no breakdown and therefore no indicative
+  // warning. Applying from there would be a one-click mutation with nothing
+  // disclosed, so "a warning is shown" and "Apply is possible" are one
+  // condition.
+  const applyDisabled =
+    preview.status !== "READY" ||
+    preview.preview_token === null ||
+    preview.result === undefined ||
+    applying;
   return (
     <>
       <p className="supporting-copy">{t.rebalanceStatusLabel(preview.status)}</p>
@@ -224,15 +266,14 @@ export function RebalancePreviewOutcome({
         </p>
       ) : null}
       <RebalancePreviewDetails preview={preview} t={t} />
-      <button
-        aria-label={t.rebalanceApplyAriaLabel}
-        className="primary-action"
-        disabled={applyDisabled}
-        onClick={onApply}
-        type="button"
-      >
+      <button className="primary-action" disabled={applyDisabled} onClick={onApply} type="button">
         {applying ? t.rebalanceApplyingButton : t.rebalanceApplyButton}
       </button>
+      {applyError === null ? null : (
+        <p className="form-result" role="alert">
+          <strong>{t.rebalanceApplyFailedTitle}</strong> — {applyError}
+        </p>
+      )}
     </>
   );
 }
@@ -264,15 +305,13 @@ export function PaperRebalancePreview({ accountId, runs }: PaperRebalancePreview
           if (cancelled) {
             return;
           }
-          if (next.status === "READY") {
-            setState({ kind: "ready", preview: next });
-            return;
-          }
-          if (next.status === "FAILED") {
-            setState({ kind: "failed", preview: next });
-            return;
-          }
-          setState({ kind: "polling", attempt: state.attempt + 1, preview: next });
+          setState(
+            settledPreviewState(next) ?? {
+              kind: "polling",
+              attempt: state.attempt + 1,
+              preview: next,
+            },
+          );
         } catch (error) {
           if (!cancelled) {
             setState({
@@ -300,13 +339,7 @@ export function PaperRebalancePreview({ accountId, runs }: PaperRebalancePreview
         { json: { recommendation_run_id: selectedRunId }, method: "POST" },
       );
       const preview = await parseApiResponse(response, rebalancePreviewSchema);
-      if (preview.status === "READY") {
-        setState({ kind: "ready", preview });
-      } else if (preview.status === "FAILED") {
-        setState({ kind: "failed", preview });
-      } else {
-        setState({ kind: "polling", attempt: 0, preview });
-      }
+      setState(settledPreviewState(preview) ?? { kind: "polling", attempt: 0, preview });
     } catch (error) {
       setState({
         kind: "error",
@@ -329,9 +362,13 @@ export function PaperRebalancePreview({ accountId, runs }: PaperRebalancePreview
       setState({ kind: "applied", applied });
       router.refresh();
     } catch (error) {
+      // Apply is idempotent on the same token, and a stale-token 409 is the
+      // one outcome the reader most needs the plan on screen for. Discarding
+      // the READY preview here would leave no retry and nothing to read.
       setState({
-        kind: "error",
+        kind: "apply-error",
         message: error instanceof Error ? error.message : t.unavailableMessage,
+        preview,
       });
     }
   }
@@ -341,7 +378,9 @@ export function PaperRebalancePreview({ accountId, runs }: PaperRebalancePreview
     state.kind === "ready" ||
     state.kind === "failed" ||
     state.kind === "timed-out" ||
-    state.kind === "applying"
+    state.kind === "applying" ||
+    state.kind === "already-applied" ||
+    state.kind === "apply-error"
       ? state.preview
       : null;
 
@@ -376,7 +415,7 @@ export function PaperRebalancePreview({ accountId, runs }: PaperRebalancePreview
             >
               {runs.map((run) => (
                 <option key={run.id} value={run.id}>
-                  {run.asOf} · {run.id.slice(0, 8)}
+                  {run.asOf} · {run.strategyLabel} · {run.id.slice(0, 8)}
                 </option>
               ))}
             </select>
@@ -413,6 +452,7 @@ export function PaperRebalancePreview({ accountId, runs }: PaperRebalancePreview
 
       {activePreview === null ? null : (
         <RebalancePreviewOutcome
+          applyError={state.kind === "apply-error" ? state.message : null}
           applying={state.kind === "applying"}
           onApply={() => void applyPreview(activePreview)}
           preview={activePreview}
