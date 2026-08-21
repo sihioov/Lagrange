@@ -582,6 +582,58 @@ A는 (6) 이전에 닫을 항목, B는 사용자 가시 기능의 잔여 항목,
 ADR-0005의 ACTIVE KIS metadata로 E1을 재평가한 게이트 재실행은 아직 수행되지
 않았다** — 이 재실행은 소유자 결정을 요구하지 않는 유일한 순수 실행 항목이다.
 
+### 0.17 §0.16 A·C 종결과 잔여 코드 작업 4건 완료 (2026-08-22)
+
+`assess-project-status` 브랜치에 네 커밋. provider·브라우저·운영 DB·systemd·CI를
+호출하지 않았고 secret을 만들지 않았다. **판정은 그대로 `vendor_snapshot=true`,
+`strict_pit=false`, `ready=false`** — 이 작업 중 어느 것도 계약 flag를 바꾸지 않는다.
+
+| 커밋 | 내용 |
+|---|---|
+| `8e77c7a` | **§0.16 A 종결.** `session_closes`/`session_opens`의 `curated` 이중 join 제거. 픽스처 3곳도 실제 writer 레이아웃으로 정정 |
+| `7b07522` | **§0.16 C 종결.** `python-tests` job 신설 + lockfile 검사 + verify-all 드리프트 가드 |
+| `79da609` | **§4 항목 7 (=§0.16 B) 종결.** 리밸런싱 미리보기 UI |
+| `6138075` | Stage4B evidence package 조립 CLI |
+
+**A에서 실제로 산출한 것은 수정이 아니라 가드다.** 픽스처가 프로덕션과 같은 이중
+join으로 *쓰고* 있었기 때문에 수정 전에도 후에도 스위트가 green이었다 — 즉 테스트가
+정합성의 증거가 아니었다. 그래서 `session_closes`/`session_opens`를 실제로 호출하고
+`curated/curated`가 없음을 단언하는 가드 테스트를 사이트별로 추가했고, **수정 전 트리에서
+두 테스트가 실패하는 것을 먼저 확인한 뒤** 프로덕션을 뒤집었다. 이 순서를 지키지 않으면
+그 테스트가 무엇을 지키는지 증명할 수 없다.
+
+**C도 배선보다 드리프트 가드가 본체다.** `verify-all.sh`는 자신을 CI용 하드 게이트라고
+선언하는데 어느 workflow도 부르지 않고 CI가 부분집합을 재구현했다. 부분집합을 또 늘리는
+대신, `test_ci_contract.py`가 verify-all의 각 게이트에 CI 대응물이 있는지와 게이트 수가
+매핑 표와 일치하는지를 단언한다. 가드가 실제로 실패하는지는 CI 스텝을 지워보고 확인했다.
+
+**검증 (코디네이터 독립 실행).**
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features
+  --locked -- -D warnings`, `git diff --check`: 모두 PASS
+- `uv run --project nt pytest -q`: **357 passed, 2 skipped, 0 failed**
+- `python -m unittest scripts.ci.test_ci_contract`: 7/7 PASS
+- web `lint`/`typecheck`/`test`/`build`: clean, **75/75 (16 files)**
+- `configs/evidence/kis-range-canonical-approved-manifests.json` 무변경 확인
+- `cargo test --workspace`: 2개 target 실패, **둘 다 환경 요인이며 이번 변경과 무관함을
+  증명했다.** `job-queue::recommendation_compute`는 테스트가 시스템 `python`으로
+  `prepare_phase0.py`를 부르는데 거기에 `pyarrow`가 없어서 실패했다 — `PYTHON`을
+  `nt/.venv`로 지정하니 **16/16 PASS**. `collectors::research_worker`는 6건이
+  `required QA DATABASE_URL ... NotPresent`이며 Docker QA DB가 이 호스트에 없다
+  (62 passed / 6 blocked). 해당 파일은 이번에 건드리지 않았다.
+
+**Stage4B CLI의 한계를 명시한다.** `write_evidence_package`는 로더가 역직렬화하는 바로
+그 비공개 타입을 직렬화하고 로더 자신의 검증기(`load_action_evidence` 포함)를 먼저
+돌리므로, 로드 불가능한 패키지는 애초에 써지지 않는다. 그러나 **승인 목록이 빈 배열인
+한 이 CLI의 산출물은 fixture 밖에서 로드되지 않는다.** 이는 결함이 아니라 설계된
+게이트다. 다음 단계는 소유자가 출력된 `manifest_sha256`을 검토해 승인 목록에 커밋하는
+것이며, 그 행위는 이 작업 범위 밖이다.
+
+**작업 환경에서 치른 비용 하나.** 병렬 워커의 Rust 빌드가 `/tmp`(tmpfs, 7.3G, `usrquota`)
+사용자 쿼터를 소진시켜 모든 에이전트의 셸이 `EDQUOT`로 동시에 죽었다. 명령이 출력 없이
+exit 1로만 실패해 원인 파악이 늦었다. §5의 함정 표와 같은 계열이며, `TMPDIR`을 `/data`로
+옮기는 것만으로는 부족하다 — cargo/rustc가 일부 경로에서 `/tmp`을 직접 쓴다.
+
 ---
 
 ## 1. 목표 — 이 시스템은 무엇인가
@@ -967,10 +1019,21 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 증거로 유지하고 새 metadata를 사용해 게이트를 재실행한다. Member 접근과 Live는
 권리 추정으로 넓히지 않고 명시적으로 비활성 상태를 유지한다.
 
-### 4.2 소유자 결정 대기 2건
+### 4.2 소유자 결정 대기 3건
 
 1. **phase-0 골든에 수수료 필드를 넣을지** — 넣는 것은 승인된 기준값을 바꾸는 명시적 재승인 행위라 보류 중
 2. **Phase 4 우선순위** — §4.4 참조
+3. **기업행사 7개 클래스 중 6개의 canonical 매핑** (신규, 2026-08-22) — 일일 EOD 경로
+   (`crates/market-data/src/normalize.rs:1045`)는 ETF11 종목이면서 이벤트 날짜가 대상일과
+   같은 non-bonus 기업행사를 만나면 그날 실행 전체를 닫는다. 매핑된 것은 bonus-issue
+   하나뿐이다. **이건 매핑 코드를 안 짜서가 아니다** — 차단 사유가 코드에 적혀 있듯이
+   KSD가 canonical action 계약이 요구하는 필드를 주지 않는다(dividend는 record/pay date만
+   있고 문서화된 ex-date도 공시 시각도 없다). 매핑하려면 canonical 계약을 확장하고 어떤
+   PIT 주장을 할지 정해야 하므로 원칙 1·4에 걸리는 **소유자 결정**이다.
+   실제로 터지는지는 미확인 — 저장소 자체 증거(`docs/runbooks/stage6-source-contracts.md:550`)
+   는 "ETF는 배당이 아니라 분배금을 지급한다"고 적고 있어 KSD `dividend`가 ETF11에 대해
+   빈 응답일 가능성이 있으나, 그 관찰은 KIND 유형 체계에서 나온 것이고 KSD 응답을 확인한
+   것이 아니다. §0.15 (3)/(4)의 첫 credentialed 실행에서 read-only GET 한 번이면 결판난다.
 
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
@@ -980,7 +1043,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
 5. **실제 KIS provider와 운영 원천 활성화.** 새 credential을 발급하지 않고 기존 등록 KIS App Key/App Secret의 보호된 source/runtime secret을 검증한다. 이후 token/endpoint를 확인하고 확정된 entitlement metadata를 운영 DB에 등록한 뒤 `research_writer`, migration, Raw volume을 검증해 KIS calendar/EOD/instrument/corporate-action 원천을 공급한다. 고정 ETF 백필 후 후보 bridge와 KOSPI200/KOSDAQ150 source set은 별도 승인한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 
-**작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다. §0.16의 A(Paper 런타임 `CurateStore` 이중 경로)와 C(CI가 Python 스위트를 실행하지 않음)도 함께 남아 있다 — A는 §0.15 (6) 이전에 닫고, C는 게이트가 아니라 탐지 수단의 공백이다.
+**작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다. §0.16의 A(Paper 런타임 `CurateStore` 이중 경로)와 C(CI가 Python 스위트를 실행하지 않음)는 **2026-08-22에 종결됐다(§0.17)**.
 
 ### 4.4 Phase 4 잔여
 
