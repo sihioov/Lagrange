@@ -190,6 +190,6 @@ pub use range_to_canonical::{
     NON_STRICT_PIT_POLICY_ID, RANGE_CANONICAL_BRIDGE_VERSION, REQUIRED_ACTION_KINDS, RangeAction,
     RangeCanonicalBarCandidate, RangeCanonicalCandidate, RangeCanonicalError,
     VerifiedRangeCanonicalEvidence, build_range_canonical_candidate,
-    load_verified_range_canonical_evidence,
+    load_verified_range_canonical_evidence, write_evidence_package,
 };
 pub use storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};

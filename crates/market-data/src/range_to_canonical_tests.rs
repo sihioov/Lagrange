@@ -12,7 +12,7 @@ use crate::range_normalize::{
 };
 use crate::range_to_canonical::{
     RANGE_CANONICAL_BRIDGE_VERSION, REQUIRED_ACTION_KINDS, RangeAction, RangeCanonicalError,
-    build_range_canonical_candidate,
+    build_range_canonical_candidate, write_evidence_package,
 };
 use crate::{BatchSpec, ManifestEntry, RawStore};
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
@@ -729,6 +729,121 @@ fn public_loader_rejects_self_created_package_pin_when_registry_is_empty() {
             package_root.path(),
         ),
         Err(RangeCanonicalError::EvidencePackage { .. })
+    ));
+}
+
+fn schedule_bytes(calendar_hash: ContentHash) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "schema_version": 1,
+        "calendar_id": "xkrx-reviewed",
+        "calendar_hash": calendar_hash,
+        "session_date": DATE,
+        "open_utc": "2020-01-31T00:00:00Z",
+        "close_utc": "2020-01-31T06:30:00Z",
+        "break_start_utc": null,
+        "break_end_utc": null,
+        "authority": {"Reviewed": {"source": "reviewed-schedule", "version": "v1"}}
+    }))
+    .unwrap()
+}
+
+fn pit_policy_bytes() -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "schema_version": 1,
+        "policy_id": "kis-historical-vendor-snapshot-v1",
+        "approved": true,
+        "approved_by": "operator",
+        "approved_at": ACQUIRED,
+        "rationale": "KIS endpoint is an acquisition-time vendor snapshot; strict PIT is unavailable"
+    }))
+    .unwrap()
+}
+
+fn listing_bytes_with_snapshot_hash(snapshot_hash: ContentHash) -> Vec<u8> {
+    let mut document = listing_document();
+    document["snapshot_hash"] = json!(snapshot_hash);
+    serde_json::to_vec(&document).unwrap()
+}
+
+/// The acceptance test: `write_evidence_package` output must round-trip
+/// through the same pin loader production callers use. A schema mismatch
+/// between the writer and `EvidencePackageManifest`'s `deny_unknown_fields`
+/// deserializer would fail here even though it can't be caught by any
+/// self-test inside the writer/CLI itself.
+#[test]
+fn write_evidence_package_round_trips_through_the_pin_loader() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let _actions = action_entry(&raw, false);
+
+    let package_root = TempDir::new().unwrap();
+    let out_dir = package_root.path().join("pkg");
+    let manifest_hash = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &pit_policy_bytes(),
+        &out_dir,
+    )
+    .unwrap();
+
+    let evidence =
+        load_with_approved_pin_for_test(&raw, &normalized, &out_dir, &manifest_hash).unwrap();
+    let candidate = build_range_canonical_candidate(&raw, &normalized, &evidence).unwrap();
+    assert_eq!(candidate.action_coverage_file_count(), 7);
+    assert!(candidate.action_coverage_is_zero_result());
+    assert_eq!(candidate.bars.len(), 11);
+}
+
+#[test]
+fn write_evidence_package_fails_closed_on_schedule_lineage_mismatch() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let _actions = action_entry(&raw, false);
+
+    let package_root = TempDir::new().unwrap();
+    let out_dir = package_root.path().join("pkg");
+    let result = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"not-the-lineage-calendar")),
+        &listing_bytes_with_snapshot_hash(listing_hash()),
+        &pit_policy_bytes(),
+        &out_dir,
+    );
+    assert!(matches!(
+        result,
+        Err(RangeCanonicalError::UnsupportedHistoricalSessionSchedule { .. })
+    ));
+    assert!(!out_dir.exists() || fs::read_dir(&out_dir).unwrap().next().is_none());
+}
+
+#[test]
+fn write_evidence_package_fails_closed_on_listing_lineage_mismatch() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let _actions = action_entry(&raw, false);
+
+    let package_root = TempDir::new().unwrap();
+    let out_dir = package_root.path().join("pkg");
+    let result = write_evidence_package(
+        &raw,
+        &normalized,
+        &schedule_bytes(ContentHash::from_bytes(b"calendar")),
+        &listing_bytes_with_snapshot_hash(ContentHash::from_bytes(b"not-the-lineage-listing")),
+        &pit_policy_bytes(),
+        &out_dir,
+    );
+    assert!(matches!(
+        result,
+        Err(RangeCanonicalError::MissingListingMasterEvidence { .. })
     ));
 }
 

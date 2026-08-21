@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use domain::{
@@ -256,7 +257,7 @@ pub struct VerifiedRangeCanonicalEvidence {
     pit_policy: NonStrictPitPolicyApproval,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EvidencePackageManifest {
     schema_version: u32,
@@ -272,7 +273,7 @@ struct EvidencePackageManifest {
     actions: Vec<EvidenceActionRef>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EvidenceArtifactRef {
     path: String,
@@ -281,7 +282,7 @@ struct EvidenceArtifactRef {
     schema_version: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EvidenceActionRef {
     kind: String,
@@ -1203,6 +1204,23 @@ fn action_spec(kind: &str) -> Option<ActionSpec> {
     kis_action_spec(kind)
 }
 
+fn expected_action_query(
+    spec: &ActionSpec,
+    range_start: TradingDate,
+    range_end: TradingDate,
+) -> BTreeMap<String, String> {
+    let mut expected = BTreeMap::from([
+        ("CTS".to_owned(), String::new()),
+        ("F_DT".to_owned(), kis_date(range_start)),
+        ("T_DT".to_owned(), kis_date(range_end)),
+        ("SHT_CD".to_owned(), String::new()),
+    ]);
+    for (key, value) in spec.extra {
+        expected.insert((*key).to_owned(), (*value).to_owned());
+    }
+    expected
+}
+
 fn validate_action_request(
     metadata: &FileEntry,
     kind: &str,
@@ -1219,15 +1237,7 @@ fn validate_action_request(
         });
     }
     let query = query_map(&metadata.request.query)?;
-    let mut expected = BTreeMap::from([
-        ("CTS".to_owned(), String::new()),
-        ("F_DT".to_owned(), kis_date(range_start)),
-        ("T_DT".to_owned(), kis_date(range_end)),
-        ("SHT_CD".to_owned(), String::new()),
-    ]);
-    for (key, value) in spec.extra {
-        expected.insert((*key).to_owned(), (*value).to_owned());
-    }
+    let expected = expected_action_query(spec, range_start, range_end);
     if query != expected {
         return Err(RangeCanonicalError::ActionEvidence {
             reason: format!(
@@ -2078,6 +2088,273 @@ fn deterministic_candidate_id(
         pit_policy.hash(),
     );
     BatchId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_URL, name.as_bytes()))
+}
+
+/// Identifies which of the seven KSD classes one Raw KIS action file belongs
+/// to by matching its request endpoint/tr_id/query against the allowlisted
+/// [`kis_action_spec`] contract for the given range. Returns `None` for a
+/// file that matches no allowlisted class (wrong response kind, mode,
+/// endpoint, or query shape).
+fn identify_action_kind(
+    file: &FileEntry,
+    range_start: TradingDate,
+    range_end: TradingDate,
+) -> Option<&'static str> {
+    if file.kind != ResponseKind::CorporateActions || file.request.mode != FetchMode::Credentialed {
+        return None;
+    }
+    let query = query_map(&file.request.query).ok()?;
+    for kind in REQUIRED_ACTION_KINDS {
+        let Some(spec) = action_spec(kind) else {
+            continue;
+        };
+        if file.request.endpoint != spec.path {
+            continue;
+        }
+        if query != expected_action_query(&spec, range_start, range_end) {
+            continue;
+        }
+        let tr_ids = file
+            .request
+            .headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("tr_id"))
+            .map(|(_, value)| value.as_str())
+            .collect::<Vec<_>>();
+        if tr_ids.as_slice() == [spec.tr_id] {
+            return Some(kind);
+        }
+    }
+    None
+}
+
+/// True only for the first page of a KSD request (an explicit empty
+/// `tr_cont`).  A continuation page of the same class is deliberately never
+/// selected as evidence: this bridge has no persisted continuation chain.
+fn is_initial_action_page(file: &FileEntry) -> bool {
+    let continuations = file
+        .request
+        .headers
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case("tr_cont"))
+        .map(|(_, value)| value.as_str())
+        .collect::<Vec<_>>();
+    continuations.as_slice() == [""]
+}
+
+/// Finds the one immutable Raw KIS batch whose files provide exactly one
+/// initial-page response for each of the seven KSD action classes over
+/// `[range_start, range_end]`, and returns the corresponding evidence refs.
+/// Fails closed (as [`RangeCanonicalError::MissingActionEvidence`]) when zero
+/// or more than one Raw batch qualifies, so a package can never silently pin
+/// an arbitrary or ambiguous action batch.
+fn find_matching_action_evidence(
+    raw: &RawStore,
+    range_start: TradingDate,
+    range_end: TradingDate,
+) -> Result<Vec<EvidenceActionRef>, RangeCanonicalError> {
+    let entries = raw.read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)?;
+    let mut candidates: Vec<Vec<EvidenceActionRef>> = Vec::new();
+    for entry in &entries {
+        if entry.mode != FetchMode::Credentialed {
+            continue;
+        }
+        let mut chosen: BTreeMap<&'static str, &FileEntry> = BTreeMap::new();
+        let mut ambiguous = false;
+        for file in &entry.files {
+            let Some(kind) = identify_action_kind(file, range_start, range_end) else {
+                continue;
+            };
+            if !is_initial_action_page(file) {
+                continue;
+            }
+            if chosen.insert(kind, file).is_some() {
+                ambiguous = true;
+            }
+        }
+        if ambiguous || chosen.len() != REQUIRED_ACTION_KINDS.len() {
+            continue;
+        }
+        let raw_manifest_hash = ContentHash::from_bytes(&serde_json::to_vec(entry)?);
+        candidates.push(
+            chosen
+                .into_iter()
+                .map(|(kind, file)| EvidenceActionRef {
+                    kind: kind.to_owned(),
+                    raw_batch_id: entry.batch_id,
+                    raw_manifest_hash: raw_manifest_hash.clone(),
+                    raw_file_name: file.file_name.clone(),
+                    content_hash: file.content_hash.clone(),
+                    size_bytes: file.size_bytes,
+                })
+                .collect(),
+        );
+    }
+    match candidates.len() {
+        1 => Ok(candidates.remove(0)),
+        0 => Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "no Raw KIS batch has exactly one initial-page response for each of the \
+                     seven KSD action classes over this range"
+                .to_owned(),
+        }),
+        _ => Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "multiple Raw KIS batches match the seven KSD action classes over this \
+                     range; the pin is ambiguous"
+                .to_owned(),
+        }),
+    }
+}
+
+fn create_and_verify_package_dir(out_dir: &Path) -> Result<PathBuf, RangeCanonicalError> {
+    fs::create_dir_all(out_dir).map_err(|_| RangeCanonicalError::UnsafeEvidencePath {
+        path: out_dir.display().to_string(),
+    })?;
+    safe_package_root(out_dir)
+}
+
+fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), RangeCanonicalError> {
+    let mut handle = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| RangeCanonicalError::EvidencePackage {
+            reason: format!("failed to create {}: {error}", path.display()),
+        })?;
+    handle
+        .write_all(bytes)
+        .map_err(|error| RangeCanonicalError::EvidencePackage {
+            reason: format!("failed to write {}: {error}", path.display()),
+        })?;
+    handle
+        .sync_all()
+        .map_err(|error| RangeCanonicalError::EvidencePackage {
+            reason: format!("failed to sync {}: {error}", path.display()),
+        })
+}
+
+fn write_evidence_artifact(
+    root: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<EvidenceArtifactRef, RangeCanonicalError> {
+    write_new_file(&root.join(name), bytes)?;
+    Ok(EvidenceArtifactRef {
+        path: name.to_owned(),
+        sha256: ContentHash::from_bytes(bytes),
+        size_bytes: bytes.len() as u64,
+        schema_version: 1,
+    })
+}
+
+/// Assembles a Stage4B-0 evidence package on disk: `schedule.json`,
+/// `listing.json`, `pit.json`, and `manifest.json` inside `out_dir`.
+///
+/// `schedule_bytes`/`listing_bytes`/`pit_policy_bytes` are caller-supplied
+/// evidence, never synthesized here. Every one of them is fully validated
+/// against the immutable Stage4A lineage before anything is written, and the
+/// seven KSD action files are discovered from the immutable Raw KIS batch
+/// that exactly covers this session's range (never caller-selected). The
+/// action coverage is also verified end-to-end via [`load_action_evidence`]
+/// before the package is written, so the returned hash is proven loadable —
+/// not merely schema-shaped — by the same acceptance path
+/// [`load_verified_range_canonical_evidence`] runs afterward.
+///
+/// This function has no authority to approve its own output: the returned
+/// [`ContentHash`] must still be reviewed and committed to
+/// `configs/evidence/kis-range-canonical-approved-manifests.json` by an
+/// operator before [`load_verified_range_canonical_evidence`] will accept it.
+pub fn write_evidence_package(
+    raw: &RawStore,
+    normalized_entry: &ManifestEntry,
+    schedule_bytes: &[u8],
+    listing_bytes: &[u8],
+    pit_policy_bytes: &[u8],
+    out_dir: &Path,
+) -> Result<ContentHash, RangeCanonicalError> {
+    validate_scope(normalized_entry)?;
+    let (file, document) = read_stage4a_document(raw, normalized_entry)?;
+    validate_entry(normalized_entry)?;
+    validate_document(normalized_entry, file, &document)?;
+    validate_lineage(normalized_entry, file, &document.lineage)?;
+    verify_upstream_range_manifest(raw, &document.lineage)?;
+
+    let schedule: HistoricalSessionScheduleEvidence = serde_json::from_slice(schedule_bytes)
+        .map_err(
+            |error| RangeCanonicalError::UnsupportedHistoricalSessionSchedule {
+                reason: format!("supplied schedule evidence is malformed: {error}"),
+            },
+        )?;
+    validate_schedule(&schedule, normalized_entry.date)?;
+    if schedule.calendar_id != document.lineage.calendar_id
+        || schedule.calendar_hash != document.lineage.calendar_hash
+    {
+        return Err(RangeCanonicalError::UnsupportedHistoricalSessionSchedule {
+            reason: "supplied schedule identity differs from Stage4A lineage".to_owned(),
+        });
+    }
+
+    let listing: ListingMasterEvidence =
+        serde_json::from_slice(listing_bytes).map_err(|error| {
+            RangeCanonicalError::MissingListingMasterEvidence {
+                reason: format!("supplied listing evidence is malformed: {error}"),
+            }
+        })?;
+    validate_listing(
+        &listing,
+        normalized_entry.date,
+        normalized_entry.retrieved_at,
+    )?;
+    if listing.snapshot_id != document.lineage.listing_snapshot_id
+        || listing.snapshot_hash != document.lineage.listing_snapshot_hash
+    {
+        return Err(RangeCanonicalError::MissingListingMasterEvidence {
+            reason: "supplied listing identity differs from Stage4A lineage".to_owned(),
+        });
+    }
+
+    let pit_policy: NonStrictPitPolicyApproval =
+        serde_json::from_slice(pit_policy_bytes).map_err(|error| {
+            RangeCanonicalError::NonStrictPitNotApproved {
+                reason: format!("supplied PIT policy evidence is malformed: {error}"),
+            }
+        })?;
+    validate_pit_policy(&pit_policy)?;
+
+    let action_refs = find_matching_action_evidence(
+        raw,
+        document.lineage.source_start,
+        document.lineage.source_end,
+    )?;
+    // Fully exercise the same acceptance path the loader will run later, so
+    // a package that fails to load can never be written in the first place.
+    load_action_evidence(
+        raw,
+        &action_refs,
+        document.lineage.source_start,
+        document.lineage.source_end,
+    )?;
+
+    let out_root = create_and_verify_package_dir(out_dir)?;
+    let calendar = write_evidence_artifact(&out_root, "schedule.json", schedule_bytes)?;
+    let listing_ref = write_evidence_artifact(&out_root, "listing.json", listing_bytes)?;
+    let pit_ref = write_evidence_artifact(&out_root, "pit.json", pit_policy_bytes)?;
+
+    let manifest = EvidencePackageManifest {
+        schema_version: EVIDENCE_PACKAGE_SCHEMA_VERSION,
+        bridge_version: RANGE_CANONICAL_BRIDGE_VERSION.to_owned(),
+        source_batch_id: document.lineage.upstream_batch_id,
+        normalized_batch_id: normalized_entry.batch_id,
+        session_date: normalized_entry.date,
+        range_start: document.lineage.source_start,
+        range_end: document.lineage.source_end,
+        calendar,
+        listing: listing_ref,
+        pit_policy: pit_ref,
+        actions: action_refs,
+    };
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
+    write_new_file(&out_root.join("manifest.json"), &manifest_bytes)?;
+    Ok(ContentHash::from_bytes(&manifest_bytes))
 }
 
 #[cfg(test)]
