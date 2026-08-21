@@ -43,6 +43,21 @@ jobs:
       - run: bash deploy/db/integration-validation/static-check.sh
       - run: bash deploy/db/integration-validation/validate.sh --self-test
       - run: bash deploy/compose/candidate-static-check.sh
+      # Deployment-safety static checks. These need no Docker, database, root or
+      # secret, and each already passed on a clean checkout before being wired —
+      # they were simply never referenced by a workflow. They cover the nginx auth
+      # routes, the systemd units, secret file modes, the remaining compose files,
+      # and migration ordering, which is exactly the surface a release depends on.
+      - run: bash deploy/compose/backtest-static-check.sh
+      - run: bash deploy/compose/code-commit-static-check.sh
+      - run: bash deploy/db/migrate-static-check.sh
+      - run: bash deploy/nginx/auth-route-static-check.sh
+      - run: bash deploy/secrets/runtime-static-check.sh
+      - run: bash deploy/systemd/paper-runner-static-check.sh
+      - run: bash deploy/systemd/tailscale-tls-renewal-static-check.sh
+      - run: bash scripts/ops/static-check.sh
+      - run: bash scripts/ops/production-ops-static-check.sh
+      - run: bash scripts/ops/build-production-images-static-check.sh
       - run: python -m unittest scripts.ci.test_ci_contract -v
 
   format:
