@@ -54,14 +54,14 @@ backfill, DatasetManifest/five-pin과 운영 배포다.
 
 소스 역할은 다음처럼 고정한다.
 
-- **KIS**: 고정 ETF 11종목의 주 가격 소스. 과거 데이터는 strict PIT가 아닌 수집 시점 vendor snapshot으로 표시한다.
-- **KRX Open API**: 종목·시장 상태·상장 효력일·시장조치의 최종 기준이며 KIS 가격의 교차검증 소스다.
+- **KIS**: 고정 ETF 11종목의 주 가격·거래량 소스. 과거 데이터는 strict PIT가 아닌 수집 시점 vendor snapshot으로 표시한다.
+- **KRX Open API**: `ETF 일별매매정보` 표면은 deferred 상태이며 KIS 가격의 교차검증·fallback 경로로 자동 선택하지 않는다. 두 번째 price API는 아래 2026-08-21 결정의 명시적 승인이 있어야 한다.
 - **KIND**: 신규/추가/변경상장, 상호변경, 시장조치와 게시·정정 관계를 보강한다. 반드시 API일 필요는 없고 공식 Excel/다운로드도 immutable Raw로 수집할 수 있다.
 - **OpenDART**: 기업공시 결정 정보, 최초 공시시각, 정정·철회 체인을 제공한다.
 - **KSD/SEIBro**: 배당·증자·감자·합병/분할·권리 일정 등 기업행사 세부사항을 제공한다.
 - 소스가 충돌하거나 공개시각·효력일·정정 계보가 부족하면 자동 추정하지 않고 Raw만 보존한 채 Curated/READY/pin을 차단한다.
 
-초기 범위는 고정 ETF 11종목, 시작일 `2020-01-31`이다. KIS는 주 가격, KRX는 가격 교차검증과 시장 효력일, KIND/OpenDART는 공개·정정 시각, KSD/SEIBro는 권리·행사 세부 기준으로 사용한다. record date·지급일·상장일·권리락일을 `available_at`으로 소급하지 않는다.
+초기 범위는 고정 ETF 11종목, 시작일 `2020-01-31`이다. KIS는 주 가격·거래량 소스이며, 두 번째 price API를 쓰려면 독립적인 cross-check 또는 fallback 목적·우선순위·failure behavior에 대한 별도 소유자 승인이 필요하다. record date·지급일·상장일·권리락일을 `available_at`으로 소급하지 않는다.
 
 ### 0.5 Stage6 초기 작업 계획 — 현재 상태는 §0.13~§0.14
 
@@ -323,6 +323,8 @@ registration/key, entitlement reference/hash, 동일 ISIN의 두 과거 기준�
 확정되기 전에는 FSC adapter나 network call을 만들지 않는다. KIS bonus issue도
 KIND availability와 deterministic relation이 없으면 기존 source evidence를 넘어
 Curated/PIT로 승격하지 않는다.
+이 historical identity 방향은 이후 D14에서 진단·control 소비 완료 및 ETF11 적용성
+기각으로 대체됐다. 현재 상태는 아래 2026-08-21 기록을 따른다.
 
 KIND pilot은 종료된 창 `2026-08-15..2026-08-19`를 own-controls capture로 정확히
 한 번 실행했다. 40 stored pages 뒤 extra probe가 distinct response를 반환해
@@ -424,11 +426,42 @@ functional PASS`로 종료했다. 이전 `CANDIDATE_PIPELINE_FAILED`는 재현�
 결정문을 SHA-256으로 고정한 ACTIVE metadata에는 `usr_owner` 한 명만 포함했다.
 Member-visible KR-derived surface와 Live는 이 결정에 포함되지 않는다.
 
-**결정 뒤에도 남은 외부 입력.** 다음 세 항목은 추측해서 진행하지 않는다.
+**FSC KRX상장종목정보 ETF11 적용성 종료(2026-08-21).** 소유자 승인 key와 공식
+활용가이드로 exact `GET /1160100/service/GetKrxListedInfoService/getItemInfo`, JSON
+`response.header/body`, `basDt`/`isinCd`, `resultType=json`, `A`-prefixed 단축코드
+계약을 구현·검증했다. 069500/KR7069500007을 검증된 최근 XKRX 거래일 5개
+(`08-20`, `08-19`, `08-18`, `08-14`, `08-13`)에서 비저장 조회했으나 모두
+관측 0건이었다. 같은 서비스·`2026-08-19`에서 공식 예제 주식
+000020/KR7000020008을 정확히 한 번 조회한 control은 관측됐다. 따라서 key·서비스·
+날짜 문제가 아니라 최소 한 개의 필수 ETF가 빠진 것이며, 이 미러는 고정 ETF11의
+완전한 identity 원천으로 사용할 수 없다. 응답 본문·provider prose·key는 출력/저장하지
+않았고 FSC Raw batch/manifest도 생성되지 않았다(빈 commit lock만 존재). 임시 sudo
+grant는 control 성공 직후 자동 회수됐다. 이는 모든 ETF의 영구 부재 주장이 아니라
+ETF11 completeness 기각이며, fuzzy/bulk 확인으로 넓히지 않는다.
 
-- FSC mirror: owner registration/key, official 활용가이드, entitlement, 과거 query
-  semantics를 확정한다. 11종목의 code/name/효력 구간이 해소되기 전에는 fuzzy name
-  join을 금지한다.
+**FSC 진단·control 소비 완료.** 위 다섯 ETF probe와 정확히 한 번의 non-ETF control은
+역사적이고 완전히 소비됐다. FSC `KRX상장종목정보`에 대한 추가 live query나 Raw 수집은
+새 명시적 소유자 승인이 없으면 금지한다. 오프라인 fixture/contract 코드는 남을 수 있지만
+그 존재가 live 권한을 만들지 않는다.
+
+**가격·거래량 소스 결정(2026-08-21).** KIS read-only daily bars와 reference quotes를
+고정 ETF11의 primary price/volume source로 사용한다. 다른 price API를 추가하는 것은
+독립적인 cross-check 또는 fallback이라는 목적, 우선순위, failure behavior를 소유자가
+명시적으로 승인하고 해당 공식 계약·focused test를 추가한 경우에만 가능하다. FSC의
+겹치는 `증권상품시세정보`를 기본 후속 경로로 취급하지 않는다.
+
+**운영 activation 결정.** KIS once-daily incremental EOD는 소유자 승인 범위다. runtime은
+commit-suffixed immutable-release unit을 만드는 전용 installer로만 설치하며, 깨진 static
+KIS unit/env 파일은 남기거나 대체 경로로 사용하지 않는다. KIND D11은 low-volume manual
+operator-gated one-day capture만 허용하며 scheduled/timer/bulk/full-history 실행은 금지한다.
+
+**결정 뒤에도 남은 외부 입력.** 다음 항목은 추측해서 진행하지 않는다.
+
+- FSC `KRX상장종목정보`: registration/key/공식 guide/live control은 해소됐지만 ETF11
+  completeness가 기각돼 identity 경로는 종료·소비됐다. 추가 live/Raw는 새 명시적 owner
+  approval 없이는 금지한다. `증권상품시세정보`를 포함한 다른 price API는 independent
+  cross-check/fallback 목적, priority, failure behavior를 먼저 승인받아야 한다. fuzzy
+  name join은 계속 금지한다.
 - KIS `bonus-issue`: 공식 field/unit과 lineage 부재는 로컬 KIS XLSX 검토로
   확정했다. 이제 남은 것은 KIND availability와의 deterministic relation이다.
   다른 `ksdinfo` event와 direct KSD/KSD portal은 이번 결정에 포함되지 않는다.

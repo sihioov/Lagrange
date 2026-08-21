@@ -23,6 +23,7 @@ members = [
     "crates/risk-gateway",
     "crates/kis-client",
     "crates/opendart-client",
+    "crates/data-go-client",
     "crates/api-server",
     "apps/api-server/auth",
     "tests/integration/migration-contract",

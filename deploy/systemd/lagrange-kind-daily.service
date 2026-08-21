@@ -1,0 +1,29 @@
+[Unit]
+Description=Lagrange owner-approved targeted KIND daily evidence capture
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/var/lib/lagrange/data /var/lib/lagrange/state/kind-daily
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+EnvironmentFile=-/etc/lagrange/kind-daily.env
+Environment=KIND_DAILY_REPO_ROOT=/opt/lagrange
+Environment=KIND_DAILY_CAPTURE_ROOT=/opt/lagrange/data-pipelines/kind-capture
+Environment=KIND_DAILY_KIND_RAW_BIN=/opt/lagrange/bin/kind-raw
+Environment=KIND_DAILY_KIND_CORRECTION_RAW_BIN=/opt/lagrange/bin/kind-correction-raw
+Environment=KIND_DAILY_NORMALIZE_BIN=/opt/lagrange/bin/kind-normalize
+Environment=KIND_DAILY_RAW_ROOT=/var/lib/lagrange/data
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/lagrange/playwright-browsers
+ExecStart=/opt/lagrange/bin/kind-daily.sh --execute --confirm KIND_DAILY_OPERATOR_CONFIRMATION
+TimeoutStartSec=30min
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lagrange/data /var/lib/lagrange/state/kind-daily
+NoNewPrivileges=true
+PrivateDevices=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

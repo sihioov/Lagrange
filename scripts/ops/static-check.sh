@@ -20,7 +20,10 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   build-production-images-self-test.sh deploy-production-release.sh \
   run-production-backup.sh install-production-backup.sh \
   production-ops-static-check.sh production-ops-self-test.sh \
-  kis-range-raw-backfill.sh; do
+  kis-range-raw-backfill.sh kis-daily-production.sh kis-daily-production-self-test.sh \
+  kis-daily-calendar-refresh.sh install-kis-daily.sh \
+  fsc-krx-listed-self-test.sh kind-daily.sh install-kind-daily.sh \
+  kind-daily-self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
@@ -573,4 +576,111 @@ grep -Fq 'KIS_BACKFILL_TIMER_TEST_NOW' "$ops/install-kis-backfill-timer.sh" \
 if grep -Eq 'compose[^#]*--profile[[:space:]]+live|--profile[[:space:]]+live' "$ops"/*.sh; then
   die 'operator workflow must not enable the live profile'
 fi
+fsc_self_test="$ops/fsc-krx-listed-self-test.sh"
+fsc_collector="$root/data-pipelines/collectors/src/bin/fsc-krx-listed-raw.rs"
+[ -x "$fsc_self_test" ] || die 'FSC offline self-test must be executable'
+[ -f "$fsc_collector" ] || die 'FSC collector source is missing'
+for forbidden in '--approve-live' '--approve-live-probe' 'DataGoClient' \
+  'I_UNDERSTAND_READ_ONLY_FSC_KRX_LISTED_CALLS'; do
+  if grep -Fq -- "$forbidden" "$fsc_collector"; then
+    die "FSC collector must not contain $forbidden"
+  fi
+done
+for forbidden_wrapper in grant-fsc-krx-listed-temporary-access.sh \
+  provision-fsc-krx-listed-key.sh; do
+  [ ! -e "$ops/$forbidden_wrapper" ] && [ ! -L "$ops/$forbidden_wrapper" ] ||
+    die "obsolete FSC live wrapper must be absent: $forbidden_wrapper"
+done
+fsc_runner="$ops/run-fsc-krx-listed.sh"
+[ -x "$fsc_runner" ] || die 'FSC offline runner must be executable'
+grep -Fq -- '--plan|--check' "$fsc_runner" || die 'FSC runner must be offline-only'
+if grep -Eq -- '--approve-live|--approve-live-probe|--live|--execute|FSC_KRX_LISTED_KEY_FILE|FSC_KRX_LISTED_CONFIRM|systemctl|sudo' "$fsc_runner"; then
+  die 'FSC runner must not retain a live/provider activation path'
+fi
+bash "$fsc_self_test" >/dev/null || die 'FSC offline self-test failed'
+
+kis_daily="$ops/kis-daily-production.sh"
+kis_daily_installer="$ops/install-kis-daily.sh"
+kis_daily_self_test="$ops/kis-daily-production-self-test.sh"
+[ -x "$kis_daily" ] || die 'KIS daily wrapper must be executable'
+[ -x "$kis_daily_installer" ] || die 'KIS daily installer must be executable'
+[ -x "$kis_daily_self_test" ] || die 'KIS daily self-test must be executable'
+grep -Fq -- '--plan' "$kis_daily" || die 'KIS daily plan mode is missing'
+grep -Fq -- '--check' "$kis_daily" || die 'KIS daily check mode is missing'
+grep -Fq -- '--execute' "$kis_daily" || die 'KIS daily execute mode is missing'
+grep -Fq 'source "$script_dir/lib/db.sh"' "$kis_daily" || die 'KIS daily must reuse the shared DB helper'
+grep -Fq 'xkrx-calendar-bootstrap.py' "$kis_daily" || die 'KIS daily must use the validated XKRX calendar artifact'
+grep -Fq "fetch_mode='credentialed'" "$kis_daily" || die 'KIS daily DB snapshot must select credentialed publications'
+grep -Fq "provider='KRX'" "$kis_daily" || die 'KIS daily DB snapshot provider scope is missing'
+grep -Fq "market='KR'" "$kis_daily" || die 'KIS daily DB snapshot market scope is missing'
+grep -Fq 'ensure_protected_file' "$kis_daily" || die 'KIS daily protected file hardening is missing'
+grep -Fq 'verify_lock_fd_identity' "$kis_daily" || die 'KIS daily lock descriptor identity check is missing'
+grep -Fq 'flock -n 9' "$kis_daily" || die 'KIS daily single-run lock is missing'
+grep -Fq 'max_sessions=10000' "$kis_daily" || die 'KIS daily worker bound is missing'
+grep -Fq -- '--backfill-session-dates' "$kis_daily" || die 'KIS daily exact worker session contract is missing'
+grep -Fq 'LAGRANGE_BACKFILL_STATE' "$kis_daily" || die 'KIS daily must reuse the protected backfill state contract'
+grep -Fq 'BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS' "$kis_daily" \
+  || die 'KIS daily execute confirmation is missing'
+grep -Fq 'no worker/Docker/KIS call' "$kis_daily" || die 'KIS daily no-op idempotency message is missing'
+if grep -Eq 'KIS_ACCOUNT_REF|(^|[^[:alnum:]_])CANO([^[:alnum:]_]|$)|ACNT_PRDT_CD|--profile[[:space:]]+live|KIS_APP_KEY_FILE|KIS_APP_SECRET_FILE' "$kis_daily"; then
+  die 'KIS daily wrapper must not add account/live/credential-file surface'
+fi
+for installer_marker in '--dry-run' '--preflight' '--check' '--apply' \
+  'release_root' 'code_commit' 'short_commit' 'service_name' 'timer_name' \
+  'LAGRANGE_CODE_COMMIT' 'BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS'; do
+  grep -Fq -- "$installer_marker" "$kis_daily_installer" ||
+    die "KIS daily installer contract is missing: $installer_marker"
+done
+if grep -Eq 'deploy/systemd/lagrange-kis-daily\.(service|timer)|kis-daily\.env\.example' "$kis_daily_installer"; then
+  die 'KIS daily installer must not recreate legacy static unit/env artifacts'
+fi
+for legacy in "$root/deploy/systemd/lagrange-kis-daily.service" \
+  "$root/deploy/systemd/lagrange-kis-daily.timer" "$root/deploy/systemd/kis-daily.env.example"; do
+  [ ! -e "$legacy" ] && [ ! -L "$legacy" ] || die "legacy KIS daily artifact must be absent: $legacy"
+done
+
+kis_daily_calendar_refresh="$ops/kis-daily-calendar-refresh.sh"
+[ -x "$kis_daily_calendar_refresh" ] || die 'KIS daily protected calendar refresh must be executable'
+grep -Fq -- '--plan' "$kis_daily_calendar_refresh" || die 'KIS daily calendar refresh plan mode is missing'
+grep -Fq -- '--check' "$kis_daily_calendar_refresh" || die 'KIS daily calendar refresh check mode is missing'
+grep -Fq -- '--apply' "$kis_daily_calendar_refresh" || die 'KIS daily calendar refresh apply mode is missing'
+grep -Fq 'end_date=2027-12-31' "$kis_daily_calendar_refresh" \
+  || die 'KIS daily calendar refresh horizon must reach 2027-12-31'
+grep -Fq 'xkrx-calendar-bootstrap.py' "$kis_daily_calendar_refresh" \
+  || die 'KIS daily calendar refresh must reuse the pinned XKRX bootstrap'
+grep -Fq 'XKRX_CALENDAR_BOOTSTRAP_REEXEC' "$kis_daily_calendar_refresh" \
+  || die 'KIS daily calendar refresh must use the locked local Python environment'
+refresh_code=$(grep -Ev '^[[:space:]]*#' "$kis_daily_calendar_refresh")
+if grep -Eq 'curl|wget|playwright|selenium|browser|KIS.*(GET|POST)|oauth2/token|(^|[^[:alnum:]_])CANO([^[:alnum:]_]|$)|ACNT_PRDT_CD' <<<"$refresh_code"; then
+  die 'KIS daily calendar refresh must not add network/browser/account surface'
+fi
+
+kind_wrapper="$ops/kind-daily.sh"
+kind_installer="$ops/install-kind-daily.sh"
+kind_self_test="$ops/kind-daily-self-test.sh"
+kind_service="$root/deploy/systemd/lagrange-kind-daily.service"
+kind_timer="$root/deploy/systemd/lagrange-kind-daily.timer"
+[ -x "$kind_wrapper" ] || die 'KIND manual wrapper must be executable'
+[ -x "$kind_installer" ] || die 'KIND installer must be executable'
+[ -x "$kind_self_test" ] || die 'KIND self-test must be executable'
+grep -Fq -- '--plan' "$kind_wrapper" || die 'KIND plan mode is missing'
+grep -Fq -- '--check' "$kind_wrapper" || die 'KIND check mode is missing'
+grep -Fq -- '--execute' "$kind_wrapper" || die 'KIND execute mode is missing'
+grep -Fq 'target-date-file' "$kind_wrapper" || die 'KIND one-day target input is missing'
+grep -Fq 'window_days=1' "$kind_wrapper" || die 'KIND one-day window contract is missing'
+grep -Fq 'release_root' "$kind_installer" || die 'KIND installer release input is missing'
+grep -Fq 'no_systemd=true' "$kind_installer" || die 'KIND installer no-systemd plan contract is missing'
+grep -Fq 'lagrange-kind-daily.service' "$kind_installer" || die 'KIND manual service install contract is missing'
+if grep -Eq 'lagrange-kind-daily\.timer|OnCalendar=|Persistent=true' "$kind_installer"; then
+  die 'KIND installer must not recreate scheduled/timer activation'
+fi
+[ -f "$kind_service" ] || die 'KIND manual service is missing'
+[ ! -L "$kind_service" ] || die 'KIND manual service must not be a symlink'
+[ ! -e "$kind_timer" ] && [ ! -L "$kind_timer" ] || die 'KIND timer must be absent'
+grep -Fq 'Type=oneshot' "$kind_service" || die 'KIND service must be a oneshot service'
+grep -Fq 'ExecStart=' "$kind_service" || die 'KIND manual service command is missing'
+grep -Fq -- '--confirm KIND_DAILY_OPERATOR_CONFIRMATION' "$kind_service" \
+  || die 'KIND manual service confirmation is missing'
+bash "$kis_daily_self_test" >/dev/null || die 'KIS daily focused self-test failed'
+bash "$kind_self_test" >/dev/null || die 'KIND focused self-test failed'
 echo 'OPS_STATIC: PASS'

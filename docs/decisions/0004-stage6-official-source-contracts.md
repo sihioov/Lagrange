@@ -132,7 +132,7 @@ The cadence sentence was verified on the `KRX상장종목정보` mirror only. It
 not be located on the `증권상품시세정보` mirror and must not be assumed to apply
 there.
 
-### D3: Prefer the public-data-portal mirror over the KRX Open API where it covers the category
+### D3: Historical preference for the public-data-portal mirror
 
 The KRX Open API Terms of Use (effective 2025-12-26) restrict use to
 non-commercial purposes (제6조②), prohibit providing received information to
@@ -147,12 +147,19 @@ tension with retaining exact provider bytes indefinitely as immutable Raw
 evidence — the property the entire lineage design rests on.
 
 The Financial Services Commission mirrors of KRX-sourced data on the public data
-portal state `이용허락범위: 제한 없음` and `비용부과유무: 무료`. For the two
-categories they cover — listed-issue information and securities-product
-(ETF/ETN/ELW) prices — the mirror is the preferred surface, because indefinite
-Raw retention does not collide with a post-termination use prohibition.
+portal state `이용허락범위: 제한 없음` and `비용부과유무: 무료`. In that
+historical pass, this made the mirror appear preferable for retention analysis
+of the two covered categories — listed-issue information and securities-product
+(ETF/ETN/ELW) prices — because indefinite Raw retention did not collide with a
+post-termination use prohibition.
 
 This is a preference, not a licence conclusion. See D8.
+
+For the fixed ETF11 price/volume path, this historical preference is superseded
+by D14 and D15: the FSC listing mirror cannot anchor ETF11 identity, KIS is the
+primary price/volume source, and no FSC securities-price request is selected.
+Any second price API requires the explicit independent cross-check/fallback
+purpose, priority, and failure behavior approval recorded in D15.
 
 ### D4: OpenDART does not cover the ETF11 universe — KIND is the disclosure authority
 
@@ -493,6 +500,60 @@ and the event cannot become disclosure-backed Curated/PIT evidence until an
 approved deterministic KIND relation exists. No provider request was made and
 no network surface was widened by this decision.
 
+### D14: The FSC listed-information mirror cannot anchor ETF11 identity
+
+On 2026-08-21 the owner supplied the approved public-data key and authorized a
+narrow live coverage check for
+`GET /1160100/service/GetKrxListedInfoService/getItemInfo`. The downloaded
+official guide fixed the JSON `response.header/body` envelope, exact
+`basDt`/`isinCd` filters, `resultType=json`, and the `A`-prefixed `srtnCd`
+contract. The key remained inside the private transport and no response body or
+provider prose was printed or persisted.
+
+The fixed ETF control `069500` / `KR7069500007` returned no observation for the
+five validated XKRX sessions `2026-08-20`, `2026-08-19`, `2026-08-18`,
+`2026-08-14`, and `2026-08-13`. To distinguish date/service availability from
+ETF absence, the owner then authorized exactly one non-persisting official-guide
+control: stock `000020` / `KR7000020008` at `2026-08-19`. That exact control was
+available on the same service and date. The temporary sudo capability revoked
+itself after the successful control, and the Raw store contains no FSC batch;
+only its empty commit lock exists.
+
+This evidence is sufficient to reject this mirror as the authoritative fixed
+ETF11 identity source: at least one required ETF is absent while a same-date
+listed-stock control resolves. It does not prove that every ETF is absent from
+every edition, and it does not authorize fuzzy queries or a broader scan. The
+diagnostic and exact control are now fully consumed: no further live FSC query
+or FSC Raw collection is allowed without a new explicit owner approval. The
+adapter's offline fixture and contract code may remain, but it must not publish
+a partial ETF universe.
+
+### D15: KIS is the primary ETF11 price/volume source
+
+On 2026-08-21 the owner selected KIS read-only daily bars and reference quotes
+as the primary price/volume source for the fixed ETF11 universe. This is a
+source-priority decision, not permission to add any KIS account or order path.
+
+No overlapping price API is a default follow-up. Another price API may be
+added only after a separate explicit owner approval states its independent
+cross-check or fallback purpose, its priority relative to KIS, and its failure
+behavior. That approval must also carry the current official contract,
+entitlement reference, and focused tests. The FSC securities-price surface is
+therefore not proposed or queried under this decision.
+
+### D16: Runtime activation is narrow and operator-gated
+
+The owner approved once-daily incremental KIS EOD collection as a read-only
+operation. Its deployment contract is a dedicated installer that writes
+commit-suffixed units pointing at one immutable release; the old static KIS
+unit/env artifacts are not an activation path and must be absent.
+
+KIND D11 remains limited to low-volume, manual, operator-confirmed capture of
+exactly one calendar day through the site's own browser controls. Scheduled or
+timer activation, bulk capture, and full-history backfill remain forbidden.
+Neither decision authorizes account, balance, order, correction, cancellation,
+execution, or WebSocket APIs.
+
 ## Consequences
 
 - Stage5 data keeps `vendor_snapshot=true`, `strict_pit=false`, `ready=false`.
@@ -534,10 +595,14 @@ The historical advancement condition required, from the operator:
 4. resolution of the operator-verification checklist items that Step 2's
    adapters depend on.
 
-**Current gate state — 2026-08-20.** The OpenDART core fixture contract is
+**Current gate state — 2026-08-21.** The OpenDART core fixture contract is
 approved but has no ETF11 use (D4), and its in-process live path is blocked by
 D10. KIND D11 is approved and capture → Raw → normalization is implemented.
-KRX/FSC/KSD surfaces, the backfill budget, and ETF11 identity remain deferred.
+KIND scheduled/timer/bulk/full-history capture remains forbidden. The FSC
+listing diagnostic is consumed and rejected for ETF11 identity; KRX/FSC/KSD
+surfaces and ETF11 identity remain deferred except for the offline FSC
+fixture/contract code. The KIS once-daily incremental EOD approval remains
+read-only and does not widen the KIS allowlist.
 The Stage5 contract flags are unchanged — `vendor_snapshot=true`,
 `strict_pit=false`, `ready=false` — and Curated/publication/five-pin and
 downstream recommendation, backtest, and Paper connections remain `BLOCKED`

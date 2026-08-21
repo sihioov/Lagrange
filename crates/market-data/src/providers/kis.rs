@@ -24,6 +24,38 @@ pub const KR_ETF_CORE_SYMBOLS: [&str; 11] = [
     "153130", "132030",
 ];
 
+/// Scope of the dedicated KSD action-range Raw collector.
+///
+/// `WholeMarket` preserves the Stage4B-v0-compatible blank `SHT_CD` request.
+/// `FixedEtf11` sends one exact short-code query per member of the reviewed
+/// fixed ETF11 universe. Both scopes retain every page in one immutable Raw
+/// batch; neither scope claims historical point-in-time completeness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KisActionRangeScope {
+    WholeMarket,
+    FixedEtf11,
+}
+
+impl KisActionRangeScope {
+    pub const fn initial_call_count(self) -> usize {
+        match self {
+            Self::WholeMarket => KIS_ACTION_CLASS_COUNT,
+            Self::FixedEtf11 => KIS_ACTION_CLASS_COUNT * KR_ETF_CORE_SYMBOLS.len(),
+        }
+    }
+
+    pub const fn is_symbol_scoped(self) -> bool {
+        matches!(self, Self::FixedEtf11)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::WholeMarket => "whole-market",
+            Self::FixedEtf11 => "etf11",
+        }
+    }
+}
+
 const DAILY_BARS_PATH: &str = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice";
 const DAILY_BARS_TR_ID: &str = "FHKST03010100";
 const REFERENCE_PATH: &str = "/uapi/domestic-stock/v1/quotations/inquire-price";
@@ -45,6 +77,12 @@ enum PaginationPolicy {
 }
 
 const KSD_MAX_PAGES: usize = 10;
+
+/// The seven logical KSD action classes. Paid-in capital is one endpoint/TR
+/// pair with two explicitly different `GB1` response classes.
+pub const KIS_ACTION_CLASS_COUNT: usize = 7;
+/// Maximum pages retained for one KSD action class.
+pub const KIS_ACTION_MAX_PAGES: usize = KSD_MAX_PAGES;
 
 /// The documented maximum number of daily observations returned by one
 /// `FHKST03010100` request.
@@ -251,7 +289,7 @@ impl<R: KisRead> KisProvider<R> {
                     }
                 }
                 ResponseKind::CorporateActions => {
-                    for endpoint in corporate_action_endpoints(&date) {
+                    for endpoint in corporate_action_endpoints(&date, &date, None) {
                         self.fetch_pages(
                             req,
                             *kind,
@@ -269,6 +307,83 @@ impl<R: KisRead> KisProvider<R> {
                 unsupported => return Err(ProviderError::UnsupportedKind(*unsupported)),
             }
         }
+        Ok(envelopes)
+    }
+
+    /// Fetches the complete KSD action-range request matrix as immutable Raw
+    /// envelopes. The calls are strictly sequential. Every endpoint/class
+    /// accumulates pages locally, and the complete output is returned only
+    /// after all expected symbol/class groups have passed validation; callers
+    /// can therefore commit it as one all-or-nothing Raw batch.
+    pub async fn fetch_corporate_actions_range(
+        &self,
+        market: &str,
+        start: TradingDate,
+        end: TradingDate,
+        now: domain::UtcTimestamp,
+        batch_id: BatchId,
+        scope: KisActionRangeScope,
+    ) -> Result<Vec<RawEnvelope>, ProviderError> {
+        if market != "kr" {
+            return Err(ProviderError::InvalidConfiguration {
+                detail: format!("KIS provider supports market kr, got {market:?}"),
+            });
+        }
+        if end < start {
+            return Err(ProviderError::InvalidConfiguration {
+                detail: "KSD action range end precedes start".to_owned(),
+            });
+        }
+
+        let request = FetchRequest {
+            market: market.to_owned(),
+            date: start,
+            kinds: vec![ResponseKind::CorporateActions],
+            now,
+            batch_id,
+        };
+        let start_text = kis_date_text(start);
+        let end_text = kis_date_text(end);
+        let symbols: Vec<Option<&str>> = match scope {
+            KisActionRangeScope::WholeMarket => vec![None],
+            KisActionRangeScope::FixedEtf11 => {
+                KR_ETF_CORE_SYMBOLS.iter().copied().map(Some).collect()
+            }
+        };
+        let mut envelopes = Vec::new();
+
+        for symbol in symbols {
+            for endpoint in corporate_action_endpoints(&start_text, &end_text, symbol) {
+                let mut pages = Vec::new();
+                self.fetch_pages(
+                    &request,
+                    ResponseKind::CorporateActions,
+                    endpoint.label,
+                    symbol,
+                    endpoint.path,
+                    endpoint.tr_id,
+                    endpoint.query,
+                    PaginationPolicy::KsdGithubSample,
+                    &mut pages,
+                )
+                .await?;
+
+                for envelope in &pages {
+                    validate_kis_response(
+                        ResponseKind::CorporateActions,
+                        endpoint.path,
+                        &envelope.bytes,
+                    )
+                    .map_err(|error| action_range_validation_error(error.code))?;
+                    if let Some(symbol) = symbol {
+                        validate_action_response_symbol(&envelope.bytes, symbol)?;
+                    }
+                }
+                envelopes.extend(pages);
+            }
+        }
+
+        validate_action_range_envelopes(scope, start, end, &envelopes)?;
         Ok(envelopes)
     }
 
@@ -845,8 +960,79 @@ fn remote_error(kind: ResponseKind, requested_endpoint: &str, error: KisError) -
             endpoint: requested_endpoint.to_owned(),
             http_status,
         }),
-        detail: error.to_string(),
+        // `KisError::Broker` and schema errors can carry redacted broker
+        // prose. Keep that detail out of the provider error because this
+        // error may cross a worker boundary or be rendered by an operator.
+        detail: error.code().to_owned(),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct KisActionSpec {
+    pub(crate) kind: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) path: &'static str,
+    pub(crate) tr_id: &'static str,
+    pub(crate) extra: &'static [(&'static str, &'static str)],
+}
+
+pub(crate) const KIS_ACTION_SPECS: [KisActionSpec; KIS_ACTION_CLASS_COUNT] = [
+    KisActionSpec {
+        kind: "paidin-subscription",
+        label: "corporate-actions-paidin-subscription",
+        path: "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
+        tr_id: "HHKDB669100C0",
+        extra: &[("GB1", "1")],
+    },
+    KisActionSpec {
+        kind: "paidin-record",
+        label: "corporate-actions-paidin-record",
+        path: "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
+        tr_id: "HHKDB669100C0",
+        extra: &[("GB1", "2")],
+    },
+    KisActionSpec {
+        kind: "bonus-issue",
+        label: "corporate-actions-bonus",
+        path: "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
+        tr_id: "HHKDB669101C0",
+        extra: &[],
+    },
+    KisActionSpec {
+        kind: "dividend",
+        label: "corporate-actions-dividend",
+        path: "/uapi/domestic-stock/v1/ksdinfo/dividend",
+        tr_id: "HHKDB669102C0",
+        extra: &[("GB1", "0"), ("HIGH_GB", "")],
+    },
+    KisActionSpec {
+        kind: "merger-split",
+        label: "corporate-actions-merger-split",
+        path: "/uapi/domestic-stock/v1/ksdinfo/merger-split",
+        tr_id: "HHKDB669104C0",
+        extra: &[],
+    },
+    KisActionSpec {
+        kind: "reverse-split",
+        label: "corporate-actions-reverse-split",
+        path: "/uapi/domestic-stock/v1/ksdinfo/rev-split",
+        tr_id: "HHKDB669105C0",
+        extra: &[("MARKET_GB", "0")],
+    },
+    KisActionSpec {
+        kind: "capital-decrease",
+        label: "corporate-actions-capital-decrease",
+        path: "/uapi/domestic-stock/v1/ksdinfo/cap-dcrs",
+        tr_id: "HHKDB669106C0",
+        extra: &[],
+    },
+];
+
+pub(crate) fn kis_action_spec(kind: &str) -> Option<KisActionSpec> {
+    KIS_ACTION_SPECS
+        .iter()
+        .copied()
+        .find(|spec| spec.kind == kind)
 }
 
 #[derive(Debug)]
@@ -857,13 +1043,13 @@ struct EndpointSpec {
     query: Vec<(String, String)>,
 }
 
-fn corporate_action_endpoints(date: &str) -> Vec<EndpointSpec> {
+fn corporate_action_endpoints(start: &str, end: &str, symbol: Option<&str>) -> Vec<EndpointSpec> {
     let common = |extra: &[(&str, &str)]| {
         let mut query = vec![
             ("CTS".to_owned(), String::new()),
-            ("F_DT".to_owned(), date.to_owned()),
-            ("T_DT".to_owned(), date.to_owned()),
-            ("SHT_CD".to_owned(), String::new()),
+            ("F_DT".to_owned(), start.to_owned()),
+            ("T_DT".to_owned(), end.to_owned()),
+            ("SHT_CD".to_owned(), symbol.unwrap_or_default().to_owned()),
         ];
         query.extend(
             extra
@@ -872,50 +1058,230 @@ fn corporate_action_endpoints(date: &str) -> Vec<EndpointSpec> {
         );
         query
     };
+    KIS_ACTION_SPECS
+        .iter()
+        .map(|spec| EndpointSpec {
+            label: spec.label,
+            path: spec.path,
+            tr_id: spec.tr_id,
+            query: common(spec.extra),
+        })
+        .collect()
+}
+
+fn kis_date_text(date: TradingDate) -> String {
+    date.to_iso().replace('-', "")
+}
+
+fn action_range_validation_error(code: &'static str) -> ProviderError {
+    ProviderError::Remote {
+        provider: PROVIDER_KIS,
+        kind: ResponseKind::CorporateActions,
+        code,
+        retryable: false,
+        diagnostic: None,
+        detail: code.to_owned(),
+    }
+}
+
+fn expected_action_query(
+    spec: KisActionSpec,
+    start: TradingDate,
+    end: TradingDate,
+    symbol: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut query = vec![
+        ("CTS".to_owned(), String::new()),
+        ("F_DT".to_owned(), kis_date_text(start)),
+        ("T_DT".to_owned(), kis_date_text(end)),
+        ("SHT_CD".to_owned(), symbol.unwrap_or_default().to_owned()),
+    ];
+    query.extend(
+        spec.extra
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned())),
+    );
+    query
+}
+
+fn expected_action_headers(spec: KisActionSpec, page: usize) -> Vec<(String, String)> {
     vec![
-        EndpointSpec {
-            label: "corporate-actions-paidin-subscription",
-            path: "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
-            tr_id: "HHKDB669100C0",
-            query: common(&[("GB1", "1")]),
-        },
-        EndpointSpec {
-            label: "corporate-actions-paidin-record",
-            path: "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
-            tr_id: "HHKDB669100C0",
-            query: common(&[("GB1", "2")]),
-        },
-        EndpointSpec {
-            label: "corporate-actions-bonus",
-            path: "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
-            tr_id: "HHKDB669101C0",
-            query: common(&[]),
-        },
-        EndpointSpec {
-            label: "corporate-actions-dividend",
-            path: "/uapi/domestic-stock/v1/ksdinfo/dividend",
-            tr_id: "HHKDB669102C0",
-            query: common(&[("GB1", "0"), ("HIGH_GB", "")]),
-        },
-        EndpointSpec {
-            label: "corporate-actions-merger-split",
-            path: "/uapi/domestic-stock/v1/ksdinfo/merger-split",
-            tr_id: "HHKDB669104C0",
-            query: common(&[]),
-        },
-        EndpointSpec {
-            label: "corporate-actions-reverse-split",
-            path: "/uapi/domestic-stock/v1/ksdinfo/rev-split",
-            tr_id: "HHKDB669105C0",
-            query: common(&[("MARKET_GB", "0")]),
-        },
-        EndpointSpec {
-            label: "corporate-actions-capital-decrease",
-            path: "/uapi/domestic-stock/v1/ksdinfo/cap-dcrs",
-            tr_id: "HHKDB669106C0",
-            query: common(&[]),
-        },
+        ("authorization".to_owned(), "[REDACTED]".to_owned()),
+        ("appkey".to_owned(), "[REDACTED]".to_owned()),
+        ("appsecret".to_owned(), "[REDACTED]".to_owned()),
+        ("tr_id".to_owned(), spec.tr_id.to_owned()),
+        (
+            "tr_cont".to_owned(),
+            if page == 1 {
+                String::new()
+            } else {
+                "N".to_owned()
+            },
+        ),
     ]
+}
+
+/// Validate the symbol identity carried by a KSD response when the endpoint
+/// exposes one. Some KSD classes legitimately omit a short-code field, so a
+/// missing identity is retained as unverifiable rather than fabricated; an
+/// explicit conflicting identity fails closed.
+fn validate_action_response_symbol(bytes: &[u8], expected: &str) -> Result<(), ProviderError> {
+    let document: Value = serde_json::from_slice(bytes)
+        .map_err(|_| action_range_validation_error("KIS_ACTION_RANGE_SCHEMA_INVALID"))?;
+    let output1 = document
+        .get("output1")
+        .ok_or_else(|| action_range_validation_error("KIS_ACTION_RANGE_SCHEMA_INVALID"))?;
+    let rows: Vec<&Value> = match output1 {
+        Value::Array(rows) => rows.iter().collect(),
+        Value::Object(_) => vec![output1],
+        _ => {
+            return Err(action_range_validation_error(
+                "KIS_ACTION_RANGE_SCHEMA_INVALID",
+            ));
+        }
+    };
+    const SYMBOL_KEYS: [&str; 3] = ["sht_cd", "stck_shrn_iscd", "isu_srt_cd"];
+    for row in rows {
+        let object = row
+            .as_object()
+            .ok_or_else(|| action_range_validation_error("KIS_ACTION_RANGE_SCHEMA_INVALID"))?;
+        for key in SYMBOL_KEYS {
+            let Some((_, value)) = object
+                .iter()
+                .find(|(actual, _)| actual.eq_ignore_ascii_case(key))
+            else {
+                continue;
+            };
+            let Some(actual) = value.as_str() else {
+                return Err(action_range_validation_error(
+                    "KIS_ACTION_RANGE_SYMBOL_SHAPE_INVALID",
+                ));
+            };
+            if !actual.is_empty() && actual != expected {
+                return Err(action_range_validation_error(
+                    "KIS_ACTION_RANGE_SYMBOL_MISMATCH",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate the complete request/file matrix before the caller can commit a
+/// Raw batch. This rejects missing logical classes, unexpected classes,
+/// duplicate file identities, altered common queries, and altered page
+/// continuation metadata.
+fn validate_action_range_envelopes(
+    scope: KisActionRangeScope,
+    start: TradingDate,
+    end: TradingDate,
+    envelopes: &[RawEnvelope],
+) -> Result<(), ProviderError> {
+    let symbols: Vec<Option<&str>> = match scope {
+        KisActionRangeScope::WholeMarket => vec![None],
+        KisActionRangeScope::FixedEtf11 => KR_ETF_CORE_SYMBOLS.iter().copied().map(Some).collect(),
+    };
+    let mut groups = BTreeSet::new();
+    let mut file_names = BTreeSet::new();
+
+    for envelope in envelopes {
+        if envelope.kind != ResponseKind::CorporateActions
+            || envelope.request.mode != FetchMode::Credentialed
+        {
+            return Err(action_range_validation_error(
+                "KIS_ACTION_RANGE_UNEXPECTED_CLASS",
+            ));
+        }
+        if !file_names.insert(envelope.file_name.clone()) {
+            return Err(action_range_validation_error(
+                "KIS_ACTION_RANGE_DUPLICATE_FILE",
+            ));
+        }
+
+        let matches: Vec<(KisActionSpec, Option<&str>)> = symbols
+            .iter()
+            .flat_map(|symbol| {
+                KIS_ACTION_SPECS.iter().copied().filter_map(move |spec| {
+                    (envelope.request.endpoint == spec.path
+                        && envelope.request.query
+                            == expected_action_query(spec, start, end, *symbol))
+                    .then_some((spec, *symbol))
+                })
+            })
+            .collect();
+        if matches.len() != 1 {
+            return Err(action_range_validation_error(
+                "KIS_ACTION_RANGE_REQUEST_CONTRACT_INVALID",
+            ));
+        }
+        let (spec, symbol) = matches[0];
+        if envelope.request.headers != expected_action_headers(spec, 1)
+            && envelope.request.headers != expected_action_headers(spec, 2)
+        {
+            return Err(action_range_validation_error(
+                "KIS_ACTION_RANGE_METADATA_INVALID",
+            ));
+        }
+        let prefix = match symbol {
+            Some(symbol) => format!("{}-{symbol}-page-", spec.label),
+            None => format!("{}-page-", spec.label),
+        };
+        let Some(page_text) = envelope
+            .file_name
+            .strip_prefix(&prefix)
+            .and_then(|name| name.strip_suffix(".json"))
+        else {
+            return Err(action_range_validation_error(
+                "KIS_ACTION_RANGE_FILENAME_INVALID",
+            ));
+        };
+        if page_text.len() != 2 || !page_text.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(action_range_validation_error(
+                "KIS_ACTION_RANGE_FILENAME_INVALID",
+            ));
+        }
+        let page = page_text
+            .parse::<usize>()
+            .ok()
+            .filter(|page| (1..=KSD_MAX_PAGES).contains(page))
+            .ok_or_else(|| action_range_validation_error("KIS_ACTION_RANGE_FILENAME_INVALID"))?;
+        let continuation = envelope
+            .request
+            .headers
+            .iter()
+            .find(|(name, _)| name == "tr_cont")
+            .map(|(_, value)| value.as_str());
+        let expected_continuation = if page == 1 { "" } else { "N" };
+        if continuation != Some(expected_continuation) {
+            return Err(action_range_validation_error(
+                "KIS_ACTION_RANGE_METADATA_INVALID",
+            ));
+        }
+        if !groups.insert((spec.kind, symbol.unwrap_or_default(), page)) {
+            return Err(action_range_validation_error(
+                "KIS_ACTION_RANGE_DUPLICATE_PAGE",
+            ));
+        }
+        validate_kis_response(ResponseKind::CorporateActions, spec.path, &envelope.bytes)
+            .map_err(|error| action_range_validation_error(error.code))?;
+    }
+
+    let expected_groups = KIS_ACTION_SPECS
+        .iter()
+        .flat_map(|spec| {
+            symbols
+                .iter()
+                .map(move |symbol| (spec.kind, symbol.unwrap_or_default()))
+        })
+        .collect::<BTreeSet<_>>();
+    let actual_groups = groups
+        .iter()
+        .map(|(kind, symbol, _)| (*kind, *symbol))
+        .collect::<BTreeSet<_>>();
+    if actual_groups != expected_groups {
+        return Err(action_range_validation_error("KIS_ACTION_RANGE_INCOMPLETE"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1162,6 +1528,7 @@ mod tests {
                 body: "appsecret=fixture-secret".to_owned(),
             },
         );
+        assert!(!error.to_string().contains("fixture-secret"));
         match error {
             ProviderError::Remote {
                 code,

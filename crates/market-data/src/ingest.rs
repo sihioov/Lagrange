@@ -12,9 +12,9 @@ use std::collections::BTreeSet;
 
 use domain::{BatchId, TradingDate, UtcTimestamp};
 
-use crate::contract::{PROVIDER_KIS_DAILY_RANGE, ResponseKind, StoredFile};
+use crate::contract::{PROVIDER_KIS, PROVIDER_KIS_DAILY_RANGE, ResponseKind, StoredFile};
 use crate::provider::{EodProvider, ProviderError};
-use crate::providers::kis::{KisProvider, KisRead, validate_kis_response};
+use crate::providers::kis::{KisActionRangeScope, KisProvider, KisRead, validate_kis_response};
 use crate::providers::kis_candidate::{
     KIS_CANDIDATE_SUPPORTED_KINDS, KisCandidateProvider, validate_kis_candidate_response,
 };
@@ -315,6 +315,83 @@ pub async fn ingest_kis_daily_bars_range_with_batch_id<R: KisRead>(
     persist_bundle(
         store,
         PROVIDER_KIS_DAILY_RANGE,
+        provider.fetch_mode(),
+        &request,
+        entitlement_reference,
+        batch_id,
+        &envelopes,
+    )
+}
+
+/// Fetches a complete KIS KSD action-range matrix and persists it as one
+/// immutable `provider=kis` Raw batch. The provider returns no envelopes on
+/// a failed/incomplete class or pagination chain, and RawStore publishes the
+/// batch only after every class/page has been written and hashed.
+#[allow(clippy::too_many_arguments)]
+pub async fn ingest_kis_action_range<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    market: &str,
+    start: TradingDate,
+    end: TradingDate,
+    now: UtcTimestamp,
+    scope: KisActionRangeScope,
+    entitlement_reference: Option<&str>,
+) -> Result<IngestOutcome, IngestError> {
+    ingest_kis_action_range_with_batch_id(
+        store,
+        provider,
+        market,
+        start,
+        end,
+        now,
+        scope,
+        entitlement_reference,
+        BatchId::generate(),
+    )
+    .await
+}
+
+/// Same action-range Raw capture with an explicit caller-owned batch id.
+/// Whole-market and symbol-scoped captures both remain one atomic batch; a
+/// failed symbol/class never permits a partial manifest row.
+#[allow(clippy::too_many_arguments)]
+pub async fn ingest_kis_action_range_with_batch_id<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    market: &str,
+    start: TradingDate,
+    end: TradingDate,
+    now: UtcTimestamp,
+    scope: KisActionRangeScope,
+    entitlement_reference: Option<&str>,
+    batch_id: BatchId,
+) -> Result<IngestOutcome, IngestError> {
+    let envelopes = provider
+        .fetch_corporate_actions_range(market, start, end, now, batch_id, scope)
+        .await?;
+    if envelopes.is_empty() {
+        return Err(IngestError::ResponseShape {
+            detail: "KIS action-range capture returned no response pages".to_owned(),
+        });
+    }
+    for envelope in &envelopes {
+        validate_kis_response(envelope.kind, &envelope.request.endpoint, &envelope.bytes).map_err(
+            |error| IngestError::MalformedResponse {
+                kind: error.kind,
+                reason: error.reason,
+                diagnostic: Some(ResponseValidationDiagnostic {
+                    code: error.code,
+                    endpoint: envelope.request.endpoint.clone(),
+                    file_name: envelope.file_name.clone(),
+                }),
+            },
+        )?;
+    }
+    let request = IngestRequest::new(market.to_owned(), start, now);
+    persist_bundle(
+        store,
+        PROVIDER_KIS,
         provider.fetch_mode(),
         &request,
         entitlement_reference,

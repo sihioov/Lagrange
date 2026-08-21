@@ -76,6 +76,18 @@ project.
   `docs/kis_openapi_entiredocs_20260818_030007.xlsx`.  When they conflict, choose the narrowest
   fail-closed behavior and record the exact discrepancy in tests or a runbook.
 
+### Cross-cutting ETF source and runtime boundary
+
+- KIS read-only daily bars and reference quotes are the primary ETF11 price/volume source.  A
+  second price API is added only after explicit owner approval of its independent cross-check or
+  fallback purpose, priority, and failure behavior, with current documentation and focused tests.
+- Once-daily incremental KIS EOD collection is owner-approved.  Its runtime activation is created
+  only by the commit-pinned immutable-release installer; legacy static KIS unit/env artifacts are
+  not an alternate activation path.  This approval remains read-only and does not authorize any
+  account or order API.
+- KIND D11 remains a low-volume, manual, operator-confirmed one-calendar-day browser capture.
+  Scheduled or timer activation, bulk capture, and full-history backfill remain forbidden.
+
 ## OpenDART safety boundary (mandatory)
 
 Stage6 adds OpenDART (`opendart.fss.or.kr`) as a read-only disclosure-evidence source for the
@@ -106,9 +118,15 @@ focused tests.
 
 - Never call any other OpenDART endpoint.  `crDecsn`, `piicDecsn`, `cmpMgDecsn`, `alotMatter`, and
   the original-document file API are explicitly DEFERRED, not allowed.
-- Never call `data.go.kr`, `apis.data.go.kr`, `openapi.krx.co.kr`, `data.krx.co.kr`,
-  `kind.krx.co.kr`, `seibro.or.kr`, or `api.seibro.or.kr` from code.  Those surfaces are deferred;
-  the KIND and Data Marketplace exports are operator-driven downloads, not automated collection.
+- Never call `data.go.kr`, `openapi.krx.co.kr`, `data.krx.co.kr`, `kind.krx.co.kr`,
+  `seibro.or.kr`, or `api.seibro.or.kr` from code.  Those surfaces remain deferred; the KIND and
+  Data Marketplace exports are operator-driven downloads, not automated collection.
+- **FSC KRX-listed diagnostic consumed (historical, 2026-08-21):** the exact
+  `GetKrxListedInfoService/getItemInfo` coverage probes for ETF `069500` /
+  `KR7069500007` and the one owner-approved, non-persisting stock control `000020` /
+  `KR7000020008` at `basDt=20260819` are fully consumed.  The source is rejected for ETF11
+  identity; no further live FSC query or FSC Raw collection is allowed without a new explicit
+  owner approval.  Offline fixture and contract code may remain, but it is not a live allowance.
 - **Sole KIND exception (owner-approved ADR-0004 D11, 2026-08-20):** the existing
   `data-pipelines/kind-capture` path may drive KIND's own browser controls for low-volume,
   operator-gated ETF disclosure and correction-evidence capture.  It must not reconstruct or send

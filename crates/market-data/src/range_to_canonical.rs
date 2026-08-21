@@ -25,7 +25,7 @@ use crate::contract::{
     PROVIDER_KIS_DAILY_RANGE_NORMALIZED, ResponseKind, StoredFile,
 };
 use crate::normalize::bonus_split_factor_from_percent;
-use crate::providers::kis::KR_ETF_CORE_SYMBOLS;
+use crate::providers::kis::{KR_ETF_CORE_SYMBOLS, KisActionSpec, kis_action_spec};
 use crate::range_normalize::{
     RANGE_NORMALIZED_SCHEMA_VERSION, RANGE_NORMALIZER, RANGE_NORMALIZER_SCHEMA_VERSION,
     RangeNormalizationLineage,
@@ -1197,52 +1197,10 @@ fn load_action_evidence(
     ))
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ActionSpec {
-    path: &'static str,
-    tr_id: &'static str,
-    extra: &'static [(&'static str, &'static str)],
-}
+type ActionSpec = KisActionSpec;
 
 fn action_spec(kind: &str) -> Option<ActionSpec> {
-    Some(match kind {
-        "paidin-subscription" => ActionSpec {
-            path: "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
-            tr_id: "HHKDB669100C0",
-            extra: &[("GB1", "1")],
-        },
-        "paidin-record" => ActionSpec {
-            path: "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
-            tr_id: "HHKDB669100C0",
-            extra: &[("GB1", "2")],
-        },
-        "bonus-issue" => ActionSpec {
-            path: "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
-            tr_id: "HHKDB669101C0",
-            extra: &[],
-        },
-        "dividend" => ActionSpec {
-            path: "/uapi/domestic-stock/v1/ksdinfo/dividend",
-            tr_id: "HHKDB669102C0",
-            extra: &[("GB1", "0"), ("HIGH_GB", "")],
-        },
-        "merger-split" => ActionSpec {
-            path: "/uapi/domestic-stock/v1/ksdinfo/merger-split",
-            tr_id: "HHKDB669104C0",
-            extra: &[],
-        },
-        "reverse-split" => ActionSpec {
-            path: "/uapi/domestic-stock/v1/ksdinfo/rev-split",
-            tr_id: "HHKDB669105C0",
-            extra: &[("MARKET_GB", "0")],
-        },
-        "capital-decrease" => ActionSpec {
-            path: "/uapi/domestic-stock/v1/ksdinfo/cap-dcrs",
-            tr_id: "HHKDB669106C0",
-            extra: &[],
-        },
-        _ => return None,
-    })
+    kis_action_spec(kind)
 }
 
 fn validate_action_request(

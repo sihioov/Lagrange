@@ -100,7 +100,8 @@ pub use curate::{
 };
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,
-    ingest_kis_bundle, ingest_kis_candidate_bundle, ingest_kis_candidate_bundle_with_kinds,
+    ingest_kis_action_range, ingest_kis_action_range_with_batch_id, ingest_kis_bundle,
+    ingest_kis_candidate_bundle, ingest_kis_candidate_bundle_with_kinds,
     ingest_kis_daily_bars_range, ingest_kis_daily_bars_range_with_batch_id,
 };
 pub use instrument_master::{
@@ -127,6 +128,12 @@ pub use normalize::{
 pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
 };
+pub use providers::fsc_krx_listed::{
+    FIXED_ETF11, FSC_KRX_LISTED_ENDPOINT, FSC_KRX_LISTED_ENTITLEMENT_REFERENCE,
+    FSC_KRX_LISTED_PATH, FSC_KRX_LISTED_PROVIDER, FSC_KRX_LISTED_RESPONSE_KIND, FixedEtfIdentity,
+    FscKrxListedAvailability, FscKrxListedError, FscKrxListedOutcome, FscKrxListedProvider,
+    FscKrxListedRead, ITEM_INFO_MAX_PAGES, ITEM_INFO_PAGE_SIZE,
+};
 pub use providers::kind::{
     CapturedPage, KIND_CORRECTION_ARTIFACT_KIND, KIND_CORRECTION_ENTRY_URL,
     KIND_CORRECTION_SURFACE, KIND_CORRECTION_TERMINATION, KIND_CORRECTION_TERMINATION_STAGE,
@@ -139,7 +146,8 @@ pub use providers::kind::{
     ingest_correction_capture, ingest_disclosure_capture,
 };
 pub use providers::kis::{
-    KR_ETF_CORE_SYMBOLS, KisProvider, KisRead, MAX_DAILY_BAR_OBSERVATIONS, MAX_DAILY_BAR_WINDOWS,
+    KIS_ACTION_CLASS_COUNT, KIS_ACTION_MAX_PAGES, KR_ETF_CORE_SYMBOLS, KisActionRangeScope,
+    KisProvider, KisRead, MAX_DAILY_BAR_OBSERVATIONS, MAX_DAILY_BAR_WINDOWS,
 };
 pub use providers::kis_candidate::{
     KIS_CANDIDATE_SUPPORTED_KINDS, KIS_CANDIDATE_UNSUPPORTED_KINDS, KisCandidateProvider,

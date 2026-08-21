@@ -12,15 +12,19 @@ awaited the approval `AGENTS.md` requires for any change to a method, path,
 host, or response contract. This snapshot is retained as history; see the
 allowlist table at the end for the current per-row state.
 
-**Current state — 2026-08-20.** The owner supplied an OpenDART key and approved
+**Current state — 2026-08-21.** The owner supplied an OpenDART key and approved
 the live observation needed to settle ETF coverage. **Exactly one request using
 the owner-supplied key has been made**: a single
 `GET /api/corpCode.xml`, whose purpose and result are recorded in checklist
 item 4 below. No other OpenDART API surface has been contacted, and the key
 value and all response bodies are intentionally absent from this runbook. KIND
 D11 is approved for browser-driven collection, and its capture → immutable Raw →
-normalization path is implemented. KRX, FSC, KSD, the full KIND backfill, and
-ETF11 identity decisions remain deferred.
+normalization path is implemented. The FSC listing diagnostic and exact control
+are consumed and reject that source for ETF11 identity; no further FSC live or
+Raw path is allowed without new explicit owner approval. KIS daily bars and
+reference quotes are the primary ETF11 price/volume source, and any alternate
+price API needs the D15 approval conditions. KRX, KSD, the full KIND backfill,
+and ETF11 identity decisions remain deferred.
 
 ## How this evidence was gathered
 
@@ -123,6 +127,28 @@ both. The `증권상품시세정보` page defers field-level detail to a downloa
 
 `[verified]` The sentence describes a service-wide refresh cadence, not a
 per-record response field. ADR-0004 D2 depends on this distinction.
+
+**Credentialed coverage observation — 2026-08-21.** The owner-approved
+`KRX상장종목정보` adapter used only exact `basDt` + `isinCd` JSON queries. ETF
+`069500` / `KR7069500007` was absent on the five validated XKRX sessions
+`2026-08-20`, `2026-08-19`, `2026-08-18`, `2026-08-14`, and `2026-08-13`.
+One separately approved, exact-once, non-persisting official-guide control —
+stock `000020` / `KR7000020008` at `2026-08-19` — was present. This rejects the
+listing mirror as a complete ETF11 identity source without claiming universal
+ETF absence. No key, response body, or provider message was recorded; no FSC
+Raw batch or manifest was committed. The diagnostic and control are fully
+consumed: no further live FSC query or FSC Raw collection is allowed without a
+new explicit owner approval. Offline fixture/contract code may remain. See
+ADR-0004 D14.
+
+### Price and volume source priority
+
+KIS read-only daily bars and reference quotes are the primary price/volume
+source for ETF11. The overlapping FSC `증권상품시세정보` surface is not a
+default follow-up and must not be queried as one. Any other price API
+requires a separate explicit owner approval that names its independent
+cross-check or fallback purpose, priority, failure behavior, official contract,
+entitlement reference, and focused tests.
 
 ### Terms of use — `data.krx.co.kr`
 
@@ -565,12 +591,14 @@ with headless Chromium, installed outside the repository under
 downloaded, and no dataset was collected — only rendered table structure was
 read, a handful of page loads in total.
 
-**Current state — 2026-08-20.** D11 supersedes D6's operator-only restriction
+**Current state — 2026-08-21.** D11 supersedes D6's operator-only restriction
 for the approved low-volume KIND browser path: capture records the site's own
 responses, Rust ingest commits immutable Raw, and normalization is implemented.
-The capture remains browser-driven and never reconstructs requests. D6 still
-governs `data.krx.co.kr` and any unapproved bulk/scheduled path; the full KIND
-backfill budget and ETF11 identity remain deferred.
+The capture remains browser-driven and never reconstructs requests. Its runtime
+scope is manual operator confirmation for exactly one calendar day. D6 still
+governs `data.krx.co.kr`; scheduled/timer activation, bulk capture, and
+full-history backfill remain forbidden. The full KIND backfill budget and ETF11
+identity remain deferred.
 
 ### Rights
 
@@ -734,16 +762,17 @@ credentialed call, because read-only public fetching cannot settle it.
    HTTP method, full parameter set, response schema, pagination mechanism and
    terminal condition, and any correction or revision field — for
    `ETF 일별매매정보` at minimum. Everything technical is behind this wall.
-2. **FSC mirror specifications.** Download the `활용자가이드` `.docx` for
-   `금융위원회_KRX상장종목정보` and `금융위원회_증권상품시세정보` and capture the
-   same facts, plus whether the response envelope uses
-   `numOfRows` / `pageNo` / `totalCount` — a common portal pattern that must not
-   be assumed here.
-3. **Snapshot versus live semantics.** Query `KRX상장종목정보` for the same ISIN
-   at two past `기준일자` values and check whether market classification or name
-   can differ across dates. That determines whether it is a true point-in-time
-   query or a date filter over a current table — which decides whether it can
-   anchor instrument identity validity intervals.
+2. **FSC mirror specifications.** **CONSUMED / CLOSED FOR ETF11 2026-08-21:**
+   the official `KRX상장종목정보` guide and live JSON envelope were resolved,
+   then D14 rejected the source as a complete ETF11 identity source. No further
+   FSC live query or Raw collection is allowed without new explicit owner
+   approval. The separate `금융위원회_증권상품시세정보` ETF operation is not a
+   default follow-up; it needs a new independent cross-check/fallback decision
+   before any contract work or request.
+3. **Snapshot versus live semantics.** **DEFERRED FOR INDIVIDUAL-STOCK SCOPE:**
+   two past-date observations are no longer on the ETF11 critical path because
+   D14 closed this source for ETF11 completeness. Do not infer validity
+   intervals from the diagnostic observations.
 4. ~~**ETF coverage in OpenDART.**~~ **CLOSED 2026-08-20 — answer: no.** One
    live `corpCode.xml` request returned a 3,596,991-byte ZIP holding a
    28,585,431-byte `CORPCODE.xml` with 118,714 entities, 3,984 of them carrying
@@ -887,13 +916,15 @@ credentialed call, because read-only public fetching cannot settle it.
 
 ## Read-only allowlist — approval state
 
-**Current state — 2026-08-20.** The OpenDART core remains approved for its
+**Current state — 2026-08-21.** The OpenDART core remains approved for its
 fixture-backed contract, but D4 establishes no ETF11 use and D10 blocks the
 in-process live path. KIND D11 is approved for the low-volume browser path and
 its capture → Raw → normalization implementation is present. The FSC listing
-mirror is the selected identity direction but remains not allowed pending its
-exact contract and owner inputs. KRX, other FSC surfaces, KSD,
-`data.krx.co.kr`, the full KIND backfill, and ETF11 identity remain deferred.
+mirror contract and credentialed control are resolved, but D14 rejects it as a
+complete ETF11 identity source. KIS is primary for ETF11 price/volume; the
+ETF-specific FSC price surface is not selected, and any second price API needs
+an explicit independent cross-check/fallback approval. KRX, KSD, `data.krx.co.kr`,
+the full KIND backfill, and ETF11 identity remain deferred.
 The 2026-08-19 approval snapshot above is retained as historical evidence, not
 as the current table state.
 
@@ -912,11 +943,11 @@ backfill.
 | OpenDART | `GET /api/company.json` \| `.xml` | **APPROVED** — fixture contract; no ETF11 use (D4), in-process live path blocked (D10) |
 | OpenDART | `GET /api/crDecsn`, `/api/piicDecsn`, `/api/cmpMgDecsn` | **DEFERRED / NOT ALLOWED** — outside the approved core; D4 establishes no ETF11 use |
 | OpenDART | `GET /api/alotMatter` | **DEFERRED / NOT ALLOWED** — outside the approved core; D4 establishes no ETF11 use |
-| FSC mirror | `금융위원회_KRX상장종목정보` | **SELECTED DIRECTION / NOT YET ALLOWED** — owner chose the mirror for ETF11 identity, but exact endpoint/schema, registration/key, entitlement, and historical-query semantics remain missing |
-| FSC mirror | `금융위원회_증권상품시세정보` (ETF operation) | DEFERRED — mirror-vs-origin decision open; endpoint needs checklist item 2 |
-| KRX Open API | `ETF 일별매매정보` | DEFERRED — endpoint needs checklist item 1; prefer the FSC mirror per D3 |
+| FSC mirror | `금융위원회_KRX상장종목정보` | **CONSUMED / REJECTED FOR ETF11** — exact diagnostic and non-ETF control are historical; no further live query or Raw collection without new explicit owner approval; no Raw batch committed |
+| FSC mirror | `금융위원회_증권상품시세정보` (ETF operation) | **NOT A CANDIDATE / NOT ALLOWED** — only a separately approved independent cross-check/fallback could reopen price-API review |
+| KRX Open API | `ETF 일별매매정보` | DEFERRED — endpoint needs checklist item 1; no default comparison path is selected |
 | KSD portal | `주식권리일정정보`, `주식배당정보` | DEFERRED — blocked on the KOGL Type 2 entitlement decision |
-| KIND | ETF-scoped disclosure list and related correction-evidence viewer flow | **APPROVED 2026-08-20** — browser-driven through the site's own controls, low volume, no reconstructed requests (ADR-0004 D11); ETF disclosure capture → Raw → normalization is the implemented path |
+| KIND | ETF-scoped disclosure list and related correction-evidence viewer flow | **APPROVED 2026-08-20, MANUAL ONE-DAY ONLY** — browser-driven through the site's own controls, low volume, explicit operator confirmation, no scheduled/timer/bulk/full-history path (ADR-0004 D11); ETF disclosure capture → Raw → normalization is the implemented path |
 | KIND | 상세검색, 관리종목, 매매거래정지, and every other page/endpoint | **DEFERRED / NOT ALLOWED** — outside the exact D11 exception |
 | data.krx.co.kr | 이슈 통계 leaf pages for 신규상장 / 상장폐지 / 매매거래정지 / 관리종목 | DEFERRED — operator-driven export only, per D6; leaf URLs unconfirmed |
 | terms pages | KRX Open API 이용약관, data.krx.co.kr 이용약관, KOGL licence, OpenDART 약관 | re-check periodically; terms change |
