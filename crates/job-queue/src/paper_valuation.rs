@@ -359,7 +359,7 @@ fn session_closes(
     date: TradingDate,
     canceled: &AtomicBool,
 ) -> Result<BTreeMap<InstrumentId, Price>, ValuationError> {
-    let store = CurateStore::new(dataset_root.join("curated"));
+    let store = CurateStore::new(dataset_root);
     let year = date
         .as_naive_date()
         .format("%Y")
@@ -405,4 +405,74 @@ fn session_closes(
         closes.insert(instrument.clone(), bar.close);
     }
     Ok(closes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use domain::ContentHash;
+    use market_data::curate::schema::{CuratedBar, write_bars};
+    use portfolio_model::cost::CostProfile;
+
+    #[test]
+    fn session_closes_reads_the_path_the_real_writer_produces() {
+        // scripts/ci/prepare_phase0.py writes to `<root>/curated/...`; `CurateStore`
+        // appends the curated zone itself (crate-market-data/src/curate.rs), so
+        // production must hand it the dataset root, not `root/curated`.
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let instrument_id = InstrumentId::parse("069500.KRX").unwrap();
+        let date = TradingDate::parse("2020-01-21").unwrap();
+        let close = Price::parse("10290").unwrap();
+
+        let store = CurateStore::new(&root);
+        let bar = CuratedBar {
+            instrument_id: instrument_id.clone(),
+            trading_date: date,
+            market_open_ts: domain::UtcTimestamp::parse_rfc3339("2020-01-21T00:00:00Z").unwrap(),
+            market_close_ts: domain::UtcTimestamp::parse_rfc3339("2020-01-21T06:30:00Z").unwrap(),
+            open: close,
+            high: close,
+            low: close,
+            close,
+            volume: 1,
+            trading_value: Some(1),
+            currency: Currency::KRW,
+            source: "test".to_owned(),
+            ingested_at: domain::UtcTimestamp::parse_rfc3339("2020-02-01T00:00:00Z").unwrap(),
+            batch_id: "00000000-0000-0000-0000-000000000001".parse().unwrap(),
+            raw_hash: ContentHash::from_bytes(b"session-closes-guard"),
+        };
+        write_bars(
+            &store.bars_path(MARKET, "069500.KRX", 2020, CURATED_VERSION),
+            std::slice::from_ref(&bar),
+        )
+        .unwrap();
+
+        let mut positions = BTreeMap::new();
+        positions.insert(instrument_id.clone(), Quantity::parse("1").unwrap());
+        let state = LedgerState {
+            positions,
+            ..LedgerState::new(
+                Money::zero(Currency::KRW),
+                CostProfile::krx_etf_default().unwrap(),
+            )
+        };
+        let canceled = AtomicBool::new(false);
+
+        let closes = session_closes(&root, &state, date, &canceled)
+            .expect("session_closes must read the path the real writer produces");
+        assert_eq!(closes.get(&instrument_id), Some(&close));
+
+        let doubled = CurateStore::new(root.join("curated")).bars_path(
+            MARKET,
+            "069500.KRX",
+            2020,
+            CURATED_VERSION,
+        );
+        assert!(
+            !doubled.exists(),
+            "the fixture must not create a curated/curated bars path"
+        );
+    }
 }

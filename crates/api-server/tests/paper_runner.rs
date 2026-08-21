@@ -87,7 +87,7 @@ fn runner_dataset() -> Dataset {
 fn runner_dataset_for(session: &str) -> Dataset {
     let dir = tempfile::tempdir().expect("dataset tempdir");
     let root = dir.path().to_path_buf();
-    let store = CurateStore::new(root.join("curated"));
+    let store = CurateStore::new(&root);
     let open = Price::parse("10240").expect("open price");
     let close = Price::parse("10300").expect("close price");
     let bar = CuratedBar {

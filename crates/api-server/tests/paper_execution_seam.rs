@@ -95,9 +95,9 @@ const BARS_229200: &[FixtureBar] = &[
 fn curated_fixture() -> Dataset {
     let dir = tempfile::tempdir().expect("temp dataset root");
     let root = dir.path().to_path_buf();
-    // The runner is given the dataset root and the curated zone sits one level
-    // in, exactly as the engine reaches it.
-    let store = CurateStore::new(root.join("curated"));
+    // `dataset_root` is the storage root (`/data` in production); CurateStore
+    // appends the curated zone itself, just like load_recommendation_closes.
+    let store = CurateStore::new(&root);
     for (symbol, bars) in [("069500.KRX", BARS_069500), ("229200.KRX", BARS_229200)] {
         let rows: Vec<CuratedBar> = bars.iter().map(|b| curated_bar(symbol, b)).collect();
         write_bars(&store.bars_path("kr", symbol, 2020, CURATED_VERSION), &rows)

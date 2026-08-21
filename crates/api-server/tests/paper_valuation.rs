@@ -29,7 +29,7 @@ impl Dataset {
 fn dataset(symbol: &str, date: &str, close: i64, close_at: &str) -> Dataset {
     let dir = tempfile::tempdir().expect("dataset tempdir");
     let root = dir.path().to_path_buf();
-    let store = CurateStore::new(root.join("curated"));
+    let store = CurateStore::new(&root);
     let price = Price::parse(&close.to_string()).expect("positive close");
     let bar = CuratedBar {
         instrument_id: InstrumentId::parse(symbol).expect("instrument"),

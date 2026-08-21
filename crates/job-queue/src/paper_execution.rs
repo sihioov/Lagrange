@@ -678,9 +678,9 @@ fn session_opens(
     target: &PendingTarget,
     canceled: &AtomicBool,
 ) -> Result<BTreeMap<InstrumentId, Price>, ExecutionError> {
-    // The worker is given the dataset root and the curated zone sits one level
-    // in, exactly as `runner.rs` reaches it for the factor series.
-    let store = CurateStore::new(dataset_root.join("curated"));
+    // `dataset_root` is the storage root (`/data` in production); CurateStore
+    // appends the curated zone itself, just like load_recommendation_closes.
+    let store = CurateStore::new(dataset_root);
     let year = target
         .effective_date
         .as_naive_date()
@@ -903,6 +903,7 @@ fn side_code(side: Side) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use market_data::curate::schema::{CuratedBar, write_bars};
 
     #[test]
     fn targets_parse_from_the_stored_wire_shape() {
@@ -944,6 +945,78 @@ mod tests {
             stamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             "2020-01-21T00:30:00Z",
             "ledger_evidence matches orders by created_at::date = effective_date"
+        );
+    }
+
+    #[test]
+    fn session_opens_reads_the_path_the_real_writer_produces() {
+        // scripts/ci/prepare_phase0.py writes to `<root>/curated/...`; `CurateStore`
+        // appends the curated zone itself (crate-market-data/src/curate.rs), so
+        // production must hand it the dataset root, not `root/curated`.
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let instrument_id = InstrumentId::parse("069500.KRX").unwrap();
+        let date = TradingDate::parse("2020-01-21").unwrap();
+        let open = Price::parse("10240").unwrap();
+
+        let store = CurateStore::new(&root);
+        let bar = CuratedBar {
+            instrument_id: instrument_id.clone(),
+            trading_date: date,
+            market_open_ts: domain::UtcTimestamp::parse_rfc3339("2020-01-21T00:00:00Z").unwrap(),
+            market_close_ts: domain::UtcTimestamp::parse_rfc3339("2020-01-21T06:30:00Z").unwrap(),
+            open,
+            high: open,
+            low: open,
+            close: open,
+            volume: 1,
+            trading_value: Some(1),
+            currency: domain::Currency::KRW,
+            source: "test".to_owned(),
+            ingested_at: domain::UtcTimestamp::parse_rfc3339("2020-02-01T00:00:00Z").unwrap(),
+            batch_id: "00000000-0000-0000-0000-000000000001".parse().unwrap(),
+            raw_hash: domain::ContentHash::from_bytes(b"session-opens-guard"),
+        };
+        write_bars(
+            &store.bars_path(MARKET, "069500.KRX", 2020, CURATED_VERSION),
+            std::slice::from_ref(&bar),
+        )
+        .unwrap();
+
+        let mut positions = BTreeMap::new();
+        positions.insert(instrument_id.clone(), domain::Quantity::parse("1").unwrap());
+        let state = LedgerState {
+            positions,
+            ..LedgerState::new(
+                domain::Money::zero(domain::Currency::KRW),
+                portfolio_model::cost::CostProfile::krx_etf_default().unwrap(),
+            )
+        };
+        let target = PendingTarget {
+            account_id: Uuid::nil(),
+            effective_date: date,
+            targets: Vec::new(),
+        };
+        let canceled = AtomicBool::new(false);
+
+        let opens = session_opens(&root, &state, &target, &canceled)
+            .expect("session_opens must read the path the real writer produces");
+        assert_eq!(
+            opens.get(&instrument_id),
+            Some(&open),
+            "the open must come from the fixture the real writer layout produces, \
+             not a curated/curated path that never exists"
+        );
+
+        let doubled = CurateStore::new(root.join("curated")).bars_path(
+            MARKET,
+            "069500.KRX",
+            2020,
+            CURATED_VERSION,
+        );
+        assert!(
+            !doubled.exists(),
+            "the fixture must not create a curated/curated bars path"
         );
     }
 }
