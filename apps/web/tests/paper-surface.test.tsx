@@ -1,7 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PaperPage from "@/app/(authenticated)/paper/page";
-import { defaultAccount, parityReason } from "@/lib/products/paper-contracts";
+import { RebalancePreviewOutcome } from "@/components/paper/paper-rebalance-preview";
+import { paperDictionary } from "@/lib/i18n/dictionaries/paper";
+import {
+  defaultAccount,
+  parityReason,
+  type RebalancePreviewModel,
+} from "@/lib/products/paper-contracts";
 
 vi.mock("server-only", () => ({}));
 
@@ -19,6 +25,116 @@ const ACCOUNT_ID = "00000000-0000-4000-8000-000000000401";
 const CONFIG_ID = "00000000-0000-4000-8000-000000000101";
 const NOTICE_ID = "00000000-0000-4000-8000-000000000431";
 const TARGET_ID = "00000000-0000-4000-8000-000000000421";
+const RUN_ID = "00000000-0000-4000-8000-000000000201";
+const PREVIEW_ID = "00000000-0000-4000-8000-000000000501";
+const TARGET_PORTFOLIO_ID = "00000000-0000-4000-8000-000000000601";
+const DATASET_VERSION_ID = "00000000-0000-4000-8000-000000000701";
+const JOB_ID = "00000000-0000-4000-8000-000000000801";
+const SHA = "a".repeat(64);
+const PREVIEW_TOKEN = "b".repeat(64);
+
+function succeededRun() {
+  return {
+    as_of: "2026-01-30",
+    created_at: "2026-01-30T00:10:00Z",
+    id: RUN_ID,
+    provenance: {},
+    status: "SUCCEEDED",
+    trigger_kind: "MANUAL",
+  };
+}
+
+function readyPreview(overrides: Partial<RebalancePreviewModel> = {}): RebalancePreviewModel {
+  return {
+    account_id: ACCOUNT_ID,
+    applied_at: null,
+    completed_at: "2026-01-30T00:20:00Z",
+    created_at: "2026-01-30T00:15:00Z",
+    dataset_manifest_sha256: SHA,
+    dataset_version_id: DATASET_VERSION_ID,
+    id: PREVIEW_ID,
+    job_id: JOB_ID,
+    preview_token: PREVIEW_TOKEN,
+    price_basis: "RECOMMENDATION_CLOSE",
+    price_date: "2026-01-30",
+    proposed_effective_date: "2026-02-02",
+    recommendation_run_id: RUN_ID,
+    result: {
+      available_cash: "500000.0000",
+      buy_notional: "1000000.0000",
+      cash_before: "2000000.0000",
+      decisions: [
+        {
+          action: "BUY",
+          current_quantity: "0",
+          current_value: "0",
+          current_weight: "0",
+          delta_value: "1000000.0000",
+          instrument_id: "069500.KRX",
+          skip_reason: null,
+          target_value: "1000000.0000",
+          target_weight: "0.5",
+        },
+      ],
+      equity: "10000000.0000",
+      explicit_fees: "1500.0000",
+      informational_slippage: "500.0000",
+      leftover_cash: "498500.0000",
+      lineage: {
+        account_id: ACCOUNT_ID,
+        account_state_sha256: SHA,
+        account_state_version: 3,
+        curated_version: 7,
+        dataset_manifest_sha256: SHA,
+        dataset_version_id: DATASET_VERSION_ID,
+        recommendation_run_id: RUN_ID,
+        strategy_config_id: CONFIG_ID,
+        target_portfolio_id: TARGET_PORTFOLIO_ID,
+        target_portfolio_sha256: SHA,
+      },
+      orders: [
+        {
+          commission: "300.0000",
+          estimated_execution_price: "40500.0000",
+          informational_slippage: "500.0000",
+          instrument_id: "069500.KRX",
+          notional: "1000000.0000",
+          quantity: "24",
+          raw_price: "40239.3000",
+          side: "BUY",
+          tax: "0.0000",
+        },
+      ],
+      price_basis: "RECOMMENDATION_CLOSE",
+      price_date: "2026-01-30",
+      proposed_effective_date: "2026-02-02",
+      schema_version: 1,
+      sell_notional: "0.0000",
+      warning_code: "INDICATIVE_NEXT_OPEN_REPLAN_REQUIRED",
+    },
+    started_at: "2026-01-30T00:15:05Z",
+    status: "READY",
+    strategy_config_id: CONFIG_ID,
+    target_portfolio_id: TARGET_PORTFOLIO_ID,
+    target_portfolio_sha256: SHA,
+    updated_at: "2026-01-30T00:20:00Z",
+    ...overrides,
+  };
+}
+
+function failedPreview(): RebalancePreviewModel {
+  return {
+    ...readyPreview(),
+    completed_at: "2026-01-30T00:20:00Z",
+    error: {
+      code: "REBALANCE_PREVIEW_DATA_BLOCKED",
+      message: "Dataset was blocked for this session.",
+    },
+    preview_token: null,
+    result: undefined,
+    status: "FAILED",
+  };
+}
 
 const FILL_MODEL_DIFFERENCE =
   "Backtest fills come from the NautilusTrader engine's execution model; Paper fills are modeled at the next session's raw open plus the configured slippage.";
@@ -66,6 +182,7 @@ type PaperFixture = {
   readonly accounts?: unknown[];
   readonly notifications?: unknown[];
   readonly parity?: unknown;
+  readonly recommendationRuns?: unknown[];
 };
 
 function syntheticPaperApi(fixture: PaperFixture = {}): typeof fetch {
@@ -165,6 +282,13 @@ function syntheticPaperApi(fixture: PaperFixture = {}): typeof fetch {
             updated_at: "2026-01-20T00:30:00Z",
           },
         ],
+        next_cursor: null,
+      });
+    }
+    if (pathname === "/api/v1/recommendations/runs") {
+      return Response.json({
+        has_more: false,
+        items: fixture.recommendationRuns ?? [succeededRun()],
         next_cursor: null,
       });
     }
@@ -304,6 +428,88 @@ describe("paper product surface", () => {
 
     expect(markup).toContain("Shared account · 00000000");
     expect(markup).not.toContain("Bind strategy");
+    expect(markup).not.toContain("Rebalancing preview");
+  });
+
+  it("renders the rebalance preview section for an owner with a completed run", async () => {
+    // Given / When
+    const markup = renderToStaticMarkup(await PaperPage());
+
+    // Then
+    expect(markup).toContain("Rebalancing preview");
+    expect(markup).toContain("Recommendation run");
+    expect(markup).toContain(RUN_ID.slice(0, 8));
+  });
+});
+
+describe("rebalance preview outcome", () => {
+  const t = paperDictionary.en;
+
+  it("surfaces the indicative next-open replan warning when a preview is READY", () => {
+    // Given / When
+    const markup = renderToStaticMarkup(
+      <RebalancePreviewOutcome
+        applying={false}
+        onApply={() => undefined}
+        preview={readyPreview()}
+        t={t}
+      />,
+    );
+
+    // Then
+    expect(markup).toContain("Indicative only — next-open replan required");
+    expect(markup).toContain(
+      "prices decisions at the recommendation close, but the account will actually execute at the next session&#x27;s open",
+    );
+    expect(markup).toContain("069500.KRX");
+    expect(markup).toContain("BUY");
+  });
+
+  it("surfaces the error code and message when a preview FAILED", () => {
+    // Given / When
+    const markup = renderToStaticMarkup(
+      <RebalancePreviewOutcome
+        applying={false}
+        onApply={() => undefined}
+        preview={failedPreview()}
+        t={t}
+      />,
+    );
+
+    // Then
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("Preview failed");
+    expect(markup).toContain("REBALANCE_PREVIEW_DATA_BLOCKED");
+    expect(markup).toContain("Dataset was blocked for this session.");
+  });
+
+  it("disables Apply when the preview has no preview_token", () => {
+    // Given
+    const withoutToken = readyPreview({ preview_token: null });
+    const disabledAttribute =
+      'aria-label="Apply rebalance preview" class="primary-action" disabled=""';
+
+    // When
+    const disabledMarkup = renderToStaticMarkup(
+      <RebalancePreviewOutcome
+        applying={false}
+        onApply={() => undefined}
+        preview={withoutToken}
+        t={t}
+      />,
+    );
+    const enabledMarkup = renderToStaticMarkup(
+      <RebalancePreviewOutcome
+        applying={false}
+        onApply={() => undefined}
+        preview={readyPreview()}
+        t={t}
+      />,
+    );
+
+    // Then
+    expect(disabledMarkup).toContain(disabledAttribute);
+    expect(enabledMarkup).not.toContain(disabledAttribute);
   });
 });
 

@@ -7,6 +7,7 @@ import { PaperLineage } from "@/components/paper/paper-lineage";
 import { PaperNotifications } from "@/components/paper/paper-notifications";
 import { PaperParityPanel } from "@/components/paper/paper-parity-panel";
 import { PaperPerformance } from "@/components/paper/paper-performance";
+import { PaperRebalancePreview } from "@/components/paper/paper-rebalance-preview";
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
@@ -83,14 +84,16 @@ export default async function PaperPage({ searchParams }: PaperPageProps = {}) {
       );
     }
 
-    const [performance, lineage, positions, orders, configs, notifications] = await Promise.all([
-      api.getPaperPerformance(account.id),
-      api.getPaperLineage(account.id),
-      api.getPaperPositions(account.id),
-      api.getPaperOrders(account.id),
-      api.getStrategyConfigs(),
-      api.getNotifications(),
-    ]);
+    const [performance, lineage, positions, orders, configs, notifications, recommendationRuns] =
+      await Promise.all([
+        api.getPaperPerformance(account.id),
+        api.getPaperLineage(account.id),
+        api.getPaperPositions(account.id),
+        api.getPaperOrders(account.id),
+        api.getStrategyConfigs(),
+        api.getNotifications(),
+        api.getRecommendationRuns(),
+      ]);
 
     const session = latestSession(lineage);
     let parity: PaperParityModel | null = null;
@@ -165,6 +168,14 @@ export default async function PaperPage({ searchParams }: PaperPageProps = {}) {
               configs={bindable}
             />
           </section>
+        )}
+        {!account.can_manage ? null : (
+          <PaperRebalancePreview
+            accountId={account.id}
+            runs={recommendationRuns.items
+              .filter((run) => run.status === "SUCCEEDED")
+              .map((run) => ({ asOf: run.as_of, id: run.id }))}
+          />
         )}
         <PaperNotifications notifications={notifications.items} t={t} />
       </>,

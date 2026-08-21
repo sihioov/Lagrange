@@ -18,22 +18,30 @@ export type PaperDictionary = {
   readonly bindingHistoryCaption: string;
   readonly bindStrategyHeading: string;
   readonly branchedState: string;
+  readonly columnAction: string;
   readonly columnAveragePrice: string;
   readonly columnBacktest: string;
   readonly columnBacktestWeight: string;
   readonly columnBound: string;
   readonly columnCash: string;
+  readonly columnCommission: string;
   readonly columnComputedOn: string;
+  readonly columnCurrentQuantity: string;
+  readonly columnCurrentValue: string;
+  readonly columnCurrentWeight: string;
   readonly columnDailyReturn: string;
   readonly columnDate: string;
   readonly columnDelivery: string;
+  readonly columnDeltaValue: string;
   readonly columnEquity: string;
+  readonly columnEstimatedPrice: string;
   readonly columnExecuted: string;
   readonly columnExecutesAt: string;
   readonly columnField: string;
   readonly columnInstrument: string;
   readonly columnKind: string;
   readonly columnNotice: string;
+  readonly columnNotional: string;
   readonly columnOrder: string;
   readonly columnPaper: string;
   readonly columnPaperWeight: string;
@@ -41,9 +49,15 @@ export type PaperDictionary = {
   readonly columnPrice: string;
   readonly columnQuantity: string;
   readonly columnRaised: string;
+  readonly columnRawPrice: string;
   readonly columnSide: string;
+  readonly columnSkipReason: string;
+  readonly columnSlippage: string;
   readonly columnState: string;
   readonly columnStrategy: string;
+  readonly columnTargetValue: string;
+  readonly columnTargetWeight: string;
+  readonly columnTax: string;
   readonly columnUnbound: string;
   readonly columnVersion: string;
   readonly costProfileLabel: string;
@@ -81,6 +95,46 @@ export type PaperDictionary = {
   readonly parityAriaLabel: (status: string) => string;
   readonly parityTitle: string;
   readonly performanceTitle: string;
+  readonly rebalanceApplyAriaLabel: string;
+  readonly rebalanceApplyButton: string;
+  readonly rebalanceAppliedMessage: (effectiveDate: string) => string;
+  readonly rebalanceApplyingButton: string;
+  readonly rebalanceAvailableCashLabel: string;
+  readonly rebalanceBuyNotionalLabel: string;
+  readonly rebalanceCashBeforeLabel: string;
+  readonly rebalanceCreateAriaLabel: string;
+  readonly rebalanceCreateButton: string;
+  readonly rebalanceCreatingButton: string;
+  readonly rebalanceDecisionsCaption: string;
+  readonly rebalanceEquityLabel: string;
+  readonly rebalanceErrorCodeLabel: string;
+  readonly rebalanceEyebrow: string;
+  readonly rebalanceExplicitFeesLabel: string;
+  readonly rebalanceFailedTitle: string;
+  readonly rebalanceHeading: string;
+  readonly rebalanceIndicativeWarningMessage: string;
+  readonly rebalanceIndicativeWarningTitle: string;
+  readonly rebalanceLeftoverCashLabel: string;
+  readonly rebalanceLineageAccountStateSha: string;
+  readonly rebalanceLineageAccountStateVersion: string;
+  readonly rebalanceLineageCaption: string;
+  readonly rebalanceLineageCuratedVersion: string;
+  readonly rebalanceLineageDatasetManifest: string;
+  readonly rebalanceLineageDatasetVersion: string;
+  readonly rebalanceLineageRecommendationRun: string;
+  readonly rebalanceLineageStrategyConfig: string;
+  readonly rebalanceLineageTargetPortfolio: string;
+  readonly rebalanceLineageTargetPortfolioSha: string;
+  readonly rebalanceNoRunsMessage: string;
+  readonly rebalanceNoSkipReason: string;
+  readonly rebalanceOrdersCaption: string;
+  readonly rebalancePollingMessage: string;
+  readonly rebalanceRunLabel: string;
+  readonly rebalanceSellNotionalLabel: string;
+  readonly rebalanceStatusLabel: (status: string) => string;
+  readonly rebalanceTimedOutMessage: string;
+  readonly rebalanceTimedOutTitle: string;
+  readonly rebalanceTotalsCaption: string;
   readonly reviewStrategiesLink: string;
   readonly sessionLabel: string;
   readonly sessionTargetsCaption: string;
@@ -118,22 +172,30 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     bindingHistoryCaption: "Strategy binding history",
     bindStrategyHeading: "Bind strategy",
     branchedState: "Branched",
+    columnAction: "Action",
     columnAveragePrice: "Average price",
     columnBacktest: "Backtest",
     columnBacktestWeight: "Backtest weight",
     columnBound: "Bound",
     columnCash: "Cash",
+    columnCommission: "Commission",
     columnComputedOn: "Computed on",
+    columnCurrentQuantity: "Current quantity",
+    columnCurrentValue: "Current value",
+    columnCurrentWeight: "Current weight",
     columnDailyReturn: "Daily return",
     columnDate: "Date",
     columnDelivery: "Delivery",
+    columnDeltaValue: "Delta value",
     columnEquity: "Equity",
+    columnEstimatedPrice: "Estimated execution price",
     columnExecuted: "Executed",
     columnExecutesAt: "Executes at",
     columnField: "Field",
     columnInstrument: "Instrument",
     columnKind: "Kind",
     columnNotice: "Notice",
+    columnNotional: "Notional",
     columnOrder: "Order",
     columnPaper: "Paper",
     columnPaperWeight: "Paper weight",
@@ -141,9 +203,15 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     columnPrice: "Price",
     columnQuantity: "Quantity",
     columnRaised: "Raised",
+    columnRawPrice: "Raw price",
     columnSide: "Side",
+    columnSkipReason: "Skip reason",
+    columnSlippage: "Informational slippage",
     columnState: "State",
     columnStrategy: "Strategy",
+    columnTargetValue: "Target value",
+    columnTargetWeight: "Target weight",
+    columnTax: "Tax",
     columnUnbound: "Unbound",
     columnVersion: "Version",
     costProfileLabel: "Cost profile",
@@ -187,6 +255,49 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     parityAriaLabel: (status) => `Paper parity ${status}`,
     parityTitle: "Backtest parity",
     performanceTitle: "Daily performance",
+    rebalanceApplyAriaLabel: "Apply rebalance preview",
+    rebalanceApplyButton: "Apply preview",
+    rebalanceAppliedMessage: (effectiveDate) =>
+      `Applied. A pending target now targets the ${effectiveDate} session.`,
+    rebalanceApplyingButton: "Applying preview",
+    rebalanceAvailableCashLabel: "Available cash",
+    rebalanceBuyNotionalLabel: "Buy notional",
+    rebalanceCashBeforeLabel: "Cash before",
+    rebalanceCreateAriaLabel: "Create rebalance preview",
+    rebalanceCreateButton: "Create preview",
+    rebalanceCreatingButton: "Creating preview",
+    rebalanceDecisionsCaption: "Rebalance decisions",
+    rebalanceEquityLabel: "Equity",
+    rebalanceErrorCodeLabel: "Error code",
+    rebalanceEyebrow: "Rebalancing preview",
+    rebalanceExplicitFeesLabel: "Explicit fees",
+    rebalanceFailedTitle: "Preview failed",
+    rebalanceHeading: "Preview a rebalance",
+    rebalanceIndicativeWarningMessage:
+      "This preview prices decisions at the recommendation close, but the account will actually execute at the next session's open. The plan may need to be recomputed before it executes.",
+    rebalanceIndicativeWarningTitle: "Indicative only — next-open replan required",
+    rebalanceLeftoverCashLabel: "Leftover cash",
+    rebalanceLineageAccountStateSha: "Account state SHA-256",
+    rebalanceLineageAccountStateVersion: "Account state version",
+    rebalanceLineageCaption: "Preview lineage",
+    rebalanceLineageCuratedVersion: "Curated version",
+    rebalanceLineageDatasetManifest: "Dataset manifest SHA-256",
+    rebalanceLineageDatasetVersion: "Dataset version",
+    rebalanceLineageRecommendationRun: "Recommendation run",
+    rebalanceLineageStrategyConfig: "Strategy configuration",
+    rebalanceLineageTargetPortfolio: "Target portfolio",
+    rebalanceLineageTargetPortfolioSha: "Target portfolio SHA-256",
+    rebalanceNoRunsMessage: "No completed recommendation run is available to preview yet.",
+    rebalanceNoSkipReason: "—",
+    rebalanceOrdersCaption: "Proposed orders",
+    rebalancePollingMessage: "Computing preview — checking again shortly.",
+    rebalanceRunLabel: "Recommendation run",
+    rebalanceSellNotionalLabel: "Sell notional",
+    rebalanceStatusLabel: (status) => `Preview status: ${status}`,
+    rebalanceTimedOutMessage:
+      "The preview did not finish computing within the polling window. Try creating it again.",
+    rebalanceTimedOutTitle: "Preview timed out",
+    rebalanceTotalsCaption: "Preview totals",
     reviewStrategiesLink: "Review strategies",
     sessionLabel: "Session",
     sessionTargetsCaption: "Session targets",
@@ -223,22 +334,30 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     bindingHistoryCaption: "전략 바인딩 이력",
     bindStrategyHeading: "전략 바인딩",
     branchedState: "분기됨",
+    columnAction: "액션",
     columnAveragePrice: "평균 단가",
     columnBacktest: "백테스트",
     columnBacktestWeight: "백테스트 비중",
     columnBound: "바인딩",
     columnCash: "현금",
+    columnCommission: "수수료",
     columnComputedOn: "계산일",
+    columnCurrentQuantity: "현재 수량",
+    columnCurrentValue: "현재 가치",
+    columnCurrentWeight: "현재 비중",
     columnDailyReturn: "일일 수익률",
     columnDate: "날짜",
     columnDelivery: "전송",
+    columnDeltaValue: "변동 금액",
     columnEquity: "자산",
+    columnEstimatedPrice: "예상 체결가",
     columnExecuted: "실행됨",
     columnExecutesAt: "실행일",
     columnField: "항목",
     columnInstrument: "종목",
     columnKind: "종류",
     columnNotice: "알림",
+    columnNotional: "명목 금액",
     columnOrder: "주문",
     columnPaper: "모의투자",
     columnPaperWeight: "모의투자 비중",
@@ -246,9 +365,15 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     columnPrice: "가격",
     columnQuantity: "수량",
     columnRaised: "발생 시각",
+    columnRawPrice: "원시 가격",
     columnSide: "매매 구분",
+    columnSkipReason: "건너뜀 사유",
+    columnSlippage: "참고용 슬리피지",
     columnState: "상태",
     columnStrategy: "전략",
+    columnTargetValue: "목표 가치",
+    columnTargetWeight: "목표 비중",
+    columnTax: "세금",
     columnUnbound: "해제",
     columnVersion: "버전",
     costProfileLabel: "비용 프로필",
@@ -289,6 +414,49 @@ export const paperDictionary: LocaleDictionary<PaperDictionary> = {
     parityAriaLabel: (status) => `모의투자 정합성 ${status}`,
     parityTitle: "백테스트 정합성",
     performanceTitle: "일일 성과",
+    rebalanceApplyAriaLabel: "리밸런싱 미리보기 적용",
+    rebalanceApplyButton: "미리보기 적용",
+    rebalanceAppliedMessage: (effectiveDate) =>
+      `적용되었습니다. 대기 중인 목표가 ${effectiveDate} 세션을 대상으로 합니다.`,
+    rebalanceApplyingButton: "미리보기 적용 중",
+    rebalanceAvailableCashLabel: "가용 현금",
+    rebalanceBuyNotionalLabel: "매수 명목 금액",
+    rebalanceCashBeforeLabel: "이전 현금",
+    rebalanceCreateAriaLabel: "리밸런싱 미리보기 생성",
+    rebalanceCreateButton: "미리보기 생성",
+    rebalanceCreatingButton: "미리보기 생성 중",
+    rebalanceDecisionsCaption: "리밸런싱 결정 사항",
+    rebalanceEquityLabel: "자산",
+    rebalanceErrorCodeLabel: "오류 코드",
+    rebalanceEyebrow: "리밸런싱 미리보기",
+    rebalanceExplicitFeesLabel: "명시적 수수료",
+    rebalanceFailedTitle: "미리보기 실패",
+    rebalanceHeading: "리밸런싱 미리보기",
+    rebalanceIndicativeWarningMessage:
+      "이 미리보기는 추천 마감가로 가격이 책정되지만, 실제 실행은 다음 세션 시가에 이루어집니다. 실행 전에 계획을 다시 계산해야 할 수 있습니다.",
+    rebalanceIndicativeWarningTitle: "참고용 — 다음 시가 재계산 필요",
+    rebalanceLeftoverCashLabel: "잔여 현금",
+    rebalanceLineageAccountStateSha: "계좌 상태 SHA-256",
+    rebalanceLineageAccountStateVersion: "계좌 상태 버전",
+    rebalanceLineageCaption: "미리보기 계보",
+    rebalanceLineageCuratedVersion: "큐레이션 버전",
+    rebalanceLineageDatasetManifest: "데이터셋 매니페스트 SHA-256",
+    rebalanceLineageDatasetVersion: "데이터셋 버전",
+    rebalanceLineageRecommendationRun: "추천 실행",
+    rebalanceLineageStrategyConfig: "전략 구성",
+    rebalanceLineageTargetPortfolio: "목표 포트폴리오",
+    rebalanceLineageTargetPortfolioSha: "목표 포트폴리오 SHA-256",
+    rebalanceNoRunsMessage: "미리볼 수 있는 완료된 추천 실행이 아직 없습니다.",
+    rebalanceNoSkipReason: "—",
+    rebalanceOrdersCaption: "제안된 주문",
+    rebalancePollingMessage: "미리보기 계산 중 — 잠시 후 다시 확인합니다.",
+    rebalanceRunLabel: "추천 실행",
+    rebalanceSellNotionalLabel: "매도 명목 금액",
+    rebalanceStatusLabel: (status) => `미리보기 상태: ${status}`,
+    rebalanceTimedOutMessage:
+      "폴링 시간 내에 미리보기 계산이 끝나지 않았습니다. 다시 생성해 보세요.",
+    rebalanceTimedOutTitle: "미리보기 시간 초과",
+    rebalanceTotalsCaption: "미리보기 합계",
     reviewStrategiesLink: "전략 검토",
     sessionLabel: "세션",
     sessionTargetsCaption: "세션 목표",

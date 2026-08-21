@@ -48,6 +48,8 @@ import {
   paperParitySchema,
   paperPerformanceSchema,
   paperPositionSchema,
+  type RebalancePreviewModel,
+  rebalancePreviewSchema,
   type StrategyConfigModel,
   strategyConfigSchema,
 } from "@/lib/products/paper-contracts";
@@ -84,6 +86,10 @@ export type ProductApiClient = {
   readonly getPaperOrders: (
     accountId: string,
   ) => Promise<PageResult<z.infer<typeof paperOrderSchema>>>;
+  readonly getRebalancePreview: (
+    accountId: string,
+    previewId: string,
+  ) => Promise<RebalancePreviewModel>;
 };
 
 const paperAccountPageSchema = pageSchema(paperAccountSchema);
@@ -189,6 +195,12 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
         client,
         `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/orders`,
         paperOrderPageSchema,
+      ),
+    getRebalancePreview: (accountId, previewId) =>
+      getParsed(
+        client,
+        `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/recommendation-previews/${encodeURIComponent(previewId)}`,
+        rebalancePreviewSchema,
       ),
     queryScreener: async (query) => {
       const response = await client.post("api/v1/screener/query", { json: query });

@@ -15,6 +15,8 @@ export type ProductMutationPath =
   | `/api/v1/backtests/${string}/robustness`
   | `/api/v1/admin/live/kill-switch/${string}`
   | `/api/v1/paper/accounts/${string}/bind-strategy`
+  | `/api/v1/paper/accounts/${string}/recommendation-previews`
+  | `/api/v1/paper/accounts/${string}/recommendation-previews/${string}/apply`
   | `/api/v1/screener/screens/${string}`
   | `/api/v1/strategies/${string}/configs`;
 

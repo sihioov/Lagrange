@@ -165,6 +165,131 @@ export const notificationSchema = z
   })
   .strict();
 
+export const rebalancePreviewErrorSchema = z
+  .object({
+    code: z.string(),
+    message: z.string(),
+  })
+  .strict();
+
+export const rebalancePreviewDecisionSchema = z
+  .object({
+    action: z.enum(["BUY", "SELL", "SKIP"]),
+    current_quantity: z.string(),
+    current_value: z.string(),
+    current_weight: z.string(),
+    delta_value: z.string(),
+    instrument_id: z.string(),
+    skip_reason: z
+      .enum([
+        "BELOW_REBALANCE_THRESHOLD",
+        "BELOW_MIN_TRADE",
+        "NO_AVAILABLE_CASH",
+        "NO_AFFORDABLE_LOT",
+      ])
+      .nullable(),
+    target_value: z.string(),
+    target_weight: z.string(),
+  })
+  .strict();
+
+export const rebalancePreviewOrderSchema = z
+  .object({
+    commission: z.string(),
+    estimated_execution_price: z.string(),
+    informational_slippage: z.string(),
+    instrument_id: z.string(),
+    notional: z.string(),
+    quantity: z.string(),
+    raw_price: z.string(),
+    side: z.enum(["BUY", "SELL"]),
+    tax: z.string(),
+  })
+  .strict();
+
+export const rebalancePreviewLineageSchema = z
+  .object({
+    account_id: z.uuid(),
+    account_state_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    account_state_version: z.number(),
+    curated_version: z.number(),
+    dataset_manifest_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    dataset_version_id: z.uuid(),
+    recommendation_run_id: z.uuid(),
+    strategy_config_id: z.uuid(),
+    target_portfolio_id: z.uuid(),
+    target_portfolio_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  })
+  .strict();
+
+export const rebalancePreviewResultSchema = z
+  .object({
+    available_cash: z.string(),
+    buy_notional: z.string(),
+    cash_before: z.string(),
+    decisions: z.array(rebalancePreviewDecisionSchema),
+    equity: z.string(),
+    explicit_fees: z.string(),
+    informational_slippage: z.string(),
+    leftover_cash: z.string(),
+    lineage: rebalancePreviewLineageSchema,
+    orders: z.array(rebalancePreviewOrderSchema),
+    price_basis: z.literal("RECOMMENDATION_CLOSE"),
+    price_date: z.string(),
+    proposed_effective_date: z.string(),
+    schema_version: z.literal(1),
+    sell_notional: z.string(),
+    warning_code: z.literal("INDICATIVE_NEXT_OPEN_REPLAN_REQUIRED"),
+  })
+  .strict();
+
+export const rebalancePreviewSchema = z
+  .object({
+    account_id: z.uuid(),
+    applied_at: z.string().nullable(),
+    completed_at: z.string().nullable(),
+    created_at: z.string(),
+    dataset_manifest_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    dataset_version_id: z.uuid(),
+    error: rebalancePreviewErrorSchema.optional(),
+    id: z.uuid(),
+    job_id: z.uuid(),
+    preview_token: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .nullable(),
+    price_basis: z.literal("RECOMMENDATION_CLOSE"),
+    price_date: z.string(),
+    proposed_effective_date: z.string().nullable(),
+    recommendation_run_id: z.uuid(),
+    result: rebalancePreviewResultSchema.optional(),
+    started_at: z.string().nullable(),
+    status: z.enum(["PENDING", "RUNNING", "READY", "FAILED", "APPLIED"]),
+    strategy_config_id: z.uuid(),
+    target_portfolio_id: z.uuid(),
+    target_portfolio_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    updated_at: z.string(),
+  })
+  .strict();
+
+export const appliedRebalancePreviewSchema = z
+  .object({
+    effective_date: z.string(),
+    pending_target_id: z.uuid(),
+    preview_id: z.uuid(),
+    source_kind: z.literal("MANUAL_RECOMMENDATION"),
+    status: z.literal("APPLIED"),
+  })
+  .strict();
+
+export type RebalancePreviewErrorModel = z.infer<typeof rebalancePreviewErrorSchema>;
+export type RebalancePreviewDecisionModel = z.infer<typeof rebalancePreviewDecisionSchema>;
+export type RebalancePreviewOrderModel = z.infer<typeof rebalancePreviewOrderSchema>;
+export type RebalancePreviewLineageModel = z.infer<typeof rebalancePreviewLineageSchema>;
+export type RebalancePreviewResultModel = z.infer<typeof rebalancePreviewResultSchema>;
+export type RebalancePreviewModel = z.infer<typeof rebalancePreviewSchema>;
+export type AppliedRebalancePreviewModel = z.infer<typeof appliedRebalancePreviewSchema>;
+
 export type PaperAccountModel = z.infer<typeof paperAccountSchema>;
 export type StrategyConfigModel = z.infer<typeof strategyConfigSchema>;
 export type NotificationModel = z.infer<typeof notificationSchema>;
