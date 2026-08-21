@@ -689,6 +689,54 @@ PASS. `cargo test --workspace`는 환경 요인 6건(`research_worker`, QA `DATA
 실패하며 개수 불변. web `lint`/`typecheck`/`build` clean, **86/86**(75→86). pytest **357
 passed / 2 skipped**. CI contract 7/7. **GitHub Actions `main` 전 job green.**
 
+### 0.19 탐지 공백 일괄 폐쇄 — 재발 방지 가드와 CI 커버리지 (2026-08-22)
+
+§0.18의 리뷰가 드러낸 것은 개별 결함 6건만이 아니었다. **"게이트라고 선언해놓고 아무도
+실행하지 않는다"는 같은 패턴이 세 군데 더 있었다.** 커밋 `6c6e771`, `a6a9438`,
+`ba5735b`, `6d54f59`. 전부 `main`에 반영됐고 CI 8 job 전부 green이다.
+
+**1. curated 이중 경로에 저장소 전역 불변식을 걸었다 (`6c6e771`).** 이 결함은 네 번
+나왔다 — Paper 리더 2곳, 픽스처 3곳, 그리고 `factor_series.rs:591`. 매번 그 자리만
+고쳤고 재발 금지 규칙은 없었다. 그래서 두 겹짜리 가드를 넣었다. 소스 스캔은
+`CurateStore::new(`의 **괄호 균형 인자**를 뜯어 마지막 경로 세그먼트가 `curated`인 문자열
+리터럴을 거부한다 — 부분문자열이 아니라 리터럴만 보므로 이름만 curated인
+`config.curated_root`(실제 값은 data 루트)를 오탐하지 않고, 전체 일치가 아니라 꼬리 일치라
+`join("data/phase0/curated")` 같은 복합형도 잡는다. 파일시스템 절반은 생성된 curated 트리에
+`curated/curated` 중첩이 없음을 단언하는데, **문자열 검색으로는 절대 못 찾는 두 홉짜리
+형태를 잡는 것이 이쪽**이다. 허용 예외는 파일 단위가 아니라 **construction 단위**다 —
+`let`으로 바인딩하고 15줄 안에서 `!binding.exists()`를 단언해야만 통과한다. 이중 경로로
+읽으려는 코드는 그 단언을 할 수 없다(자기가 필요한 것의 부정이기 때문). 이미 허용된 파일
+안에서 결함을 재도입해도 잡히는 것을 확인했다. 양쪽 절반 모두 재도입 시 실패하는 것을
+증명하고 복원했다.
+
+**2. e2e 7개 중 1개만 CI에서 돌고 있었다 (`a6a9438`, `ba5735b`).**
+`scripts/qa/candidate-web-e2e.sh`가 `candidates.spec.ts` 하나만 실행했다. 돌지 않던 6개에
+`no-member-live`와 `live-kill-switch` — **member가 Live 통제에 도달할 수 없음과 kill
+switch 동작을 증명하는 스펙** — 이 들어 있었다. `playwright.config.ts`가 `workers: 1`,
+`fullyParallel: false`이고 모든 스펙이 같은 synthetic API를 쓰므로 한 번에 직렬 실행이
+구조적으로 안전하다. 배선 전에 7개 전부 로컬 실행해 **36 tests 전부 통과**를 확인했다
+(하나라도 실패했으면 통과분만 배선하고 실패는 발견 사항으로 보고할 계획이었다). 함께
+§0.18의 권한 격리 수정을 실제 브라우저 seam에 고정하는 스펙 2개를 추가했다 — 양방향
+모두, 그리고 수정을 되돌리면 실패하는 것을 확인했다.
+
+**3. static-check 22개 중 3개만 CI에 있었다 (`6d54f59`).** 배선되지 않은 것 중에 nginx
+auth-route, systemd unit 2개, secret 파일 모드, migration 순서, 나머지 compose 검사가
+있었다 — **출시가 딛고 서는 표면 그 자체**다. 10개를 추가했고, 이름이 아니라 **증거로**
+골랐다: 깨끗한 체크아웃에서 각각 실행해 통과를 확인했고 Docker·DB·root·secret이 필요
+없으며 수 초 안에 끝난다. 나머지 12개는 Docker/root/실 secret/live 호스트가 필요해
+operator 실행으로 남긴다.
+
+기록해둘 것 하나 — `scripts/ops/static-check.sh`와 `deploy/secrets/runtime-static-check.sh`는
+**이 개발 호스트에서는 실패한다.** 둘 다 정확한 파일 모드를 요구하는데 이 호스트의
+`umask 0002`가 체크아웃된 스크립트를 group-writable로 만들어 0755 대신 0775가 된다. git은
+`100755`로 기록하고 러너는 umask 0022로 체크아웃하므로, 로컬에서 umask 0022로 클론하면
+0755가 나오고 둘 다 통과한다 — 그리고 실제 CI에서 통과했다. **트리의 문제가 아니라 이
+워크스테이션의 성질이다.** §5 함정 표에 추가할 만하다.
+
+**검증.** 로컬: `cargo fmt`/`git diff --check` PASS, pytest **357 passed / 2 skipped**,
+CI contract 7/7, web **86/86**, 새 가드 2/2. CI: **8 job 전부 green** — 특히 새로 배선한
+`web`(e2e 7스펙)과 `policy`(static-check 10개)가 실제로 통과했다.
+
 ---
 
 ## 1. 목표 — 이 시스템은 무엇인가
