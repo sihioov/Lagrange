@@ -161,6 +161,69 @@ test("a blocked paper entitlement renders no account data", async ({ page, reque
   await expect(page.getByRole("region", { name: "Backtest parity" })).toHaveCount(0);
 });
 
+test("a blocked recommendation entitlement degrades only the rebalance preview, not the rest of the page", async ({
+  page,
+  request,
+}) => {
+  // Given — the recommendation entitlement is refused (403 on every
+  // /api/v1/recommendations* path) while the paper entitlement stays active.
+  // These are separate scenario keys on the synthetic server, mirroring the
+  // real API where `recommendation` and `paper_view` are distinct grants.
+  await setScenario(request, { ...BASELINE, entitlement: "blocked", role: "owner" });
+
+  // When
+  await page.goto("/paper");
+
+  // Then — the page is not the blocked shell; every other section still
+  // renders from data that does not depend on the recommendation entitlement.
+  await expect(page.getByRole("heading", { name: "Paper data is blocked" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: "Paper account" })).toBeVisible();
+
+  const holdings = page.getByRole("region", { name: "Account and holdings" });
+  await expect(holdings).toContainText("Paper account 1");
+  await expect(holdings.getByRole("rowheader", { name: "069500.KRX" })).toBeVisible();
+
+  const performance = page.getByRole("region", { name: "Daily performance" });
+  await expect(performance).toContainText("10042180.0000");
+
+  const parity = page.getByRole("region", { name: "Backtest parity" });
+  await expect(parity.getByRole("status")).toContainText("Match");
+
+  const lineage = page.getByRole("region", { name: "Strategy and target lineage" });
+  await expect(lineage).toContainText("dual_momentum");
+
+  const notices = page.getByRole("region", { name: "Session notifications" });
+  await expect(notices).toContainText("Paper session 2026-02-02 completed");
+
+  // Then — only the optional preview section degrades: it renders its
+  // empty-run state instead of taking the whole page down with it.
+  const preview = page.getByRole("region", { name: "Preview a rebalance" });
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText(
+    "No completed recommendation run is available to preview yet.",
+  );
+  await expect(preview.getByRole("form")).toHaveCount(0);
+});
+
+test("a blocked paper entitlement still shows the blocked shell even when the recommendation entitlement is active", async ({
+  page,
+  request,
+}) => {
+  // Given — the inverse combination: paper_view is refused while the
+  // recommendation entitlement stays active. Proves the isolation runs both
+  // ways, not just in the direction the regression happened to take.
+  await setScenario(request, { ...BASELINE, entitlement: "active", paperEntitlement: "blocked" });
+
+  // When
+  await page.goto("/paper");
+
+  // Then
+  await expect(page.getByRole("heading", { name: "Paper data is blocked" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Daily performance" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Backtest parity" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Preview a rebalance" })).toHaveCount(0);
+});
+
 test("invited members can switch to each other's read-only accounts", async ({ page, request }) => {
   // Given — member 1 defaults to their own account.
   await page.goto("/paper");
