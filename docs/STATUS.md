@@ -2,8 +2,8 @@
 
 **최신 기준일: 2026년 8월 21일 (2026-08-21).** §0.1~§0.12는
 운영·Stage6 진행 당시의 날짜별 스냅샷이고, 현재 개발 worktree의 권위 있는
-remediation 상태와 다음 작업은 §0.13~§0.14다. 현재 `main` 상태와 최신 KIS
-명세 보정은 §0.14 끝부분을 우선한다. 이후 §1부터는 설계 목표와
+remediation 상태와 다음 작업은 §0.13~§0.15다. 현재 `main` 상태와 공식 소스
+수집기의 최신 구현·검증·운영 순서는 §0.15를 우선한다. 이후 §1부터는 설계 목표와
 08-17 이전 게이트·구현 이력을 보존한 기록이다. 과거의 "미설치", "KIS
 credential 없음", "초기 백필 미완료" 같은 문장은 당시에는 사실이었지만
 현재 상태를 뜻하지 않는다. 코드가 바뀌면 게이트와 판정은 다시 실행해
@@ -475,6 +475,51 @@ recommendation/backtest/Paper 연결 순서로 진행한다. 그 전까지 계�
 `vendor_snapshot=true`, `strict_pit=false`, `ready=false`다. OpenDART TLS는
 ETF11 critical path가 아니므로 개별주식 범위가 별도 승인되지 않는 한 다음
 작업에 포함하지 않는다.
+
+### 0.15 공식 소스 수집기 구현·검증과 main 반영 완료 (2026-08-21)
+
+**Git 전달 상태.** canonical repository `/data/workspace/lagrange`의 `main`에
+`3e349bc6e0fd351e1ca2f10856efa2f94a19641d` (`feat(stage6): add bounded
+official-source collectors`)를 생성해 `origin/main`으로 push했고, 두 ref가 같은
+커밋임을 확인했다. 개발용 `unspecified-task`의 세 커밋은 이미
+`3ebc288` 병합을 통해 `main`의 조상이므로 중복 병합 커밋을 만들지 않았다.
+작업 전부터 있던 공식 KIS XLSX
+`docs/kis_openapi_entiredocs_20260818_030007.xlsx`는 의도한 untracked 파일로
+그대로 보존했으며 이번 커밋에 포함하지 않았다.
+
+**이번 커밋으로 완결한 저장소 내부 경계.** 비밀값은 코드·Git·로그·이 문서에
+저장하지 않는다.
+
+| 소스/경로 | 현재 구현과 허용 범위 | 아직 하지 않은 것 |
+|---|---|---|
+| KIS 일일 시세 | `kis-daily-production.sh`, commit-suffixed immutable-release installer와 XKRX calendar refresh를 추가했다. 하루 한 번 `16:30 Asia/Seoul`, `Persistent=true`, 단일 lock, 보호 state, 기존 KIS secret 재사용, read-only EOD 경로만 허용한다. `--plan`/`--check`는 provider를 호출하지 않고 installer `--apply`도 service/timer를 시작하지 않는다. | 실제 release 설치·timer 활성화와 credentialed read-only 첫 실행은 아직 수행하지 않았다. 주문·계좌·잔고·Live profile은 계속 금지한다. |
+| KIS KSD 기업행사 범위 | 공식 6 endpoint를 paid-in 두 구분을 포함한 7 logical class로 고정했다. ETF11 기본 scope는 종목 11개 × class 7개 = 초기 77 GET을 순차 실행하며, class별 10-page bound, exact continuation, duplicate bytes·schema·symbol 검증과 전체 원자 Raw commit을 적용한다. | 이번 closure에서 live provider 호출이나 Raw backfill은 하지 않았다. symbol-scoped/multi-page batch는 아직 `bridge-v1` 입력이며, canonical mapping은 bonus issue만 존재한다. 나머지 nonempty class는 fail-closed blocker다. |
+| KIND | 날짜별 명시된 opaque 14자리 후보만 받는 manual one-day wrapper, 별도 Raw 권한 경계, `kind-normalize` 실행 파일, 설치/check/self-test와 manual oneshot service를 추가했다. capture → immutable Raw → normalization을 기존 검증기와 연결한다. | timer·scheduled·bulk·full-history 수집은 없다. 추가 browser 실행은 D11의 저빈도 operator 승인 범위에서만 가능하다. |
+| 금융위 `KRX상장종목정보` | 별도 `data-go-client`, FSC Raw adapter와 offline CLI를 추가했다. exact endpoint/query, 고정 `resultType=json`, private transport 단계의 `serviceKey`, bounded response/pagination, typed error, key 비노출과 `CandidateMaster` Raw 격리를 검증했다. | §0.14의 ETF11 적용성 기각이 최종 결정이다. 진단/control은 소비됐고 추가 live query·Raw 수집·가격 API 전환은 새 명시적 승인 없이는 금지한다. |
+
+**최종 로컬 검증.** 외부 API·브라우저·운영 DB·systemd는 호출하지 않았다.
+
+- shell syntax와 FSC/KIND/KIS daily provider-free self-test: 모두 PASS
+- `data-go-client` 13/13, market-data FSC Raw 6/6, KIS action range 8/8
+- collectors FSC CLI 3/3, KIND normalizer CLI 2/2, KIS action-range CLI 3/3
+  — focused Rust 합계 35/35 PASS
+- `cargo fmt --all -- --check`, workspace all-target/all-feature Clippy
+  `-D warnings`, `cargo test --workspace --all-targets --all-features --no-run`,
+  `scripts/ops/static-check.sh`, `git diff --check`: 모두 PASS
+- `/tmp`의 user quota 때문에 첫 KIND self-test가 파일 쓰기 전에
+  `Disk quota exceeded`로 중단됐다. 코드 실패가 아니며 `/data` 아래 새 임시
+  디렉터리로 `TMPDIR`만 옮겨 동일 검증을 재실행해 PASS했고, 생성한 빈 임시
+  디렉터리는 제거했다. 사용자 소유 `/tmp` 파일은 삭제하지 않았다.
+
+**현재 출시 판정과 다음 순서.** 코드와 오프라인 운영 계약은 `main`에 있지만
+실제 운영 activation과 새 데이터 증거는 아직 없다. 따라서 현재 판정은 계속
+`vendor_snapshot=true`, `strict_pit=false`, `ready=false`다. 다음 순서는
+(1) exact `3e349bc` immutable release 배포, (2) KIS daily installer preflight/check와
+16:30 이전 timer 설치, (3) read-only 첫 credentialed daily 실행 및 Raw/정규화/DB
+freshness 확인, (4) 별도 operator 확인 아래 ETF11 KIS action-range 최초 Raw 수집,
+(5) `bridge-v1`과 KIND availability 증거가 확보된 유형만 canonical/Curated 후보로
+승격, (6) DatasetManifest·DB publication·five-pin 후 recommendation/backtest/Paper
+연결이다. FSC 상장종목 미러나 OpenDART를 ETF11 identity 경로로 다시 열지 않는다.
 
 ---
 
