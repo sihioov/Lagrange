@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Browser proof for the synthetic candidate research surfaces. The fixture is
 # intentionally QA-only and cannot satisfy the production source-readiness gate.
+# Despite the "candidate" name, this now runs the entire tests/e2e/ directory
+# (candidates, backtests, recommendations, paper, live-kill-switch,
+# no-member-live, and the phase1 multi-user specs) against the one shared
+# synthetic API + Next dev server brought up below, in a single serial
+# Playwright invocation. Kept under the original name to avoid touching
+# ci.yml's exact step list, which scripts/ci/test_ci_contract.py asserts by
+# equality.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -60,4 +67,4 @@ fi
 cd "$web_dir"
 SYNTHETIC_API_ORIGIN="http://127.0.0.1:$api_port" \
 PLAYWRIGHT_BASE_URL="http://127.0.0.1:$web_port" \
-npx playwright test tests/e2e/candidates.spec.ts
+npx playwright test tests/e2e/
