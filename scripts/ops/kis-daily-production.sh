@@ -341,26 +341,35 @@ run_config_validator() {
 snapshot_database() {
   db_init
   db_snapshot_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-kis-daily-db.XXXXXX") || die 'cannot stage the published DB snapshot'
+  # A quoted heredoc, not `$'...'` concatenation. The previous form mixed
+  # `$"..."` (locale translation, which leaves \n literal and broke psql) with
+  # `$'...'` (ANSI-C, which then required escaping every SQL single quote as
+  # \'). Both hazards disappear here: newlines and quotes are literal, and the
+  # SQL reads as SQL — which also keeps scripts/ops/static-check.sh able to
+  # grep the predicates it pins.
   local snapshot_sql
-  snapshot_sql=$'WITH grouped AS (\n'
-  snapshot_sql+=$'  SELECT batch_date::date AS batch_date, count(*)::bigint AS eod_rows\n'
-  snapshot_sql+=$'    FROM public.data_batches\n'
-  snapshot_sql+=$'   WHERE provider=\'KRX\' AND market=\'KR\' AND kind=\'EOD\'\n'
-  snapshot_sql+=$'     AND fetch_mode=\'credentialed\'\n'
-  snapshot_sql+=$'   GROUP BY batch_date\n'
-  snapshot_sql+=$'), rows AS (\n'
-  snapshot_sql+=$'  SELECT 0 AS row_order, \'META\' AS row_type,\n'
-  snapshot_sql+=$'         COALESCE(min(batch_date)::text, \'\') AS first_date,\n'
-  snapshot_sql+=$'         COALESCE(max(batch_date)::text, \'\') AS last_date,\n'
-  snapshot_sql+=$'         count(*)::text AS date_count,\n'
-  snapshot_sql+=$'         COALESCE(sum(eod_rows), 0)::text AS row_count\n'
-  snapshot_sql+=$'    FROM grouped\n'
-  snapshot_sql+=$'  UNION ALL\n'
-  snapshot_sql+=$'  SELECT 1, \'DATE\', batch_date::text, eod_rows::text, \'-\', \'-\'\n'
-  snapshot_sql+=$'    FROM grouped\n'
-  snapshot_sql+=$')\n'
-  snapshot_sql+=$'SELECT row_type, first_date, last_date, date_count, row_count\n'
-  snapshot_sql+=$'  FROM rows ORDER BY row_order, first_date;'
+  snapshot_sql=$(cat <<'SQL'
+WITH grouped AS (
+  SELECT batch_date::date AS batch_date, count(*)::bigint AS eod_rows
+    FROM public.data_batches
+   WHERE provider='KRX' AND market='KR' AND kind='EOD'
+     AND fetch_mode='credentialed'
+   GROUP BY batch_date
+), rows AS (
+  SELECT 0 AS row_order, 'META' AS row_type,
+         COALESCE(min(batch_date)::text, '') AS first_date,
+         COALESCE(max(batch_date)::text, '') AS last_date,
+         count(*)::text AS date_count,
+         COALESCE(sum(eod_rows), 0)::text AS row_count
+    FROM grouped
+  UNION ALL
+  SELECT 1, 'DATE', batch_date::text, eod_rows::text, '-', '-'
+    FROM grouped
+)
+SELECT row_type, first_date, last_date, date_count, row_count
+  FROM rows ORDER BY row_order, first_date;
+SQL
+)
 
   if ! db_psql -qAt -F $'\t' -c "$snapshot_sql" >"$db_snapshot_file"; then
     blocked 'published DB snapshot query failed; no Docker worker or KIS call was made'
