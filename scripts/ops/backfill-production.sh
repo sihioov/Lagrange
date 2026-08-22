@@ -552,7 +552,11 @@ compose=(docker compose --env-file "$env_file" -f "$root/deploy/compose/compose.
 # worker rejects unsorted/duplicate/empty input and iterates these dates only;
 # it never reconstructs a civil range or asks KIS about a skipped date.
 session_dates_csv=$(IFS=,; printf '%s' "${pending_dates[*]}")
-[ "${#session_dates_csv}" -le 1_000_000 ] ||
+# 1000000, not 1_000_000: bash arithmetic has no digit separators, so the
+# underscore form made `[` abort with "integer expected" and fall through to
+# the blocked branch below — every run refused as "too large" regardless of
+# the actual length.
+[ "${#session_dates_csv}" -le 1000000 ] ||
   blocked 'validated XKRX session list is too large for one worker invocation'
 worker_start=${pending_dates[0]}
 worker_end=${pending_dates[$((${#pending_dates[@]} - 1))]}
