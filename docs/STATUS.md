@@ -1101,7 +1101,7 @@ DB의 FORCE RLS 소유권 정책은 완화하지 않았다. 공유 GET/조회성
 | 5 | Auth0 confidential client 배선 | **코드 작업** | ✅ **완료** (§3.9, main) |
 | 6 | `feat/recommendation-pipeline` → main 병합 | **코드 작업** | ✅ **완료** (08-13 fast-forward, §2.6) |
 | 6b | 전체 게이트 재실행(E7 포함) → Linux 호스트 최초 증거 발행 | **코드/운영** | ✅ **완료** — Phase 1/2/3, failures 30개, 실제 PITR, 종합 F3 재실행(§2.12) |
-| 7 | 리밸런싱 미리보기 UI (백엔드만 완료, UI 미포함) | **코드 작업** | ▶️ 착수 가능 |
+| 7 | 리밸런싱 미리보기 UI | **코드 작업** | ✅ **완료·리뷰 반영** (`79da609`+`e16b9da`, e2e 고정 `a6a9438`, §0.17~§0.19) |
 | 8 | paper-runner·recommendation-runner 배포 서비스 활성화 | **운영자** | ◐ 배포 계약/preflight 완료, 운영 secret·volume·systemd 설치 대기(§2.12) |
 | 9 | Auth0 vendor 스위트 실제 실행 → E2 증거 갱신 | **운영자** | ✅ **완료** — 스위트 5/5 통과(§2.8), phase1 게이트가 **E2 PASS**를 발행(§2.10) |
 | 10 | phase-0 골든에 수수료 필드 추가 재승인 | **사장님 결정** | ⛔ 동일 |
@@ -1142,7 +1142,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 
 1. ~~**`phase1-gate.sh` native Linux 이식.**~~ **완료 (2026-08-17, `5b3f832`, §2.10)** — WSL 가드·PATH·`CARGO_TARGET_DIR`·DB 포트를 정리했고, 이식 과정에서 드러난 거짓 PASS 3건도 함께 닫았다. pyarrow 전제는 이 게이트에는 해당하지 않는다(추천 계산 경로의 문제이며 phase1 검사는 `prepare_phase0.py`를 부르지 않는다).
 2. ~~**전체 게이트 재실행.**~~ **완료 (2026-08-17, `61af2bb`, §2.12)** — Phase 1/2/3, 양 단계 failures, 실제 PITR, 종합 F3를 재실행했다. 당시 판정은 외부 권리·실계좌 때문에 `BLOCKED_EXTERNAL`이었다. 권리 판정은 2026-08-21에 해소됐고 실계좌는 read-only 범위 밖이다. F1/F2/F4 판정문은 여전히 사람 재검토가 필요하다.
-3. **리밸런싱 미리보기 UI.** §2.5의 백엔드 계약은 완료됐지만 화면과 Live 주문은 범위 밖이다.
+3. ~~**리밸런싱 미리보기 UI.**~~ **완료 (2026-08-22, `79da609`+`e16b9da`, §0.17~§0.19)** — 생성→폴링→적용 전체와 `INDICATIVE_NEXT_OPEN_REPLAN_REQUIRED` 경고 노출. 리뷰에서 나온 MAJOR 3건(권한 격리, 계좌 전환 리셋, Owner 역할 게이트)을 반영했고 e2e로 seam에 고정했다. Live 주문은 계속 범위 밖이다.
 4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
 5. **실제 KIS provider와 운영 원천 활성화.** 새 credential을 발급하지 않고 기존 등록 KIS App Key/App Secret의 보호된 source/runtime secret을 검증한다. 이후 token/endpoint를 확인하고 확정된 entitlement metadata를 운영 DB에 등록한 뒤 `research_writer`, migration, Raw volume을 검증해 KIS calendar/EOD/instrument/corporate-action 원천을 공급한다. 고정 ETF 백필 후 후보 bridge와 KOSPI200/KOSDAQ150 source set은 별도 승인한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 
