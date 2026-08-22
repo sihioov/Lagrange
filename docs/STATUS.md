@@ -843,7 +843,19 @@ PENDING으로 바꾼 사본을 만들어야 하는데 그것은 **검증기를 �
 재현 테스트가 통과한 것도 최신 소스로 돌렸기 때문이다. 오늘 고친 5건이 전부 셸 스크립트라
 문제가 드러나지 않다가 컨테이너 안 Rust에 도달하자마자 튀어나왔다.
 `build-production-images.sh --apply`로 11개 서비스를 재빌드하니 `INVALID_CONFIG`가 사라졌다.
-**이미지에 소스 커밋 라벨이 없어 이미지만 보고는 어느 코드인지 알 수 없다** — 별도 항목.
+
+**정정:** 이 절의 초판은 "이미지에 소스 커밋 라벨이 없다"고 적었으나 **틀렸다.** 조회할 때
+엉뚱한 이미지(nginx 베이스)를 지목한 실수였다. `data-pipelines/collectors/Dockerfile:31`이
+`LABEL org.opencontainers.image.revision`과 `ENV LAGRANGE_CODE_COMMIT`을 모두 박고 있고,
+실제로 `research-worker`·`api-server` 이미지에서 값이 확인된다. 따라서 진단 수단은 처음부터
+있었고, 내가 그것을 쓰지 않아 낡은 바이너리를 못 알아본 것이다. 다음 세션은 컨테이너 동작이
+소스와 어긋나 보이면 **먼저** 다음을 확인할 것:
+
+    docker image inspect <image> --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+
+두 가지가 남는다. `db-migrate` 이미지에는 라벨이 없어(별도 `deploy/db/Dockerfile`) 같은
+확인이 불가능하고, 릴리스를 배포해도 이미지는 자동으로 따라오지 않으므로 **배포 후 이미지
+커밋과 릴리스 커밋이 어긋난 상태가 정상적으로 발생한다** — 이를 알려주는 검사는 없다.
 
 **timer는 현재 릴리스로 재설치했다.** 처음 설치분이 옛 커밋(`b0576c8`)을 가리키고 있었고,
 `--replace-existing`이 새 유닛을 넣으면서 **옛 유닛을 지우지 않아 둘 다 enabled**였다. 옛
