@@ -345,18 +345,18 @@ snapshot_database() {
   snapshot_sql=$'WITH grouped AS (\n'
   snapshot_sql+=$'  SELECT batch_date::date AS batch_date, count(*)::bigint AS eod_rows\n'
   snapshot_sql+=$'    FROM public.data_batches\n'
-  snapshot_sql+=$"   WHERE provider='KRX' AND market='KR' AND kind='EOD'\n"
-  snapshot_sql+=$"     AND fetch_mode='credentialed'\n"
+  snapshot_sql+=$'   WHERE provider=\'KRX\' AND market=\'KR\' AND kind=\'EOD\'\n'
+  snapshot_sql+=$'     AND fetch_mode=\'credentialed\'\n'
   snapshot_sql+=$'   GROUP BY batch_date\n'
   snapshot_sql+=$'), rows AS (\n'
-  snapshot_sql+=$"  SELECT 0 AS row_order, 'META' AS row_type,\n"
-  snapshot_sql+=$"         COALESCE(min(batch_date)::text, '') AS first_date,\n"
-  snapshot_sql+=$"         COALESCE(max(batch_date)::text, '') AS last_date,\n"
-  snapshot_sql+=$"         count(*)::text AS date_count,\n"
-  snapshot_sql+=$"         COALESCE(sum(eod_rows), 0)::text AS row_count\n"
+  snapshot_sql+=$'  SELECT 0 AS row_order, \'META\' AS row_type,\n'
+  snapshot_sql+=$'         COALESCE(min(batch_date)::text, \'\') AS first_date,\n'
+  snapshot_sql+=$'         COALESCE(max(batch_date)::text, \'\') AS last_date,\n'
+  snapshot_sql+=$'         count(*)::text AS date_count,\n'
+  snapshot_sql+=$'         COALESCE(sum(eod_rows), 0)::text AS row_count\n'
   snapshot_sql+=$'    FROM grouped\n'
-  snapshot_sql+=$"  UNION ALL\n"
-  snapshot_sql+=$"  SELECT 1, 'DATE', batch_date::text, eod_rows::text, '-', '-'\n"
+  snapshot_sql+=$'  UNION ALL\n'
+  snapshot_sql+=$'  SELECT 1, \'DATE\', batch_date::text, eod_rows::text, \'-\', \'-\'\n'
   snapshot_sql+=$'    FROM grouped\n'
   snapshot_sql+=$')\n'
   snapshot_sql+=$'SELECT row_type, first_date, last_date, date_count, row_count\n'

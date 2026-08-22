@@ -33,10 +33,21 @@ db_psql() {
   # container; --no-deps keeps this helper from starting/restarting a service.
   # PGPASSWORD exists only in that container process environment so libpq can
   # authenticate; it never enters the host argv/environment or SQL text.
+  #
+  # The inner script is single-quoted and therefore expands INSIDE the
+  # container, where the only database settings that exist are the service's
+  # `DB_*` ones (compose.yml db-migrate: `DB_NAME: ${POSTGRES_DB:-lagrange}`).
+  # `POSTGRES_DB` is a HOST variable consumed by compose interpolation and is
+  # never passed through, so reading it here yielded an empty `-d`, at which
+  # point libpq falls back to the username and psql died with
+  # `database "migration_owner" does not exist`.  Use the service settings the
+  # comment above already promises, and let RANGE_RAW_BATCH_ID keep whole-file
+  # interpolation from failing on an unrelated Stage5 service we never run.
+  RANGE_RAW_BATCH_ID=${RANGE_RAW_BATCH_ID:-compose-config-disabled} \
   docker compose --env-file "$compose_env_file" -f "$compose_file" \
     run --rm --no-deps --entrypoint /bin/sh db-migrate \
     -ec 'export PGPASSWORD="$(cat "$DB_PASSWORD_FILE")"; exec psql \
       -X --no-password -v ON_ERROR_STOP=1 -P pager=off \
-      -h postgres -p 5432 -U migration_owner -d "$POSTGRES_DB" "$@"' \
+      -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" "$@"' \
     operator-attestation-psql "$@"
 }
