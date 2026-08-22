@@ -797,6 +797,60 @@ production config에 남아 있으면 거부한다) §2.8에서 콜백을 Tailsc
    (QA DB가 이미 떠 있기를 요구할 뿐) **`sg` 없이 직접 실행해야 한다.** 이걸 모르면 E7
    실패를 코드 회귀로 오인한다 — 실제로 이번에 한 번 오인했다가 transcript를 읽고 정정했다.
 
+### 0.21 첫 credentialed KIS 수집 — 실데이터가 들어왔고, 결함 5건과 벽 1건을 만났다 (2026-08-23)
+
+§0.15가 미뤄둔 운영 activation (1)~(3)을 실제로 밟았다. **`--execute`가 KIS를 호출해
+Raw를 커밋하고 정규화까지 성공했다.** 이 저장소에서 실데이터가 파이프라인을 통과한 것은
+처음이다. DB publication 직전에서 멈췄고, 그 원인은 코드가 아니라 미등록 권리다.
+
+**들어온 데이터 (2026-08-19분).**
+`raw/provider=kis/market=kr/date=2026-08-19/batch=54421e32-...` 31파일 — calendar 1,
+기업행사 7종, ETF11 시세와 reference. 정규화 결과는
+`provider=kis-normalized/.../batch=4140c8d1-...`에 `bars/calendar/corporate-actions/reference`.
+
+**§4.2-3 소유자 결정이 실측으로 해소 방향이 잡혔다.** 그 항목은 "KSD 비-bonus 기업행사가
+ETF11에 실제로 발생하면 일일 실행이 닫힌다, 다만 발생 여부는 미확인"이었다. 이번 응답의
+행 수는 dividend 0, merger-split 0, capital-decrease 0, reverse-split 0,
+paidin-subscription 0, **bonus 1, paidin-record 1**이다. 즉 (a) **dividend는 실제로 비어
+있었다** — 저장소가 추정한 "ETF는 배당이 아니라 분배금" 쪽이 맞는 방향이고, (b) non-bonus인
+`paidin-record`가 1행 있었는데도 **정규화가 성공했다.** whole-market 응답의 타 발행사 행을
+ETF11+대상일 필터가 정상적으로 걸러냈다는 뜻이다. 하루치 관측이므로 결정을 철회하지는
+않되, "매일 터진다"는 전제는 성립하지 않는다.
+
+**막힌 지점: `data_entitlements` 테이블이 비어 있다.** publication이
+`PIPELINE_FAILED`(phase=publication)로 실패한다. §4.1이 "DB entitlement 등록은 별도 운영
+provisioning"이라 적어둔 그 단계이며 결함이 아니다. **다만 여기서 멈췄다** —
+`provision-entitlement.sh register`는 `lifecycle == "PENDING"` 레코드를 요구하는데
+`configs/data-rights/kis.entitlement.json`은 이미 `ACTIVE`다. 통과시키려면 lifecycle을
+PENDING으로 바꾼 사본을 만들어야 하는데 그것은 **검증기를 만족시키려 권리 상태를 위조하는
+것**이고, `activate`의 activation-date도 소유자가 정할 값이다. 권리 증빙의 출처를 에이전트가
+만들지 않는다. **소유자 작업으로 남긴다.**
+
+**고친 결함 5건 — 전부 "작성됐으나 실행된 적 없음".**
+
+| 커밋 | 결함 |
+|---|---|
+| `afa3e01` | `db_psql`이 컨테이너 안에 없는 `$POSTGRES_DB`를 읽어 `-d`가 비었고 libpq가 사용자명으로 폴백 → `database "migration_owner" does not exist`. 공유 헬퍼라 `register-dataset-version.sh`·`provision-entitlement.sh`도 같이 깨져 있었다 |
+| `afa3e01` | snapshot SQL 9줄이 `$"..."`(로케일 번역 문법)이라 `\n`이 리터럴로 남아 psql 구문 오류 |
+| `afa3e01` | `db_psql`에 `RANGE_RAW_BATCH_ID` 자리표시자 누락 — compose 전체 파싱이 무관한 Stage5 서비스에서 중단 |
+| `3962f9d` | 상한을 `1_000_000`으로 써서 bash `[`가 `integer expected`로 죽고 **모든 실행이 "너무 크다"로 거부**됐다 |
+| `e3d1739` | `backfill-production.sh`의 자체 compose 배열에도 같은 자리표시자 누락 |
+
+**그리고 릴리스 배포로는 코드가 반영되지 않는다는 것을 늦게 알았다.**
+`deploy-production-release.sh`는 소스를 `/opt/lagrange/releases/<commit>/`에 복사하고
+`current`를 옮길 뿐 **이미지를 재빌드하지 않는다.** 컨테이너로 도는 Rust 워커는 2026-08-19
+빌드 그대로였고, 그래서 `INVALID_CONFIG`의 원인을 최신 소스에서 찾느라 한참 헤맸다 —
+재현 테스트가 통과한 것도 최신 소스로 돌렸기 때문이다. 오늘 고친 5건이 전부 셸 스크립트라
+문제가 드러나지 않다가 컨테이너 안 Rust에 도달하자마자 튀어나왔다.
+`build-production-images.sh --apply`로 11개 서비스를 재빌드하니 `INVALID_CONFIG`가 사라졌다.
+**이미지에 소스 커밋 라벨이 없어 이미지만 보고는 어느 코드인지 알 수 없다** — 별도 항목.
+
+**timer는 현재 릴리스로 재설치했다.** 처음 설치분이 옛 커밋(`b0576c8`)을 가리키고 있었고,
+`--replace-existing`이 새 유닛을 넣으면서 **옛 유닛을 지우지 않아 둘 다 enabled**였다. 옛
+유닛을 제거하고 `lagrange-kis-daily-e3d1739.timer`만 남겨 가동했다(다음 실행 16:30 KST).
+entitlement가 등록되기 전까지 그 실행은 publication에서 fail-closed로 멈춘다.
+
+---
 ---
 
 ## 1. 목표 — 이 시스템은 무엇인가
@@ -1182,7 +1236,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 증거로 유지하고 새 metadata를 사용해 게이트를 재실행한다. Member 접근과 Live는
 권리 추정으로 넓히지 않고 명시적으로 비활성 상태를 유지한다.
 
-### 4.2 소유자 결정 대기 3건
+### 4.2 소유자 결정 대기 4건
 
 1. **phase-0 골든에 수수료 필드를 넣을지** — 넣는 것은 승인된 기준값을 바꾸는 명시적 재승인 행위라 보류 중
 2. **Phase 4 우선순위** — §4.4 참조
@@ -1197,6 +1251,17 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    는 "ETF는 배당이 아니라 분배금을 지급한다"고 적고 있어 KSD `dividend`가 ETF11에 대해
    빈 응답일 가능성이 있으나, 그 관찰은 KIND 유형 체계에서 나온 것이고 KSD 응답을 확인한
    것이 아니다. §0.15 (3)/(4)의 첫 credentialed 실행에서 read-only GET 한 번이면 결판난다.
+
+4. **KIS entitlement의 DB 등록** (신규, 2026-08-23) — `data_entitlements`가 비어 있어
+   publication이 막혀 있다(§0.21). `provision-entitlement.sh register`는 `PENDING` 레코드를
+   요구하는데 `configs/data-rights/kis.entitlement.json`은 `ACTIVE`다. **에이전트가 lifecycle을
+   PENDING으로 바꾼 사본을 만들어 통과시키지 않았다** — 검증기를 만족시키려 권리 상태를
+   위조하는 것이고, `activate --activation-date`도 소유자가 정할 값이기 때문이다. 소유자가
+   (a) PENDING 레코드를 작성해 register → activate 2단계를 밟거나, (b) ACTIVE 레코드를 직접
+   받아들이도록 흐름을 조정할지 결정해야 한다. 필요한 나머지 입력은 확인해뒀다:
+   owner UUID `00000000-0000-4000-8000-000000000042`(users 테이블의 유일한 행),
+   문서 `docs/decisions/0005-kis-personal-use-entitlement.md`, `jq` 설치됨.
+   메타데이터/문서 파일은 0400/0600을 요구하므로 `/etc/lagrange/`에 보호 사본을 만들어 뒀다.
 
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
