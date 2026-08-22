@@ -842,7 +842,7 @@ PENDING으로 바꾼 사본을 만들어야 하는데 그것은 **검증기를 �
 빌드 그대로였고, 그래서 `INVALID_CONFIG`의 원인을 최신 소스에서 찾느라 한참 헤맸다 —
 재현 테스트가 통과한 것도 최신 소스로 돌렸기 때문이다. 오늘 고친 5건이 전부 셸 스크립트라
 문제가 드러나지 않다가 컨테이너 안 Rust에 도달하자마자 튀어나왔다.
-`build-production-images.sh --apply`로 11개 서비스를 재빌드하니 `INVALID_CONFIG`가 사라졌다.
+`build-production-images.sh --apply`로 재빌드하니 `INVALID_CONFIG`가 사라졌다. (**정정:** 빌드 목록은 11개지만 `reverse-proxy`는 digest-pin된 업스트림 이미지라 빌드 대상이 아니다 — 실제로 만들어진 것은 **10개**다.)
 
 **정정:** 이 절의 초판은 "이미지에 소스 커밋 라벨이 없다"고 적었으나 **틀렸다.** 조회할 때
 엉뚱한 이미지(nginx 베이스)를 지목한 실수였다. `data-pipelines/collectors/Dockerfile:31`이
@@ -853,9 +853,16 @@ PENDING으로 바꾼 사본을 만들어야 하는데 그것은 **검증기를 �
 
     docker image inspect <image> --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 
-두 가지가 남는다. `db-migrate` 이미지에는 라벨이 없어(별도 `deploy/db/Dockerfile`) 같은
-확인이 불가능하고, 릴리스를 배포해도 이미지는 자동으로 따라오지 않으므로 **배포 후 이미지
-커밋과 릴리스 커밋이 어긋난 상태가 정상적으로 발생한다** — 이를 알려주는 검사는 없다.
+**두 번째 정정 (§0.23 리뷰):** 위에서 "`db-migrate`만 라벨이 없다"고 적은 것도 **틀렸다.**
+라벨을 설정하는 Dockerfile은 세 개뿐이다(`crates/api-server/Dockerfile`,
+`crates/job-queue/Dockerfile.backtest-runner`, `data-pipelines/collectors/Dockerfile`). 즉
+빌드된 10개 중 **라벨이 있는 것은 4개**(api-server, research-worker, nt-backtest-worker-1/2)
+뿐이고 **web·db-migrate·db-role-bootstrap·candidate-runner·recommendation-runner·
+paper-scheduler 6개에는 없다.** 위에서 권한 진단 수단이라고 적은 그 명령이 함대의 다수에는
+쓸 수 없다. 오늘 16:30 스냅샷 쿼리를 실행할 `db-migrate`도 그중 하나다.
+
+그리고 릴리스를 배포해도 이미지는 자동으로 따라오지 않으므로 **배포 후 이미지 커밋과
+릴리스 커밋이 어긋난 상태가 정상적으로 발생한다** — 이를 알려주는 검사는 없다.
 
 **timer는 현재 릴리스로 재설치했다.** 처음 설치분이 옛 커밋(`b0576c8`)을 가리키고 있었고,
 `--replace-existing`이 새 유닛을 넣으면서 **옛 유닛을 지우지 않아 둘 다 enabled**였다. 옛

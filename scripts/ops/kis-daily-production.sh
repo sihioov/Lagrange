@@ -498,6 +498,38 @@ while IFS= read -r date_text || [ -n "$date_text" ]; do
   fi
 done <"$calendar_selection_file"
 
+# Never collect the current session before the exchange has closed.
+#
+# The timer is Persistent=true, so a host that was down at 16:30 fires this once
+# shortly after the next boot -- at any hour. `today` is a member of the
+# calendar selection and, being unpublished, would join pending_dates; the
+# collector would then request today's "daily" bars mid-session and commit
+# intraday values into an IMMUTABLE EOD Raw batch. Raw is never rewritten, so
+# that record would stay wrong forever and would silently feed every later
+# backtest -- fabricated point-in-time evidence, which principle 6 forbids.
+#
+# KRX regular trading closes 15:30 KST and the scheduled run is 16:30 KST, so
+# treat the scheduled hour as the earliest safe moment. Dropping today is
+# fail-closed: the next run collects it once the day is genuinely complete.
+kis_daily_close_guard() {
+  local now_hm kept=() dropped=0
+  now_hm=$(TZ=Asia/Seoul date '+%H:%M')
+  [[ "$now_hm" < "${KIS_DAILY_EARLIEST_TODAY_KST:-16:30}" ]] || return 0
+  local date_text
+  for date_text in ${pending_dates+"${pending_dates[@]}"}; do
+    if [ "$date_text" = "$today" ]; then
+      dropped=1
+    else
+      kept+=("$date_text")
+    fi
+  done
+  [ "$dropped" -eq 1 ] || return 0
+  pending_dates=(${kept+"${kept[@]}"})
+  printf 'BACKFILL_DEFERRED_TODAY date=%s now=%s KST earliest=%s (session not closed; immutable EOD Raw must not hold intraday values)\n' \
+    "$today" "$now_hm" "${KIS_DAILY_EARLIEST_TODAY_KST:-16:30}" >&2
+}
+kis_daily_close_guard
+
 [ "${#pending_dates[@]}" -le "$max_sessions" ] || blocked "exact missing XKRX session list exceeds the worker bound of $max_sessions"
 if [ "${#pending_dates[@]}" -eq 0 ]; then
   echo "KIS_DAILY: PASS (published=$published_count sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count; no worker/Docker/KIS call)"

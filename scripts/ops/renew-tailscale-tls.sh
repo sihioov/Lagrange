@@ -655,16 +655,16 @@ proxy_action=absent-no-start
 if command -v docker >/dev/null 2>&1; then
   compose_state=$(mktemp -- "$source_stage_dir/.lagrange-tls-compose-state.XXXXXX") ||
     die 'cannot create private Compose state staging file'
-  if ! LAGRANGE_CODE_COMMIT="$code_commit" RANGE_RAW_BATCH_ID=compose-config-disabled \
-    docker compose --project-name "$compose_project" \
+  if ! RANGE_RAW_BATCH_ID=compose-config-disabled \
+    LAGRANGE_CODE_COMMIT="$code_commit" docker compose --project-name "$compose_project" \
     --env-file "$env_file" --file "$compose_file" ps --services \
     --filter status=running >"$compose_state" 2>/dev/null; then
     rm -f -- "$compose_state"
     die 'cannot inspect Compose reverse-proxy state; TLS pair remains converged'
   fi
   if grep -Fxq reverse-proxy "$compose_state"; then
-    if ! LAGRANGE_CODE_COMMIT="$code_commit" RANGE_RAW_BATCH_ID=compose-config-disabled \
-    docker compose --project-name "$compose_project" \
+    if ! RANGE_RAW_BATCH_ID=compose-config-disabled \
+    LAGRANGE_CODE_COMMIT="$code_commit" docker compose --project-name "$compose_project" \
       --env-file "$env_file" --file "$compose_file" up --detach --no-deps \
       --force-recreate --no-build --pull never --wait reverse-proxy \
       >"$source_stage_dir/.lagrange-tls-compose-refresh.$$" 2>&1; then
