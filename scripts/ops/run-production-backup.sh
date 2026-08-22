@@ -166,6 +166,13 @@ exec 9>>"$lock_file" || die 'cannot open backup lock'
 chmod 0600 "$lock_file"
 flock -n 9 || die 'another production backup/verification holds the lock'
 
+# Compose interpolates the whole file even for `exec` against one service, so
+# every required variable must resolve or the backup aborts before reaching
+# PostgreSQL. LAGRANGE_CODE_COMMIT is already supplied per-call from the
+# validated config value; RANGE_RAW_BATCH_ID had no source at all. It belongs to
+# the Stage5 range services, which this script never runs. Latent today only
+# because production-backup.conf still pins a release predating the requirement.
+export RANGE_RAW_BATCH_ID=${RANGE_RAW_BATCH_ID:-compose-config-disabled}
 compose=(docker compose -p "$compose_project" --env-file "$compose_env" -f "$compose_file")
 encrypt() { openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 -pass "file:$key_file"; }
 decrypt() { openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass "file:$key_file"; }

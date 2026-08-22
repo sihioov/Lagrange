@@ -41,9 +41,22 @@ db_psql() {
   # never passed through, so reading it here yielded an empty `-d`, at which
   # point libpq falls back to the username and psql died with
   # `database "migration_owner" does not exist`.  Use the service settings the
-  # comment above already promises, and let RANGE_RAW_BATCH_ID keep whole-file
-  # interpolation from failing on an unrelated Stage5 service we never run.
+  # comment above already promises.
+  #
+  # Compose interpolates the WHOLE file to run one service, so both required
+  # variables must be satisfiable here or the call dies before any container
+  # exists.  RANGE_RAW_BATCH_ID belongs to the Stage5 range services and
+  # LAGRANGE_CODE_COMMIT to other services' build args; `db-migrate` consumes
+  # neither, and LAGRANGE_CODE_COMMIT is NOT a key in the production env file
+  # (only a comment), so without a value here every caller that does not inject
+  # it separately fails.  kis-daily-production.sh survives because its systemd
+  # unit sets it; provision-entitlement.sh and register-dataset-version.sh do
+  # not set it at all, and reported the resulting interpolation abort as
+  # "pending entitlement row is absent or conflicts" — a data message for a
+  # config failure, which is the exact confusion this helper already had once.
+  # Defaults, so a real value from the caller still wins.
   RANGE_RAW_BATCH_ID=${RANGE_RAW_BATCH_ID:-compose-config-disabled} \
+  LAGRANGE_CODE_COMMIT=${LAGRANGE_CODE_COMMIT:-compose-config-disabled} \
   docker compose --env-file "$compose_env_file" -f "$compose_file" \
     run --rm --no-deps --entrypoint /bin/sh db-migrate \
     -ec 'export PGPASSWORD="$(cat "$DB_PASSWORD_FILE")"; exec psql \
