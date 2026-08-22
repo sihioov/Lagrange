@@ -546,6 +546,12 @@ fi
 
 docker compose version >/dev/null 2>&1 ||
   blocked 'Docker Compose v2 is unavailable'
+# Compose interpolates the WHOLE file even to touch one service, so the
+# unrelated Stage5 research-range-raw services abort every invocation here over
+# a required RANGE_RAW_BATCH_ID we have no reason to supply — we never run them.
+# post-backfill-health.sh and compose-release.sh already pass this exact
+# placeholder; export it so both `compose` uses below inherit it.
+export RANGE_RAW_BATCH_ID=${RANGE_RAW_BATCH_ID:-compose-config-disabled}
 compose=(docker compose --env-file "$env_file" -f "$root/deploy/compose/compose.yml")
 
 # Keep the exact validated session sequence in one bounded argv value.  The
