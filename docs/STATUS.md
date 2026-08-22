@@ -737,6 +737,48 @@ operator 실행으로 남긴다.
 CI contract 7/7, web **86/86**, 새 가드 2/2. CI: **8 job 전부 green** — 특히 새로 배선한
 `web`(e2e 7스펙)과 `policy`(static-check 10개)가 실제로 통과했다.
 
+### 0.20 phase1 게이트 재실행 — E1이 PASS로 뒤집혔다 (2026-08-22)
+
+§0.16이 "소유자 결정을 요구하지 않는 유일한 순수 실행 항목"이라 꼽고 계속 미뤄져 있던
+게이트 재실행을 수행했다. 기준 트리 `3ddf1c1`.
+
+| 검사 | 2026-08-17 (`61af2bb`) | 2026-08-22 (`3ddf1c1`) |
+|---|---|---|
+| **E1** written-rights | `BLOCKED_EXTERNAL` | **PASS** — `kis.entitlement.json` provider=kis ACTIVE, 문서 해시 `b888942df6b0...`, reference `repo://docs/decisions/0005-...` |
+| E2 vendor-auth0 | PASS | `BLOCKED_EXTERNAL` — 이 실행에 Auth0 credential을 주입하지 않았다 |
+| E3 auth0-simulator | PASS | PASS (10) |
+| E4 auth0-invite-mfa | PASS | PASS (52) |
+| E5 phase1-five-user | PASS | PASS (5) |
+| E6 restore-policy | PASS | PASS |
+| E7 playwright-phase1 | PASS | PASS — chromium 4/4 |
+| **VERDICT** | `BLOCKED_EXTERNAL_DATA_RIGHTS` | `BLOCKED_EXTERNAL_DATA_RIGHTS` |
+
+**판정문 이름이 이제 오해를 부른다.** 게이트 NOTE가 적었듯 이 판정은 "written-rights가
+ACTIVE가 아니거나 **vendor Auth0가 통과하지 못할 때**" 나온다. 이번 실행에서 막은 것은
+**E2 하나뿐이고 data-rights가 아니다** — E1은 통과했다. 판정 문자열만 보고 권리가 여전히
+막혀 있다고 읽으면 틀린다.
+
+**E2를 일부러 통과시키지 않았다.** 게이트는 `deploy/secrets/auth0_client_secret`을 스스로
+읽지 않도록 설계돼 있고 그 이유를 주석에 적어놨다 — *"credential 주입은 운영자의 명시적
+행위로 남는다. 필요 없는 표면을 게이트가 획득하지 않는다."* `LAGRANGE_AUTH0_DOMAIN` /
+`_CLIENT_ID` / `_CLIENT_SECRET`을 주고 재실행하면 E2까지 닫힌다. 08-17에는 운영자가 그렇게
+해서 PASS했다(§2.8, §2.10).
+
+**부수 확인 — 밤새 "환경 요인"이라 분류한 것이 실제로 환경 요인이었다.** QA DB를 띄우고
+`cargo test --workspace`를 재실행하니 **실패 0건**이다. `collectors::research_worker`의 6건은
+`DATABASE_URL` 부재가 맞았고(68/68 통과), 다른 원인이 숨어 있지 않았다.
+
+**환경 함정 둘을 새로 치렀다 (§5.1에 반영).**
+1. docker 그룹이 `/etc/group`에는 있는데 에이전트 프로세스 트리가 물고 있지 않았다. UI
+   세션을 리로드해도 부모인 Paseo 데몬이 낡은 그룹 집합을 유지해 반영되지 않는다.
+   `sg docker -c '...'`로 획득하면 데몬 재시작 없이 해결된다.
+2. 그런데 **`sg`는 setgid라 glibc가 `LD_LIBRARY_PATH`를 지운다.** E7의 chromium이
+   `libasound.so.2` 부재로 죽는데 이 호스트에는 시스템 설치가 없고
+   `/home/l1nnx/tools/pwlibs`의 사본을 `LD_LIBRARY_PATH`로 가리켜야 한다. 즉 게이트를
+   `sg`로 감싸면 E7이 반드시 실패한다. phase1 게이트는 docker를 부르지 않으므로
+   (QA DB가 이미 떠 있기를 요구할 뿐) **`sg` 없이 직접 실행해야 한다.** 이걸 모르면 E7
+   실패를 코드 회귀로 오인한다 — 실제로 이번에 한 번 오인했다가 transcript를 읽고 정정했다.
+
 ---
 
 ## 1. 목표 — 이 시스템은 무엇인가
@@ -1185,7 +1227,8 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 |---|---|
 | **`/tmp` 사용자 쿼터 소진 → 모든 에이전트 셸이 동시에 죽는다** | `/tmp`은 디스크가 아니라 **tmpfs 7.3G**(램의 절반)이고 `usrquota`가 걸려 있다. `df`가 여유를 보여줘도 사용자 쿼터를 넘기면 `EDQUOT`다. 에이전트 툴이 명령 출력을 `/tmp`에 캡처하므로, 쿼터가 차면 `echo`조차 **출력 없이 exit 1**로 죽어 원인 파악이 매우 어렵다. 병렬 Rust 빌드가 주범이다. 긴 작업 전 `du -sh /tmp/* \| sort -rh \| head`로 확인하고, 모든 워커에 `TMPDIR`을 `/data` 아래로 지정할 것 — 다만 cargo/rustc가 일부 경로에서 `/tmp`을 직접 쓰므로 `TMPDIR`만으로는 부족하다 (2026-08-22, §0.18) |
 | **`umask 0002` 때문에 정확한 파일 모드를 요구하는 static-check가 로컬에서만 실패한다** | 이 호스트의 umask는 `0002`라 체크아웃된 스크립트가 `0775`가 된다. `scripts/ops/static-check.sh`와 `deploy/secrets/runtime-static-check.sh`는 정확히 `0755`를 요구하므로 로컬에서 실패한다. **git은 `100755`로 기록하고 CI 러너는 umask 0022라 CI에서는 통과한다.** `( umask 0022; git clone --depth 1 ... )` 후 실행하면 확인된다. 이 실패를 트리의 결함으로 오인하지 말 것 (2026-08-22, §0.19) |
-| Docker 소켓 접근 권한이 없다 | `id -nG`에 `docker` 그룹이 없고 `sudo`는 비밀번호를 요구한다(비대화식 불가). 따라서 QA DB(55432)를 띄우는 phase1/2/3 게이트와 `cargo test`의 DB 의존 테스트 6건은 **이 계정으로 실행할 수 없다**. 소유자가 docker 그룹에 추가하거나 직접 띄워야 한다 |
+| **docker 그룹이 `/etc/group`엔 있는데 `id`엔 안 보인다** | 계정은 이미 `docker`(gid 983) 멤버다. 그런데 그룹 멤버십은 로그인 시 프로세스에 박히므로, 그보다 먼저 뜬 프로세스의 자손은 갖지 못한다. **UI 세션을 리로드해도 부모인 Paseo 데몬이 낡은 그룹 집합을 유지하면 소용없다** — `/proc/<pid>/status`의 `Groups:`로 조상 체인을 확인하면 어디서 끊기는지 보인다. 데몬을 재시작하는 대신 **`sg docker -c '<명령>'`**으로 획득하면 된다. `sudo`는 비밀번호를 요구해 비대화식으로 못 쓴다 (2026-08-22, §0.20) |
+| **`sg`로 감싸면 `LD_LIBRARY_PATH`가 지워진다 → E7이 반드시 실패한다** | `sg`는 setgid 바이너리라 glibc가 보안상 `LD_LIBRARY_PATH`를 제거한다. E7의 chromium은 `libasound.so.2`를 필요로 하는데 이 호스트엔 시스템 설치가 없고 `/home/l1nnx/tools/pwlibs`의 사본을 `LD_LIBRARY_PATH`로 가리켜야만 뜬다. **phase1 게이트는 docker를 호출하지 않는다**(QA DB가 이미 떠 있기를 요구할 뿐)이므로 `sg` 없이 직접 실행할 것. 모르면 E7 실패를 코드 회귀로 오인한다 (2026-08-22, §0.20) |
 
 ---
 
