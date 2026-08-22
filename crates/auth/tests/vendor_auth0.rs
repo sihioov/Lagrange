@@ -11,7 +11,14 @@ use std::time::Duration;
 use url::Url;
 use zeroize::Zeroizing;
 
-const CALLBACK_URI: &str = "https://app.lagrange.local/auth/callback";
+/// Fallback only. `https://app.lagrange.local` is the repository's documented
+/// PLACEHOLDER host — `scripts/ops/validate-production-config.sh` rejects a
+/// production config that still contains it. The real tenant only redirects to
+/// callbacks registered on the app, and that value is deployment-specific
+/// (currently a Tailscale hostname), so it is supplied by the operator through
+/// [`REDIRECT_URI_ENV`] exactly as the domain and client id already are.
+/// Hard-coding one host's address here would pin a machine into the suite.
+const DEFAULT_CALLBACK_URI: &str = "https://app.lagrange.local/auth/callback";
 const INVALID_AUTHORIZATION_CODE: &str = "deliberately-invalid-authorization-code";
 const INVALID_CLIENT_SECRET: &str = "deliberately-invalid-vendor-test-secret";
 const PKCE_CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
@@ -20,6 +27,7 @@ const PKCE_VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 const DOMAIN_ENV: &str = "LAGRANGE_AUTH0_DOMAIN";
 const CLIENT_ID_ENV: &str = "LAGRANGE_AUTH0_CLIENT_ID";
 const CLIENT_SECRET_ENV: &str = "LAGRANGE_AUTH0_CLIENT_SECRET";
+const REDIRECT_URI_ENV: &str = "LAGRANGE_AUTH0_REDIRECT_URI";
 
 pub const EXPECTED_AUTH0_DOMAIN: &str = "lagrange-station.jp.auth0.com";
 pub const EXPECTED_AUTH0_CLIENT_ID: &str = "YZ4T7g575IohtS1HsltlFAiU7AlyUUuI";
@@ -38,6 +46,18 @@ fn tenant_config() -> TenantConfig {
 
 fn client_secret() -> Zeroizing<String> {
     Zeroizing::new(required_env(CLIENT_SECRET_ENV))
+}
+
+/// The callback the tenant is expected to accept.
+///
+/// Unset falls back to the placeholder, which the tenant will refuse with 403 —
+/// a loud, correct failure rather than a silent skip, matching how this suite
+/// treats every other missing input.
+fn callback_uri() -> String {
+    match std::env::var(REDIRECT_URI_ENV) {
+        Ok(value) if !value.is_empty() => value,
+        _ => DEFAULT_CALLBACK_URI.to_owned(),
+    }
 }
 
 fn required_env(key: &'static str) -> String {
@@ -151,7 +171,7 @@ async fn token_probe(
             ("client_id", client_id),
             ("client_secret", client_secret),
             ("code", INVALID_AUTHORIZATION_CODE),
-            ("redirect_uri", CALLBACK_URI),
+            ("redirect_uri", callback_uri().as_str()),
             ("code_verifier", PKCE_VERIFIER),
         ])
         .send()
@@ -205,13 +225,14 @@ async fn vendor_tenant_jwks_issuer_audience_endpoints() {
 async fn vendor_authorize_endpoint_engages_oidc() {
     let config = tenant_config();
     let issuer = issuer(&config.domain);
+    let callback = callback_uri();
     let mut authorize_url = issuer
         .join("authorize")
         .unwrap_or_else(|_| panic!("vendor authorize URL construction failed"));
     authorize_url.query_pairs_mut().extend_pairs([
         ("response_type", "code"),
         ("client_id", config.client_id.as_str()),
-        ("redirect_uri", CALLBACK_URI),
+        ("redirect_uri", callback.as_str()),
         ("scope", "openid email profile"),
         ("state", "vendor-auth0-state"),
         ("nonce", "vendor-auth0-nonce"),
