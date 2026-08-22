@@ -737,7 +737,7 @@ operator 실행으로 남긴다.
 CI contract 7/7, web **86/86**, 새 가드 2/2. CI: **8 job 전부 green** — 특히 새로 배선한
 `web`(e2e 7스펙)과 `policy`(static-check 10개)가 실제로 통과했다.
 
-### 0.20 phase1 게이트 재실행 — E1이 PASS로 뒤집혔다 (2026-08-22)
+### 0.20 phase1 게이트 재실행 — VERDICT: APPROVED (2026-08-22)
 
 §0.16이 "소유자 결정을 요구하지 않는 유일한 순수 실행 항목"이라 꼽고 계속 미뤄져 있던
 게이트 재실행을 수행했다. 기준 트리 `3ddf1c1`.
@@ -745,24 +745,42 @@ CI contract 7/7, web **86/86**, 새 가드 2/2. CI: **8 job 전부 green** — �
 | 검사 | 2026-08-17 (`61af2bb`) | 2026-08-22 (`3ddf1c1`) |
 |---|---|---|
 | **E1** written-rights | `BLOCKED_EXTERNAL` | **PASS** — `kis.entitlement.json` provider=kis ACTIVE, 문서 해시 `b888942df6b0...`, reference `repo://docs/decisions/0005-...` |
-| E2 vendor-auth0 | PASS | `BLOCKED_EXTERNAL` — 이 실행에 Auth0 credential을 주입하지 않았다 |
+| E2 vendor-auth0 | PASS | **PASS** — 콜백 불일치를 고친 뒤(`2ec0460`) 통과 |
 | E3 auth0-simulator | PASS | PASS (10) |
 | E4 auth0-invite-mfa | PASS | PASS (52) |
 | E5 phase1-five-user | PASS | PASS (5) |
 | E6 restore-policy | PASS | PASS |
 | E7 playwright-phase1 | PASS | PASS — chromium 4/4 |
-| **VERDICT** | `BLOCKED_EXTERNAL_DATA_RIGHTS` | `BLOCKED_EXTERNAL_DATA_RIGHTS` |
+| **VERDICT** | `BLOCKED_EXTERNAL_DATA_RIGHTS` | **`APPROVED`** |
 
 **판정문 이름이 이제 오해를 부른다.** 게이트 NOTE가 적었듯 이 판정은 "written-rights가
 ACTIVE가 아니거나 **vendor Auth0가 통과하지 못할 때**" 나온다. 이번 실행에서 막은 것은
 **E2 하나뿐이고 data-rights가 아니다** — E1은 통과했다. 판정 문자열만 보고 권리가 여전히
 막혀 있다고 읽으면 틀린다.
 
-**E2를 일부러 통과시키지 않았다.** 게이트는 `deploy/secrets/auth0_client_secret`을 스스로
-읽지 않도록 설계돼 있고 그 이유를 주석에 적어놨다 — *"credential 주입은 운영자의 명시적
-행위로 남는다. 필요 없는 표면을 게이트가 획득하지 않는다."* `LAGRANGE_AUTH0_DOMAIN` /
-`_CLIENT_ID` / `_CLIENT_SECRET`을 주고 재실행하면 E2까지 닫힌다. 08-17에는 운영자가 그렇게
-해서 PASS했다(§2.8, §2.10).
+**E2도 이어서 닫았다 — 그리고 credential 문제가 아니었다 (`2ec0460`).** 소유자 승인 아래
+`LAGRANGE_AUTH0_*`를 주입해 재실행하니 vendor 3개 중 2개는 통과하고
+`vendor_authorize_endpoint_engages_oidc`만 실패했다 — `/authorize`가 302 대신 **403**.
+**credential은 정상이었다**(confidential client 인증 테스트가 통과했다). 원인은 스위트가
+보내던 `https://app.lagrange.local/auth/callback`이 테넌트에 등록돼 있지 않아서다.
+`curl`로 직접 확인했다: placeholder는 403, 배포된 Tailscale 콜백은 **302**.
+
+그 호스트는 저장소의 **명시된 placeholder**이고(`scripts/ops/validate-production-config.sh:153`이
+production config에 남아 있으면 거부한다) §2.8에서 콜백을 Tailscale 주소로 옮길 때 목록에서
+빠진 것으로 보인다. 즉 이 테스트는 "배포된 콜백이 동작한다"가 아니라 **"안 쓰는 placeholder가
+아직 등록돼 있다"**를 검증하고 있었다. 콜백은 배포 종속 값이므로 domain·client_id와 똑같이
+`LAGRANGE_AUTH0_REDIRECT_URI`로 받게 했다. Tailscale 호스트명을 저장소에 박으면 이 기계를
+스위트에 고정시키고 주소가 바뀌면 또 깨진다. 미설정 시 fallback은 placeholder 그대로라
+테넌트가 소리내어 거부한다 — 이 스위트는 조용히 skip하지 않는다.
+
+**의도적으로 좁게 고쳤다.** `app.lagrange.local`은 저장소 약 40곳에 있지만 **실 테넌트에
+접속하는 것은 이 파일 하나뿐**이다. 나머지는 오프라인 시뮬레이터라 값이 임의이고, compose
+기본값은 production이 덮어쓰는 placeholder이며 `deploy/nginx/auth-route-static-check.sh`가
+그 문자열을 정확히 고정하고 있다(=건드리면 방금 CI에 배선한 검사가 깨진다).
+
+**결과: `VERDICT: APPROVED`.** E1~E7 전부 PASS. 이 저장소에서 phase1이 APPROVED를 낸 것은
+처음이며, 08-17 실행은 `BLOCKED_EXTERNAL_DATA_RIGHTS`였다. 게이트 테스트 기대값 변경은
+원칙 5의 명시적 행위이므로 커밋 메시지에 선언했다.
 
 **부수 확인 — 밤새 "환경 요인"이라 분류한 것이 실제로 환경 요인이었다.** QA DB를 띄우고
 `cargo test --workspace`를 재실행하니 **실패 0건**이다. `collectors::research_worker`의 6건은
