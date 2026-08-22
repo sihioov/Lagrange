@@ -60,9 +60,16 @@ test("member selects relative momentum, polls only its submitted run, and retain
   await runForm.getByLabel("As-of date").fill("2026-01-31");
   await runForm.getByRole("button", { name: "Generate strategy proposal" }).click();
 
-  await expect(page.getByRole("status", { name: "Recommendation is in progress" })).toContainText(
-    "Recommendation is in progress",
-  );
+  // Scope to the run section, not the page. The page renders a second
+  // RecommendationRunStatus for `activeRun` outside this section
+  // (recommendations/page.tsx:109), so once the submitted run and the active
+  // run are both pending the page-wide locator matches two elements and
+  // Playwright strict mode fails. It is the SUBMITTED run's status this
+  // assertion is about, and that one lives inside the section the form is in.
+  const runSection = page.getByRole("region", { name: "Generate recommendation" });
+  await expect(
+    runSection.getByRole("status", { name: "Recommendation is in progress" }),
+  ).toContainText("Recommendation is in progress");
   await expect(report.getByText("069500.KRX")).toBeVisible();
   await expect(
     report
