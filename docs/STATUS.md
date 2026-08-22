@@ -901,6 +901,72 @@ Playwright strict mode 위반으로 실패했다. `getByRole("status", …)`가 
 증거가 아니다**. 특히 타이밍에 의존하는 e2e는 느린 러너에서만 드러나는 모호성을 갖는다.
 
 ---
+### 0.23 §0.21 정정 — "첫 수집"도 "entitlement 차단"도 사실이 아니었다 (2026-08-23)
+
+§0.20~§0.22를 독립 사실검증에 걸었다. 대부분의 수치·SHA·file:line·가드 동작은 재현됐지만
+**§0.21의 서사 부분 두 건이 거짓**이었고, 그중 하나는 소유자에게 잘못된 다음 행동을
+지시하고 있었다. 둘 다 직접 재확인했다.
+
+**① "실데이터가 파이프라인을 통과한 것은 처음이다" — 거짓.** 나흘 앞선 2026-08-18에
+credentialed 수집이 **DB publication까지 전부 성공**했다. 직접 조회한 `data_batches`:
+
+    KRX|KR|EOD|2026-08-18|credentialed|2026-08-18 16:08:15+00
+    KRX|KR|REFERENCE|2026-08-18|credentialed|2026-08-18 16:08:15+00
+    KRX|KR|CALENDAR|2026-08-18|credentialed|2026-08-18 16:08:15+00
+    KRX|KR|CORPORATE_ACTIONS|2026-08-18|credentialed|2026-08-18 16:08:15+00
+
+Raw manifest의 첫 항목도 `date=2026-08-18`, `mode=credentialed`다. 08-19 종가가 08-18
+종가에서 `prdy_vrss`만큼 정확히 이어지는 것도 확인됐다. §0.21의 제목과 "처음" 주장, 그리고
+같은 내용을 반복한 BM 노트를 철회한다. **§0.15(:496,:519)의 "첫 credentialed 실행은 아직
+안 했다"도 같은 근거로 틀렸다** — 내가 만든 오류가 아니라 물려받아 증폭한 오류다.
+
+**② "막힌 지점은 빈 `data_entitlements`다" — 인과가 틀렸다.** 그 테이블은 지금도 비어
+있지만 **08-18 publication이 성공하던 시점에도 똑같이 비어 있었다.** 비어 있다는 사실은
+맞고 원인 지목이 틀렸다. 실제 원인을 재실행으로 확인했다:
+
+    {"error_code":"PRICE_CURATION_FAILED","phase":"publication","class":"permanent",
+     "message":"price curation failed"}
+
+`WorkerError::Curation(CurateError)` — **Curated 생성 단계**이지 권리 검사가 아니다.
+(앞서 3일치를 한 번에 넘겼을 때는 `PIPELINE_FAILED`로 보였는데, 1일치로 좁히니 더 정확한
+코드가 드러났다.)
+
+`data_entitlements`가 무의미한 것은 아니다. DB 함수 `public.resolve_price_dataset_entitlement`
+(`candidate_sink.rs:211`)와 `crates/auth`의 API 권한 게이트가 읽는다. 즉 **candidate/Curated
+승격 경로와 사용자 화면에는 필요하고, 오늘의 EOD publication을 막은 것은 아니다.** §4.2-4는
+유지하되 "지금 이것 때문에 막혀 있다"는 표현을 철회한다.
+
+**어느 CurateError인지는 아직 모른다.** 임시 sudo를 이미 회수해 `/var/lib/lagrange/data/curated`를
+읽을 수 없다. 추측하지 않고 미확인으로 남긴다.
+
+**③ 그 외 정정.**
+- §0.19 "나머지 12개는 operator 실행": `6d54f59`가 static-check 12개를 전부 배선했으므로
+  남는 것은 **10개**이고, 그중 3개는 `scripts/ops/static-check.sh`가 직접 실행하므로 실제
+  operator 전용은 **7개**다. "22개 중 3개 배선"도 정확히는 2개다(세 번째 CI 스텝
+  `validate.sh --self-test`는 그 22개에 속하지 않는다).
+- §0.20 "기준 트리 `3ddf1c1`": 게이트 아티팩트는 `2ec0460`(콜백 수정) 커밋 **39초 전**에
+  발행됐다. `APPROVED`는 `3ddf1c1` + 미커밋 수정 + 주입된 `LAGRANGE_AUTH0_*`의 결과이며
+  **트리 `3ddf1c1`만으로는 재현되지 않는다.** 판정 자체는 진짜다.
+- §0.18 제목 "결함 8건" vs 본문 6 MAJOR + CI 1 = 7. 8번째는 특정되지 않는다.
+- §0.21의 timer 이름 `e3d1739`는 이후 `cbb7357`로 교체됐다. 더 중요한 것은 **같은 중복
+  유닛 문제가 `lagrange-kis-backfill-*` 3세대에 그대로 남아 전부 enabled**라는 점이다.
+- §0.18 "236커밋 뒤"는 237이다.
+
+**④ 과잉주장 하나를 특히 철회한다.** §0.21은 08-19 dividend가 0행인 것을 "ETF는 배당이
+아니라 분배금" 추정의 근거로 삼았다. 그 응답은 **whole-market 질의**라 "ETF가 배당을 안
+준다"와 "그날 아무 발행사도 배당 기준일이 아니었다"를 구분하지 못한다. 결정적 반증이 바로
+옆 디렉터리에 있었고 열어보지 않았다 — **08-18 dividend 응답에는 5행이 있다**(덕양에너젠, SK,
+SK1우, 포스코인터내셔널, 케이비발해인프라, 전부 `record_date 20260818`, ETF11 코드는 없음).
+즉 dividend는 비는 날도 있고 안 비는 날도 있으며, ETF11이 걸러지는 이유는 **필터가 동작하기
+때문**이지 응답이 항상 비어서가 아니다. §4.2-3의 소유자 결정은 이 정정으로 오히려 **더**
+필요해진다.
+
+**이 절이 남기는 규칙.** 두 밤 동안 내가 STATUS에 쓴 거짓 주장이 이것으로 네 건째다
+(§0.17 writer 주장, §0.21 이미지 라벨, §0.21 "처음", §0.21 entitlement 인과). 넷 다 **한
+디렉터리 옆이나 한 쿼리 거리에 반증이 있었는데 확인하지 않고 단정한** 경우다. 새 사실을
+쓸 때는 반증이 될 수 있는 가장 가까운 곳을 먼저 열어볼 것.
+
+---
 ---
 
 ## 1. 목표 — 이 시스템은 무엇인가
@@ -1302,8 +1368,11 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    빈 응답일 가능성이 있으나, 그 관찰은 KIND 유형 체계에서 나온 것이고 KSD 응답을 확인한
    것이 아니다. §0.15 (3)/(4)의 첫 credentialed 실행에서 read-only GET 한 번이면 결판난다.
 
-4. **KIS entitlement의 DB 등록** (신규, 2026-08-23) — `data_entitlements`가 비어 있어
-   publication이 막혀 있다(§0.21). `provision-entitlement.sh register`는 `PENDING` 레코드를
+4. **KIS entitlement의 DB 등록** (신규, 2026-08-23; §0.23에서 인과 정정) — `data_entitlements`가
+   비어 있다. **오늘의 EOD publication을 막는 것은 이것이 아니다**(§0.23 — 08-18에는 같은 상태로
+   성공했고, 실제 실패는 `PRICE_CURATION_FAILED`다). 다만 DB 함수
+   `resolve_price_dataset_entitlement`와 `crates/auth`의 API 권한 게이트가 이 테이블을 읽으므로
+   **candidate/Curated 승격과 사용자 화면에는 필요하다.** `provision-entitlement.sh register`는 `PENDING` 레코드를
    요구하는데 `configs/data-rights/kis.entitlement.json`은 `ACTIVE`다. **에이전트가 lifecycle을
    PENDING으로 바꾼 사본을 만들어 통과시키지 않았다** — 검증기를 만족시키려 권리 상태를
    위조하는 것이고, `activate --activation-date`도 소유자가 정할 값이기 때문이다. 소유자가
