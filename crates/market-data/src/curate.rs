@@ -1023,6 +1023,21 @@ pub fn curation_inputs_from_raw(
     raw: &RawStore,
     entry: &ManifestEntry,
 ) -> Result<(KrCalendar, InstrumentMaster), CurateError> {
+    curation_inputs_with_listing_fallback(raw, entry, None)
+}
+
+/// `listing_fallback` is the listing date used for instruments whose Raw
+/// reference record carries none. `None` means "this batch's own calendar
+/// first session", which is what a single-batch curation wants. A cumulative
+/// generation passes the merged first session instead, so the master it
+/// builds is a property of the generation rather than of whichever batch
+/// happened to be read. Instruments that DO carry a listing date ignore this
+/// entirely.
+fn curation_inputs_with_listing_fallback(
+    raw: &RawStore,
+    entry: &ManifestEntry,
+    listing_fallback: Option<TradingDate>,
+) -> Result<(KrCalendar, InstrumentMaster), CurateError> {
     validate_curation_scope(entry)?;
     validate_normalized_raw(raw, entry)?;
     let files = raw
@@ -1125,7 +1140,7 @@ pub fn curation_inputs_from_raw(
             .map_err(|error| CurateError::MalformedBars {
                 reason: format!("invalid listed_at for {}: {error}", instrument.symbol),
             })?
-            .unwrap_or(calendar_first_session);
+            .unwrap_or(listing_fallback.unwrap_or(calendar_first_session));
         let instrument_id = InstrumentId::parse(&instrument.symbol).map_err(|error| {
             CurateError::MalformedBars {
                 reason: format!("invalid reference symbol {}: {error}", instrument.symbol),
@@ -1215,22 +1230,16 @@ pub fn curation_inputs_from_raw_entries(
             context: "cumulative curation inputs".to_owned(),
             detail: "at least one Raw entry is required".to_owned(),
         })?;
-    let (first_calendar, first_master) = curation_inputs_from_raw(raw, first)?;
-    let first_instruments = first_master.instruments().cloned().collect::<Vec<_>>();
+    let (first_calendar, _) = curation_inputs_with_listing_fallback(raw, first, None)?;
     let first_provenance = first_calendar.provenance().clone();
     let mut sessions = BTreeSet::new();
     let mut holidays = BTreeMap::<TradingDate, String>::new();
     let mut latest_published_at = first_provenance.published_at;
 
+    // First pass: validate every entry on its own and merge the calendar.
+    // Instrument masters are deliberately not compared yet — see below.
     for entry in entries {
-        let (calendar, master) = curation_inputs_from_raw(raw, entry)?;
-        let instruments = master.instruments().cloned().collect::<Vec<_>>();
-        if instruments != first_instruments {
-            return Err(CurateError::NonCanonicalNormalizedBatch {
-                reason: "cumulative curation inputs contain conflicting instrument masters"
-                    .to_owned(),
-            });
-        }
+        let (calendar, _) = curation_inputs_with_listing_fallback(raw, entry, None)?;
         let provenance = calendar.provenance();
         if provenance.calendar_id != first_provenance.calendar_id
             || provenance.source != first_provenance.source
@@ -1255,6 +1264,41 @@ pub fn curation_inputs_from_raw_entries(
             }
         }
         latest_published_at = latest_published_at.max(provenance.published_at);
+    }
+
+    // A KIS reference document carries no listing date for any instrument, so
+    // the master falls back to its calendar's first session. `chk-holiday` is
+    // normalized to the requested date — the very reason this function merges
+    // calendars — so a per-batch calendar holds exactly one session and that
+    // fallback is batch-local. Comparing masters built that way makes every
+    // multi-date generation fail closed on the shape this function exists to
+    // accept. Derive the fallback from the merged session set instead, so it
+    // is one property of the generation; instruments carrying a real listing
+    // date are unaffected and still compared strictly. A delivery set that
+    // declares no sessions at all (every entry a holiday response) has no
+    // merged session to use, so fall back to the earliest target date rather
+    // than leaving the public API partial.
+    let listing_fallback = sessions
+        .iter()
+        .copied()
+        .min()
+        .or_else(|| entries.iter().map(|entry| entry.date).min())
+        .expect("nonempty entries");
+
+    // Second pass: rebuild every master against that one fallback and require
+    // them to agree.
+    let (_, first_master) =
+        curation_inputs_with_listing_fallback(raw, first, Some(listing_fallback))?;
+    let first_instruments = first_master.instruments().cloned().collect::<Vec<_>>();
+    for entry in entries {
+        let (_, master) =
+            curation_inputs_with_listing_fallback(raw, entry, Some(listing_fallback))?;
+        if master.instruments().cloned().collect::<Vec<_>>() != first_instruments {
+            return Err(CurateError::NonCanonicalNormalizedBatch {
+                reason: "cumulative curation inputs contain conflicting instrument masters"
+                    .to_owned(),
+            });
+        }
     }
 
     let calendar = KrCalendar::build(KrCalendarSpec {
