@@ -1236,6 +1236,58 @@ operator-attestation URI를 쓰는 것은 **설계된 형태가 후자**임을 �
 여기서 멈춘다** — 승인 레코드에 없는 참조로 권리를 등록하는 것을 에이전트가 지어내지 않는다.
 
 
+### 0.28 네 번째 벽 — 코드 계약 테스트와 DB 스키마가 서로 모순한다 (2026-08-23)
+
+소유자가 §4.2-6을 **(a)안 — operator-attestation URI로 등록**으로 확정해 실행했다.
+`data_entitlements`에 두 번째 행을 만들고 활성화했다(`9e3c78cb-…`, ACTIVE,
+`contract_reference = operator-attestation://l1nnx/kis-readonly/2026-08-18`, 문서 해시는
+ADR-0005 그대로 유지해 문서 결속을 지켰다). **함수가 이제 해결된다:**
+
+    select public.resolve_price_dataset_entitlement(
+      'operator-attestation://l1nnx/kis-readonly/2026-08-18','2026-08-18','2026-08-19');
+    -> 9e3c78cb-029b-41d2-89b1-c5641ac63ec1
+
+행이 둘이 되어도 안전한 것을 먼저 확인했다 — `repos/entitlements.rs::load()`는 전체를
+읽어 Vec에 담고, `recommendation/runner.rs:790`은 `EXISTS`이며, 함수는 참조로 필터한다.
+
+**entitlement 벽은 뚫렸고 재검증도 통과해 훨씬 안쪽에서 멈췄다.**
+
+    ERROR: insert or update on table "candidate_price_instrument_coverage"
+           violates foreign key constraint
+           "candidate_price_instrument_coverage_instrument_id_fkey"
+    CONTEXT: PL/pgSQL function public.publish_candidate_price_publication(...) line 161
+
+`candidate_price_instrument_coverage.instrument_id` → `instruments(id)` FK인데
+**`instruments` 테이블이 0행이다.**
+
+**그리고 그 테이블에는 프로덕션 writer가 없다.** `INSERT INTO instruments`는 저장소 전체에서
+**테스트에만** 있다. 유일한 프로덕션 함수 `register_candidate_instruments`
+(`candidate_sink.rs:280`)는 **호출처가 하나도 없다** — 테스트와, 아래 부정 단언뿐이다.
+
+**모순이 명시적으로 코드에 박혀 있다.** `worker.rs:2927`의 계약 테스트 이름이
+`cumulative_recovery_revalidates_blocked_price_and_does_not_require_candidate_catalog`이고
+본문이 단언한다:
+
+    assert!(!function.contains("register_candidate_instruments("));
+
+즉 코드 쪽은 "고정 ETF price dataset은 candidate 카탈로그를 요구하지 않는다"를 **계약으로
+고정**하고 있는데, DB 함수는 `v_inserted = 1`일 때 coverage 행을 넣고 그 FK가 `instruments`를
+요구한다. **테스트 이름이 프로덕션에서 거짓이다.** 이 경로는 출하된 상태 그대로는 완료될 수
+없다 — backfill 경로는 `candidate_sources_enabled`를 명시적으로 금지하므로
+(`run_credentialed_backfill_session_dates_stream`), 카탈로그를 채울 유일한 경로와 상호
+배타적이다.
+
+**고치지 않았다 — 어느 쪽이 권위인지가 결정이다.** (a) price publication이 coverage를 쓰지
+않도록 한다(코드 계약이 맞고 DB 함수가 과하다) (b) 고정 ETF 11종을 `instruments`에 등록하는
+프로덕션 경로를 만든다(DB가 맞고 계약 테스트가 틀렸다) (c) FK를 완화한다 — 이는 coverage가
+지키려던 참조 무결성을 잃는다. §4.2-7로 등재한다.
+
+**오늘 벽 넷을 통과했고 넷 다 같은 성질이었다** — 단일 배치·단일 날짜를 전제한 설계가 둘째
+날에 무너진다(§0.24 listing 폴백, §0.26 calendar source_version), 그리고 한쪽이 참으로
+가정한 것을 다른 쪽이 강제한다(§0.27 참조 불일치, 이 절의 FK). 매번 **가장 가까운 반증을
+먼저 열었고**, 매번 원인을 확정한 뒤에야 다음으로 갔다.
+
+
 ---
 ---
 
@@ -1622,7 +1674,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 증거로 유지하고 새 metadata를 사용해 게이트를 재실행한다. Member 접근과 Live는
 권리 추정으로 넓히지 않고 명시적으로 비활성 상태를 유지한다.
 
-### 4.2 소유자 결정 대기 6건
+### 4.2 소유자 결정 대기 7건
 
 1. **phase-0 골든에 수수료 필드를 넣을지** — 넣는 것은 승인된 기준값을 바꾸는 명시적 재승인 행위라 보류 중
 2. **Phase 4 우선순위** — §4.4 참조
@@ -1675,7 +1727,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    (c) 불변식을 세션 날짜 단위로 완화 — (c)는 원래 지키려던 것을 잃는다. 어느 쪽이든
    "source version"이 무엇을 뜻하는지에 대한 결정이라 원칙 1·4·6에 걸린다.
 
-6. **entitlement `contract_reference`의 권위 (신규, 2026-08-23; §0.27-③, 출시 차단)** —
+6. ~~**entitlement `contract_reference`의 권위**~~ **(a)안으로 해소 (2026-08-23, §0.28)** — operator-attestation URI로 등록해 함수가 해결된다. 아래는 결정 당시 기록 —
    `resolve_price_dataset_entitlement`는 Raw가 citing하는 참조와 DB `contract_reference`의
    정확 일치를 요구하는데, 전자는 `operator-attestation://l1nnx/kis-readonly/2026-08-18`,
    후자는 승인 레코드의 `document_reference`인 `repo://docs/decisions/0005-...md`다.
@@ -1684,6 +1736,14 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    이틀을 살린다 (b) `RESEARCH_ENTITLEMENT_REFERENCE`를 repo:// 로 변경 — 앞으로만 유효하고
    08-18·08-19는 영구 미발행 (c) 두 역할을 별도 필드로 분리. **에이전트가 승인 레코드에 없는
    참조로 권리를 등록하지 않는다.**
+
+7. **`instruments` 카탈로그와 price coverage FK (신규, 2026-08-23; §0.28, 출시 차단)** —
+   `publish_candidate_price_publication`이 `candidate_price_instrument_coverage`에 쓰고 그
+   FK가 `instruments(id)`를 요구하는데 그 테이블은 0행이고 **프로덕션 writer가 없다**
+   (`register_candidate_instruments`는 호출처 0). 반대로 `worker.rs:2927`의 계약 테스트는
+   price 경로가 카탈로그를 요구하지 **않는다**고 단언한다. 코드 계약과 DB 스키마 중
+   어느 쪽이 권위인지가 결정이다. 후보 (a) price publication이 coverage를 쓰지 않게
+   (b) 고정 ETF 11종 등록 경로 신설 (c) FK 완화 — (c)는 coverage의 참조 무결성을 잃는다.
 
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
