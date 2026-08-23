@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_DAILY_RANGE,
-    PROVIDER_KIS_DAILY_RANGE_NORMALIZED, ResponseKind, StoredFile,
+    PROVIDER_KIS_DAILY_RANGE_NORMALIZED, RequestMetadata, ResponseKind, StoredFile,
 };
 use crate::normalize::bonus_split_factor_from_percent;
 use crate::providers::kis::{KR_ETF_CORE_SYMBOLS, KisActionSpec, kis_action_spec};
@@ -64,6 +64,18 @@ pub const REQUIRED_ACTION_KINDS: [&str; 7] = [
 
 const STAGE4A_ENDPOINT: &str = "kis.range.normalized/kis-daily-range-to-session-bars-v2/bars";
 const STAGE4A_DATASET_KIND: &str = "kis-daily-range-bars";
+const DAILY_RANGE_ENDPOINT: &str =
+    "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice";
+const DAILY_RANGE_TR_ID: &str = "FHKST03010100";
+const HISTORICAL_PRICE_ONLY_BETA_WINDOW_COUNT: usize = 17;
+const STAGE5_QUERY_KEYS: [&str; 6] = [
+    "FID_COND_MRKT_DIV_CODE",
+    "FID_INPUT_ISCD",
+    "FID_INPUT_DATE_1",
+    "FID_INPUT_DATE_2",
+    "FID_PERIOD_DIV_CODE",
+    "FID_ORG_ADJ_PRC",
+];
 const PIT_MODE: &str = "acquisition-time-vendor-snapshot";
 const APPROVED_EVIDENCE_REGISTRY_BYTES: &[u8] =
     include_bytes!("../../../configs/evidence/kis-range-canonical-approved-manifests.json");
@@ -468,6 +480,63 @@ impl HistoricalPriceOnlyBetaInput {
 
     pub fn actions(&self) -> &[RangeAction] {
         &self.actions
+    }
+}
+
+/// Metadata-only pins discovered from committed Raw manifests.
+///
+/// This accessor deliberately contains no file names, requests, or response
+/// bytes, and it is not serializable.  Discovery is a candidate seam only:
+/// the returned pins still require explicit owner review and the separate
+/// byte-reading verifier before they can become an authenticated input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoricalPriceOnlyBetaPins {
+    contract: &'static str,
+    range_start: TradingDate,
+    range_end: TradingDate,
+    source_batch_id: BatchId,
+    source_manifest_hash: ContentHash,
+    source_file_count: usize,
+    action_batch_id: BatchId,
+    action_manifest_hash: ContentHash,
+    action_file_count: usize,
+}
+
+impl HistoricalPriceOnlyBetaPins {
+    pub fn contract(&self) -> &'static str {
+        self.contract
+    }
+
+    pub fn range_start(&self) -> TradingDate {
+        self.range_start
+    }
+
+    pub fn range_end(&self) -> TradingDate {
+        self.range_end
+    }
+
+    pub fn source_batch_id(&self) -> BatchId {
+        self.source_batch_id
+    }
+
+    pub fn source_manifest_hash(&self) -> &ContentHash {
+        &self.source_manifest_hash
+    }
+
+    pub fn source_file_count(&self) -> usize {
+        self.source_file_count
+    }
+
+    pub fn action_batch_id(&self) -> BatchId {
+        self.action_batch_id
+    }
+
+    pub fn action_manifest_hash(&self) -> &ContentHash {
+        &self.action_manifest_hash
+    }
+
+    pub fn action_file_count(&self) -> usize {
+        self.action_file_count
     }
 }
 
@@ -1260,6 +1329,17 @@ fn load_action_evidence(
     range_start: TradingDate,
     range_end: TradingDate,
 ) -> Result<ActionCoverageEvidence, RangeCanonicalError> {
+    let entries = raw.read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)?;
+    load_action_evidence_from_entries(raw, &entries, refs, range_start, range_end)
+}
+
+fn load_action_evidence_from_entries(
+    raw: &RawStore,
+    entries: &[ManifestEntry],
+    refs: &[EvidenceActionRef],
+    range_start: TradingDate,
+    range_end: TradingDate,
+) -> Result<ActionCoverageEvidence, RangeCanonicalError> {
     if refs.len() != REQUIRED_ACTION_KINDS.len() {
         return Err(RangeCanonicalError::MissingActionEvidence {
             reason: "package must pin exactly one Raw file for each of the seven KSD classes"
@@ -1288,9 +1368,8 @@ fn load_action_evidence(
             reason: "all action files must come from one pinned immutable Raw manifest".to_owned(),
         });
     }
-    let entries = raw.read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)?;
     let entry = entries
-        .into_iter()
+        .iter()
         .find(|candidate| candidate.batch_id == raw_batch_id)
         .ok_or_else(|| RangeCanonicalError::ActionEvidence {
             reason: "pinned KIS action Raw batch is absent".to_owned(),
@@ -1306,7 +1385,7 @@ fn load_action_evidence(
             reason: "action Raw batch has unexpected mode or file count".to_owned(),
         });
     }
-    let stored = raw.read_batch_bytes(PROVIDER_KIS, MARKET_KR, &entry)?;
+    let stored = raw.read_batch_bytes(PROVIDER_KIS, MARKET_KR, entry)?;
     let mut files = Vec::with_capacity(refs.len());
     let mut actions = Vec::new();
     for item in refs {
@@ -1719,6 +1798,208 @@ fn approved_historical_beta_scope() -> Result<HistoricalBetaVerificationScope, R
     })
 }
 
+fn historical_beta_contract_error(reason: &'static str) -> RangeCanonicalError {
+    RangeCanonicalError::HistoricalBetaContract {
+        reason: reason.to_owned(),
+    }
+}
+
+fn has_fixed_stage5_headers(request: &RequestMetadata) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut has_tr_id = false;
+    let mut has_tr_cont = false;
+    for (key, value) in &request.headers {
+        let normalized = key.to_ascii_lowercase();
+        if !matches!(
+            normalized.as_str(),
+            "authorization" | "appkey" | "appsecret" | "tr_id" | "tr_cont"
+        ) || !seen.insert(normalized.clone())
+        {
+            return false;
+        }
+        match normalized.as_str() {
+            "tr_id" => {
+                if value != DAILY_RANGE_TR_ID {
+                    return false;
+                }
+                has_tr_id = true;
+            }
+            "tr_cont" => {
+                if !value.is_empty() {
+                    return false;
+                }
+                has_tr_cont = true;
+            }
+            "authorization" | "appkey" | "appsecret" => {
+                if value != "[REDACTED]" {
+                    return false;
+                }
+            }
+            _ => unreachable!("header allowlist checked above"),
+        }
+    }
+    seen.len() == 5 && has_tr_id && has_tr_cont
+}
+
+fn validate_fixed_stage5_source_metadata(
+    entry: &ManifestEntry,
+    range_start: TradingDate,
+    range_end: TradingDate,
+) -> Result<(), RangeCanonicalError> {
+    if entry.provider != PROVIDER_KIS_DAILY_RANGE
+        || entry.market != MARKET_KR
+        || entry.mode != FetchMode::Credentialed
+        || entry.date != range_start
+        || entry.files.len() != HISTORICAL_PRICE_ONLY_BETA_SOURCE_FILE_COUNT
+    {
+        return Err(historical_beta_contract_error(
+            "fixed Stage5 source manifest scope, mode, or file count is invalid",
+        ));
+    }
+
+    let expected_start = kis_date(range_start);
+    let expected_end = kis_date(range_end);
+    for (symbol_index, symbol) in KR_ETF_CORE_SYMBOLS.iter().enumerate() {
+        let mut previous_window_end = None;
+        for window in 1..=HISTORICAL_PRICE_ONLY_BETA_WINDOW_COUNT {
+            let file_index = symbol_index * HISTORICAL_PRICE_ONLY_BETA_WINDOW_COUNT + window - 1;
+            let file = entry.files.get(file_index).ok_or_else(|| {
+                historical_beta_contract_error("fixed Stage5 source file order is incomplete")
+            })?;
+            let expected_file_name =
+                format!("daily-bars-range-window-{window}-{symbol}-page-01.json");
+            if file.file_name != expected_file_name
+                || file.kind != ResponseKind::Bars
+                || file.request.mode != FetchMode::Credentialed
+                || file.request.endpoint != DAILY_RANGE_ENDPOINT
+                || !has_fixed_stage5_headers(&file.request)
+            {
+                return Err(historical_beta_contract_error(
+                    "fixed Stage5 source file metadata is outside the contract",
+                ));
+            }
+
+            let query = query_map(&file.request.query).map_err(|_| {
+                historical_beta_contract_error("fixed Stage5 source query metadata is invalid")
+            })?;
+            if query.len() != STAGE5_QUERY_KEYS.len()
+                || STAGE5_QUERY_KEYS
+                    .iter()
+                    .any(|key| !query.contains_key(*key))
+                || query.get("FID_COND_MRKT_DIV_CODE").map(String::as_str) != Some("J")
+                || query.get("FID_INPUT_ISCD").map(String::as_str) != Some(*symbol)
+                || query.get("FID_INPUT_DATE_1").map(String::as_str)
+                    != Some(expected_start.as_str())
+                || query.get("FID_PERIOD_DIV_CODE").map(String::as_str) != Some("D")
+                || query.get("FID_ORG_ADJ_PRC").map(String::as_str) != Some("1")
+            {
+                return Err(historical_beta_contract_error(
+                    "fixed Stage5 source query keys or values are invalid",
+                ));
+            }
+            let Some(end_value) = query.get("FID_INPUT_DATE_2") else {
+                return Err(historical_beta_contract_error(
+                    "fixed Stage5 source end-date query is missing",
+                ));
+            };
+            if end_value.len() != 8 || !end_value.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(historical_beta_contract_error(
+                    "fixed Stage5 source end-date query is not compact",
+                ));
+            }
+            let Some(window_end) = parse_kis_date(end_value) else {
+                return Err(historical_beta_contract_error(
+                    "fixed Stage5 source end-date query is not a date",
+                ));
+            };
+            if window_end < range_start || window_end > range_end {
+                return Err(historical_beta_contract_error(
+                    "fixed Stage5 source end-date query is outside the beta range",
+                ));
+            }
+            if window == 1 {
+                if end_value != &expected_end {
+                    return Err(historical_beta_contract_error(
+                        "fixed Stage5 first window does not end at the beta end",
+                    ));
+                }
+            } else if previous_window_end.is_some_and(|previous| window_end >= previous) {
+                return Err(historical_beta_contract_error(
+                    "fixed Stage5 window end dates are not strictly decreasing",
+                ));
+            }
+            previous_window_end = Some(window_end);
+        }
+    }
+    Ok(())
+}
+
+fn find_fixed_stage5_source(
+    entries: &[ManifestEntry],
+    expected_batch_id: BatchId,
+    range_start: TradingDate,
+    range_end: TradingDate,
+) -> Result<&ManifestEntry, RangeCanonicalError> {
+    let mut fixed_entries = entries
+        .iter()
+        .filter(|entry| entry.batch_id == expected_batch_id);
+    let entry = fixed_entries.next().ok_or_else(|| {
+        historical_beta_contract_error("the contractual Stage5 source batch is absent")
+    })?;
+    if fixed_entries.next().is_some() {
+        return Err(historical_beta_contract_error(
+            "the contractual Stage5 source batch is not unique",
+        ));
+    }
+    validate_fixed_stage5_source_metadata(entry, range_start, range_end)?;
+    Ok(entry)
+}
+
+/// Discover candidate pins from committed manifest metadata only.
+///
+/// This function never calls [`RawStore::read_batch_bytes`], never parses a
+/// response body, and never writes or reconciles Raw.  Its result is an
+/// unapproved metadata candidate; the explicit verifier remains the second
+/// owner-reviewed step.
+pub fn discover_historical_price_only_beta_pins(
+    raw: &RawStore,
+) -> Result<HistoricalPriceOnlyBetaPins, RangeCanonicalError> {
+    let scope = approved_historical_beta_scope()?;
+    let source_entries = raw.read_committed_manifest(PROVIDER_KIS_DAILY_RANGE, MARKET_KR)?;
+    let source_entry = find_fixed_stage5_source(
+        &source_entries,
+        scope.source_batch_id,
+        scope.range_start,
+        scope.range_end,
+    )?;
+    let source_manifest_hash = ContentHash::from_bytes(&serde_json::to_vec(source_entry)?);
+
+    let action_entries = raw.read_committed_manifest(PROVIDER_KIS, MARKET_KR)?;
+    let action_refs = find_matching_action_evidence_in_entries(
+        &action_entries,
+        scope.range_start,
+        scope.range_end,
+    )?;
+    let action_pin =
+        action_refs
+            .first()
+            .ok_or_else(|| RangeCanonicalError::MissingActionEvidence {
+                reason: "the matching KSD action candidate has no files".to_owned(),
+            })?;
+
+    Ok(HistoricalPriceOnlyBetaPins {
+        contract: HISTORICAL_PRICE_ONLY_BETA_CONTRACT,
+        range_start: scope.range_start,
+        range_end: scope.range_end,
+        source_batch_id: source_entry.batch_id,
+        source_manifest_hash,
+        source_file_count: source_entry.files.len(),
+        action_batch_id: action_pin.raw_batch_id,
+        action_manifest_hash: action_pin.raw_manifest_hash.clone(),
+        action_file_count: action_refs.len(),
+    })
+}
+
 /// Authenticate the exact owner-beta Stage5 and KSD inputs from immutable Raw.
 ///
 /// Both hashes are independently reviewed pins; discovering a convenient
@@ -1768,7 +2049,7 @@ fn verify_historical_price_only_beta_input_for_scope(
         });
     }
 
-    let source_entries = raw.read_reconciled_manifest(PROVIDER_KIS_DAILY_RANGE, MARKET_KR)?;
+    let source_entries = raw.read_committed_manifest(PROVIDER_KIS_DAILY_RANGE, MARKET_KR)?;
     let mut source_matches = source_entries
         .into_iter()
         .filter(|entry| entry.batch_id == scope.source_batch_id);
@@ -1797,7 +2078,7 @@ fn verify_historical_price_only_beta_input_for_scope(
     let source_files = raw.read_batch_bytes(PROVIDER_KIS_DAILY_RANGE, MARKET_KR, &source_entry)?;
 
     let normalized_entries =
-        raw.read_reconciled_manifest(PROVIDER_KIS_DAILY_RANGE_NORMALIZED, MARKET_KR)?;
+        raw.read_committed_manifest(PROVIDER_KIS_DAILY_RANGE_NORMALIZED, MARKET_KR)?;
     let normalized_by_id = normalized_entries
         .into_iter()
         .map(|entry| (entry.batch_id, entry))
@@ -2568,9 +2849,9 @@ fn load_pinned_action_coverage(
     range_start: TradingDate,
     range_end: TradingDate,
 ) -> Result<ActionCoverageEvidence, RangeCanonicalError> {
-    let entries = raw.read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)?;
+    let entries = raw.read_committed_manifest(PROVIDER_KIS, MARKET_KR)?;
     let mut matches = Vec::new();
-    for entry in entries {
+    for entry in &entries {
         if ContentHash::from_bytes(&serde_json::to_vec(&entry)?) == *expected_manifest_hash {
             matches.push(entry);
         }
@@ -2620,7 +2901,7 @@ fn load_pinned_action_coverage(
             size_bytes: file.size_bytes,
         })
         .collect::<Vec<_>>();
-    load_action_evidence(raw, &refs, range_start, range_end)
+    load_action_evidence_from_entries(raw, &entries, &refs, range_start, range_end)
 }
 
 /// Finds the one immutable Raw KIS batch whose files are exactly the seven
@@ -2637,8 +2918,16 @@ fn find_matching_action_evidence(
     range_end: TradingDate,
 ) -> Result<Vec<EvidenceActionRef>, RangeCanonicalError> {
     let entries = raw.read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)?;
+    find_matching_action_evidence_in_entries(&entries, range_start, range_end)
+}
+
+fn find_matching_action_evidence_in_entries(
+    entries: &[ManifestEntry],
+    range_start: TradingDate,
+    range_end: TradingDate,
+) -> Result<Vec<EvidenceActionRef>, RangeCanonicalError> {
     let mut candidates: Vec<Vec<EvidenceActionRef>> = Vec::new();
-    for entry in &entries {
+    for entry in entries {
         // `load_action_evidence` requires the pinned batch to hold exactly
         // one file per KSD class and nothing else, so a batch with extra
         // files -- the daily EOD bundle, or a paginated KSD range batch --
@@ -2646,7 +2935,10 @@ fn find_matching_action_evidence(
         // batch out of the candidate set entirely, instead of letting it be
         // selected and then rejected, or counted toward ambiguity against a
         // batch that is genuinely loadable.
-        if entry.mode != FetchMode::Credentialed || entry.files.len() != REQUIRED_ACTION_KINDS.len()
+        if entry.provider != PROVIDER_KIS
+            || entry.market != MARKET_KR
+            || entry.mode != FetchMode::Credentialed
+            || entry.files.len() != REQUIRED_ACTION_KINDS.len()
         {
             continue;
         }

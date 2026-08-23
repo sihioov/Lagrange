@@ -172,6 +172,7 @@ fn map_write_error(error: market_data::RangeCanonicalError) -> Failure {
         E::UnsupportedLegacyStage4A { .. } => Failure("unsupported_legacy_stage4a"),
         E::InvalidLineage { .. } => Failure("invalid_lineage"),
         E::InvalidSession { .. } => Failure("invalid_session"),
+        E::HistoricalBetaContract { .. } => Failure("historical_beta_contract"),
         E::Store(_) => Failure("raw_store_error"),
         E::Serialization(_) => Failure("serialization_error"),
         E::EvidencePackage { .. } => Failure("evidence_package_error"),

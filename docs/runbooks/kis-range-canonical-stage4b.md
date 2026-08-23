@@ -82,6 +82,51 @@ issues, and rejects every other nonempty action class. Success yields an
 opaque, non-serializable `HistoricalPriceOnlyBetaInput`; callers cannot create
 or deserialize one without `RawStore` verification.
 
+### Candidate-only historical pin discovery
+
+`discover_historical_price_only_beta_pins(&RawStore)` and the provider-free
+`kis-historical-price-beta-pin-discover --raw-root ...` command are a
+metadata-only candidate seam before the explicit verifier. Discovery reads
+only the already committed source and KIS action manifest rows through
+`read_committed_manifest`; it does not reconcile orphan batches, read any
+response body, call a body reader, create a Raw directory, append a manifest,
+or approve a pin.
+
+Discovery first selects exactly one committed entry whose batch ID is the
+contractual `HISTORICAL_PRICE_ONLY_BETA_SOURCE_BATCH_ID`; unrelated 187-file
+batches never create source ambiguity. It then validates that selected entry's
+exact Stage5 metadata shape: `kis-daily-range/kr`, credentialed mode, and 187
+`Bars` files in canonical producer order — each fixed `KR_ETF_CORE_SYMBOLS`
+symbol in order, followed by unpadded windows `1..=17` — with filenames
+`daily-bars-range-window-{window}-{symbol}-page-01.json`. Every request is
+credentialed, uses the exact daily-bars endpoint, has one
+`tr_id=FHKST03010100` and one blank `tr_cont`, and has exactly the six
+documented query keys: market `J`, the exact symbol, compact beta start,
+compact `FID_INPUT_DATE_2` within the beta range, period `D`, and original
+price `1`. Duplicate or extra query/header keys fail closed. Each symbol's
+first window ends at the beta end and later metadata end dates strictly
+decrease. These are metadata-only checks; discovery does not read bodies or
+claim the body-dependent exact oldest-date progression, which remains the
+explicit verifier's responsibility.
+
+There must also be exactly one matching credentialed KIS action batch for
+`2020-01-31..2026-08-19`: seven initial-page files, one for each allowlisted
+KSD class, with exact endpoint/query/TR metadata, blank continuation, and no
+duplicate, extra, or continuation file. The returned non-serializable accessor
+exposes only the fixed contract/range and the two batch
+ID/manifest-hash/file-count triples. It is a candidate, not an approval.
+
+The discovery CLI emits one candidate line only after the complete metadata
+match, with `body_bytes_read=false`, `raw_writes=false`, `approved=false`, and
+`review_required=true`. Failure output contains only a static reason code and
+never paths, names, queries, response text, entitlements, credentials, or
+account/order data. A tampered or missing response body can therefore remain
+undetected at discovery; the separately invoked explicit verifier must read
+and authenticate the reviewed hashes and fails closed on that body condition.
+An owner must review the candidate line and independently confirm both hashes
+before invoking `kis-historical-price-beta-verify`; discovery itself grants no
+publication, materialization, or approval authority.
+
 The provider-free command
 `kis-historical-price-beta-verify --raw-root ... --stage5-manifest-sha256 ...
 --action-manifest-sha256 ...` exposes this check. Its output is limited to

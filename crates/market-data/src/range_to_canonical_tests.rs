@@ -1,6 +1,8 @@
 use super::load_with_approved_pin_for_test;
 use std::fs;
-use std::path::Path;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 
 use crate::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_DAILY_RANGE,
@@ -11,8 +13,11 @@ use crate::range_normalize::{
     RangeNormalizationSourceFile, RangeNormalizationSourceRow,
 };
 use crate::range_to_canonical::{
+    HISTORICAL_PRICE_ONLY_BETA_END, HISTORICAL_PRICE_ONLY_BETA_SOURCE_BATCH_ID,
+    HISTORICAL_PRICE_ONLY_BETA_SOURCE_FILE_COUNT, HISTORICAL_PRICE_ONLY_BETA_START,
     HistoricalBetaVerificationScope, RANGE_CANONICAL_BRIDGE_VERSION, REQUIRED_ACTION_KINDS,
     RangeAction, RangeCanonicalError, build_range_canonical_candidate,
+    discover_historical_price_only_beta_pins, verify_historical_price_only_beta_input,
     verify_historical_price_only_beta_input_for_scope, write_evidence_package,
 };
 use crate::{BatchSpec, ManifestEntry, RawStore};
@@ -1283,4 +1288,699 @@ fn legacy_stage4a_v1_is_rejected_before_deserialization() {
             ..
         })
     ));
+}
+
+fn beta_start() -> TradingDate {
+    TradingDate::parse(HISTORICAL_PRICE_ONLY_BETA_START).unwrap()
+}
+
+fn beta_end() -> TradingDate {
+    TradingDate::parse(HISTORICAL_PRICE_ONLY_BETA_END).unwrap()
+}
+
+fn fixed_stage5_batch_id() -> BatchId {
+    HISTORICAL_PRICE_ONLY_BETA_SOURCE_BATCH_ID.parse().unwrap()
+}
+
+#[derive(Clone, Copy)]
+enum SourceMutation {
+    Valid,
+    WrongQuery,
+    MissingQuery,
+    WrongSymbol,
+    WrongWindow,
+    WrongFilename,
+    WrongDateOrder,
+    UnredactedHeader,
+    WrongManifestDate,
+}
+
+fn fixed_stage5_window_end(window: usize) -> String {
+    format!("202608{:02}", 20 - window)
+}
+
+fn fixed_stage5_request(symbol: &str, window: usize) -> RequestMetadata {
+    RequestMetadata {
+        endpoint: "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice".to_owned(),
+        query: vec![
+            ("FID_COND_MRKT_DIV_CODE".to_owned(), "J".to_owned()),
+            ("FID_INPUT_ISCD".to_owned(), symbol.to_owned()),
+            ("FID_INPUT_DATE_1".to_owned(), "20200131".to_owned()),
+            (
+                "FID_INPUT_DATE_2".to_owned(),
+                fixed_stage5_window_end(window),
+            ),
+            ("FID_PERIOD_DIV_CODE".to_owned(), "D".to_owned()),
+            ("FID_ORG_ADJ_PRC".to_owned(), "1".to_owned()),
+        ],
+        headers: vec![
+            ("authorization".to_owned(), "[REDACTED]".to_owned()),
+            ("appkey".to_owned(), "[REDACTED]".to_owned()),
+            ("appsecret".to_owned(), "[REDACTED]".to_owned()),
+            ("tr_id".to_owned(), "FHKST03010100".to_owned()),
+            ("tr_cont".to_owned(), String::new()),
+        ],
+        mode: FetchMode::Credentialed,
+    }
+}
+
+fn set_source_query(envelope: &mut RawEnvelope, key: &str, value: &str) {
+    envelope
+        .request
+        .query
+        .iter_mut()
+        .find(|(candidate, _)| candidate == key)
+        .unwrap()
+        .1 = value.to_owned();
+}
+
+fn apply_source_mutation(envelopes: &mut [RawEnvelope], mutation: SourceMutation) {
+    match mutation {
+        SourceMutation::Valid => {}
+        SourceMutation::WrongQuery => {
+            set_source_query(&mut envelopes[0], "FID_COND_MRKT_DIV_CODE", "U");
+        }
+        SourceMutation::MissingQuery => envelopes[0]
+            .request
+            .query
+            .retain(|(key, _)| key != "FID_INPUT_DATE_2"),
+        SourceMutation::WrongSymbol => {
+            set_source_query(&mut envelopes[0], "FID_INPUT_ISCD", "000001");
+        }
+        SourceMutation::WrongWindow => envelopes.swap(0, 1),
+        SourceMutation::WrongFilename => {
+            envelopes[0].file_name = "daily-bars-range-window-1-069500-page-02.json".to_owned();
+        }
+        SourceMutation::WrongDateOrder => {
+            set_source_query(&mut envelopes[1], "FID_INPUT_DATE_2", "20260819");
+        }
+        SourceMutation::UnredactedHeader => {
+            envelopes[0]
+                .request
+                .headers
+                .iter_mut()
+                .find(|(key, _)| key == "appkey")
+                .unwrap()
+                .1 = "SENTINEL_UNREDACTED_KEY".to_owned();
+        }
+        SourceMutation::WrongManifestDate => {}
+    }
+}
+
+fn store_fixed_source_shape(
+    raw: &RawStore,
+    batch_id: BatchId,
+    file_count: usize,
+    mode: FetchMode,
+) -> ManifestEntry {
+    store_fixed_source_shape_with_mutation(raw, batch_id, file_count, mode, SourceMutation::Valid)
+}
+
+fn store_fixed_source_shape_with_mutation(
+    raw: &RawStore,
+    batch_id: BatchId,
+    file_count: usize,
+    mode: FetchMode,
+    mutation: SourceMutation,
+) -> ManifestEntry {
+    assert!(file_count <= HISTORICAL_PRICE_ONLY_BETA_SOURCE_FILE_COUNT);
+    let mut envelopes = Vec::with_capacity(file_count);
+    for symbol in crate::KR_ETF_CORE_SYMBOLS.iter().copied() {
+        for window in 1..=17 {
+            let request = fixed_stage5_request(symbol, window);
+            envelopes.push(RawEnvelope::new(
+                batch_id,
+                ResponseKind::Bars,
+                format!("daily-bars-range-window-{window}-{symbol}-page-01.json"),
+                format!("SENTINEL_SOURCE_BODY_{symbol}_{window}").into_bytes(),
+                timestamp(ACQUIRED),
+                request,
+            ));
+        }
+    }
+    envelopes.truncate(file_count);
+    apply_source_mutation(&mut envelopes, mutation);
+    for envelope in &mut envelopes {
+        envelope.request.mode = mode;
+    }
+    let date = if matches!(mutation, SourceMutation::WrongManifestDate) {
+        TradingDate::parse("2020-02-03").unwrap()
+    } else {
+        date()
+    };
+    raw.store_batch(
+        &BatchSpec {
+            provider: PROVIDER_KIS_DAILY_RANGE,
+            market: MARKET_KR,
+            date: &date,
+            batch_id,
+            entitlement_reference: Some("SENTINEL_ENTITLEMENT"),
+            mode,
+        },
+        &envelopes,
+    )
+    .unwrap()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn store_beta_action_shape(
+    raw: &RawStore,
+    batch_id: BatchId,
+    range_start: TradingDate,
+    range_end: TradingDate,
+    mode: FetchMode,
+    wrong_tr_id: bool,
+    wrong_continuation: bool,
+    duplicate_kind: bool,
+    extra_file: bool,
+) -> ManifestEntry {
+    let mut envelopes = REQUIRED_ACTION_KINDS
+        .iter()
+        .enumerate()
+        .map(|(index, kind)| {
+            let actual_kind = if duplicate_kind && index + 1 == REQUIRED_ACTION_KINDS.len() {
+                "bonus-issue"
+            } else {
+                *kind
+            };
+            let mut request = action_request(actual_kind, range_start, range_end);
+            request.mode = mode;
+            if wrong_tr_id && index == 0 {
+                request
+                    .headers
+                    .iter_mut()
+                    .find(|(key, _)| key.eq_ignore_ascii_case("tr_id"))
+                    .unwrap()
+                    .1 = "SENTINEL_WRONG_TR".to_owned();
+            }
+            if wrong_continuation && index == 0 {
+                request
+                    .headers
+                    .iter_mut()
+                    .find(|(key, _)| key.eq_ignore_ascii_case("tr_cont"))
+                    .unwrap()
+                    .1 = "M".to_owned();
+            }
+            RawEnvelope::new(
+                batch_id,
+                ResponseKind::CorporateActions,
+                format!("candidate-action-{index:02}-{actual_kind}.json"),
+                b"SENTINEL_ACTION_BODY".to_vec(),
+                timestamp(ACQUIRED),
+                request,
+            )
+        })
+        .collect::<Vec<_>>();
+    if extra_file {
+        envelopes.push(RawEnvelope::new(
+            batch_id,
+            ResponseKind::Bars,
+            "candidate-action-extra.json",
+            b"SENTINEL_EXTRA_BODY".to_vec(),
+            timestamp(ACQUIRED),
+            source_request("069500"),
+        ));
+    }
+    let date = date();
+    raw.store_batch(
+        &BatchSpec {
+            provider: PROVIDER_KIS,
+            market: MARKET_KR,
+            date: &date,
+            batch_id,
+            entitlement_reference: Some("SENTINEL_ENTITLEMENT"),
+            mode,
+        },
+        &envelopes,
+    )
+    .unwrap()
+}
+
+fn new_batch_id() -> BatchId {
+    BatchId::from_uuid(Uuid::new_v4())
+}
+
+#[test]
+fn historical_beta_discovery_returns_metadata_candidate_without_body_reads_or_writes() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source =
+        store_fixed_source_shape(&raw, fixed_stage5_batch_id(), 187, FetchMode::Credentialed);
+    let actions = store_beta_action_shape(
+        &raw,
+        new_batch_id(),
+        beta_start(),
+        beta_end(),
+        FetchMode::Credentialed,
+        false,
+        false,
+        false,
+        false,
+    );
+    let source_manifest_path = raw.manifest_path(PROVIDER_KIS_DAILY_RANGE, MARKET_KR);
+    let action_manifest_path = raw.manifest_path(PROVIDER_KIS, MARKET_KR);
+    let source_manifest_before = fs::read(&source_manifest_path).unwrap();
+    let action_manifest_before = fs::read(&action_manifest_path).unwrap();
+    let normalized_manifest_path =
+        raw.manifest_path(PROVIDER_KIS_DAILY_RANGE_NORMALIZED, MARKET_KR);
+
+    let pins = discover_historical_price_only_beta_pins(&raw).unwrap();
+
+    assert_eq!(pins.contract(), "kis-historical-price-only-beta-v1");
+    assert_eq!(pins.range_start(), beta_start());
+    assert_eq!(pins.range_end(), beta_end());
+    assert_eq!(pins.source_batch_id(), source.batch_id);
+    assert_eq!(pins.source_file_count(), 187);
+    assert_eq!(
+        pins.source_manifest_hash(),
+        &ContentHash::from_bytes(&serde_json::to_vec(&source).unwrap())
+    );
+    assert_eq!(pins.action_batch_id(), actions.batch_id);
+    assert_eq!(pins.action_file_count(), REQUIRED_ACTION_KINDS.len());
+    assert_eq!(
+        pins.action_manifest_hash(),
+        &ContentHash::from_bytes(&serde_json::to_vec(&actions).unwrap())
+    );
+    assert_eq!(
+        fs::read(&source_manifest_path).unwrap(),
+        source_manifest_before
+    );
+    assert_eq!(
+        fs::read(&action_manifest_path).unwrap(),
+        action_manifest_before
+    );
+    assert!(!normalized_manifest_path.exists());
+}
+
+#[test]
+fn historical_beta_discovery_rejects_missing_contractual_source_batch() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    store_fixed_source_shape(&raw, new_batch_id(), 187, FetchMode::Credentialed);
+    store_beta_action_shape(
+        &raw,
+        new_batch_id(),
+        beta_start(),
+        beta_end(),
+        FetchMode::Credentialed,
+        false,
+        false,
+        false,
+        false,
+    );
+    assert!(matches!(
+        discover_historical_price_only_beta_pins(&raw),
+        Err(RangeCanonicalError::HistoricalBetaContract { .. })
+    ));
+}
+
+#[test]
+fn historical_beta_discovery_ignores_unrelated_valid_source_batch() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let fixed =
+        store_fixed_source_shape(&raw, fixed_stage5_batch_id(), 187, FetchMode::Credentialed);
+    store_fixed_source_shape(&raw, new_batch_id(), 187, FetchMode::Credentialed);
+    store_beta_action_shape(
+        &raw,
+        new_batch_id(),
+        beta_start(),
+        beta_end(),
+        FetchMode::Credentialed,
+        false,
+        false,
+        false,
+        false,
+    );
+
+    let pins = discover_historical_price_only_beta_pins(&raw).unwrap();
+    assert_eq!(pins.source_batch_id(), fixed.batch_id);
+}
+
+#[test]
+fn historical_beta_discovery_rejects_invalid_fixed_source_metadata() {
+    let cases = [
+        (
+            "wrong-count",
+            186,
+            FetchMode::Credentialed,
+            SourceMutation::Valid,
+        ),
+        (
+            "wrong-mode",
+            187,
+            FetchMode::Synthetic,
+            SourceMutation::Valid,
+        ),
+        (
+            "wrong-query",
+            187,
+            FetchMode::Credentialed,
+            SourceMutation::WrongQuery,
+        ),
+        (
+            "missing-query",
+            187,
+            FetchMode::Credentialed,
+            SourceMutation::MissingQuery,
+        ),
+        (
+            "wrong-symbol",
+            187,
+            FetchMode::Credentialed,
+            SourceMutation::WrongSymbol,
+        ),
+        (
+            "wrong-window",
+            187,
+            FetchMode::Credentialed,
+            SourceMutation::WrongWindow,
+        ),
+        (
+            "wrong-filename",
+            187,
+            FetchMode::Credentialed,
+            SourceMutation::WrongFilename,
+        ),
+        (
+            "wrong-date-order",
+            187,
+            FetchMode::Credentialed,
+            SourceMutation::WrongDateOrder,
+        ),
+        (
+            "unredacted-header",
+            187,
+            FetchMode::Credentialed,
+            SourceMutation::UnredactedHeader,
+        ),
+        (
+            "wrong-manifest-date",
+            187,
+            FetchMode::Credentialed,
+            SourceMutation::WrongManifestDate,
+        ),
+    ];
+    for (label, file_count, mode, mutation) in cases {
+        let raw_root = TempDir::new().unwrap();
+        let raw = RawStore::new(raw_root.path());
+        store_fixed_source_shape_with_mutation(
+            &raw,
+            fixed_stage5_batch_id(),
+            file_count,
+            mode,
+            mutation,
+        );
+        store_beta_action_shape(
+            &raw,
+            new_batch_id(),
+            beta_start(),
+            beta_end(),
+            FetchMode::Credentialed,
+            false,
+            false,
+            false,
+            false,
+        );
+        let result = discover_historical_price_only_beta_pins(&raw);
+        assert!(
+            matches!(
+                result,
+                Err(RangeCanonicalError::HistoricalBetaContract { .. })
+            ),
+            "{label}: unexpected discovery result: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn historical_beta_discovery_rejects_zero_or_multiple_and_invalid_action_candidates() {
+    let invalid_cases = [
+        (
+            "wrong-range",
+            beta_start(),
+            beta_start(),
+            FetchMode::Credentialed,
+            false,
+            false,
+            false,
+            false,
+        ),
+        (
+            "wrong-mode",
+            beta_start(),
+            beta_end(),
+            FetchMode::Synthetic,
+            false,
+            false,
+            false,
+            false,
+        ),
+        (
+            "wrong-tr",
+            beta_start(),
+            beta_end(),
+            FetchMode::Credentialed,
+            true,
+            false,
+            false,
+            false,
+        ),
+        (
+            "continuation",
+            beta_start(),
+            beta_end(),
+            FetchMode::Credentialed,
+            false,
+            true,
+            false,
+            false,
+        ),
+        (
+            "duplicate",
+            beta_start(),
+            beta_end(),
+            FetchMode::Credentialed,
+            false,
+            false,
+            true,
+            false,
+        ),
+        (
+            "extra",
+            beta_start(),
+            beta_end(),
+            FetchMode::Credentialed,
+            false,
+            false,
+            false,
+            true,
+        ),
+    ];
+    for (label, start, end, mode, wrong_tr, wrong_continuation, duplicate, extra) in invalid_cases {
+        let raw_root = TempDir::new().unwrap();
+        let raw = RawStore::new(raw_root.path());
+        store_fixed_source_shape(&raw, fixed_stage5_batch_id(), 187, FetchMode::Credentialed);
+        store_beta_action_shape(
+            &raw,
+            new_batch_id(),
+            start,
+            end,
+            mode,
+            wrong_tr,
+            wrong_continuation,
+            duplicate,
+            extra,
+        );
+        let result = discover_historical_price_only_beta_pins(&raw);
+        assert!(
+            matches!(
+                result,
+                Err(RangeCanonicalError::MissingActionEvidence { .. })
+            ),
+            "{label}: unexpected discovery result: {result:?}"
+        );
+    }
+
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    store_fixed_source_shape(&raw, fixed_stage5_batch_id(), 187, FetchMode::Credentialed);
+    store_beta_action_shape(
+        &raw,
+        new_batch_id(),
+        beta_start(),
+        beta_end(),
+        FetchMode::Credentialed,
+        false,
+        false,
+        false,
+        false,
+    );
+    store_beta_action_shape(
+        &raw,
+        new_batch_id(),
+        beta_start(),
+        beta_end(),
+        FetchMode::Credentialed,
+        false,
+        false,
+        false,
+        false,
+    );
+    let result = discover_historical_price_only_beta_pins(&raw);
+    assert!(matches!(
+        result,
+        Err(RangeCanonicalError::MissingActionEvidence { .. })
+    ));
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawTreeNode {
+    path: String,
+    kind: &'static str,
+    mode: u32,
+    regular_file_bytes: Option<Vec<u8>>,
+}
+
+#[cfg(unix)]
+fn raw_tree_snapshot(root: &Path) -> Vec<RawTreeNode> {
+    fn visit(root: &Path, current: &Path, output: &mut Vec<RawTreeNode>) {
+        let metadata = fs::symlink_metadata(current).unwrap();
+        let file_type = metadata.file_type();
+        let kind = if file_type.is_dir() {
+            "directory"
+        } else if file_type.is_file() {
+            "regular-file"
+        } else if file_type.is_symlink() {
+            "symlink"
+        } else {
+            "other"
+        };
+        output.push(RawTreeNode {
+            path: current
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            kind,
+            mode: metadata.permissions().mode(),
+            regular_file_bytes: file_type.is_file().then(|| fs::read(current).unwrap()),
+        });
+        if file_type.is_dir() {
+            let mut children = fs::read_dir(current)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
+            children.sort();
+            for child in children {
+                visit(root, &child, output);
+            }
+        }
+    }
+
+    let mut output = Vec::new();
+    visit(root, root, &mut output);
+    output.sort_by(|left, right| left.path.cmp(&right.path));
+    output
+}
+
+#[cfg(unix)]
+struct BodyBackupEntry {
+    path: PathBuf,
+    bytes: Vec<u8>,
+    mode: u32,
+}
+
+#[cfg(unix)]
+struct BodyBackup {
+    entries: Vec<BodyBackupEntry>,
+}
+
+#[cfg(unix)]
+impl Drop for BodyBackup {
+    fn drop(&mut self) {
+        for entry in &self.entries {
+            let _ = fs::remove_dir(&entry.path);
+            fs::write(&entry.path, &entry.bytes).expect("restore body fixture bytes");
+            fs::set_permissions(&entry.path, fs::Permissions::from_mode(entry.mode))
+                .expect("restore body fixture mode");
+        }
+    }
+}
+
+#[cfg(unix)]
+fn replace_all_body_files_with_controls(
+    raw: &RawStore,
+    source: &ManifestEntry,
+    actions: &ManifestEntry,
+) -> BodyBackup {
+    let mut paths = source
+        .files
+        .iter()
+        .map(|file| {
+            raw.batch_dir(
+                PROVIDER_KIS_DAILY_RANGE,
+                MARKET_KR,
+                &source.date,
+                &source.batch_id,
+            )
+            .join(&file.file_name)
+        })
+        .collect::<Vec<_>>();
+    paths.extend(actions.files.iter().map(|file| {
+        raw.batch_dir(PROVIDER_KIS, MARKET_KR, &actions.date, &actions.batch_id)
+            .join(&file.file_name)
+    }));
+    assert_eq!(
+        paths.len(),
+        HISTORICAL_PRICE_ONLY_BETA_SOURCE_FILE_COUNT + 7
+    );
+
+    let mut entries = Vec::with_capacity(paths.len());
+    for path in paths {
+        let metadata = fs::metadata(&path).unwrap();
+        entries.push(BodyBackupEntry {
+            path: path.clone(),
+            bytes: fs::read(&path).unwrap(),
+            mode: metadata.permissions().mode(),
+        });
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+    }
+    BodyBackup { entries }
+}
+
+#[cfg(unix)]
+#[test]
+fn discovery_reads_no_body_and_writes_no_raw_tree_while_verifier_fails() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source =
+        store_fixed_source_shape(&raw, fixed_stage5_batch_id(), 187, FetchMode::Credentialed);
+    let actions = store_beta_action_shape(
+        &raw,
+        new_batch_id(),
+        beta_start(),
+        beta_end(),
+        FetchMode::Credentialed,
+        false,
+        false,
+        false,
+        false,
+    );
+    let before_controls = raw_tree_snapshot(raw_root.path());
+    let body_backup = replace_all_body_files_with_controls(&raw, &source, &actions);
+    let before_discovery = raw_tree_snapshot(raw_root.path());
+    let pins = discover_historical_price_only_beta_pins(&raw).unwrap();
+    assert_eq!(raw_tree_snapshot(raw_root.path()), before_discovery);
+    let verification = verify_historical_price_only_beta_input(
+        &raw,
+        pins.source_manifest_hash(),
+        pins.action_manifest_hash(),
+    );
+    assert!(verification.is_err());
+    assert_eq!(raw_tree_snapshot(raw_root.path()), before_discovery);
+    drop(body_backup);
+    assert_eq!(raw_tree_snapshot(raw_root.path()), before_controls);
 }
