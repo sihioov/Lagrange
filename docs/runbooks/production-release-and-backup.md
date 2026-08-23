@@ -6,30 +6,56 @@ clean, `/opt/lagrange` capacity is confirmed, and backup sizing is approved.
 
 ## Install an exact release
 
-`deploy-production-release.sh` refuses every tracked change and every untracked
-path except the exact operator-supplied
-`docs/kis_openapi_entiredocs_20260818_030007.xlsx`. It requires `--commit` to
-equal `git rev-parse HEAD`. It uses `git archive`, so
-it never copies the mutable worktree, `.git`, host Raw/Curated, caches, secrets,
-or the untracked KIS XLSX. The Compose `.env` is the sole host-specific addition
-and must be supplied separately as a root-owned mode-0600 regular file.
+`build-production-images.sh` and `deploy-production-release.sh` refuse every
+tracked change and every untracked path except the exact operator-supplied
+`docs/kis_openapi_entiredocs_20260818_030007.xlsx`. `--commit` must equal
+`git rev-parse HEAD`. Deployment uses `git archive`, so it never copies the
+mutable worktree, `.git`, host Raw/Curated, caches, secrets, or the untracked
+KIS XLSX.
+
+This is a single-host, single-platform owner-beta release. Its V2 manifest
+records Docker's exact local immutable `.Id` as `image_id` (`sha256:` plus 64
+lowercase hex), not a `RepoDigest`, registry digest, or multi-architecture
+claim. The manifest scope is exactly these ten locally built serving services:
+
+- `db-role-bootstrap`, `db-migrate`, `api-server`, `web`, `research-worker`
+- `recommendation-runner`, `candidate-runner`, `nt-backtest-worker-1`,
+  `nt-backtest-worker-2`, `paper-scheduler`
+
+Postgres and reverse-proxy are independently content-pinned upstream images and
+are outside this local-image manifest. `research-range-raw` is an
+operator-confirmed historical-capture profile, not an owner-beta serving
+release service; use its dedicated Stage5 runbook. `live-node-owner` and the
+`live` profile remain forbidden and excluded.
+
+The protected Compose `.env` and the V2 manifest are separate root-owned
+mode-0600 regular files. The manifest must also live below a root-owned,
+non-group/other-writable, non-symlink path. The deployer validates that external
+file, copies it once into release staging, and validates the installed copy
+again before atomically changing `current`.
 
 ```bash
 export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
 # Output must be empty or exactly the one allowlisted workbook above.
 git status --porcelain=v1 --untracked-files=all
+
 sudo install -o root -g root -m 0600 deploy/compose/.env \
   /etc/lagrange/compose.env.pending
+sudo install -d -o root -g root -m 0755 /etc/lagrange/release-manifests
+
+sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  scripts/ops/build-production-images.sh --apply \
+  --manifest-file "/etc/lagrange/release-manifests/$LAGRANGE_CODE_COMMIT.manifest"
 
 scripts/ops/deploy-production-release.sh --dry-run \
   --commit "$LAGRANGE_CODE_COMMIT" \
   --env-source /etc/lagrange/compose.env.pending
 sudo scripts/ops/deploy-production-release.sh --apply \
   --commit "$LAGRANGE_CODE_COMMIT" \
-  --env-source /etc/lagrange/compose.env.pending
+  --env-source /etc/lagrange/compose.env.pending \
+  --release-manifest "/etc/lagrange/release-manifests/$LAGRANGE_CODE_COMMIT.manifest"
 sudo scripts/ops/deploy-production-release.sh --check \
-  --commit "$LAGRANGE_CODE_COMMIT" \
-  --env-source /etc/lagrange/compose.env.pending
+  --commit "$LAGRANGE_CODE_COMMIT"
 ```
 
 Each immutable directory is `/opt/lagrange/releases/<commit>`. `current` is an
@@ -39,16 +65,36 @@ Protected TLS and backup configs keep their no-symlink fence and must pin
 `/opt/lagrange/releases/<commit>/deploy/...`; after switching a release,
 customize/check the TLS config for that exact release before renewal activation.
 `/opt/lagrange/bin` stays installer-owned for stable helpers.
-Applying a second commit never overwrites or deletes the first. Roll back with:
+Applying a second commit never overwrites or deletes the first. `--check` and
+`--rollback` use only the installed trusted manifest; they reject an optional
+external manifest and explicitly block a legacy manifest-less release. Roll
+back with:
 
 ```bash
 sudo scripts/ops/deploy-production-release.sh --rollback \
-  --commit <previous-exact-40-hex> \
-  --env-source /etc/lagrange/compose.env.pending
+  --commit <previous-exact-40-hex>
 ```
 
-The release installer never runs Compose, restarts services, migrates a DB, or
-contacts a provider. Rollout remains a separate validated action.
+The release installer never runs Compose, rebuilds/restarts services, migrates
+a DB, or contacts a provider. Rollout is a separate installed-release action:
+
+```bash
+sudo /opt/lagrange/current/scripts/ops/compose-release.sh --scope release --apply
+```
+
+That command requires the installed V2 manifest, rechecks every local image ID
+and OCI revision immediately before startup, creates a mode-0600 temporary
+Compose override mapping the ten services to `image: sha256:<image_id>` with
+build reset, and passes `--no-build` to every `up`/`run`. It checks the actual
+`.Image` and OCI revision of each persistent local service after startup. The
+one-shot services consume the same override but are intentionally not claimed as
+post-start inspected after `--rm`. A mismatch returns failure without printing
+container/environment configuration and without automatically stopping or
+rolling back services.
+
+No real registry, multi-architecture, or remote-Docker verification is claimed
+or required for this host-local beta. A future registry promotion needs separate
+owner approval and a new provenance contract.
 
 ## Size and configure backups
 

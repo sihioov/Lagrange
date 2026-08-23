@@ -37,6 +37,10 @@ RUN npm run build
 # the application tree, which keeps it compatible with a read-only rootfs
 # (Compose provides a tmpfs for /tmp).
 FROM node@sha256:4f696fbf39f383c1e486030ba6b289a5d9af541642fc78ab197e584a113b9c03 AS runner
+ARG LAGRANGE_CODE_COMMIT
+RUN test -n "$LAGRANGE_CODE_COMMIT" \
+    && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=0.0.0.0 \

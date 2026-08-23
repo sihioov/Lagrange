@@ -22,6 +22,11 @@ RUN cargo build --locked --release --package api-server --bin paper-runner
 
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 
+ARG LAGRANGE_CODE_COMMIT
+RUN test -n "$LAGRANGE_CODE_COMMIT" \
+    && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"
+
 RUN apk add --no-cache ca-certificates libgcc libstdc++ libpq libssl3 postgresql-client python3 \
     && addgroup -S -g 10001 lagrange \
     && adduser -S -D -H -u 10001 -G lagrange lagrange

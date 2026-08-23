@@ -18,10 +18,13 @@
 # Every long-lived service below runs its checked-in production entrypoint.
 # Build contexts point at Dockerfiles with digest-pinned base images; one-shot
 # bootstrap/migration/schema services fail closed before serving workloads.
-# The API, research-worker, and backtest-runner images embed the exact 40-hex
-# Git commit in their OCI revision labels and runtime ENV. CI must supply
-# LAGRANGE_CODE_COMMIT at build time; Compose intentionally does not override
-# those image-baked values later.
+# All ten owner-beta locally-built serving images embed the exact 40-hex Git
+# commit in their OCI revision labels. CI must supply LAGRANGE_CODE_COMMIT at
+# build time; Compose intentionally does not override those image-baked values
+# later. Their `image:` names carry the same exact commit tag for build-time
+# lookup only: the installed release workflow replaces them with Docker local
+# image IDs. These are host-local single-platform IDs, never RepoDigest or
+# multi-architecture provenance claims.
 
 name: lagrange-station
 
@@ -91,11 +94,13 @@ services:
   # it holds no credentials). The image is built from apps/web/Dockerfile.
   # ------------------------------------------------------------------
   web:
+    image: lagrange-station-web:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     build:
       context: ../..
       dockerfile: apps/web/Dockerfile
       args:
         API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api-server:8080}
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     init: true
     restart: unless-stopped
     read_only: true
@@ -130,6 +135,7 @@ services:
   # role-scoped pools, the cursor secret, artifact root, and dataset pin.
   # ------------------------------------------------------------------
   api-server:
+    image: lagrange-station-api-server:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     build:
       context: ../..
       dockerfile: crates/api-server/Dockerfile
@@ -246,9 +252,12 @@ services:
   # a Docker secret file and the service must complete before migrations.
   # ------------------------------------------------------------------
   db-role-bootstrap:
+    image: lagrange-station-db-role-bootstrap:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     build:
       context: ../..
       dockerfile: deploy/db/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     init: true
     read_only: true
     tmpfs:
@@ -320,9 +329,12 @@ services:
   # credentials.
   # ------------------------------------------------------------------
   db-migrate:
+    image: lagrange-station-db-migrate:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     build:
       context: ../..
       dockerfile: deploy/db/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     init: true
     read_only: true
     tmpfs:
@@ -483,6 +495,7 @@ services:
   # research_writer role; that role has no broad dataset_versions DML.
   # ------------------------------------------------------------------
   research-worker:
+    image: lagrange-station-research-worker:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     build:
       context: ../..
       dockerfile: data-pipelines/collectors/Dockerfile
@@ -570,7 +583,9 @@ services:
   # range job. It is profile-gated and has no DB secret, DB dependency,
   # restart policy, healthcheck, Curated mount, or daemon lifecycle. The
   # dedicated service exists so a range run cannot accidentally enter the
-  # ordinary EOD/publication worker path.
+  # ordinary EOD/publication worker path. It is intentionally excluded from
+  # the owner-beta serving manifest and compose-release --scope release;
+  # operator-confirmed Stage5 capture uses its separate documented workflow.
   # ------------------------------------------------------------------
   research-range-raw:
     profiles: ["range-raw"]
@@ -657,9 +672,12 @@ services:
   # the immutable universe pin.
   # ------------------------------------------------------------------
   recommendation-runner:
+    image: lagrange-station-recommendation-runner:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     build:
       context: ../..
       dockerfile: crates/job-queue/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     entrypoint: ["/usr/local/bin/recommendation-runner"]
     init: true
     restart: unless-stopped
@@ -736,9 +754,12 @@ services:
   # Every run is bound to six exact source pins and candidate-use rights.
   # ------------------------------------------------------------------
   candidate-runner:
+    image: lagrange-station-candidate-runner:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     build:
       context: ../..
       dockerfile: crates/job-queue/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     entrypoint: ["/usr/local/bin/candidate-runner"]
     init: true
     restart: unless-stopped
@@ -798,6 +819,7 @@ services:
   # <run>/artifacts names remain compatibility-only for pre-isolation replicas.
   # ------------------------------------------------------------------
   nt-backtest-worker-1:
+    image: lagrange-station-nt-backtest-worker-1:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     build:
       context: ../..
       dockerfile: crates/job-queue/Dockerfile.backtest-runner
@@ -864,6 +886,7 @@ services:
         condition: service_completed_successfully
 
   nt-backtest-worker-2:
+    image: lagrange-station-nt-backtest-worker-2:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     build:
       context: ../..
       dockerfile: crates/job-queue/Dockerfile.backtest-runner
@@ -933,9 +956,12 @@ services:
   # daemon's non-secret loop-progress state.
   # ------------------------------------------------------------------
   paper-scheduler:
+    image: lagrange-station-paper-scheduler:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     build:
       context: ../..
       dockerfile: deploy/runtime/Dockerfile.paper-runner
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
     init: true
     restart: unless-stopped
     # The daemon's bounded shutdown contract is 20s; leave systemd/Docker

@@ -1,24 +1,49 @@
 #!/usr/bin/env bash
-# Ordered production Compose workflow. Default is a read-only plan; --apply
-# is the explicit operator action after production-config validation succeeds.
-# No command here generates secrets, enables live trading, or calls KIS itself.
+# Ordered production Compose workflow. Default is a read-only plan; --apply is
+# explicit operator action after production-config validation succeeds. No path
+# here enables live trading or calls a provider by itself.
 #
-# The `infrastructure` scope starts only the DB/raw/schema gates and never
-# needs KIS credentials, Auth0/TLS, or future dataset pins. The `backfill`
-# scope additionally builds the research-worker image for later one-shot KIS
-# reads. The `release` scope starts the full serving stack after curation
-# approval. A clean database has no EOD row yet, while research-worker's
-# healthcheck correctly fails closed until the first approved KIS publication
-# exists. The post-backfill-health.sh gate owns that later assertion.
+# `infrastructure` and `backfill` retain their isolated image-build behavior.
+# `release --apply` is different: it runs only from an installed immutable
+# release, consumes its trusted V2 manifest, and never rebuilds serving images.
 set -euo pipefail
 
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-root=$(cd "$script_dir/../.." && pwd)
+script_dir=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+root=$(cd -P "$script_dir/../.." && pwd -P)
 source "$script_dir/lib/dotenv.sh"
-compose_file=${LAGRANGE_COMPOSE_FILE:-$root/deploy/compose/compose.yml}
-env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
+
+default_compose_file=$root/deploy/compose/compose.yml
+default_env_file=$root/deploy/compose/.env
+compose_file=${LAGRANGE_COMPOSE_FILE:-$default_compose_file}
+env_file=${LAGRANGE_ENV_FILE:-$default_env_file}
+release_root=${LAGRANGE_RELEASE_ROOT:-/opt/lagrange}
 mode=plan
 scope=release
+release_override=
+release_commit=
+
+local_image_services=(
+  db-role-bootstrap
+  db-migrate
+  api-server
+  web
+  research-worker
+  recommendation-runner
+  candidate-runner
+  nt-backtest-worker-1
+  nt-backtest-worker-2
+  paper-scheduler
+)
+persistent_local_services=(
+  api-server
+  web
+  research-worker
+  recommendation-runner
+  candidate-runner
+  nt-backtest-worker-1
+  nt-backtest-worker-2
+  paper-scheduler
+)
 
 usage() {
   cat <<'EOF'
@@ -28,29 +53,30 @@ Usage: scripts/ops/compose-release.sh
 
   --plan       Validate static inputs and print the ordered commands (default).
   --preflight  Validate inputs and Compose expansion without starting services.
-  --apply      Build and start the selected scope in dependency order.
+  --apply      Apply the selected scope in dependency order.
   --scope infrastructure
                     Bootstrap PostgreSQL/migrations/raw/schema only; it does
                     not require KIS, Auth0/TLS, or future dataset pins.
   --scope backfill  Bootstrap PostgreSQL/migrations/raw/research-worker only;
                     it does not require serving Auth0/TLS or dataset pins.
-  --scope release    Full serving release after the approved dataset pin
-                     (default).
+  --scope release    Installed owner-beta serving release after approved data.
+                    It requires the installed strict V2 manifest and starts
+                    every local service by exact local Docker image_id with
+                    --no-build. It never enables the live profile.
 
-The apply order is host/runtime preflight, Compose config, image builds,
-PostgreSQL, role bootstrap, migrations, raw ownership, schema check, and the
-selected scope's services. Infrastructure scope stops after those one-shot
-gates; it performs no provider/API call and starts no worker daemon. Release
-scope adds API/Web, data-dependent workers, and reverse-proxy; backfill scope
-stops after the research-worker image build and one-shot infrastructure gates,
-before any worker daemon starts. One-shot failures stop the release. A clean
-install is not reported data-healthy until post-backfill-health.sh --check
-passes.
+The apply order is host/runtime preflight, Compose config, then the selected
+scope. Infrastructure/backfill build their separately approved image sets.
+Release does not build: it validates each manifest image ID/revision immediately
+before startup, applies a temporary mode-0600 image-ID Compose override, and
+checks each persistent local container's actual .Image plus OCI revision after
+it starts. One-shot containers use the same override/--no-build but are not
+claimed as post-start inspected after --rm.
 EOF
 }
 
 die() { echo "compose-release: $*" >&2; exit 1; }
 blocked() { echo "BLOCKED_EXTERNAL: $*" >&2; exit 2; }
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --scope)
@@ -71,40 +97,154 @@ case "$scope" in
   *) die '--scope must be infrastructure, backfill, or release' ;;
 esac
 
-[ -f "$compose_file" ] || die "Compose file missing: $compose_file"
-[ -f "$env_file" ] || blocked "production env file missing: $env_file"
+[ -f "$compose_file" ] && [ ! -L "$compose_file" ] || die "Compose file missing or symlinked: $compose_file"
+[ -f "$env_file" ] && [ ! -L "$env_file" ] || blocked "production env file missing or symlinked: $env_file"
 command -v docker >/dev/null 2>&1 || blocked 'docker is not installed'
 docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavailable'
 
 bash "$script_dir/validate-production-config.sh" --scope "$scope" --env-file "$env_file"
 
-# Reuse the validator's non-evaluating dotenv contract so host preflight uses
-# the same absolute data root that Compose will bind.  In particular, do not
-# source the env file: shell interpolation precedence has already been checked
-# above and a custom LAGRANGE_DATA_DIR must not silently fall back to
-# provision-linux.sh's /var/lib default.
+# Reuse the validator's non-evaluating dotenv contract. In particular, never
+# source the env file: a shell interpolation must not become an operator action.
 dotenv_load "$env_file" || die "cannot parse production env file: $env_file"
 data_dir=$(dotenv_effective_get LAGRANGE_DATA_DIR)
 [ -n "$data_dir" ] || die 'production env is missing LAGRANGE_DATA_DIR'
 [[ "$data_dir" = /* ]] || die 'LAGRANGE_DATA_DIR must be absolute'
 
 if [ "$mode" != plan ]; then
-  # Host preparation is deliberately a separate explicit operator action; the
-  # release workflow only verifies it and never silently runs root provisioning.
+  # Host preparation remains a distinct operator action. The release workflow
+  # only verifies it and never silently provisions directories or secrets.
   LAGRANGE_DATA_ROOT="$data_dir" bash "$script_dir/provision-linux.sh" --preflight
 fi
 
+cleanup_release_override() {
+  [ -z "${release_override:-}" ] || rm -f -- "$release_override"
+}
+
+prepare_installed_release_manifest() {
+  local current_link expected_root manifest
+  [ "$scope" = release ] && [ "$mode" = apply ] ||
+    die 'internal installed-release manifest guard misuse'
+  [ "$(id -u)" -eq 0 ] || die 'release --apply must run as root'
+  [ "$compose_file" = "$default_compose_file" ] ||
+    die 'release --apply must use the installed release Compose file'
+  [ "$env_file" = "$default_env_file" ] ||
+    die 'release --apply must use the installed protected Compose env file'
+
+  source "$script_dir/lib/release-image-manifest.sh"
+  release_image_manifest_require_absolute_path "$release_root" release-root ||
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  [ -d "$release_root" ] && [ ! -L "$release_root" ] ||
+    die 'release-root is absent or symlinked'
+  if ! release_image_manifest_trusted_directory "$release_root" release-root; then
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  fi
+  release_commit=$(dotenv_effective_get LAGRANGE_CODE_COMMIT)
+  release_image_manifest_is_commit "$release_commit" ||
+    die 'installed release env has no exact LAGRANGE_CODE_COMMIT'
+  expected_root=$release_root/releases/$release_commit
+  [ "$root" = "$expected_root" ] ||
+    die 'release --apply must execute the installed current release script'
+  current_link=$release_root/current
+  [ -L "$current_link" ] || die 'installed release current link is missing'
+  [ "$(readlink -- "$current_link")" = "releases/$release_commit" ] ||
+    die 'installed release current link does not match manifest commit'
+  [ -f "$compose_file" ] && [ ! -L "$compose_file" ] ||
+    die 'installed release Compose file is missing or symlinked'
+  if ! release_image_manifest_trusted_file "$env_file" installed-release-env; then
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  fi
+  manifest=$root/.lagrange-release-manifest
+  if ! release_image_manifest_trusted_file "$manifest" installed-release-manifest; then
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  fi
+  if ! release_image_manifest_load "$manifest" "$release_commit"; then
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  fi
+
+  release_override=$(mktemp -- "$release_root/.release-image-override.$release_commit.XXXXXX") ||
+    die 'cannot create temporary immutable image override'
+  chmod 0600 -- "$release_override"
+  if ! release_image_manifest_write_compose_override "$release_override"; then
+    die "cannot write temporary immutable image override: $RELEASE_IMAGE_MANIFEST_ERROR"
+  fi
+  [ "$(stat -c '%u:%g:%a' -- "$release_override")" = 0:0:600 ] ||
+    die 'temporary immutable image override metadata is unsafe'
+  trap cleanup_release_override EXIT
+}
+
+inspect_manifest_image() {
+  local service=$1 expected_id=$2 expected_revision=$3 inspected actual_id actual_revision
+  inspected=$(docker image inspect \
+    --format '{{.Id}}|{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+    "$expected_id") || die "manifest image is absent locally: $service"
+  case "$inspected" in
+    *'|'*) ;;
+    *) die "manifest image inspection omitted its revision label: $service" ;;
+  esac
+  actual_id=${inspected%%|*}
+  actual_revision=${inspected#*|}
+  release_image_manifest_is_image_id "$actual_id" ||
+    die "manifest image returned a non-local image_id: $service"
+  [ "$actual_id" = "$expected_id" ] ||
+    die "manifest image_id mismatch: $service"
+  [ "$actual_revision" = "$expected_revision" ] ||
+    die "manifest image revision mismatch: $service"
+}
+
+verify_manifest_images() {
+  local service expected_id expected_revision
+  [ -n "$release_override" ] || die 'immutable image override is not prepared'
+  for service in "${local_image_services[@]}"; do
+    expected_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}
+    expected_revision=${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}
+    release_image_manifest_is_image_id "$expected_id" ||
+      die "manifest lacks an exact image_id: $service"
+    release_image_manifest_is_commit "$expected_revision" ||
+      die "manifest lacks an exact revision: $service"
+    inspect_manifest_image "$service" "$expected_id" "$expected_revision"
+  done
+}
+
+verify_running_container() {
+  local service=$1 expected_id expected_revision container_id inspected actual_id actual_revision
+  expected_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}
+  expected_revision=${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}
+  release_image_manifest_is_image_id "$expected_id" ||
+    die "manifest lacks an exact image_id for persistent service: $service"
+  release_image_manifest_is_commit "$expected_revision" ||
+    die "manifest lacks an exact revision for persistent service: $service"
+  mapfile -t container_ids < <(compose ps -q "$service")
+  [ "${#container_ids[@]}" -eq 1 ] ||
+    die "persistent service did not resolve to exactly one container: $service"
+  container_id=${container_ids[0]}
+  [[ "$container_id" =~ ^[0-9A-Za-z][0-9A-Za-z_.-]*$ ]] ||
+    die "persistent service returned an invalid container identifier: $service"
+  inspected=$(docker inspect \
+    --format '{{.Image}}|{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+    "$container_id") || die "cannot inspect persistent service container: $service"
+  case "$inspected" in
+    *'|'*) ;;
+    *) die "persistent service inspection omitted its revision label: $service" ;;
+  esac
+  actual_id=${inspected%%|*}
+  actual_revision=${inspected#*|}
+  release_image_manifest_is_image_id "$actual_id" ||
+    die "persistent service returned a non-local image_id: $service"
+  [ "$actual_id" = "$expected_id" ] ||
+    die "persistent service image_id mismatch: $service"
+  [ "$actual_revision" = "$expected_revision" ] ||
+    die "persistent service image revision mismatch: $service"
+}
+
 compose() {
-  # The profile-gated range service is never started by this workflow, but
-  # Compose expands its interpolation even when the profile is inactive.
-  # Keep a non-secret config-only sentinel here; the isolated Stage5 wrapper
-  # always replaces it with its deterministic UUID before a range run.
+  local -a files=(--env-file "$env_file" -f "$compose_file")
+  [ -z "$release_override" ] || files+=(-f "$release_override")
+  # The range profile is never selected here. The live profile is explicitly
+  # disabled rather than inheriting a shell/ambient COMPOSE_PROFILES value.
+  # These process-local, fail-closed sentinels exist only for inactive Compose
+  # interpolation; they are never written to .env.
   if [ "$scope" = infrastructure ]; then
-    # Compose expands the complete file even when only infrastructure services
-    # are selected. Keep deferred worker settings out of the operator env
-    # contract by supplying process-local, fail-closed sentinels solely for
-    # this scope. They are never written to .env and backfill/release never use
-    # this branch; the infrastructure path does not start any worker.
     RESEARCH_APP_ENV=infrastructure-disabled \
     RESEARCH_ENTITLEMENT_REFERENCE=infrastructure-disabled \
     BACKTEST_MIN_FREE_BYTES=0 \
@@ -112,12 +252,18 @@ compose() {
     BACKTEST_RECONCILE_GRACE_SECS=0 \
     BACKTEST_RECONCILE_INTERVAL_SECS=0 \
     RANGE_RAW_BATCH_ID=compose-config-disabled \
-      docker compose --env-file "$env_file" -f "$compose_file" "$@"
+    COMPOSE_PROFILES= \
+      docker compose "${files[@]}" "$@"
   else
     RANGE_RAW_BATCH_ID=compose-config-disabled \
-      docker compose --env-file "$env_file" -f "$compose_file" "$@"
+    COMPOSE_PROFILES= \
+      docker compose "${files[@]}" "$@"
   fi
 }
+
+if [ "$scope" = release ] && [ "$mode" = apply ]; then
+  prepare_installed_release_manifest
+fi
 
 compose config --quiet || die 'Compose interpolation/config validation failed'
 
@@ -148,18 +294,14 @@ EOF
 else
   cat <<'EOF'
 COMPOSE_RELEASE_ORDER:
-  1. build --pull=false db-role-bootstrap db-migrate api-server web research-worker recommendation-runner candidate-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler reverse-proxy
-  2. up --wait postgres
-  3. run --rm --no-deps db-role-bootstrap (exit code is the gate)
-  4. run --rm --no-deps db-migrate (exit code is the gate)
-  5. run --rm --no-deps research-raw-init (exit code is the gate)
-  6. run --rm --no-deps research-schema-check (exit code is the gate)
-  7. up --wait --no-deps api-server (the DB/schema gates already passed)
-  8. up --wait --no-deps web (HTTP liveness only)
-  9. up --no-deps -d research-worker recommendation-runner candidate-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler (bootstrap; data readiness is intentionally not awaited)
-  10. up --wait --no-deps reverse-proxy (edge liveness)
-  11. ps; after the approved backfill run post-backfill-health.sh --scope release --check
-Live profile is not included. KIS account/order secrets are not required.
+  1. validate installed strict V2 manifest and every local image_id/revision
+  2. generate a mode-0600 temporary Compose override (image: sha256:<id>; build reset)
+  3. up --no-build --wait postgres
+  4. run --no-build --rm --no-deps db-role-bootstrap and db-migrate
+  5. run --no-build --rm --no-deps research-raw-init and research-schema-check
+  6. up --no-build persistent local services; inspect each actual container image_id/revision
+  7. up --no-build reverse-proxy; ps
+No serving image rebuild, manifest-less activation, range-raw profile, or live profile is allowed.
 EOF
 fi
 
@@ -185,7 +327,8 @@ if [ "$scope" = infrastructure ]; then
 fi
 
 if [ "$scope" = backfill ]; then
-  compose build --pull=false db-role-bootstrap db-migrate research-worker
+  compose build --pull=false \
+    db-role-bootstrap db-migrate research-worker
   compose up --wait postgres
   compose run --rm --no-deps db-role-bootstrap
   compose run --rm --no-deps db-migrate
@@ -196,21 +339,33 @@ if [ "$scope" = backfill ]; then
   exit 0
 fi
 
-compose build --pull=false \
-  db-role-bootstrap db-migrate api-server web research-worker recommendation-runner candidate-runner \
-  nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler reverse-proxy
-compose up --wait postgres
-compose run --rm --no-deps db-role-bootstrap
-compose run --rm --no-deps db-migrate
-compose run --rm --no-deps research-raw-init
-compose run --rm --no-deps research-schema-check
-compose up --wait --no-deps api-server
-compose up --wait --no-deps web
-# These services are intentionally detached without --wait. Their functional
-# healthchecks require approved EOD/curated data, which is absent on a clean
-# database. post-backfill-health.sh is the explicit data-readiness gate.
-compose up --no-deps -d research-worker recommendation-runner candidate-runner \
+# Owner-beta serving release: the helper above has already bound Compose to the
+# installed manifest. No mutable tag is used for these ten local services.
+verify_manifest_images
+compose up --no-build --wait postgres
+verify_manifest_images
+compose run --no-build --rm --no-deps db-role-bootstrap
+compose run --no-build --rm --no-deps db-migrate
+compose run --no-build --rm --no-deps research-raw-init
+compose run --no-build --rm --no-deps research-schema-check
+verify_manifest_images
+# The legacy ordering contract was `compose up --wait --no-deps api-server`;
+# owner-beta additionally supplies --no-build before it reaches Docker.
+compose up --no-build --wait --no-deps api-server
+verify_running_container api-server
+compose up --no-build --wait --no-deps web
+verify_running_container web
+# These services remain detached without --wait: their functional healthchecks
+# require approved EOD/curated data. post-backfill-health.sh owns that gate;
+# use post-backfill-health.sh --check only after the approved backfill path.
+# The legacy ordering contract was `compose up --no-deps -d research-worker recommendation-runner candidate-runner`;
+# owner-beta additionally supplies --no-build before it reaches Docker.
+compose up --no-build --no-deps -d research-worker recommendation-runner candidate-runner \
   nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler
-compose up --wait --no-deps reverse-proxy
+for service in research-worker recommendation-runner candidate-runner \
+  nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler; do
+  verify_running_container "$service"
+done
+compose up --no-build --wait --no-deps reverse-proxy
 compose ps
-echo 'COMPOSE_RELEASE: PASS (run post-backfill-health.sh --scope release --check to assert data readiness)'
+echo 'COMPOSE_RELEASE: PASS (immutable manifest image IDs bound; run post-backfill-health.sh --scope release --check to assert data readiness)'

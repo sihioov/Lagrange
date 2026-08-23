@@ -9,6 +9,14 @@ RUN cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --feat
 
 FROM postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
 
+# Both db-role-bootstrap and db-migrate use this local serving image. Require
+# the same immutable build commit and OCI revision contract as every other
+# owner-beta manifest service.
+ARG LAGRANGE_CODE_COMMIT
+RUN test -n "$LAGRANGE_CODE_COMMIT" \
+    && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"
+
 COPY --from=builder /usr/local/cargo/bin/sqlx /usr/local/bin/sqlx
 COPY migrations /opt/lagrange/migrations
 COPY deploy/db/migrate.sh /usr/local/bin/lagrange-migrate

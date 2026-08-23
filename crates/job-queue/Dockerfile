@@ -20,6 +20,12 @@ RUN cargo build --locked --release --package job-queue --bin recommendation-runn
 
 FROM python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db
 
+# recommendation-runner and candidate-runner share this local serving image.
+ARG LAGRANGE_CODE_COMMIT
+RUN test -n "$LAGRANGE_CODE_COMMIT" \
+    && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"
+
 RUN pip install --no-cache-dir uv==0.9.17 \
     && groupadd --system --gid 10001 lagrange \
     && useradd --system --uid 10001 --gid lagrange --home-dir /opt/lagrange --shell /usr/sbin/nologin lagrange
