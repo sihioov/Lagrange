@@ -966,6 +966,77 @@ SK1우, 포스코인터내셔널, 케이비발해인프라, 전부 `record_date 
 디렉터리 옆이나 한 쿼리 거리에 반증이 있었는데 확인하지 않고 단정한** 경우다. 새 사실을
 쓸 때는 반증이 될 수 있는 가장 가까운 곳을 먼저 열어볼 것.
 
+### 0.24 `PRICE_CURATION_FAILED` 규명 — 이 파이프라인은 이틀치를 발행할 수 없다 (2026-08-23)
+
+§0.23이 "어느 CurateError인지는 모른다"로 남긴 것을 재현으로 확정했다. **추측이 아니라
+실제 코드를 실제 데이터에 돌려서 얻은 변종이다.**
+
+    NonCanonicalNormalizedBatch {
+      reason: "cumulative curation inputs contain conflicting instrument masters" }
+
+실패 지점은 `curation_inputs_from_raw_entries`(`curate.rs:1208`)이며 **`curate_generation`에
+도달하기 전**이다. Curated 트리에 version=3이 없는 것과 일치한다.
+
+**재현 방법.** sudo를 회수한 상태라 `/var/lib/lagrange/data`를 직접 못 읽는다. `/data`를
+마운트한 컨테이너로 raw 2배치(36파일)와 curated 트리(68파일)를 읽기 가능한 위치로 복사한
+뒤, `market-data`에 일회용 통합 테스트를 두어 worker의 누적 큐레이션 블록
+(`worker.rs:2626~2740`)을 그대로 재현했다. 배포된 worker 이미지의 revision은 `e3d1739`이고
+`git diff e3d1739..85e5774 -- crates/market-data data-pipelines/collectors`가 **비어 있으므로**
+큐레이션 코드는 이미지와 워크트리가 동일하다 — 재현이 프로덕션에 대해 유효하다.
+(테스트는 하드코딩 경로를 담고 있어 커밋하지 않았다.)
+
+**인과 사슬 — 네 단계 전부 확인했다.**
+
+1. KIS normalized `reference.json`의 instrument에는 `listed_at`이 **없다**(11개 중 0개).
+   프로덕션 두 배치 모두, 그리고 저장소 픽스처
+   `tests/fixtures/kr-etf/contract/reference-response.json`도 2개 중 0개다.
+2. 그래서 `curate.rs:1127`이 `listed_at`을 `calendar_first_session`으로 폴백한다.
+3. `calendar_first_session`은 `sessions.min().unwrap_or(entry.date)`(`curate.rs:1073`)인데,
+   KIS `chk-holiday`는 요청한 날짜로 정규화되므로 **각 배치의 calendar에는 자기 날짜
+   세션 하나뿐**이다(08-18 배치 → `[2026-08-18]`, 08-19 배치 → `[2026-08-19]`, 확인함).
+4. 결과적으로 배치마다 `listed_at`이 자기 날짜가 된다. `curation_inputs_from_raw_entries`는
+   모든 배치의 instrument master가 **완전히 같을 것**을 요구하므로 fail-closed 된다.
+
+두 Instrument 레코드를 직접 출력해 대조했다. **`listed_at` 한 필드만 다르고 나머지는 전부
+같다:**
+
+    A = Instrument { instrument_id: 069500.KRX, name: "KODEX 200", asset_class: Etf,
+        ..., listed_at: TradingDate(2026-08-18), ... }
+    B = Instrument { instrument_id: 069500.KRX, name: "KODEX 200", asset_class: Etf,
+        ..., listed_at: TradingDate(2026-08-19), ... }
+
+**영향 범위 — 이것이 출시를 막는 벽이다.** 날짜가 2개 이상인 누적 큐레이션은 **항상**
+실패한다. 즉 이 파이프라인은 **첫날만 발행할 수 있고 둘째 날부터 영구히 실패한다.**
+관측된 이력과 정확히 일치한다 — 08-18은 version=2로 발행됐고(`source_batches` 1개),
+08-19 이후는 전부 `PRICE_CURATION_FAILED`. `class:"permanent"`라 재시도로는 절대 풀리지
+않는다.
+
+**왜 테스트가 못 잡았나 (§0.19와 같은 종류의 공백).** 다중 배치 누적 큐레이션 테스트는
+**이미 있다** — `crates/market-data/tests/price_publication_evidence.rs:247`이 2개 배치를
+넘겨 성공을 단언한다. 통과하는 이유는 `fixture_entry`(:11)가 **두 배치에 완전히 같은
+calendar 바이트**(`kr-etf/2020-01-31/calendar.json`, 세션 여러 개)를 넣기 때문이다. 그래서
+`calendar_first_session`이 양쪽 동일 → master 동일 → 검사 통과. 픽스처는 프로덕션의
+"`listed_at` 없음"은 재현하지만 **"배치마다 자기 날짜 세션 하나뿐"은 재현하지 않는다.**
+정작 `curation_inputs_from_raw_entries`의 doc 주석(`curate.rs:1203`)은 "KIS는 chk-holiday를
+요청 날짜로 정규화하므로 단일 배치의 calendar로는 부족하다"고 **이미 적고 있다.** 코드가
+아는 사실을 픽스처가 반영하지 않아, 세션은 배치 간 병합하면서 그 세션에서 파생된
+`listed_at`은 배치별 동일성을 요구하는 자기모순이 검출되지 않았다.
+
+**아직 하지 않은 것 — 수정.** 원인은 확정이지만 고치는 방법은 설계 판단이 섞인다.
+`listed_at`은 `NotListed { instrument, date }` 게이트의 입력이므로, 값을 바꾸면 어떤 바가
+거부되는지가 바뀐다(원칙 6: PIT 증거를 지어내지 않는다). 이 절은 **원인 기록까지만**이고
+수정은 별도로 판단한다. 같은 영역에서 다섯 번째 조사이고, §0.23이 남긴 규칙대로
+"반증이 될 수 있는 가장 가까운 곳을 먼저 연다"를 지켰다 — entitlement 참조 불일치, curated
+트리 손상, calendar provenance 불일치, instrument master 원본 불일치, `BatchAlreadyCurated`
+다섯 후보를 **각각 데이터나 코드로 제거한 뒤** 재현에 도달했다.
+
+**부수 발견 — 진단 가능성 결함.** `CurateError`는 변종이 약 30개인데 worker가 전부
+`PRICE_CURATION_FAILED` + `"price curation failed"` 한 줄로 접는다
+(`research-worker.rs:709`). 변종 이름조차 남지 않아 이번 규명에 컨테이너 복사와 일회용
+하네스가 필요했다. 변종 이름과 구조화된 필드(모두 우리가 만든 문자열이며 provider 응답
+본문이 아니다)는 노출해도 KIS 안전 경계를 침범하지 않는다. §4.3에 등재한다.
+
+
 ---
 ---
 
@@ -1389,6 +1460,17 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 3. ~~**리밸런싱 미리보기 UI.**~~ **완료 (2026-08-22, `79da609`+`e16b9da`, §0.17~§0.19)** — 생성→폴링→적용 전체와 `INDICATIVE_NEXT_OPEN_REPLAN_REQUIRED` 경고 노출. 리뷰에서 나온 MAJOR 3건(권한 격리, 계좌 전환 리셋, Owner 역할 게이트)을 반영했고 e2e로 seam에 고정했다. Live 주문은 계속 범위 밖이다.
 4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
 5. **실제 KIS provider와 운영 원천 활성화.** 새 credential을 발급하지 않고 기존 등록 KIS App Key/App Secret의 보호된 source/runtime secret을 검증한다. 이후 token/endpoint를 확인하고 확정된 entitlement metadata를 운영 DB에 등록한 뒤 `research_writer`, migration, Raw volume을 검증해 KIS calendar/EOD/instrument/corporate-action 원천을 공급한다. 고정 ETF 백필 후 후보 bridge와 KOSPI200/KOSDAQ150 source set은 별도 승인한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
+
+6. **누적 큐레이션이 이틀치를 발행하지 못하는 결함 (§0.24, 출시 차단).** 원인은 확정됐다 —
+   KIS reference에 `listed_at`이 없어 배치별 calendar 첫 세션으로 폴백하고, 그 값이 배치마다
+   달라 instrument master 동일성 검사가 fail-closed 된다. 수정은 `NotListed` 게이트의 입력을
+   바꾸므로 PIT 의미가 걸린다(원칙 6). 함께 닫아야 할 것: `price_publication_evidence.rs:11`의
+   `fixture_entry`가 두 배치에 같은 다중 세션 calendar를 주어 이 결함을 가리고 있으므로,
+   **배치마다 자기 날짜 세션 하나만 주는 픽스처로 회귀 테스트를 먼저 세운다.**
+7. **`CurateError` 진단 가능성 (§0.24 부수 발견).** 약 30개 변종이 전부
+   `PRICE_CURATION_FAILED` + `"price curation failed"`로 접혀 변종 이름조차 남지 않는다
+   (`research-worker.rs:709`). 변종 이름과 구조화 필드는 우리가 만든 문자열이라 노출해도
+   KIS 안전 경계를 침범하지 않는다.
 
 **작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다. §0.16의 A(Paper 런타임 `CurateStore` 이중 경로)와 C(CI가 Python 스위트를 실행하지 않음)는 **2026-08-22에 종결됐다(§0.17)**.
 
