@@ -152,12 +152,188 @@ const CANDIDATE_WORKER_PRICE_ATTESTATION_UP_SQL: &str = include_str!(
 const CANDIDATE_WORKER_PRICE_ATTESTATION_DOWN_SQL: &str = include_str!(
     "../../../../migrations/0047_candidate_worker_price_entitlement_attestation.down.sql"
 );
+const OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL: &str =
+    include_str!("../../../../migrations/0049_owner_beta_price_recommendations.up.sql");
+const OWNER_BETA_PRICE_RECOMMENDATIONS_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0049_owner_beta_price_recommendations.down.sql");
 const CANDIDATE_SCHEDULE_RS: &str =
     include_str!("../../../../crates/job-queue/src/candidate/schedule.rs");
 const CANDIDATE_RUNNER_RS: &str =
     include_str!("../../../../crates/job-queue/src/candidate/runner.rs");
 const RESEARCH_WORKER_RS: &str =
     include_str!("../../../../data-pipelines/collectors/src/worker.rs");
+
+#[test]
+fn owner_beta_price_recommendation_persistence_is_separate_and_fail_closed() {
+    assert_eq!(
+        MIGRATOR
+            .migrations
+            .iter()
+            .filter(|migration| migration.version == 49)
+            .count(),
+        2,
+        "0049 must have exactly one reversible up/down migration pair"
+    );
+
+    for token in [
+        "SET LOCAL lock_timeout = '5s';",
+        "SET LOCAL statement_timeout = '30s';",
+        "CREATE TABLE public.owner_beta_recommendation_runs",
+        "CREATE TABLE public.owner_beta_recommendation_items",
+        "owner_beta_recommendation_runs_id_owner_key",
+        "FOREIGN KEY (recommendation_run_id, owner_user_id)",
+        "UNIQUE (recommendation_run_id, instrument_id)",
+        "input_kind = 'owner_beta_historical_price_only_v1'",
+        "capability = 'PRICE_RETURN_ONLY'",
+        "audience = 'OWNER_ONLY'",
+        "vendor_snapshot",
+        "NOT strict_pit",
+        "status IN ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELED')",
+        "status <> 'SUCCEEDED' OR factor_snapshot_sha256 IS NOT NULL",
+        "error_code text",
+        "ALTER TABLE public.owner_beta_recommendation_runs OWNER TO migration_owner",
+        "ALTER TABLE public.owner_beta_recommendation_items OWNER TO migration_owner",
+        "ALTER TABLE public.owner_beta_recommendation_runs FORCE ROW LEVEL SECURITY",
+        "ALTER TABLE public.owner_beta_recommendation_items FORCE ROW LEVEL SECURITY",
+        "REVOKE ALL ON TABLE public.owner_beta_recommendation_runs",
+        "REVOKE ALL ON TABLE public.owner_beta_recommendation_items",
+        "CREATE POLICY owner_beta_recommendation_runs_app_insert",
+        "CREATE POLICY owner_beta_recommendation_runs_owner_all",
+        "CREATE POLICY owner_beta_recommendation_items_owner_all",
+        "GRANT INSERT (",
+        ") ON public.owner_beta_recommendation_runs TO app;",
+        "GRANT UPDATE (",
+        ") ON public.owner_beta_recommendation_runs TO worker;",
+        ") ON public.owner_beta_recommendation_items TO worker;",
+        "FOR UPDATE TO worker",
+        "FOR INSERT TO worker",
+        "GRANT SELECT ON TABLE public.owner_beta_recommendation_runs TO app, worker, admin",
+        "GRANT SELECT ON TABLE public.owner_beta_recommendation_items TO app, worker, admin",
+        "CREATE FUNCTION public.owner_beta_recommendation_runs_validate_job_binding()",
+        "CREATE FUNCTION public.jobs_protect_owner_beta_recommendation_lineage()",
+        "BEFORE UPDATE OR DELETE ON public.jobs",
+        "owner beta recommendation run identity is immutable",
+        "owner beta recommendation job lineage is immutable",
+        "v_job_type IS DISTINCT FROM 'owner_beta_price_recommendation'",
+        "pg_catalog.jsonb_object_keys(v_payload)",
+        "pg_catalog.jsonb_object_keys(v_payload -> 'pins')",
+        "'as_of', 'pins', 'run_id', 'strategy_config_id'",
+        "'action_manifest_sha256'",
+        "'approval_registry_sha256'",
+        "'artifact_manifest_sha256'",
+        "'candidate_content_sha256'",
+        "'stage5_manifest_sha256'",
+        "v_payload ->> 'run_id' IS DISTINCT FROM NEW.id::text",
+        "v_payload ->> 'strategy_config_id' IS DISTINCT FROM NEW.strategy_config_id::text",
+        "v_payload ->> 'as_of' IS DISTINCT FROM pg_catalog.to_char(NEW.as_of, 'YYYY-MM-DD')",
+        "NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key",
+        "NEW.payload_json IS DISTINCT FROM OLD.payload_json",
+    ] {
+        assert!(
+            OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL.contains(token),
+            "0049 owner-beta persistence contract is missing {token}"
+        );
+    }
+
+    for hash_column in [
+        "candidate_content_sha256",
+        "artifact_manifest_sha256",
+        "stage5_manifest_sha256",
+        "action_manifest_sha256",
+        "approval_registry_sha256",
+    ] {
+        assert!(
+            OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL
+                .contains(&format!("{hash_column} ~ '^sha256:[0-9a-f]{{64}}$'")),
+            "0049 must strictly validate {hash_column}"
+        );
+        assert!(
+            OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL
+                .contains(&format!("v_payload -> 'pins' ->> '{hash_column}'")),
+            "0049 payload binding must compare {hash_column}"
+        );
+    }
+    assert!(
+        OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL
+            .contains("factor_snapshot_sha256 ~ '^sha256:[0-9a-f]{64}$'"),
+        "0049 must strictly validate the optional factor snapshot hash"
+    );
+
+    let executable_up = OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL.to_ascii_lowercase();
+    for forbidden in [
+        "dataset_versions",
+        "target_portfolios",
+        "accounts",
+        "paper",
+        "curated",
+        "ready",
+        "error_message",
+        "request_path",
+        "raw_batch",
+        "registration",
+        "publication",
+    ] {
+        assert!(
+            !executable_up.contains(forbidden),
+            "0049 executable up SQL must not reference {forbidden}"
+        );
+    }
+    for grant in executable_up
+        .split(';')
+        .map(str::trim)
+        .filter(|statement| statement.starts_with("grant "))
+    {
+        assert!(
+            !grant.contains("audit_writer") && !grant.contains("research_writer"),
+            "0049 must grant no capability to non-serving writers: {grant}"
+        );
+        assert!(
+            !(grant.starts_with("grant insert")
+                && grant.contains("owner_beta_recommendation_items")
+                && grant.contains(" to app"))
+                && !(grant.starts_with("grant update")
+                    && grant.contains("owner_beta_recommendation_runs")
+                    && grant.contains(" to app")),
+            "0049 must preserve the narrow app write boundary: {grant}"
+        );
+    }
+    assert!(
+        !executable_up.contains("delete on table public.owner_beta")
+            && !executable_up.contains("truncate on table public.owner_beta"),
+        "0049 must grant no destructive table capability"
+    );
+
+    for token in [
+        "DROP TRIGGER IF EXISTS jobs_protect_owner_beta_recommendation_lineage",
+        "DROP TRIGGER IF EXISTS owner_beta_recommendation_runs_validate_job_binding",
+        "DROP FUNCTION IF EXISTS public.jobs_protect_owner_beta_recommendation_lineage()",
+        "DROP FUNCTION IF EXISTS public.owner_beta_recommendation_runs_validate_job_binding()",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_items_owner_all",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_items_admin_select",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_items_worker_insert",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_items_worker_select",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_items_app_select",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_runs_owner_all",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_runs_admin_select",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_runs_worker_update",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_runs_worker_select",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_runs_app_insert",
+        "DROP POLICY IF EXISTS owner_beta_recommendation_runs_app_select",
+        "DROP TABLE IF EXISTS public.owner_beta_recommendation_items",
+        "DROP TABLE IF EXISTS public.owner_beta_recommendation_runs",
+    ] {
+        assert!(
+            OWNER_BETA_PRICE_RECOMMENDATIONS_DOWN_SQL.contains(token),
+            "0049 rollback is missing {token}"
+        );
+    }
+    assert!(
+        !OWNER_BETA_PRICE_RECOMMENDATIONS_DOWN_SQL
+            .to_ascii_uppercase()
+            .contains("CASCADE"),
+        "0049 rollback must not use CASCADE"
+    );
+}
 
 #[test]
 fn candidate_vertical_contract_is_separate_pit_and_fail_closed() {
