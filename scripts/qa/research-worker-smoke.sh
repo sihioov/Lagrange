@@ -972,14 +972,26 @@ manual_manifest="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; p
 [ "$(cd "$(dirname "$manual_manifest")" && pwd)/$(basename "$manual_manifest")" = "$(cd "$(dirname "$direct_manifest")" && pwd)/$(basename "$direct_manifest")" ] || fail "manual --root manifest mismatch: $manual_manifest"
 manual_batch_id="$(printf '%s' "$manual_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["batch_id"])')" || fail 'manual collectors output omitted batch_id'
 
-# Candidate instruments are an explicit Raw-reference approval boundary and
-# the worker deliberately does not auto-register them. Derive every argument
-# from this immutable synthetic delivery, then exercise only the narrow
-# research_writer definer before price/source publication is attempted.
+# Candidate instruments are an explicit Raw-reference approval boundary.  The
+# worker registers them itself during price recovery -- it must, because the
+# price publication writes candidate_price_instrument_coverage, whose
+# instrument_id is a foreign key onto instruments -- so this step exists to
+# exercise the narrow research_writer definer on its own, before any
+# publication is attempted.
+#
+# It therefore has to agree with the worker on listed_at.  That column is the
+# platform's approved coverage floor, not an exchange listing date, and
+# register_candidate_instrument compares the stored row on it while
+# ON CONFLICT (id) DO NOTHING prevents any correction.  Read the floor from the
+# universe config the worker's constant is pinned to rather than deriving it
+# from this fixture's sessions: the earliest session here is 2020-01-20, and
+# registering that made the worker's own registration raise 'candidate
+# instrument conflicts with canonical instrument master'.
 mapfile -t manual_reference_evidence < <(python3 - \
-  "$direct_manifest" "$manual_batch_id" "$eod_smoke_bundle" <<'PY'
+  "$direct_manifest" "$manual_batch_id" "$eod_smoke_bundle" "$root/configs/universes/kr-etf-core-v1.yaml" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
 manifest_path = pathlib.Path(sys.argv[1])
@@ -1024,7 +1036,11 @@ if len(instruments) != 6:
     raise SystemExit("manual Raw reference instrument count drifted")
 print(reference_sha256.removeprefix("sha256:"))
 print(entry["retrieved_at"])
-print(min(sessions))
+universe = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
+coverage_from = re.search(r'^\s*effective_from:\s*"([0-9]{4}-[0-9]{2}-[0-9]{2})"', universe, re.M)
+if not coverage_from:
+    raise SystemExit("universe config has no exact effective_from")
+print(coverage_from.group(1))
 print(json.dumps(instruments, ensure_ascii=False, separators=(",", ":")))
 PY
 )
