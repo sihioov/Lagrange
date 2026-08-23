@@ -42,7 +42,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::{
-    CandidatePipelineError, CandidatePricePublication, FailureClass,
+    CandidateInstrumentCatalog, CandidatePipelineError, CandidatePricePublication, FailureClass,
     KisNormalizationRecoveryReport, PipelineError, PostgresCandidateSourceSink,
     PostgresPublicationSink, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome, RecoveryError, RecoveryPage,
     RecoveryPosition, RecoveryScope, SinkError, ingest_and_publish, ingest_normalize_publish_kis,
@@ -2783,9 +2783,7 @@ async fn recover_price_publications(
     // A renewed price entitlement may arrive after one or more exact Raw
     // deliveries were terminally blocked.  Re-open only those exact
     // entitlement-inactive rows; any other terminal reason remains a hard
-    // failure in the database procedure.  This is deliberately separate from
-    // candidate instrument registration, whose candidate-use contract is not
-    // required for the fixed ETF price dataset.
+    // failure in the database procedure.
     for entry in &entries {
         sink.revalidate_price_raw_batch_after_rights(
             entry,
@@ -2818,6 +2816,48 @@ async fn recover_price_publications(
     if pending.is_empty() {
         return Ok(None);
     }
+    // The canonical instrument master must exist before the price publication
+    // writes coverage: `publish_candidate_price_publication` inserts into
+    // `candidate_price_instrument_coverage`, whose `instrument_id` is a foreign
+    // key onto `instruments`. Commit 84e6ce1 removed this registration from the
+    // price path while keeping that insert, and left no other production writer
+    // for the table -- `register_candidate_instruments` had zero callers -- so
+    // the fixed ETF price publication could never complete against an empty
+    // `instruments`. The comment it added, that candidate instrument
+    // registration is "not required for the fixed ETF price dataset", is what
+    // the database contradicts.
+    let reference_sha256 = anchor
+        .files
+        .iter()
+        .find(|file| file.kind == market_data::ResponseKind::Reference)
+        .and_then(|file| file.content_hash.as_str().strip_prefix("sha256:"))
+        .ok_or_else(|| {
+            WorkerError::Curation(CurateError::MalformedManifest {
+                context: "candidate instrument catalog".to_owned(),
+                detail: "Raw EOD batch has no exact reference hash".to_owned(),
+            })
+        })?;
+    let source_revision = anchor.batch_id.to_string();
+    sink.register_candidate_instruments(&CandidateInstrumentCatalog {
+        master: &master,
+        entitlement_id,
+        contract_reference,
+        entitlement_date: anchor.date,
+        reference_sha256,
+        source_revision: &source_revision,
+        retrieved_at: anchor.retrieved_at,
+        // Not the master's listing date: that is a fallback derived from the
+        // sessions in this generation and therefore moves as the cumulative
+        // window widens, while the registration can never overwrite what it
+        // first stored.  See CandidateInstrumentCatalog::coverage_from.
+        coverage_from: TradingDate::parse(market_data::range_normalize::APPROVED_EFFECTIVE_FROM)
+            .expect("approved universe coverage floor is a valid date"),
+    })
+    .await
+    .map_err(|source| WorkerError::Database {
+        phase: WorkerPhase::Publication,
+        source,
+    })?;
     let raw_manifest_sha256 = crate::candidate_sink::candidate_raw_manifest_sha256(anchor)
         .map_err(|source| WorkerError::Database {
             phase: WorkerPhase::Publication,
@@ -2926,7 +2966,7 @@ async fn recover_price_publication_for_entry(
 #[cfg(test)]
 mod price_recovery_contract_tests {
     #[test]
-    fn cumulative_recovery_revalidates_blocked_price_and_does_not_require_candidate_catalog() {
+    fn cumulative_recovery_revalidates_blocked_price_and_registers_the_instrument_catalog() {
         let source = include_str!("worker.rs");
         let function = source
             .split_once("async fn recover_price_publications(")
@@ -2937,7 +2977,16 @@ mod price_recovery_contract_tests {
         assert!(function.contains("revalidate_price_raw_batch_after_rights"));
         assert!(function.contains("!manifest.artifacts.is_empty()"));
         assert!(!function.contains("resolve_contract_entitlement("));
-        assert!(!function.contains("register_candidate_instruments("));
+        // The database decides this, not the comment that used to sit here:
+        // publish_candidate_price_publication writes
+        // candidate_price_instrument_coverage, whose instrument_id is a foreign
+        // key onto instruments, and no other production path writes that table.
+        assert!(function.contains("register_candidate_instruments("));
+        // The floor persisted as instruments.listed_at must not come from the
+        // curation master, whose fallback moves as the cumulative window widens
+        // while the registration can never overwrite what it first stored.
+        assert!(function.contains("coverage_from: TradingDate::parse("));
+        assert!(!function.contains("coverage_from: instrument"));
         assert!(!function.contains(
             "the latest source date is already terminal while an older cumulative source is pending"
         ));

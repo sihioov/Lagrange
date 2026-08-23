@@ -264,6 +264,13 @@ async fn insert_dataset(
     .expect("insert candidate dataset version")
 }
 
+/// The approved coverage floor persisted as `instruments.listed_at`. Not an
+/// exchange listing date; see `CandidateInstrumentCatalog::coverage_from`.
+fn coverage_floor() -> TradingDate {
+    TradingDate::parse(market_data::range_normalize::APPROVED_EFFECTIVE_FROM)
+        .expect("approved coverage floor")
+}
+
 #[tokio::test]
 async fn synthetic_sources_schedule_compute_and_publish_one_atomic_top_five() {
     let Some(db) = ScratchDb::create().await else {
@@ -1185,6 +1192,7 @@ async fn rolling_raw_sources_curate_seal_schedule_run_and_publish_without_source
             .expect("rolling reference hash"),
         source_revision: &price_outcome.batch_id.to_string(),
         retrieved_at: retrieved,
+        coverage_from: coverage_floor(),
     })
     .await
     .expect("register rolling instruments");
@@ -1380,7 +1388,9 @@ async fn rolling_raw_sources_curate_seal_schedule_run_and_publish_without_source
         assert_eq!(canonical.1, instrument.name);
         assert_eq!(canonical.2, "EQUITY");
         assert_eq!(canonical.3, "ACTIVE");
-        assert_eq!(canonical.4, instrument.listed_at.to_iso());
+        // The stored floor is what the catalog passed, not what the curation
+        // master inferred -- the master's fallback moves with the window.
+        assert_eq!(canonical.4, coverage_floor().to_iso());
         assert_eq!(canonical.5, None);
     }
     sink.register_candidate_instruments(&CandidateInstrumentCatalog {
@@ -1397,6 +1407,7 @@ async fn rolling_raw_sources_curate_seal_schedule_run_and_publish_without_source
             .expect("day-two reference hash"),
         source_revision: &day2_source_revision,
         retrieved_at: day2_retrieved,
+        coverage_from: coverage_floor(),
     })
     .await
     .expect("day-two instrument replay");

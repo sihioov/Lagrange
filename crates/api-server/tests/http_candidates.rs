@@ -717,6 +717,8 @@ async fn publish_credentialed_rolling_day(
         reference_sha256,
         source_revision: &price.batch_id.to_string(),
         retrieved_at,
+        coverage_from: TradingDate::parse(market_data::range_normalize::APPROVED_EFFECTIVE_FROM)
+            .expect("approved coverage floor"),
     })
     .await
     .expect("credentialed rolling instrument catalog");

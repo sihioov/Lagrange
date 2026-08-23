@@ -60,6 +60,21 @@ pub struct CandidatePricePublication<'a> {
 
 pub struct CandidateInstrumentCatalog<'a> {
     pub master: &'a InstrumentMaster,
+    /// The date persisted as `instruments.listed_at`.
+    ///
+    /// This is the platform's approved coverage floor, NOT the exchange
+    /// listing date -- no source we collect carries one. A KIS reference
+    /// document has no listing date for any instrument, so the curation
+    /// master falls back to the earliest session in the generation being
+    /// curated (`curate.rs`), which moves earlier every time the cumulative
+    /// window widens. `register_candidate_instrument` requires the stored row
+    /// to match on `listed_at` exactly and can never overwrite it
+    /// (`ON CONFLICT (id) DO NOTHING`), so a value derived from the master
+    /// would make the first widened backfill fail permanently against the
+    /// value it wrote earlier. Pass the approved floor instead: one fixed
+    /// date, and the fixed point the master's fallback converges to once the
+    /// full approved window is present.
+    pub coverage_from: TradingDate,
     pub entitlement_id: Uuid,
     pub contract_reference: &'a str,
     pub entitlement_date: TradingDate,
@@ -327,7 +342,7 @@ impl PostgresCandidateSourceSink {
             .bind(instrument.instrument_id.symbol())
             .bind(&instrument.name)
             .bind(asset_class)
-            .bind(date(instrument.listed_at))
+            .bind(date(catalog.coverage_from))
             .bind(catalog.entitlement_id)
             .bind(catalog.contract_reference)
             .bind(date(catalog.entitlement_date))

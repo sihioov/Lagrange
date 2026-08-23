@@ -239,6 +239,12 @@ async fn insert_status_in_own_transaction(
     Ok(published)
 }
 
+/// The approved coverage floor persisted as `instruments.listed_at`.
+fn coverage_floor() -> TradingDate {
+    TradingDate::parse(market_data::range_normalize::APPROVED_EFFECTIVE_FROM)
+        .expect("approved coverage floor")
+}
+
 #[tokio::test]
 async fn typed_status_natural_key_is_serialized_across_datasets() {
     let Some(db) = ScratchDb::create().await else {
@@ -578,6 +584,7 @@ async fn research_writer_catalogs_exact_raw_sources_without_broad_dataset_dml() 
             reference_sha256,
             source_revision: &source_revision,
             retrieved_at: price_retrieved,
+            coverage_from: coverage_floor(),
         })
         .await
         .expect("Raw reference instrument catalog"),
@@ -592,9 +599,63 @@ async fn research_writer_catalogs_exact_raw_sources_without_broad_dataset_dml() 
             reference_sha256,
             source_revision: &source_revision,
             retrieved_at: price_retrieved,
+            coverage_from: coverage_floor(),
         })
         .await
         .expect("exact instrument catalog replay"),
+        0
+    );
+
+    // instruments.listed_at must be the floor the catalog passed, not anything
+    // the curation master inferred. The master's listing date is a fallback
+    // derived from the sessions present in the generation being curated, so it
+    // moves earlier as the cumulative window widens -- and
+    // register_candidate_instrument compares the stored row on listed_at while
+    // ON CONFLICT (id) DO NOTHING prevents it from ever overwriting. A value
+    // taken from the master therefore fails permanently on the first widened
+    // backfill, against the value an earlier run wrote.
+    for instrument in master.instruments() {
+        let stored: String =
+            // research_writer deliberately has no direct DML/SELECT on
+            // instruments -- it reaches the table only through the SECURITY
+            // DEFINER registration function -- so read the result as supervisor.
+            sqlx::query_scalar("SELECT listed_at::text FROM instruments WHERE id=$1")
+                .bind(instrument.instrument_id.to_string())
+                .fetch_one(&db.supervisor)
+                .await
+                .expect("registered canonical instrument");
+        assert_eq!(stored, coverage_floor().to_iso());
+        assert_ne!(
+            instrument.listed_at.to_iso(),
+            coverage_floor().to_iso(),
+            "fixture must keep the master's inferred date distinct from the floor, \
+             otherwise this assertion cannot tell them apart"
+        );
+    }
+
+    // A later generation infers a different listing date. Registration must
+    // still converge, because the floor it passes is unchanged.
+    let mut drifted = market_data::InstrumentMaster::new();
+    for instrument in master.instruments() {
+        let mut moved = instrument.clone();
+        moved.listed_at = TradingDate::parse("2019-06-03").expect("drifted inferred date");
+        drifted
+            .register_instrument(moved)
+            .expect("drifted instrument master");
+    }
+    assert_eq!(
+        sink.register_candidate_instruments(&CandidateInstrumentCatalog {
+            master: &drifted,
+            entitlement_id,
+            contract_reference,
+            entitlement_date: price_date,
+            reference_sha256,
+            source_revision: &source_revision,
+            retrieved_at: price_retrieved,
+            coverage_from: coverage_floor(),
+        })
+        .await
+        .expect("a drifted inferred listing date must not break convergence"),
         0
     );
     let flow_source = batch
