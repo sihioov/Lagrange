@@ -6,7 +6,7 @@
 //! health/readiness probes, and graceful shutdown.
 
 use crate::http::api_router;
-use crate::http::state::{ApiConfig, ApiState, system_seoul_today};
+use crate::http::state::{ApiConfig, ApiState, OwnerBetaAccessMode, system_seoul_today};
 use api_server_auth::RouterState as AuthRouterState;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -59,6 +59,7 @@ pub struct RuntimeConfig {
     /// Immutable source revision baked into the API image and copied into
     /// every API-created backtest run.
     pub code_commit: String,
+    pub owner_beta_access: OwnerBetaAccessMode,
     pub acquire_timeout: Duration,
 }
 
@@ -112,6 +113,7 @@ impl RuntimeConfig {
             seoul_today: system_seoul_today,
             candidate_eod_ready: crate::http::state::system_candidate_eod_ready,
             code_commit: self.code_commit.clone(),
+            owner_beta_access: self.owner_beta_access,
         }
     }
 }
@@ -140,6 +142,7 @@ where
         Err(error) => return Err(error),
     };
     let code_commit = code_commit_from(&get, production)?;
+    let owner_beta_access = owner_beta_access_from(&get)?;
 
     let listen_addr = listen_addr_from(&get)?;
     let database = DatabaseConfig {
@@ -188,8 +191,38 @@ where
         artifact_root,
         recommendation_dataset,
         code_commit,
+        owner_beta_access,
         acquire_timeout: Duration::from_secs(acquire_timeout_secs),
     })
+}
+
+/// Parse the deliberately narrow, non-secret owner-beta access mode.  This is
+/// strict so a typo cannot silently start a Member-visible beta surface.
+fn owner_beta_access_from<F>(get: &F) -> Result<OwnerBetaAccessMode, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    // This is policy, not secret material.  In particular, do not route it
+    // through the generic `*_FILE` secret-input convention: a policy typo or
+    // whitespace must fail at process startup rather than being trimmed into
+    // an unexpected active mode.
+    if get("OWNER_BETA_ACCESS_MODE_FILE").is_some() {
+        return Err(invalid("OWNER_BETA_ACCESS_MODE_FILE"));
+    }
+    let Some(raw) = get("OWNER_BETA_ACCESS_MODE") else {
+        return Ok(OwnerBetaAccessMode::Disabled);
+    };
+    let value = raw.into_string().map_err(|_| ConfigError::NonUnicode {
+        key: "OWNER_BETA_ACCESS_MODE".to_owned(),
+    })?;
+    if value.trim() != value || value.is_empty() {
+        return Err(invalid("OWNER_BETA_ACCESS_MODE"));
+    }
+    match value.as_str() {
+        "disabled" => Ok(OwnerBetaAccessMode::Disabled),
+        "owner_only" => Ok(OwnerBetaAccessMode::OwnerOnly),
+        _ => Err(invalid("OWNER_BETA_ACCESS_MODE")),
+    }
 }
 
 /// Parse the image revision once at startup. Production receives the exact
@@ -1347,6 +1380,39 @@ mod tests {
         assert_eq!(loaded.recommendation_dataset.id, uuid::Uuid::nil());
         assert_eq!(loaded.code_commit, DEVELOPMENT_CODE_COMMIT);
         assert_eq!(loaded.listen_addr, "127.0.0.1:18080".parse().unwrap());
+    }
+
+    #[test]
+    fn owner_beta_access_mode_is_explicit_and_fail_closed_on_invalid_values() {
+        let mut env = base_env();
+        assert_eq!(
+            config(&env).expect("default config").owner_beta_access,
+            OwnerBetaAccessMode::Disabled
+        );
+
+        env.insert("OWNER_BETA_ACCESS_MODE".to_owned(), "owner_only".into());
+        assert_eq!(
+            config(&env).expect("owner beta config").owner_beta_access,
+            OwnerBetaAccessMode::OwnerOnly
+        );
+
+        for invalid_value in ["enabled", "OWNER_ONLY", "owner-only", "disabled "] {
+            env.insert("OWNER_BETA_ACCESS_MODE".to_owned(), invalid_value.into());
+            assert!(
+                matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_ACCESS_MODE"),
+                "{invalid_value:?} must fail closed"
+            );
+        }
+
+        env.remove("OWNER_BETA_ACCESS_MODE");
+        env.insert(
+            "OWNER_BETA_ACCESS_MODE_FILE".to_owned(),
+            "/not/a/secret".into(),
+        );
+        assert!(
+            matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_ACCESS_MODE_FILE"),
+            "the non-secret policy must not accept the generic *_FILE channel"
+        );
     }
 
     #[test]

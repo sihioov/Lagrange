@@ -324,6 +324,25 @@ pub struct RouteSpec {
     pub audit: bool,
 }
 
+/// The temporary owner-beta boundary is conditional deployment policy, not
+/// an unconditional property of the normal API contract.  Keep this list
+/// adjacent to the route inventory so tests can prove every matching route is
+/// covered without incorrectly advertising the routes as always Owner-only.
+pub const OWNER_BETA_PRODUCT_PREFIXES: &[&str] = &[
+    "/api/v1/recommendations",
+    "/api/v1/backtests",
+    "/api/v1/paper",
+];
+
+pub fn owner_beta_applies(path: &str) -> bool {
+    OWNER_BETA_PRODUCT_PREFIXES.iter().any(|prefix| {
+        path == *prefix
+            || path
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| suffix.starts_with('/'))
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 const fn route(
     method: &'static str,
@@ -1126,3 +1145,51 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
         false,
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owner_beta_prefixes_cover_exactly_the_temporary_product_groups() {
+        let expected = CONTRACT_ROUTES
+            .iter()
+            .filter(|route| {
+                matches!(
+                    route.path,
+                    path if path.starts_with("/api/v1/recommendations/")
+                        || path.starts_with("/api/v1/backtests")
+                        || path.starts_with("/api/v1/paper/")
+                )
+            })
+            .map(|route| route.path)
+            .collect::<Vec<_>>();
+        let covered = CONTRACT_ROUTES
+            .iter()
+            .filter(|route| owner_beta_applies(route.path))
+            .map(|route| route.path)
+            .collect::<Vec<_>>();
+        assert_eq!(covered, expected);
+
+        for path in [
+            "/api/v1/recommendations",
+            "/api/v1/recommendations/runs",
+            "/api/v1/backtests",
+            "/api/v1/backtests/anything",
+            "/api/v1/paper",
+            "/api/v1/paper/accounts",
+        ] {
+            assert!(owner_beta_applies(path), "{path} must be gated");
+        }
+        for path in [
+            "/api/v1/auth/session",
+            "/api/v1/strategies",
+            "/api/v1/candidates/feed/latest",
+            "/api/v1/admin/datasets",
+            "/api/v1/live",
+            "/api/v1/papers/accounts",
+        ] {
+            assert!(!owner_beta_applies(path), "{path} must not be beta-gated");
+        }
+    }
+}

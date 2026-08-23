@@ -5,8 +5,12 @@
 //! authenticated responses also carry `Cache-Control: no-store` (no shared
 //! caching of authenticated data - the plan's Must-NOT list).
 
+use crate::contract::owner_beta_applies;
+use crate::http::error::{code_error, request_id};
+use crate::http::session::session_from_headers;
+use crate::http::state::ApiState;
 use crate::observability::{log, metrics};
-use axum::extract::Request;
+use axum::extract::{Request, State};
 use axum::http::HeaderValue;
 use axum::middleware::Next;
 use axum::response::Response;
@@ -44,4 +48,28 @@ pub async fn correlation(req: Request, next: Next) -> Response {
         .message(format!("{method} {path} -> {status}"))
         .emit();
     resp
+}
+
+/// One central admission boundary for the explicitly configured owner-only
+/// beta.  It deliberately precedes product handlers, so direct API callers
+/// cannot bypass a Web navigation restriction.  It has no effect unless the
+/// non-secret runtime mode is exactly `owner_only`.
+pub async fn owner_beta_admission(
+    State(state): State<ApiState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if !state.cfg.owner_beta_access.requires_owner() || !owner_beta_applies(req.uri().path()) {
+        return next.run(req).await;
+    }
+
+    let rid = request_id(req.headers());
+    let session = match session_from_headers(&state, req.headers()).await {
+        Ok(session) => session,
+        Err(response) => return response,
+    };
+    if !session.actor().is_owner() {
+        return code_error("FORBIDDEN", "forbidden", &rid);
+    }
+    next.run(req).await
 }

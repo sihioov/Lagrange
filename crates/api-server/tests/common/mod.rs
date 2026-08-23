@@ -15,7 +15,7 @@
 #![allow(dead_code)]
 
 use api_server::http::api_router;
-use api_server::http::state::{ApiConfig, ApiState};
+use api_server::http::state::{ApiConfig, ApiState, OwnerBetaAccessMode};
 use auth::entitlement::{Actor, Role};
 use auth::sessions::cookie;
 use axum::body::Body;
@@ -366,6 +366,7 @@ impl Harness {
             seoul_today: || chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
             candidate_eod_ready: || true,
             code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            owner_beta_access: OwnerBetaAccessMode::Disabled,
         };
         let state = ApiState::from_pools(
             cfg,
@@ -406,6 +407,13 @@ impl Harness {
     ) {
         let mut cfg = (*self.state().cfg).clone();
         cfg.recommendation_dataset = recommendation_dataset;
+        self.restart_api_with_config(cfg).await;
+    }
+
+    /// Rebuild the router with the explicit owner-beta admission policy.
+    pub async fn restart_api_with_owner_beta_access(&mut self) {
+        let mut cfg = (*self.state().cfg).clone();
+        cfg.owner_beta_access = OwnerBetaAccessMode::OwnerOnly;
         self.restart_api_with_config(cfg).await;
     }
 

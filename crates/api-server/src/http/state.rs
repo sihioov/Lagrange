@@ -37,6 +37,27 @@ pub trait SessionBackend: Send + Sync {
     fn app_pool(&self) -> &sqlx::PgPool;
 }
 
+/// Whether the deployment has activated the temporary owner-only beta access
+/// boundary for the ETF recommendation product.  This is intentionally a
+/// runtime policy rather than a dataset attribute: enabling it does not
+/// attest, publish, or otherwise make a dataset available.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum OwnerBetaAccessMode {
+    /// Preserve the normal multi-user product contract.
+    #[default]
+    Disabled,
+    /// Require an Owner session for recommendation, backtest, and Paper
+    /// routes.  The individual handlers still apply their normal entitlement,
+    /// dataset, CSRF, and tenancy gates after this boundary.
+    OwnerOnly,
+}
+
+impl OwnerBetaAccessMode {
+    pub const fn requires_owner(self) -> bool {
+        matches!(self, Self::OwnerOnly)
+    }
+}
+
 /// Runtime configuration of the API surface.
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -64,6 +85,8 @@ pub struct ApiConfig {
     pub candidate_eod_ready: fn() -> bool,
     /// Immutable API image revision copied to newly-created backtest runs.
     pub code_commit: String,
+    /// Explicit, non-secret deployment policy for the temporary owner beta.
+    pub owner_beta_access: OwnerBetaAccessMode,
 }
 
 pub fn system_seoul_today() -> chrono::NaiveDate {
@@ -101,6 +124,43 @@ impl SessionBackend for ApiState {
 }
 
 impl ApiState {
+    /// Construct a state whose pools do not open connections.  Router unit
+    /// tests use this to prove an admission boundary returns before any SQL
+    /// path; production and integration-test construction remain unchanged.
+    #[cfg(test)]
+    pub(crate) fn test_without_database(owner_beta_access: OwnerBetaAccessMode) -> Self {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
+            .expect("static lazy PostgreSQL URL");
+        ApiState {
+            cfg: Arc::new(ApiConfig {
+                cursor_secret: [7; 32],
+                max_jobs_per_owner: 1,
+                recommendation_dataset: DatasetPin {
+                    id: uuid::Uuid::nil(),
+                    dataset_id: "owner-beta-test".to_owned(),
+                    version: "test".to_owned(),
+                    curated_version: 1,
+                    manifest_sha256: "0".repeat(64),
+                },
+                db_url: "postgres://unused:unused@127.0.0.1:1/unused".to_owned(),
+                step_up_max_auth_age_secs: 900,
+                artifact_root: std::path::PathBuf::from("/unused"),
+                seoul_today: || chrono::NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+                candidate_eod_ready: || false,
+                code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+                owner_beta_access,
+            }),
+            app_pool: pool.clone(),
+            admin_pool: pool.clone(),
+            audit_pool: pool,
+            entitlements: Arc::new(EntitlementService::new(Vec::new())),
+            idempotency: Arc::new(InMemoryIdempotencyStore::default()),
+            actor_pools: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
     /// Build state from the three serving pools, loading the entitlement
     /// service from `data_entitlements` (fail-closed when empty).
     pub async fn from_pools(

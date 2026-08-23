@@ -464,6 +464,10 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
             seoul_today: api_server::http::state::system_seoul_today,
             candidate_eod_ready: || true,
             code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            // This daemon does not expose HTTP routes.  Its direct internal
+            // state still carries the API configuration shape, so preserve
+            // the normal non-beta default here.
+            owner_beta_access: api_server::http::state::OwnerBetaAccessMode::Disabled,
         },
         app_pool,
         admin_pool,

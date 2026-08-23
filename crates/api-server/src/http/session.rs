@@ -36,34 +36,45 @@ impl<S: SessionBackend> FromRequestParts<S> for Session {
     type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let headers = &parts.headers;
-        let rid = request_id(headers);
-        let cookie_header = headers
-            .get(header::COOKIE)
-            .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                api_error(
-                    StatusCode::UNAUTHORIZED,
-                    "SESSION_UNKNOWN",
-                    "session required",
-                    &rid,
-                    None,
-                )
-            })?;
-        let value = cookie::parse(cookie_header, cookie::NAME).ok_or_else(|| {
+        session_from_headers(state, &parts.headers)
+            .await
+            .map(Session)
+    }
+}
+
+/// Resolve the canonical session from request headers.  Route middleware uses
+/// this exact helper before a handler is reached, so the owner-beta admission
+/// boundary cannot disagree with the normal `Session` extractor about cookie
+/// parsing or typed authentication failures.
+pub(crate) async fn session_from_headers<S: SessionBackend>(
+    state: &S,
+    headers: &HeaderMap,
+) -> Result<SessionInfo, Response> {
+    let rid = request_id(headers);
+    let cookie_header = headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
             api_error(
                 StatusCode::UNAUTHORIZED,
                 "SESSION_UNKNOWN",
-                "session cookie missing",
+                "session required",
                 &rid,
                 None,
             )
         })?;
-        let info = resolve_session(state, &value)
-            .await
-            .map_err(|e| api_error(e.status(), e.code(), e.message(), &rid, None))?;
-        Ok(Session(info))
-    }
+    let value = cookie::parse(cookie_header, cookie::NAME).ok_or_else(|| {
+        api_error(
+            StatusCode::UNAUTHORIZED,
+            "SESSION_UNKNOWN",
+            "session cookie missing",
+            &rid,
+            None,
+        )
+    })?;
+    resolve_session(state, &value)
+        .await
+        .map_err(|e| api_error(e.status(), e.code(), e.message(), &rid, None))
 }
 
 #[derive(Debug)]

@@ -422,6 +422,15 @@ pub fn api_router(state: ApiState) -> Router {
 
     Router::new()
         .nest("/api/v1", v1)
+        // Axum strips a nested prefix before middleware installed on the
+        // nested router.  Keep this full-path policy outside `nest` so its
+        // `/api/v1/...` allowlist cannot silently miss every protected route.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::owner_beta_admission,
+        ))
+        // Correlation is installed after the policy layer so it runs first
+        // and every admission rejection carries the ordinary request id.
         .layer(axum::middleware::from_fn(middleware::correlation))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
@@ -431,4 +440,84 @@ pub fn api_router(state: ApiState) -> Router {
 /// equality with the spec's operation count).
 pub fn mounted_route_count() -> usize {
     CONTRACT_ROUTES.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Method, Request};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn owner_beta_admission_sees_the_full_path_outside_the_nested_router() {
+        let state =
+            ApiState::test_without_database(crate::http::state::OwnerBetaAccessMode::OwnerOnly);
+        assert_eq!(state.app_pool.size(), 0);
+        assert_eq!(state.admin_pool.size(), 0);
+        assert_eq!(state.audit_pool.size(), 0);
+        let app = api_router(state.clone());
+
+        // DELETE has no MethodRouter handler here.  The outer admission
+        // boundary must still recognize the protected full path and return
+        // its authentication rejection before Axum can return 405.  With the
+        // old layer inside `v1`, Axum exposed `/backtests` to the middleware,
+        // skipped the gate, and this assertion failed with 405.
+        let protected = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/backtests")
+                    .body(Body::empty())
+                    .expect("protected request"),
+            )
+            .await
+            .expect("protected response");
+        assert_eq!(protected.status(), StatusCode::UNAUTHORIZED);
+        let request_id = protected
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("correlation runs before admission")
+            .to_owned();
+        assert!(!request_id.is_empty());
+        let body = to_bytes(protected.into_body(), 16 * 1024)
+            .await
+            .expect("bounded error body");
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("typed error JSON");
+        assert_eq!(body["error"]["code"], "SESSION_UNKNOWN");
+        assert_eq!(body["error"]["request_id"], request_id);
+
+        // A normal supported request is also rejected without touching the
+        // lazy pools; this is an admission result, not a database outage.
+        let protected_get = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/backtests")
+                    .body(Body::empty())
+                    .expect("protected GET request"),
+            )
+            .await
+            .expect("protected GET response");
+        assert_eq!(protected_get.status(), StatusCode::UNAUTHORIZED);
+
+        // A real, database-free route outside the product prefixes must not
+        // be misclassified by the outer layer.
+        let unrelated = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/metrics")
+                    .body(Body::empty())
+                    .expect("unrelated request"),
+            )
+            .await
+            .expect("unrelated response");
+        assert_eq!(unrelated.status(), StatusCode::OK);
+
+        assert_eq!(state.app_pool.size(), 0);
+        assert_eq!(state.admin_pool.size(), 0);
+        assert_eq!(state.audit_pool.size(), 0);
+    }
 }
