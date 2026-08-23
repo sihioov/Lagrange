@@ -1288,6 +1288,73 @@ ADR-0005 그대로 유지해 문서 결속을 지켰다). **함수가 이제 해
 먼저 열었고**, 매번 원인을 확정한 뒤에야 다음으로 갔다.
 
 
+### 0.29 파이프라인이 처음으로 이틀치를 발행했다 — 그리고 벽 여섯 개는 전부 같은 모양이었다 (2026-08-23)
+
+    data_batches
+      2026-08-18 | CALENDAR, CORPORATE_ACTIONS, EOD, REFERENCE | credentialed
+      2026-08-19 | CALENDAR, CORPORATE_ACTIONS, EOD, REFERENCE | credentialed   ← 신규
+
+`exit=0`, `{"event":"published","phase":"canonical_publication","target_date":"2026-08-19"}`,
+`outcome: backfilled`. 아침에 `PRICE_CURATION_FAILED` 한 줄로 시작한 문제가 닫혔다.
+
+**각 수정이 의도한 자리에서 확인된다.**
+
+| 수정 | 증거 |
+|---|---|
+| §0.24 큐레이션 폴백 | Curated `version=3` (source batch 2개, bar 22개) |
+| §0.26/(나)안 달력 | `trading_calendar_versions`에 **같은 `source_version`으로 두 날짜**가 각자 다른 해시(`96624dab…`/`eaf6e6be…`)로 공존 |
+| §4.2-7 instrument 등록 | `instruments` 11행, `candidate_price_instrument_coverage` 11행 |
+| `0048` 재사용 바인딩 | `candidate_raw_batch_datasets`에 `reused_existing=false`(anchor)와 `true`(이전 날짜)가 **둘 다** |
+| §0.27/§0.28 entitlement | 원장 두 날짜 모두 `PUBLISHED`, `ENTITLEMENT_INACTIVE` 소멸 |
+
+**이 절이 남기는 진짜 교훈 — "둘째 날" 패턴.** 오늘 넘은 벽이 여섯인데 **여섯 다 같은 성질**이었다:
+**하루치에는 맞고 이틀치를 표현할 수 없는 설계.** 우연이 아니라 이 시스템이 단일 배치·단일
+날짜로 개발되고 그 상태로만 검증돼 온 결과다.
+
+| # | 벽 | 하루치에서 왜 안 보였나 |
+|---|---|---|
+| 1 | 상장일 폴백이 배치별 (`curate.rs`) | 배치가 하나면 폴백도 하나 |
+| 2 | 달력 `source_version`이 상수인데 문서는 날짜별 (`sink.rs`) | 문서가 하나면 충돌 상대가 없다 |
+| 3 | `instruments` FK를 요구하면서 등록 경로가 제거됨 (`84e6ce1`) | — 이건 날짜와 무관한 자기모순 |
+| 4 | 카탈로그 `listed_at`이 master에서 오면 윈도우 따라 드리프트 | 윈도우가 안 넓어지면 안 움직인다 |
+| 5 | 재사용 바인딩 경로에 DB 전제조건 미갱신 (`f815f63`) | 하루치는 originate만 하고 reuse를 안 한다 |
+| 6 | entitlement 참조가 두 역할을 겸함 | 발행이 한 번뿐이면 불일치가 드러날 기회가 없다 |
+
+**다음에 이 시스템에서 "왜 어제는 됐는데 오늘 안 되지"를 만나면, 먼저 의심할 것은
+"이 값이 배치 하나를 전제하는가"이다.**
+
+**계측이 실제로 값을 했다.** §0.24와 §0.25에서 같은 벽에 두 번 부딪힌 뒤 `detail` 필드에
+30분을 썼다. 그 다음 규명 세 건(§0.26 달력, FK, `0048` 바인딩)은 **재실행 한 번씩**으로
+끝났다. 앞선 두 건은 각각 컨테이너로 Raw를 복사하고 일회용 하네스를 빌드해야 했다.
+
+**내가 오늘 반복한 실수 둘.**
+- **머지되어 닫힌 PR에 계속 푸시했다.** 그러면 CI가 돌지 않는다. PR #3에서 겪고 PR #4에서
+  또 했다. 그 사이 커밋 두 개가 검증 없이 브랜치에 앉아 있었다.
+- **`research-smoke.yml`이 별도 워크플로이고 `push: [main]`에서만 돈다는 것을 몰랐다.**
+  `ci.yml` 8개 job만 보고 "green"이라고 여러 번 보고했고, 실제로는 머지 뒤 main이 빨개졌다
+  (`6521db9`). 30분 넘게 지나서야 발견했다. **머지 후에는 `gh run list`로 워크플로 전체를
+  확인한다** — `gh pr checks`는 PR에 붙는 것만 보여준다.
+
+**정렬 상태 (2026-08-23 20:40 기준).**
+
+| | |
+|---|---|
+| main / 이미지 | `6c2d18b` |
+| 릴리스 / 타이머 | `66b2a8c` |
+
+일일 경로 스크립트(`kis-daily-production.sh`, `backfill-production.sh`, `lib/`, compose)는
+`66b2a8c..6c2d18b` 사이에 **변경이 없으므로** 내일 16:30 실행은 새 이미지로 정상 동작한다.
+다만 셋을 일치시키려면 **내일 16:30 이전에** 릴리스·타이머를 `6c2d18b`로 옮겨야 한다
+(`install-kis-daily.sh --apply`는 `Persistent=true` 때문에 16:30 이후 설치가 금지된다).
+
+**적용된 마이그레이션.** 47(worker price entitlement attestation)과 48(price generation
+reuse binding)이 함께 적용됐다 — 47도 미적용 상태였다.
+
+**남은 것.** 08-20·08-21 미수집(다음 실행이 집어간다). §4.2의 소유자 결정 3건(수수료 필드,
+Phase 4 우선순위, 기업행사 6개 클래스)은 그대로다. 기업행사 건은 이제 **실제로 터지는지
+확인할 수 있다** — 발행이 되므로 다음 실행에서 드러난다.
+
+
 ---
 ---
 
@@ -1674,7 +1741,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 증거로 유지하고 새 metadata를 사용해 게이트를 재실행한다. Member 접근과 Live는
 권리 추정으로 넓히지 않고 명시적으로 비활성 상태를 유지한다.
 
-### 4.2 소유자 결정 대기 7건
+### 4.2 소유자 결정 대기 — 3건 (해소 4건은 기록 유지)
 
 1. **phase-0 골든에 수수료 필드를 넣을지** — 넣는 것은 승인된 기준값을 바꾸는 명시적 재승인 행위라 보류 중
 2. **Phase 4 우선순위** — §4.4 참조
@@ -1718,7 +1785,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    (`effective_until = 9999-12-31`). **소유자가 정할 것은 "(a)로 간다"와 활성화 날짜뿐이며,
    실행은 에이전트가 할 수 있다.**
 
-5. **KIS 달력의 `source_version` 모델 (신규, 2026-08-23; §0.26, 출시 차단)** — DB는
+5. ~~**KIS 달력의 `source_version` 모델**~~ **(나)안으로 해소 (2026-08-23, §0.29)** — 비교를 세션 날짜 범위로 좁혔다. 마이그레이션 불필요 — 테이블 UNIQUE 제약은 `0022`부터 이미 날짜 단위였고 교차 날짜 규칙은 `sink.rs`에만 있었다. 아래는 결정 당시 기록 — DB는
    `(exchange, source_version)` 하나에 `content_sha256`이 하나여야 한다고 강제하는데
    (`sink.rs:570`), KIS `chk-holiday`는 날짜마다 다른 문서를 주면서 `source_version`은
    `kis-chk-holiday-v1:schema-1`로 상수다. **둘째 날 publication이 반드시 충돌한다.**
@@ -1737,7 +1804,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    08-18·08-19는 영구 미발행 (c) 두 역할을 별도 필드로 분리. **에이전트가 승인 레코드에 없는
    참조로 권리를 등록하지 않는다.**
 
-7. **`instruments` 카탈로그와 price coverage FK (신규, 2026-08-23; §0.28, 출시 차단)** —
+7. ~~**`instruments` 카탈로그와 price coverage FK**~~ **(b)안으로 해소 (2026-08-23, §0.29)** — price 복구 경로가 카탈로그를 등록한다. 커버리지 하한은 master가 아니라 승인된 `APPROVED_EFFECTIVE_FROM`을 쓴다. 아래는 결정 당시 기록 —
    `publish_candidate_price_publication`이 `candidate_price_instrument_coverage`에 쓰고 그
    FK가 `instruments(id)`를 요구하는데 그 테이블은 0행이고 **프로덕션 writer가 없다**
    (`register_candidate_instruments`는 호출처 0). 반대로 `worker.rs:2927`의 계약 테스트는
@@ -1766,6 +1833,17 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    kis-chk-holiday-v1:schema-1)`. 원인은 §4.2-5로 등재했다.
 
 **작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다. §0.16의 A(Paper 런타임 `CurateStore` 이중 경로)와 C(CI가 Python 스위트를 실행하지 않음)는 **2026-08-22에 종결됐다(§0.17)**.
+
+9. **릴리스·타이머를 `6c2d18b`로 정렬 (2026-08-23 미완, 내일 16:30 이전).** 이미지와 main은
+   `6c2d18b`이고 릴리스·타이머는 `66b2a8c`다. 일일 경로 스크립트는 동일하므로 동작에는
+   문제가 없지만 셋이 어긋난 상태다. `install-kis-daily.sh --apply`는 `Persistent=true`
+   때문에 16:30 이후 설치가 금지되고, 설치 스크립트가 **이전 세대 타이머를 끄지 않으므로**
+   교체 후 옛 유닛을 직접 `disable --now` 해야 한다(§0.25-⑤).
+10. **`fsc-krx-listed` 수집과 실제 상장일 승격 (§0.29).** `instruments.listed_at`은 현재
+   플랫폼 커버리지 하한(`2020-01-31`)이지 거래소 상장일이 아니다 — 우리가 수집하는 어떤
+   소스도 실제 상장일을 주지 않는다. `register_candidate_instrument`는
+   `ON CONFLICT (id) DO NOTHING`이라 **이 경로로는 영원히 못 고친다.** 실제 상장일을 넣으려면
+   fsc-krx-listed 수집 + 별도 갱신 마이그레이션이 필요하다.
 
 ### 4.4 Phase 4 잔여
 
