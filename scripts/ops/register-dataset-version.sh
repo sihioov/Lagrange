@@ -73,10 +73,35 @@ command -v sha256sum >/dev/null 2>&1 || die 'sha256sum is required'
 
 valid_uuid() { [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]; }
 valid_date() {
-  local value=$1 normalized
-  [[ "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
-  normalized=$(date -u -d "$value" +%F 2>/dev/null) || return 1
-  [ "$normalized" = "$value" ]
+  # Validate the calendar arithmetically rather than round-tripping through
+  # date(1).  A rights window legitimately ends on 9999-12-31 -- that is the
+  # open-ended sentinel in this repository's own
+  # configs/data-rights/kis.entitlement.json -- and GNU date cannot represent
+  # that day once a timezone offset is applied: `date -u -d 9999-12-31` fails
+  # outright, and dropping -u only moves the failure to UTC and negative-offset
+  # hosts (it passes only where the local offset is positive).  So the old
+  # round-trip rejected the exact value the approved record carries, on exactly
+  # the hosts CI and most operators run.
+  local value=$1 year month day last_day
+  [[ "$value" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})$ ]] || return 1
+  year=$((10#${BASH_REMATCH[1]}))
+  month=$((10#${BASH_REMATCH[2]}))
+  day=$((10#${BASH_REMATCH[3]}))
+  [ "$year" -ge 1 ] || return 1
+  [ "$month" -ge 1 ] && [ "$month" -le 12 ] || return 1
+  case "$month" in
+    1 | 3 | 5 | 7 | 8 | 10 | 12) last_day=31 ;;
+    4 | 6 | 9 | 11) last_day=30 ;;
+    2)
+      if [ $((year % 4)) -eq 0 ] && { [ $((year % 100)) -ne 0 ] || [ $((year % 400)) -eq 0 ]; }; then
+        last_day=29
+      else
+        last_day=28
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+  [ "$day" -ge 1 ] && [ "$day" -le "$last_day" ]
 }
 regular_file() {
   [ -f "$1" ] || blocked "$2 is missing"

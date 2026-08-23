@@ -27,6 +27,29 @@ done
 doc="$tmp/rights.pdf"
 printf '%s' 'operator-controlled rights fixture; never a real entitlement' >"$doc"
 chmod 0600 "$doc"
+# A rights window may legitimately end on 9999-12-31 -- that is the sentinel in
+# configs/data-rights/kis.entitlement.json. The previous date(1) round-trip
+# rejected exactly that value on UTC and negative-offset hosts, so pin the
+# calendar rule here and run it under a timezone on each side of UTC. The
+# fixture above now carries the same sentinel, so the plan path exercises it too.
+for helper in "$entitlement" "$dataset"; do
+  for tz in UTC Asia/Seoul America/Sao_Paulo; do
+    for probe in '2020-01-31:0' '9999-12-31:0' '2020-02-29:0' '0001-01-01:0' \
+                 '2020-02-30:1' '2021-02-29:1' '2020-13-01:1' '2020-00-10:1'; do
+      probe_date=${probe%:*}
+      probe_want=${probe#*:}
+      if TZ=$tz bash -c "source <(sed -n '/^valid_date()/,/^}/p' \"\$1\"); valid_date \"\$2\"" \
+        _ "$helper" "$probe_date"; then
+        probe_got=0
+      else
+        probe_got=1
+      fi
+      [ "$probe_got" = "$probe_want" ] ||
+        fail "valid_date($probe_date) in $(basename "$helper") under TZ=$tz returned $probe_got, wanted $probe_want"
+    done
+  done
+done
+
 doc_hash=$(sha256sum -- "$doc" | awk '{print $1}')
 metadata="$tmp/kis-entitlement.json"
 jq -n --arg hash "$doc_hash" '{
@@ -41,7 +64,7 @@ jq -n --arg hash "$doc_hash" '{
   covered_uses: ["dataset", "recommendation", "backtest", "paper_view"],
   covered_users: ["usr_self_test"],
   effective_from: "2026-01-01",
-  effective_until: "2026-12-31",
+  effective_until: "9999-12-31",
   lifecycle: "PENDING"
 }' >"$metadata"
 chmod 0600 "$metadata"
