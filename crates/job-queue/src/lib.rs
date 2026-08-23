@@ -12,6 +12,7 @@ pub mod batch;
 pub mod candidate;
 pub mod error;
 pub mod factor_series;
+pub mod owner_beta;
 pub mod paper_execution;
 pub mod paper_io;
 pub mod paper_preview;
