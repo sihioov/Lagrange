@@ -89,13 +89,54 @@ static contract flags, counts, batch IDs, and hashes. It writes no Raw,
 Curated, approval registry, database row, or five-pin and makes no network,
 provider, Docker, or systemd call.
 
-This verifier is only the authenticated input seam. A separately reviewed
-materializer must still apply verified bonus split factors, write a date-only
-price schema without invented open/close timestamps, omit total-return
-artifacts, preserve `owner-only`, `vendor_snapshot=true`, `strict_pit=false`,
-and `PRICE_RETURN_ONLY`, and create a deterministic review manifest. Until
-that materializer exists and its manifest is independently approved, the
-owner beta remains unregistered and unavailable to recommendation/backtest.
+This verifier is only the authenticated input seam. The in-memory materializer
+below applies verified bonus split factors and produces a date-only price
+candidate without invented open/close timestamps or total-return artifacts.
+Its candidate remains owner-only, `vendor_snapshot=true`, `strict_pit=false`,
+and `PRICE_RETURN_ONLY`; a separate review manifest is still required. The
+candidate encodes the closed `OWNER_ONLY` audience scope, but this in-memory
+layer does not authorize any user identity because it has no publication or
+access path. Downstream publication must enforce owner identity independently.
+Until that manifest is independently approved, the owner beta remains
+unregistered, unpublishable, and unavailable to recommendation/backtest.
+
+## In-memory historical price-only beta candidate
+
+`materialize_historical_price_only_beta(&HistoricalPriceOnlyBetaInput)` is the
+bounded materializer at this seam. It returns an opaque in-memory candidate and
+does not serialize, write a file, create a database-ready type, or register a
+publication. Its rows contain date-only `(instrument, session_date)` keys,
+separate raw `open/high/low/close/volume/trading_value` fields, and separate
+split-adjusted `open/high/low/close` fields. Volume and trading value are kept
+raw; there is no dividend or total-return field.
+
+Only verified `RangeAction::BonusIssue` evidence is accepted. Source files must
+already follow the Stage5 producer's fixed ETF11 instrument order and numeric
+range-window order, so `window-9` precedes `window-10` regardless of lexical
+filename order. Bonus actions must be ordered by
+`(instrument_id, ex_date, record_date, split_factor, acquired_at)`; noncanonical
+input is rejected rather than silently sorted. Duplicate or conflicting bonus
+actions with the same `(instrument_id, ex_date)` identity are rejected. For a
+bar whose date is strictly before an action `ex_date`, the materializer
+multiplies the exact raw price by that action's reciprocal `split_factor`; the
+action is not applied on or after `ex_date`. Reciprocal factors and the
+cumulative factor use scale 8 with half-even rounding after each
+multiplication. Adjusted prices use scale 4 with one final half-even round.
+Output ordering is canonical by instrument and date.
+
+The candidate carries the exact Stage5 and KSD batch/manifest pins, source
+file metadata, normalized-session witnesses, canonical bonus evidence, exact
+source-file/action-file/session/row counts, and a SHA-256 over an explicit
+canonical representation of those values and the rows. Bonus evidence exposes
+only `acquired_at` retrieval provenance; it does not expose or imply
+`available_at` point-in-time semantics. Fixed metadata is
+`vendor_snapshot=true`, `strict_pit=false`, `capability=PRICE_RETURN_ONLY`,
+`OWNER_ONLY`, `in_memory=true`, `materialized=false`, and `ready=false`. The
+materializer fails closed on input/order mismatches, duplicate bars or actions,
+unsupported actions, invalid split factors, raw or rounded OHLC invariant
+violations, and fixed-point or canonical-hash overflow/serialization failure.
+Acquisition timestamps retained in provenance are source retrieval evidence
+only; no market-open, market-close, or invented session timestamp is generated.
 
 ## Deliberate limitations
 

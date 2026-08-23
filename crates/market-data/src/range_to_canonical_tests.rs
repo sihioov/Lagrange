@@ -86,7 +86,7 @@ fn store_source(raw: &RawStore) -> ManifestEntry {
             RawEnvelope::new(
                 id,
                 ResponseKind::Bars,
-                format!("daily-bars-range-window-01-{symbol}.json"),
+                format!("daily-bars-range-window-1-{symbol}-page-01.json"),
                 bytes,
                 timestamp(ACQUIRED),
                 source_request(symbol),
@@ -616,6 +616,38 @@ fn raw_bound_historical_input_reauthenticates_exact_source_and_action_pins() {
     );
     assert_eq!(verified.bars().len(), 11);
     assert!(verified.actions().is_empty());
+
+    let first = crate::materialize_historical_price_only_beta(&verified).unwrap();
+    let second = crate::materialize_historical_price_only_beta(&verified).unwrap();
+    assert_eq!(first.source_batch_id(), verified.source_batch_id());
+    assert_eq!(
+        first.source_manifest_hash(),
+        verified.source_manifest_hash()
+    );
+    assert_eq!(first.source_files(), verified.source_files());
+    assert_eq!(first.action_batch_id(), verified.action_batch_id());
+    assert_eq!(
+        first.action_manifest_hash(),
+        verified.action_manifest_hash()
+    );
+    assert_eq!(first.action_file_count(), verified.action_file_count());
+    assert_eq!(first.row_count(), 11);
+    assert_eq!(first.session_count(), 1);
+    assert!(first.bonus_evidence().is_empty());
+    assert_eq!(
+        first.metadata(),
+        crate::HistoricalPriceOnlyMetadata {
+            audience: crate::HistoricalPriceOnlyAudience::OwnerOnly,
+            vendor_snapshot: true,
+            strict_pit: false,
+            capability: crate::Capability::PriceReturnOnly,
+            materialized: false,
+            in_memory: true,
+            ready: false,
+        }
+    );
+    assert_eq!(first, second);
+    assert_eq!(first.content_hash(), second.content_hash());
 
     let wrong_source_pin = ContentHash::from_bytes(b"wrong-stage5-pin");
     assert!(matches!(
