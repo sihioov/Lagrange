@@ -1030,6 +1030,34 @@ calendar 바이트**(`kr-etf/2020-01-31/calendar.json`, 세션 여러 개)를 �
 트리 손상, calendar provenance 불일치, instrument master 원본 불일치, `BatchAlreadyCurated`
 다섯 후보를 **각각 데이터나 코드로 제거한 뒤** 재현에 도달했다.
 
+**수정 (`b67ae1b`).** 폴백을 **병합된 세션 집합**에서 유도하도록 바꿨다 — 배치가 아니라
+**세대(generation)의 속성**이 된다. `curation_inputs_from_raw`는 `None`을 넘기는 얇은
+래퍼가 되어 **단일 배치 동작은 바이트 단위로 그대로**이고, 따라서 이미 발행된
+version=1/2의 의미도 움직이지 않는다.
+
+의도적으로 하지 **않은** 선택: instrument별 `min(listed_at)` 병합. 그렇게 하면 한 배치는
+진짜 상장일을 주고 다른 배치는 폴백을 주는 불일치를 **조용히 받아들이게** 되는데, 지금은
+그것이 fail-closed 된다. 진짜 `listed_at`을 가진 종목은 계속 엄격하게 비교된다.
+
+**이 수정이 PIT 증거를 새로 지어내지 않는 근거.** `listed_at`은 **curated 산출물에 전혀
+저장되지 않는다** — `manifest.json` 스키마에도, 어떤 parquet에도 없다(실제 version=2
+manifest로 확인). 큐레이션 시점 `NotListed` sanity 게이트의 입력일 뿐이므로, 이 변경은 그
+경계를 "한 배치"에서 "지금 큐레이션하는 세대"로 넓힌 것이고 그것이 올바른 스코프다.
+
+**회귀 테스트** `crates/market-data/tests/cumulative_curation_single_session_calendars.rs`는
+프로덕션의 **두 조건을 모두** 재현한다(배치당 세션 1개 + `listed_at` 0개). 수정 전 트리에서
+`NonCanonicalNormalizedBatch`와 **동일한 reason 문자열로 실패**하는 것을 먼저 확인한 뒤
+수정했다. 기존 다중 배치 테스트는 "calendar가 일치할 때"를 지키므로 건드리지 않았다.
+
+**검증.** 실제 08-18/08-19 배치로 하네스를 다시 돌려 `curate_generation`이 **version=3**을
+두 source batch로 생성하고 `last_session == anchor.date`(2026-08-19)임을 확인했다. 공통
+게이트: fmt/clippy 통과, `cargo test --workspace --all-targets --all-features --no-fail-fast`
+**1904건 통과 / 실패 0**(QA DB + `PYTHON=nt/.venv/bin/python` 필요), CI `policy` job의 정적
+검사 전부 통과.
+
+**아직 프로덕션 미검증.** 이미지 재빌드와 08-19 재실행이 남았다. version=3이 실제로 생기고
+DB publication이 성공하기 전까지 이 벽은 "원인 수정, 운영 미확인"이다.
+
 **부수 발견 — 진단 가능성 결함.** `CurateError`는 변종이 약 30개인데 worker가 전부
 `PRICE_CURATION_FAILED` + `"price curation failed"` 한 줄로 접는다
 (`research-worker.rs:709`). 변종 이름조차 남지 않아 이번 규명에 컨테이너 복사와 일회용
@@ -1461,12 +1489,11 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 4. **배포 서비스 활성화.** Paper/recommendation/candidate runner에 실제 role-scoped DB URL과 curated/raw volume을 호스트 Secret Manager에서 주입한다. 저장소에는 비밀값을 넣지 않는다.
 5. **실제 KIS provider와 운영 원천 활성화.** 새 credential을 발급하지 않고 기존 등록 KIS App Key/App Secret의 보호된 source/runtime secret을 검증한다. 이후 token/endpoint를 확인하고 확정된 entitlement metadata를 운영 DB에 등록한 뒤 `research_writer`, migration, Raw volume을 검증해 KIS calendar/EOD/instrument/corporate-action 원천을 공급한다. 고정 ETF 백필 후 후보 bridge와 KOSPI200/KOSDAQ150 source set은 별도 승인한다. 원천이 없거나 오래되면 게이트는 계속 닫힌다.
 
-6. **누적 큐레이션이 이틀치를 발행하지 못하는 결함 (§0.24, 출시 차단).** 원인은 확정됐다 —
-   KIS reference에 `listed_at`이 없어 배치별 calendar 첫 세션으로 폴백하고, 그 값이 배치마다
-   달라 instrument master 동일성 검사가 fail-closed 된다. 수정은 `NotListed` 게이트의 입력을
-   바꾸므로 PIT 의미가 걸린다(원칙 6). 함께 닫아야 할 것: `price_publication_evidence.rs:11`의
-   `fixture_entry`가 두 배치에 같은 다중 세션 calendar를 주어 이 결함을 가리고 있으므로,
-   **배치마다 자기 날짜 세션 하나만 주는 픽스처로 회귀 테스트를 먼저 세운다.**
+6. ~~**누적 큐레이션이 이틀치를 발행하지 못하는 결함.**~~ **코드 수정 완료 (2026-08-23,
+   `b67ae1b`, §0.24) — 운영 검증은 남음.** 폴백을 병합 세션 집합에서 유도하도록 바꿨고,
+   배치당 단일 세션 calendar를 주는 회귀 테스트를 세웠다. **남은 것: worker 이미지 재빌드 →
+   `org.opencontainers.image.revision`이 새 커밋과 일치하는지 확인 → 08-19 재실행 →
+   version=3과 DB publication 확인.**
 7. **`CurateError` 진단 가능성 (§0.24 부수 발견).** 약 30개 변종이 전부
    `PRICE_CURATION_FAILED` + `"price curation failed"`로 접혀 변종 이름조차 남지 않는다
    (`research-worker.rs:709`). 변종 이름과 구조화 필드는 우리가 만든 문자열이라 노출해도
@@ -1510,6 +1537,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 | 함정 | 대응 |
 |---|---|
 | **`/tmp` 사용자 쿼터 소진 → 모든 에이전트 셸이 동시에 죽는다** | `/tmp`은 디스크가 아니라 **tmpfs 7.3G**(램의 절반)이고 `usrquota`가 걸려 있다. `df`가 여유를 보여줘도 사용자 쿼터를 넘기면 `EDQUOT`다. 에이전트 툴이 명령 출력을 `/tmp`에 캡처하므로, 쿼터가 차면 `echo`조차 **출력 없이 exit 1**로 죽어 원인 파악이 매우 어렵다. 병렬 Rust 빌드가 주범이다. 긴 작업 전 `du -sh /tmp/* \| sort -rh \| head`로 확인하고, 모든 워커에 `TMPDIR`을 `/data` 아래로 지정할 것 — 다만 cargo/rustc가 일부 경로에서 `/tmp`을 직접 쓰므로 `TMPDIR`만으로는 부족하다 (2026-08-22, §0.18) |
+| **`TMPDIR`을 `/data` 아래로 옮기면 PostgreSQL 검증 게이트 2개가 로컬에서만 실패한다** | 바로 위 칸의 `/tmp` 쿼터 대응과 **정면으로 충돌한다.** `deploy/db/integration-validation/validate.sh:101`은 `mktemp -d "${TMPDIR:-/tmp}/..."` 결과가 **리터럴 `/tmp/lagrange-pg-validation-self.*`와 일치하는지 검사**하고, 아니면 `unsafe self-test temp path`로 죽는다. `static-check.sh`는 이것을 호출하므로 같이 실패한다. 메시지가 권한 문제를 가리키는 것처럼 읽히지만 **경로 고정 가드**이며 디렉터리 모드와 무관하다(0777→0700으로 바꿔도 동일하게 실패). 이 두 게이트만 기본 `TMPDIR`로 돌릴 것. CI는 `TMPDIR`을 건드리지 않아 green이다 (2026-08-23, §0.24) |
 | **`umask 0002` 때문에 정확한 파일 모드를 요구하는 static-check가 로컬에서만 실패한다** | 이 호스트의 umask는 `0002`라 체크아웃된 스크립트가 `0775`가 된다. `scripts/ops/static-check.sh`와 `deploy/secrets/runtime-static-check.sh`는 정확히 `0755`를 요구하므로 로컬에서 실패한다. **git은 `100755`로 기록하고 CI 러너는 umask 0022라 CI에서는 통과한다.** `( umask 0022; git clone --depth 1 ... )` 후 실행하면 확인된다. 이 실패를 트리의 결함으로 오인하지 말 것 (2026-08-22, §0.19) |
 | **docker 그룹이 `/etc/group`엔 있는데 `id`엔 안 보인다** | 계정은 이미 `docker`(gid 983) 멤버다. 그런데 그룹 멤버십은 로그인 시 프로세스에 박히므로, 그보다 먼저 뜬 프로세스의 자손은 갖지 못한다. **UI 세션을 리로드해도 부모인 Paseo 데몬이 낡은 그룹 집합을 유지하면 소용없다** — `/proc/<pid>/status`의 `Groups:`로 조상 체인을 확인하면 어디서 끊기는지 보인다. 데몬을 재시작하는 대신 **`sg docker -c '<명령>'`**으로 획득하면 된다. `sudo`는 비밀번호를 요구해 비대화식으로 못 쓴다 (2026-08-22, §0.20) |
 | **`sg`로 감싸면 `LD_LIBRARY_PATH`가 지워진다 → E7이 반드시 실패한다** | `sg`는 setgid 바이너리라 glibc가 보안상 `LD_LIBRARY_PATH`를 제거한다. E7의 chromium은 `libasound.so.2`를 필요로 하는데 이 호스트엔 시스템 설치가 없고 `/home/l1nnx/tools/pwlibs`의 사본을 `LD_LIBRARY_PATH`로 가리켜야만 뜬다. **phase1 게이트는 docker를 호출하지 않는다**(QA DB가 이미 떠 있기를 요구할 뿐)이므로 `sg` 없이 직접 실행할 것. 모르면 E7 실패를 코드 회귀로 오인한다 (2026-08-22, §0.20) |
