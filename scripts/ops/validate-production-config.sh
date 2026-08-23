@@ -130,6 +130,42 @@ if ! dotenv_validate_shell_overrides; then
 fi
 
 get() { dotenv_get "$1"; }
+
+# Owner-beta admission is deployment policy, not a secret. Missing mode keys
+# preserve the pre-beta release as disabled, while a present value must be
+# exact. The root-side release gate derives any artifact identity only from the
+# canonical registry embedded in its verified immutable image.
+owner_beta_access_mode=$(get OWNER_BETA_ACCESS_MODE)
+if ! dotenv_has OWNER_BETA_ACCESS_MODE; then
+  owner_beta_access_mode=disabled
+fi
+owner_beta_paper_mode=$(get OWNER_BETA_PAPER_MODE)
+if ! dotenv_has OWNER_BETA_PAPER_MODE; then
+  owner_beta_paper_mode=disabled
+fi
+for key in OWNER_BETA_ACCESS_MODE_FILE OWNER_BETA_PAPER_MODE_FILE; do
+  dotenv_has "$key" && invalid+=("owner_beta_policy_file_forbidden")
+done
+
+case "$owner_beta_access_mode" in
+  disabled)
+    [ "$owner_beta_paper_mode" = disabled ] ||
+      invalid+=("owner_beta_paper_requires_owner_only")
+    ;;
+  owner_only) ;;
+  *) invalid+=("owner_beta_access_mode_invalid") ;;
+esac
+
+case "$owner_beta_paper_mode" in
+  disabled) ;;
+  enabled)
+    # No trusted three-unattended-session evidence checker exists yet. Keep a
+    # single static blocker instead of accepting an operator assertion.
+    invalid+=("owner_beta_paper_evidence_unavailable")
+    ;;
+  *) invalid+=("owner_beta_paper_mode_invalid") ;;
+esac
+
 env_dir=$(cd "$(dirname "$env_file")" && pwd)
 resolve_config_path() {
   case "$1" in

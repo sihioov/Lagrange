@@ -21,6 +21,8 @@ mode=plan
 scope=release
 release_override=
 release_commit=
+owner_beta_access_mode=disabled
+owner_beta_paper_mode=disabled
 
 local_image_services=(
   db-role-bootstrap
@@ -110,6 +112,10 @@ dotenv_load "$env_file" || die "cannot parse production env file: $env_file"
 data_dir=$(dotenv_effective_get LAGRANGE_DATA_DIR)
 [ -n "$data_dir" ] || die 'production env is missing LAGRANGE_DATA_DIR'
 [[ "$data_dir" = /* ]] || die 'LAGRANGE_DATA_DIR must be absolute'
+owner_beta_access_mode=$(dotenv_effective_get OWNER_BETA_ACCESS_MODE)
+[ -n "$owner_beta_access_mode" ] || owner_beta_access_mode=disabled
+owner_beta_paper_mode=$(dotenv_effective_get OWNER_BETA_PAPER_MODE)
+[ -n "$owner_beta_paper_mode" ] || owner_beta_paper_mode=disabled
 
 if [ "$mode" != plan ]; then
   # Host preparation remains a distinct operator action. The release workflow
@@ -206,6 +212,25 @@ verify_manifest_images() {
   done
 }
 
+run_owner_beta_approval_gate() {
+  local wrapper output
+  [ "$owner_beta_access_mode" = owner_only ] || return 0
+  [ "$owner_beta_paper_mode" = disabled ] || blocked 'owner_beta_paper_evidence_unavailable'
+  wrapper=$root/scripts/ops/kis-historical-price-beta-artifact.sh
+  [ -f "$wrapper" ] && [ ! -L "$wrapper" ] && [ -x "$wrapper" ] ||
+    blocked 'owner_beta_approval_wrapper_unavailable'
+
+  # The installed wrapper binds this request to the same current release,
+  # exact research-worker image ID/revision, embedded registry, and dedicated
+  # read-only artifact mount. Discard its diagnostics and never repeat the
+  # artifact identity or approval hashes in this release workflow's output.
+  output=$("$wrapper" --approval-check 2>/dev/null) ||
+    blocked 'owner_beta_artifact_not_approved'
+  [[ "$output" =~ ^HISTORICAL_PRICE_BETA_APPROVAL\ status=ok\ operation=check\ approval_registry_sha256=sha256:[0-9a-f]{64}\ approval_status=APPROVED\ audience=OWNER_ONLY\ vendor_snapshot=true\ strict_pit=false\ capability=PRICE_RETURN_ONLY\ materialization_status=MATERIALIZED\ registration_status=UNREGISTERED\ publication_status=NOT_PUBLISHED\ instrument_count=11\ session_count=1608\ bar_count=17688$ ]] ||
+    blocked 'owner_beta_artifact_not_approved'
+  printf 'OWNER_BETA_RELEASE_GATE: PASS access=owner_only paper=disabled\n'
+}
+
 verify_running_container() {
   local service=$1 expected_id expected_revision container_id inspected actual_id actual_revision
   expected_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}
@@ -296,11 +321,12 @@ else
 COMPOSE_RELEASE_ORDER:
   1. validate installed strict V2 manifest and every local image_id/revision
   2. generate a mode-0600 temporary Compose override (image: sha256:<id>; build reset)
-  3. up --no-build --wait postgres
-  4. run --no-build --rm --no-deps db-role-bootstrap and db-migrate
-  5. run --no-build --rm --no-deps research-raw-init and research-schema-check
-  6. up --no-build persistent local services; inspect each actual container image_id/revision
-  7. up --no-build reverse-proxy; ps
+  3. owner_only only: require the embedded-registry artifact approval before the first Compose up
+  4. up --no-build --wait postgres
+  5. run --no-build --rm --no-deps db-role-bootstrap and db-migrate
+  6. run --no-build --rm --no-deps research-raw-init and research-schema-check
+  7. up --no-build persistent local services; owner_only excludes Paper until a future evidence gate
+  8. up --no-build reverse-proxy; ps
 No serving image rebuild, manifest-less activation, range-raw profile, or live profile is allowed.
 EOF
 fi
@@ -342,6 +368,7 @@ fi
 # Owner-beta serving release: the helper above has already bound Compose to the
 # installed manifest. No mutable tag is used for these ten local services.
 verify_manifest_images
+run_owner_beta_approval_gate
 compose up --no-build --wait postgres
 verify_manifest_images
 compose run --no-build --rm --no-deps db-role-bootstrap
@@ -360,10 +387,15 @@ verify_running_container web
 # use post-backfill-health.sh --check only after the approved backfill path.
 # The legacy ordering contract was `compose up --no-deps -d research-worker recommendation-runner candidate-runner`;
 # owner-beta additionally supplies --no-build before it reaches Docker.
-compose up --no-build --no-deps -d research-worker recommendation-runner candidate-runner \
-  nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler
-for service in research-worker recommendation-runner candidate-runner \
-  nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler; do
+release_worker_services=(
+  research-worker recommendation-runner candidate-runner
+  nt-backtest-worker-1 nt-backtest-worker-2
+)
+if [ "$owner_beta_access_mode" = disabled ]; then
+  release_worker_services+=(paper-scheduler)
+fi
+compose up --no-build --no-deps -d "${release_worker_services[@]}"
+for service in "${release_worker_services[@]}"; do
   verify_running_container "$service"
 done
 compose up --no-build --wait --no-deps reverse-proxy

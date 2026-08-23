@@ -39,6 +39,17 @@ fn openapi_session_requires_the_typed_owner_beta_policy() {
         serde_json::json!(["disabled", "owner_only"]),
         "the policy must remain a closed enum"
     );
+    assert!(
+        required
+            .iter()
+            .any(|field| field == "owner_beta_paper_mode"),
+        "new API responses must always disclose the non-secret Paper policy"
+    );
+    assert_eq!(
+        session["properties"]["owner_beta_paper_mode"]["enum"],
+        serde_json::json!(["disabled", "enabled"]),
+        "the Paper policy must remain a closed enum"
+    );
 }
 
 #[test]

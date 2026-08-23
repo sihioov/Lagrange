@@ -19,7 +19,11 @@ import {
   type PrimaryNavigationItem,
 } from "@/components/shell/primary-navigation";
 import { ThemeToggle } from "@/components/shell/theme-toggle";
-import { type ApiSession, permitsOwnerBetaProduct } from "@/lib/api/contracts";
+import {
+  type ApiSession,
+  type OwnerBetaProduct,
+  permitsOwnerBetaProduct,
+} from "@/lib/api/contracts";
 import { LocaleProvider } from "@/lib/i18n/client";
 import { type ShellDictionary, shellDictionary } from "@/lib/i18n/dictionaries/shell";
 import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n/locale";
@@ -27,10 +31,7 @@ import type { Theme } from "@/lib/theme/theme";
 
 const NAV_ICON_SIZE = 20;
 
-function memberNavigation(
-  t: ShellDictionary,
-  includeOwnerBetaProducts: boolean,
-): PrimaryNavigationItem[] {
+function memberNavigation(t: ShellDictionary, session: ApiSession): PrimaryNavigationItem[] {
   const items = [
     {
       href: "/",
@@ -68,17 +69,22 @@ function memberNavigation(
       label: t.navPaperAccount,
     },
   ];
-  if (includeOwnerBetaProducts) {
-    return items;
-  }
-  return items.filter((item) => !["/recommendations", "/backtests", "/paper"].includes(item.href));
+  const ownerBetaDestinations = {
+    "/backtests": "backtests",
+    "/paper": "paper",
+    "/recommendations": "recommendations",
+  } as const satisfies Record<string, OwnerBetaProduct>;
+  return items.filter((item) => {
+    const product = ownerBetaDestinations[item.href as keyof typeof ownerBetaDestinations];
+    return product === undefined || permitsOwnerBetaProduct(session, product);
+  });
 }
 
 function navigationForRole(
   session: ApiSession,
   t: ShellDictionary,
 ): readonly PrimaryNavigationItem[] {
-  const member = memberNavigation(t, permitsOwnerBetaProduct(session));
+  const member = memberNavigation(t, session);
   if (session.role === "member") {
     return member;
   }

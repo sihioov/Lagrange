@@ -63,6 +63,7 @@ export type PaperPageProps = {
 export default async function PaperPage(props: PaperPageProps = {}) {
   const locale = await getLocale();
   return OwnerBetaProductRoute({
+    product: "paper",
     renderProduct: () => PaperProductPage(props),
     title: paperDictionary[locale].pageTitle,
   });

@@ -89,16 +89,46 @@ async fn http_owner_beta_access_is_central_exhaustive_and_non_leaking() {
         assert_eq!(Harness::error_code(&anonymous_body), "SESSION_UNKNOWN");
     }
 
-    // Owner admission continues into each product's existing downstream
-    // entitlement/dataset path rather than receiving a middleware success
-    // response.  These three list routes are seeded and therefore complete.
+    // Owner reaches recommendation/backtest handlers, while the separate
+    // Paper default is rejected centrally before handler input or data access.
+    for path in ["/api/v1/recommendations/runs", "/api/v1/backtests"] {
+        let response = h.get(path, Some(&h.owner)).await;
+        assert_eq!(response.status(), StatusCode::OK, "Owner reaches {path}");
+    }
+    for route in CONTRACT_ROUTES
+        .iter()
+        .filter(|route| route.path.starts_with("/api/v1/paper/"))
+    {
+        let path = concrete_path(route.path);
+        let owner = h
+            .send(
+                route.method,
+                &path,
+                Some(&h.owner),
+                false,
+                Some("owner-beta-paper-disabled"),
+                None,
+                None,
+            )
+            .await;
+        assert_eq!(status(&owner), StatusCode::FORBIDDEN);
+        let body = Harness::body_json(owner).await;
+        assert_eq!(Harness::error_code(&body), "FORBIDDEN");
+        assert_eq!(body["error"]["message"], "forbidden");
+    }
+
+    h.restart_api_with_owner_beta_paper().await;
     for path in [
         "/api/v1/recommendations/runs",
         "/api/v1/backtests",
         "/api/v1/paper/accounts",
     ] {
         let response = h.get(path, Some(&h.owner)).await;
-        assert_eq!(response.status(), StatusCode::OK, "Owner reaches {path}");
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "enabled Owner reaches {path}"
+        );
     }
 
     // Authentication and unrelated product routes retain their existing

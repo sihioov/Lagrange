@@ -444,6 +444,8 @@ pub struct SessionDto {
     /// Non-secret deployment policy used by the Web as defense in depth.
     /// The API middleware remains the authoritative admission boundary.
     pub owner_beta_access_mode: crate::http::state::OwnerBetaAccessMode,
+    /// Separate Paper activation inside an Owner-only beta.
+    pub owner_beta_paper_mode: crate::http::state::OwnerBetaPaperMode,
 }
 
 // ---------------------------------------------------------------------------

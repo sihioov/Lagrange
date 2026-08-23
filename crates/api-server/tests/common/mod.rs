@@ -15,7 +15,7 @@
 #![allow(dead_code)]
 
 use api_server::http::api_router;
-use api_server::http::state::{ApiConfig, ApiState, OwnerBetaAccessMode};
+use api_server::http::state::{ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaPaperMode};
 use auth::entitlement::{Actor, Role};
 use auth::sessions::cookie;
 use axum::body::Body;
@@ -367,6 +367,7 @@ impl Harness {
             candidate_eod_ready: || true,
             code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
             owner_beta_access: OwnerBetaAccessMode::Disabled,
+            owner_beta_paper: OwnerBetaPaperMode::Disabled,
         };
         let state = ApiState::from_pools(
             cfg,
@@ -414,6 +415,13 @@ impl Harness {
     pub async fn restart_api_with_owner_beta_access(&mut self) {
         let mut cfg = (*self.state().cfg).clone();
         cfg.owner_beta_access = OwnerBetaAccessMode::OwnerOnly;
+        self.restart_api_with_config(cfg).await;
+    }
+
+    pub async fn restart_api_with_owner_beta_paper(&mut self) {
+        let mut cfg = (*self.state().cfg).clone();
+        cfg.owner_beta_access = OwnerBetaAccessMode::OwnerOnly;
+        cfg.owner_beta_paper = OwnerBetaPaperMode::Enabled;
         self.restart_api_with_config(cfg).await;
     }
 

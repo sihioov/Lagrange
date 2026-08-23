@@ -445,9 +445,17 @@ pub fn mounted_route_count() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::owner_beta_applies;
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request};
     use tower::ServiceExt;
+
+    fn concrete_path(template: &str) -> String {
+        template
+            .replace("{run_id}", "00000000-0000-0000-0000-000000000001")
+            .replace("{account_id}", "00000000-0000-0000-0000-000000000002")
+            .replace("{preview_id}", "00000000-0000-0000-0000-000000000003")
+    }
 
     #[tokio::test]
     async fn owner_beta_admission_sees_the_full_path_outside_the_nested_router() {
@@ -489,19 +497,32 @@ mod tests {
         assert_eq!(body["error"]["code"], "SESSION_UNKNOWN");
         assert_eq!(body["error"]["request_id"], request_id);
 
-        // A normal supported request is also rejected without touching the
-        // lazy pools; this is an admission result, not a database outage.
-        let protected_get = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v1/backtests")
-                    .body(Body::empty())
-                    .expect("protected GET request"),
-            )
-            .await
-            .expect("protected GET response");
-        assert_eq!(protected_get.status(), StatusCode::UNAUTHORIZED);
+        // Every currently inventoried full path is intercepted without a
+        // session-store or product-store query. This turns any newly added
+        // route in the three groups into a required admission test case.
+        for route in CONTRACT_ROUTES
+            .iter()
+            .filter(|route| owner_beta_applies(route.path))
+        {
+            let protected = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(route.method.parse::<Method>().expect("contract method"))
+                        .uri(concrete_path(route.path))
+                        .body(Body::empty())
+                        .expect("inventoried protected request"),
+                )
+                .await
+                .expect("inventoried protected response");
+            assert_eq!(
+                protected.status(),
+                StatusCode::UNAUTHORIZED,
+                "{} {} must be admitted centrally",
+                route.method,
+                route.path
+            );
+        }
 
         // A real, database-free route outside the product prefixes must not
         // be misclassified by the outer layer.
@@ -519,5 +540,23 @@ mod tests {
         assert_eq!(state.app_pool.size(), 0);
         assert_eq!(state.admin_pool.size(), 0);
         assert_eq!(state.audit_pool.size(), 0);
+
+        // The Paper default is inert outside owner-only access mode.
+        let normal_state =
+            ApiState::test_without_database(crate::http::state::OwnerBetaAccessMode::Disabled);
+        let normal = api_router(normal_state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/paper/accounts")
+                    .body(Body::empty())
+                    .expect("normal-mode Paper request"),
+            )
+            .await
+            .expect("normal-mode Paper response");
+        assert_eq!(normal.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(normal_state.app_pool.size(), 0);
+        assert_eq!(normal_state.admin_pool.size(), 0);
+        assert_eq!(normal_state.audit_pool.size(), 0);
     }
 }

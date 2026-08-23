@@ -6,7 +6,9 @@
 //! health/readiness probes, and graceful shutdown.
 
 use crate::http::api_router;
-use crate::http::state::{ApiConfig, ApiState, OwnerBetaAccessMode, system_seoul_today};
+use crate::http::state::{
+    ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaPaperMode, system_seoul_today,
+};
 use api_server_auth::RouterState as AuthRouterState;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -60,6 +62,7 @@ pub struct RuntimeConfig {
     /// every API-created backtest run.
     pub code_commit: String,
     pub owner_beta_access: OwnerBetaAccessMode,
+    pub owner_beta_paper: OwnerBetaPaperMode,
     pub acquire_timeout: Duration,
 }
 
@@ -114,6 +117,7 @@ impl RuntimeConfig {
             candidate_eod_ready: crate::http::state::system_candidate_eod_ready,
             code_commit: self.code_commit.clone(),
             owner_beta_access: self.owner_beta_access,
+            owner_beta_paper: self.owner_beta_paper,
         }
     }
 }
@@ -143,6 +147,7 @@ where
     };
     let code_commit = code_commit_from(&get, production)?;
     let owner_beta_access = owner_beta_access_from(&get)?;
+    let owner_beta_paper = owner_beta_paper_from(&get, owner_beta_access)?;
 
     let listen_addr = listen_addr_from(&get)?;
     let database = DatabaseConfig {
@@ -192,6 +197,7 @@ where
         recommendation_dataset,
         code_commit,
         owner_beta_access,
+        owner_beta_paper,
         acquire_timeout: Duration::from_secs(acquire_timeout_secs),
     })
 }
@@ -223,6 +229,36 @@ where
         "owner_only" => Ok(OwnerBetaAccessMode::OwnerOnly),
         _ => Err(invalid("OWNER_BETA_ACCESS_MODE")),
     }
+}
+
+fn owner_beta_paper_from<F>(
+    get: &F,
+    owner_beta_access: OwnerBetaAccessMode,
+) -> Result<OwnerBetaPaperMode, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    if get("OWNER_BETA_PAPER_MODE_FILE").is_some() {
+        return Err(invalid("OWNER_BETA_PAPER_MODE_FILE"));
+    }
+    let Some(raw) = get("OWNER_BETA_PAPER_MODE") else {
+        return Ok(OwnerBetaPaperMode::Disabled);
+    };
+    let value = raw.into_string().map_err(|_| ConfigError::NonUnicode {
+        key: "OWNER_BETA_PAPER_MODE".to_owned(),
+    })?;
+    if value.trim() != value || value.is_empty() {
+        return Err(invalid("OWNER_BETA_PAPER_MODE"));
+    }
+    let mode = match value.as_str() {
+        "disabled" => OwnerBetaPaperMode::Disabled,
+        "enabled" => OwnerBetaPaperMode::Enabled,
+        _ => return Err(invalid("OWNER_BETA_PAPER_MODE")),
+    };
+    if mode.is_enabled() && !owner_beta_access.requires_owner() {
+        return Err(invalid("OWNER_BETA_PAPER_MODE"));
+    }
+    Ok(mode)
 }
 
 /// Parse the image revision once at startup. Production receives the exact
@@ -1412,6 +1448,51 @@ mod tests {
         assert!(
             matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_ACCESS_MODE_FILE"),
             "the non-secret policy must not accept the generic *_FILE channel"
+        );
+    }
+
+    #[test]
+    fn owner_beta_paper_mode_requires_explicit_owner_only_access() {
+        let mut env = base_env();
+        let default = config(&env).expect("default config");
+        assert_eq!(default.owner_beta_access, OwnerBetaAccessMode::Disabled);
+        assert_eq!(default.owner_beta_paper, OwnerBetaPaperMode::Disabled);
+
+        env.insert("OWNER_BETA_PAPER_MODE".to_owned(), "disabled".into());
+        assert_eq!(
+            config(&env)
+                .expect("explicit Paper default")
+                .owner_beta_paper,
+            OwnerBetaPaperMode::Disabled
+        );
+
+        env.insert("OWNER_BETA_PAPER_MODE".to_owned(), "enabled".into());
+        assert!(
+            matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PAPER_MODE"),
+            "Paper cannot open outside owner-only access"
+        );
+
+        env.insert("OWNER_BETA_ACCESS_MODE".to_owned(), "owner_only".into());
+        let enabled = config(&env).expect("explicit owner-only Paper beta");
+        assert_eq!(enabled.owner_beta_access, OwnerBetaAccessMode::OwnerOnly);
+        assert_eq!(enabled.owner_beta_paper, OwnerBetaPaperMode::Enabled);
+
+        for invalid_value in ["", "ENABLED", "enabled ", "owner_only", "true"] {
+            env.insert("OWNER_BETA_PAPER_MODE".to_owned(), invalid_value.into());
+            assert!(
+                matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PAPER_MODE"),
+                "{invalid_value:?} must fail closed"
+            );
+        }
+
+        env.remove("OWNER_BETA_PAPER_MODE");
+        env.insert(
+            "OWNER_BETA_PAPER_MODE_FILE".to_owned(),
+            "/not/a/secret".into(),
+        );
+        assert!(
+            matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PAPER_MODE_FILE"),
+            "the non-secret Paper policy must not accept *_FILE"
         );
     }
 

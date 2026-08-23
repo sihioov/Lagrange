@@ -34,6 +34,14 @@ non-group/other-writable, non-symlink path. The deployer validates that external
 file, copies it once into release staging, and validates the installed copy
 again before atomically changing `current`.
 
+The protected env also carries the temporary beta policy. The safe/default
+values are `OWNER_BETA_ACCESS_MODE=disabled` and
+`OWNER_BETA_PAPER_MODE=disabled`. An owner-only release derives its artifact
+identity exclusively from the canonical registry embedded in the verified image;
+the host env supplies no candidate hash. Do not set Paper to `enabled`: no
+trusted three-unattended-session evidence checker exists,
+so production validation rejects it with `owner_beta_paper_evidence_unavailable`.
+
 ```bash
 export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
 # Output must be empty or exactly the one allowlisted workbook above.
@@ -91,6 +99,23 @@ one-shot services consume the same override but are intentionally not claimed as
 post-start inspected after `--rm`. A mismatch returns failure without printing
 container/environment configuration and without automatically stopping or
 rolling back services.
+
+When `OWNER_BETA_ACCESS_MODE=owner_only`, the command runs the installed
+networkless artifact `--approval-check` after validating all ten manifest image
+IDs and before the first Compose `up`. It accepts only the fixed sanitized
+success contract, including the compile-time embedded approval-registry hash;
+failure starts no Compose service and prints no candidate, path, or internal
+error. The committed registry is currently empty, so this remains a deliberate
+launch blocker until a separately reviewed registry commit is rebuilt into the
+same immutable `research-worker` image. Owner-only startup also omits
+`paper-scheduler`; the ten-image manifest is unchanged so a future reviewed
+Paper gate can activate that exact image without changing release provenance.
+
+Because installation switches `current` without starting services, an approval
+failure is recovered by leaving the old containers untouched and switching the
+link back to the previously installed V2 release with the rollback command
+above. Re-run that previous release's `--check` before any later Compose action.
+This sequence is preflight hardening, not evidence that the beta has launched.
 
 No real registry, multi-architecture, or remote-Docker verification is claimed
 or required for this host-local beta. A future registry promotion needs separate

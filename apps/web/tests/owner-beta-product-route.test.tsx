@@ -19,6 +19,7 @@ vi.mock("@/lib/i18n/server", () => ({ getLocale: async () => "en" }));
 const MEMBER_OWNER_ONLY = {
   expires_at_secs: 2_000_000_000,
   owner_beta_access_mode: "owner_only",
+  owner_beta_paper_mode: "disabled",
   role: "member",
   user_id: "00000000-0000-4000-8000-000000000002",
 } as const satisfies ApiSession;
@@ -53,19 +54,57 @@ describe("owner-beta product page boundary", () => {
     expect(mocks.getServerSession).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps the direct Paper page lazy for an Owner while Paper is disabled", async () => {
+    mocks.getServerSession.mockResolvedValue(OWNER_OWNER_ONLY);
+    mocks.getProductApi.mockImplementation(() => {
+      throw new Error("locked Paper must not construct its product API");
+    });
+
+    const markup = renderToStaticMarkup(await PaperPage());
+
+    expect(markup).toContain("Paper beta is not enabled");
+    expect(markup).toContain(
+      "Paper remains unavailable until the separate beta readiness check is complete.",
+    );
+    expect(markup).not.toContain("Member access");
+    expect(markup).toContain('role="alert"');
+    expect(mocks.getProductApi).not.toHaveBeenCalled();
+    expect(mocks.getServerSession).toHaveBeenCalledTimes(1);
+  });
+
   it("renders lazily for the Owner and for the normal disabled mode", async () => {
     const renderProduct = vi.fn(() => <p>product content</p>);
 
-    mocks.getServerSession.mockResolvedValueOnce(OWNER_OWNER_ONLY).mockResolvedValueOnce({
-      ...MEMBER_OWNER_ONLY,
-      owner_beta_access_mode: "disabled",
-    });
+    mocks.getServerSession
+      .mockResolvedValueOnce(OWNER_OWNER_ONLY)
+      .mockResolvedValueOnce({
+        ...MEMBER_OWNER_ONLY,
+        owner_beta_access_mode: "disabled",
+      })
+      .mockResolvedValueOnce({
+        ...OWNER_OWNER_ONLY,
+        owner_beta_paper_mode: "enabled",
+      });
 
-    const owner = await OwnerBetaProductRoute({ renderProduct, title: "Protected product" });
-    const normal = await OwnerBetaProductRoute({ renderProduct, title: "Normal product" });
+    const owner = await OwnerBetaProductRoute({
+      product: "recommendations",
+      renderProduct,
+      title: "Protected product",
+    });
+    const normal = await OwnerBetaProductRoute({
+      product: "paper",
+      renderProduct,
+      title: "Normal product",
+    });
+    const paper = await OwnerBetaProductRoute({
+      product: "paper",
+      renderProduct,
+      title: "Enabled Paper",
+    });
 
     expect(renderToStaticMarkup(owner)).toContain("product content");
     expect(renderToStaticMarkup(normal)).toContain("product content");
-    expect(renderProduct).toHaveBeenCalledTimes(2);
+    expect(renderToStaticMarkup(paper)).toContain("product content");
+    expect(renderProduct).toHaveBeenCalledTimes(3);
   });
 });

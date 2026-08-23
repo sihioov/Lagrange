@@ -13,6 +13,7 @@ const MEMBER_SESSION = {
   role: "member",
   expires_at_secs: 2_000_000_000,
   owner_beta_access_mode: "disabled",
+  owner_beta_paper_mode: "disabled",
 } as const satisfies ApiSession;
 
 const OWNER_BETA_MEMBER_SESSION = {
@@ -25,6 +26,7 @@ const OWNER_SESSION = {
   role: "owner",
   expires_at_secs: 2_000_000_000,
   owner_beta_access_mode: "disabled",
+  owner_beta_paper_mode: "disabled",
 } as const satisfies ApiSession;
 
 function renderShell(session: ApiSession): string {
@@ -96,13 +98,29 @@ describe("role-aware primary navigation", () => {
     expect(markup).not.toContain('href="/live"');
   });
 
-  it("keeps owner-beta products visible to the Owner", () => {
-    const markup = renderShell({ ...OWNER_SESSION, owner_beta_access_mode: "owner_only" });
+  it("keeps recommendations and backtests but hides locked Paper for the Owner", () => {
+    const markup = renderShell({
+      ...OWNER_SESSION,
+      owner_beta_access_mode: "owner_only",
+      owner_beta_paper_mode: "disabled",
+    });
+
+    expect(markup).toContain('href="/recommendations"');
+    expect(markup).toContain('href="/backtests"');
+    expect(markup).not.toContain('href="/paper"');
+    expect(markup).toContain('href="/admin"');
+    expect(markup).toContain('href="/live"');
+  });
+
+  it("shows Paper to the Owner only after its separate activation", () => {
+    const markup = renderShell({
+      ...OWNER_SESSION,
+      owner_beta_access_mode: "owner_only",
+      owner_beta_paper_mode: "enabled",
+    });
 
     expect(markup).toContain('href="/recommendations"');
     expect(markup).toContain('href="/backtests"');
     expect(markup).toContain('href="/paper"');
-    expect(markup).toContain('href="/admin"');
-    expect(markup).toContain('href="/live"');
   });
 });

@@ -33,6 +33,7 @@ pub async fn session_info(State(state): State<ApiState>, session: Session) -> Re
             expires_at_secs: session.0.expires_at_secs,
             auth_time_secs: session.0.auth_time_secs,
             owner_beta_access_mode: state.cfg.owner_beta_access,
+            owner_beta_paper_mode: state.cfg.owner_beta_paper,
         }),
     )
         .into_response()
@@ -514,18 +515,34 @@ fn decode_cursor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::state::OwnerBetaAccessMode;
+    use crate::http::state::{OwnerBetaAccessMode, OwnerBetaPaperMode};
     use auth::entitlement::{Role, UserId};
     use auth::sessions::SessionInfo;
     use axum::body::to_bytes;
 
     #[tokio::test]
     async fn session_info_exposes_only_the_typed_owner_beta_policy() {
-        for (mode, expected) in [
-            (OwnerBetaAccessMode::Disabled, "disabled"),
-            (OwnerBetaAccessMode::OwnerOnly, "owner_only"),
+        for (access_mode, paper_mode, expected_access, expected_paper) in [
+            (
+                OwnerBetaAccessMode::Disabled,
+                OwnerBetaPaperMode::Disabled,
+                "disabled",
+                "disabled",
+            ),
+            (
+                OwnerBetaAccessMode::OwnerOnly,
+                OwnerBetaPaperMode::Disabled,
+                "owner_only",
+                "disabled",
+            ),
+            (
+                OwnerBetaAccessMode::OwnerOnly,
+                OwnerBetaPaperMode::Enabled,
+                "owner_only",
+                "enabled",
+            ),
         ] {
-            let state = ApiState::test_without_database(mode);
+            let state = ApiState::test_without_database_with_policy(access_mode, paper_mode);
             let response = session_info(
                 State(state),
                 Session(SessionInfo {
@@ -544,8 +561,9 @@ mod tests {
                 .expect("bounded session response");
             let body: serde_json::Value =
                 serde_json::from_slice(&body).expect("typed session JSON");
-            assert_eq!(body["owner_beta_access_mode"], expected);
-            assert_eq!(body.as_object().expect("session object").len(), 5);
+            assert_eq!(body["owner_beta_access_mode"], expected_access);
+            assert_eq!(body["owner_beta_paper_mode"], expected_paper);
+            assert_eq!(body.as_object().expect("session object").len(), 6);
             assert!(body.get("recommendation_dataset").is_none());
             assert!(body.get("artifact_root").is_none());
         }

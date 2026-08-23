@@ -122,6 +122,18 @@ printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
   >"$release_fixture/repo/scripts/ops/validate-production-config.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
   >"$release_fixture/repo/scripts/ops/provision-linux.sh"
+cat >"$release_fixture/repo/scripts/ops/kis-historical-price-beta-artifact.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' approval-check >>"${COMPOSE_FAKE_LOG:?}"
+printf '%s\n' "$*" >"${OWNER_BETA_FAKE_ARGS:?}"
+[ "${OWNER_BETA_FAKE_APPROVAL_FAIL:-0}" = 0 ] || exit 2
+if [ "${OWNER_BETA_FAKE_APPROVAL_BAD_OUTPUT:-0}" = 1 ]; then
+  printf 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_status=APPROVED\n'
+  exit 0
+fi
+printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
+SH
 chmod 0755 "$release_fixture/repo/scripts/ops/"*.sh
 printf '%s\n' 'services: {}' >"$release_fixture/repo/deploy/compose/compose.yml"
 printf '%s\n' fixture >"$release_fixture/repo/nt/fixture"
@@ -298,6 +310,7 @@ git -C "$release_fixture/repo" checkout -- second
 compose_bin=$release_fixture/compose-bin
 compose_log=$release_fixture/compose.log
 override_capture=$release_fixture/override.yml
+owner_beta_args=$release_fixture/owner-beta-args
 mkdir -p "$compose_bin"
 cat >"$compose_bin/docker" <<'SH'
 #!/usr/bin/env bash
@@ -397,6 +410,64 @@ if grep -Eiq '(^| )(down|stop)( |$)' "$compose_log"; then
   echo 'production-ops-self-test: successful immutable release stopped a service' >&2
   exit 1
 fi
+
+# Switch only the protected fixture policy to owner-only. The release and its
+# ten-image manifest remain unchanged; the host approval gate must run before
+# the first Compose up, and Paper must remain absent from the started subset.
+installed_env=$release_fixture/install/releases/$commit_one/deploy/compose/.env
+cp "$installed_env" "$release_fixture/disabled.env.backup"
+printf '%s\n' \
+  'OWNER_BETA_ACCESS_MODE=owner_only' \
+  'OWNER_BETA_PAPER_MODE=disabled' \
+  >>"$installed_env"
+: >"$compose_log"
+env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" \
+  COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+  OWNER_BETA_FAKE_ARGS="$owner_beta_args" \
+  PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-owner-beta-pass.out"
+grep -Fxq 'OWNER_BETA_RELEASE_GATE: PASS access=owner_only paper=disabled' \
+  "$tmp/compose-owner-beta-pass.out"
+grep -Fxq -- '--approval-check' "$owner_beta_args"
+approval_line=$(grep -n '^approval-check$' "$compose_log" | cut -d: -f1)
+first_up_line=$(grep -n 'compose .* up ' "$compose_log" | head -n1 | cut -d: -f1)
+[ -n "$approval_line" ] && [ -n "$first_up_line" ] && [ "$approval_line" -lt "$first_up_line" ]
+if grep -Fq 'paper-scheduler' "$compose_log"; then
+  echo 'production-ops-self-test: owner-only release reached Paper scheduler' >&2
+  exit 1
+fi
+if grep -Fq 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' \
+   "$owner_beta_args" "$compose_log" "$tmp/compose-owner-beta-pass.out"; then
+  echo 'production-ops-self-test: owner-beta candidate escaped the host approval seam' >&2
+  exit 1
+fi
+
+for failure_mode in fail bad-output; do
+  : >"$compose_log"
+  extra_env=(OWNER_BETA_FAKE_APPROVAL_FAIL=0 OWNER_BETA_FAKE_APPROVAL_BAD_OUTPUT=0)
+  case "$failure_mode" in
+    fail) extra_env=(OWNER_BETA_FAKE_APPROVAL_FAIL=1 OWNER_BETA_FAKE_APPROVAL_BAD_OUTPUT=0) ;;
+    bad-output) extra_env=(OWNER_BETA_FAKE_APPROVAL_FAIL=0 OWNER_BETA_FAKE_APPROVAL_BAD_OUTPUT=1) ;;
+  esac
+  if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+     REAL_INSTALL_BIN="$real_install" \
+     COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+     OWNER_BETA_FAKE_ARGS="$owner_beta_args" "${extra_env[@]}" \
+     PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+     bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+     >"$tmp/compose-owner-beta-$failure_mode.out" 2>&1; then
+    echo "production-ops-self-test: owner-beta $failure_mode unexpectedly passed" >&2
+    exit 1
+  fi
+  grep -Fq 'owner_beta_artifact_not_approved' "$tmp/compose-owner-beta-$failure_mode.out"
+  if grep -Eq 'compose .* up ' "$compose_log"; then
+    echo "production-ops-self-test: owner-beta $failure_mode reached Compose up" >&2
+    exit 1
+  fi
+done
+cp "$release_fixture/disabled.env.backup" "$installed_env"
 
 : >"$compose_log"
 if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \

@@ -152,10 +152,10 @@ case "${1:-}" in
     if printf '%s\n' "$*" | grep -Fq -- '/usr/local/bin/kis-historical-price-beta-approval-check'; then
       if [ -f "${HISTORICAL_ARTIFACT_BAD_APPROVAL_OUTPUT_FILE:-}" ]; then
         printf '%s\n' 'approval-secret-sentinel should be discarded by wrapper'
-        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check candidate_content_sha256=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd artifact_manifest_sha256=not-a-hash stage5_manifest_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa action_manifest_sha256=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
+        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=not-a-hash approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
       else
         printf '%s\n' 'approval-secret-sentinel should be discarded by wrapper'
-        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check candidate_content_sha256=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc artifact_manifest_sha256=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd stage5_manifest_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa action_manifest_sha256=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
+        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
       fi
     elif printf '%s\n' "$*" | grep -Fq -- 'candidate-content-sha256'; then
       printf '%s\n' 'HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc instrument_count=11 session_count=1608 bar_count=17688 raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED'
@@ -214,23 +214,21 @@ if run_wrapper --materialize \
 fi
 [ ! -e "$docker_log" ]
 
-if run_wrapper --approval-check >/dev/null 2>&1; then
-  echo 'historical artifact self-test: approval-check missing hash unexpectedly passed' >&2
+if run_wrapper --approval-check \
+  --candidate-content-sha256 sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+  >/dev/null 2>&1; then
+  echo 'historical artifact self-test: approval-check candidate option unexpectedly accepted' >&2
   exit 1
 fi
 [ ! -e "$docker_log" ]
 
-if run_wrapper --approval-check \
-  --candidate-content-sha256 sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
-  --extra >/dev/null 2>&1; then
+if run_wrapper --approval-check --extra >/dev/null 2>&1; then
   echo 'historical artifact self-test: approval-check extra option unexpectedly accepted' >&2
   exit 1
 fi
 [ ! -e "$docker_log" ]
 
-if run_wrapper --approval-check \
-  --candidate-content-sha256 sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
-  --approval-registry /tmp/caller-supplied-registry >/dev/null 2>&1; then
+if run_wrapper --approval-check --approval-registry /tmp/caller-supplied-registry >/dev/null 2>&1; then
   echo 'historical artifact self-test: caller registry path unexpectedly accepted' >&2
   exit 1
 fi
@@ -278,10 +276,14 @@ check_line=$(grep -F 'run ' "$docker_log" | tail -n1)
 grep -Fq 'destination=/artifact-root,readonly' <<<"$check_line"
 grep -Fq -- '--network none' <<<"$check_line"
 
-approval=$(run_wrapper --approval-check \
-  --candidate-content-sha256 sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)
+approval=$(run_wrapper --approval-check)
 grep -Fq 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check' <<<"$approval"
-grep -Fq 'candidate_content_sha256=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' <<<"$approval"
+! grep -Fq 'candidate_content_sha256=' <<<"$approval"
+! grep -Fq 'artifact_manifest_sha256=' <<<"$approval"
+! grep -Fq 'stage5_manifest_sha256=' <<<"$approval"
+! grep -Fq 'action_manifest_sha256=' <<<"$approval"
+! grep -Fq 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' <<<"$approval"
+grep -Fq 'approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' <<<"$approval"
 grep -Fq 'approval_status=APPROVED' <<<"$approval"
 ! grep -Fq approval-secret-sentinel <<<"$approval"
 approval_line=$(grep -F 'run ' "$docker_log" | tail -n1)
@@ -295,7 +297,8 @@ grep -Fq -- '--entrypoint /usr/local/bin/kis-historical-price-beta-approval-chec
 ! grep -Fq '/data/curated' <<<"$approval_line"
 grep -Fq 'destination=/artifact-root,readonly' <<<"$approval_line"
 ! grep -Fq -- '--approval-registry' <<<"$approval_line"
-grep -Fq -- '--candidate-content-sha256 sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' <<<"$approval_line"
+! grep -Fq -- '--candidate-content-sha256' <<<"$approval_line"
+! grep -Fq 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' <<<"$approval_line"
 grep -Fq -- "$image_id" <<<"$approval_line"
 
 # A malformed approval line (including an unsafe hash field) is discarded and
@@ -303,9 +306,7 @@ grep -Fq -- "$image_id" <<<"$approval_line"
 approval_snapshot=$(find "$artifact_root" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
 : >"$tmp/bad-approval-output"
 : >"$docker_log"
-if run_wrapper --approval-check \
-  --candidate-content-sha256 sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
-  >/dev/null 2>&1; then
+if run_wrapper --approval-check >/dev/null 2>&1; then
   echo 'historical artifact self-test: malformed approval output unexpectedly passed' >&2
   exit 1
 fi

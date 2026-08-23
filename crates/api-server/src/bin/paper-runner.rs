@@ -468,6 +468,7 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
             // state still carries the API configuration shape, so preserve
             // the normal non-beta default here.
             owner_beta_access: api_server::http::state::OwnerBetaAccessMode::Disabled,
+            owner_beta_paper: api_server::http::state::OwnerBetaPaperMode::Disabled,
         },
         app_pool,
         admin_pool,

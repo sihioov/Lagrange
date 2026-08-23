@@ -5,10 +5,17 @@ export type ApiPath = keyof paths;
 export type ApiSession = components["schemas"]["Session"];
 export type ApiErrorCode = components["schemas"]["ErrorCode"];
 export type ApiErrorEnvelope = components["schemas"]["ErrorEnvelope"];
+export type OwnerBetaProduct = "recommendations" | "backtests" | "paper";
 
 /** Web defense in depth only; the API admission middleware is authoritative. */
-export function permitsOwnerBetaProduct(session: ApiSession): boolean {
-  return session.owner_beta_access_mode === "disabled" || session.role === "owner";
+export function permitsOwnerBetaProduct(session: ApiSession, product: OwnerBetaProduct): boolean {
+  if (session.owner_beta_access_mode === "disabled") {
+    return true;
+  }
+  if (session.role === "member") {
+    return false;
+  }
+  return product !== "paper" || session.owner_beta_paper_mode === "enabled";
 }
 
 export type ProductMutationPath =
@@ -41,6 +48,9 @@ export const apiSessionSchema = z
     // normal multi-user (`disabled`) contract. Unknown values and fields still
     // fail the strict parser instead of becoming an accidentally open mode.
     owner_beta_access_mode: z.enum(["disabled", "owner_only"]).default("disabled"),
+    // The same legacy API also predates the separate Paper activation. Only
+    // absence defaults; unknown present values remain contract failures.
+    owner_beta_paper_mode: z.enum(["disabled", "enabled"]).default("disabled"),
   })
   .strict() satisfies z.ZodType<ApiSession>;
 

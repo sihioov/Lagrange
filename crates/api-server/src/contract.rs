@@ -334,13 +334,33 @@ pub const OWNER_BETA_PRODUCT_PREFIXES: &[&str] = &[
     "/api/v1/paper",
 ];
 
-pub fn owner_beta_applies(path: &str) -> bool {
-    OWNER_BETA_PRODUCT_PREFIXES.iter().any(|prefix| {
-        path == *prefix
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnerBetaProduct {
+    Recommendations,
+    Backtests,
+    Paper,
+}
+
+pub(crate) fn owner_beta_product(path: &str) -> Option<OwnerBetaProduct> {
+    let groups = [
+        (
+            OWNER_BETA_PRODUCT_PREFIXES[0],
+            OwnerBetaProduct::Recommendations,
+        ),
+        (OWNER_BETA_PRODUCT_PREFIXES[1], OwnerBetaProduct::Backtests),
+        (OWNER_BETA_PRODUCT_PREFIXES[2], OwnerBetaProduct::Paper),
+    ];
+    groups.into_iter().find_map(|(prefix, product)| {
+        (path == prefix
             || path
                 .strip_prefix(prefix)
-                .is_some_and(|suffix| suffix.starts_with('/'))
+                .is_some_and(|suffix| suffix.starts_with('/')))
+        .then_some(product)
     })
+}
+
+pub fn owner_beta_applies(path: &str) -> bool {
+    owner_beta_product(path).is_some()
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -50,6 +50,17 @@ pre-staging, data, and serving approvals:
 5. the full
    serving release (`compose-release.sh --scope release --apply`).
 
+The protected env defaults both `OWNER_BETA_ACCESS_MODE` and
+`OWNER_BETA_PAPER_MODE` to `disabled`. Owner-only activation derives the
+candidate only from the canonical registry embedded in the installed verified
+image; `compose-release.sh` supplies no candidate hash to the networkless
+approval wrapper. The embedded approval registry is currently empty, so
+owner-only activation remains blocked.
+Paper is also unconditionally rejected in owner-only mode until a separate
+three-unattended-session evidence checker is implemented; `paper-scheduler`
+stays in the immutable ten-image manifest but is omitted from owner-only
+startup. These guards do not constitute a launch or dataset registration.
+
 No script enables Compose `live`, asks for a KIS account/order credential, or
 calls an order endpoint. KOSPI200/KOSDAQ150 candidate backfill is a separate
 blocked workflow until its credentialed candidate bridge and entitlement are
@@ -73,8 +84,7 @@ sudo scripts/ops/kis-historical-price-beta-artifact.sh --materialize \
   --action-manifest-sha256 sha256:<64-lowercase-hex>
 sudo scripts/ops/kis-historical-price-beta-artifact.sh --check \
   --candidate-content-sha256 sha256:<64-lowercase-hex>
-sudo scripts/ops/kis-historical-price-beta-artifact.sh --approval-check \
-  --candidate-content-sha256 sha256:<64-lowercase-hex>
+sudo scripts/ops/kis-historical-price-beta-artifact.sh --approval-check
 ```
 
 `provision-linux.sh --apply` creates the dedicated

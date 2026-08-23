@@ -5,10 +5,10 @@
 //! authenticated responses also carry `Cache-Control: no-store` (no shared
 //! caching of authenticated data - the plan's Must-NOT list).
 
-use crate::contract::owner_beta_applies;
+use crate::contract::{OwnerBetaProduct, owner_beta_product};
 use crate::http::error::{code_error, request_id};
 use crate::http::session::session_from_headers;
-use crate::http::state::ApiState;
+use crate::http::state::{ApiState, OwnerBetaPaperMode};
 use crate::observability::{log, metrics};
 use axum::extract::{Request, State};
 use axum::http::HeaderValue;
@@ -59,17 +59,72 @@ pub async fn owner_beta_admission(
     req: Request,
     next: Next,
 ) -> Response {
-    if !state.cfg.owner_beta_access.requires_owner() || !owner_beta_applies(req.uri().path()) {
+    if !state.cfg.owner_beta_access.requires_owner() {
         return next.run(req).await;
     }
+    let Some(product) = owner_beta_product(req.uri().path()) else {
+        return next.run(req).await;
+    };
 
     let rid = request_id(req.headers());
     let session = match session_from_headers(&state, req.headers()).await {
         Ok(session) => session,
         Err(response) => return response,
     };
-    if !session.actor().is_owner() {
+    if !owner_beta_product_allowed(
+        product,
+        session.actor().is_owner(),
+        state.cfg.owner_beta_paper,
+    ) {
         return code_error("FORBIDDEN", "forbidden", &rid);
     }
     next.run(req).await
+}
+
+fn owner_beta_product_allowed(
+    product: OwnerBetaProduct,
+    is_owner: bool,
+    paper_mode: OwnerBetaPaperMode,
+) -> bool {
+    is_owner && (product != OwnerBetaProduct::Paper || paper_mode.is_enabled())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn separate_paper_lock_is_closed_for_every_role_and_mode() {
+        for product in [
+            OwnerBetaProduct::Recommendations,
+            OwnerBetaProduct::Backtests,
+            OwnerBetaProduct::Paper,
+        ] {
+            assert!(!owner_beta_product_allowed(
+                product,
+                false,
+                OwnerBetaPaperMode::Enabled
+            ));
+        }
+        assert!(owner_beta_product_allowed(
+            OwnerBetaProduct::Recommendations,
+            true,
+            OwnerBetaPaperMode::Disabled
+        ));
+        assert!(owner_beta_product_allowed(
+            OwnerBetaProduct::Backtests,
+            true,
+            OwnerBetaPaperMode::Disabled
+        ));
+        assert!(!owner_beta_product_allowed(
+            OwnerBetaProduct::Paper,
+            true,
+            OwnerBetaPaperMode::Disabled
+        ));
+        assert!(owner_beta_product_allowed(
+            OwnerBetaProduct::Paper,
+            true,
+            OwnerBetaPaperMode::Enabled
+        ));
+    }
 }

@@ -17,7 +17,8 @@ use market_data::{
 };
 use serde::{Deserialize, Serialize};
 
-const USAGE: &str = "kis-historical-price-beta-approval-check check --artifact-root <ABS_ARTIFACT_ROOT> --candidate-content-sha256 <sha256:64hex>";
+const USAGE: &str =
+    "kis-historical-price-beta-approval-check check --artifact-root <ABS_ARTIFACT_ROOT>";
 const REGISTRY_SCHEMA_ID: &str = "kis-historical-price-only-beta-approval-registry";
 const REGISTRY_SCHEMA_VERSION: u32 = 1;
 const MAX_REGISTRY_BYTES: u64 = 256 * 1024;
@@ -25,11 +26,10 @@ const EMBEDDED_APPROVAL_REGISTRY_BYTES: &[u8] = include_bytes!(
     "../../../../configs/evidence/kis-historical-price-only-beta-approved-artifacts.json"
 );
 
-const CHECK_OPTIONS: [&str; 2] = ["--artifact-root", "--candidate-content-sha256"];
+const CHECK_OPTIONS: [&str; 1] = ["--artifact-root"];
 
 struct CheckArgs {
     artifact_root: PathBuf,
-    candidate_content_sha256: ContentHash,
 }
 
 enum ParseOutcome {
@@ -86,6 +86,7 @@ struct ApprovalFacts {
     artifact_manifest_sha256: ContentHash,
     stage5_manifest_sha256: ContentHash,
     action_manifest_sha256: ContentHash,
+    approval_registry_sha256: ContentHash,
     artifact_schema_id: String,
     artifact_schema_version: u32,
     audience: String,
@@ -107,12 +108,14 @@ impl ApprovalFacts {
     fn from_verified(
         candidate_content_sha256: &ContentHash,
         summary: &HistoricalPriceOnlyArtifactApprovalSummary,
+        approval_registry_sha256: ContentHash,
     ) -> Self {
         Self {
             candidate_content_sha256: candidate_content_sha256.clone(),
             artifact_manifest_sha256: summary.artifact_manifest_sha256().clone(),
             stage5_manifest_sha256: summary.stage5_manifest_sha256().clone(),
             action_manifest_sha256: summary.action_manifest_sha256().clone(),
+            approval_registry_sha256,
             artifact_schema_id: summary.schema_id().to_owned(),
             artifact_schema_version: summary.schema_version(),
             audience: summary.audience().to_owned(),
@@ -169,12 +172,7 @@ fn parse_args(argv: &[String]) -> Result<ParseOutcome, Failure> {
     }
     let values = exact_option_values(&argv[1..])?;
     let artifact_root = absolute_path(values[0], "artifact_root_must_be_absolute")?;
-    let candidate_content_sha256 = ContentHash::parse(values[1])
-        .map_err(|_| Failure::new("invalid_candidate_content_sha256"))?;
-    Ok(ParseOutcome::Check(CheckArgs {
-        artifact_root,
-        candidate_content_sha256,
-    }))
+    Ok(ParseOutcome::Check(CheckArgs { artifact_root }))
 }
 
 fn exact_option_values(argv: &[String]) -> Result<Vec<&str>, Failure> {
@@ -214,14 +212,18 @@ fn execute_check(args: &CheckArgs) -> Result<String, Failure> {
 
 fn execute_check_with_registry(args: &CheckArgs, registry_bytes: &[u8]) -> Result<String, Failure> {
     let registry = read_registry_bytes(registry_bytes)?;
-    let verified =
-        read_historical_price_only_artifact(&args.artifact_root, &args.candidate_content_sha256)
-            .map_err(|_| Failure::new("artifact_rejected"))?;
+    let approved = sole_approved_artifact(&registry)?;
+    let verified = read_historical_price_only_artifact(
+        &args.artifact_root,
+        &approved.candidate_content_sha256,
+    )
+    .map_err(|_| Failure::new("artifact_rejected"))?;
     let facts = ApprovalFacts::from_verified(
         verified.candidate_content_sha256(),
         verified.approval_summary(),
+        ContentHash::from_bytes(registry_bytes),
     );
-    if !fixed_contract_matches(&facts) || !registry_approves(&registry, &facts) {
+    if !fixed_contract_matches(&facts) || !approved_record_matches(approved, &facts) {
         return Err(Failure::new("artifact_not_approved"));
     }
     Ok(success_line(&facts))
@@ -243,11 +245,7 @@ fn read_registry_bytes(bytes: &[u8]) -> Result<ApprovalRegistry, Failure> {
 }
 
 fn valid_registry(registry: &ApprovalRegistry) -> bool {
-    registry.schema_id == REGISTRY_SCHEMA_ID
-        && registry.schema_version == REGISTRY_SCHEMA_VERSION
-        && registry.approved_artifacts.windows(2).all(|pair| {
-            pair[0].candidate_content_sha256.as_str() < pair[1].candidate_content_sha256.as_str()
-        })
+    registry.schema_id == REGISTRY_SCHEMA_ID && registry.schema_version == REGISTRY_SCHEMA_VERSION
 }
 
 fn fixed_contract_matches(facts: &ApprovalFacts) -> bool {
@@ -273,16 +271,12 @@ fn fixed_contract_matches(facts: &ApprovalFacts) -> bool {
         && facts.bar_count == 17688
 }
 
-fn registry_approves(registry: &ApprovalRegistry, facts: &ApprovalFacts) -> bool {
-    registry
-        .approved_artifacts
-        .binary_search_by(|record| {
-            record
-                .candidate_content_sha256
-                .as_str()
-                .cmp(facts.candidate_content_sha256.as_str())
-        })
-        .is_ok_and(|index| approved_record_matches(&registry.approved_artifacts[index], facts))
+fn sole_approved_artifact(registry: &ApprovalRegistry) -> Result<&ApprovedArtifact, Failure> {
+    match registry.approved_artifacts.as_slice() {
+        [] => Err(Failure::new("artifact_not_approved")),
+        [approved] => Ok(approved),
+        _ => Err(Failure::new("registry_ambiguous")),
+    }
 }
 
 fn approved_record_matches(record: &ApprovedArtifact, facts: &ApprovalFacts) -> bool {
@@ -309,11 +303,8 @@ fn approved_record_matches(record: &ApprovedArtifact, facts: &ApprovalFacts) -> 
 
 fn success_line(facts: &ApprovalFacts) -> String {
     format!(
-        "HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check candidate_content_sha256={} artifact_manifest_sha256={} stage5_manifest_sha256={} action_manifest_sha256={} approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count={} session_count={} bar_count={}",
-        facts.candidate_content_sha256,
-        facts.artifact_manifest_sha256,
-        facts.stage5_manifest_sha256,
-        facts.action_manifest_sha256,
+        "HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256={} approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count={} session_count={} bar_count={}",
+        facts.approval_registry_sha256,
         facts.instrument_count,
         facts.session_count,
         facts.bar_count,
@@ -346,6 +337,7 @@ mod tests {
             artifact_manifest_sha256: hash("artifact-manifest"),
             stage5_manifest_sha256: hash("stage5-manifest"),
             action_manifest_sha256: hash("action-manifest"),
+            approval_registry_sha256: hash("approval-registry"),
             artifact_schema_id: "kis-historical-price-only-beta".into(),
             artifact_schema_version: 1,
             audience: "OWNER_ONLY".into(),
@@ -409,38 +401,70 @@ mod tests {
         let registry = read_registry_bytes(&registry_bytes).unwrap();
         assert!(valid_registry(&registry));
         assert!(fixed_contract_matches(&facts));
-        assert!(registry_approves(&registry, &facts));
+        assert!(approved_record_matches(
+            sole_approved_artifact(&registry).unwrap(),
+            &facts
+        ));
         let line = success_line(&facts);
-        assert!(line.contains("approval_status=APPROVED"));
-        assert!(line.contains(&format!(
-            "stage5_manifest_sha256={}",
-            facts.stage5_manifest_sha256
-        )));
-        assert!(line.contains(&format!(
-            "action_manifest_sha256={}",
-            facts.action_manifest_sha256
-        )));
+        assert_eq!(
+            line,
+            format!(
+                "HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256={} approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688",
+                facts.approval_registry_sha256
+            )
+        );
+        for private_fact in [
+            facts.candidate_content_sha256.to_string(),
+            facts.artifact_manifest_sha256.to_string(),
+            facts.stage5_manifest_sha256.to_string(),
+            facts.action_manifest_sha256.to_string(),
+        ] {
+            assert!(!line.contains(&private_fact));
+        }
     }
 
     #[test]
-    fn empty_or_nonapproved_registry_never_approves() {
+    fn approval_registry_pin_binds_the_exact_embedded_bytes() {
+        let exact = ContentHash::from_bytes(EMBEDDED_APPROVAL_REGISTRY_BYTES);
+        let mut changed = EMBEDDED_APPROVAL_REGISTRY_BYTES.to_vec();
+        changed.push(b' ');
+
+        assert_ne!(exact, ContentHash::from_bytes(&changed));
+
+        let mut facts = facts();
+        facts.approval_registry_sha256 = exact.clone();
+        assert!(success_line(&facts).contains(&format!("approval_registry_sha256={exact}")));
+    }
+
+    #[test]
+    fn registry_requires_exactly_one_approved_artifact() {
         let facts = facts();
-        assert!(!registry_approves(&registry(vec![]), &facts));
-        let mut different = approved(&facts);
-        different.candidate_content_sha256 = hash("other-candidate");
-        assert!(!registry_approves(&registry(vec![different]), &facts));
+        assert_eq!(
+            sole_approved_artifact(&registry(vec![]))
+                .unwrap_err()
+                .reason,
+            "artifact_not_approved"
+        );
+        assert_eq!(
+            sole_approved_artifact(&registry(vec![approved(&facts), approved(&facts)]))
+                .unwrap_err()
+                .reason,
+            "registry_ambiguous"
+        );
     }
 
     #[test]
     fn embedded_empty_registry_never_approves() {
-        let facts = facts();
         let registry = read_registry_bytes(EMBEDDED_APPROVAL_REGISTRY_BYTES).unwrap();
         assert!(registry.approved_artifacts.is_empty());
-        assert!(!registry_approves(&registry, &facts));
+        assert_eq!(
+            sole_approved_artifact(&registry).unwrap_err().reason,
+            "artifact_not_approved"
+        );
     }
 
     #[test]
-    fn registry_rejects_unknown_duplicate_stale_and_noncanonical_forms() {
+    fn registry_rejects_unknown_stale_and_noncanonical_forms() {
         let facts = facts();
         let unknown = String::from_utf8(canonical_registry_bytes(&registry(vec![])))
             .unwrap()
@@ -448,7 +472,11 @@ mod tests {
         assert!(read_registry_bytes(unknown.as_bytes()).is_err());
 
         let duplicate = registry(vec![approved(&facts), approved(&facts)]);
-        assert!(read_registry_bytes(&canonical_registry_bytes(&duplicate)).is_err());
+        let duplicate = read_registry_bytes(&canonical_registry_bytes(&duplicate)).unwrap();
+        assert_eq!(
+            sole_approved_artifact(&duplicate).unwrap_err().reason,
+            "registry_ambiguous"
+        );
 
         let mut stale = registry(vec![]);
         stale.schema_version = 2;
@@ -462,25 +490,19 @@ mod tests {
         let facts = facts();
         let mut wrong_hash = approved(&facts);
         wrong_hash.artifact_manifest_sha256 = hash("tampered");
-        assert!(!registry_approves(&registry(vec![wrong_hash]), &facts));
+        assert!(!approved_record_matches(&wrong_hash, &facts));
         let mut wrong_stage5_hash = approved(&facts);
         wrong_stage5_hash.stage5_manifest_sha256 = hash("tampered-stage5");
-        assert!(!registry_approves(
-            &registry(vec![wrong_stage5_hash]),
-            &facts
-        ));
+        assert!(!approved_record_matches(&wrong_stage5_hash, &facts));
         let mut wrong_action_hash = approved(&facts);
         wrong_action_hash.action_manifest_sha256 = hash("tampered-action");
-        assert!(!registry_approves(
-            &registry(vec![wrong_action_hash]),
-            &facts
-        ));
+        assert!(!approved_record_matches(&wrong_action_hash, &facts));
         let mut wrong_flag = approved(&facts);
         wrong_flag.strict_pit = true;
-        assert!(!registry_approves(&registry(vec![wrong_flag]), &facts));
+        assert!(!approved_record_matches(&wrong_flag, &facts));
         let mut wrong_count = approved(&facts);
         wrong_count.bar_count += 1;
-        assert!(!registry_approves(&registry(vec![wrong_count]), &facts));
+        assert!(!approved_record_matches(&wrong_count, &facts));
     }
 
     #[test]
@@ -495,10 +517,7 @@ mod tests {
         ] {
             let mut tampered = facts.clone();
             mutate(&mut tampered);
-            assert!(registry_approves(
-                &registry(vec![approved(&tampered)]),
-                &tampered
-            ));
+            assert!(approved_record_matches(&approved(&tampered), &tampered));
             assert!(!fixed_contract_matches(&tampered));
         }
     }
@@ -506,13 +525,10 @@ mod tests {
     #[test]
     fn grammar_is_exact_and_reader_failure_does_not_write() {
         let root = tempfile::tempdir().unwrap();
-        let candidate = hash("candidate");
         let argv = vec![
             "check".into(),
             "--artifact-root".into(),
             root.path().display().to_string(),
-            "--candidate-content-sha256".into(),
-            candidate.to_string(),
         ];
         let ParseOutcome::Check(parsed) = parse_args(&argv).unwrap() else {
             panic!("check command should parse");
@@ -523,7 +539,7 @@ mod tests {
         let reordered = vec![
             "check".into(),
             "--candidate-content-sha256".into(),
-            candidate.to_string(),
+            hash("candidate").to_string(),
             "--artifact-root".into(),
             root.path().display().to_string(),
         ];

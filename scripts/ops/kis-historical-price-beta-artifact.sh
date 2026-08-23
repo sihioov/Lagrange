@@ -19,7 +19,7 @@ Usage: scripts/ops/kis-historical-price-beta-artifact.sh
        [--plan|--preflight]
        [--materialize --stage5-manifest-sha256 HASH --action-manifest-sha256 HASH]
        [--check --candidate-content-sha256 HASH]
-       [--approval-check --candidate-content-sha256 HASH]
+       [--approval-check]
 
 The default --plan is a static description and does not read the installed
 environment/manifest or invoke Docker.  The other modes are root-only and
@@ -66,7 +66,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --candidate-content-sha256)
-      [ "$mode" = check ] || [ "$mode" = approval-check ] || die candidate_option_not_allowed
+      [ "$mode" = check ] || die candidate_option_not_allowed
       [ "$#" -ge 2 ] || die candidate_option_missing_value
       [ -z "$candidate_content_sha256" ] || die candidate_option_repeated
       candidate_content_sha256=$2
@@ -110,7 +110,7 @@ case "$mode" in
     hash_shape "$candidate_content_sha256" || die invalid_candidate_content_sha256
     ;;
   approval-check)
-    hash_shape "$candidate_content_sha256" || die invalid_candidate_content_sha256
+    [ -z "$candidate_content_sha256" ] || die operation_options_not_allowed
     ;;
 esac
 
@@ -303,7 +303,6 @@ run_artifact_container() {
       "$image_id"
       check
       --artifact-root /artifact-root
-      --candidate-content-sha256 "$candidate_content_sha256"
     )
   fi
 
@@ -333,7 +332,7 @@ run_artifact_container() {
   [ "$success_count" -eq 1 ] || blocked artifact_success_output_invalid
 
   if [ "$mode" = approval-check ]; then
-    [[ "$success_line" =~ ^HISTORICAL_PRICE_BETA_APPROVAL\ status=ok\ operation=check\ candidate_content_sha256=$candidate_content_sha256\ artifact_manifest_sha256=sha256:[0-9a-f]{64}\ stage5_manifest_sha256=sha256:[0-9a-f]{64}\ action_manifest_sha256=sha256:[0-9a-f]{64}\ approval_status=APPROVED\ audience=OWNER_ONLY\ vendor_snapshot=true\ strict_pit=false\ capability=PRICE_RETURN_ONLY\ materialization_status=MATERIALIZED\ registration_status=UNREGISTERED\ publication_status=NOT_PUBLISHED\ instrument_count=11\ session_count=1608\ bar_count=17688$ ]] ||
+    [[ "$success_line" =~ ^HISTORICAL_PRICE_BETA_APPROVAL\ status=ok\ operation=check\ approval_registry_sha256=sha256:[0-9a-f]{64}\ approval_status=APPROVED\ audience=OWNER_ONLY\ vendor_snapshot=true\ strict_pit=false\ capability=PRICE_RETURN_ONLY\ materialization_status=MATERIALIZED\ registration_status=UNREGISTERED\ publication_status=NOT_PUBLISHED\ instrument_count=11\ session_count=1608\ bar_count=17688$ ]] ||
       blocked artifact_success_output_invalid
   elif [ "$mode" = materialize ]; then
     [[ "$success_line" =~ ^HISTORICAL_PRICE_BETA_ARTIFACT\ status=ok\ operation=materialize\ candidate_content_sha256=sha256:[0-9a-f]{64}\ stage5_manifest_sha256=$stage5_manifest_sha256\ action_manifest_sha256=$action_manifest_sha256\ instrument_count=11\ session_count=1608\ bar_count=17688\ raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS\ audience=OWNER_ONLY\ vendor_snapshot=true\ strict_pit=false\ capability=PRICE_RETURN_ONLY\ materialization_status=MATERIALIZED\ registration_status=UNREGISTERED\ publication_status=NOT_PUBLISHED$ ]] ||

@@ -185,6 +185,12 @@ services:
       # routes /auth/* to this API service before the web catch-all.
       AUTH0_REDIRECT_URI: ${AUTH0_REDIRECT_URI:-https://app.lagrange.local/auth/callback}
       AUTH0_CLIENT_SECRET_FILE: /run/secrets/auth0_client_secret
+      # Temporary owner beta admission is an explicit non-secret policy. The
+      # candidate approval hash remains host-side and is never passed to a
+      # service container. Paper stays independently disabled until a future
+      # three-session evidence checker exists.
+      OWNER_BETA_ACCESS_MODE: ${OWNER_BETA_ACCESS_MODE:-disabled}
+      OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}
     secrets:
       - source: api_db_app_password
         target: db_app_password

@@ -59,6 +59,22 @@ impl OwnerBetaAccessMode {
     }
 }
 
+/// Explicit activation of the Paper surface inside an Owner-only beta.
+/// This flag has no effect while [`OwnerBetaAccessMode`] is disabled.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnerBetaPaperMode {
+    #[default]
+    Disabled,
+    Enabled,
+}
+
+impl OwnerBetaPaperMode {
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
 /// Runtime configuration of the API surface.
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -88,6 +104,8 @@ pub struct ApiConfig {
     pub code_commit: String,
     /// Explicit, non-secret deployment policy for the temporary owner beta.
     pub owner_beta_access: OwnerBetaAccessMode,
+    /// Separate Paper activation inside the temporary owner-only beta.
+    pub owner_beta_paper: OwnerBetaPaperMode,
 }
 
 pub fn system_seoul_today() -> chrono::NaiveDate {
@@ -130,6 +148,14 @@ impl ApiState {
     /// path; production and integration-test construction remain unchanged.
     #[cfg(test)]
     pub(crate) fn test_without_database(owner_beta_access: OwnerBetaAccessMode) -> Self {
+        Self::test_without_database_with_policy(owner_beta_access, OwnerBetaPaperMode::Disabled)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_without_database_with_policy(
+        owner_beta_access: OwnerBetaAccessMode,
+        owner_beta_paper: OwnerBetaPaperMode,
+    ) -> Self {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
             .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
@@ -152,6 +178,7 @@ impl ApiState {
                 candidate_eod_ready: || false,
                 code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
                 owner_beta_access,
+                owner_beta_paper,
             }),
             app_pool: pool.clone(),
             admin_pool: pool.clone(),

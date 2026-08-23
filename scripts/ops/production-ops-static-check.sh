@@ -7,13 +7,17 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 ops=$root/scripts/ops
 systemd=$root/deploy/systemd
 release=$ops/deploy-production-release.sh
+compose_release=$ops/compose-release.sh
+production_config=$ops/validate-production-config.sh
+artifact_wrapper=$ops/kis-historical-price-beta-artifact.sh
 manifest_lib=$ops/lib/release-image-manifest.sh
 backup=$ops/run-production-backup.sh
 installer=$ops/install-production-backup.sh
 
 die() { echo "production-ops-static: $*" >&2; exit 1; }
 
-for script in "$release" "$manifest_lib" "$backup" "$installer"; do
+for script in "$release" "$compose_release" "$production_config" "$artifact_wrapper" \
+  "$manifest_lib" "$backup" "$installer"; do
   [ -f "$script" ] || die "required script missing: $script"
   bash -n "$script" || die "shell syntax failure: $script"
 done
@@ -24,6 +28,22 @@ grep -Fq 'TEST_ENVIRONMENT_ERROR: production-ops root fixture requires user name
 if grep -Fq 'PASS (root fixture skipped' "$self_test" || grep -Fq 'fakeroot "$@"' "$self_test"; then
   die 'production ops root fixture must not pass-on-skip or nest fakeroot'
 fi
+
+grep -Fq 'OWNER_BETA_ACCESS_MODE' "$root/deploy/compose/compose.yml" ||
+  die 'Compose owner-beta access policy injection missing'
+grep -Fq 'OWNER_BETA_PAPER_MODE' "$root/deploy/compose/compose.yml" ||
+  die 'Compose owner-beta Paper policy injection missing'
+grep -Fq 'owner_beta_paper_evidence_unavailable' "$production_config" ||
+  die 'Paper must remain blocked without a future evidence checker'
+grep -Fq 'run_owner_beta_approval_gate' "$compose_release" ||
+  die 'owner-beta pre-start approval gate missing'
+approval_gate_line=$(grep -n '^run_owner_beta_approval_gate$' "$compose_release" | tail -n1 | cut -d: -f1)
+first_release_up_line=$(grep -n '^compose up --no-build --wait postgres$' "$compose_release" | cut -d: -f1)
+[ -n "$approval_gate_line" ] && [ -n "$first_release_up_line" ] &&
+  [ "$approval_gate_line" -lt "$first_release_up_line" ] ||
+  die 'owner-beta approval gate must precede the first release Compose up'
+grep -Fq 'approval_registry_sha256=sha256:[0-9a-f]{64}' "$artifact_wrapper" ||
+  die 'artifact wrapper approval output must bind the embedded registry hash'
 
 grep -Fq 'status --porcelain=v1 --untracked-files=all' "$release" ||
   die 'release clean-tree fence missing'

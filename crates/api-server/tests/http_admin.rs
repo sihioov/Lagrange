@@ -401,6 +401,7 @@ async fn http_auth_session_routes() {
     assert_eq!(body["role"], "member");
     assert!(body["expires_at_secs"].is_number());
     assert_eq!(body["owner_beta_access_mode"], "disabled");
+    assert_eq!(body["owner_beta_paper_mode"], "disabled");
 
     // GET /api/v1/auth/csrf -> rotates the synchronizer token.
     let resp = h.get("/api/v1/auth/csrf", Some(&h.member)).await;

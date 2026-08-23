@@ -13,6 +13,7 @@ const OWNER_SESSION = {
   role: "owner",
   expires_at_secs: 2_000_000_000,
   owner_beta_access_mode: "disabled",
+  owner_beta_paper_mode: "disabled",
 } as const;
 
 describe("application shell accessibility", () => {

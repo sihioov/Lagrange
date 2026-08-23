@@ -24,6 +24,7 @@ function sessionApi(): {
         role: "owner",
         expires_at_secs: 2_000_000_000,
         owner_beta_access_mode: "owner_only",
+        owner_beta_paper_mode: "enabled",
       },
     ],
     // Deliberately models the previous API shape. That server predates the
@@ -84,11 +85,13 @@ describe("server API client", () => {
       user_id: OWNER_USER_ID,
       role: "owner",
       owner_beta_access_mode: "owner_only",
+      owner_beta_paper_mode: "enabled",
     });
     expect(memberSession).toMatchObject({
       user_id: MEMBER_USER_ID,
       role: "member",
       owner_beta_access_mode: "disabled",
+      owner_beta_paper_mode: "disabled",
     });
     expect(JSON.stringify(ownerSession)).not.toContain(MEMBER_USER_ID);
     expect(JSON.stringify(memberSession)).not.toContain(OWNER_USER_ID);
@@ -108,6 +111,26 @@ describe("server API client", () => {
           user_id: MEMBER_USER_ID,
         }),
       sessionCookie: "member-opaque",
+    });
+
+    await expect(client.getSession()).rejects.toMatchObject({
+      message: "API response did not match the generated contract",
+      name: "ApiContractError",
+    });
+  });
+
+  it("fails closed on an unknown Paper activation instead of enabling it", async () => {
+    const client = createServerApiClient({
+      baseUrl: "https://api.internal",
+      fetcher: async () =>
+        Response.json({
+          expires_at_secs: 2_000_000_000,
+          owner_beta_access_mode: "owner_only",
+          owner_beta_paper_mode: "preview",
+          role: "owner",
+          user_id: OWNER_USER_ID,
+        }),
+      sessionCookie: "owner-opaque",
     });
 
     await expect(client.getSession()).rejects.toMatchObject({

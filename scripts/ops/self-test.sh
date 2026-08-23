@@ -1024,6 +1024,57 @@ sed -i \
   -e "s|^LAGRANGE_SECRET_SOURCE_DIR=.*|LAGRANGE_SECRET_SOURCE_DIR=$out_dir/source|" \
   -e "s|^LAGRANGE_RUNTIME_SECRET_DIR=.*|LAGRANGE_RUNTIME_SECRET_DIR=$out_dir/runtime|" \
   "$out_dir/.env"
+
+# Owner-beta deployment policy is validated before any release operation. The
+# fixtures below remain intentionally incomplete in unrelated areas; each run
+# must still expose the exact static policy result.
+assert_owner_beta_invalid() {
+  local name=$1 expected=$2 fixture=$out_dir/owner-beta-$1.env
+  shift 2
+  cp "$out_dir/.env" "$fixture"
+  "$@" "$fixture"
+  chmod 0600 "$fixture"
+  if LAGRANGE_ENV_FILE="$fixture" \
+     LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
+     bash "$ops/validate-production-config.sh" --scope infrastructure \
+     >"$out_dir/owner-beta-$name.out" 2>&1; then
+    echo "self-test: invalid owner-beta fixture unexpectedly passed: $name" >&2
+    exit 1
+  fi
+  grep -Fq "$expected" "$out_dir/owner-beta-$name.out" || {
+    cat "$out_dir/owner-beta-$name.out" >&2
+    exit 1
+  }
+}
+set_owner_beta_unknown() { sed -i 's/^OWNER_BETA_ACCESS_MODE=.*/OWNER_BETA_ACCESS_MODE=enabled/' "$1"; }
+set_owner_beta_file_channel() { printf '%s\n' 'OWNER_BETA_ACCESS_MODE_FILE=/not/a/secret' >>"$1"; }
+set_owner_beta_paper_enabled() {
+  sed -i \
+    -e 's/^OWNER_BETA_ACCESS_MODE=.*/OWNER_BETA_ACCESS_MODE=owner_only/' \
+    -e 's/^OWNER_BETA_PAPER_MODE=.*/OWNER_BETA_PAPER_MODE=enabled/' \
+    "$1"
+}
+assert_owner_beta_invalid unknown owner_beta_access_mode_invalid set_owner_beta_unknown
+assert_owner_beta_invalid file-channel owner_beta_policy_file_forbidden set_owner_beta_file_channel
+assert_owner_beta_invalid paper-enabled owner_beta_paper_evidence_unavailable set_owner_beta_paper_enabled
+
+owner_beta_compat=$out_dir/owner-beta-compatible.env
+sed -E '/^OWNER_BETA_(ACCESS_MODE|PAPER_MODE)=/d' \
+  "$out_dir/.env" >"$owner_beta_compat"
+chmod 0600 "$owner_beta_compat"
+if LAGRANGE_ENV_FILE="$owner_beta_compat" \
+   LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
+   bash "$ops/validate-production-config.sh" --scope infrastructure \
+   >"$out_dir/owner-beta-compatible.out" 2>&1; then
+  echo 'self-test: incomplete compatibility fixture unexpectedly passed' >&2
+  exit 1
+fi
+if grep -Eq 'owner_beta_|OWNER_BETA_' "$out_dir/owner-beta-compatible.out"; then
+  echo 'self-test: absent owner-beta keys did not preserve disabled compatibility' >&2
+  cat "$out_dir/owner-beta-compatible.out" >&2
+  exit 1
+fi
+
 if LAGRANGE_ENV_FILE="$out_dir/.env" \
    LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
    bash "$ops/validate-production-config.sh" >"$out_dir/config.out" 2>&1; then

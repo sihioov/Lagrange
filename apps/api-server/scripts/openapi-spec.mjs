@@ -1371,13 +1371,20 @@ const SCHEMAS = {
   },
   Session: {
     type: "object",
-    required: ["user_id", "role", "expires_at_secs", "owner_beta_access_mode"],
+    required: [
+      "user_id",
+      "role",
+      "expires_at_secs",
+      "owner_beta_access_mode",
+      "owner_beta_paper_mode",
+    ],
     properties: {
       user_id: { type: "string", format: "uuid" },
       role: { type: "string", enum: ["owner", "member"] },
       expires_at_secs: { type: "integer" },
       auth_time_secs: { type: "integer" },
       owner_beta_access_mode: { type: "string", enum: ["disabled", "owner_only"] },
+      owner_beta_paper_mode: { type: "string", enum: ["disabled", "enabled"] },
     },
   },
   EmptyBody: { type: "object", additionalProperties: false },

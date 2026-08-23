@@ -24,6 +24,9 @@ export type ShellDictionary = {
   readonly navStrategies: string;
   readonly ownerAccessRequiredMessage: string;
   readonly ownerAccessRequiredTitle: string;
+  readonly ownerBetaPaperUnavailableDescription: string;
+  readonly ownerBetaPaperUnavailableMessage: string;
+  readonly ownerBetaPaperUnavailableTitle: string;
   readonly paperAccountDescription: string;
   readonly privateSession: string;
   readonly recommendationsDescription: string;
@@ -71,6 +74,10 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     ownerAccessRequiredMessage:
       "This workspace requires the Owner role. Your current session remains signed in with Member access.",
     ownerAccessRequiredTitle: "Owner access required",
+    ownerBetaPaperUnavailableDescription: "This beta workspace is not enabled yet.",
+    ownerBetaPaperUnavailableMessage:
+      "Paper remains unavailable until the separate beta readiness check is complete.",
+    ownerBetaPaperUnavailableTitle: "Paper beta is not enabled",
     paperAccountDescription: "Monitor simulated accounts and orders shared with your invite group.",
     privateSession: "Private session",
     recommendationsDescription: "Inspect explainable candidates, weights, and exclusions.",
@@ -115,6 +122,10 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     ownerAccessRequiredMessage:
       "이 워크스페이스는 오너 권한이 필요합니다. 현재 세션은 멤버 권한으로 로그인된 상태입니다.",
     ownerAccessRequiredTitle: "오너 권한이 필요합니다",
+    ownerBetaPaperUnavailableDescription: "이 베타 워크스페이스는 아직 활성화되지 않았습니다.",
+    ownerBetaPaperUnavailableMessage:
+      "별도 베타 준비 상태 검사가 완료될 때까지 모의투자는 사용할 수 없습니다.",
+    ownerBetaPaperUnavailableTitle: "모의투자 베타가 아직 활성화되지 않았습니다",
     paperAccountDescription: "초대 그룹에 공유된 모의투자 계좌와 주문 내역을 확인하세요.",
     privateSession: "비공개 세션",
     recommendationsDescription: "설명 가능한 후보 종목, 비중, 제외 내역을 확인하세요.",

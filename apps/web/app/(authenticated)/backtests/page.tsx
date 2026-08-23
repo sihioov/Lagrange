@@ -51,6 +51,7 @@ function firstByStatus(runs: readonly BacktestRunModel[], status: BacktestRunMod
 export default async function BacktestsPage() {
   const locale = await getLocale();
   return OwnerBetaProductRoute({
+    product: "backtests",
     renderProduct: BacktestsProductPage,
     title: backtestsDictionary[locale].pageTitle,
   });

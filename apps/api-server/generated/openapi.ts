@@ -1905,6 +1905,8 @@ export interface components {
             auth_time_secs?: number;
             /** @enum {string} */
             owner_beta_access_mode: "disabled" | "owner_only";
+            /** @enum {string} */
+            owner_beta_paper_mode: "disabled" | "enabled";
         };
         EmptyBody: Record<string, never>;
     };

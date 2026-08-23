@@ -43,6 +43,25 @@ export function OwnerAccessRefusal({ locale, title }: OwnerAccessRefusalProps) {
   );
 }
 
+/** Non-sensitive readiness refusal for an authenticated Owner. */
+export function OwnerBetaPaperUnavailable({ locale, title }: OwnerAccessRefusalProps) {
+  const t = shellDictionary[locale];
+  return (
+    <RoutePage description={t.ownerBetaPaperUnavailableDescription} title={title}>
+      <StatePanel
+        action={
+          <Link className="quiet-action" href="/">
+            {t.returnToDashboard}
+          </Link>
+        }
+        kind="blocked"
+        message={t.ownerBetaPaperUnavailableMessage}
+        title={t.ownerBetaPaperUnavailableTitle}
+      />
+    </RoutePage>
+  );
+}
+
 export async function OwnerRoute({ children, description, title }: OwnerRouteProps) {
   const [session, locale] = await Promise.all([getServerSession(), getLocale()]);
   if (!OWNER_ACCESS_BY_ROLE[session.role]) {
