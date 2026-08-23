@@ -11,8 +11,9 @@ use crate::range_normalize::{
     RangeNormalizationSourceFile, RangeNormalizationSourceRow,
 };
 use crate::range_to_canonical::{
-    RANGE_CANONICAL_BRIDGE_VERSION, REQUIRED_ACTION_KINDS, RangeAction, RangeCanonicalError,
-    build_range_canonical_candidate, write_evidence_package,
+    HistoricalBetaVerificationScope, RANGE_CANONICAL_BRIDGE_VERSION, REQUIRED_ACTION_KINDS,
+    RangeAction, RangeCanonicalError, build_range_canonical_candidate,
+    verify_historical_price_only_beta_input_for_scope, write_evidence_package,
 };
 use crate::{BatchSpec, ManifestEntry, RawStore};
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
@@ -193,11 +194,18 @@ fn stage4a_entry_version(
     schema_version: u32,
     normalizer: &str,
 ) -> ManifestEntry {
-    let id = BatchId::from_uuid(Uuid::new_v4());
     let mut lineage = source_lineage(source);
     lineage.listing_snapshot_hash = listing_hash();
     lineage.schema_version = schema_version;
     lineage.normalizer = normalizer.to_owned();
+    let source_manifest_hash = ContentHash::from_bytes(&serde_json::to_vec(source).unwrap());
+    let id = crate::deterministic_range_normalized_batch_id_with_identity(
+        source,
+        &source_manifest_hash,
+        lineage.selected_session,
+        &lineage.calendar_hash,
+        &lineage.listing_snapshot_hash,
+    );
     let document = json!({
         "schema_version": schema_version,
         "dataset_kind": "kis-daily-range-bars",
@@ -570,6 +578,65 @@ fn loader_produces_verified_candidate_and_replay_is_deterministic() {
     assert_eq!(first.bars.len(), 11);
     assert_eq!(first.acquired_at, timestamp(ACQUIRED));
     assert!(first.actions.is_empty());
+}
+
+#[test]
+fn raw_bound_historical_input_reauthenticates_exact_source_and_action_pins() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let actions = action_entry(&raw, false);
+    let source_pin = ContentHash::from_bytes(&serde_json::to_vec(&source).unwrap());
+    let action_pin = ContentHash::from_bytes(&serde_json::to_vec(&actions).unwrap());
+    let scope = HistoricalBetaVerificationScope {
+        source_batch_id: source.batch_id,
+        range_start: date(),
+        range_end: date(),
+        sessions: vec![date()],
+        calendar_id: "xkrx-reviewed".to_owned(),
+        calendar_hash: ContentHash::from_bytes(b"calendar"),
+        listing_snapshot_id: "listing-v1".to_owned(),
+        listing_snapshot_hash: listing_hash(),
+    };
+
+    let verified =
+        verify_historical_price_only_beta_input_for_scope(&raw, &source_pin, &action_pin, &scope)
+            .unwrap();
+    assert_eq!(verified.source_batch_id(), source.batch_id);
+    assert_eq!(verified.source_manifest_hash(), &source_pin);
+    assert_eq!(verified.source_files().len(), 11);
+    assert_eq!(verified.action_batch_id(), actions.batch_id);
+    assert_eq!(verified.action_manifest_hash(), &action_pin);
+    assert_eq!(verified.action_file_count(), 7);
+    assert_eq!(verified.sessions().len(), 1);
+    assert_eq!(
+        verified.sessions()[0].normalized_batch_id(),
+        normalized.batch_id
+    );
+    assert_eq!(verified.bars().len(), 11);
+    assert!(verified.actions().is_empty());
+
+    let wrong_source_pin = ContentHash::from_bytes(b"wrong-stage5-pin");
+    assert!(matches!(
+        verify_historical_price_only_beta_input_for_scope(
+            &raw,
+            &wrong_source_pin,
+            &action_pin,
+            &scope,
+        ),
+        Err(RangeCanonicalError::HistoricalBetaContract { .. })
+    ));
+    let wrong_action_pin = ContentHash::from_bytes(b"wrong-action-pin");
+    assert!(matches!(
+        verify_historical_price_only_beta_input_for_scope(
+            &raw,
+            &source_pin,
+            &wrong_action_pin,
+            &scope,
+        ),
+        Err(RangeCanonicalError::MissingActionEvidence { .. })
+    ));
 }
 
 #[test]

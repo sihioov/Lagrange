@@ -187,9 +187,13 @@ pub use range_normalize::{
     normalize_kis_daily_range, normalize_kis_daily_range_batch,
 };
 pub use range_to_canonical::{
-    NON_STRICT_PIT_POLICY_ID, RANGE_CANONICAL_BRIDGE_VERSION, REQUIRED_ACTION_KINDS, RangeAction,
-    RangeCanonicalBarCandidate, RangeCanonicalCandidate, RangeCanonicalError,
-    VerifiedRangeCanonicalEvidence, build_range_canonical_candidate,
-    load_verified_range_canonical_evidence, write_evidence_package,
+    HISTORICAL_PRICE_ONLY_BETA_CONTRACT, HISTORICAL_PRICE_ONLY_BETA_END,
+    HISTORICAL_PRICE_ONLY_BETA_SESSION_COUNT, HISTORICAL_PRICE_ONLY_BETA_SOURCE_BATCH_ID,
+    HISTORICAL_PRICE_ONLY_BETA_SOURCE_FILE_COUNT, HISTORICAL_PRICE_ONLY_BETA_START,
+    HistoricalPriceOnlyBetaInput, HistoricalPriceOnlySessionWitness, NON_STRICT_PIT_POLICY_ID,
+    RANGE_CANONICAL_BRIDGE_VERSION, REQUIRED_ACTION_KINDS, RangeAction, RangeCanonicalBarCandidate,
+    RangeCanonicalCandidate, RangeCanonicalError, VerifiedRangeCanonicalEvidence,
+    build_range_canonical_candidate, load_verified_range_canonical_evidence,
+    verify_historical_price_only_beta_input, write_evidence_package,
 };
 pub use storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};

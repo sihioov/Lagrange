@@ -57,6 +57,46 @@ canonical-row hash/size and query link. Action rows are retained in range
 coverage but only rows
 attributable to the target session enter the candidate's action list.
 
+## Owner-beta range verifier (separate bounded path)
+
+The owner-only beta does **not** multiply the per-session Stage4B package into
+1,608 independent approvals. That would require 1,608 reviewed schedule and
+listing artifacts even though the approved price-only output makes no
+historical intraday-time or listing-interval claim.
+
+`verify_historical_price_only_beta_input` is a separate, narrower boundary for
+`kis-historical-price-only-beta-v1`. It requires two independently reviewed
+pins as inputs:
+
+- the serialized immutable manifest hash for the fixed Stage5 source batch
+  `3d4f061f-8b8c-54f3-bb44-4d491b3ad256` (exactly 187 source files); and
+- the serialized immutable manifest hash for one exact seven-file KSD action
+  batch over `2020-01-31..2026-08-19`.
+
+The verifier discovers neither pin. It re-reads the pinned Stage5 files once,
+derives all 1,608 normalized batch IDs from the source manifest and the
+checked-in calendar/listing-snapshot identities, then verifies every Stage4A
+document, ETF11 row, source-row hash/size/query link, and normalized file hash.
+It separately re-reads all seven pinned KSD files, accepts only verified bonus
+issues, and rejects every other nonempty action class. Success yields an
+opaque, non-serializable `HistoricalPriceOnlyBetaInput`; callers cannot create
+or deserialize one without `RawStore` verification.
+
+The provider-free command
+`kis-historical-price-beta-verify --raw-root ... --stage5-manifest-sha256 ...
+--action-manifest-sha256 ...` exposes this check. Its output is limited to
+static contract flags, counts, batch IDs, and hashes. It writes no Raw,
+Curated, approval registry, database row, or five-pin and makes no network,
+provider, Docker, or systemd call.
+
+This verifier is only the authenticated input seam. A separately reviewed
+materializer must still apply verified bonus split factors, write a date-only
+price schema without invented open/close timestamps, omit total-return
+artifacts, preserve `owner-only`, `vendor_snapshot=true`, `strict_pit=false`,
+and `PRICE_RETURN_ONLY`, and create a deterministic review manifest. Until
+that materializer exists and its manifest is independently approved, the
+owner beta remains unregistered and unavailable to recommendation/backtest.
+
 ## Deliberate limitations
 
 KIS `inquire-daily-itemchartprice` is a current vendor snapshot acquired at

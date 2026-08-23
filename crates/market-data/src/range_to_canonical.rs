@@ -28,13 +28,26 @@ use crate::contract::{
 use crate::normalize::bonus_split_factor_from_percent;
 use crate::providers::kis::{KR_ETF_CORE_SYMBOLS, KisActionSpec, kis_action_spec};
 use crate::range_normalize::{
-    RANGE_NORMALIZED_SCHEMA_VERSION, RANGE_NORMALIZER, RANGE_NORMALIZER_SCHEMA_VERSION,
-    RangeNormalizationLineage,
+    ExpectedRangeSessions, RANGE_NORMALIZED_SCHEMA_VERSION, RANGE_NORMALIZER,
+    RANGE_NORMALIZER_SCHEMA_VERSION, RangeNormalizationLineage,
+    deterministic_range_normalized_batch_id_with_identity,
 };
 use crate::storage::{FileEntry, ManifestEntry, RawStore, StoreError};
 
 /// Version of this local, non-persisted bridge contract.
 pub const RANGE_CANONICAL_BRIDGE_VERSION: &str = "kis-range-to-canonical-evidence-v0";
+/// The bounded pre-publication contract approved for the first owner beta.
+pub const HISTORICAL_PRICE_ONLY_BETA_CONTRACT: &str = "kis-historical-price-only-beta-v1";
+/// The one immutable Stage5 source batch named by the owner beta plan.
+pub const HISTORICAL_PRICE_ONLY_BETA_SOURCE_BATCH_ID: &str = "3d4f061f-8b8c-54f3-bb44-4d491b3ad256";
+/// Inclusive first session allowed by the owner beta contract.
+pub const HISTORICAL_PRICE_ONLY_BETA_START: &str = "2020-01-31";
+/// Inclusive final session allowed by the owner beta contract.
+pub const HISTORICAL_PRICE_ONLY_BETA_END: &str = "2026-08-19";
+/// Exact count in the checked-in, hash-verified XKRX date selection.
+pub const HISTORICAL_PRICE_ONLY_BETA_SESSION_COUNT: usize = 1_608;
+/// Exact immutable Stage5 file count (11 ETFs x 17 bounded request windows).
+pub const HISTORICAL_PRICE_ONLY_BETA_SOURCE_FILE_COUNT: usize = 187;
 /// The only PIT policy accepted by this bridge.
 pub const NON_STRICT_PIT_POLICY_ID: &str = "kis-historical-vendor-snapshot-v1";
 /// The seven KSD response classes that must be covered by an action evidence
@@ -319,25 +332,25 @@ pub struct RangeCanonicalBarCandidate {
 
 /// A safe, explicitly non-persisted canonical candidate.  No downstream
 /// publication implementation accepts this scope or this type yet.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RangeCanonicalCandidate {
-    pub candidate_id: BatchId,
-    pub bridge_version: String,
-    pub evidence_manifest_hash: ContentHash,
-    pub schedule_artifact_hash: ContentHash,
-    pub listing_artifact_hash: ContentHash,
-    pub pit_policy_artifact_hash: ContentHash,
-    pub source_batch_id: BatchId,
-    pub source_entry_hash: ContentHash,
-    pub source_file_hash: ContentHash,
-    pub upstream_range_batch_id: BatchId,
-    pub upstream_range_manifest_hash: ContentHash,
-    pub session_date: TradingDate,
-    pub acquired_at: UtcTimestamp,
-    pub bars: Vec<RangeCanonicalBarCandidate>,
+    candidate_id: BatchId,
+    bridge_version: String,
+    evidence_manifest_hash: ContentHash,
+    schedule_artifact_hash: ContentHash,
+    listing_artifact_hash: ContentHash,
+    pit_policy_artifact_hash: ContentHash,
+    source_batch_id: BatchId,
+    source_entry_hash: ContentHash,
+    source_file_hash: ContentHash,
+    upstream_range_batch_id: BatchId,
+    upstream_range_manifest_hash: ContentHash,
+    session_date: TradingDate,
+    acquired_at: UtcTimestamp,
+    bars: Vec<RangeCanonicalBarCandidate>,
     schedule: HistoricalSessionScheduleEvidence,
     listing: ListingMasterEvidence,
-    pub actions: Vec<RangeAction>,
+    actions: Vec<RangeAction>,
     action_coverage: ActionCoverageEvidence,
     pit_policy: NonStrictPitPolicyApproval,
 }
@@ -353,6 +366,121 @@ impl RangeCanonicalCandidate {
     pub fn action_coverage_is_zero_result(&self) -> bool {
         self.action_coverage.all_action_responses_empty()
     }
+}
+
+/// One normalized session proven against immutable Stage5 Raw bytes.
+///
+/// Fields are intentionally private: callers can inspect the witness through
+/// accessors but cannot assemble a value that bypasses [`RawStore`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoricalPriceOnlySessionWitness {
+    session_date: TradingDate,
+    normalized_batch_id: BatchId,
+    normalized_entry_hash: ContentHash,
+    normalized_bars_hash: ContentHash,
+    acquired_at: UtcTimestamp,
+}
+
+impl HistoricalPriceOnlySessionWitness {
+    pub fn session_date(&self) -> TradingDate {
+        self.session_date
+    }
+
+    pub fn normalized_batch_id(&self) -> BatchId {
+        self.normalized_batch_id
+    }
+
+    pub fn normalized_entry_hash(&self) -> &ContentHash {
+        &self.normalized_entry_hash
+    }
+
+    pub fn normalized_bars_hash(&self) -> &ContentHash {
+        &self.normalized_bars_hash
+    }
+
+    pub fn acquired_at(&self) -> UtcTimestamp {
+        self.acquired_at
+    }
+}
+
+/// Opaque, RawStore-authenticated input for the future price-only
+/// materializer.
+///
+/// It is neither serializable nor publicly constructible. A writer must
+/// receive this value directly from [`verify_historical_price_only_beta_input`]
+/// (or invoke that verifier itself), which prevents a self-hashed DTO from
+/// substituting for immutable Stage5 and KSD evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoricalPriceOnlyBetaInput {
+    range_start: TradingDate,
+    range_end: TradingDate,
+    source_batch_id: BatchId,
+    source_manifest_hash: ContentHash,
+    source_files: Vec<FileEntry>,
+    action_batch_id: BatchId,
+    action_manifest_hash: ContentHash,
+    action_files: Vec<ActionCoverageFileEvidence>,
+    sessions: Vec<HistoricalPriceOnlySessionWitness>,
+    bars: Vec<RangeCanonicalBarCandidate>,
+    actions: Vec<RangeAction>,
+}
+
+impl HistoricalPriceOnlyBetaInput {
+    pub fn range_start(&self) -> TradingDate {
+        self.range_start
+    }
+
+    pub fn range_end(&self) -> TradingDate {
+        self.range_end
+    }
+
+    pub fn source_batch_id(&self) -> BatchId {
+        self.source_batch_id
+    }
+
+    pub fn source_manifest_hash(&self) -> &ContentHash {
+        &self.source_manifest_hash
+    }
+
+    pub fn source_files(&self) -> &[FileEntry] {
+        &self.source_files
+    }
+
+    pub fn action_batch_id(&self) -> BatchId {
+        self.action_batch_id
+    }
+
+    pub fn action_manifest_hash(&self) -> &ContentHash {
+        &self.action_manifest_hash
+    }
+
+    pub fn action_file_count(&self) -> usize {
+        self.action_files.len()
+    }
+
+    pub fn sessions(&self) -> &[HistoricalPriceOnlySessionWitness] {
+        &self.sessions
+    }
+
+    pub fn bars(&self) -> &[RangeCanonicalBarCandidate] {
+        &self.bars
+    }
+
+    pub fn actions(&self) -> &[RangeAction] {
+        &self.actions
+    }
+}
+
+#[derive(Debug, Clone)]
+struct HistoricalBetaVerificationScope {
+    source_batch_id: BatchId,
+    range_start: TradingDate,
+    range_end: TradingDate,
+    sessions: Vec<TradingDate>,
+    calendar_id: String,
+    calendar_hash: ContentHash,
+    listing_snapshot_id: String,
+    listing_snapshot_hash: ContentHash,
 }
 
 /// Typed fail-closed errors.  In particular, no missing evidence is silently
@@ -398,6 +526,8 @@ pub enum RangeCanonicalError {
     InvalidLineage { reason: String },
     #[error("session candidate coverage is invalid: {reason}")]
     InvalidSession { reason: String },
+    #[error("historical price-only beta contract is invalid: {reason}")]
+    HistoricalBetaContract { reason: String },
     #[error("immutable Raw read failed: {0}")]
     Store(#[from] StoreError),
     #[error("serialization failed: {0}")]
@@ -906,6 +1036,80 @@ fn verify_upstream_range_manifest(
                 reason: format!("row source file {} is absent", row.source_file_name),
             });
         };
+        if row.source_file_hash != file.content_hash
+            || row.source_file_size_bytes != file.size_bytes
+            || row.source_query_start > row.source_query_end
+        {
+            return Err(RangeCanonicalError::UpstreamManifest {
+                reason: format!("row-level source link mismatch for {}", row.symbol),
+            });
+        }
+        let stored = source_files
+            .iter()
+            .find(|candidate| candidate.file_name == row.source_file_name)
+            .ok_or_else(|| RangeCanonicalError::UpstreamManifest {
+                reason: format!("row source file {} was not read back", row.source_file_name),
+            })?;
+        verify_source_row_bytes(file, stored, row)?;
+    }
+    Ok(())
+}
+
+/// Re-check one session's row-level lineage against an already authenticated
+/// source entry/readback. The historical range verifier calls this 1,608
+/// times while reading the 187 Stage5 files only once.
+fn verify_upstream_range_witness(
+    entry: &ManifestEntry,
+    source_files: &[StoredFile],
+    lineage: &RangeNormalizationLineage,
+) -> Result<(), RangeCanonicalError> {
+    let manifest_hash = ContentHash::from_bytes(&serde_json::to_vec(entry)?);
+    if entry.batch_id != lineage.upstream_batch_id
+        || manifest_hash != lineage.upstream_manifest_hash
+        || entry.mode != FetchMode::Credentialed
+        || entry.files.is_empty()
+        || entry.files.len() != lineage.source_files.len()
+    {
+        return Err(RangeCanonicalError::UpstreamManifest {
+            reason: "cached Stage5 source identity or file coverage differs from lineage"
+                .to_owned(),
+        });
+    }
+    for file in &entry.files {
+        let Some(source) = lineage
+            .source_files
+            .iter()
+            .find(|candidate| candidate.file_name == file.file_name)
+        else {
+            return Err(RangeCanonicalError::UpstreamManifest {
+                reason: format!("source file {} is absent from lineage", file.file_name),
+            });
+        };
+        if source.kind != file.kind
+            || source.content_hash != file.content_hash
+            || source.size_bytes != file.size_bytes
+            || source.request != file.request
+            || source_files
+                .iter()
+                .find(|candidate| candidate.file_name == file.file_name)
+                .is_none_or(|stored| stored.bytes.len() as u64 != file.size_bytes)
+        {
+            return Err(RangeCanonicalError::UpstreamManifest {
+                reason: format!(
+                    "source file readback or metadata mismatch for {}",
+                    file.file_name
+                ),
+            });
+        }
+    }
+    for row in &lineage.source_rows {
+        let file = entry
+            .files
+            .iter()
+            .find(|file| file.file_name == row.source_file_name)
+            .ok_or_else(|| RangeCanonicalError::UpstreamManifest {
+                reason: format!("row source file {} is absent", row.source_file_name),
+            })?;
         if row.source_file_hash != file.content_hash
             || row.source_file_size_bytes != file.size_bytes
             || row.source_query_start > row.source_query_end
@@ -1477,6 +1681,216 @@ pub fn build_range_canonical_candidate(
             .collect(),
         action_coverage: actions.clone(),
         pit_policy: pit_policy.clone(),
+    })
+}
+
+fn approved_historical_beta_scope() -> Result<HistoricalBetaVerificationScope, RangeCanonicalError>
+{
+    let range_start = TradingDate::parse(HISTORICAL_PRICE_ONLY_BETA_START)
+        .expect("checked-in beta start date is valid");
+    let range_end = TradingDate::parse(HISTORICAL_PRICE_ONLY_BETA_END)
+        .expect("checked-in beta end date is valid");
+    let expected =
+        ExpectedRangeSessions::approved_xkrx(range_start, range_end).map_err(|error| {
+            RangeCanonicalError::HistoricalBetaContract {
+                reason: format!("approved XKRX session selection is unavailable: {error}"),
+            }
+        })?;
+    if expected.sessions.len() != HISTORICAL_PRICE_ONLY_BETA_SESSION_COUNT {
+        return Err(RangeCanonicalError::HistoricalBetaContract {
+            reason: format!(
+                "checked-in XKRX selection has {} sessions, expected {}",
+                expected.sessions.len(),
+                HISTORICAL_PRICE_ONLY_BETA_SESSION_COUNT
+            ),
+        });
+    }
+    Ok(HistoricalBetaVerificationScope {
+        source_batch_id: HISTORICAL_PRICE_ONLY_BETA_SOURCE_BATCH_ID
+            .parse()
+            .expect("checked-in Stage5 batch id is valid"),
+        range_start,
+        range_end,
+        sessions: expected.sessions,
+        calendar_id: expected.calendar_id,
+        calendar_hash: expected.calendar_hash,
+        listing_snapshot_id: expected.listing_snapshot_id,
+        listing_snapshot_hash: expected.listing_snapshot_hash,
+    })
+}
+
+/// Authenticate the exact owner-beta Stage5 and KSD inputs from immutable Raw.
+///
+/// Both hashes are independently reviewed pins; discovering a convenient
+/// batch is not enough. The verifier re-reads the pinned Stage5 files once,
+/// proves all 1,608 deterministic Stage4A sessions and their 11 row-level
+/// source witnesses, and revalidates the exact seven-file KSD batch. It makes
+/// no listing-interval, intraday-schedule, strict-PIT, or total-return claim.
+pub fn verify_historical_price_only_beta_input(
+    raw: &RawStore,
+    approved_stage5_manifest_hash: &ContentHash,
+    approved_action_manifest_hash: &ContentHash,
+) -> Result<HistoricalPriceOnlyBetaInput, RangeCanonicalError> {
+    let verified = verify_historical_price_only_beta_input_for_scope(
+        raw,
+        approved_stage5_manifest_hash,
+        approved_action_manifest_hash,
+        &approved_historical_beta_scope()?,
+    )?;
+    if verified.source_files.len() != HISTORICAL_PRICE_ONLY_BETA_SOURCE_FILE_COUNT
+        || verified.sessions.len() != HISTORICAL_PRICE_ONLY_BETA_SESSION_COUNT
+        || verified.bars.len()
+            != HISTORICAL_PRICE_ONLY_BETA_SESSION_COUNT * KR_ETF_CORE_SYMBOLS.len()
+        || verified.action_files.len() != REQUIRED_ACTION_KINDS.len()
+    {
+        return Err(RangeCanonicalError::HistoricalBetaContract {
+            reason: "verified Raw witness counts differ from the fixed owner-beta contract"
+                .to_owned(),
+        });
+    }
+    Ok(verified)
+}
+
+fn verify_historical_price_only_beta_input_for_scope(
+    raw: &RawStore,
+    approved_stage5_manifest_hash: &ContentHash,
+    approved_action_manifest_hash: &ContentHash,
+    scope: &HistoricalBetaVerificationScope,
+) -> Result<HistoricalPriceOnlyBetaInput, RangeCanonicalError> {
+    if scope.sessions.is_empty()
+        || scope.sessions.first() != Some(&scope.range_start)
+        || scope.sessions.last() != Some(&scope.range_end)
+        || scope.sessions.windows(2).any(|pair| pair[0] >= pair[1])
+    {
+        return Err(RangeCanonicalError::HistoricalBetaContract {
+            reason: "verification scope is empty, unsorted, duplicated, or range-mismatched"
+                .to_owned(),
+        });
+    }
+
+    let source_entries = raw.read_reconciled_manifest(PROVIDER_KIS_DAILY_RANGE, MARKET_KR)?;
+    let mut source_matches = source_entries
+        .into_iter()
+        .filter(|entry| entry.batch_id == scope.source_batch_id);
+    let source_entry =
+        source_matches
+            .next()
+            .ok_or_else(|| RangeCanonicalError::HistoricalBetaContract {
+                reason: "approved Stage5 batch is absent from immutable Raw".to_owned(),
+            })?;
+    if source_matches.next().is_some() {
+        return Err(RangeCanonicalError::HistoricalBetaContract {
+            reason: "approved Stage5 batch is not unique".to_owned(),
+        });
+    }
+    let source_manifest_hash = ContentHash::from_bytes(&serde_json::to_vec(&source_entry)?);
+    if &source_manifest_hash != approved_stage5_manifest_hash
+        || source_entry.provider != PROVIDER_KIS_DAILY_RANGE
+        || source_entry.market != MARKET_KR
+        || source_entry.mode != FetchMode::Credentialed
+        || source_entry.files.is_empty()
+    {
+        return Err(RangeCanonicalError::HistoricalBetaContract {
+            reason: "Stage5 source pin, scope, mode, or file coverage is invalid".to_owned(),
+        });
+    }
+    let source_files = raw.read_batch_bytes(PROVIDER_KIS_DAILY_RANGE, MARKET_KR, &source_entry)?;
+
+    let normalized_entries =
+        raw.read_reconciled_manifest(PROVIDER_KIS_DAILY_RANGE_NORMALIZED, MARKET_KR)?;
+    let normalized_by_id = normalized_entries
+        .into_iter()
+        .map(|entry| (entry.batch_id, entry))
+        .collect::<BTreeMap<_, _>>();
+    let expected_instruments = KR_ETF_CORE_SYMBOLS
+        .iter()
+        .map(|symbol| format!("{symbol}.KRX"))
+        .collect::<BTreeSet<_>>();
+    let mut sessions = Vec::with_capacity(scope.sessions.len());
+    let mut bars = Vec::with_capacity(scope.sessions.len() * KR_ETF_CORE_SYMBOLS.len());
+
+    for session in &scope.sessions {
+        let normalized_batch_id = deterministic_range_normalized_batch_id_with_identity(
+            &source_entry,
+            &source_manifest_hash,
+            *session,
+            &scope.calendar_hash,
+            &scope.listing_snapshot_hash,
+        );
+        let entry = normalized_by_id.get(&normalized_batch_id).ok_or_else(|| {
+            RangeCanonicalError::HistoricalBetaContract {
+                reason: format!("deterministic normalized session {session} is missing"),
+            }
+        })?;
+        validate_scope(entry)?;
+        let (file, document) = read_stage4a_document(raw, entry)?;
+        validate_entry(entry)?;
+        validate_document(entry, file, &document)?;
+        validate_lineage(entry, file, &document.lineage)?;
+        if entry.date != *session
+            || document.lineage.upstream_batch_id != scope.source_batch_id
+            || document.lineage.upstream_manifest_hash != source_manifest_hash
+            || document.lineage.source_start != scope.range_start
+            || document.lineage.source_end != scope.range_end
+            || document.lineage.calendar_id != scope.calendar_id
+            || document.lineage.calendar_hash != scope.calendar_hash
+            || document.lineage.listing_snapshot_id != scope.listing_snapshot_id
+            || document.lineage.listing_snapshot_hash != scope.listing_snapshot_hash
+        {
+            return Err(RangeCanonicalError::HistoricalBetaContract {
+                reason: format!("normalized session {session} escapes the pinned Stage5 scope"),
+            });
+        }
+        verify_upstream_range_witness(&source_entry, &source_files, &document.lineage)?;
+        let mut session_bars = parse_bars(&document.bars, *session)?;
+        let actual_instruments = session_bars
+            .iter()
+            .map(|bar| bar.instrument_id.as_str())
+            .collect::<BTreeSet<_>>();
+        if actual_instruments != expected_instruments
+            || session_bars.len() != KR_ETF_CORE_SYMBOLS.len()
+        {
+            return Err(RangeCanonicalError::HistoricalBetaContract {
+                reason: format!("normalized session {session} does not contain exactly ETF11"),
+            });
+        }
+        session_bars.sort_by(|left, right| left.instrument_id.cmp(&right.instrument_id));
+        let normalized_entry_hash = ContentHash::from_bytes(&serde_json::to_vec(entry)?);
+        sessions.push(HistoricalPriceOnlySessionWitness {
+            session_date: *session,
+            normalized_batch_id,
+            normalized_entry_hash,
+            normalized_bars_hash: file.content_hash.clone(),
+            acquired_at: document.acquired_at,
+        });
+        bars.extend(session_bars);
+    }
+
+    let action_coverage = load_pinned_action_coverage(
+        raw,
+        approved_action_manifest_hash,
+        scope.range_start,
+        scope.range_end,
+    )?;
+    validate_actions(
+        &action_coverage,
+        scope.range_start,
+        scope.range_end,
+        scope.range_start,
+    )?;
+
+    Ok(HistoricalPriceOnlyBetaInput {
+        range_start: scope.range_start,
+        range_end: scope.range_end,
+        source_batch_id: source_entry.batch_id,
+        source_manifest_hash,
+        source_files: source_entry.files,
+        action_batch_id: action_coverage.raw_batch_id,
+        action_manifest_hash: action_coverage.raw_manifest_hash.clone(),
+        action_files: action_coverage.files.clone(),
+        sessions,
+        bars,
+        actions: action_coverage.actions,
     })
 }
 
@@ -2140,6 +2554,73 @@ fn is_initial_action_page(file: &FileEntry) -> bool {
         .map(|(_, value)| value.as_str())
         .collect::<Vec<_>>();
     continuations.as_slice() == [""]
+}
+
+/// Load the exact independently pinned seven-file KSD witness.
+///
+/// Unlike the Stage4B package discovery path below, an explicit reviewed hash
+/// disambiguates repeated captures. The selected entry must still be the
+/// exact allowlisted seven-class, initial-page shape and all response bytes
+/// are re-read and validated before an opaque input is returned.
+fn load_pinned_action_coverage(
+    raw: &RawStore,
+    expected_manifest_hash: &ContentHash,
+    range_start: TradingDate,
+    range_end: TradingDate,
+) -> Result<ActionCoverageEvidence, RangeCanonicalError> {
+    let entries = raw.read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)?;
+    let mut matches = Vec::new();
+    for entry in entries {
+        if ContentHash::from_bytes(&serde_json::to_vec(&entry)?) == *expected_manifest_hash {
+            matches.push(entry);
+        }
+    }
+    let entry = matches
+        .pop()
+        .ok_or_else(|| RangeCanonicalError::MissingActionEvidence {
+            reason: "pinned KSD action manifest is absent from immutable Raw".to_owned(),
+        })?;
+    if !matches.is_empty() {
+        return Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "pinned KSD action manifest is not unique".to_owned(),
+        });
+    }
+    if entry.mode != FetchMode::Credentialed || entry.files.len() != REQUIRED_ACTION_KINDS.len() {
+        return Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "pinned KSD action batch is not the exact seven-file credentialed shape"
+                .to_owned(),
+        });
+    }
+    let mut chosen = BTreeMap::new();
+    for file in &entry.files {
+        let kind = identify_action_kind(file, range_start, range_end).ok_or_else(|| {
+            RangeCanonicalError::MissingActionEvidence {
+                reason: "pinned KSD file does not match an allowlisted action class".to_owned(),
+            }
+        })?;
+        if !is_initial_action_page(file) || chosen.insert(kind, file).is_some() {
+            return Err(RangeCanonicalError::MissingActionEvidence {
+                reason: "pinned KSD action classes are duplicated or not initial pages".to_owned(),
+            });
+        }
+    }
+    if chosen.len() != REQUIRED_ACTION_KINDS.len() {
+        return Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "pinned KSD batch does not cover all seven action classes".to_owned(),
+        });
+    }
+    let refs = chosen
+        .into_iter()
+        .map(|(kind, file)| EvidenceActionRef {
+            kind: kind.to_owned(),
+            raw_batch_id: entry.batch_id,
+            raw_manifest_hash: expected_manifest_hash.clone(),
+            raw_file_name: file.file_name.clone(),
+            content_hash: file.content_hash.clone(),
+            size_bytes: file.size_bytes,
+        })
+        .collect::<Vec<_>>();
+    load_action_evidence(raw, &refs, range_start, range_end)
 }
 
 /// Finds the one immutable Raw KIS batch whose files are exactly the seven
