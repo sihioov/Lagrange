@@ -5,6 +5,7 @@ import { StatePanel } from "@/components/states/state-panel";
 import type { ApiSession } from "@/lib/api/contracts";
 import { getServerSession } from "@/lib/api/server-session";
 import { shellDictionary } from "@/lib/i18n/dictionaries/shell";
+import type { Locale } from "@/lib/i18n/locale";
 import { getLocale } from "@/lib/i18n/server";
 
 const OWNER_ACCESS_BY_ROLE = {
@@ -18,9 +19,32 @@ export type OwnerRouteProps = {
   readonly title: string;
 };
 
+export type OwnerAccessRefusalProps = {
+  readonly locale: Locale;
+  readonly title: string;
+};
+
+/** One non-enumerating refusal surface shared by every Owner role boundary. */
+export function OwnerAccessRefusal({ locale, title }: OwnerAccessRefusalProps) {
+  const t = shellDictionary[locale];
+  return (
+    <RoutePage description={t.refusedDescription} title={title}>
+      <StatePanel
+        action={
+          <Link className="quiet-action" href="/">
+            {t.returnToDashboard}
+          </Link>
+        }
+        kind="blocked"
+        message={t.ownerAccessRequiredMessage}
+        title={t.ownerAccessRequiredTitle}
+      />
+    </RoutePage>
+  );
+}
+
 export async function OwnerRoute({ children, description, title }: OwnerRouteProps) {
   const [session, locale] = await Promise.all([getServerSession(), getLocale()]);
-  const t = shellDictionary[locale];
   if (!OWNER_ACCESS_BY_ROLE[session.role]) {
     // `t.refusedDescription` is deliberately NOT the caller's `description`:
     // that text exists to orient the Owner and therefore enumerates the
@@ -28,20 +52,7 @@ export async function OwnerRoute({ children, description, title }: OwnerRoutePro
     // disclose, in prose, exactly what the refusal is meant to conceal — for
     // the Live route it named broker connections, node lifecycle, and the
     // kill switch.
-    return (
-      <RoutePage description={t.refusedDescription} title={title}>
-        <StatePanel
-          action={
-            <Link className="quiet-action" href="/">
-              {t.returnToDashboard}
-            </Link>
-          }
-          kind="blocked"
-          message={t.ownerAccessRequiredMessage}
-          title={t.ownerAccessRequiredTitle}
-        />
-      </RoutePage>
-    );
+    return <OwnerAccessRefusal locale={locale} title={title} />;
   }
   return (
     <RoutePage description={description} title={title}>

@@ -41,7 +41,8 @@ pub trait SessionBackend: Send + Sync {
 /// boundary for the ETF recommendation product.  This is intentionally a
 /// runtime policy rather than a dataset attribute: enabling it does not
 /// attest, publish, or otherwise make a dataset available.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OwnerBetaAccessMode {
     /// Preserve the normal multi-user product contract.
     #[default]

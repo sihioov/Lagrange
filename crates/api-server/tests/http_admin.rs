@@ -400,6 +400,7 @@ async fn http_auth_session_routes() {
     let body = Harness::body_json(resp).await;
     assert_eq!(body["role"], "member");
     assert!(body["expires_at_secs"].is_number());
+    assert_eq!(body["owner_beta_access_mode"], "disabled");
 
     // GET /api/v1/auth/csrf -> rotates the synchronizer token.
     let resp = h.get("/api/v1/auth/csrf", Some(&h.member)).await;

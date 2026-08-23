@@ -6,6 +6,11 @@ export type ApiSession = components["schemas"]["Session"];
 export type ApiErrorCode = components["schemas"]["ErrorCode"];
 export type ApiErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 
+/** Web defense in depth only; the API admission middleware is authoritative. */
+export function permitsOwnerBetaProduct(session: ApiSession): boolean {
+  return session.owner_beta_access_mode === "disabled" || session.role === "owner";
+}
+
 export type ProductMutationPath =
   | "/api/v1/backtests"
   | "/api/v1/backtests/compare"
@@ -32,6 +37,10 @@ export const apiSessionSchema = z
     role: z.enum(["owner", "member"]),
     expires_at_secs: z.number().int(),
     auth_time_secs: z.number().int().exactOptional(),
+    // An older API predates owner-beta policy, so an absent field denotes its
+    // normal multi-user (`disabled`) contract. Unknown values and fields still
+    // fail the strict parser instead of becoming an accidentally open mode.
+    owner_beta_access_mode: z.enum(["disabled", "owner_only"]).default("disabled"),
   })
   .strict() satisfies z.ZodType<ApiSession>;
 

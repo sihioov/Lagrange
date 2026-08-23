@@ -4,6 +4,7 @@ import { BacktestCreateForm } from "@/components/backtests/backtest-create-form"
 import { BacktestHistory } from "@/components/backtests/backtest-history";
 import { BacktestProgress } from "@/components/backtests/backtest-progress";
 import { BacktestReport } from "@/components/backtests/backtest-report";
+import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { RoutePage } from "@/components/pages/route-page";
 import { StatePanel } from "@/components/states/state-panel";
 import { ApiProblem } from "@/lib/api/response";
@@ -48,6 +49,14 @@ function firstByStatus(runs: readonly BacktestRunModel[], status: BacktestRunMod
 }
 
 export default async function BacktestsPage() {
+  const locale = await getLocale();
+  return OwnerBetaProductRoute({
+    renderProduct: BacktestsProductPage,
+    title: backtestsDictionary[locale].pageTitle,
+  });
+}
+
+export async function BacktestsProductPage() {
   const locale = await getLocale();
   const t = backtestsDictionary[locale];
   try {

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { RoutePage } from "@/components/pages/route-page";
 import { PaperBindForm } from "@/components/paper/paper-bind-form";
 import { PaperHoldings } from "@/components/paper/paper-holdings";
@@ -59,7 +60,15 @@ export type PaperPageProps = {
   readonly searchParams?: Promise<{ readonly account?: string }>;
 };
 
-export default async function PaperPage({ searchParams }: PaperPageProps = {}) {
+export default async function PaperPage(props: PaperPageProps = {}) {
+  const locale = await getLocale();
+  return OwnerBetaProductRoute({
+    renderProduct: () => PaperProductPage(props),
+    title: paperDictionary[locale].pageTitle,
+  });
+}
+
+export async function PaperProductPage({ searchParams }: PaperPageProps = {}) {
   const locale = await getLocale();
   const t = paperDictionary[locale];
   try {

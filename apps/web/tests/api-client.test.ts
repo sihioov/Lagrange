@@ -17,7 +17,17 @@ function sessionApi(): {
 } {
   const calls: RecordedRequest[] = [];
   const sessions = new Map([
-    ["owner-opaque", { user_id: OWNER_USER_ID, role: "owner", expires_at_secs: 2_000_000_000 }],
+    [
+      "owner-opaque",
+      {
+        user_id: OWNER_USER_ID,
+        role: "owner",
+        expires_at_secs: 2_000_000_000,
+        owner_beta_access_mode: "owner_only",
+      },
+    ],
+    // Deliberately models the previous API shape. That server predates the
+    // owner-beta mode, so the Web normalizes only this absence to `disabled`.
     ["member-opaque", { user_id: MEMBER_USER_ID, role: "member", expires_at_secs: 2_000_000_000 }],
   ]);
   const fetcher: typeof fetch = async (input, init) => {
@@ -70,13 +80,40 @@ describe("server API client", () => {
     const memberSession = await memberClient.getSession();
 
     // Then
-    expect(ownerSession).toMatchObject({ user_id: OWNER_USER_ID, role: "owner" });
-    expect(memberSession).toMatchObject({ user_id: MEMBER_USER_ID, role: "member" });
+    expect(ownerSession).toMatchObject({
+      user_id: OWNER_USER_ID,
+      role: "owner",
+      owner_beta_access_mode: "owner_only",
+    });
+    expect(memberSession).toMatchObject({
+      user_id: MEMBER_USER_ID,
+      role: "member",
+      owner_beta_access_mode: "disabled",
+    });
     expect(JSON.stringify(ownerSession)).not.toContain(MEMBER_USER_ID);
     expect(JSON.stringify(memberSession)).not.toContain(OWNER_USER_ID);
     expect(api.calls).toHaveLength(2);
     expect(api.calls[0]?.cookie).toBe(`${SESSION_COOKIE_NAME}=owner-opaque`);
     expect(api.calls[1]?.cookie).toBe(`${SESSION_COOKIE_NAME}=member-opaque`);
+  });
+
+  it("fails closed on an unknown owner-beta policy instead of guessing", async () => {
+    const client = createServerApiClient({
+      baseUrl: "https://api.internal",
+      fetcher: async () =>
+        Response.json({
+          expires_at_secs: 2_000_000_000,
+          owner_beta_access_mode: "member_preview",
+          role: "member",
+          user_id: MEMBER_USER_ID,
+        }),
+      sessionCookie: "member-opaque",
+    });
+
+    await expect(client.getSession()).rejects.toMatchObject({
+      message: "API response did not match the generated contract",
+      name: "ApiContractError",
+    });
   });
 
   it("opts every authenticated request out of caches and forwards no bearer identity", async () => {

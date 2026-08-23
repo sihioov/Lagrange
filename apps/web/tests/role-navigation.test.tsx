@@ -12,12 +12,19 @@ const MEMBER_SESSION = {
   user_id: "00000000-0000-4000-8000-000000000002",
   role: "member",
   expires_at_secs: 2_000_000_000,
+  owner_beta_access_mode: "disabled",
+} as const satisfies ApiSession;
+
+const OWNER_BETA_MEMBER_SESSION = {
+  ...MEMBER_SESSION,
+  owner_beta_access_mode: "owner_only",
 } as const satisfies ApiSession;
 
 const OWNER_SESSION = {
   user_id: "00000000-0000-4000-8000-000000000001",
   role: "owner",
   expires_at_secs: 2_000_000_000,
+  owner_beta_access_mode: "disabled",
 } as const satisfies ApiSession;
 
 function renderShell(session: ApiSession): string {
@@ -72,6 +79,29 @@ describe("role-aware primary navigation", () => {
     const markup = renderShell(session);
 
     // Then
+    expect(markup).toContain('href="/admin"');
+    expect(markup).toContain('href="/live"');
+  });
+
+  it("removes only owner-beta product destinations for a Member", () => {
+    const markup = renderShell(OWNER_BETA_MEMBER_SESSION);
+
+    expect(markup).not.toContain('href="/recommendations"');
+    expect(markup).not.toContain('href="/backtests"');
+    expect(markup).not.toContain('href="/paper"');
+    expect(markup).toContain('href="/strategies"');
+    expect(markup).toContain('href="/candidates"');
+    expect(markup).toContain('href="/screener"');
+    expect(markup).not.toContain('href="/admin"');
+    expect(markup).not.toContain('href="/live"');
+  });
+
+  it("keeps owner-beta products visible to the Owner", () => {
+    const markup = renderShell({ ...OWNER_SESSION, owner_beta_access_mode: "owner_only" });
+
+    expect(markup).toContain('href="/recommendations"');
+    expect(markup).toContain('href="/backtests"');
+    expect(markup).toContain('href="/paper"');
     expect(markup).toContain('href="/admin"');
     expect(markup).toContain('href="/live"');
   });

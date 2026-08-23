@@ -100,6 +100,13 @@ function syntheticRecommendationApi(fixture: Fixture): typeof fetch {
   return async (input, init) => {
     const request = new Request(input, init);
     const { pathname } = new URL(request.url);
+    if (pathname === "/api/v1/auth/session") {
+      return Response.json({
+        expires_at_secs: 2_000_000_000,
+        role: "member",
+        user_id: "00000000-0000-4000-8000-000000000002",
+      });
+    }
     if (pathname === "/api/v1/licensing-status") {
       return Response.json({
         as_of: "2026-01-31",

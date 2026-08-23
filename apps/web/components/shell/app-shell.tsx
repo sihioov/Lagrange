@@ -19,7 +19,7 @@ import {
   type PrimaryNavigationItem,
 } from "@/components/shell/primary-navigation";
 import { ThemeToggle } from "@/components/shell/theme-toggle";
-import type { ApiSession } from "@/lib/api/contracts";
+import { type ApiSession, permitsOwnerBetaProduct } from "@/lib/api/contracts";
 import { LocaleProvider } from "@/lib/i18n/client";
 import { type ShellDictionary, shellDictionary } from "@/lib/i18n/dictionaries/shell";
 import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n/locale";
@@ -27,8 +27,11 @@ import type { Theme } from "@/lib/theme/theme";
 
 const NAV_ICON_SIZE = 20;
 
-function memberNavigation(t: ShellDictionary): PrimaryNavigationItem[] {
-  return [
+function memberNavigation(
+  t: ShellDictionary,
+  includeOwnerBetaProducts: boolean,
+): PrimaryNavigationItem[] {
+  const items = [
     {
       href: "/",
       icon: <PlanetIcon aria-hidden={true} size={NAV_ICON_SIZE} weight="regular" />,
@@ -65,14 +68,18 @@ function memberNavigation(t: ShellDictionary): PrimaryNavigationItem[] {
       label: t.navPaperAccount,
     },
   ];
+  if (includeOwnerBetaProducts) {
+    return items;
+  }
+  return items.filter((item) => !["/recommendations", "/backtests", "/paper"].includes(item.href));
 }
 
 function navigationForRole(
-  role: ApiSession["role"],
+  session: ApiSession,
   t: ShellDictionary,
 ): readonly PrimaryNavigationItem[] {
-  const member = memberNavigation(t);
-  if (role === "member") {
+  const member = memberNavigation(t, permitsOwnerBetaProduct(session));
+  if (session.role === "member") {
     return member;
   }
   return [
@@ -124,7 +131,7 @@ export function AppShell({ children, locale = DEFAULT_LOCALE, session, theme }: 
             <LanguageToggle label={t.languageToggleLabel} />
           </div>
         </header>
-        <PrimaryNavigation items={navigationForRole(session.role, t)} />
+        <PrimaryNavigation items={navigationForRole(session, t)} />
         <main className="shell-main" id="main-content">
           {children}
         </main>

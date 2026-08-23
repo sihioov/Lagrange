@@ -441,6 +441,9 @@ pub struct SessionDto {
     pub role: &'static str,
     pub expires_at_secs: i64,
     pub auth_time_secs: i64,
+    /// Non-secret deployment policy used by the Web as defense in depth.
+    /// The API middleware remains the authoritative admission boundary.
+    pub owner_beta_access_mode: crate::http::state::OwnerBetaAccessMode,
 }
 
 // ---------------------------------------------------------------------------

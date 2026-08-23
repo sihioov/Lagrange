@@ -20,7 +20,7 @@ use uuid::Uuid;
 // Auth / session
 // ---------------------------------------------------------------------------
 
-pub async fn session_info(State(_state): State<ApiState>, session: Session) -> Response {
+pub async fn session_info(State(state): State<ApiState>, session: Session) -> Response {
     (
         StatusCode::OK,
         Json(SessionDto {
@@ -32,6 +32,7 @@ pub async fn session_info(State(_state): State<ApiState>, session: Session) -> R
             },
             expires_at_secs: session.0.expires_at_secs,
             auth_time_secs: session.0.auth_time_secs,
+            owner_beta_access_mode: state.cfg.owner_beta_access,
         }),
     )
         .into_response()
@@ -507,5 +508,46 @@ fn decode_cursor(
                 rid,
             )),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::http::state::OwnerBetaAccessMode;
+    use auth::entitlement::{Role, UserId};
+    use auth::sessions::SessionInfo;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn session_info_exposes_only_the_typed_owner_beta_policy() {
+        for (mode, expected) in [
+            (OwnerBetaAccessMode::Disabled, "disabled"),
+            (OwnerBetaAccessMode::OwnerOnly, "owner_only"),
+        ] {
+            let state = ApiState::test_without_database(mode);
+            let response = session_info(
+                State(state),
+                Session(SessionInfo {
+                    user_id: UserId("00000000-0000-4000-8000-000000000001".to_owned()),
+                    role: Role::Owner,
+                    auth_time_secs: 1,
+                    amr: Vec::new(),
+                    expires_at_secs: 2,
+                    csrf_token_hash: "not-secret-test-hash".to_owned(),
+                }),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("bounded session response");
+            let body: serde_json::Value =
+                serde_json::from_slice(&body).expect("typed session JSON");
+            assert_eq!(body["owner_beta_access_mode"], expected);
+            assert_eq!(body.as_object().expect("session object").len(), 5);
+            assert!(body.get("recommendation_dataset").is_none());
+            assert!(body.get("artifact_root").is_none());
+        }
     }
 }

@@ -12,6 +12,7 @@ const OWNER_SESSION = {
   user_id: "00000000-0000-4000-8000-000000000001",
   role: "owner",
   expires_at_secs: 2_000_000_000,
+  owner_beta_access_mode: "disabled",
 } as const;
 
 describe("application shell accessibility", () => {

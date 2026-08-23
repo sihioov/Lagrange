@@ -24,6 +24,24 @@ fn openapi_contract_parses() {
 }
 
 #[test]
+fn openapi_session_requires_the_typed_owner_beta_policy() {
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let session = &spec["components"]["schemas"]["Session"];
+    let required = session["required"].as_array().expect("Session.required");
+    assert!(
+        required
+            .iter()
+            .any(|field| field == "owner_beta_access_mode"),
+        "new API responses must always disclose the non-secret policy"
+    );
+    assert_eq!(
+        session["properties"]["owner_beta_access_mode"]["enum"],
+        serde_json::json!(["disabled", "owner_only"]),
+        "the policy must remain a closed enum"
+    );
+}
+
+#[test]
 fn openapi_contract_routes_match_router_inventory() {
     let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
     let spec_paths = spec["paths"].as_object().expect("paths object");

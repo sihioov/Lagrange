@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { RoutePage } from "@/components/pages/route-page";
 import { RecommendationHistory } from "@/components/recommendations/recommendation-history";
 import { RecommendationReport } from "@/components/recommendations/recommendation-report";
@@ -53,7 +54,15 @@ function noRun(error: unknown): boolean {
   return error instanceof ApiProblem && error.code === "RESOURCE_NOT_FOUND";
 }
 
-export default async function RecommendationsPage({ searchParams }: RecommendationsPageProps = {}) {
+export default async function RecommendationsPage(props: RecommendationsPageProps = {}) {
+  const locale = await getLocale();
+  return OwnerBetaProductRoute({
+    renderProduct: () => RecommendationsProductPage(props),
+    title: recommendationsDictionary[locale].routeTitle,
+  });
+}
+
+export async function RecommendationsProductPage({ searchParams }: RecommendationsPageProps = {}) {
   const locale = await getLocale();
   const t = recommendationsDictionary[locale];
   try {

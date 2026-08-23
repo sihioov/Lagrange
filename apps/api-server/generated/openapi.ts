@@ -1903,6 +1903,8 @@ export interface components {
             role: "owner" | "member";
             expires_at_secs: number;
             auth_time_secs?: number;
+            /** @enum {string} */
+            owner_beta_access_mode: "disabled" | "owner_only";
         };
         EmptyBody: Record<string, never>;
     };
