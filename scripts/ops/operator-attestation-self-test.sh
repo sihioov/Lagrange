@@ -50,6 +50,25 @@ for helper in "$entitlement" "$dataset"; do
   done
 done
 
+# psql prints one line per result row for the whole file, and the advisory lock
+# guarding each attestation transaction returns void -- an empty leading line.
+# The previous NR==1 parser read that line, so --apply reported "database
+# returned no entitlement row" after successfully committing: an operator saw a
+# failure and a written row. Pin the parser against that exact shape.
+for helper in "$entitlement" "$dataset"; do
+  parse() { bash -c "source <(sed -n '/^db_row_field()/,/^}/p' \"\$1\"); shift; db_row_field \"\$@\"" _ "$helper" "$@"; }
+  two_col=$(printf '\nrow-id\tPENDING\n')
+  [ "$(printf '%s\n' "$two_col" | parse 1)" = row-id ] ||
+    fail "db_row_field in $(basename "$helper") did not skip the empty advisory-lock line"
+  [ "$(printf '%s\n' "$two_col" | parse 2)" = PENDING ] ||
+    fail "db_row_field in $(basename "$helper") returned the wrong column"
+  four_col=$(printf '\nrow-id\tREADY\tdeadbeef\t/curated\n')
+  [ "$(printf '%s\n' "$four_col" | parse 3 4)" = deadbeef ] ||
+    fail "db_row_field in $(basename "$helper") mishandled a four-column readback"
+  [ -z "$(printf '\n\n' | parse 1)" ] ||
+    fail "db_row_field in $(basename "$helper") invented a row from empty output"
+done
+
 doc_hash=$(sha256sum -- "$doc" | awk '{print $1}')
 metadata="$tmp/kis-entitlement.json"
 jq -n --arg hash "$doc_hash" '{

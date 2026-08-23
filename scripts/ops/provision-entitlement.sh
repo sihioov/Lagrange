@@ -66,6 +66,20 @@ command -v sha256sum >/dev/null 2>&1 || die 'sha256sum is required'
 valid_uuid() {
   [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
 }
+db_row_field() {
+  # psql emits one line per result row for the WHOLE file, and the advisory
+  # lock guarding each of these transactions is `SELECT pg_advisory_xact_lock(...)`,
+  # which returns void and therefore prints an empty leading line. Reading
+  # NR==1 read that empty line, so every --apply reported "database returned no
+  # entitlement row" AFTER successfully committing -- the operator saw a failure
+  # and a written row. Take the first line that actually carries the two
+  # tab-separated columns instead.
+  # `columns` is how many tab-separated fields the target SELECT emits, so the
+  # right line is picked even when other statements in the same file print.
+  local column=$1 columns=${2:-2}
+  awk -F '\t' -v column="$column" -v columns="$columns" \
+    'NF == columns { print $column; exit }'
+}
 valid_date() {
   # Validate the calendar arithmetically rather than round-tripping through
   # date(1).  A rights window legitimately ends on 9999-12-31 -- that is the
@@ -202,8 +216,8 @@ SELECT id::text, status
    AND managed_by = :'managed_by'::uuid;
 SQL
     ) || blocked 'pending entitlement row is absent or conflicts'
-    row_id=$(printf '%s\n' "$result" | awk -F '\t' 'NR==1 {print $1}')
-    row_status=$(printf '%s\n' "$result" | awk -F '\t' 'NR==1 {print $2}')
+    row_id=$(printf '%s\n' "$result" | db_row_field 1)
+    row_status=$(printf '%s\n' "$result" | db_row_field 2)
     [ -n "$row_id" ] && [ "$row_status" = PENDING ] || blocked 'pending entitlement row is absent or conflicts'
     printf 'ENTITLEMENT_CHECK: PASS db_row=%s status=%s\n' "$row_id" "$row_status"
     exit 0
@@ -288,8 +302,8 @@ SQL
     -v managed_by="$managed_by" <"$sql_file") || {
       [ "$mode" = check ] && blocked 'pending entitlement row is absent or conflicts' || exit 1
     }
-  row_id=$(printf '%s\n' "$result" | awk -F '\t' 'NR==1 {print $1}')
-  row_status=$(printf '%s\n' "$result" | awk -F '\t' 'NR==1 {print $2}')
+  row_id=$(printf '%s\n' "$result" | db_row_field 1)
+  row_status=$(printf '%s\n' "$result" | db_row_field 2)
   [ -n "$row_id" ] && [ -n "$row_status" ] || blocked 'database returned no entitlement row'
   printf 'ENTITLEMENT_%s: PASS db_row=%s status=%s\n' \
     "$( [ "$mode" = check ] && printf CHECK || printf APPLY )" "$row_id" "$row_status"
@@ -305,8 +319,8 @@ SELECT id::text, status
    AND status IN ('PENDING', 'ACTIVE');
 SQL
     ) || blocked 'entitlement is not an eligible PENDING row'
-    row_id=$(printf '%s\n' "$result" | awk -F '\t' 'NR==1 {print $1}')
-    row_status=$(printf '%s\n' "$result" | awk -F '\t' 'NR==1 {print $2}')
+    row_id=$(printf '%s\n' "$result" | db_row_field 1)
+    row_status=$(printf '%s\n' "$result" | db_row_field 2)
     [ -n "$row_id" ] && [ "$row_id" = "$entitlement_id" ] || blocked 'entitlement is not an eligible PENDING row'
     printf 'ENTITLEMENT_CHECK: PASS db_row=%s status=%s\n' "$row_id" "$row_status"
     exit 0
@@ -364,8 +378,8 @@ SQL
     -v managed_by="$managed_by" -v activation_date="$activation_date" <"$sql_file") || {
       [ "$mode" = check ] && blocked 'entitlement is not an eligible PENDING row' || exit 1
     }
-  row_id=$(printf '%s\n' "$result" | awk -F '\t' 'NR==1 {print $1}')
-  row_status=$(printf '%s\n' "$result" | awk -F '\t' 'NR==1 {print $2}')
+  row_id=$(printf '%s\n' "$result" | db_row_field 1)
+  row_status=$(printf '%s\n' "$result" | db_row_field 2)
   [ -n "$row_id" ] && [ -n "$row_status" ] || blocked 'database returned no entitlement row'
   printf 'ENTITLEMENT_%s: PASS db_row=%s status=%s\n' \
     "$( [ "$mode" = check ] && printf CHECK || printf APPLY )" "$row_id" "$row_status"
