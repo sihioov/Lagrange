@@ -16,6 +16,7 @@ before Compose can reinterpret a value.
 | `renew-tailscale-tls.sh` | `--dry-run` | `--check` validates the fixed Tailscale source/runtime pair; `--renew` stages `tailscale cert`, atomically reconciles TLS-only files, and refreshes only a running reverse-proxy; no KIS/Auth0/DB/API call |
 | `install-tailscale-tls-renewal.sh` | `--dry-run` | `--check` compares the approved helper/unit/custom protected config artifacts; `--apply` installs them and enables (but does not start) the timer, refuses an existing config target, and never issues a certificate or starts Compose |
 | `build-production-images.sh` | `--plan` | `--preflight` checks Docker/Compose config without a build; `--apply` builds the exact release image set with `--pull=false`, without `up`, `run`, restart, migration, DB, provider, or secret actions |
+| `kis-historical-price-beta-artifact.sh` | `--plan` | root-only installed-current-release seam; `--preflight` only inspects the protected env/manifest, host fences, and the manifest-bound research-worker image; `--materialize`/`--check` use direct image-ID, network-none, no-secret one-shots with Raw/artifact mounts restricted by operation |
 | `deploy-production-release.sh` | `--dry-run` | root-only `--apply` installs one exact clean Git commit plus protected Compose `.env` into an immutable release and atomically switches `current`; `--rollback` selects an existing release; no service action |
 | `run-production-backup.sh` | `--plan` | root-only `--check` is read-only; `--run` encrypts PostgreSQL/Raw/Curated, performs an isolated restore, then applies bounded retention; `--verify-latest` repeats verification |
 | `install-production-backup.sh` | `--dry-run` | root-only `--apply` installs helper/config/units and enables but does not start timers; no Docker, backup, restore, or prune during install |
@@ -53,6 +54,39 @@ No script enables Compose `live`, asks for a KIS account/order credential, or
 calls an order endpoint. KOSPI200/KOSDAQ150 candidate backfill is a separate
 blocked workflow until its credentialed candidate bridge and entitlement are
 available. See [`docs/runbooks/kis-production-backfill.md`](../../docs/runbooks/kis-production-backfill.md).
+
+## Run the owner-only historical price beta artifact seam
+
+The artifact CLI is built into the next `research-worker` image. Once that exact
+image is installed, the operator wrapper is root-only and accepts only the
+installed `current` release whose protected V2 manifest names the exact local
+research-worker image ID and OCI revision. It never uses the ordinary
+`research-worker` service, Compose
+`up`, a build, KIS/DB secrets, a network namespace, Curated, registration, or
+publication.
+
+```sh
+scripts/ops/kis-historical-price-beta-artifact.sh --plan
+sudo scripts/ops/kis-historical-price-beta-artifact.sh --preflight
+sudo scripts/ops/kis-historical-price-beta-artifact.sh --materialize \
+  --stage5-manifest-sha256 sha256:<64-lowercase-hex> \
+  --action-manifest-sha256 sha256:<64-lowercase-hex>
+sudo scripts/ops/kis-historical-price-beta-artifact.sh --check \
+  --candidate-content-sha256 sha256:<64-lowercase-hex>
+```
+
+`provision-linux.sh --apply` creates the dedicated
+`<LAGRANGE_ARTIFACTS_DIR>/historical-price-beta-root` leaf as `10001:10001`
+mode `0750`; it does not change the generic artifact root ownership. The leaf
+name is a fixed derivation from the existing `LAGRANGE_ARTIFACTS_DIR`, so no
+new owner-only `.env` variable is required. If an operator uses a custom
+artifact directory, pass the already-supported `LAGRANGE_ARTIFACTS_DIR` to
+provisioning and keep it identical to the protected Compose env value.
+Materialize mounts only host `raw/` read-only plus that leaf read-write;
+`check` mounts only the leaf read-only. Both operations pass `/data` and
+`/artifact-root` as container-local roots, while the wrapper repeats the
+separation check against host-canonical Raw/Curated identities because bind
+mounts hide host ancestry inside a container.
 
 For a multi-year ETF range, install the recurring backfill timer only after
 reviewing its dry-run and immutable release path. It runs once daily at 03:15

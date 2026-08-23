@@ -244,6 +244,40 @@ replacement pin, a guessed zero-action attestation, or a new historical KIS
 request. No real artifact can be created or registered until the exact action
 evidence is available and passes the existing verifier.
 
+### Installed production execution seam
+
+The Rust CLI is built into the next `research-worker` release image; the
+ten-image serving manifest remains unchanged. After that exact image and release
+are installed, run it only through the root-only
+`scripts/ops/kis-historical-price-beta-artifact.sh` wrapper from the installed
+`current` release:
+
+```sh
+scripts/ops/kis-historical-price-beta-artifact.sh --plan
+sudo scripts/ops/kis-historical-price-beta-artifact.sh --preflight
+sudo scripts/ops/kis-historical-price-beta-artifact.sh --materialize \
+  --stage5-manifest-sha256 sha256:<64-lowercase-hex> \
+  --action-manifest-sha256 sha256:<64-lowercase-hex>
+sudo scripts/ops/kis-historical-price-beta-artifact.sh --check \
+  --candidate-content-sha256 sha256:<64-lowercase-hex>
+```
+
+Provisioning creates `<LAGRANGE_ARTIFACTS_DIR>/historical-price-beta-root` as
+`10001:10001` mode `0750`; the generic artifact root remains owned by its
+existing service account. The fixed leaf derivation uses the existing
+`LAGRANGE_ARTIFACTS_DIR` setting and adds no required owner-only environment
+key. Materialize uses a direct image-ID run bound to the manifest's
+`research-worker` ID and OCI revision, with host Raw mounted only at
+`/data/raw:ro` and the dedicated leaf at `/artifact-root` read-write. Check
+mounts no Raw at all and the leaf read-only. Both use `/data` and
+`/artifact-root` as topology-neutral container roots, `network none`, UID/GID
+`10001:10001`, a read-only root filesystem, dropped capabilities, and
+no-new-privileges. There is no alternate Compose service; the wrapper does not
+build, inject a secret or DB/provider environment, mount Curated, publish,
+register, or perform a READY transition.
+The wrapper repeats the Raw/Curated separation check on host-canonical paths
+because independent bind mounts hide host ancestry inside the container.
+
 ## Deliberate limitations
 
 KIS `inquire-daily-itemchartprice` is a current vendor snapshot acquired at

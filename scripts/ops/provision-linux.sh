@@ -15,6 +15,7 @@ service_group=${LAGRANGE_SERVICE_GROUP:-lagrange}
 config_root=${LAGRANGE_CONFIG_ROOT:-/etc/lagrange}
 deploy_root=${LAGRANGE_DEPLOY_ROOT:-/opt/lagrange}
 data_root=${LAGRANGE_DATA_ROOT:-/var/lib/lagrange/data}
+artifacts_root=${LAGRANGE_ARTIFACTS_DIR:-$data_root/artifacts}
 secret_root=${LAGRANGE_HOST_SECRET_ROOT:-$config_root/secrets}
 worker_uid=${LAGRANGE_WORKER_UID:-10001}
 worker_gid=${LAGRANGE_WORKER_GID:-10001}
@@ -37,6 +38,7 @@ by root ownership and mode 0750 fences.
 
 The paths may be overridden for an isolated test with:
   LAGRANGE_CONFIG_ROOT, LAGRANGE_DEPLOY_ROOT, LAGRANGE_DATA_ROOT,
+  LAGRANGE_ARTIFACTS_DIR,
   LAGRANGE_HOST_SECRET_ROOT, LAGRANGE_SERVICE_USER, LAGRANGE_SERVICE_GROUP,
   LAGRANGE_WORKER_UID, LAGRANGE_WORKER_GID. The worker UID/GID must remain
   exactly 10001 to match the Compose and systemd container identity; the host
@@ -100,6 +102,7 @@ safe_path() {
 safe_path "$config_root" LAGRANGE_CONFIG_ROOT
 safe_path "$deploy_root" LAGRANGE_DEPLOY_ROOT
 safe_path "$data_root" LAGRANGE_DATA_ROOT
+safe_path "$artifacts_root" LAGRANGE_ARTIFACTS_DIR
 safe_path "$secret_root" LAGRANGE_HOST_SECRET_ROOT
 case "$worker_uid" in
   10001) ;;
@@ -122,7 +125,8 @@ declare -a required_dirs=(
   "$data_root/raw"
   "$data_root/curated"
   "$data_root/nautilus_catalog"
-  "$data_root/artifacts"
+  "$artifacts_root"
+  "$artifacts_root/historical-price-beta-root"
   "$data_root/phase0"
 )
 
@@ -137,7 +141,7 @@ print_plan() {
     create) echo "  ensure group $data_group with GID $worker_gid" ;;
     use) echo "  use existing group $data_group with GID $worker_gid" ;;
   esac
-  echo "  config=$config_root deploy=$deploy_root data=$data_root"
+  echo "  config=$config_root deploy=$deploy_root data=$data_root artifacts=$artifacts_root"
   echo "  no deletion, truncation, secret generation, Docker start, or API call"
   for dir in "${required_dirs[@]}"; do
     echo "  ensure directory $dir"
@@ -237,7 +241,8 @@ if [ "$mode" = preflight ]; then
   check_mode_owner "$data_root/raw" "$worker_uid" "$worker_gid" 750 raw
   check_mode_owner "$data_root/curated" "$worker_uid" "$worker_gid" 750 curated
   check_mode_owner "$data_root/nautilus_catalog" "$worker_uid" "$worker_gid" 750 nautilus_catalog
-  check_mode_owner "$data_root/artifacts" "$service_uid" "$service_gid" 750 artifacts
+  check_mode_owner "$artifacts_root" "$service_uid" "$service_gid" 750 artifacts
+  check_mode_owner "$artifacts_root/historical-price-beta-root" "$worker_uid" "$worker_gid" 750 historical-price-beta-root
   check_mode_owner "$data_root/phase0" "$service_uid" "$service_gid" 750 phase0
   echo "PREFLIGHT: PASS"
   exit 0
@@ -289,7 +294,18 @@ install -d -m 0750 -- "$data_root/curated"
 chown "$worker_uid:$worker_gid" -- "$data_root/curated"
 install -d -m 0750 -- "$data_root/nautilus_catalog"
 chown "$worker_uid:$worker_gid" -- "$data_root/nautilus_catalog"
-install -d -o "$service_uid" -g "$service_gid" -m 0750 -- "$data_root/artifacts"
+if [ -e "$artifacts_root" ] || [ -L "$artifacts_root" ]; then
+  check_mode_owner "$artifacts_root" "$service_uid" "$service_gid" 750 artifacts
+else
+  install -d -o "$service_uid" -g "$service_gid" -m 0750 -- "$artifacts_root"
+fi
+if [ -e "$artifacts_root/historical-price-beta-root" ] ||
+   [ -L "$artifacts_root/historical-price-beta-root" ]; then
+  check_mode_owner "$artifacts_root/historical-price-beta-root" "$worker_uid" "$worker_gid" 750 historical-price-beta-root
+else
+  install -d -m 0750 -- "$artifacts_root/historical-price-beta-root"
+  chown "$worker_uid:$worker_gid" -- "$artifacts_root/historical-price-beta-root"
+fi
 install -d -o "$service_uid" -g "$service_gid" -m 0750 -- "$data_root/phase0"
 
 echo "APPLY: host paths and service account are ready"

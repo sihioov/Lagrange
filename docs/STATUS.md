@@ -1,6 +1,6 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준 시각: 2026-08-23 (Asia/Seoul), 기준 트리 `1150700` = `origin/main`.**
+**최신 기준 시각: 2026-08-24 (Asia/Seoul), 기준 트리 `1150700` = `origin/main`.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
 당시의 기록이다. **현재 상태는 §0.29(이틀치 발행 달성), §0.30(출시 준비도 실측),
 §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업 순서는 §0.15에 정의돼
@@ -12,6 +12,17 @@
 보여주듯 **"완료"·"처음" 같은 서사 문장도 나중에 철회된 전례가 있다** — 새 사실을
 쓸 때는 반증이 될 수 있는 가장 가까운 곳을 먼저 열어볼 것(§0.23). 코드가 바뀌면
 게이트와 판정은 다시 실행해 갱신해야 한다.
+
+**2026-08-24 owner-beta execution seam.** The next immutable `research-worker`
+image definition now includes historical price beta materialize/check and exposes
+it only through the installed-current-release root-only wrapper
+`scripts/ops/kis-historical-price-beta-artifact.sh`. It uses the V2 manifest's
+exact research-worker image ID/revision, `network none`, UID/GID 10001, no
+secrets/DB/provider environment, Raw read-only only for materialize, and the
+dedicated artifact leaf read-write/read-only by operation. This closes the
+runtime implementation seam only. The currently installed `66b2a8c` release has
+not been rebuilt or switched, and this does not approve missing pins, Curated/DB
+publication, READY, recommendation use, or live trading.
 
 ## 0. 2026-08-19 현재 운영 스냅샷
 

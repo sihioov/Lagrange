@@ -16,7 +16,8 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   build-production-images-self-test.sh deploy-production-release.sh \
   run-production-backup.sh install-production-backup.sh \
   production-ops-static-check.sh production-ops-self-test.sh \
-  kis-range-raw-backfill.sh; do
+  kis-range-raw-backfill.sh kis-historical-price-beta-artifact.sh \
+  kis-historical-price-beta-artifact-self-test.sh; do
   bash -n "$ops/$script"
 done
 
@@ -214,6 +215,7 @@ bash "$root/scripts/qa/recommendation-runner-smoke.sh" --static-only >/dev/null
 bash "$ops/static-check.sh" >/dev/null
 bash "$ops/tailscale-tls-self-test.sh" >/dev/null
 bash "$ops/build-production-images-self-test.sh" >/dev/null
+bash "$ops/kis-historical-price-beta-artifact-self-test.sh" >/dev/null
 bash "$ops/backfill-review-report-self-test.sh" >/dev/null
 bash "$ops/backfill-resume-self-test.sh" >/dev/null
 python3 - "$ops/lib/backfill-progress.py" <<'PY'

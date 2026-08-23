@@ -23,7 +23,8 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   kis-range-raw-backfill.sh kis-daily-production.sh kis-daily-production-self-test.sh \
   kis-daily-calendar-refresh.sh install-kis-daily.sh \
   fsc-krx-listed-self-test.sh kind-daily.sh install-kind-daily.sh \
-  kind-daily-self-test.sh; do
+  kind-daily-self-test.sh kis-historical-price-beta-artifact.sh \
+  kis-historical-price-beta-artifact-self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
@@ -52,6 +53,47 @@ grep -Fq 'read_reconciled_manifest' "$root/data-pipelines/collectors/src/worker.
 grep -Fq 'LAGRANGE_CODE_COMMIT' "$range_raw" \
   || die 'Stage5 code commit provenance guard missing'
 worker_dockerfile="$root/data-pipelines/collectors/Dockerfile"
+artifact_ops="$ops/kis-historical-price-beta-artifact.sh"
+artifact_self_test="$ops/kis-historical-price-beta-artifact-self-test.sh"
+manifest_lib="$ops/lib/release-image-manifest.sh"
+if sed -n '/RELEASE_IMAGE_SERVICES=(/,/)/p' "$manifest_lib" |
+   grep -Fq 'research-historical-price-beta-artifact'; then
+  die 'historical artifact one-shot must not join the ten-image serving manifest'
+fi
+if grep -Fq 'research-historical-price-beta-artifact:' "$root/deploy/compose/compose.yml"; then
+  die 'historical artifact must have no alternate Compose execution path'
+fi
+grep -Fq 'kis-historical-price-beta-artifact' "$worker_dockerfile" \
+  || die 'historical artifact binary is missing from the research-worker image'
+grep -Fq 'cargo build --locked --release --package collectors --bin kis-historical-price-beta-artifact' \
+  "$worker_dockerfile" || die 'historical artifact binary build is missing'
+grep -Fq 'COPY --from=builder /build/target/release/kis-historical-price-beta-artifact' \
+  "$worker_dockerfile" || die 'historical artifact binary copy is missing'
+grep -Fq 'historical-price-beta-root' "$root/scripts/ops/provision-linux.sh" \
+  || die 'dedicated historical artifact provisioning is missing'
+grep -Fq 'worker_uid" "$worker_gid" 750 historical-price-beta-root' \
+  "$root/scripts/ops/provision-linux.sh" || die 'dedicated historical artifact ownership fence is missing'
+grep -Fq 'docker image inspect' "$artifact_ops" || die 'historical artifact image gate is missing'
+grep -Fq 'org.opencontainers.image.revision' "$artifact_ops" \
+  || die 'historical artifact revision gate is missing'
+grep -Fq -- '--pull=never' "$artifact_ops" || die 'historical artifact must refuse image pulls'
+grep -Fq -- '--network none' "$artifact_ops" || die 'historical artifact direct run network fence is missing'
+grep -Fq -- '--cap-drop ALL' "$artifact_ops" || die 'historical artifact direct run cap fence is missing'
+grep -Fq -- '--security-opt no-new-privileges:true' "$artifact_ops" \
+  || die 'historical artifact direct run privilege fence is missing'
+grep -Fq -- '--read-only' "$artifact_ops" || die 'historical artifact direct run rootfs fence is missing'
+grep -Fq -- '--user 10001:10001' "$artifact_ops" || die 'historical artifact direct run UID/GID fence is missing'
+grep -Fq 'destination=/data/raw,readonly' "$artifact_ops" \
+  || die 'historical artifact materialize Raw read-only mount is missing'
+grep -Fq 'destination=/artifact-root,readonly' "$artifact_ops" \
+  || die 'historical artifact check read-only mount is missing'
+grep -Fq 'not_current_release' "$artifact_ops" || die 'installed current release gate is missing'
+grep -Fq 'release_image_manifest_load' "$artifact_ops" || die 'installed V2 manifest gate is missing'
+if grep -Eq 'docker[[:space:]]+compose|docker[[:space:]]+(build|up|start|restart)' "$artifact_ops"; then
+  die 'historical artifact wrapper must not build or start Compose services'
+fi
+grep -Fq 'HISTORICAL_PRICE_BETA_ARTIFACT_SELF_TEST: PASS' "$artifact_self_test" \
+  || die 'historical artifact fake-Docker self-test is missing'
 grep -Fq 'ARG LAGRANGE_CODE_COMMIT' "$worker_dockerfile" \
   || die 'research-worker image must accept an exact commit build argument'
 grep -Fq 'org.opencontainers.image.revision' "$worker_dockerfile" \

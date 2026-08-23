@@ -23,7 +23,8 @@ COPY tests/integration/migration-contract ./tests/integration/migration-contract
 COPY tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
 COPY tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contract
 
-RUN cargo build --locked --release --package collectors --bin research-worker
+RUN cargo build --locked --release --package collectors --bin research-worker \
+    && cargo build --locked --release --package collectors --bin kis-historical-price-beta-artifact
 
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 
@@ -37,6 +38,7 @@ RUN apk add --no-cache ca-certificates libgcc libpq libssl3 \
 
 WORKDIR /opt/lagrange
 COPY --from=builder /build/target/release/research-worker /usr/local/bin/research-worker
+COPY --from=builder /build/target/release/kis-historical-price-beta-artifact /usr/local/bin/kis-historical-price-beta-artifact
 COPY --from=builder /build/tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
 COPY --from=builder /build/tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contract
 

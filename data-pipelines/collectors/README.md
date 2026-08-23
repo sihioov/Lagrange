@@ -209,6 +209,20 @@ command discovers or approves a pin, calls a provider, writes Curated/DB,
 registers a dataset, marks READY, or exposes a recommendation/backtest/Paper
 consumer.
 
+The installed-release operator seam is
+`scripts/ops/kis-historical-price-beta-artifact.sh`. Its `--plan` does not read
+protected inputs; `--preflight` validates only the installed current release,
+the trusted V2 manifest's `research-worker` image ID/revision, and the host
+ownership/separation fences. `--materialize` mounts host `raw/` read-only and a
+dedicated artifact leaf read-write; `--check` mounts only that leaf read-only.
+Both use the existing research-worker image by exact local image ID with
+network `none`, UID/GID `10001:10001`, a read-only root filesystem, dropped
+capabilities, no-new-privileges, no secrets, and no DB/provider environment.
+Provisioning creates the fixed
+`<LAGRANGE_ARTIFACTS_DIR>/historical-price-beta-root` leaf as `10001:10001`
+mode `0750`; the generic artifact root is not re-owned. This fixed derivation
+uses the existing `LAGRANGE_ARTIFACTS_DIR` setting and adds no required env key.
+
 `DB_PASSWORD_FILE`, `KIS_APP_KEY_FILE`, and `KIS_APP_SECRET_FILE` are paths, not
 secret values. The worker reads each file during configuration validation,
 trims surrounding whitespace, rejects missing, unreadable, empty, or multiline
