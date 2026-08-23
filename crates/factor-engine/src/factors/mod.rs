@@ -38,6 +38,37 @@ pub fn all_mvp_factors() -> Vec<Box<dyn Factor>> {
     ]
 }
 
+/// The owner-beta price-only MVP registry.
+///
+/// Liquidity is intentionally absent: the approved input carries adjusted
+/// close only, even though its source rows retain raw trading value for the
+/// source contract. The order is stable and matches the generic MVP registry
+/// with `avg_value_20` removed.
+pub fn all_price_only_factors() -> Vec<Box<dyn Factor>> {
+    vec![
+        Box::new(ReturnFactor::one_month()),
+        Box::new(ReturnFactor::three_months()),
+        Box::new(ReturnFactor::six_months()),
+        Box::new(ReturnFactor::twelve_months()),
+        Box::new(MomentumFactor),
+        Box::new(TrendFactor::new(50).expect("documented window")),
+        Box::new(TrendFactor::new(100).expect("documented window")),
+        Box::new(TrendFactor::new(200).expect("documented window")),
+        Box::new(RealizedVolFactor::new(20).expect("documented window")),
+        Box::new(RealizedVolFactor::new(60).expect("documented window")),
+        Box::new(RealizedVolFactor::new(120).expect("documented window")),
+        Box::new(DrawdownFactor),
+    ]
+}
+
+/// Stable ids of the owner-beta price-only MVP registry.
+pub fn price_only_factor_ids() -> Vec<String> {
+    all_price_only_factors()
+        .iter()
+        .map(|factor| factor.id().to_owned())
+        .collect()
+}
+
 /// The documented factor ids in canonical order (used by tests and QA).
 pub fn mvp_factor_ids() -> Vec<String> {
     all_mvp_factors()

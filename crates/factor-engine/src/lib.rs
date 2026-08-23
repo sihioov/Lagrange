@@ -29,6 +29,7 @@ pub mod fundamentals;
 pub mod lazy_util;
 pub mod months;
 pub mod normalize;
+pub mod price_only;
 pub mod snapshot;
 
 pub use candidate::{
@@ -39,4 +40,5 @@ pub use candidate::{
 };
 pub use contract::{Factor, FactorContext, FactorError, FactorFrame, FactorValue, Field};
 pub use normalize::{NormalizePolicy, PercentilePolicy, WinsorizePolicy, ZScorePolicy};
+pub use price_only::{PriceOnlyFactorSnapshot, PriceOnlyFactorSnapshotBuilder};
 pub use snapshot::{FactorRow, FactorSnapshot, FactorSnapshotBuilder, FrozenUniverse};
