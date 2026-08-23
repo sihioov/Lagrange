@@ -69,6 +69,10 @@ grep -Fq 'cargo build --locked --release --package collectors --bin kis-historic
   "$worker_dockerfile" || die 'historical artifact binary build is missing'
 grep -Fq 'COPY --from=builder /build/target/release/kis-historical-price-beta-artifact' \
   "$worker_dockerfile" || die 'historical artifact binary copy is missing'
+grep -Fq 'cargo build --locked --release --package collectors --bin kis-historical-price-beta-approval-check' \
+  "$worker_dockerfile" || die 'historical approval-check binary build is missing'
+grep -Fq 'COPY --from=builder /build/target/release/kis-historical-price-beta-approval-check /usr/local/bin/kis-historical-price-beta-approval-check' \
+  "$worker_dockerfile" || die 'historical approval-check binary copy is missing'
 grep -Fq 'historical-price-beta-root' "$root/scripts/ops/provision-linux.sh" \
   || die 'dedicated historical artifact provisioning is missing'
 grep -Fq 'worker_uid" "$worker_gid" 750 historical-price-beta-root' \
@@ -87,6 +91,12 @@ grep -Fq 'destination=/data/raw,readonly' "$artifact_ops" \
   || die 'historical artifact materialize Raw read-only mount is missing'
 grep -Fq 'destination=/artifact-root,readonly' "$artifact_ops" \
   || die 'historical artifact check read-only mount is missing'
+grep -Fq -- '--approval-check' "$artifact_ops" || die 'historical approval-check mode is missing'
+grep -Fq 'entrypoint=/usr/local/bin/kis-historical-price-beta-approval-check' "$artifact_ops" \
+  || die 'historical approval-check entrypoint is missing'
+if grep -Fq -- '--approval-registry' "$artifact_ops"; then
+  die 'historical approval-check must use only its compile-time embedded registry'
+fi
 grep -Fq 'not_current_release' "$artifact_ops" || die 'installed current release gate is missing'
 grep -Fq 'release_image_manifest_load' "$artifact_ops" || die 'installed V2 manifest gate is missing'
 if grep -Eq 'docker[[:space:]]+compose|docker[[:space:]]+(build|up|start|restart)' "$artifact_ops"; then

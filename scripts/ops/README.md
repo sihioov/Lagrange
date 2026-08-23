@@ -16,7 +16,7 @@ before Compose can reinterpret a value.
 | `renew-tailscale-tls.sh` | `--dry-run` | `--check` validates the fixed Tailscale source/runtime pair; `--renew` stages `tailscale cert`, atomically reconciles TLS-only files, and refreshes only a running reverse-proxy; no KIS/Auth0/DB/API call |
 | `install-tailscale-tls-renewal.sh` | `--dry-run` | `--check` compares the approved helper/unit/custom protected config artifacts; `--apply` installs them and enables (but does not start) the timer, refuses an existing config target, and never issues a certificate or starts Compose |
 | `build-production-images.sh` | `--plan` | `--preflight` checks Docker/Compose config without a build; `--apply` builds the exact release image set with `--pull=false`, without `up`, `run`, restart, migration, DB, provider, or secret actions |
-| `kis-historical-price-beta-artifact.sh` | `--plan` | root-only installed-current-release seam; `--preflight` only inspects the protected env/manifest, host fences, and the manifest-bound research-worker image; `--materialize`/`--check` use direct image-ID, network-none, no-secret one-shots with Raw/artifact mounts restricted by operation |
+| `kis-historical-price-beta-artifact.sh` | `--plan` | root-only installed-current-release seam; `--preflight` only inspects the protected env/manifest, host fences, and the manifest-bound research-worker image; `--materialize`/`--check`/`--approval-check` use direct image-ID, network-none, no-secret one-shots with only the operation-approved mounts |
 | `deploy-production-release.sh` | `--dry-run` | root-only `--apply` installs one exact clean Git commit plus protected Compose `.env` into an immutable release and atomically switches `current`; `--rollback` selects an existing release; no service action |
 | `run-production-backup.sh` | `--plan` | root-only `--check` is read-only; `--run` encrypts PostgreSQL/Raw/Curated, performs an isolated restore, then applies bounded retention; `--verify-latest` repeats verification |
 | `install-production-backup.sh` | `--dry-run` | root-only `--apply` installs helper/config/units and enables but does not start timers; no Docker, backup, restore, or prune during install |
@@ -73,6 +73,8 @@ sudo scripts/ops/kis-historical-price-beta-artifact.sh --materialize \
   --action-manifest-sha256 sha256:<64-lowercase-hex>
 sudo scripts/ops/kis-historical-price-beta-artifact.sh --check \
   --candidate-content-sha256 sha256:<64-lowercase-hex>
+sudo scripts/ops/kis-historical-price-beta-artifact.sh --approval-check \
+  --candidate-content-sha256 sha256:<64-lowercase-hex>
 ```
 
 `provision-linux.sh --apply` creates the dedicated
@@ -87,6 +89,11 @@ Materialize mounts only host `raw/` read-only plus that leaf read-write;
 `/artifact-root` as container-local roots, while the wrapper repeats the
 separation check against host-canonical Raw/Curated identities because bind
 mounts hide host ancestry inside a container.
+`--check` is artifact integrity only and never auto-chains to `--approval-check`.
+The approval checker uses its compile-time embedded registry and accepts no
+registry path or Raw/Curated mount. That embedded registry is currently empty,
+so real approval-check execution remains blocked until a separately reviewed
+registry commit is rebuilt into a new immutable research-worker image.
 
 For a multi-year ETF range, install the recurring backfill timer only after
 reviewing its dry-run and immutable release path. It runs once daily at 03:15

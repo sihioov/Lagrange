@@ -260,6 +260,8 @@ sudo scripts/ops/kis-historical-price-beta-artifact.sh --materialize \
   --action-manifest-sha256 sha256:<64-lowercase-hex>
 sudo scripts/ops/kis-historical-price-beta-artifact.sh --check \
   --candidate-content-sha256 sha256:<64-lowercase-hex>
+sudo scripts/ops/kis-historical-price-beta-artifact.sh --approval-check \
+  --candidate-content-sha256 sha256:<64-lowercase-hex>
 ```
 
 Provisioning creates `<LAGRANGE_ARTIFACTS_DIR>/historical-price-beta-root` as
@@ -277,6 +279,13 @@ build, inject a secret or DB/provider environment, mount Curated, publish,
 register, or perform a READY transition.
 The wrapper repeats the Raw/Curated separation check on host-canonical paths
 because independent bind mounts hide host ancestry inside the container.
+`--check` remains artifact integrity only and never auto-chains to the separate
+`--approval-check`. The checker reads its compile-time embedded approval
+registry and accepts no registry path; it mounts only the dedicated artifact
+leaf read-only, with no Raw, Curated, DB, or provider surface. The checked-in
+registry is empty, so real approval-check execution currently blocks until a
+separately reviewed registry commit is rebuilt into a new immutable
+research-worker image.
 
 ## Deliberate limitations
 

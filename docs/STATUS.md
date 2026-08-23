@@ -24,6 +24,13 @@ runtime implementation seam only. The currently installed `66b2a8c` release has
 not been rebuilt or switched, and this does not approve missing pins, Curated/DB
 publication, READY, recommendation use, or live trading.
 
+The separate root-only `--approval-check` mode invokes the compile-time embedded
+checker with only the dedicated artifact leaf read-only; it does not chain from
+`--check`, accept a registry path, or mount Raw/Curated. The checked-in embedded
+approval registry is empty, so real approval-check execution remains blocked
+until a separately reviewed registry commit is rebuilt into a new immutable
+image.
+
 ## 0. 2026-08-19 현재 운영 스냅샷
 
 ### 0.1 저장소와 실행 환경

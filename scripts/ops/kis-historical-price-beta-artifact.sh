@@ -19,6 +19,7 @@ Usage: scripts/ops/kis-historical-price-beta-artifact.sh
        [--plan|--preflight]
        [--materialize --stage5-manifest-sha256 HASH --action-manifest-sha256 HASH]
        [--check --candidate-content-sha256 HASH]
+       [--approval-check --candidate-content-sha256 HASH]
 
 The default --plan is a static description and does not read the installed
 environment/manifest or invoke Docker.  The other modes are root-only and
@@ -44,7 +45,7 @@ hash_shape() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --plan|--preflight|--materialize|--check)
+    --plan|--preflight|--materialize|--check|--approval-check)
       [ "$mode_seen" -eq 0 ] || die mode_repeated
       mode=${1#--}
       mode_seen=1
@@ -65,7 +66,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --candidate-content-sha256)
-      [ "$mode" = check ] || die candidate_option_not_allowed
+      [ "$mode" = check ] || [ "$mode" = approval-check ] || die candidate_option_not_allowed
       [ "$#" -ge 2 ] || die candidate_option_missing_value
       [ -z "$candidate_content_sha256" ] || die candidate_option_repeated
       candidate_content_sha256=$2
@@ -87,6 +88,7 @@ HISTORICAL_PRICE_BETA_OPS mode=plan operation=materialize_or_check
   image=installed-v2-manifest:research-worker:image-id-and-oci-revision
   materialize=Raw-read-only artifact-dedicated-root-read-write network-none uid-gid-10001:10001
   check=Raw-unmounted artifact-dedicated-root-read-only network-none uid-gid-10001:10001
+  approval-check=Raw-unmounted artifact-dedicated-root-read-only network-none uid-gid-10001:10001 embedded-registry
   container=read-only-rootfs cap-drop-ALL no-new-privileges fixed-entrypoint no-secrets no-db-env
 PLAN_ONLY: no protected env/manifest read, host path read, Docker invocation, or artifact/Raw write made
 EOF
@@ -105,6 +107,9 @@ case "$mode" in
     hash_shape "$action_manifest_sha256" || die invalid_action_manifest_sha256
     ;;
   check)
+    hash_shape "$candidate_content_sha256" || die invalid_candidate_content_sha256
+    ;;
+  approval-check)
     hash_shape "$candidate_content_sha256" || die invalid_candidate_content_sha256
     ;;
 esac
@@ -220,6 +225,12 @@ elif [ "$mode" = check ]; then
   # read into an accidental Raw read.
   require_directory "$raw_root"
   host_separation_gate
+elif [ "$mode" = approval-check ]; then
+  # Approval reads only the dedicated artifact mount, but the host identity
+  # fence still prevents an artifact/Raw/Curated alias from being presented to
+  # the checker through its independent bind mount.
+  require_directory "$raw_root"
+  host_separation_gate
 fi
 
 command -v docker >/dev/null 2>&1 || blocked docker_unavailable
@@ -250,6 +261,10 @@ fi
 
 run_artifact_container() {
   local output success_line line success_count=0
+  local entrypoint=/usr/local/bin/kis-historical-price-beta-artifact
+  if [ "$mode" = approval-check ]; then
+    entrypoint=/usr/local/bin/kis-historical-price-beta-approval-check
+  fi
   local -a docker_args=(
     run
     --pull=never
@@ -260,7 +275,7 @@ run_artifact_container() {
     --cap-drop ALL
     --security-opt no-new-privileges:true
     --user 10001:10001
-    --entrypoint /usr/local/bin/kis-historical-price-beta-artifact
+    --entrypoint "$entrypoint"
   )
 
   if [ "$mode" = materialize ]; then
@@ -273,6 +288,14 @@ run_artifact_container() {
       --artifact-root /artifact-root
       --stage5-manifest-sha256 "$stage5_manifest_sha256"
       --action-manifest-sha256 "$action_manifest_sha256"
+    )
+  elif [ "$mode" = check ]; then
+    docker_args+=(
+      --mount "type=bind,source=$artifact_root,destination=/artifact-root,readonly"
+      "$image_id"
+      check
+      --artifact-root /artifact-root
+      --candidate-content-sha256 "$candidate_content_sha256"
     )
   else
     docker_args+=(
@@ -291,16 +314,28 @@ run_artifact_container() {
   output=$(docker "${docker_args[@]}" 2>/dev/null) || blocked artifact_container_failed
 
   while IFS= read -r line; do
-    case "$line" in
-      HISTORICAL_PRICE_BETA_ARTIFACT\ status=ok\ operation=*)
-        success_line=$line
-        success_count=$((success_count + 1))
-        ;;
-    esac
+    if [ "$mode" = approval-check ]; then
+      case "$line" in
+        HISTORICAL_PRICE_BETA_APPROVAL\ status=ok\ operation=*)
+          success_line=$line
+          success_count=$((success_count + 1))
+          ;;
+      esac
+    else
+      case "$line" in
+        HISTORICAL_PRICE_BETA_ARTIFACT\ status=ok\ operation=*)
+          success_line=$line
+          success_count=$((success_count + 1))
+          ;;
+      esac
+    fi
   done <<<"$output"
   [ "$success_count" -eq 1 ] || blocked artifact_success_output_invalid
 
-  if [ "$mode" = materialize ]; then
+  if [ "$mode" = approval-check ]; then
+    [[ "$success_line" =~ ^HISTORICAL_PRICE_BETA_APPROVAL\ status=ok\ operation=check\ candidate_content_sha256=$candidate_content_sha256\ artifact_manifest_sha256=sha256:[0-9a-f]{64}\ stage5_manifest_sha256=sha256:[0-9a-f]{64}\ action_manifest_sha256=sha256:[0-9a-f]{64}\ approval_status=APPROVED\ audience=OWNER_ONLY\ vendor_snapshot=true\ strict_pit=false\ capability=PRICE_RETURN_ONLY\ materialization_status=MATERIALIZED\ registration_status=UNREGISTERED\ publication_status=NOT_PUBLISHED\ instrument_count=11\ session_count=1608\ bar_count=17688$ ]] ||
+      blocked artifact_success_output_invalid
+  elif [ "$mode" = materialize ]; then
     [[ "$success_line" =~ ^HISTORICAL_PRICE_BETA_ARTIFACT\ status=ok\ operation=materialize\ candidate_content_sha256=sha256:[0-9a-f]{64}\ stage5_manifest_sha256=$stage5_manifest_sha256\ action_manifest_sha256=$action_manifest_sha256\ instrument_count=11\ session_count=1608\ bar_count=17688\ raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS\ audience=OWNER_ONLY\ vendor_snapshot=true\ strict_pit=false\ capability=PRICE_RETURN_ONLY\ materialization_status=MATERIALIZED\ registration_status=UNREGISTERED\ publication_status=NOT_PUBLISHED$ ]] ||
       blocked artifact_success_output_invalid
   else

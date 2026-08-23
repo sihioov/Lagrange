@@ -223,6 +223,15 @@ Provisioning creates the fixed
 mode `0750`; the generic artifact root is not re-owned. This fixed derivation
 uses the existing `LAGRANGE_ARTIFACTS_DIR` setting and adds no required env key.
 
+`--check` remains an artifact-integrity check and does not approve or chain into
+the separate `--approval-check` operation. That operation invokes the
+compile-time embedded approval checker with only the dedicated artifact leaf
+mounted read-only; it accepts no caller-supplied registry path and never mounts
+Raw or Curated. The checked-in embedded registry is currently empty, so a real
+approval-check is expected to block until a separately reviewed registry commit
+is rebuilt into a new immutable research-worker image. This runtime seam does
+not itself approve a pin or publish a dataset.
+
 `DB_PASSWORD_FILE`, `KIS_APP_KEY_FILE`, and `KIS_APP_SECRET_FILE` are paths, not
 secret values. The worker reads each file during configuration validation,
 trims surrounding whitespace, rejects missing, unreadable, empty, or multiline
