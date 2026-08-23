@@ -1542,6 +1542,20 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    문서 `docs/decisions/0005-kis-personal-use-entitlement.md`, `jq` 설치됨.
    메타데이터/문서 파일은 0400/0600을 요구하므로 `/etc/lagrange/`에 보호 사본을 만들어 뒀다.
 
+   **2026-08-23 추가 조사로 결정이 한 필드까지 좁혀졌다 (§0.25-②).** 이제 이것은 추정이
+   아니라 **DB가 명시적으로 거부하는 차단 항목**이다 — PostgreSQL 로그에
+   `ERROR: price dataset requires one exact active entitlement`
+   (`public.resolve_price_dataset_entitlement` line 26). `register`의 jq 검증기를
+   실제로 돌려 보니 **통과하지 못하는 조건은 `.lifecycle == "PENDING"` 하나뿐**이고
+   provider·covered_datasets(9개)·covered_uses(10개)·covered_users·effective_from·
+   effective_until·contract_document 해시는 전부 통과한다. 즉 (a)안은 **`lifecycle`만
+   `PENDING`으로 둔 임시 입력 파일 하나**를 만들어 register → activate 2단계를 밟는 것이고,
+   이는 권리 상태를 위조하는 것이 아니라 **설계된 lifecycle을 그대로 걷는 것**이다
+   (저장소의 `ACTIVE` 레코드는 그 흐름의 최종 상태 문서다).
+   `--activation-date`에 넣을 값도 레코드에 이미 있다: `effective_from = 2020-01-31`
+   (`effective_until = 9999-12-31`). **소유자가 정할 것은 "(a)로 간다"와 활성화 날짜뿐이며,
+   실행은 에이전트가 할 수 있다.**
+
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
 1. ~~**`phase1-gate.sh` native Linux 이식.**~~ **완료 (2026-08-17, `5b3f832`, §2.10)** — WSL 가드·PATH·`CARGO_TARGET_DIR`·DB 포트를 정리했고, 이식 과정에서 드러난 거짓 PASS 3건도 함께 닫았다. pyarrow 전제는 이 게이트에는 해당하지 않는다(추천 계산 경로의 문제이며 phase1 검사는 `prepare_phase0.py`를 부르지 않는다).
