@@ -6,11 +6,14 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
 runner="$script_dir/kis-daily-production.sh"
 installer="$script_dir/install-kis-daily.sh"
+state_helper="$script_dir/lib/kis-daily-state.py"
 
 [ -x "$runner" ] || { echo 'KIS_DAILY_SELF_TEST: runner is not executable' >&2; exit 1; }
 [ -x "$installer" ] || { echo 'KIS_DAILY_SELF_TEST: installer is not executable' >&2; exit 1; }
+[ -f "$state_helper" ] && [ ! -L "$state_helper" ] || { echo 'KIS_DAILY_SELF_TEST: state helper is missing or unsafe' >&2; exit 1; }
 bash -n "$runner"
 bash -n "$installer"
+python3 -B -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="ascii"))' "$state_helper"
 
 help_output=$(bash "$runner" --help)
 grep -Fq -- '--plan' <<<"$help_output"
@@ -41,6 +44,87 @@ mkdir -p "$test_root/releases" "$test_root/calendar" "$test_root/state" "$test_r
 commit=0123456789abcdef0123456789abcdef01234567
 release="$test_root/releases/$commit"
 mkdir -p "$release/scripts/ops/lib"
+state_identity=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+stale_identity=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+state_db="$test_root/state/db.tsv"
+printf '%s\n' \
+  $'META\t2026-08-18\t2026-08-19\t2\t2' \
+  $'DATE\t2026-08-18\t1\t-\t-' \
+  $'DATE\t2026-08-19\t1\t-\t-' >"$state_db"
+
+state_failure() {
+  local label=$1 expected=$2 state_path=$3
+  local output="$test_root/$label.out" error="$test_root/$label.err" rc
+  set +e
+  python3 -B "$state_helper" "$state_path" "$state_identity" "$state_db" \
+    2026-08-18 2026-08-24 >"$output" 2>"$error"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || { echo "KIS_DAILY_SELF_TEST: $label unexpectedly passed" >&2; exit 1; }
+  [ "$(<"$error")" = "$expected" ] || {
+    echo "KIS_DAILY_SELF_TEST: $label diagnostic was not typed" >&2
+    exit 1
+  }
+  [ ! -s "$output" ] || { echo "KIS_DAILY_SELF_TEST: $label wrote stdout" >&2; exit 1; }
+  for forbidden in "$state_identity" "$stale_identity" PROVIDER_BODY_SENTINEL SECRET_VALUE_SENTINEL Traceback; do
+    if grep -Fq -- "$forbidden" "$error"; then
+      echo "KIS_DAILY_SELF_TEST: $label leaked $forbidden" >&2
+      exit 1
+    fi
+  done
+}
+
+missing_state="$test_root/state/missing.tsv"
+state_failure missing DAILY_STATE_MISSING "$missing_state"
+
+stale_state="$test_root/state/stale.tsv"
+printf 'LAGRANGE_BACKFILL_STATE_V4\t%s\n' "$stale_identity" >"$stale_state"
+state_failure stale DAILY_STATE_STALE "$stale_state"
+
+malformed_state="$test_root/state/malformed.tsv"
+printf '%s\n' \
+  "LAGRANGE_BACKFILL_STATE_V4	$state_identity" \
+  $'2026-08-18\tPUBLISHED\t'"$state_identity"$'\tPROVIDER_BODY_SENTINEL' >"$malformed_state"
+state_failure malformed DAILY_STATE_MALFORMED "$malformed_state"
+
+not_appendable_state="$test_root/state/not-appendable.tsv"
+mkdir "$not_appendable_state"
+state_failure not-appendable DAILY_STATE_NOT_APPENDABLE "$not_appendable_state"
+
+initialized_state="$test_root/state/initialized.tsv"
+: >"$initialized_state"
+set +e
+python3 -B "$state_helper" "$initialized_state" "$state_identity" "$state_db" \
+  2026-08-18 2026-08-24 >"$test_root/initialize.out" 2>"$test_root/initialize.err"
+initialize_rc=$?
+set -e
+[ "$initialize_rc" -eq 0 ] || { echo 'KIS_DAILY_SELF_TEST: successful initialization failed' >&2; exit 1; }
+[ ! -s "$test_root/initialize.out" ] && [ ! -s "$test_root/initialize.err" ] || {
+  echo 'KIS_DAILY_SELF_TEST: successful initialization emitted diagnostics' >&2
+  exit 1
+}
+grep -Fq $'LAGRANGE_BACKFILL_STATE_V4\t'"$state_identity" "$initialized_state"
+grep -Fq $'2026-08-18\tPUBLISHED\t'"$state_identity" "$initialized_state"
+[ "$(grep -c $'\tPUBLISHED\t' "$initialized_state")" -eq 2 ] || {
+  echo 'KIS_DAILY_SELF_TEST: initialization wrote the wrong publication count' >&2
+  exit 1
+}
+cp -- "$initialized_state" "$test_root/initialized-before-replay.tsv"
+set +e
+python3 -B "$state_helper" "$initialized_state" "$state_identity" "$state_db" \
+  2026-08-18 2026-08-24 >"$test_root/replay.out" 2>"$test_root/replay.err"
+replay_rc=$?
+set -e
+[ "$replay_rc" -eq 0 ] || { echo 'KIS_DAILY_SELF_TEST: idempotent replay failed' >&2; exit 1; }
+cmp -s "$test_root/initialized-before-replay.tsv" "$initialized_state" || {
+  echo 'KIS_DAILY_SELF_TEST: idempotent replay changed state' >&2
+  exit 1
+}
+[ ! -s "$test_root/replay.out" ] && [ ! -s "$test_root/replay.err" ] || {
+  echo 'KIS_DAILY_SELF_TEST: idempotent replay emitted diagnostics' >&2
+  exit 1
+}
+
 for required in \
   scripts/ops/kis-daily-production.sh \
   scripts/ops/backfill-production.sh \
@@ -53,6 +137,8 @@ for required in scripts/ops/lib/dotenv.sh scripts/ops/lib/db.sh; do
   printf '%s\n' '# helper fixture' >"$release/$required"
   chmod 0644 "$release/$required"
 done
+printf '%s\n' '# helper fixture' >"$release/scripts/ops/lib/kis-daily-state.py"
+chmod 0644 "$release/scripts/ops/lib/kis-daily-state.py"
 
 installer_args=(
   --release-root "$release"

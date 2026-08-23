@@ -284,21 +284,31 @@ ensure_state_directory() {
   [ "$shape" = '0:0:700:directory' ] || blocked 'protected state directory must be root:root mode 0700'
 }
 
+protected_file_blocked() {
+  local label=$1 detail=$2
+  if [ "$label" = daily-state ]; then
+    blocked 'DAILY_STATE_NOT_APPENDABLE; no worker/Docker/KIS call was made'
+  fi
+  blocked "$detail"
+}
+
 ensure_protected_file() {
   local path=$1 label=$2
-  [ ! -L "$path" ] || blocked "$label must not be a symlink: $path"
+  [ ! -L "$path" ] || protected_file_blocked "$label" "$label must not be a symlink: $path"
   if [ ! -e "$path" ]; then
     if ! (umask 077; set -C; : >"$path"); then
-      [ ! -L "$path" ] && [ -e "$path" ] || blocked "$label could not be created without following a symlink: $path"
+      [ ! -L "$path" ] && [ -e "$path" ] ||
+        protected_file_blocked "$label" "$label could not be created without following a symlink: $path"
     else
-      chown root:root -- "$path" || blocked "cannot set $label owner: $path"
-      chmod 0600 -- "$path" || blocked "cannot set $label mode: $path"
+      chown root:root -- "$path" || protected_file_blocked "$label" "cannot set $label owner: $path"
+      chmod 0600 -- "$path" || protected_file_blocked "$label" "cannot set $label mode: $path"
     fi
   fi
-  [ ! -L "$path" ] && [ -f "$path" ] || blocked "$label must be a regular non-symlink file: $path"
+  [ ! -L "$path" ] && [ -f "$path" ] ||
+    protected_file_blocked "$label" "$label must be a regular non-symlink file: $path"
   case "$(stat -Lc '%u:%g:%a:%F' -- "$path")" in
     '0:0:600:regular file'|'0:0:600:regular empty file') ;;
-    *) blocked "$label must be root:root mode 0600" ;;
+    *) protected_file_blocked "$label" "$label must be root:root mode 0600" ;;
   esac
 }
 
@@ -579,41 +589,18 @@ EOF
 run_identity=$(printf '%s' "$identity_payload" | sha256sum | awk '{print $1}')
 [[ "$run_identity" =~ ^[0-9a-f]{64}$ ]] || die 'could not derive daily backfill run identity'
 
-if ! python3 - "$state_file" "$run_identity" "$db_parsed_file" 2>/dev/null <<'PY'
-import os
-import sys
-
-state_path, identity, db_path = sys.argv[1:]
-header = f"LAGRANGE_BACKFILL_STATE_V4\t{identity}"
-with open(state_path, encoding="ascii") as state:
-    lines = state.read().splitlines()
-if lines and lines[0] != header:
-    raise SystemExit("daily state identity mismatch")
-
-published = set()
-for line in lines[1:]:
-    fields = line.split("\t")
-    if len(fields) == 3 and fields[1] == "PUBLISHED" and fields[2] == identity:
-        published.add(fields[0])
-
-db_dates = []
-with open(db_path, encoding="ascii") as db:
-    for line in db:
-        fields = line.rstrip("\n").split("\t")
-        if fields and fields[0] == "DATE":
-            db_dates.append(fields[1])
-
-to_append = [value for value in db_dates if value not in published]
-with open(state_path, "a", encoding="ascii") as state:
-    if not lines:
-        state.write(header + "\n")
-    for value in to_append:
-        state.write(f"{value}\tPUBLISHED\t{identity}\n")
-    state.flush()
-    os.fsync(state.fileno())
-PY
-then
-  blocked 'daily state is missing, stale, malformed, or not appendable; no worker or KIS call was made'
+state_diagnostic=
+set +e
+state_diagnostic=$(python3 "$script_dir/lib/kis-daily-state.py" \
+  "$state_file" "$run_identity" "$db_parsed_file" "$range_start" "$today" 2>&1)
+state_validator_rc=$?
+set -e
+if [ "$state_validator_rc" -ne 0 ] || [ -n "$state_diagnostic" ]; then
+  case "$state_diagnostic" in
+    DAILY_STATE_MISSING|DAILY_STATE_STALE|DAILY_STATE_MALFORMED|DAILY_STATE_NOT_APPENDABLE) ;;
+    *) state_diagnostic=DAILY_STATE_MALFORMED ;;
+  esac
+  blocked "$state_diagnostic; no worker/Docker/KIS call was made"
 fi
 
 echo "KIS_DAILY_EXECUTE: range=$range_start..$today missing=${#pending_dates[@]} state=$state_file"

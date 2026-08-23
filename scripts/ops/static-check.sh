@@ -602,9 +602,17 @@ bash "$fsc_self_test" >/dev/null || die 'FSC offline self-test failed'
 kis_daily="$ops/kis-daily-production.sh"
 kis_daily_installer="$ops/install-kis-daily.sh"
 kis_daily_self_test="$ops/kis-daily-production-self-test.sh"
+kis_daily_state="$ops/lib/kis-daily-state.py"
 [ -x "$kis_daily" ] || die 'KIS daily wrapper must be executable'
 [ -x "$kis_daily_installer" ] || die 'KIS daily installer must be executable'
 [ -x "$kis_daily_self_test" ] || die 'KIS daily self-test must be executable'
+[ -f "$kis_daily_state" ] && [ ! -L "$kis_daily_state" ] || die 'KIS daily state helper is missing or unsafe'
+for state_diagnostic in DAILY_STATE_MISSING DAILY_STATE_STALE DAILY_STATE_MALFORMED DAILY_STATE_NOT_APPENDABLE; do
+  grep -Fq "$state_diagnostic" "$kis_daily" "$kis_daily_state" \
+    || die "KIS daily state diagnostic is missing: $state_diagnostic"
+done
+grep -Fq 'LAGRANGE_BACKFILL_STATE_V4' "$kis_daily_state" \
+  || die 'KIS daily state helper must preserve the V4 state contract'
 grep -Fq -- '--plan' "$kis_daily" || die 'KIS daily plan mode is missing'
 grep -Fq -- '--check' "$kis_daily" || die 'KIS daily check mode is missing'
 grep -Fq -- '--execute' "$kis_daily" || die 'KIS daily execute mode is missing'

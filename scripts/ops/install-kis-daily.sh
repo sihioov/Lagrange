@@ -196,6 +196,7 @@ check_source_inputs() {
   require_release_file scripts/ops/xkrx-calendar-bootstrap.py executable
   require_release_file scripts/ops/lib/dotenv.sh regular
   require_release_file scripts/ops/lib/db.sh regular
+  require_release_file scripts/ops/lib/kis-daily-state.py regular
 }
 
 timer_now_hms() {
