@@ -1126,6 +1126,55 @@ root 소유 보호 사본 `/etc/lagrange/compose.env.pending`을 명시해야 �
 동일함을 확인했다.
 
 
+### 0.26 세 번째 벽 — 같은 원인이 DB 계층에서 한 번 더 (2026-08-23)
+
+§0.25-③이 "어느 변종인지 모른다"로 남긴 것을, 바로 앞 커밋에서 넣은 `detail` 필드가
+**재실행 한 번에** 알려줬다. 계측이 즉시 값을 했다.
+
+    "detail": "Sink(stage=Publish, SinkError::Conflict:
+               calendar source version differs for KRX kis-chk-holiday-v1:schema-1)"
+
+**검사 지점.** `lock_and_verify_source_versions`(`sink.rs:570`)가 강제하는 것은
+**`(exchange, source_version)` 하나에 `content_sha256`이 정확히 하나**라는 불변식이다:
+
+    SELECT EXISTS(SELECT 1 FROM trading_calendar_versions
+     WHERE exchange=$1 AND source_version=$2
+       AND (source <> $3 OR timezone <> $4 OR content_sha256 <> $5))
+
+**증거.**
+
+| | `calendar.json` sha256 | source_version |
+|---|---|---|
+| 08-18 (발행 성공) | `96624dabde9e1dd7…` — `trading_calendar_versions`에 저장된 값과 일치 | `kis-chk-holiday-v1:schema-1` |
+| 08-19 | `eaf6e6be10f54aca…` **다름** | `kis-chk-holiday-v1:schema-1` **동일** |
+
+**§0.24와 같은 원인 계열이다.** KIS `chk-holiday`는 요청한 날짜로 정규화되므로 매일의
+calendar 문서가 다르다. 그런데 `source_version`은 `calendar_id`(`kis-chk-holiday-v1`)와
+`schema_version`(1)에서만 나오고 둘 다 상수다. DB는 "source version 하나 = 불변 문서 하나"로
+모델링하고 있는데 — 이는 KRX가 발행하는 연간 달력처럼 **버전이 찍힌 문서**를 전제한 설계이며,
+벤더가 발행된 달력을 몰래 바꾸는 것을 잡아내는 좋은 불변식이다 — **날짜별로 생성되는 KIS
+소스는 이 전제를 원리적으로 만족할 수 없다.** 그래서 둘째 날에 반드시 충돌한다.
+
+**즉 파이프라인은 여전히 이틀치를 발행하지 못한다.** §0.24를 고쳐 Curated 생성(version=3)까지는
+갔지만, canonical EOD publication이 DB에서 막힌다.
+
+**두 벽은 독립이다.** 실행 순서상 `recover_price_publications`의 entitlement 거부(§0.25-②)가
+먼저 나오고 그 다음 날짜별 publish에서 이 충돌이 난다. 전자는 **candidate/price 승격** 경로를,
+후자는 **canonical EOD publication**(`data_batches`)을 막는다. **둘 다 풀려야 둘째 날이 발행된다.**
+
+**고치지 않았다 — 설계 판단이다.** 후보는 최소 셋이고 셋 다 PIT 증거의 의미를 건드린다:
+(a) `source_version`을 세션 날짜까지 포함하도록 유도해 날짜마다 다른 버전으로 취급,
+(b) KIS 달력을 "버전이 찍힌 문서"가 아닌 별도 모델로 분리,
+(c) 불변식을 `(exchange, source_version, session_date)` 단위로 완화.
+(c)는 벤더가 같은 날짜의 달력을 바꿔치기하는 것을 못 잡게 되므로 이 불변식이 원래 지키려던
+것을 잃는다. (a)는 "source version"이 무엇을 뜻하는지를 재정의하는 것이다. 원칙 1·4·6에
+걸리므로 **소유자 결정으로 등재하고 여기서는 원인 기록까지만 한다.**
+
+**이 절이 확인해 주는 것.** §0.24의 부수 발견(진단 가능성)을 먼저 고친 판단이 옳았다.
+같은 벽에 두 번 부딪힌 뒤 계측에 30분을 썼고, 그 다음 원인 규명은 **재실행 한 번**으로 끝났다.
+앞선 두 번은 각각 컨테이너로 Raw를 복사하고 일회용 하네스를 빌드해야 했다.
+
+
 ---
 ---
 
@@ -1512,7 +1561,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 증거로 유지하고 새 metadata를 사용해 게이트를 재실행한다. Member 접근과 Live는
 권리 추정으로 넓히지 않고 명시적으로 비활성 상태를 유지한다.
 
-### 4.2 소유자 결정 대기 4건
+### 4.2 소유자 결정 대기 5건
 
 1. **phase-0 골든에 수수료 필드를 넣을지** — 넣는 것은 승인된 기준값을 바꾸는 명시적 재승인 행위라 보류 중
 2. **Phase 4 우선순위** — §4.4 참조
@@ -1556,6 +1605,15 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    (`effective_until = 9999-12-31`). **소유자가 정할 것은 "(a)로 간다"와 활성화 날짜뿐이며,
    실행은 에이전트가 할 수 있다.**
 
+5. **KIS 달력의 `source_version` 모델 (신규, 2026-08-23; §0.26, 출시 차단)** — DB는
+   `(exchange, source_version)` 하나에 `content_sha256`이 하나여야 한다고 강제하는데
+   (`sink.rs:570`), KIS `chk-holiday`는 날짜마다 다른 문서를 주면서 `source_version`은
+   `kis-chk-holiday-v1:schema-1`로 상수다. **둘째 날 publication이 반드시 충돌한다.**
+   불변식 자체는 벤더가 발행된 달력을 몰래 바꾸는 것을 잡는 좋은 장치라 그냥 풀 수 없다.
+   후보 (a) `source_version`에 세션 날짜를 포함 (b) KIS 달력을 별도 모델로 분리
+   (c) 불변식을 세션 날짜 단위로 완화 — (c)는 원래 지키려던 것을 잃는다. 어느 쪽이든
+   "source version"이 무엇을 뜻하는지에 대한 결정이라 원칙 1·4·6에 걸린다.
+
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
 1. ~~**`phase1-gate.sh` native Linux 이식.**~~ **완료 (2026-08-17, `5b3f832`, §2.10)** — WSL 가드·PATH·`CARGO_TARGET_DIR`·DB 포트를 정리했고, 이식 과정에서 드러난 거짓 PASS 3건도 함께 닫았다. pyarrow 전제는 이 게이트에는 해당하지 않는다(추천 계산 경로의 문제이며 phase1 검사는 `prepare_phase0.py`를 부르지 않는다).
@@ -1572,8 +1630,9 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 7. ~~**`CurateError` 진단 가능성.**~~ **완료 (2026-08-23, `485c937`, §0.25-④)** —
    `PIPELINE_FAILED`와 `PRICE_CURATION_FAILED` 양쪽에 변종 이름을 담는 `detail` 필드를
    추가했다. 같은 벽에 두 번 부딪힌 뒤에 고쳤다.
-8. **08-19 `PIPELINE_FAILED`의 변종 규명 (§0.25-③, 출시 차단).** `detail` 필드가 실린
-   이미지로 재실행하면 바로 드러난다. 배제한 것과 남은 후보는 §0.25-③에 있다.
+8. ~~**08-19 `PIPELINE_FAILED`의 변종 규명.**~~ **완료 (2026-08-23, §0.26)** —
+   `Sink(stage=Publish, SinkError::Conflict: calendar source version differs for KRX
+   kis-chk-holiday-v1:schema-1)`. 원인은 §4.2-5로 등재했다.
 
 **작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다. §0.16의 A(Paper 런타임 `CurateStore` 이중 경로)와 C(CI가 Python 스위트를 실행하지 않음)는 **2026-08-22에 종결됐다(§0.17)**.
 
