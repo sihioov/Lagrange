@@ -512,6 +512,63 @@ async fn calendar_equal_time_and_source_version_conflicts_roll_back_the_whole_ba
     db.drop_db().await;
 }
 
+/// A per-date calendar source publishes a different document every day under
+/// one unchanging source version, and every day after the first must still
+/// publish.
+///
+/// KIS `chk-holiday` is normalized to the date requested, while the version
+/// string is built from `calendar_id` and `schema_version` alone -- both
+/// constant. The cross-date rule that used to live in the sink read that as one
+/// source version claiming two documents and refused, so the pipeline could
+/// publish exactly one session and no more. The sibling test above pins what
+/// survives: the same date coming back with different bytes is still a
+/// conflict.
+#[tokio::test]
+async fn one_source_version_may_span_dates_that_each_have_their_own_document() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let original = synthetic_bundle("2026-08-05T07:00:00Z");
+    let sink = PostgresPublicationSink::new(db.writer.clone());
+    sink.publish(&original.bundle).await.unwrap();
+    let first_version = original.bundle.calendar_facts[0].source_version.clone();
+    let already_published: Vec<_> = original
+        .bundle
+        .calendar_facts
+        .iter()
+        .map(|fact| fact.session_date)
+        .collect();
+
+    // The next day: same source version, a session this generation has not
+    // recorded yet, and necessarily a different document hash.
+    let next_day = TradingDate::parse("2020-02-04").expect("next session");
+    assert!(!already_published.contains(&next_day));
+    let mut following = original.bundle.clone();
+    following.source_batch_id = BatchId::generate();
+    following.calendar_facts.truncate(1);
+    following.calendar_facts[0].session_date = next_day;
+    following.calendar_facts[0].session_type = CalendarSessionType::Trading;
+    assert_eq!(following.calendar_facts[0].source_version, first_version);
+    set_calendar_hash(&mut following, "e".repeat(64));
+
+    assert_eq!(
+        sink.publish(&following).await.unwrap(),
+        PublishOutcome::Published,
+        "a second session under one source version must publish"
+    );
+    let persisted: String = sqlx::query_scalar(
+        "SELECT content_sha256 FROM trading_calendar_versions \
+         WHERE exchange='KRX' AND session_date=$1 AND source_version=$2",
+    )
+    .bind(next_day.as_naive_date())
+    .bind(&first_version)
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("second session calendar history");
+    assert_eq!(persisted, "e".repeat(64));
+    db.drop_db().await;
+}
+
 #[tokio::test]
 async fn calendar_facts_must_be_anchored_to_the_calendar_file_hash() {
     let Some(db) = ScratchDb::create().await else {
@@ -668,7 +725,19 @@ async fn concurrent_different_batches_leave_the_newest_projection() {
 }
 
 #[tokio::test]
-async fn concurrent_disjoint_dates_cannot_reuse_a_source_version_for_different_content() {
+/// Two publishers landing different sessions under one source version at the
+/// same time must both succeed.
+///
+/// This used to assert the opposite: whichever lost the race got a conflict.
+/// That rule assumed a source version names exactly one document, which holds
+/// for a published calendar file and cannot hold for KIS `chk-holiday`, whose
+/// response is normalized to the date requested while the version string is
+/// built only from `calendar_id` and `schema_version`. Under the old rule the
+/// pipeline published one session and refused every later one.
+///
+/// The advisory lock is unchanged and still serializes these two, so each lands
+/// its own history row and its own projection rather than interleaving.
+async fn concurrent_disjoint_dates_may_share_one_source_version() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -691,13 +760,28 @@ async fn concurrent_disjoint_dates_cannot_reuse_a_source_version_for_different_c
     let left = PostgresPublicationSink::new(db.writer.clone());
     let right = PostgresPublicationSink::new(db.writer.clone());
     let (a, b) = tokio::join!(left.publish(&first), right.publish(&second));
-    assert!(
-        matches!(&a, Ok(PublishOutcome::Published)) && matches!(&b, Err(SinkError::Conflict(_)))
-            || matches!(&b, Ok(PublishOutcome::Published))
-                && matches!(&a, Err(SinkError::Conflict(_))),
-        "first={a:?}, second={b:?}"
+    assert_eq!(
+        a.expect("first disjoint session"),
+        PublishOutcome::Published
     );
-    assert_eq!(counts(&db).await, (4, 1, 1));
+    assert_eq!(
+        b.expect("second disjoint session"),
+        PublishOutcome::Published
+    );
+    // Four data_batches rows per bundle, then one history row and one
+    // projection per distinct session date.
+    assert_eq!(counts(&db).await, (8, 2, 2));
+    for (date, hash) in [("2020-02-03", "3"), ("2020-02-04", "4")] {
+        let persisted: String = sqlx::query_scalar(
+            "SELECT content_sha256 FROM trading_calendar_versions \
+             WHERE exchange='KRX' AND session_date=$1",
+        )
+        .bind(TradingDate::parse(date).unwrap().as_naive_date())
+        .fetch_one(&db.supervisor)
+        .await
+        .unwrap_or_else(|error| panic!("history for {date}: {error}"));
+        assert_eq!(persisted, hash.repeat(64));
+    }
     db.drop_db().await;
 }
 

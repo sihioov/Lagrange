@@ -576,6 +576,8 @@ async fn lock_and_verify_source_versions(
         .iter()
         .map(|fact| (fact.exchange.as_str(), fact.source_version.as_str()))
         .collect();
+    // Take every source-version lock first, so concurrent publishers serialize
+    // on the same keys regardless of which sessions each one carries.
     for (exchange, source_version) in keys {
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))")
             .bind(exchange)
@@ -583,28 +585,46 @@ async fn lock_and_verify_source_versions(
             .execute(&mut **tx)
             .await
             .map_err(SinkError::from_sqlx)?;
-        let expected = bundle
-            .calendar_facts
-            .iter()
-            .find(|fact| fact.exchange == exchange && fact.source_version == source_version)
-            .expect("source-version lock key came from a calendar fact");
+    }
+    // Compare within one session date, not across all of them.
+    //
+    // A source version used to be required to name exactly one document. That
+    // holds for a published calendar file -- KRX's yearly one covers many dates
+    // and every row repeats its hash -- but KIS `chk-holiday` is normalized to
+    // the date requested, so each day is a different document while
+    // `calendar_id` and `schema_version`, the only two inputs to the version
+    // string, stay constant. Every second session therefore conflicted with the
+    // first and the pipeline could publish exactly one day, forever.
+    //
+    // Scoping to the session date keeps what the check is for: if the calendar
+    // for a date we already recorded comes back with different bytes, that is
+    // still caught, for a per-date source and a yearly file alike -- a rewritten
+    // file changes the hash on each of its dates. What it stops asserting is
+    // that two dates must share one document, which is the one thing a per-date
+    // source can never satisfy. The table's own UNIQUE constraint has always
+    // been (exchange, session_date, source_version); this cross-date rule lived
+    // only here.
+    for fact in &bundle.calendar_facts {
         let mismatch: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM trading_calendar_versions \
-             WHERE exchange=$1 AND source_version=$2 \
-               AND (source <> $3 OR timezone <> $4 OR content_sha256 <> $5))",
+             WHERE exchange=$1 AND source_version=$2 AND session_date=$3 \
+               AND (source <> $4 OR timezone <> $5 OR content_sha256 <> $6))",
         )
-        .bind(exchange)
-        .bind(source_version)
-        .bind(&expected.source)
-        .bind(&expected.timezone)
-        .bind(&expected.content_sha256)
+        .bind(&fact.exchange)
+        .bind(&fact.source_version)
+        .bind(fact.session_date.as_naive_date())
+        .bind(&fact.source)
+        .bind(&fact.timezone)
+        .bind(&fact.content_sha256)
         .fetch_one(&mut **tx)
         .await
         .map_err(SinkError::from_sqlx)?;
         if mismatch {
             return Err(SinkError::Conflict(format!(
-                "calendar source version differs for {} {}",
-                exchange, source_version
+                "calendar source version differs for {} {} {}",
+                fact.exchange,
+                fact.source_version,
+                fact.session_date.to_iso()
             )));
         }
     }
