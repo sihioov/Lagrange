@@ -1175,6 +1175,67 @@ calendar 문서가 다르다. 그런데 `source_version`은 `calendar_id`(`kis-c
 앞선 두 번은 각각 컨테이너로 Raw를 복사하고 일회용 하네스를 빌드해야 했다.
 
 
+### 0.27 entitlement 등록 실행 — 결함 2건을 넘었고, 참조 불일치 1건에서 멈췄다 (2026-08-23)
+
+소유자가 §4.2-4를 **(a)안, 활성화 날짜 2020-01-31**로 확정해 실행했다. 등록·활성화는
+성공했다(`data_entitlements` 1행, `status=ACTIVE`, `2020-01-31..9999-12-31`,
+`managed_by=00000000-0000-4000-8000-000000000042`). 다만 **경로에서 결함 2건을 만났고 둘 다
+고쳤으며, 세 번째 불일치에서 소유자 결정이 한 번 더 필요해졌다.**
+
+**결함 ① 승인된 권리 문서의 sentinel을 검증기가 거부했다 (`86e6577`).**
+
+    entitlement: effective_until is not a real date
+
+`configs/data-rights/kis.entitlement.json`의 `effective_until`은 무기한 sentinel
+`9999-12-31`인데, `valid_date`가 `date -u -d`로 라운드트립했다. GNU date는 오프셋이 적용되면
+그 날을 표현하지 못한다 — `date -u -d 9999-12-31`은 실패하고, `-u`를 빼면 **양수 오프셋 존에서만**
+통과한다(Asia/Seoul 성공, UTC·America/Sao_Paulo 실패, 셋 다 실측). `9999-12-30`과 `5000-06-15`는
+멀쩡히 통과하므로 **sentinel이 정확히 경계값**이고, 그것이 승인 레코드가 담고 있는 값이다.
+달력을 산술로 검증하도록 바꿨다. `register-dataset-version.sh`에 **동일한 헬퍼와 동일한 결함**이
+있어 함께 고쳤다. **레코드를 고치는 선택지는 없다** — 검증기를 만족시키려 승인된 권리 문서를
+편집하는 것은 이 저장소가 다른 곳에서 이미 거부하는 실패 양식이다. 틀린 쪽은 검증기였다.
+self-test가 못 잡은 이유: 픽스처가 `effective_until: "2026-12-31"`을 써서 **실제 레코드가
+쓰는 바로 그 필드에서 프로덕션과 어긋나 있었다.** 이제 같은 sentinel을 쓰고, UTC와 그 양쪽
+오프셋 존에서 달력 규칙을 고정한다.
+
+**결함 ② 커밋에 성공하고도 실패를 보고했다 (`4bf67a2`).**
+
+    ENTITLEMENT_APPLY 대신 → BLOCKED_EXTERNAL: database returned no entitlement row
+    (그런데 data_entitlements 에는 정확한 행이 이미 커밋돼 있었다)
+
+**동시에 참인 이 두 상태가 운영자 실패 중 최악의 모양이다** — 이미 써진 DB에 재시도를
+유도한다. psql은 파일 전체에 대해 결과 행마다 한 줄을 내는데, 각 트랜잭션을 지키는
+`SELECT pg_advisory_xact_lock(...)`이 void를 반환해 **빈 줄을 먼저** 찍는다. 파서가 `NR==1`을
+읽어 그 빈 줄을 집었다. 원시 출력으로 확인했다:
+
+    $
+    2ac51ec7-78d9-4180-91c5-f37f2fb6ed68^IPENDING$
+
+즉 두 헬퍼의 `--apply`는 **한 번도 성공한 적이 없다.** `--check`만 되는 이유는 그 쿼리가
+advisory lock 없이 돌기 때문이다. 기대하는 열 개수를 가진 첫 줄을 집도록 공유 헬퍼
+`db_row_field`로 바꿨다(두 스크립트 10곳, `register-dataset-version.sh`의 4열 readback 포함).
+self-test는 DB를 쓰지 않아 끝단을 못 덮지만 **출력 모양은 고정할 수 있고** 이제 고정한다.
+
+**③ 멈춘 지점 — 참조 불일치. 소유자 결정이 한 번 더 필요하다.** entitlement가 ACTIVE인데도
+함수는 여전히 거부한다. `resolve_price_dataset_entitlement`는
+`entitlement.contract_reference = p_contract_reference` **정확 일치**로 찾는데:
+
+| | 값 |
+|---|---|
+| Raw 배치가 citing (`RESEARCH_ENTITLEMENT_REFERENCE`) | `operator-attestation://l1nnx/kis-readonly/2026-08-18` |
+| 등록된 DB `contract_reference` (승인 레코드의 `document_reference`) | `repo://docs/decisions/0005-kis-personal-use-entitlement.md` |
+| self-test 픽스처 | `operator-attestation://self-test/kis-readonly` |
+
+**근본 원인은 한 필드가 두 역할을 겸하는 것이다.** `document_reference`는 "계약 문서가 어디
+있는가"(해시도 그 ADR의 해시다)인데, 스크립트가 그것을 그대로 `contract_reference` —
+"Raw 배치가 citing하는 키" — 로 쓴다. 둘은 다른 것이다. self-test 픽스처가
+operator-attestation URI를 쓰는 것은 **설계된 형태가 후자**임을 시사한다.
+
+08-18·08-19 Raw는 불변이고 이미 operator-attestation URI를 citing하므로, 설정만 바꾸는 것으로는
+그 이틀을 살릴 수 없다. **어느 쪽이 권위인지는 권리 주장에 관한 결정이라 §4.2-6으로 등재하고
+여기서 멈춘다** — 승인 레코드에 없는 참조로 권리를 등록하는 것을 에이전트가 지어내지 않는다.
+
+
 ---
 ---
 
@@ -1561,7 +1622,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 증거로 유지하고 새 metadata를 사용해 게이트를 재실행한다. Member 접근과 Live는
 권리 추정으로 넓히지 않고 명시적으로 비활성 상태를 유지한다.
 
-### 4.2 소유자 결정 대기 5건
+### 4.2 소유자 결정 대기 6건
 
 1. **phase-0 골든에 수수료 필드를 넣을지** — 넣는 것은 승인된 기준값을 바꾸는 명시적 재승인 행위라 보류 중
 2. **Phase 4 우선순위** — §4.4 참조
@@ -1577,7 +1638,7 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    빈 응답일 가능성이 있으나, 그 관찰은 KIND 유형 체계에서 나온 것이고 KSD 응답을 확인한
    것이 아니다. §0.15 (3)/(4)의 첫 credentialed 실행에서 read-only GET 한 번이면 결판난다.
 
-4. **KIS entitlement의 DB 등록** (신규, 2026-08-23; §0.23에서 인과 정정) — `data_entitlements`가
+4. ~~**KIS entitlement의 DB 등록**~~ **등록·활성화 완료 (2026-08-23, §0.27) — 다만 §4.2-6이 남았다.** (아래는 결정 당시 기록) — `data_entitlements`가
    비어 있다. **오늘의 EOD publication을 막는 것은 이것이 아니다**(§0.23 — 08-18에는 같은 상태로
    성공했고, 실제 실패는 `PRICE_CURATION_FAILED`다). 다만 DB 함수
    `resolve_price_dataset_entitlement`와 `crates/auth`의 API 권한 게이트가 이 테이블을 읽으므로
@@ -1613,6 +1674,16 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    후보 (a) `source_version`에 세션 날짜를 포함 (b) KIS 달력을 별도 모델로 분리
    (c) 불변식을 세션 날짜 단위로 완화 — (c)는 원래 지키려던 것을 잃는다. 어느 쪽이든
    "source version"이 무엇을 뜻하는지에 대한 결정이라 원칙 1·4·6에 걸린다.
+
+6. **entitlement `contract_reference`의 권위 (신규, 2026-08-23; §0.27-③, 출시 차단)** —
+   `resolve_price_dataset_entitlement`는 Raw가 citing하는 참조와 DB `contract_reference`의
+   정확 일치를 요구하는데, 전자는 `operator-attestation://l1nnx/kis-readonly/2026-08-18`,
+   후자는 승인 레코드의 `document_reference`인 `repo://docs/decisions/0005-...md`다.
+   한 필드가 "계약 문서 위치"와 "Raw가 citing하는 키" 두 역할을 겸하는 것이 원인이다.
+   후보 (a) operator-attestation URI로 등록 — self-test 픽스처가 그 형태이고 기존 불변 Raw
+   이틀을 살린다 (b) `RESEARCH_ENTITLEMENT_REFERENCE`를 repo:// 로 변경 — 앞으로만 유효하고
+   08-18·08-19는 영구 미발행 (c) 두 역할을 별도 필드로 분리. **에이전트가 승인 레코드에 없는
+   참조로 권리를 등록하지 않는다.**
 
 ### 4.3 코드 작업 — 착수 가능, 권장 순서
 
