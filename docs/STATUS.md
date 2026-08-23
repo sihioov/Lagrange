@@ -1355,6 +1355,54 @@ Phase 4 우선순위, 기업행사 6개 클래스)은 그대로다. 기업행사
 확인할 수 있다** — 발행이 되므로 다음 실행에서 드러난다.
 
 
+### 0.30 출시 준비도 실측 — 데이터 경로는 열렸고, 그 위층은 아직 한 번도 돈 적이 없다 (2026-08-23)
+
+§0.29 직후 "이제 출시를 앞둔 것이냐"는 물음에 답하기 위해 운영 상태를 **기억이 아니라 실측**했다.
+답은 **아니다**. 오늘 연 것은 필요조건이지 출시가 아니다.
+
+**지금 실제로 떠 있는 것은 데이터베이스 하나뿐이다.**
+
+    docker ps → lagrange-station-postgres-1 | Up (healthy)
+
+compose에 정의된 서비스는 14개다(`api-server`, `web`, `reverse-proxy`, `paper-scheduler`,
+`recommendation-runner`, `candidate-runner`, `research-worker`, `nt-backtest-worker-1/2`,
+`postgres`, `db-migrate`, `db-role-bootstrap`, `research-raw-init`, `research-schema-check`).
+**사용자가 닿는 것은 하나도 돌지 않는다.** systemd 유닛도 없다 — `systemctl list-unit-files
+'lagrange*'`에 있는 것은 kis-daily, kis-backfill 3세대, production-backup, tailscale-tls뿐이고
+api/web/paper/recommendation 유닛은 **존재하지 않는다.** 설치된 적이 없다는 뜻이다.
+
+**데이터와 상태.**
+
+| | |
+|---|---|
+| EOD 발행일 | `2026-08-18`, `2026-08-19` — **2일** |
+| `recommendation_runs` | **0** — 추천이 실데이터로 한 번도 계산된 적 없다 |
+| `accounts` | **0** |
+| `instruments` | 11 (오늘 최초 등록) |
+
+**오늘 한 일의 정확한 위치.** 어제까지 데이터는 하루치에서 멈춰 있었고, 그래서 위층(추천·
+Paper·화면)을 실데이터로 시험할 **수단 자체가 없었다.** 오늘 그 수단이 생겼다. 그것이
+전부이며, 작지 않지만 출시는 아니다.
+
+**남은 것, 순서대로.**
+
+1. **운영 서비스 활성화** (§4.3-4, §4 항목 8) — role-scoped DB URL과 curated/raw volume을
+   주입해 `api-server`/`web`/`paper-scheduler`/`recommendation-runner`를 띄운다.
+   이것 없이는 사용자가 접속할 대상이 없다.
+2. **추천 파이프라인 최초 실행** — 코드는 완성이고 테스트도 통과하지만 `recommendation_runs=0`
+   이다. **실데이터로 한 번도 돌지 않았다.**
+3. **데이터 축적** — 팩터·추천에 의미 있는 이력이 필요하다. 지금 2일이고 백필 승인은 §4.3-5다.
+4. **게이트 재실행** — phase1 APPROVED는 08-22 기준이고 그 뒤 오늘 여덟 커밋이 들어갔다.
+5. **소유자 결정 3건** (§4.2).
+
+**§0.29의 패턴이 여기에 주는 예보.** 오늘 무너진 여섯 개는 **전부 "두 번째로 해볼 때"**
+드러났다. 위 1·2번은 각각 **"처음 해보는 것"**이다. 같은 밀도로 결함이 나올 것을 전제하고
+계획하는 편이 맞다. "이제 거의 다 됐다"는 판단은 오늘 배운 것을 무시하는 것이다.
+
+**권장 다음 순서: ①서비스 활성화 → ②추천 최초 실행.** 둘 다 현재 데이터로 착수 가능하고,
+막히는 지점이 곧 다음에 알아야 할 것이다.
+
+
 ---
 ---
 
