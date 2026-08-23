@@ -42,6 +42,110 @@ const MAX_BAR_LINE_BYTES: usize = 16 * 1024;
 pub struct VerifiedHistoricalPriceOnlyArtifact {
     path: PathBuf,
     candidate_content_sha256: ContentHash,
+    approval_summary: HistoricalPriceOnlyArtifactApprovalSummary,
+}
+
+/// The non-sensitive, immutable facts an independent approval checker may
+/// compare against its own registry after the artifact reader has validated
+/// the full on-disk envelope.
+///
+/// This deliberately has no filesystem path, Raw request metadata, provider
+/// payload, batch identifier, or bar payload accessor.  It is not a dataset
+/// pin and it conveys neither registration nor publication authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoricalPriceOnlyArtifactApprovalSummary {
+    artifact_manifest_sha256: ContentHash,
+    stage5_manifest_sha256: ContentHash,
+    action_manifest_sha256: ContentHash,
+    schema_id: String,
+    schema_version: u32,
+    audience: String,
+    vendor_snapshot: bool,
+    strict_pit: bool,
+    capability: String,
+    materialization_status: String,
+    registration_status: String,
+    publication_status: String,
+    range_start: TradingDate,
+    range_end: TradingDate,
+    instruments: Vec<String>,
+    instrument_count: usize,
+    session_count: usize,
+    bar_count: usize,
+}
+
+impl HistoricalPriceOnlyArtifactApprovalSummary {
+    pub fn artifact_manifest_sha256(&self) -> &ContentHash {
+        &self.artifact_manifest_sha256
+    }
+
+    pub fn stage5_manifest_sha256(&self) -> &ContentHash {
+        &self.stage5_manifest_sha256
+    }
+
+    pub fn action_manifest_sha256(&self) -> &ContentHash {
+        &self.action_manifest_sha256
+    }
+
+    pub fn schema_id(&self) -> &str {
+        &self.schema_id
+    }
+
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    pub fn audience(&self) -> &str {
+        &self.audience
+    }
+
+    pub const fn vendor_snapshot(&self) -> bool {
+        self.vendor_snapshot
+    }
+
+    pub const fn strict_pit(&self) -> bool {
+        self.strict_pit
+    }
+
+    pub fn capability(&self) -> &str {
+        &self.capability
+    }
+
+    pub fn materialization_status(&self) -> &str {
+        &self.materialization_status
+    }
+
+    pub fn registration_status(&self) -> &str {
+        &self.registration_status
+    }
+
+    pub fn publication_status(&self) -> &str {
+        &self.publication_status
+    }
+
+    pub const fn range_start(&self) -> TradingDate {
+        self.range_start
+    }
+
+    pub const fn range_end(&self) -> TradingDate {
+        self.range_end
+    }
+
+    pub fn instruments(&self) -> &[String] {
+        &self.instruments
+    }
+
+    pub const fn instrument_count(&self) -> usize {
+        self.instrument_count
+    }
+
+    pub const fn session_count(&self) -> usize {
+        self.session_count
+    }
+
+    pub const fn bar_count(&self) -> usize {
+        self.bar_count
+    }
 }
 
 impl fmt::Debug for VerifiedHistoricalPriceOnlyArtifact {
@@ -64,6 +168,13 @@ impl VerifiedHistoricalPriceOnlyArtifact {
 
     pub fn candidate_content_sha256(&self) -> &ContentHash {
         &self.candidate_content_sha256
+    }
+
+    /// Returns only the validated, non-sensitive facts needed by a separate
+    /// approval registry checker.  This has no registration or publication
+    /// side effect.
+    pub fn approval_summary(&self) -> &HistoricalPriceOnlyArtifactApprovalSummary {
+        &self.approval_summary
     }
 }
 
@@ -240,7 +351,8 @@ fn read_historical_price_only_artifact_with_expected(
         &manifest,
         &manifest_snapshot,
     )?;
-    let unsigned = validate_manifest_bytes(candidate_content_sha256, &manifest_bytes)?;
+    let validated_manifest = validate_manifest_bytes(candidate_content_sha256, &manifest_bytes)?;
+    let unsigned = &validated_manifest.unsigned;
 
     let (bars, bars_snapshot) = open_leaf(&candidate_fd, b"bars.ndjson", owner, MAX_BARS_BYTES)?;
     ops.after_open(ArtifactReadStage::Bars);
@@ -296,6 +408,7 @@ fn read_historical_price_only_artifact_with_expected(
     Ok(VerifiedHistoricalPriceOnlyArtifact {
         path,
         candidate_content_sha256: candidate_content_sha256.clone(),
+        approval_summary: validated_manifest.approval_summary,
     })
 }
 
@@ -1515,6 +1628,11 @@ struct Manifest {
     manifest_sha256: ContentHash,
 }
 
+struct ValidatedManifest {
+    unsigned: UnsignedManifest,
+    approval_summary: HistoricalPriceOnlyArtifactApprovalSummary,
+}
+
 impl Manifest {
     fn from_unsigned(unsigned: UnsignedManifest) -> Result<Self, HistoricalPriceOnlyArtifactError> {
         let manifest_sha256 = ContentHash::from_bytes(
@@ -1577,6 +1695,29 @@ impl Manifest {
             sessions: self.sessions.clone(),
             bonus_evidence: self.bonus_evidence.clone(),
             bars: self.bars.clone(),
+        }
+    }
+
+    fn approval_summary(&self) -> HistoricalPriceOnlyArtifactApprovalSummary {
+        HistoricalPriceOnlyArtifactApprovalSummary {
+            artifact_manifest_sha256: self.manifest_sha256.clone(),
+            stage5_manifest_sha256: self.stage5.manifest_sha256.clone(),
+            action_manifest_sha256: self.ksd.manifest_sha256.clone(),
+            schema_id: self.schema_id.clone(),
+            schema_version: self.schema_version,
+            audience: self.audience.clone(),
+            vendor_snapshot: self.vendor_snapshot,
+            strict_pit: self.strict_pit,
+            capability: self.capability.clone(),
+            materialization_status: self.materialization_status.clone(),
+            registration_status: self.registration_status.clone(),
+            publication_status: self.publication_status.clone(),
+            range_start: self.range_start,
+            range_end: self.range_end,
+            instruments: self.instruments.clone(),
+            instrument_count: self.instrument_count,
+            session_count: self.session_count,
+            bar_count: self.row_count,
         }
     }
 }
@@ -1720,7 +1861,8 @@ fn validate_historical_price_only_artifact_bytes(
     if manifest_json.len() > MAX_MANIFEST_BYTES || bars_ndjson.len() > MAX_BARS_BYTES {
         return Err(HistoricalPriceOnlyArtifactError::InvalidArtifact);
     }
-    let u = validate_manifest_bytes(expected_candidate_hash, manifest_json)?;
+    let validated_manifest = validate_manifest_bytes(expected_candidate_hash, manifest_json)?;
+    let u = &validated_manifest.unsigned;
     if u.bars.size_bytes != bars_ndjson.len() as u64
         || u.bars.sha256 != ContentHash::from_bytes(bars_ndjson)
     {
@@ -1732,7 +1874,7 @@ fn validate_historical_price_only_artifact_bytes(
 fn validate_manifest_bytes(
     expected_candidate_hash: &ContentHash,
     manifest_json: &[u8],
-) -> Result<UnsignedManifest, HistoricalPriceOnlyArtifactError> {
+) -> Result<ValidatedManifest, HistoricalPriceOnlyArtifactError> {
     if manifest_json.len() > MAX_MANIFEST_BYTES || !manifest_json.ends_with(b"\n") {
         return Err(HistoricalPriceOnlyArtifactError::InvalidArtifact);
     }
@@ -1790,7 +1932,10 @@ fn validate_manifest_bytes(
         return Err(HistoricalPriceOnlyArtifactError::InvalidArtifact);
     }
     validate_manifest_semantics(&u)?;
-    Ok(u)
+    Ok(ValidatedManifest {
+        approval_summary: manifest.approval_summary(),
+        unsigned: u,
+    })
 }
 
 fn validate_manifest_semantics(
@@ -2266,6 +2411,26 @@ mod tests {
         let verified = VerifiedHistoricalPriceOnlyArtifact {
             path: PathBuf::from("/operator-root-sentinel-must-not-leak"),
             candidate_content_sha256: ContentHash::from_bytes(b"candidate"),
+            approval_summary: HistoricalPriceOnlyArtifactApprovalSummary {
+                artifact_manifest_sha256: ContentHash::from_bytes(b"manifest"),
+                stage5_manifest_sha256: ContentHash::from_bytes(b"stage5"),
+                action_manifest_sha256: ContentHash::from_bytes(b"action"),
+                schema_id: "kis-historical-price-only-beta".into(),
+                schema_version: 1,
+                audience: "OWNER_ONLY".into(),
+                vendor_snapshot: true,
+                strict_pit: false,
+                capability: "PRICE_RETURN_ONLY".into(),
+                materialization_status: "MATERIALIZED".into(),
+                registration_status: "UNREGISTERED".into(),
+                publication_status: "NOT_PUBLISHED".into(),
+                range_start: TradingDate::parse("2020-01-31").unwrap(),
+                range_end: TradingDate::parse("2026-08-19").unwrap(),
+                instruments: vec!["069500.KRX".into()],
+                instrument_count: 1,
+                session_count: 1,
+                bar_count: 1,
+            },
         };
         let debug = format!("{verified:?}");
         assert!(debug.contains("VerifiedHistoricalPriceOnlyArtifact"));
@@ -2307,6 +2472,30 @@ mod tests {
             verified.candidate_content_sha256(),
             candidate.content_hash()
         );
+        let summary = verified.approval_summary();
+        assert_eq!(
+            summary.stage5_manifest_sha256(),
+            candidate.source_manifest_hash()
+        );
+        assert_eq!(
+            summary.action_manifest_sha256(),
+            candidate.action_manifest_hash()
+        );
+        assert_eq!(summary.schema_id(), "kis-historical-price-only-beta");
+        assert_eq!(summary.schema_version(), 1);
+        assert_eq!(summary.audience(), "OWNER_ONLY");
+        assert!(summary.vendor_snapshot());
+        assert!(!summary.strict_pit());
+        assert_eq!(summary.capability(), "PRICE_RETURN_ONLY");
+        assert_eq!(summary.materialization_status(), "MATERIALIZED");
+        assert_eq!(summary.registration_status(), "UNREGISTERED");
+        assert_eq!(summary.publication_status(), "NOT_PUBLISHED");
+        assert_eq!(summary.range_start().to_string(), "2020-01-31");
+        assert_eq!(summary.range_end().to_string(), "2026-08-19");
+        assert_eq!(summary.instruments().len(), 11);
+        assert_eq!(summary.instrument_count(), 11);
+        assert_eq!(summary.session_count(), 1608);
+        assert_eq!(summary.bar_count(), 17688);
         assert_eq!(
             std::fs::read(verified.path().join("bars.ndjson")).unwrap(),
             before_bars

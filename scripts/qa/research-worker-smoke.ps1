@@ -320,7 +320,10 @@ function Invoke-StaticChecks {
         throw 'Dockerfile missing the approved digest-pinned Alpine runtime'
     }
     Assert-Contains $dockerText 'cargo build --locked --release --package collectors --bin research-worker' 'Dockerfile'
+    Assert-Contains $dockerText 'cargo build --locked --release --package collectors --bin kis-historical-price-beta-approval-check' 'Dockerfile'
+    Assert-Contains $dockerText 'COPY --from=builder /build/target/release/kis-historical-price-beta-approval-check /usr/local/bin/kis-historical-price-beta-approval-check' 'Dockerfile'
     Assert-Contains $dockerText 'ENTRYPOINT ["/usr/local/bin/research-worker"]' 'Dockerfile'
+    Assert-Contains $dockerText 'COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' 'Dockerfile'
     foreach ($buildDockerfile in @($dockerfile, $candidateDockerfile)) {
         $buildText = Get-Content -Raw -LiteralPath $buildDockerfile
         foreach ($embeddedCopy in @(
@@ -340,7 +343,7 @@ function Invoke-StaticChecks {
         }
     }
     $ignoreLines = @(Get-Content -LiteralPath $dockerignore | ForEach-Object Trim)
-    foreach ($pattern in @('**', '!Cargo.toml', '!Cargo.lock', '!rust-toolchain.toml', '!crates/**', '!data-pipelines/collectors/**', '!apps/api-server/auth/**', '!tests/integration/migration-contract/**', '!tests/fixtures/kr-etf/contract/**', '**/target/**', '**/.git/**', '**/.worktrees/**', '**/.env.*', '**/credentials/**', '**/secrets/**', '**/raw/**', '**/*.pem', '**/*.key', '**/*.p12', '**/*.pfx')) {
+    foreach ($pattern in @('**', '!Cargo.toml', '!Cargo.lock', '!rust-toolchain.toml', '!crates/**', '!data-pipelines/collectors/**', '!apps/api-server/auth/**', '!configs/evidence/kis-historical-price-only-beta-approved-artifacts.json', '!tests/integration/migration-contract/**', '!tests/fixtures/kr-etf/contract/**', '**/target/**', '**/.git/**', '**/.worktrees/**', '**/.env.*', '**/credentials/**', '**/secrets/**', '**/raw/**', '**/*.pem', '**/*.key', '**/*.p12', '**/*.pfx')) {
         if ($ignoreLines -notcontains $pattern) { throw "Docker build-context policy is missing: $pattern" }
     }
     if (@($ignoreLines | Where-Object { $_ -match '^!scripts(?:/|$)' }).Count -ne 0) {

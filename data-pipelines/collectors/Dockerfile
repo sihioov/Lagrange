@@ -15,6 +15,7 @@ COPY crates ./crates
 COPY data-pipelines/collectors ./data-pipelines/collectors
 COPY apps/api-server/auth ./apps/api-server/auth
 COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
+COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json
 COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml
 COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json
 COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json
@@ -24,7 +25,8 @@ COPY tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
 COPY tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contract
 
 RUN cargo build --locked --release --package collectors --bin research-worker \
-    && cargo build --locked --release --package collectors --bin kis-historical-price-beta-artifact
+    && cargo build --locked --release --package collectors --bin kis-historical-price-beta-artifact \
+    && cargo build --locked --release --package collectors --bin kis-historical-price-beta-approval-check
 
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 
@@ -39,6 +41,7 @@ RUN apk add --no-cache ca-certificates libgcc libpq libssl3 \
 WORKDIR /opt/lagrange
 COPY --from=builder /build/target/release/research-worker /usr/local/bin/research-worker
 COPY --from=builder /build/target/release/kis-historical-price-beta-artifact /usr/local/bin/kis-historical-price-beta-artifact
+COPY --from=builder /build/target/release/kis-historical-price-beta-approval-check /usr/local/bin/kis-historical-price-beta-approval-check
 COPY --from=builder /build/tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
 COPY --from=builder /build/tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contract
 

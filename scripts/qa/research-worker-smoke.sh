@@ -273,7 +273,10 @@ docker_text="$(<"$dockerfile")"
 printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+rust:1\.97\.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900[[:space:]]+AS[[:space:]]+builder[[:space:]]*$' || fail 'Dockerfile missing the approved digest-pinned Rust builder'
 printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+alpine:3\.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d[[:space:]]*$' || fail 'Dockerfile missing the approved digest-pinned Alpine runtime'
 contains "$docker_text" 'cargo build --locked --release --package collectors --bin research-worker' 'Dockerfile'
+contains "$docker_text" 'cargo build --locked --release --package collectors --bin kis-historical-price-beta-approval-check' 'Dockerfile'
+contains "$docker_text" 'COPY --from=builder /build/target/release/kis-historical-price-beta-approval-check /usr/local/bin/kis-historical-price-beta-approval-check' 'Dockerfile'
 contains "$docker_text" 'ENTRYPOINT ["/usr/local/bin/research-worker"]' 'Dockerfile'
+contains "$docker_text" 'COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' 'Dockerfile'
 for build_dockerfile in "$dockerfile" "$candidate_dockerfile"; do
   build_text="$(<"$build_dockerfile")"
   for embedded_copy in \
@@ -291,7 +294,7 @@ while IFS= read -r line; do
 done < <(grep -i '^FROM[[:space:]]' "$dockerfile" || true)
 [ "$from_count" -gt 0 ] || fail 'Dockerfile has no FROM instructions'
 
-for pattern in '**' '!Cargo.toml' '!Cargo.lock' '!rust-toolchain.toml' '!crates/**' '!data-pipelines/collectors/**' '!apps/api-server/auth/**' '!tests/integration/migration-contract/**' '!tests/fixtures/kr-etf/contract/**' '**/target/**' '**/.git/**' '**/.worktrees/**' '**/.env.*' '**/credentials/**' '**/secrets/**' '**/raw/**' '**/*.pem' '**/*.key' '**/*.p12' '**/*.pfx'; do
+for pattern in '**' '!Cargo.toml' '!Cargo.lock' '!rust-toolchain.toml' '!crates/**' '!data-pipelines/collectors/**' '!apps/api-server/auth/**' '!configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' '!tests/integration/migration-contract/**' '!tests/fixtures/kr-etf/contract/**' '**/target/**' '**/.git/**' '**/.worktrees/**' '**/.env.*' '**/credentials/**' '**/secrets/**' '**/raw/**' '**/*.pem' '**/*.key' '**/*.p12' '**/*.pfx'; do
   grep -Fxq -- "$pattern" "$dockerignore" || fail "Docker build-context policy is missing: $pattern"
 done
 if grep -Eq '^!scripts(/|$)' "$dockerignore"; then fail 'QA fsync probe must remain outside the worker build context'; fi

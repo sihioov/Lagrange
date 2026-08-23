@@ -108,8 +108,9 @@ pub use historical_price_only::{
     materialize_historical_price_only_beta,
 };
 pub use historical_price_only_artifact::{
-    HistoricalPriceOnlyArtifactError, VerifiedHistoricalPriceOnlyArtifact,
-    read_historical_price_only_artifact, write_historical_price_only_artifact,
+    HistoricalPriceOnlyArtifactApprovalSummary, HistoricalPriceOnlyArtifactError,
+    VerifiedHistoricalPriceOnlyArtifact, read_historical_price_only_artifact,
+    write_historical_price_only_artifact,
 };
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,
