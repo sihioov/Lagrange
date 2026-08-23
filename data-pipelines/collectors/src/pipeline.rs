@@ -89,6 +89,45 @@ impl PipelineError {
         }
     }
 
+    /// A bounded, provider-safe description of which typed failure occurred.
+    ///
+    /// The worker collapses every `PipelineError` into one `PIPELINE_FAILED`
+    /// code and the fixed message "research pipeline failed", so an operator
+    /// reading a failed run cannot tell a publication-state conflict from a
+    /// normalization failure. Diagnosing one such failure previously required
+    /// copying the Raw store out of the protected volume and rebuilding the
+    /// crate with ad-hoc prints.
+    ///
+    /// Every component here is either a fixed variant name or a string this
+    /// repository itself formatted; no provider response body, header, or
+    /// broker message can reach it, so exposing it does not widen the KIS
+    /// read-only boundary.
+    pub fn diagnostic_detail(&self) -> String {
+        match self {
+            // IngestError can quote provider transport text, so name the
+            // variant without its payload.
+            Self::Ingest { .. } => "Ingest".to_owned(),
+            Self::Manifest { .. } => "Manifest".to_owned(),
+            Self::Normalize { .. } => "Normalize".to_owned(),
+            Self::InvalidRecoveryCursor { .. } => "InvalidRecoveryCursor".to_owned(),
+            Self::InvalidRecoverySnapshotBoundary { .. } => {
+                "InvalidRecoverySnapshotBoundary".to_owned()
+            }
+            Self::InvalidRecoverySnapshotPosition => "InvalidRecoverySnapshotPosition".to_owned(),
+            Self::InvalidRecoveryPageSize => "InvalidRecoveryPageSize".to_owned(),
+            Self::Publication { source, .. } => {
+                format!("Publication({})", publication_error_variant(source))
+            }
+            Self::Sink { stage, source, .. } => {
+                format!("Sink(stage={stage:?}, {})", sink_error_detail(source))
+            }
+            Self::PartialPublication { .. } => "PartialPublication".to_owned(),
+            Self::UnexpectedPublishOutcome { state, outcome, .. } => {
+                format!("UnexpectedPublishOutcome(state={state:?}, outcome={outcome:?})")
+            }
+        }
+    }
+
     pub const fn stage(&self) -> PipelineStage {
         match self {
             Self::Ingest { .. } => PipelineStage::Ingest,
@@ -904,4 +943,53 @@ where
         cursor,
         has_more,
     })
+}
+
+/// Fixed variant name for a publication failure. `PublicationError` messages
+/// describe our own canonical contract, but keep this to the variant so the
+/// shape of the diagnostic stays stable.
+fn publication_error_variant(error: &PublicationError) -> &'static str {
+    match error {
+        PublicationError::Store(_) => "Store",
+        PublicationError::UnsupportedManifestScope { .. } => "UnsupportedManifestScope",
+        PublicationError::UnsupportedManifestMode { .. } => "UnsupportedManifestMode",
+        PublicationError::NonCanonicalNormalizedManifest { .. } => "NonCanonicalNormalizedManifest",
+        PublicationError::InvalidCanonicalFile { .. } => "InvalidCanonicalFile",
+        PublicationError::InvalidCanonicalProvenance { .. } => "InvalidCanonicalProvenance",
+        PublicationError::SizeMismatch { .. } => "SizeMismatch",
+        PublicationError::SizeExceedsPostgresBigint { .. } => "SizeExceedsPostgresBigint",
+        PublicationError::UnexpectedContentHash { .. } => "UnexpectedContentHash",
+        PublicationError::NonUtf8StoragePath { .. } => "NonUtf8StoragePath",
+        PublicationError::ReadbackFileCountMismatch { .. } => "ReadbackFileCountMismatch",
+        PublicationError::ReadbackFileNameMismatch { .. } => "ReadbackFileNameMismatch",
+        PublicationError::MalformedBars { .. } => "MalformedBars",
+        PublicationError::InvalidBarDate { .. } => "InvalidBarDate",
+        PublicationError::MalformedCalendar { .. } => "MalformedCalendar",
+        PublicationError::UnsupportedCalendarTimezone { .. } => "UnsupportedCalendarTimezone",
+        PublicationError::InvalidCalendarSessionTimes { .. } => "InvalidCalendarSessionTimes",
+        PublicationError::InvalidCalendarDate { .. } => "InvalidCalendarDate",
+        PublicationError::InvalidCalendarTimestamp { .. } => "InvalidCalendarTimestamp",
+        PublicationError::InconsistentCalendarInstant { .. } => "InconsistentCalendarInstant",
+        PublicationError::CalendarDateBothSessionAndHoliday { .. } => {
+            "CalendarDateBothSessionAndHoliday"
+        }
+        PublicationError::ConflictingCalendarFact { .. } => "ConflictingCalendarFact",
+        PublicationError::ConflictingCalendarProvenance { .. } => "ConflictingCalendarProvenance",
+    }
+}
+
+/// `Conflict` and `Invariant` carry strings this repository formatted from its
+/// own schema, so they are safe to surface verbatim and are exactly the text
+/// an operator needs. The sqlx-backed variants may quote database transport
+/// detail, so those are named without their payload.
+fn sink_error_detail(error: &SinkError) -> String {
+    match error {
+        SinkError::Conflict(reason) => format!("SinkError::Conflict: {reason}"),
+        SinkError::Invariant(reason) => format!("SinkError::Invariant: {reason}"),
+        SinkError::RetryableDatabase(_) => "SinkError::RetryableDatabase".to_owned(),
+        SinkError::PermanentDatabase(_) => "SinkError::PermanentDatabase".to_owned(),
+        SinkError::DatabaseConflict { context, .. } => {
+            format!("SinkError::DatabaseConflict: {context}")
+        }
+    }
 }

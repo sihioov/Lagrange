@@ -63,6 +63,14 @@ struct ErrorRecord {
     response_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     file_name: Option<String>,
+    /// Which typed failure occurred, for the codes that collapse many
+    /// distinct variants into one. `PIPELINE_FAILED` and
+    /// `PRICE_CURATION_FAILED` each cover roughly thirty variants and the
+    /// message is a fixed sentence, so a failed production run named neither
+    /// the defect nor the input. Only fixed variant names and strings this
+    /// repository formatted appear here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -684,6 +692,21 @@ fn error_record(
         file_name: diagnostic
             .and_then(|value| value.file_name)
             .map(str::to_owned),
+        detail: pipeline_detail(error),
+    }
+}
+
+/// Name the typed variant behind the two error codes that collapse the most
+/// distinct failures. `CurateError` messages are built entirely from this
+/// repository's own contract vocabulary (instrument ids, dates, context
+/// labels), so its `Display` is safe verbatim; `PipelineError` decides per
+/// variant, because some of its sources can quote provider transport text.
+fn pipeline_detail(error: &WorkerError) -> Option<String> {
+    match error {
+        WorkerError::Pipeline(source) => Some(source.diagnostic_detail()),
+        WorkerError::Curation(source) => Some(source.to_string()),
+        WorkerError::Cycle { source, .. } => pipeline_detail(source),
+        _ => None,
     }
 }
 
