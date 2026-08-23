@@ -1065,6 +1065,67 @@ DB publication이 성공하기 전까지 이 벽은 "원인 수정, 운영 미�
 본문이 아니다)는 노출해도 KIS 안전 경계를 침범하지 않는다. §4.3에 등재한다.
 
 
+### 0.25 §0.24 수정의 운영 검증 — 큐레이션 벽은 뚫렸고, 그 뒤에 두 개가 더 있었다 (2026-08-23)
+
+소유자가 3시간 한정 sudo를 발급해 §0.24 수정을 운영 호스트에 반영했다. 지난번 발급의 결함
+두 개(회수 유닛이 `/run`에 있어 재부팅하면 사라짐, `OnActiveSec`을 `daemon-reload`가 재기준화)를
+고쳐 유닛을 `/etc`에 두고 **절대 시각** `OnCalendar`를 썼다.
+
+**세 가지가 서로 어긋나 있었다.** 타이머가 실행하는 릴리스는 `cbb7357`, worker 이미지는
+`e3d1739`, main은 `9b4a175`였다. `cbb7357..9b4a175` 사이에 큐레이션뿐 아니라 **운영 스크립트도
+바뀌었으므로**(마감 가드 `7f72d39`, `lib/db.sh` `ccea9c2`) 셋 다 갱신했다. 이것이 §0.23이
+"릴리스 커밋·이미지 커밋·타이머 대상이 일치하는지 자동 검사가 없다"로 남긴 항목의 실제 비용이다.
+
+**① 큐레이션 수정은 운영에서 동작한다 — 확인.** `/var/lib/lagrange/data/curated/datasets/krx_eod_bars/`에
+**`version=3`이 생성됐다.** `source_batches`가 08-18(`655f5f30`)과 08-19(`4140c8d1`) **두 개**이고
+`bar_count=22`, artifacts 33개다. 수정 전에는 이 지점에서 영구 실패했다. 이미지 라벨
+`org.opencontainers.image.revision`이 `9b4a1750ef...`임을 실행 전에 확인했다(§0.21의 낡은
+바이너리 함정을 이번에는 밟지 않았다).
+
+**② 다음 벽 — entitlement. 이번에는 DB가 직접 말했다.** PostgreSQL 로그에:
+
+    ERROR:  price dataset requires one exact active entitlement
+    CONTEXT: PL/pgSQL function public.resolve_price_dataset_entitlement(text,date,date) line 26
+
+원장 `candidate_raw_batch_publications`에 08-19 배치가 **내 실행 시각(06:07:08Z)에** 기록됐다:
+`state=BLOCKED reason_code=ENTITLEMENT_INACTIVE rights_first_date=2026-08-18
+rights_last_date=2026-08-19`. **누적 창이 정확히 계산됐다는 증거이며**, 수정 전에는 큐레이션이
+먼저 죽어 이 지점에 도달조차 못 했다. §4.2-4는 이제 추정이 아니라 **DB가 명시적으로 요구하는
+차단 항목**이다. (§0.23이 인과를 잘못 지목했던 그 테이블이 맞지만, 이번엔 근거가 다르다 —
+그때는 "비어 있다"는 관찰뿐이었고 지금은 함수가 거부하는 로그가 있다.)
+
+**③ 아직 규명 못 한 것.** 그 뒤 08-19에서 `PIPELINE_FAILED`(phase=publication,
+batch_id=`4140c8d1`, class=permanent)가 남는다. **어느 변종인지 모른다.** 배제한 것:
+`PublicationBundle::from_raw`(두 배치 모두 로컬 통과), `validate_bundle`(두 배치 모두 통과),
+`PublicationState::Partial`(`data_batches`·`trading_calendars`·`trading_calendar_versions`
+전부 08-19 행 0건), SQL 거부(해당 실행 구간 PostgreSQL 로그에 entitlement 외 에러 없음),
+신규 KIS 호출(raw 디렉터리에 오늘 생성된 배치 없음). **추측하지 않고 미확인으로 남긴다.**
+
+**④ 그래서 진단 가능성을 먼저 고쳤다 (`485c937`, §4.3-7).** 코드 역추적이 여기서 막힌 것이
+§0.24에 이어 **두 번째**다. `PIPELINE_FAILED`와 `PRICE_CURATION_FAILED`가 각각 서른 개 남짓
+변종을 고정 문장 하나로 접는 것이 원인이므로, 변종 이름을 담는 `detail` 필드를 추가했다.
+provider 전송 텍스트를 인용할 수 있는 `IngestError`와 sqlx 계열은 payload 없이 이름만,
+우리가 만든 문자열인 `SinkError::Conflict/Invariant`는 그대로 노출한다. `PublicationError`는
+exhaustive match라 변종이 늘면 컴파일 에러가 난다. KIS 경계는 넓히지 않는다.
+
+**⑤ 부수 확인 — 중복 유닛 결함은 kis-daily에도 있다.** `install-kis-daily.sh --apply`는 새
+세대를 설치하면서 **이전 세대를 비활성화하지 않는다.** 설치 직후 `cbb7357`과 `9b4a175`
+타이머가 **동시에 16:30 발사 예정**이었고, 직접 `disable --now`로 정리했다. `--replace-existing`은
+같은 이름의 기존 유닛 파일에만 관여하므로 커밋 접미사가 바뀌면 도움이 되지 않는다.
+
+**⑥ §0.23의 한 문장을 정정한다.** "`lagrange-kis-backfill-*` 타이머 3세대가 전부 enabled"는
+**지금 사실이 아니다** — `systemctl list-unit-files`에서 세 개 모두 `disabled`다. 언제 그렇게
+됐는지는 특정할 수 없으므로(내가 이번 세션에 끈 것은 `lagrange-kis-daily-cbb7357.timer`뿐이다)
+"현재 disabled"라는 관찰만 기록한다.
+
+**⑦ 운영 지식 하나.** `deploy-production-release.sh --apply`의 `--env-source` 기본값은
+저장소 체크아웃 안의 `.env`인데, 스크립트는 그 **부모 디렉터리가 root 소유일 것**을 요구한다.
+사용자 소유 체크아웃에서는 항상 거부되며 메시지는 `install-root ancestor must be root-owned`라
+install-root 문제처럼 읽힌다(검사 함수가 두 경로에 공유되고 메시지가 하드코딩이다).
+root 소유 보호 사본 `/etc/lagrange/compose.env.pending`을 명시해야 한다 — 내용은 sha256으로
+동일함을 확인했다.
+
+
 ---
 ---
 
@@ -1494,10 +1555,11 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
    배치당 단일 세션 calendar를 주는 회귀 테스트를 세웠다. **남은 것: worker 이미지 재빌드 →
    `org.opencontainers.image.revision`이 새 커밋과 일치하는지 확인 → 08-19 재실행 →
    version=3과 DB publication 확인.**
-7. **`CurateError` 진단 가능성 (§0.24 부수 발견).** 약 30개 변종이 전부
-   `PRICE_CURATION_FAILED` + `"price curation failed"`로 접혀 변종 이름조차 남지 않는다
-   (`research-worker.rs:709`). 변종 이름과 구조화 필드는 우리가 만든 문자열이라 노출해도
-   KIS 안전 경계를 침범하지 않는다.
+7. ~~**`CurateError` 진단 가능성.**~~ **완료 (2026-08-23, `485c937`, §0.25-④)** —
+   `PIPELINE_FAILED`와 `PRICE_CURATION_FAILED` 양쪽에 변종 이름을 담는 `detail` 필드를
+   추가했다. 같은 벽에 두 번 부딪힌 뒤에 고쳤다.
+8. **08-19 `PIPELINE_FAILED`의 변종 규명 (§0.25-③, 출시 차단).** `detail` 필드가 실린
+   이미지로 재실행하면 바로 드러난다. 배제한 것과 남은 후보는 §0.25-③에 있다.
 
 **작지만 기록해 둘 잔여 항목** (아키텍트 검토에서 발견, 차단 아님): `strategy_promotion`(§3.5)이 계좌 단위라 그 계좌에 묶인 주문 전부를 승격된 것으로 본다 — 운영 원천이 채워져 결정적 검사가 되기 전에 재검토할 것. 이전에 기록한 `positions` 소유자 재확인 gap은 0038의 account-owner 복합 FK로 닫혔다. §0.16의 A(Paper 런타임 `CurateStore` 이중 경로)와 C(CI가 Python 스위트를 실행하지 않음)는 **2026-08-22에 종결됐다(§0.17)**.
 
