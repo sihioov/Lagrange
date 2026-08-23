@@ -47,6 +47,7 @@ pub mod curate;
 pub mod entitlement;
 pub mod freshness;
 pub mod historical_price_only;
+mod historical_price_only_approval;
 mod historical_price_only_artifact;
 pub mod ingest;
 pub mod instrument_master;
@@ -106,6 +107,10 @@ pub use historical_price_only::{
     HistoricalPriceOnlyBonusEvidence, HistoricalPriceOnlyCandidate, HistoricalPriceOnlyError,
     HistoricalPriceOnlyMetadata, HistoricalPriceOnlySessionProvenance,
     materialize_historical_price_only_beta,
+};
+pub use historical_price_only_approval::{
+    ApprovedHistoricalPriceOnlyArtifact, HistoricalPriceOnlyApprovalError,
+    HistoricalPriceOnlyArtifactPins, approve_historical_price_only_artifact,
 };
 pub use historical_price_only_artifact::{
     HistoricalPriceOnlyArtifactApprovalSummary, HistoricalPriceOnlyArtifactError,

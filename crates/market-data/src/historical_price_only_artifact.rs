@@ -14,7 +14,7 @@ use std::{
 
 use crate::contract::ResponseKind;
 use crate::historical_price_only::HistoricalPriceOnlyCandidate;
-use domain::{BatchId, ContentHash, FixedPoint, TradingDate, UtcTimestamp};
+use domain::{BatchId, ContentHash, FixedPoint, InstrumentId, TradingDate, UtcTimestamp};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::curate::Capability;
 use crate::historical_price_only::{
     HISTORICAL_PRICE_ONLY_FACTOR_SCALE, HISTORICAL_PRICE_ONLY_MATERIALIZER_VERSION,
-    HISTORICAL_PRICE_ONLY_PRICE_SCALE, HistoricalPriceOnlyAudience,
+    HISTORICAL_PRICE_ONLY_PRICE_SCALE, HistoricalPriceOnlyAudience, HistoricalPriceOnlyBar,
 };
 use crate::providers::kis::KR_ETF_CORE_SYMBOLS;
 
@@ -43,6 +43,7 @@ pub struct VerifiedHistoricalPriceOnlyArtifact {
     path: PathBuf,
     candidate_content_sha256: ContentHash,
     approval_summary: HistoricalPriceOnlyArtifactApprovalSummary,
+    approved_bars: Vec<HistoricalPriceOnlyBar>,
 }
 
 /// The non-sensitive, immutable facts an independent approval checker may
@@ -175,6 +176,10 @@ impl VerifiedHistoricalPriceOnlyArtifact {
     /// side effect.
     pub fn approval_summary(&self) -> &HistoricalPriceOnlyArtifactApprovalSummary {
         &self.approval_summary
+    }
+
+    pub(crate) fn approved_bars(&self) -> &[HistoricalPriceOnlyBar] {
+        &self.approved_bars
     }
 }
 
@@ -362,7 +367,7 @@ fn read_historical_price_only_artifact_with_expected(
     {
         return Err(HistoricalPriceOnlyArtifactError::InvalidArtifact);
     }
-    stream_validate_bars(
+    let approved_bars = stream_validate_bars(
         &bars,
         bars_snapshot.size,
         &unsigned.sessions,
@@ -409,6 +414,7 @@ fn read_historical_price_only_artifact_with_expected(
         path,
         candidate_content_sha256: candidate_content_sha256.clone(),
         approval_summary: validated_manifest.approval_summary,
+        approved_bars,
     })
 }
 
@@ -1399,7 +1405,7 @@ fn stream_validate_bars(
     instruments: &[String],
     expected_hash: &ContentHash,
     expected_bytes: Option<&[u8]>,
-) -> Result<(), HistoricalPriceOnlyArtifactError> {
+) -> Result<Vec<HistoricalPriceOnlyBar>, HistoricalPriceOnlyArtifactError> {
     if size < 0 || size > MAX_BARS_BYTES as i128 {
         return Err(HistoricalPriceOnlyArtifactError::InvalidArtifact);
     }
@@ -1422,11 +1428,11 @@ fn stream_validate_bars(
         validator.feed(&chunk[..read])?;
         remaining -= read;
     }
-    validator.finish()?;
+    let bars = validator.finish()?;
     if let Some(comparator) = comparator {
         comparator.finish()?;
     }
-    Ok(())
+    Ok(bars)
 }
 
 #[cfg(unix)]
@@ -2019,7 +2025,7 @@ fn validate_bars(
     }
     let mut validator = BarValidator::new(sessions, instruments, None);
     validator.feed(bytes)?;
-    validator.finish()
+    validator.finish().map(|_| ())
 }
 
 struct BarValidator<'a> {
@@ -2033,6 +2039,7 @@ struct BarValidator<'a> {
     count: usize,
     total_bytes: usize,
     saw_terminal_lf: bool,
+    approved_bars: Vec<HistoricalPriceOnlyBar>,
 }
 
 impl<'a> BarValidator<'a> {
@@ -2052,6 +2059,7 @@ impl<'a> BarValidator<'a> {
             count: 0,
             total_bytes: 0,
             saw_terminal_lf: false,
+            approved_bars: Vec::with_capacity(17688),
         }
     }
 
@@ -2136,10 +2144,30 @@ impl<'a> BarValidator<'a> {
         if self.count > 17688 {
             return Err(HistoricalPriceOnlyArtifactError::InvalidArtifact);
         }
+        let raw_trading_value = row
+            .raw_trading_value
+            .as_deref()
+            .map(parse_price)
+            .transpose()?;
+        self.approved_bars.push(HistoricalPriceOnlyBar {
+            instrument_id: InstrumentId::parse(&row.instrument_id)
+                .map_err(|_| HistoricalPriceOnlyArtifactError::InvalidArtifact)?,
+            session_date: row.session_date,
+            raw_open: open,
+            raw_high: high,
+            raw_low: low,
+            raw_close: close,
+            raw_volume: row.raw_volume,
+            raw_trading_value,
+            adjusted_open,
+            adjusted_high,
+            adjusted_low,
+            adjusted_close,
+        });
         Ok(())
     }
 
-    fn finish(self) -> Result<(), HistoricalPriceOnlyArtifactError> {
+    fn finish(self) -> Result<Vec<HistoricalPriceOnlyBar>, HistoricalPriceOnlyArtifactError> {
         let session_dates = self
             .sessions
             .iter()
@@ -2173,7 +2201,7 @@ impl<'a> BarValidator<'a> {
                 return Err(HistoricalPriceOnlyArtifactError::InvalidArtifact);
             }
         }
-        Ok(())
+        Ok(self.approved_bars)
     }
 }
 
@@ -2431,6 +2459,7 @@ mod tests {
                 session_count: 1,
                 bar_count: 1,
             },
+            approved_bars: Vec::new(),
         };
         let debug = format!("{verified:?}");
         assert!(debug.contains("VerifiedHistoricalPriceOnlyArtifact"));
@@ -2496,6 +2525,7 @@ mod tests {
         assert_eq!(summary.instrument_count(), 11);
         assert_eq!(summary.session_count(), 1608);
         assert_eq!(summary.bar_count(), 17688);
+        assert_eq!(verified.approved_bars().len(), 17_688);
         assert_eq!(
             std::fs::read(verified.path().join("bars.ndjson")).unwrap(),
             before_bars
