@@ -191,6 +191,24 @@ is not a READY or strict PIT dataset. One process-owned token manager normally
 issues one OAuth token POST within its lifetime; expiry/retry may require a
 later issue, so this is not an at-most-once guarantee.
 
+The provider-free owner-beta artifact tool has only two subcommands:
+
+```text
+kis-historical-price-beta-artifact materialize --raw-root <ABS_DATA_ROOT> --artifact-root <ABS_ARTIFACT_ROOT> --stage5-manifest-sha256 <sha256:64hex> --action-manifest-sha256 <sha256:64hex>
+kis-historical-price-beta-artifact check --artifact-root <ABS_ARTIFACT_ROOT> --candidate-content-sha256 <sha256:64hex>
+```
+
+`materialize` requires already reviewed immutable Stage5 and seven-file KSD
+manifest pins. Before reading Raw, it proves that the existing artifact root
+does not resolve to the data root or into Raw/Curated; the configured
+`LAGRANGE_ARTIFACTS_DIR` sibling is the intended topology. It then performs
+Raw verification, in-memory price-only materialization, and atomic no-replace
+artifact publication in one process. `check` reads only the sealed artifact
+and explicitly reports that Raw authenticity was not re-established. Neither
+command discovers or approves a pin, calls a provider, writes Curated/DB,
+registers a dataset, marks READY, or exposes a recommendation/backtest/Paper
+consumer.
+
 `DB_PASSWORD_FILE`, `KIS_APP_KEY_FILE`, and `KIS_APP_SECRET_FILE` are paths, not
 secret values. The worker reads each file during configuration validation,
 trims surrounding whitespace, rejects missing, unreadable, empty, or multiline

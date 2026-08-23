@@ -183,6 +183,67 @@ violations, and fixed-point or canonical-hash overflow/serialization failure.
 Acquisition timestamps retained in provenance are source retrieval evidence
 only; no market-open, market-close, or invented session timestamp is generated.
 
+## Sealed owner-only beta artifact boundary
+
+The next boundary projects the opaque in-memory candidate into exactly two
+canonical files, `bars.ndjson` and `manifest.json`, under a candidate-hash
+directory. The artifact state is fixed to `OWNER_ONLY`,
+`vendor_snapshot=true`, `strict_pit=false`, `PRICE_RETURN_ONLY`,
+`MATERIALIZED`, `UNREGISTERED`, and `NOT_PUBLISHED`. It has no conversion to
+Curated, a dataset pin, READY, recommendation, backtest, Paper, or publication
+types.
+
+The directory candidate hash is an opaque producer-input commitment. The
+candidate's canonical preimage includes Raw request provenance that the sealed
+artifact deliberately excludes. An artifact reader therefore validates only
+the trusted filesystem boundary, exact allowed files, canonical bytes,
+manifest self-hash, bars semantics, fixed flags, and equality between the
+directory pin and the manifest declaration. It must not claim to reconstruct
+or authenticate the producer candidate hash from the artifact alone.
+
+The projection and semantic parser remain crate-private. The Unix writer and
+reader now enforce descriptor-relative `O_NOFOLLOW` opens, single-link regular
+files, bounded reads, private modes, file/directory `fsync`, and atomic
+no-replace publication. Existing-destination success is permitted only after a
+descriptor-safe byte-identical verification; a collision never overwrites the
+existing artifact. Their adversarial reader and writer reviews are accepted.
+The remaining public seam is limited to a non-constructible verified handle
+and a provider-free `materialize`/`check` CLI whose resolved artifact root must
+be separate from Raw and Curated. No downstream consumer is exposed.
+
+The restricted command surface is exactly:
+
+```text
+kis-historical-price-beta-artifact materialize --raw-root <ABS_DATA_ROOT> --artifact-root <ABS_ARTIFACT_ROOT> --stage5-manifest-sha256 <sha256:64hex> --action-manifest-sha256 <sha256:64hex>
+kis-historical-price-beta-artifact check --artifact-root <ABS_ARTIFACT_ROOT> --candidate-content-sha256 <sha256:64hex>
+```
+
+`materialize` first resolves the existing roots and rejects an artifact root
+that is the data root, an ancestor of it, or equal to/below/aliased to
+`<ABS_DATA_ROOT>/raw` or `<ABS_DATA_ROOT>/curated`. The established
+`LAGRANGE_ARTIFACTS_DIR` topology, for example
+`/var/lib/lagrange/data/artifacts`, is a permitted sibling boundary. The gate
+runs before Raw verification and creates no directory. It then performs the
+explicit two-pin Raw verification, creates the opaque candidate in memory, and
+passes that value directly to the no-replace writer. It never discovers a pin
+or serializes an alternate candidate DTO.
+
+`check` accepts no Raw root or source pins. Its successful report says
+`raw_authenticity=NOT_REAUTHENTICATED`: it proves the trusted filesystem,
+canonical artifact bytes, fixed contract, self-hash, and directory binding,
+not reconstruction of the excluded Raw provenance. Both commands emit only
+static reason codes on failure and never print supplied paths, file names,
+requests, response bodies, credentials, batch IDs, or internal errors. There
+is no replace, registration, READY, publication, recommendation, backtest, or
+Paper option. The CLI root gate, public API shape, and static output boundary
+passed an independent source review after implementation.
+
+The current production Raw pin discovery is independently blocked on the exact
+seven-file KSD action batch. This implementation work does not authorize a
+replacement pin, a guessed zero-action attestation, or a new historical KIS
+request. No real artifact can be created or registered until the exact action
+evidence is available and passes the existing verifier.
+
 ## Deliberate limitations
 
 KIS `inquire-daily-itemchartprice` is a current vendor snapshot acquired at

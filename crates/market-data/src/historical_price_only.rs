@@ -933,5 +933,86 @@ fn canonical_representation<'a>(
 }
 
 #[cfg(test)]
+pub(crate) fn artifact_test_candidate() -> HistoricalPriceOnlyCandidate {
+    use uuid::Uuid;
+
+    let start = TradingDate::parse("2020-01-31").unwrap();
+    let end = TradingDate::parse("2026-08-19").unwrap();
+    let session_dates = crate::range_normalize::ExpectedRangeSessions::approved_xkrx(start, end)
+        .expect("embedded approved XKRX sessions")
+        .sessions;
+    let h = |value: &str| ContentHash::from_bytes(value.as_bytes());
+    let id = |value| BatchId::from_uuid(Uuid::from_u128(value));
+    let timestamp = UtcTimestamp::parse_rfc3339("2026-08-19T00:00:00Z").unwrap();
+    let sessions = session_dates
+        .iter()
+        .enumerate()
+        .map(|(i, date)| HistoricalPriceOnlySessionProvenance {
+            session_date: *date,
+            normalized_batch_id: id(i as u128 + 100),
+            normalized_entry_hash: h(&format!("entry-{i}")),
+            normalized_bars_hash: h(&format!("bars-{i}")),
+            acquired_at: timestamp,
+        })
+        .collect::<Vec<_>>();
+    let source_files = KR_ETF_CORE_SYMBOLS
+        .iter()
+        .flat_map(|symbol| {
+            (1..=17).map(move |window| {
+                let name = format!("daily-bars-range-window-{window}-{symbol}-page-01.json");
+                FileEntry {
+                    kind: ResponseKind::Bars,
+                    file_name: name.clone(),
+                    content_hash: h(&name),
+                    size_bytes: 1,
+                    request: RequestMetadata {
+                        endpoint: "sentinel-request-secret".into(),
+                        query: vec![("sentinel-query".into(), "sentinel-value".into())],
+                        headers: vec![("sentinel-header".into(), "sentinel-secret".into())],
+                        mode: crate::contract::FetchMode::Credentialed,
+                    },
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    let bars = KR_ETF_CORE_SYMBOLS
+        .iter()
+        .flat_map(|symbol| {
+            session_dates
+                .iter()
+                .map(move |date| HistoricalPriceOnlyBar {
+                    instrument_id: InstrumentId::from_parts(symbol, Venue::Krx).unwrap(),
+                    session_date: *date,
+                    raw_open: FixedPoint::parse("10.00").unwrap(),
+                    raw_high: FixedPoint::parse("11.00").unwrap(),
+                    raw_low: FixedPoint::parse("9.00").unwrap(),
+                    raw_close: FixedPoint::parse("10.50").unwrap(),
+                    raw_volume: 1,
+                    raw_trading_value: Some(FixedPoint::parse("1.00").unwrap()),
+                    adjusted_open: FixedPoint::parse("10.0000").unwrap(),
+                    adjusted_high: FixedPoint::parse("11.0000").unwrap(),
+                    adjusted_low: FixedPoint::parse("9.0000").unwrap(),
+                    adjusted_close: FixedPoint::parse("10.5000").unwrap(),
+                })
+        })
+        .collect::<Vec<_>>();
+    HistoricalPriceOnlyCandidate {
+        range_start: start,
+        range_end: end,
+        source_batch_id: id(1),
+        source_manifest_hash: h("source"),
+        source_files,
+        action_batch_id: id(2),
+        action_manifest_hash: h("actions"),
+        action_file_count: 7,
+        sessions,
+        bonus_evidence: Vec::new(),
+        bars,
+        metadata: HistoricalPriceOnlyMetadata::FIXED,
+        content_hash: h("opaque-candidate-lineage"),
+    }
+}
+
+#[cfg(test)]
 #[path = "historical_price_only_tests.rs"]
 mod tests;

@@ -1,7 +1,7 @@
 # Owner-only Read-only Beta Launch Execution Plan
 
 > 확정일: 2026-08-23<br>
-> 상태: **Owner 승인 완료 / 2026-08-24 구현 착수**<br>
+> 상태: **Owner 승인 완료 / 2026-08-24 구현 진행 중 / KSD exact pin 외부 차단**<br>
 > 코드 기준선: `main@1150700`<br>
 > 준비도 감사 기준선: `analysis/launch-readiness-audit@6ae6c50`
 
@@ -95,6 +95,12 @@ Stage5 스냅샷이 존재한다고 해서 즉시 서비스할 수 있는 것은
 재현 가능하게 승격하는 별도 브리지**다. 이 브리지는 기존 Stage4A/4B 증거의 의미를
 변경하거나 빈 승인 레지스트리를 자체 승인하는 지름길이 되어서는 안 된다.
 
+2026-08-24 운영 Raw의 읽기 전용 pin discovery 결과, Stage5 입력은 식별됐지만 계약이
+요구하는 정확한 7파일 KSD 기업행위 배치는 없거나 단일 후보로 증명되지 않았다. 따라서
+이 차단이 해소되기 전에는 pin을 추측하거나 새 역사 KIS 호출을 만들지 않는다. 대신
+검증된 입력이 들어왔을 때만 생성 가능한 봉인 산출물, 검사기와 제한 소비 경계를 먼저
+완성한다.
+
 이 계약을 허위 주장 없이 구현할 수 없다는 결론이 나오면 작업을 멈추고 범위를 다시
 결정한다. 이 조건이 전체 일정의 가장 큰 변수다.
 
@@ -180,7 +186,7 @@ Stage5 스냅샷이 존재한다고 해서 즉시 서비스할 수 있는 것은
 
 `fix(ops): align the daily collector with its pinned release`
 
-### 작업 2 — Stage5 역사 스냅샷의 가격 전용 베타 브리지
+### 작업 2 — Stage5 역사 스냅샷의 봉인된 가격 전용 베타 산출물
 
 **주요 대상**
 
@@ -202,12 +208,19 @@ Stage5 스냅샷이 존재한다고 해서 즉시 서비스할 수 있는 것은
 - 상장일, 역사적 장중 스케줄, `available_at`을 추정하거나 과거로 소급하지 않는다.
 - 배당 포함 성과물이나 `TOTAL_RETURN_CAPABLE` 판정을 만들지 않는다.
 - 무상증자 이외의 비어 있지 않은 기업행위가 나타나면 전체 승격을 중단한다.
+- 첫 산출물은 `OWNER_ONLY`, `MATERIALIZED`, `UNREGISTERED`, `NOT_PUBLISHED`로 봉인한다.
+  이 산출물 자체에는 Curated, DB, DatasetPin, 추천, 백테스트 또는 READY 변환 능력을
+  주지 않는다.
+- 후보 hash는 생산자 입력 계보의 불투명 commitment다. reader는 manifest 자기 무결성과
+  디렉터리 pin 일치만 증명하며, 산출물에서 제외한 Raw request metadata를 재구성했다고
+  주장하지 않는다.
 
 **수행**
 
 1. 먼저 입력 hash, 허용 기간, ETF11, 산출물 schema, 실패 조건을 문서와 RED 테스트로
    고정한다.
-2. Stage5 배치에서 가격 전용 canonical dataset을 결정적으로 생성하는 브리지를 구현한다.
+2. Stage5와 KSD exact pin을 검증한 뒤 메모리상의 불투명 후보를 결정적으로 생성하는
+   브리지를 구현한다.
 3. ETF별 정확한 관측 수와 전체 기간 연속성을 검증한다. 현재 스냅샷 기대치는 ETF당
    1,608개 관측이며, 실제 manifest와 다르면 자동 보정하지 않고 중단한다.
 4. 동일 입력이 byte-identical manifest와 hash를 만드는지 검증한다.
@@ -218,18 +231,25 @@ Stage5 스냅샷이 존재한다고 해서 즉시 서비스할 수 있는 것은
    - `strict_pit=true` 또는 총수익률 능력 오표기
    - manifest 변조와 승인 전 자체 등록
    - Member 또는 재배포 범위 사용
-6. 독립 코드 리뷰를 통과한 뒤에만 운영자 승인 후보 패키지를 만든다.
+6. 후보에서 허용 필드만 투영해 canonical manifest와 NDJSON을 만들고, descriptor-relative
+   no-follow open, 단일 link, 크기 상한, fsync, no-replace rename을 강제하는 봉인
+   writer/reader를 구현한다.
+7. provider-free `materialize`/`check` CLI만 공개하고, artifact root가 Raw/Curated와 resolved
+   path 또는 filesystem identity로 겹치면 Raw를 읽기 전에 중단한다. 생성·검사는 등록,
+   publication 또는 downstream 소비 능력을 갖지 않는다.
+8. 독립 코드·위협 리뷰를 통과한 뒤에만 운영자 승인 후보 패키지를 만든다.
 
 **수용 기준**
 
-- 기존 Stage5 bytes와 승인된 계약만으로 결과를 재현할 수 있다.
+- 기존 Stage5 bytes, 정확한 KSD action pin과 승인된 계약만으로 결과를 재현할 수 있다.
 - 가격수익률·비엄격 PIT·공급자 스냅샷 표지가 DB/API/UI까지 손실되지 않는다.
 - 미지원 기업행위나 증거 누락은 Raw/Curated/추천에 부분 노출되기 전에 fail-closed 한다.
 - 승인 레지스트리 수정과 데이터 생성은 같은 자동 작업이 아니다.
+- 봉인 산출물은 등록 전에는 downstream 서비스가 선택하거나 소비할 수 없다.
 
 **권장 커밋**
 
-`feat(data): publish the bounded price-only vendor snapshot`
+`feat(data): seal the bounded price-only vendor snapshot`
 
 ### 작업 3 — 증거 패키지 검토, 승인, 데이터셋 5-pin 등록
 
@@ -243,14 +263,16 @@ Stage5 스냅샷이 존재한다고 해서 즉시 서비스할 수 있는 것은
 
 **수행**
 
-1. 작업 2의 패키지를 plan/check 모드로 생성하고 데이터·manifest·보고서 hash를 기록한다.
-2. 운영자가 코드가 생성한 hash와 별개로 범위, 11종목, 기간, 능력, PIT 표지를 검토한다.
-3. 검토한 manifest SHA만 별도 커밋으로 승인 레지스트리에 추가한다. 생성기가 자기 결과를
+1. 운영 Raw에서 정확한 7파일 KSD 배치와 manifest hash를 독립적으로 식별한다. 현재 이
+   선행 조건은 외부 차단 상태이며, 해소 전에는 추측 pin이나 새 역사 호출을 사용하지 않는다.
+2. 작업 2의 패키지를 plan/check 모드로 생성하고 데이터·manifest·보고서 hash를 기록한다.
+3. 운영자가 코드가 생성한 hash와 별개로 범위, 11종목, 기간, 능력, PIT 표지를 검토한다.
+4. 검토한 manifest SHA만 별도 커밋으로 승인 레지스트리에 추가한다. 생성기가 자기 결과를
    자동 승인하지 못하게 한다.
-4. 승인 후 `register-dataset-version.sh`를 plan → check → apply 순서로 실행한다.
-5. source version, raw batch, curated generation, strategy version, policy version의 정확한 5-pin을
+5. 승인 후 `register-dataset-version.sh`를 plan → check → apply 순서로 실행한다.
+6. source version, raw batch, curated generation, strategy version, policy version의 정확한 5-pin을
    기록하고 재조회한다.
-6. 개인 사용 entitlement의 reference/hash는 유지하되 본문이나 비밀을 Git에 넣지 않는다.
+7. 개인 사용 entitlement의 reference/hash는 유지하되 본문이나 비밀을 Git에 넣지 않는다.
 
 **수용 기준**
 
@@ -393,6 +415,9 @@ rollback한다.
 현실적인 예상은 **추천·백테스트 베타까지 4~7 영업일**, **Paper 포함 안정 베타까지
 7~10 영업일이며 최소 3개 실제 거래 세션**이다. 역사 가격 전용 브리지의 계약 검토에서
 새 증거 공백이 나오면 이 일정은 중단되고 재산정한다.
+
+현재 KSD exact pin 공백은 위 일정의 시작 조건을 막는 외부 차단점이다. 코드·테스트·리허설은
+병행하지만, 해당 증거가 확보된 날부터 데이터 등록과 4~7 영업일 예상치를 다시 계산한다.
 
 ## 9. 이번 출시 이후 백로그
 

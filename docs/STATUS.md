@@ -1518,6 +1518,43 @@ Member KR, 새 역사 수집·소스, 엄격 PIT·총수익률 주장 또는 실
 않는다. manifest 생성 경로의 자동 자기승인도 계속 금지하며, 분리된 검증이 계약 전부를
 확인한 경우에만 사전 승인된 등록 절차를 진행한다.
 
+### 0.33 소유자 베타 구현 진행과 현재 외부 차단 (2026-08-24)
+
+승인된 실행 계획의 선행 구현은 `4a975d3`(일일 상태 실패 분류), `3e77a3f`(역사 입력
+인증), `8e276ec`(가격 전용 메모리 후보), `07003be`(release 이미지 identity),
+`cd06b09`(읽기 전용 manifest snapshot), `daa47d5`(안전한 pin discovery)까지 진행됐다.
+프로덕션 읽기 전용 점검에서는 기존 `66b2a8c` release의 일일 timer 하나가 활성 상태이고
+정적 self-test와 현재 HEAD의 이미지 build plan/preflight가 통과했지만, 새 release 설치나
+timer 전환은 아직 수행하지 않았다.
+
+운영 Raw에 대한 body-free pin discovery 결과는 Stage5 고정 입력을 식별했지만, 계약이
+요구하는 정확한 7파일 KSD action batch를 단일 후보로 증명하지 못해
+`reason=action_evidence`로 차단됐다. 이 공백은 임의 hash, 빈 action 추정 또는 새 역사 KIS
+호출로 메우지 않는다. 따라서 실제 역사 artifact 생성, 데이터셋 등록, 5-pin, 추천·백테스트
+활성화와 3거래일 soak는 아직 시작할 수 없다.
+
+병행 가능한 오프라인 작업으로는 `OWNER_ONLY`, `MATERIALIZED`, `UNREGISTERED`,
+`NOT_PUBLISHED` 봉인 artifact의 canonical manifest/NDJSON 투영 코어와 Unix
+descriptor-relative reader/writer를 구현했다. 후보 hash는 제외된 Raw request metadata까지
+복원하는 artifact-content hash가 아니라 불투명 생산자 계보 pin으로 취급한다. reader와
+writer는 symlink·hardlink·교체 race·tamper·크기 상한·atomic no-replace·부분 실패 cleanup을
+포함한 테스트를 통과했고, 최초 writer 리뷰의 staging/cleanup 지적을 수정한 뒤 동일 보안
+리뷰어의 `ACCEPT`를 받았다. Raw/Curated와 canonical path·Unix filesystem identity가
+겹치지 않는 전용 artifact root gate와 제한형 `materialize`/`check` CLI도 구현하고 focused
+8개, 전체 collectors binary 86개 테스트와 두 crate의 warning-zero clippy를 통과했다.
+`materialize`는 같은 프로세스에서 pinned Raw verifier → opaque candidate → no-replace writer만
+호출하며, `check`는 artifact 자기 무결성만 확인하고 Raw를 재인증했다고 주장하지 않는다.
+공개 API·root 격리·정적 출력까지 독립 최종 리뷰에서 `ACCEPT`를 받았다. downstream
+consumer, 등록, publication은 여전히 없다. 현재 상태는 구현 완료·실데이터 외부 차단이지
+데이터 등록 또는 베타 출시 완료가 아니다.
+
+최종 로컬 재검증에서 `cargo test -p market-data`는 단위 141개와 모든 통합 테스트를 포함해
+전체 PASS했고, artifact focused 34개·artifact CLI 8개·collectors binary 86개도 PASS했다.
+`cargo test -p collectors` 전체 실행에서만 기존 `research_worker` 6개가 QA
+`DATABASE_URL` 부재(`NotPresent`)로 실패했다. 이는 §0.6·§0.11에 이미 기록된 동일한
+호스트 환경 제한이며 이번 artifact 변경의 회귀로 판정하지 않는다. 실제 QA PostgreSQL이나
+운영 DB를 임의로 대체해 green을 만들지 않았다.
+
 ---
 ---
 
