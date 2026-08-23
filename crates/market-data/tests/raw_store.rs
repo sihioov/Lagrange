@@ -47,6 +47,12 @@ fn now(s: &str) -> UtcTimestamp {
     UtcTimestamp::parse_rfc3339(s).expect("valid timestamp")
 }
 
+fn commit_lock_path(store: &RawStore) -> PathBuf {
+    store
+        .manifest_path(PROVIDER_KRX, MARKET_KR)
+        .with_file_name("commit.lock")
+}
+
 fn meta(mode: FetchMode) -> RequestMetadata {
     RequestMetadata {
         endpoint: "krx.eod.bars.v1".to_owned(),
@@ -479,6 +485,515 @@ fn corrupt_complete_or_middle_manifest_record_is_permanent() {
     assert!(matches!(
         store.read_manifest(PROVIDER_KRX, MARKET_KR),
         Err(StoreError::CorruptManifest { line: 1, .. })
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn read_committed_manifest_returns_append_order_without_orphan_reconciliation() {
+    let root = temp_root("committed-manifest");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let first_batch = BatchId::generate();
+    let first = store
+        .store_batch(
+            &spec(first_batch, &d, None),
+            &[envelope(
+                first_batch,
+                ResponseKind::Reference,
+                "first.json",
+                b"first",
+                now("2026-08-06T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let second_batch = BatchId::generate();
+    let second = store
+        .store_batch(
+            &spec(second_batch, &d, None),
+            &[envelope(
+                second_batch,
+                ResponseKind::Reference,
+                "second.json",
+                b"second",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let orphan_batch = BatchId::generate();
+    let orphan = store
+        .store_batch(
+            &spec(orphan_batch, &d, None),
+            &[envelope(
+                orphan_batch,
+                ResponseKind::Reference,
+                "orphan.json",
+                b"orphan",
+                now("2026-08-07T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    fs::write(
+        &manifest_path,
+        format!(
+            "{}\n{}\n",
+            serde_json::to_string(&first).unwrap(),
+            serde_json::to_string(&second).unwrap()
+        ),
+    )
+    .unwrap();
+    let before = fs::read(&manifest_path).unwrap();
+
+    let committed = store
+        .read_committed_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("committed manifest readable");
+    assert_eq!(committed, vec![first, second]);
+    assert!(
+        !committed
+            .iter()
+            .any(|entry| entry.batch_id == orphan.batch_id)
+    );
+    assert_eq!(fs::read(&manifest_path).unwrap(), before);
+}
+
+#[test]
+fn read_committed_manifest_absent_store_creates_nothing() {
+    let root = temp_root("committed-manifest-absent");
+    let store = RawStore::new(&root);
+    let raw_root = root.join("raw");
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let lock_path = commit_lock_path(&store);
+
+    assert!(
+        store
+            .read_committed_manifest(PROVIDER_KRX, MARKET_KR)
+            .is_err()
+    );
+    assert!(!raw_root.exists());
+    assert!(!manifest_path.exists());
+    assert!(!lock_path.exists());
+}
+
+#[test]
+fn read_committed_manifest_rejects_invalid_scope_without_creating_anything() {
+    let root = temp_root("committed-manifest-invalid-scope");
+    let store = RawStore::new(&root);
+
+    assert!(matches!(
+        store.read_committed_manifest("../krx", MARKET_KR),
+        Err(StoreError::UnsafeScope { .. })
+    ));
+    assert!(!root.join("raw").exists());
+}
+
+#[test]
+fn read_committed_manifest_requires_existing_lock_and_manifest() {
+    let root_without_lock = temp_root("committed-manifest-missing-lock");
+    let store_without_lock = RawStore::new(&root_without_lock);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    store_without_lock
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let manifest_path = store_without_lock.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let before = fs::read(&manifest_path).unwrap();
+    let lock_path = commit_lock_path(&store_without_lock);
+    fs::remove_file(&lock_path).unwrap();
+    assert!(
+        store_without_lock
+            .read_committed_manifest(PROVIDER_KRX, MARKET_KR)
+            .is_err()
+    );
+    assert!(!lock_path.exists());
+    assert_eq!(fs::read(&manifest_path).unwrap(), before);
+
+    let root_without_manifest = temp_root("committed-manifest-missing-manifest");
+    let store_without_manifest = RawStore::new(&root_without_manifest);
+    let batch = BatchId::generate();
+    store_without_manifest
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let manifest_path = store_without_manifest.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let lock_path = commit_lock_path(&store_without_manifest);
+    fs::remove_file(&manifest_path).unwrap();
+    assert!(
+        store_without_manifest
+            .read_committed_manifest(PROVIDER_KRX, MARKET_KR)
+            .is_err()
+    );
+    assert!(!manifest_path.exists());
+    assert!(lock_path.is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn read_committed_manifest_preserves_crash_tail_rule() {
+    let root = temp_root("committed-manifest-tail");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let entry = store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let mut raw = serde_json::to_vec(&entry).unwrap();
+    raw.extend_from_slice(b"\n{\"batch_id\":");
+    fs::write(&manifest_path, &raw).unwrap();
+    assert_eq!(
+        store
+            .read_committed_manifest(PROVIDER_KRX, MARKET_KR)
+            .unwrap(),
+        vec![entry.clone()]
+    );
+
+    fs::write(&manifest_path, serde_json::to_vec(&entry).unwrap()).unwrap();
+    assert_eq!(
+        store
+            .read_committed_manifest(PROVIDER_KRX, MARKET_KR)
+            .unwrap(),
+        vec![entry]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn read_committed_manifest_rejects_corrupt_complete_and_middle_rows() {
+    let root = temp_root("committed-manifest-corrupt");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let first_batch = BatchId::generate();
+    let first = store
+        .store_batch(
+            &spec(first_batch, &d, None),
+            &[envelope(
+                first_batch,
+                ResponseKind::Reference,
+                "first.json",
+                b"first",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let second_batch = BatchId::generate();
+    let second = store
+        .store_batch(
+            &spec(second_batch, &d, None),
+            &[envelope(
+                second_batch,
+                ResponseKind::Reference,
+                "second.json",
+                b"second",
+                now("2026-08-06T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+
+    fs::write(
+        &manifest_path,
+        format!(
+            "{}\nnot-json\n{}\n",
+            serde_json::to_string(&first).unwrap(),
+            serde_json::to_string(&second).unwrap()
+        ),
+    )
+    .unwrap();
+    assert!(matches!(
+        store.read_committed_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::CorruptManifest { line: 2, .. })
+    ));
+
+    fs::write(&manifest_path, "not-json\n").unwrap();
+    assert!(matches!(
+        store.read_committed_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::CorruptManifest { line: 1, .. })
+    ));
+}
+
+#[cfg(not(unix))]
+#[test]
+fn read_committed_manifest_fails_closed_without_descriptor_relative_no_follow_opens() {
+    let root = temp_root("committed-manifest-unsupported-platform");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let before = fs::read(&manifest_path).unwrap();
+
+    assert!(matches!(
+        store.read_committed_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::UnsafePath { .. })
+    ));
+    assert_eq!(fs::read(manifest_path).unwrap(), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn read_committed_manifest_rejects_symlinked_lock_and_manifest() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root("committed-manifest-symlink-lock");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let lock_path = commit_lock_path(&store);
+    let lock_target = root.join("lock-target");
+    fs::write(&lock_target, b"").unwrap();
+    fs::remove_file(&lock_path).unwrap();
+    symlink(&lock_target, &lock_path).unwrap();
+    assert!(matches!(
+        store.read_committed_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::UnsafePath { .. })
+    ));
+
+    let root = temp_root("committed-manifest-symlink-manifest");
+    let store = RawStore::new(&root);
+    let batch = BatchId::generate();
+    store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let manifest_target = root.join("manifest-target");
+    fs::write(&manifest_target, b"").unwrap();
+    fs::remove_file(&manifest_path).unwrap();
+    symlink(&manifest_target, &manifest_path).unwrap();
+    assert!(matches!(
+        store.read_committed_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::UnsafePath { .. })
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn read_committed_manifest_rejects_redirected_manifest_parent_ancestor() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root("committed-manifest-ancestor-redirect");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+
+    let manifest_parent = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let manifest_parent = manifest_parent.parent().unwrap().to_owned();
+    let redirected_parent = root.join("redirected-manifest-parent");
+    fs::rename(&manifest_parent, &redirected_parent).unwrap();
+    symlink(&redirected_parent, &manifest_parent).unwrap();
+
+    assert!(matches!(
+        store.read_committed_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::Io { .. }) | Err(StoreError::UnsafePath { .. })
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn read_committed_manifest_rejects_non_regular_lock_and_manifest() {
+    for leaf in ["commit.lock", "manifest.jsonl"] {
+        let root = temp_root(&format!("committed-manifest-nonregular-{leaf}"));
+        let store = RawStore::new(&root);
+        let d = date("2020-01-31");
+        let batch = BatchId::generate();
+        store
+            .store_batch(
+                &spec(batch, &d, None),
+                &[envelope(
+                    batch,
+                    ResponseKind::Reference,
+                    "reference.json",
+                    b"{}",
+                    now("2026-08-05T01:00:00Z"),
+                )],
+            )
+            .unwrap();
+        let path = if leaf == "commit.lock" {
+            commit_lock_path(&store)
+        } else {
+            store.manifest_path(PROVIDER_KRX, MARKET_KR)
+        };
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+
+        assert!(matches!(
+            store.read_committed_manifest(PROVIDER_KRX, MARKET_KR),
+            Err(StoreError::UnsafePath { .. })
+        ));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn read_committed_manifest_rejects_group_writable_control_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = temp_root("committed-manifest-writable-parent");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let parent = store
+        .manifest_path(PROVIDER_KRX, MARKET_KR)
+        .parent()
+        .unwrap()
+        .to_owned();
+    let original_mode = fs::metadata(&parent).unwrap().permissions().mode();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(original_mode | 0o020)).unwrap();
+    let result = store.read_committed_manifest(PROVIDER_KRX, MARKET_KR);
+    fs::set_permissions(&parent, fs::Permissions::from_mode(original_mode)).unwrap();
+
+    assert!(matches!(result, Err(StoreError::UnsafePath { .. })));
+}
+
+#[cfg(windows)]
+#[test]
+fn read_committed_manifest_rejects_symlinked_lock_and_manifest() {
+    use std::os::windows::fs::symlink_file;
+
+    let root = temp_root("committed-manifest-symlink-lock");
+    let store = RawStore::new(&root);
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let lock_path = commit_lock_path(&store);
+    let lock_target = root.join("lock-target");
+    fs::write(&lock_target, b"").unwrap();
+    fs::remove_file(&lock_path).unwrap();
+    if let Err(error) = symlink_file(&lock_target, &lock_path) {
+        if error.raw_os_error() == Some(1314) {
+            eprintln!("skipping symlink test: Windows privilege 1314 is unavailable");
+            return;
+        }
+        panic!("create lock symlink: {error}");
+    }
+    assert!(matches!(
+        store.read_committed_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::UnsafePath { .. })
+    ));
+
+    let root = temp_root("committed-manifest-symlink-manifest");
+    let store = RawStore::new(&root);
+    let batch = BatchId::generate();
+    store
+        .store_batch(
+            &spec(batch, &d, None),
+            &[envelope(
+                batch,
+                ResponseKind::Reference,
+                "reference.json",
+                b"{}",
+                now("2026-08-05T01:00:00Z"),
+            )],
+        )
+        .unwrap();
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let manifest_target = root.join("manifest-target");
+    fs::write(&manifest_target, b"").unwrap();
+    fs::remove_file(&manifest_path).unwrap();
+    if let Err(error) = symlink_file(&manifest_target, &manifest_path) {
+        if error.raw_os_error() == Some(1314) {
+            eprintln!("skipping symlink test: Windows privilege 1314 is unavailable");
+            return;
+        }
+        panic!("create manifest symlink: {error}");
+    }
+    assert!(matches!(
+        store.read_committed_manifest(PROVIDER_KRX, MARKET_KR),
+        Err(StoreError::UnsafePath { .. })
     ));
 }
 

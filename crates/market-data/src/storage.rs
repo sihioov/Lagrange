@@ -316,6 +316,102 @@ struct SystemManifestReadOps;
 
 impl ManifestReadOps for SystemManifestReadOps {}
 
+/// Testable seam immediately after a committed-reader control descriptor is
+/// opened. Production uses the no-op implementation; it exists to prove that
+/// a replacement after validation cannot change the descriptor that is read.
+trait CommittedManifestReadOps: Send + Sync {
+    fn after_control_open(&self, _leaf: &str, _path: &Path) {}
+}
+
+#[derive(Debug)]
+struct SystemCommittedManifestReadOps;
+
+impl CommittedManifestReadOps for SystemCommittedManifestReadOps {}
+
+#[derive(Debug)]
+struct OpenedManifestControlFile {
+    path: PathBuf,
+    file: File,
+}
+
+#[cfg(unix)]
+impl OpenedManifestControlFile {
+    fn revalidate(&self) -> Result<(), StoreError> {
+        validate_opened_manifest_control(&self.path, &self.file, rustix::fs::FileType::RegularFile)
+            .map(|_| ())
+    }
+}
+
+#[cfg(not(unix))]
+impl OpenedManifestControlFile {
+    fn revalidate(&self) -> Result<(), StoreError> {
+        Err(StoreError::UnsafePath {
+            path: self.path.display().to_string(),
+            reason: "committed Raw manifest reads require descriptor-relative no-follow opens on this platform".to_owned(),
+        })
+    }
+}
+
+#[cfg(unix)]
+fn validate_opened_manifest_control(
+    path: &Path,
+    fd: &impl std::os::fd::AsFd,
+    expected: rustix::fs::FileType,
+) -> Result<rustix::fs::Stat, StoreError> {
+    use rustix::fs::{FileType, fstat};
+    use std::os::unix::fs::MetadataExt;
+
+    let stat =
+        fstat(fd).map_err(|error| io_err("fstat Raw manifest control file", error.into()))?;
+    if FileType::from_raw_mode(stat.st_mode) != expected {
+        return Err(StoreError::UnsafePath {
+            path: path.display().to_string(),
+            reason: "Raw manifest control path has an unexpected file type".to_owned(),
+        });
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        io_err(
+            &format!("revalidate Raw manifest control path {}", path.display()),
+            error,
+        )
+    })?;
+    if metadata.file_type().is_symlink()
+        || metadata.dev() != stat.st_dev
+        || metadata.ino() != stat.st_ino
+    {
+        return Err(StoreError::UnsafePath {
+            path: path.display().to_string(),
+            reason: "Raw manifest control path changed or redirected while opening".to_owned(),
+        });
+    }
+    Ok(stat)
+}
+
+#[cfg(unix)]
+fn validate_manifest_control_directory(
+    path: &Path,
+    fd: &impl std::os::fd::AsFd,
+) -> Result<rustix::process::RawUid, StoreError> {
+    use rustix::fs::{FileType, Mode};
+    use rustix::process::geteuid;
+
+    let stat = validate_opened_manifest_control(path, fd, FileType::Directory)?;
+    let mode = Mode::from_raw_mode(stat.st_mode);
+    if mode.intersects(Mode::WGRP | Mode::WOTH) {
+        return Err(StoreError::UnsafePath {
+            path: path.display().to_string(),
+            reason: "Raw manifest control directories must not be group/other writable".to_owned(),
+        });
+    }
+    if !geteuid().is_root() && stat.st_uid != geteuid().as_raw() {
+        return Err(StoreError::UnsafePath {
+            path: path.display().to_string(),
+            reason: "non-root Raw manifest readers must own the manifest-control tree".to_owned(),
+        });
+    }
+    Ok(stat.st_uid)
+}
+
 #[derive(Debug)]
 struct LockedManifest {
     path: PathBuf,
@@ -381,6 +477,7 @@ impl RawStore {
         })?;
         fs::create_dir_all(parent)
             .map_err(|error| io_err("create commit lock directory", error))?;
+        self.secure_manifest_control_directories(provider, market)?;
         OpenOptions::new()
             .read(true)
             .write(true)
@@ -388,6 +485,193 @@ impl RawStore {
             .truncate(false)
             .open(&path)
             .map_err(|error| io_err(&format!("open commit lock {}", path.display()), error))
+    }
+
+    #[cfg(unix)]
+    fn secure_manifest_control_directories(
+        &self,
+        provider: &str,
+        market: &str,
+    ) -> Result<(), StoreError> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let raw_root = self.root.join("raw");
+        let directories = [
+            raw_root.clone(),
+            raw_root.join("manifests"),
+            raw_root.join(format!("manifests/provider={provider}")),
+            raw_root.join(format!("manifests/provider={provider}/market={market}")),
+        ];
+        let raw_owner = fs::symlink_metadata(&directories[0])
+            .map_err(|error| {
+                io_err(
+                    &format!(
+                        "inspect Raw manifest control directory {}",
+                        directories[0].display()
+                    ),
+                    error,
+                )
+            })?
+            .uid();
+        for directory in directories {
+            let metadata = fs::symlink_metadata(&directory).map_err(|error| {
+                io_err(
+                    &format!(
+                        "inspect Raw manifest control directory {}",
+                        directory.display()
+                    ),
+                    error,
+                )
+            })?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(StoreError::UnsafePath {
+                    path: directory.display().to_string(),
+                    reason: "Raw manifest control paths must be directories, not redirects"
+                        .to_owned(),
+                });
+            }
+            if metadata.uid() != raw_owner {
+                return Err(StoreError::UnsafePath {
+                    path: directory.display().to_string(),
+                    reason:
+                        "Raw manifest control directories must share the canonical Raw-root owner"
+                            .to_owned(),
+                });
+            }
+            let mode = metadata.permissions().mode();
+            if mode & 0o022 != 0 {
+                fs::set_permissions(&directory, fs::Permissions::from_mode(mode & !0o022))
+                    .map_err(|error| {
+                        io_err(
+                            &format!(
+                                "secure Raw manifest control directory {}",
+                                directory.display()
+                            ),
+                            error,
+                        )
+                    })?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn secure_manifest_control_directories(
+        &self,
+        _provider: &str,
+        _market: &str,
+    ) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn open_existing_commit_lock(
+        &self,
+        provider: &str,
+        market: &str,
+    ) -> Result<OpenedManifestControlFile, StoreError> {
+        self.open_existing_manifest_control_file(provider, market, "commit.lock")
+    }
+
+    /// Opens an existing committed-reader control file exactly once.
+    ///
+    /// On Unix each ancestor is opened relative to the already-open parent
+    /// descriptor with `O_DIRECTORY|O_NOFOLLOW`; the leaf uses
+    /// `O_NOFOLLOW`.  We then fstat the opened object and compare its device
+    /// and inode to the pathname observed after opening.  The pathname check
+    /// is validation only: subsequent locking/reading uses this descriptor,
+    /// so a rename after the check cannot redirect the operation.  This is
+    /// deliberately fail-closed on platforms without this implementation.
+    #[cfg(unix)]
+    fn open_existing_manifest_control_file(
+        &self,
+        provider: &str,
+        market: &str,
+        leaf: &str,
+    ) -> Result<OpenedManifestControlFile, StoreError> {
+        use rustix::fs::{Mode, OFlags, open, openat};
+        use rustix::io::Errno;
+
+        fn control_open_error(path: &Path, context: &str, error: Errno) -> StoreError {
+            if error == Errno::LOOP {
+                StoreError::UnsafePath {
+                    path: path.display().to_string(),
+                    reason: "Raw manifest control paths must not contain symlinks".to_owned(),
+                }
+            } else {
+                io_err(context, error.into())
+            }
+        }
+
+        let raw_root = self.canonical_raw_root()?;
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let mut lexical = raw_root.clone();
+        let mut directory = open(&raw_root, flags, Mode::empty()).map_err(|error| {
+            control_open_error(
+                &raw_root,
+                &format!("open trusted Raw root {}", raw_root.display()),
+                error,
+            )
+        })?;
+        let raw_owner = validate_manifest_control_directory(&raw_root, &directory)?;
+        let components = [
+            "manifests".to_owned(),
+            format!("provider={provider}"),
+            format!("market={market}"),
+        ];
+        for component in components {
+            lexical.push(&component);
+            directory = openat(&directory, &component, flags, Mode::empty()).map_err(|error| {
+                control_open_error(
+                    &lexical,
+                    &format!("open existing Raw manifest parent {}", lexical.display()),
+                    error,
+                )
+            })?;
+            let owner = validate_manifest_control_directory(&lexical, &directory)?;
+            if owner != raw_owner {
+                return Err(StoreError::UnsafePath {
+                    path: lexical.display().to_string(),
+                    reason:
+                        "Raw manifest control directories must share the canonical Raw-root owner"
+                            .to_owned(),
+                });
+            }
+        }
+
+        lexical.push(leaf);
+        let file = openat(
+            &directory,
+            leaf,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| {
+            control_open_error(
+                &lexical,
+                &format!("open existing Raw manifest file {}", lexical.display()),
+                error,
+            )
+        })?;
+        let file = File::from(file);
+        let opened = OpenedManifestControlFile {
+            path: lexical,
+            file,
+        };
+        opened.revalidate()?;
+        Ok(opened)
+    }
+
+    #[cfg(not(unix))]
+    fn open_existing_manifest_control_file(
+        &self,
+        provider: &str,
+        market: &str,
+        leaf: &str,
+    ) -> Result<OpenedManifestControlFile, StoreError> {
+        Err(StoreError::UnsafePath {
+            path: self.manifest_path(provider, market).with_file_name(leaf).display().to_string(),
+            reason: "committed Raw manifest reads require descriptor-relative no-follow opens on this platform".to_owned(),
+        })
     }
 
     /// Persists one delivery as a new immutable batch and appends its manifest row.
@@ -696,6 +980,76 @@ impl RawStore {
         market: &str,
     ) -> Result<Vec<ManifestEntry>, StoreError> {
         self.read_manifest_with_ops(provider, market, &SystemManifestReadOps)
+    }
+
+    /// Returns only rows already committed to the append-only manifest.
+    ///
+    /// This path is strictly read-only: it requires the existing commit lock
+    /// and manifest, takes a shared lock, and never discovers or reconciles
+    /// durable orphan batches.
+    pub fn read_committed_manifest(
+        &self,
+        provider: &str,
+        market: &str,
+    ) -> Result<Vec<ManifestEntry>, StoreError> {
+        self.read_committed_manifest_with_ops(provider, market, &SystemCommittedManifestReadOps)
+    }
+
+    fn read_committed_manifest_with_ops<O: CommittedManifestReadOps + ?Sized>(
+        &self,
+        provider: &str,
+        market: &str,
+        operations: &O,
+    ) -> Result<Vec<ManifestEntry>, StoreError> {
+        validate_scope(provider, market)?;
+        let commit_lock = self.open_existing_commit_lock(provider, market)?;
+        operations.after_control_open("commit.lock", &self.commit_lock_path(provider, market));
+        FileExt::lock_shared(&commit_lock.file)
+            .map_err(|error| io_err("lock committed Raw manifest", error))?;
+        let result = commit_lock.revalidate().and_then(|_| {
+            self.read_committed_manifest_locked(provider, market, &commit_lock, operations)
+        });
+        let unlock = FileExt::unlock(&commit_lock.file)
+            .map_err(|error| io_err("unlock committed Raw manifest", error));
+        let entries = result?;
+        unlock?;
+        Ok(entries)
+    }
+
+    fn read_committed_manifest_locked<O: CommittedManifestReadOps + ?Sized>(
+        &self,
+        provider: &str,
+        market: &str,
+        commit_lock: &OpenedManifestControlFile,
+        operations: &O,
+    ) -> Result<Vec<ManifestEntry>, StoreError> {
+        let path = self.manifest_path(provider, market);
+        let mut manifest =
+            self.open_existing_manifest_control_file(provider, market, "manifest.jsonl")?;
+        operations.after_control_open("manifest.jsonl", &path);
+        let mut bytes = Vec::new();
+        manifest
+            .file
+            .read_to_end(&mut bytes)
+            .map_err(|error| io_err("read committed manifest", error))?;
+        // The commit lock's pathname must still name this shared-locked inode
+        // when the snapshot becomes visible; otherwise a replacement split
+        // this reader from a concurrent writer and the result must not escape.
+        commit_lock.revalidate()?;
+        let mut entries = BTreeMap::new();
+        let mut manifest_order = Vec::new();
+        parse_manifest_records(
+            provider,
+            market,
+            &path,
+            &bytes,
+            &mut entries,
+            &mut manifest_order,
+        )?;
+        Ok(manifest_order
+            .into_iter()
+            .map(|batch_id| entries.remove(&batch_id).expect("ordered batch exists"))
+            .collect())
     }
 
     /// Returns recovery's durable append-order snapshot.
@@ -1656,6 +2010,44 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[derive(Debug, Default)]
+    struct ReplaceOpenedManifest(AtomicBool);
+
+    #[cfg(unix)]
+    impl CommittedManifestReadOps for ReplaceOpenedManifest {
+        fn after_control_open(&self, leaf: &str, path: &Path) {
+            if leaf == "manifest.jsonl" && !self.0.swap(true, Ordering::SeqCst) {
+                fs::rename(path, path.with_extension("opened-before-read")).unwrap();
+                fs::write(path, b"not-json\n").unwrap();
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[derive(Debug, Default)]
+    struct ReplaceOpenedCommitLock {
+        replaced: AtomicBool,
+        simulated_writer: Mutex<Option<File>>,
+    }
+
+    #[cfg(unix)]
+    impl CommittedManifestReadOps for ReplaceOpenedCommitLock {
+        fn after_control_open(&self, leaf: &str, path: &Path) {
+            if leaf == "commit.lock" && !self.replaced.swap(true, Ordering::SeqCst) {
+                fs::rename(path, path.with_extension("opened-before-lock")).unwrap();
+                let writer = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create_new(true)
+                    .open(path)
+                    .unwrap();
+                FileExt::lock_exclusive(&writer).unwrap();
+                *self.simulated_writer.lock().unwrap() = Some(writer);
+            }
+        }
+    }
+
     fn test_envelope(batch_id: BatchId) -> RawEnvelope {
         RawEnvelope::new(
             batch_id,
@@ -2055,6 +2447,73 @@ mod tests {
         FileExt::unlock(&exclusive).unwrap();
         FileExt::try_lock_shared(&shared).unwrap();
         FileExt::unlock(&shared).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn committed_reader_uses_the_manifest_descriptor_opened_before_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let batch_id = BatchId::generate();
+        let date = TradingDate::parse("2020-01-31").unwrap();
+        let expected = store
+            .store_batch(
+                &BatchSpec {
+                    provider: crate::contract::PROVIDER_KRX,
+                    market: crate::contract::MARKET_KR,
+                    date: &date,
+                    batch_id,
+                    entitlement_reference: None,
+                    mode: FetchMode::Synthetic,
+                },
+                &[test_envelope(batch_id)],
+            )
+            .unwrap();
+
+        let opened = ReplaceOpenedManifest::default();
+        let entries = store
+            .read_committed_manifest_with_ops(
+                crate::contract::PROVIDER_KRX,
+                crate::contract::MARKET_KR,
+                &opened,
+            )
+            .expect("the already-open manifest, not its replacement, is read");
+        assert_eq!(entries, vec![expected]);
+        assert!(opened.0.load(Ordering::SeqCst));
+        assert_eq!(
+            fs::read(
+                store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR,)
+            )
+            .unwrap(),
+            b"not-json\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn committed_reader_rejects_commit_lock_replacement_before_shared_lock() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        let expected = store_test_batch(&store, BatchId::generate());
+        let replacement = ReplaceOpenedCommitLock::default();
+
+        assert!(matches!(
+            store.read_committed_manifest_with_ops(
+                crate::contract::PROVIDER_KRX,
+                crate::contract::MARKET_KR,
+                &replacement,
+            ),
+            Err(StoreError::UnsafePath { .. })
+        ));
+        assert!(replacement.replaced.load(Ordering::SeqCst));
+        assert!(replacement.simulated_writer.lock().unwrap().is_some());
+        assert_eq!(
+            fs::read(
+                store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR,)
+            )
+            .unwrap(),
+            format!("{}\n", serde_json::to_string(&expected).unwrap()).as_bytes()
+        );
     }
 
     #[test]
