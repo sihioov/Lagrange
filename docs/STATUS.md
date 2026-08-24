@@ -1637,7 +1637,20 @@ PASS했다고 보지 않는다. 현재 suite에는 owner-beta 전용 브라우�
 이 호스트에는 `DATABASE_URL`이 없으므로 새 DB 통합 테스트와 job-queue publish/recovery
 테스트는 의도된 clean skip이다. 따라서 실제 PostgreSQL에서 RLS 격리, pagination,
 실행일 entitlement, 성공/실패/cancel durable read, claim loss와 audit 동작을 검증했다고
-주장하지 않는다. 브라우저 E2E, production Web build, 새 image build도 아직 실행하지 않았다.
+주장하지 않는다. 브라우저 E2E test body와 새 production image build도 아직 실행하지 않았다.
+production Web build는 위에 기록한 대로 PASS했다.
+
+현재 HEAD에서 `cargo test --workspace --locked --no-fail-fast`도 다시 실행했다. 샌드박스
+실행은 6개 test target만 실패했다. 그중 `api-server --lib`, `paper-runner`,
+`http_oidc_transport`는 listener/Unix socket `EPERM`이 원인이었고, 같은 세 target을 로컬
+격리 환경에서 다시 실행하자 각각 55/55, 5/5, 8/8 PASS했다. `recommendation_child`의
+4건은 존재만 하고 의존성이 설치되지 않은 `nt/.venv` 때문에 자식이 `jsonschema` 없이
+종료한 환경 문제였다. `uv sync --locked`로 그 ignored venv를 잠금 파일 그대로 복구한 뒤
+17/17 PASS했다. `recommendation_compute`의 12건은 기본 `python`에 `pyarrow`가 없는 기존
+호스트 함정이었고, `PYTHON=nt/.venv/bin/python`을 지정하자 16/16 PASS했다. 마지막
+`collectors --test research_worker`는 68건 중 62건 PASS, 6건이 모두 명시적인
+`required QA DATABASE_URL ... NotPresent`에서 중단됐다. 따라서 현재 발견된 코드 회귀는
+없지만, QA PostgreSQL 없는 이 호스트에서 full-workspace exit 0을 주장하지 않는다.
 
 **출시 차단은 그대로다.** embedded approval registry는 비어 있고 정확한 7파일 KSD action
 pin도 아직 독립적으로 확정되지 않았다. 실 artifact·DatasetManifest·5-pin을 만들거나
