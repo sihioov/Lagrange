@@ -46,6 +46,12 @@ cp -- "$source_dotenv" "$release_dir/scripts/ops/lib/dotenv.sh"
 chmod 0755 "$release_dir/scripts/ops/kis-historical-price-beta-artifact.sh"
 
 image_id=sha256:1111111111111111111111111111111111111111111111111111111111111111
+stage5_hash=sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4
+action_hash=sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd
+candidate_hash=sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050
+artifact_hash=sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67
+ignored_dividend_rows_hash=sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48
+approval_registry_hash=sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380
 {
   printf 'LAGRANGE_DATA_DIR=%s\n' "$data_root"
   printf 'LAGRANGE_ARTIFACTS_DIR=%s\n' "$artifacts_root"
@@ -152,16 +158,80 @@ case "${1:-}" in
     if printf '%s\n' "$*" | grep -Fq -- '/usr/local/bin/kis-historical-price-beta-approval-check'; then
       if [ -f "${HISTORICAL_ARTIFACT_BAD_APPROVAL_OUTPUT_FILE:-}" ]; then
         printf '%s\n' 'approval-secret-sentinel should be discarded by wrapper'
-        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=not-a-hash approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
+        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
       else
         printf '%s\n' 'approval-secret-sentinel should be discarded by wrapper'
-        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
+        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380 approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
       fi
     elif printf '%s\n' "$*" | grep -Fq -- 'candidate-content-sha256'; then
-      printf '%s\n' 'HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc instrument_count=11 session_count=1608 bar_count=17688 raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED'
+      artifact_variant=
+      if [ -f "${HISTORICAL_ARTIFACT_BAD_ARTIFACT_OUTPUT_FILE:-}" ]; then
+        artifact_variant=$(<"${HISTORICAL_ARTIFACT_BAD_ARTIFACT_OUTPUT_FILE}")
+      fi
+      artifact_line='HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256=sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050 artifact_manifest_sha256=sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67 instrument_count=11 session_count=1608 bar_count=17688 cash_dividend_treatment=CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1 ignored_cash_dividends=1 ignored_cash_dividend_rows_sha256=sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48 raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED'
+      case "$artifact_variant" in
+        '') ;;
+        old-v1)
+          artifact_line='HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256=sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050 instrument_count=11 session_count=1608 bar_count=17688 raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED'
+          ;;
+        artifact-manifest)
+          artifact_line=${artifact_line/artifact_manifest_sha256=sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67/artifact_manifest_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}
+          ;;
+        treatment)
+          artifact_line=${artifact_line/cash_dividend_treatment=CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1/cash_dividend_treatment=DIVIDENDS_INCLUDED}
+          ;;
+        count)
+          artifact_line=${artifact_line/ignored_cash_dividends=1/ignored_cash_dividends=2}
+          ;;
+        rows-hash)
+          artifact_line=${artifact_line/ignored_cash_dividend_rows_sha256=sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48/ignored_cash_dividend_rows_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}
+          ;;
+        candidate)
+          artifact_line=${artifact_line/candidate_content_sha256=sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050/candidate_content_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}
+          ;;
+        *)
+          echo 'unknown artifact output variant' >&2
+          exit 95
+          ;;
+      esac
+      [ -z "$artifact_variant" ] || printf '%s\n' 'artifact-cli-sensitive-sentinel should be discarded by wrapper'
+      printf '%s\n' "$artifact_line"
     else
-      printf '%s\n' 'secret-sentinel should be discarded by wrapper'
-      printf '%s\n' 'HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=materialize candidate_content_sha256=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc stage5_manifest_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa action_manifest_sha256=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb instrument_count=11 session_count=1608 bar_count=17688 raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED'
+      artifact_variant=
+      if [ -f "${HISTORICAL_ARTIFACT_BAD_ARTIFACT_OUTPUT_FILE:-}" ]; then
+        artifact_variant=$(<"${HISTORICAL_ARTIFACT_BAD_ARTIFACT_OUTPUT_FILE}")
+      fi
+      artifact_line='HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=materialize candidate_content_sha256=sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050 artifact_manifest_sha256=sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67 stage5_manifest_sha256=sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4 action_manifest_sha256=sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd instrument_count=11 session_count=1608 bar_count=17688 cash_dividend_treatment=CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1 ignored_cash_dividends=1 ignored_cash_dividend_rows_sha256=sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48 raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED'
+      case "$artifact_variant" in
+        '') ;;
+        old-v1)
+          artifact_line='HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=materialize candidate_content_sha256=sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050 stage5_manifest_sha256=sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4 action_manifest_sha256=sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd instrument_count=11 session_count=1608 bar_count=17688 raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED'
+          ;;
+        artifact-manifest)
+          artifact_line=${artifact_line/artifact_manifest_sha256=sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67/artifact_manifest_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}
+          ;;
+        treatment)
+          artifact_line=${artifact_line/cash_dividend_treatment=CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1/cash_dividend_treatment=DIVIDENDS_INCLUDED}
+          ;;
+        count)
+          artifact_line=${artifact_line/ignored_cash_dividends=1/ignored_cash_dividends=2}
+          ;;
+        rows-hash)
+          artifact_line=${artifact_line/ignored_cash_dividend_rows_sha256=sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48/ignored_cash_dividend_rows_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}
+          ;;
+        source-stage5)
+          artifact_line=${artifact_line/stage5_manifest_sha256=sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4/stage5_manifest_sha256=sha256:9999999999999999999999999999999999999999999999999999999999999999}
+          ;;
+        source-action)
+          artifact_line=${artifact_line/action_manifest_sha256=sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd/action_manifest_sha256=sha256:8888888888888888888888888888888888888888888888888888888888888888}
+          ;;
+        *)
+          echo 'unknown artifact output variant' >&2
+          exit 95
+          ;;
+      esac
+      [ -z "$artifact_variant" ] || printf '%s\n' 'artifact-cli-sensitive-sentinel should be discarded by wrapper'
+      printf '%s\n' "$artifact_line"
     fi
     ;;
   *) exit 96 ;;
@@ -185,10 +255,34 @@ run_wrapper() {
     HISTORICAL_ARTIFACT_REAL_ID="$real_id" \
     HISTORICAL_ARTIFACT_DOCKER_LOG="$docker_log" \
     HISTORICAL_ARTIFACT_BAD_APPROVAL_OUTPUT_FILE="$tmp/bad-approval-output" \
+    HISTORICAL_ARTIFACT_BAD_ARTIFACT_OUTPUT_FILE="$tmp/bad-artifact-output" \
     HISTORICAL_ARTIFACT_IMAGE_ID="$image_id" \
     HISTORICAL_ARTIFACT_COMMIT="$commit" \
     LAGRANGE_RELEASE_ROOT="$install_root" \
     bash "$release_dir/scripts/ops/kis-historical-price-beta-artifact.sh" "$@"
+}
+
+expect_artifact_output_rejected() {
+  local variant=$1 operation=$2 output
+  printf '%s\n' "$variant" >"$tmp/bad-artifact-output"
+  : >"$docker_log"
+  if [ "$operation" = materialize ]; then
+    if output=$(run_wrapper --materialize \
+      --stage5-manifest-sha256 "$stage5_hash" \
+      --action-manifest-sha256 "$action_hash" 2>&1); then
+      echo "historical artifact self-test: $variant materialize output unexpectedly accepted" >&2
+      exit 1
+    fi
+  else
+    if output=$(run_wrapper --check \
+      --candidate-content-sha256 "$candidate_hash" 2>&1); then
+      echo "historical artifact self-test: $variant check output unexpectedly accepted" >&2
+      exit 1
+    fi
+  fi
+  [ -s "$docker_log" ]
+  ! grep -Fq artifact-cli-sensitive-sentinel <<<"$output"
+  rm -f -- "$tmp/bad-artifact-output"
 }
 
 plan=$(run_wrapper --plan)
@@ -251,10 +345,12 @@ rm -f -- "$tmp/nonroot"
 [ ! -s "$docker_log" ]
 
 materialize=$(run_wrapper --materialize \
-  --stage5-manifest-sha256 sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-  --action-manifest-sha256 sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
-grep -Fq 'operation=materialize' <<<"$materialize"
+  --stage5-manifest-sha256 "$stage5_hash" \
+  --action-manifest-sha256 "$action_hash")
+expected_materialize="HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=materialize candidate_content_sha256=$candidate_hash artifact_manifest_sha256=$artifact_hash stage5_manifest_sha256=$stage5_hash action_manifest_sha256=$action_hash instrument_count=11 session_count=1608 bar_count=17688 cash_dividend_treatment=CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1 ignored_cash_dividends=1 ignored_cash_dividend_rows_sha256=$ignored_dividend_rows_hash raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED"
+[ "$materialize" = "$expected_materialize" ]
 ! grep -Fq secret-sentinel <<<"$materialize"
+! grep -Fq artifact-cli-sensitive-sentinel <<<"$materialize"
 run_line=$(grep -F 'run ' "$docker_log" | tail -n1)
 grep -Fq -- '--network none' <<<"$run_line"
 grep -Fq -- '--cap-drop ALL' <<<"$run_line"
@@ -269,12 +365,30 @@ grep -Fq -- '/usr/local/bin/kis-historical-price-beta-artifact' <<<"$run_line"
 grep -Fq -- "$image_id" <<<"$run_line"
 
 check=$(run_wrapper --check \
-  --candidate-content-sha256 sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)
-grep -Fq 'operation=check' <<<"$check"
+  --candidate-content-sha256 "$candidate_hash")
+expected_check="HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256=$candidate_hash artifact_manifest_sha256=$artifact_hash instrument_count=11 session_count=1608 bar_count=17688 cash_dividend_treatment=CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1 ignored_cash_dividends=1 ignored_cash_dividend_rows_sha256=$ignored_dividend_rows_hash raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED"
+[ "$check" = "$expected_check" ]
+! grep -Fq artifact-cli-sensitive-sentinel <<<"$check"
 check_line=$(grep -F 'run ' "$docker_log" | tail -n1)
 ! grep -Fq '/data/raw' <<<"$check_line"
 grep -Fq 'destination=/artifact-root,readonly' <<<"$check_line"
 grep -Fq -- '--network none' <<<"$check_line"
+
+# The production seam must reject the legacy v1 line and every v2 field that
+# is malformed or does not bind to the operation's expected pins.
+expect_artifact_output_rejected old-v1 materialize
+expect_artifact_output_rejected artifact-manifest materialize
+expect_artifact_output_rejected treatment materialize
+expect_artifact_output_rejected count materialize
+expect_artifact_output_rejected rows-hash materialize
+expect_artifact_output_rejected source-stage5 materialize
+expect_artifact_output_rejected source-action materialize
+expect_artifact_output_rejected old-v1 check
+expect_artifact_output_rejected artifact-manifest check
+expect_artifact_output_rejected treatment check
+expect_artifact_output_rejected count check
+expect_artifact_output_rejected rows-hash check
+expect_artifact_output_rejected candidate check
 
 approval=$(run_wrapper --approval-check)
 grep -Fq 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check' <<<"$approval"
@@ -282,8 +396,8 @@ grep -Fq 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check' <<<"$approva
 ! grep -Fq 'artifact_manifest_sha256=' <<<"$approval"
 ! grep -Fq 'stage5_manifest_sha256=' <<<"$approval"
 ! grep -Fq 'action_manifest_sha256=' <<<"$approval"
-! grep -Fq 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' <<<"$approval"
-grep -Fq 'approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' <<<"$approval"
+! grep -Fq "$candidate_hash" <<<"$approval"
+grep -Fq "approval_registry_sha256=$approval_registry_hash" <<<"$approval"
 grep -Fq 'approval_status=APPROVED' <<<"$approval"
 ! grep -Fq approval-secret-sentinel <<<"$approval"
 approval_line=$(grep -F 'run ' "$docker_log" | tail -n1)
@@ -298,11 +412,11 @@ grep -Fq -- '--entrypoint /usr/local/bin/kis-historical-price-beta-approval-chec
 grep -Fq 'destination=/artifact-root,readonly' <<<"$approval_line"
 ! grep -Fq -- '--approval-registry' <<<"$approval_line"
 ! grep -Fq -- '--candidate-content-sha256' <<<"$approval_line"
-! grep -Fq 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' <<<"$approval_line"
+! grep -Fq "$candidate_hash" <<<"$approval_line"
 grep -Fq -- "$image_id" <<<"$approval_line"
 
-# A malformed approval line (including an unsafe hash field) is discarded and
-# causes a static failure without changing the dedicated artifact leaf.
+# A well-formed but different approval-registry hash is discarded and causes a
+# static failure without changing the dedicated artifact leaf.
 approval_snapshot=$(find "$artifact_root" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
 : >"$tmp/bad-approval-output"
 : >"$docker_log"
@@ -317,7 +431,7 @@ rm -f -- "$tmp/bad-approval-output"
 : >"$docker_log"
 write_manifest_override sha256:2222222222222222222222222222222222222222222222222222222222222222
 if run_wrapper --check \
-  --candidate-content-sha256 sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+  --candidate-content-sha256 "$candidate_hash" \
   >/dev/null 2>&1; then
   echo 'historical artifact self-test: image mismatch unexpectedly passed' >&2
   exit 1
@@ -336,7 +450,7 @@ write_manifest_revision_override() {
 write_manifest_revision_override fedcba9876543210fedcba9876543210fedcba98
 : >"$docker_log"
 if run_wrapper --check \
-  --candidate-content-sha256 sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+  --candidate-content-sha256 "$candidate_hash" \
   >/dev/null 2>&1; then
   echo 'historical artifact self-test: revision mismatch unexpectedly passed' >&2
   exit 1
@@ -349,8 +463,8 @@ write_manifest_override "$image_id"
 write_manifest_revision_override "$commit"
 : >"$docker_log"
 if HISTORICAL_ARTIFACT_BAD_OWNER=1 run_wrapper --materialize \
-  --stage5-manifest-sha256 sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-  --action-manifest-sha256 sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  --stage5-manifest-sha256 "$stage5_hash" \
+  --action-manifest-sha256 "$action_hash" \
   >/dev/null 2>&1; then
   echo 'historical artifact self-test: ownership failure unexpectedly passed' >&2
   exit 1
@@ -365,8 +479,8 @@ sed "s|LAGRANGE_ARTIFACTS_DIR=.*|LAGRANGE_ARTIFACTS_DIR=$raw_root|" \
   "$tmp/env.backup" >"$release_dir/deploy/compose/.env"
 : >"$docker_log"
 if run_wrapper --materialize \
-  --stage5-manifest-sha256 sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-  --action-manifest-sha256 sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  --stage5-manifest-sha256 "$stage5_hash" \
+  --action-manifest-sha256 "$action_hash" \
   >/dev/null 2>&1; then
   echo 'historical artifact self-test: Raw/Curated separation failure unexpectedly passed' >&2
   exit 1
@@ -382,7 +496,7 @@ sed "s|LAGRANGE_ARTIFACTS_DIR=.*|LAGRANGE_ARTIFACTS_DIR=$data_root/artifacts,uns
   "$tmp/env.backup" >"$release_dir/deploy/compose/.env"
 : >"$docker_log"
 if run_wrapper --check \
-  --candidate-content-sha256 sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+  --candidate-content-sha256 "$candidate_hash" \
   >/dev/null 2>&1; then
   echo 'historical artifact self-test: comma mount path unexpectedly passed' >&2
   exit 1

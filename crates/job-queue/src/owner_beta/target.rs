@@ -491,14 +491,30 @@ fn values_at_as_of(
     let expected_instruments = canonical_instruments().into_iter().collect::<BTreeSet<_>>();
     let expected_factors = required_factor_ids.iter().cloned().collect::<BTreeSet<_>>();
     let mut values = BTreeMap::<String, BTreeMap<String, Option<f64>>>::new();
-    let as_of = as_of.to_iso();
-    for row in snapshot.rows.iter().filter(|row| row.date == as_of) {
+    let mut seen_rows = BTreeSet::new();
+    let as_of_text = as_of.to_iso();
+    for row in &snapshot.rows {
+        let row_date = domain::TradingDate::parse(&row.date)
+            .map_err(|_| OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)?;
+        if row_date > as_of {
+            return Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid);
+        }
         if !expected_instruments.contains(&row.instrument)
             || !expected_factors.contains(&row.factor)
+            || !seen_rows.insert((
+                row.date.as_str(),
+                row.instrument.as_str(),
+                row.factor.as_str(),
+            ))
         {
             return Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid);
         }
+        // Validate every hash-bound row before its date is allowed to make it
+        // irrelevant to the target decision.
         let raw = validate_row_value(row)?;
+        if row.date != as_of_text {
+            continue;
+        }
         let entry = values.entry(row.instrument.clone()).or_default();
         if entry.insert(row.factor.clone(), raw).is_some() {
             return Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid);
@@ -809,59 +825,86 @@ fn benchmark(config: &Value) -> Result<String, OwnerBetaTargetSnapshotError> {
     Ok(benchmark.to_owned())
 }
 
-fn parse_fixed_units(
+fn round_py4(value: f64) -> Result<i64, OwnerBetaTargetSnapshotError> {
+    round_decimal_half_even_to_units(&python_float_string(value)?, 4)
+}
+
+/// Converts a finite decimal spelling to fixed-point units using decimal
+/// round-half-even. This deliberately parses the shortest round-trip decimal
+/// spelling of factor arithmetic instead of formatting its binary value.
+fn round_decimal_half_even_to_units(
     text: &str,
-    decimal_places: usize,
+    decimal_places: u32,
 ) -> Result<i64, OwnerBetaTargetSnapshotError> {
-    let negative = text.starts_with('-');
-    let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
-    let (whole, fraction) = unsigned
-        .split_once('.')
+    let (negative, significand, power) = decimal_components(text)?;
+    let power = power
+        .checked_add(
+            i32::try_from(decimal_places)
+                .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?,
+        )
         .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
-    if fraction.len() != decimal_places
-        || !whole.bytes().all(|byte| byte.is_ascii_digit())
-        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
-    }
-    let scale = pow10(
-        u32::try_from(decimal_places)
-            .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?,
-    )?;
-    let whole = whole
-        .parse::<i128>()
-        .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
-    let fraction = fraction
-        .parse::<i128>()
-        .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
-    let units = whole
-        .checked_mul(scale)
-        .and_then(|value| value.checked_add(fraction))
-        .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
+    let units = if power >= 0 {
+        significand
+            .checked_mul(pow10(power as u32)?)
+            .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?
+    } else {
+        let divisor = pow10((-power) as u32)?;
+        let quotient = significand / divisor;
+        let remainder = significand % divisor;
+        let doubled_remainder = remainder
+            .checked_mul(2)
+            .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
+        let round_up = match doubled_remainder.cmp(&divisor) {
+            Ordering::Greater => true,
+            Ordering::Equal => quotient % 2 != 0,
+            Ordering::Less => false,
+        };
+        quotient
+            .checked_add(i128::from(round_up))
+            .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?
+    };
     let units = if negative { -units } else { units };
     i64::try_from(units).map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)
 }
 
-fn round_py4(value: f64) -> Result<i64, OwnerBetaTargetSnapshotError> {
-    if !value.is_finite() {
-        return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
-    }
-    parse_fixed_units(&format!("{value:.4}"), 4)
-}
-
-fn exact_scaled_number(
+/// Floors a non-negative JSON decimal into a target's four-place unit scale.
+/// A floor is required for an exact cap: the next representable published
+/// weight must never exceed the configured decimal value.
+fn floor_decimal_number_to_units(
     number: &Number,
     decimal_places: u32,
 ) -> Result<i64, OwnerBetaTargetSnapshotError> {
-    let text = number.to_string();
+    let (negative, significand, power) = decimal_components(&number.to_string())?;
+    if negative {
+        return Err(OwnerBetaTargetSnapshotError::TargetInputInvalid);
+    }
+    let power = power
+        .checked_add(
+            i32::try_from(decimal_places)
+                .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?,
+        )
+        .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
+    let units = if power >= 0 {
+        significand
+            .checked_mul(pow10(power as u32)?)
+            .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?
+    } else {
+        significand / pow10((-power) as u32)?
+    };
+    i64::try_from(units).map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)
+}
+
+/// Returns sign, unsigned significand, and its base-10 power for a decimal
+/// or scientific-notation spelling.
+fn decimal_components(text: &str) -> Result<(bool, i128, i32), OwnerBetaTargetSnapshotError> {
     let (mantissa, exponent) = match text.find(['e', 'E']) {
         Some(index) => {
             let exponent = text[index + 1..]
                 .parse::<i32>()
-                .map_err(|_| OwnerBetaTargetSnapshotError::TargetInputInvalid)?;
+                .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
             (&text[..index], exponent)
         }
-        None => (text.as_str(), 0),
+        None => (text, 0),
     };
     let negative = mantissa.starts_with('-');
     let unsigned = mantissa.strip_prefix(['+', '-']).unwrap_or(mantissa);
@@ -870,15 +913,31 @@ fn exact_scaled_number(
         || !whole.bytes().all(|byte| byte.is_ascii_digit())
         || !fraction.bytes().all(|byte| byte.is_ascii_digit())
     {
-        return Err(OwnerBetaTargetSnapshotError::TargetInputInvalid);
+        return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
     }
-    let digits = format!("{whole}{fraction}");
-    let significand = digits
+    let significand = format!("{whole}{fraction}")
         .parse::<i128>()
         .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
     let power = exponent
-        .checked_add(decimal_places as i32)
-        .and_then(|power| power.checked_sub(fraction.len() as i32))
+        .checked_sub(
+            i32::try_from(fraction.len())
+                .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?,
+        )
+        .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
+    Ok((negative, significand, power))
+}
+
+fn exact_scaled_number(
+    number: &Number,
+    decimal_places: u32,
+) -> Result<i64, OwnerBetaTargetSnapshotError> {
+    let (negative, significand, unscaled_power) = decimal_components(&number.to_string())
+        .map_err(|_| OwnerBetaTargetSnapshotError::TargetInputInvalid)?;
+    let power = unscaled_power
+        .checked_add(
+            i32::try_from(decimal_places)
+                .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?,
+        )
         .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
     let scaled = if power >= 0 {
         significand
@@ -973,21 +1032,46 @@ fn scale_weight_units(units: i64) -> Result<i64, OwnerBetaTargetSnapshotError> {
         .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)
 }
 
-fn cash_from_round4(
-    rounded_units: i64,
-    selected_count: usize,
-) -> Result<i64, OwnerBetaTargetSnapshotError> {
-    let selected = rounded_units
-        .checked_mul(
-            i64::try_from(selected_count)
-                .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?,
-        )
-        .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
-    let selected_total = round_py4(rounded_units as f64 / 10_000.0 * selected_count as f64)?;
-    let cash = round_py4(1.0 - selected_total as f64 / 10_000.0)?;
-    if cash < 0 {
+/// Reconciles independently round-half-even selected weights in integer
+/// four-place units. When their sum exceeds one, the excess is removed one
+/// unit at a time from reverse rank/order, repeating that pass if necessary.
+/// Entries are never removed, only reduced, so selection and caps survive.
+fn apportion_rounded_units(
+    mut units: Vec<i64>,
+) -> Result<(Vec<i64>, i64), OwnerBetaTargetSnapshotError> {
+    if units.iter().any(|unit| *unit < 0) {
         return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
     }
+    let total = units.iter().try_fold(0_i64, |total, unit| {
+        total
+            .checked_add(*unit)
+            .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)
+    })?;
+    let mut excess = total.saturating_sub(10_000);
+    while excess > 0 {
+        let mut reduced = false;
+        for unit in units.iter_mut().rev() {
+            if excess == 0 {
+                break;
+            }
+            if *unit > 0 {
+                *unit -= 1;
+                excess -= 1;
+                reduced = true;
+            }
+        }
+        if !reduced {
+            return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
+        }
+    }
+    let selected = units.iter().try_fold(0_i64, |total, unit| {
+        total
+            .checked_add(*unit)
+            .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)
+    })?;
+    let cash = 10_000_i64
+        .checked_sub(selected)
+        .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
     let cash_ppm = scale_weight_units(cash)?;
     if selected
         .checked_mul(100)
@@ -996,7 +1080,7 @@ fn cash_from_round4(
     {
         return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
     }
-    Ok(cash_ppm)
+    Ok((units, cash))
 }
 
 fn fill_not_selected(selected: &BTreeSet<String>) -> Vec<OwnerBetaTargetItem> {
@@ -1032,13 +1116,15 @@ fn build_buy_and_hold(
     if !(0..=OWNER_BETA_TARGET_WEIGHT_SCALE).contains(&target_weight_ppm) {
         return Err(OwnerBetaTargetSnapshotError::TargetInputInvalid);
     }
+    if target_weight_ppm % 100 != 0 {
+        return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
+    }
     let target_weight = number
         .as_f64()
         .ok_or(OwnerBetaTargetSnapshotError::TargetInputInvalid)?;
-    let cash_units = round_py4(1.0 - target_weight)?;
-    if cash_units < 0 {
-        return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
-    }
+    let cash_units = 10_000_i64
+        .checked_sub(target_weight_ppm / 100)
+        .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
     let cash_weight_ppm = scale_weight_units(cash_units)?;
     if target_weight_ppm.checked_add(cash_weight_ppm) != Some(OWNER_BETA_TARGET_WEIGHT_SCALE) {
         return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
@@ -1089,7 +1175,9 @@ fn build_trend_following(
         .ok_or(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)?;
     let slow_value = values_for(values, &benchmark, &slow_id)?
         .ok_or(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)?;
-    if fast_value > slow_value {
+    // `trend_N` is `close / SMA_N - 1`. With a positive common close,
+    // fast SMA > slow SMA is therefore expressed by fast trend < slow trend.
+    if fast_value < slow_value {
         let factors = if fast_id == slow_id {
             BTreeMap::from([(fast_id, fast_value)])
         } else {
@@ -1160,7 +1248,8 @@ fn build_relative_momentum(
     if rounded_units <= 0 {
         return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
     }
-    let cash_weight_ppm = cash_from_round4(rounded_units, top.len())?;
+    let (apportioned_units, cash_units) = apportion_rounded_units(vec![rounded_units; top.len()])?;
+    let cash_weight_ppm = scale_weight_units(cash_units)?;
     let top_n_text = top_n.to_string();
     let mut items = Vec::with_capacity(instruments.len());
     top.iter()
@@ -1172,7 +1261,11 @@ fn build_relative_momentum(
                     .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?,
                 *value,
                 BTreeMap::from([(factor_id.clone(), *value)]),
-                scale_weight_units(rounded_units)?,
+                scale_weight_units(
+                    *apportioned_units
+                        .get(rank)
+                        .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?,
+                )?,
                 vec![reason(
                     OwnerBetaReasonCode::SelectedTopN,
                     [
@@ -1312,10 +1405,17 @@ fn build_inverse_volatility(
     let factor_id = factor_ids
         .first()
         .ok_or(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)?;
+    let max_weight_number = resolved
+        .config
+        .get("max_weight")
+        .and_then(Value::as_number)
+        .ok_or(OwnerBetaTargetSnapshotError::TargetInputInvalid)?;
     let max_weight = strategy_f64(&resolved.config, "max_weight")?;
     if !(0.0 < max_weight && max_weight <= 1.0) {
         return Err(OwnerBetaTargetSnapshotError::TargetInputInvalid);
     }
+    let max_weight_units = floor_decimal_number_to_units(max_weight_number, 4)?;
+    let max_weight_text = max_weight_number.to_string();
     let mut missing = Vec::new();
     let mut inverse = Vec::new();
     for instrument in canonical_instruments() {
@@ -1352,39 +1452,20 @@ fn build_inverse_volatility(
         if !raw_weight.is_finite() || raw_weight < 0.0 {
             return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
         }
-        let capped = raw_weight.min(max_weight);
-        let units = round_py4(capped)?;
-        rounded_units.push((instrument, *volatility, raw_weight, units));
+        let rounded = round_py4(raw_weight.min(max_weight))?;
+        let units = rounded.min(max_weight_units);
+        rounded_units.push((instrument, *volatility, raw_weight, rounded, units));
     }
-    let (sum_units, rounded_sum) = rounded_units.iter().try_fold(
-        (0_i64, 0.0_f64),
-        |(sum_units, rounded_sum), (_, _, _, units)| {
-            let sum_units = sum_units
-                .checked_add(*units)
-                .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
-            let rounded_sum = rounded_sum + *units as f64 / 10_000.0;
-            if rounded_sum.is_finite() {
-                Ok((sum_units, rounded_sum))
-            } else {
-                Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid)
-            }
-        },
+    let (apportioned_units, cash_units) = apportion_rounded_units(
+        rounded_units
+            .iter()
+            .map(|(_, _, _, _, units)| *units)
+            .collect(),
     )?;
-    let cash_units = round_py4(1.0 - rounded_sum)?;
-    if cash_units < 0 {
-        return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
-    }
     let cash_weight_ppm = scale_weight_units(cash_units)?;
-    let total_ppm = sum_units
-        .checked_mul(100)
-        .and_then(|sum| sum.checked_add(cash_weight_ppm))
-        .ok_or(OwnerBetaTargetSnapshotError::ArithmeticInvalid)?;
-    if total_ppm != OWNER_BETA_TARGET_WEIGHT_SCALE {
-        return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
-    }
     let mut items = Vec::with_capacity(rounded_units.len());
-    for (index, (instrument, volatility, raw_weight, units)) in
-        rounded_units.into_iter().enumerate()
+    for ((index, (instrument, volatility, raw_weight, rounded, _)), units) in
+        rounded_units.into_iter().enumerate().zip(apportioned_units)
     {
         let mut reasons = vec![reason(
             OwnerBetaReasonCode::InverseVolWeighted,
@@ -1394,10 +1475,10 @@ fn build_inverse_volatility(
                 ("weight", python_round4_string(units)),
             ],
         )];
-        if raw_weight > max_weight {
+        if raw_weight > max_weight || rounded > max_weight_units {
             reasons.push(reason(
                 OwnerBetaReasonCode::WeightCappedAtMax,
-                [("max_weight", python_float_string(max_weight)?)],
+                [("max_weight", max_weight_text.clone())],
             ));
         }
         items.push(selected_item(
@@ -1405,7 +1486,7 @@ fn build_inverse_volatility(
             u32::try_from(index + 1)
                 .map_err(|_| OwnerBetaTargetSnapshotError::ArithmeticInvalid)?,
             raw_weight,
-            BTreeMap::from([(factor_id.clone(), raw_weight)]),
+            BTreeMap::from([(factor_id.clone(), volatility)]),
             scale_weight_units(units)?,
             reasons,
         )?);
@@ -1435,7 +1516,7 @@ fn validate_row_value(row: &FactorRow) -> Result<Option<f64>, OwnerBetaTargetSna
         || row
             .normalized
             .is_some_and(|normalized| !normalized.is_finite())
-        || (row.raw.is_none() && row.normalized.is_some())
+        || (row.raw.is_some() != row.normalized.is_some())
     {
         return Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid);
     }
@@ -1574,9 +1655,9 @@ mod tests {
         let trend_factors =
             factor_snapshot(&trend, &["trend_100", "trend_200"], |instrument, factor| {
                 if instrument == "069500.KRX" && factor == "trend_100" {
-                    2.0
+                    0.1
                 } else if instrument == "069500.KRX" {
-                    1.0
+                    0.2
                 } else {
                     0.0
                 }
@@ -1700,12 +1781,18 @@ mod tests {
             "DEFENSIVE_CASH_SELECTED"
         );
 
-        assert_eq!(round_py4(0.00005).expect("round"), 1);
-        assert_eq!(round_py4(0.00015).expect("round"), 1);
-        assert_eq!(round_py4(0.00025).expect("round"), 3);
-        assert_eq!(round_py4(0.00035).expect("round"), 3);
-        assert_eq!(round_py4(0.33335).expect("round"), 3333);
-        assert_eq!(round_py4(1.23445).expect("round"), 12345);
+        // Decimal oracle: ties use round-half-even before values become
+        // canonical integer target units.
+        assert_eq!(round_decimal_half_even_to_units("0.00005", 4).unwrap(), 0);
+        assert_eq!(round_decimal_half_even_to_units("0.00015", 4).unwrap(), 2);
+        assert_eq!(
+            round_decimal_half_even_to_units("0.33335", 4).unwrap(),
+            3334
+        );
+        assert_eq!(round_py4(0.00005).expect("round"), 0);
+        assert_eq!(round_py4(0.00015).expect("round"), 2);
+        assert_eq!(round_py4(0.33335).expect("round"), 3334);
+        assert_eq!(round_py4(1.23445).expect("round"), 12344);
         assert_eq!(round_py4(1.0 / 3.0).expect("round"), 3333);
         assert_eq!(python_float_string(0.123456789).unwrap(), "0.123456789");
         assert_eq!(python_float_string(1e-7).unwrap(), "1e-07");
@@ -1729,6 +1816,56 @@ mod tests {
         assert_eq!(
             build_target_snapshot(&unsupported_fraction, &unsupported_factors),
             Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid)
+        );
+    }
+
+    #[test]
+    fn trend_uses_sma_order_not_the_inverted_close_over_sma_factor_order() {
+        let input = input_for(&resolved(
+            "trend_following",
+            json!({
+                "benchmark_instrument": "069500.KRX",
+                "fast_ma": 50,
+                "slow_ma": 200
+            }),
+        ));
+        let close = 100.0;
+        let trend_factor = |sma: f64| close / sma - 1.0;
+
+        // The fast SMA is greater, so its close/SMA-1 factor is smaller.
+        let long = factor_snapshot(&input, &["trend_50", "trend_200"], |instrument, factor| {
+            if instrument != "069500.KRX" {
+                return 0.0;
+            }
+            if factor == "trend_50" {
+                trend_factor(105.0)
+            } else {
+                trend_factor(100.0)
+            }
+        });
+        let long_target = build_target_snapshot(&input, &long).expect("long trend target");
+        assert_eq!(long_target.cash_weight_ppm(), 0);
+        assert_eq!(long_target.items()[0].reasons()[0].code(), "TREND_POSITIVE");
+
+        // The fast SMA is lower, so its close/SMA-1 factor is greater.
+        let cash = factor_snapshot(&input, &["trend_50", "trend_200"], |instrument, factor| {
+            if instrument != "069500.KRX" {
+                return 0.0;
+            }
+            if factor == "trend_50" {
+                trend_factor(95.0)
+            } else {
+                trend_factor(100.0)
+            }
+        });
+        let cash_target = build_target_snapshot(&input, &cash).expect("cash trend target");
+        assert_eq!(
+            cash_target.cash_weight_ppm(),
+            OWNER_BETA_TARGET_WEIGHT_SCALE
+        );
+        assert_eq!(
+            cash_target.portfolio_reasons()[0].code(),
+            "TREND_NEGATIVE_CASH"
         );
     }
 
@@ -1811,9 +1948,9 @@ mod tests {
         let mut trend_factors =
             factor_snapshot(&trend, &["trend_50", "trend_200"], |instrument, factor| {
                 if instrument == "069500.KRX" && factor == "trend_50" {
-                    2.0
-                } else {
                     1.0
+                } else {
+                    2.0
                 }
             });
         for instrument in canonical_instruments() {
@@ -1846,8 +1983,10 @@ mod tests {
             .find(|item| item.instrument_id() == "069500.KRX")
             .expect("first member");
         assert_eq!(first.score(), Some("5e-05"));
-        assert_eq!(first.target_weight(), Some("0.000100".to_owned()));
-        assert_eq!(target.cash_weight(), "0.099900");
+        assert_eq!(first.target_weight(), Some("0.000000".to_owned()));
+        assert_eq!(first.factors()["vol_60"], "1999.9");
+        assert_eq!(first.reasons()[0].params()["vol"], "1999.9");
+        assert_eq!(target.cash_weight(), "0.100000");
 
         let dual = input_for(&resolved(
             "dual_momentum",
@@ -1863,6 +2002,100 @@ mod tests {
         assert_eq!(selected.score(), Some("2.5e-06"));
         assert_eq!(selected.reasons()[0].params()["return_"], "3e-06");
         assert_eq!(selected.reasons()[0].params()["threshold"], "1e-07");
+    }
+
+    #[test]
+    fn inverse_volatility_cap_is_enforced_after_decimal_rounding() {
+        for max_weight in [json!(0.09005), json!(0.09006)] {
+            let inverse = input_for(&resolved(
+                "inverse_volatility",
+                json!({"vol_window": 60, "max_weight": max_weight}),
+            ));
+            let factors = factor_snapshot(&inverse, &["vol_60"], |_, _| 1.0);
+            let target = build_target_snapshot(&inverse, &factors).expect("capped target");
+
+            assert!(target.items().iter().all(|item| {
+                item.target_weight_ppm()
+                    .is_some_and(|weight| weight <= 90_000)
+            }));
+            assert_eq!(target.cash_weight_ppm(), 10_000);
+            assert!(target.items().iter().all(|item| {
+                item.reasons()
+                    .iter()
+                    .any(|reason| reason.code() == "WEIGHT_CAPPED_AT_MAX")
+            }));
+        }
+    }
+
+    #[test]
+    fn rounded_excess_is_apportioned_without_dropping_relative_or_inverse_vol_targets() {
+        for (selected_count, expected_weights) in [
+            (
+                6_usize,
+                vec![166_700, 166_700, 166_700, 166_700, 166_600, 166_600],
+            ),
+            (
+                7_usize,
+                vec![
+                    142_900, 142_900, 142_900, 142_900, 142_800, 142_800, 142_800,
+                ],
+            ),
+        ] {
+            let relative = input_for(&resolved(
+                "relative_momentum",
+                json!({"top_n": selected_count, "lookback_months": 12}),
+            ));
+            let relative_factors = factor_snapshot(&relative, &["momentum_12_1"], |_, _| 1.0);
+            let relative_target =
+                build_target_snapshot(&relative, &relative_factors).expect("relative target");
+            let relative_weights = relative_target
+                .items()
+                .iter()
+                .filter_map(OwnerBetaTargetItem::target_weight_ppm)
+                .collect::<Vec<_>>();
+            assert_eq!(relative_weights, expected_weights);
+            assert_eq!(relative_target.cash_weight_ppm(), 0);
+            assert_eq!(
+                relative_target
+                    .items()
+                    .iter()
+                    .filter(|item| item.target_weight_ppm().is_some())
+                    .map(OwnerBetaTargetItem::rank)
+                    .collect::<Vec<_>>(),
+                (1..=u32::try_from(selected_count).unwrap())
+                    .map(Some)
+                    .collect::<Vec<_>>()
+            );
+
+            let inverse = input_for(&resolved(
+                "inverse_volatility",
+                json!({"vol_window": 60, "max_weight": 1.0}),
+            ));
+            let mut inverse_factors = factor_snapshot(&inverse, &["vol_60"], |_, _| 1.0);
+            for instrument in canonical_instruments().into_iter().skip(selected_count) {
+                set_null(&mut inverse_factors, &instrument, Some("vol_60"));
+            }
+            let inverse_target =
+                build_target_snapshot(&inverse, &inverse_factors).expect("inverse target");
+            let inverse_weights = inverse_target
+                .items()
+                .iter()
+                .filter_map(OwnerBetaTargetItem::target_weight_ppm)
+                .collect::<Vec<_>>();
+            assert_eq!(inverse_weights, expected_weights);
+            assert_eq!(inverse_target.cash_weight_ppm(), 0);
+            assert_eq!(
+                inverse_target
+                    .items()
+                    .iter()
+                    .filter(|item| item.target_weight_ppm().is_some())
+                    .map(OwnerBetaTargetItem::rank)
+                    .collect::<Vec<_>>(),
+                (1..=u32::try_from(selected_count).unwrap())
+                    .map(Some)
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
@@ -1921,6 +2154,86 @@ mod tests {
             Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)
         );
         assert_eq!(expected_rows.len(), 11);
+    }
+
+    #[test]
+    fn target_boundary_rejects_future_rows_and_accepts_historical_rows() {
+        let input = input_for(&resolved(
+            "relative_momentum",
+            json!({"top_n": 3, "lookback_months": 12}),
+        ));
+        let baseline = factor_snapshot(&input, &["momentum_12_1"], |_, _| 1.0);
+
+        let mut historical = baseline.clone();
+        historical.rows.push(FactorRow {
+            date: "2026-08-23".to_owned(),
+            instrument: "069500.KRX".to_owned(),
+            factor: "momentum_12_1".to_owned(),
+            raw: Some(0.5),
+            normalized: Some(0.0),
+        });
+        historical.hash = historical
+            .compute_hash()
+            .expect("rehash historical snapshot");
+        build_target_snapshot(&input, &historical).expect("historical factor rows remain valid");
+
+        let mut future = baseline;
+        future.rows.push(FactorRow {
+            date: "2026-08-25".to_owned(),
+            instrument: "069500.KRX".to_owned(),
+            factor: "momentum_12_1".to_owned(),
+            raw: Some(0.5),
+            normalized: Some(0.0),
+        });
+        future.hash = future.compute_hash().expect("rehash future snapshot");
+        assert_eq!(
+            build_target_snapshot(&input, &future),
+            Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)
+        );
+    }
+
+    #[test]
+    fn historical_rows_are_validated_before_they_are_ignored_for_selection() {
+        let input = input_for(&resolved(
+            "relative_momentum",
+            json!({"top_n": 3, "lookback_months": 12}),
+        ));
+        let baseline = factor_snapshot(&input, &["momentum_12_1"], |_, _| 1.0);
+
+        let invalid_rows = [
+            FactorRow {
+                date: "2026-08-23".to_owned(),
+                instrument: "SPY.ARCA".to_owned(),
+                factor: "momentum_12_1".to_owned(),
+                raw: Some(0.5),
+                normalized: Some(0.0),
+            },
+            FactorRow {
+                date: "2026-08-23".to_owned(),
+                instrument: "069500.KRX".to_owned(),
+                factor: "return_6m".to_owned(),
+                raw: Some(0.5),
+                normalized: Some(0.0),
+            },
+            FactorRow {
+                date: "2026-08-23".to_owned(),
+                instrument: "069500.KRX".to_owned(),
+                factor: "momentum_12_1".to_owned(),
+                raw: Some(0.5),
+                normalized: None,
+            },
+        ];
+        for invalid in invalid_rows {
+            let mut snapshot = baseline.clone();
+            snapshot.rows.push(invalid);
+            snapshot.hash = snapshot
+                .compute_hash()
+                .expect("rehash invalid historical row");
+            assert_eq!(
+                build_target_snapshot(&input, &snapshot),
+                Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)
+            );
+        }
     }
 
     #[test]

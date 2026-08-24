@@ -98,7 +98,7 @@ describe("role-aware primary navigation", () => {
     expect(markup).not.toContain('href="/live"');
   });
 
-  it("keeps recommendations and backtests but hides locked Paper for the Owner", () => {
+  it("keeps beta products but hides locked Paper and Live for the Owner", () => {
     const markup = renderShell({
       ...OWNER_SESSION,
       owner_beta_access_mode: "owner_only",
@@ -109,7 +109,7 @@ describe("role-aware primary navigation", () => {
     expect(markup).toContain('href="/backtests"');
     expect(markup).not.toContain('href="/paper"');
     expect(markup).toContain('href="/admin"');
-    expect(markup).toContain('href="/live"');
+    expect(markup).not.toContain('href="/live"');
   });
 
   it("shows Paper to the Owner only after its separate activation", () => {

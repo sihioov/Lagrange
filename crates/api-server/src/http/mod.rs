@@ -568,4 +568,106 @@ mod tests {
         assert_eq!(normal_state.admin_pool.size(), 0);
         assert_eq!(normal_state.audit_pool.size(), 0);
     }
+
+    #[tokio::test]
+    async fn owner_beta_live_routes_fail_before_any_handler_logic() {
+        let state =
+            ApiState::test_without_database(crate::http::state::OwnerBetaAccessMode::OwnerOnly);
+        let app = api_router(state.clone());
+        let requests = [
+            (Method::GET, "/api/v1/admin/live/connections", String::new()),
+            (
+                Method::POST,
+                "/api/v1/admin/live/connections",
+                "{}".to_owned(),
+            ),
+            (
+                Method::POST,
+                "/api/v1/admin/live/connections/00000000-0000-0000-0000-000000000001/start",
+                "{}".to_owned(),
+            ),
+            (
+                Method::POST,
+                "/api/v1/admin/live/nodes/00000000-0000-0000-0000-000000000002/stop",
+                "{}".to_owned(),
+            ),
+            (
+                Method::POST,
+                "/api/v1/admin/live/kill-switch/enable",
+                "{}".to_owned(),
+            ),
+            (
+                Method::POST,
+                "/api/v1/admin/live/kill-switch/disable",
+                r#"{"reason":"owner-beta exclusion"}"#.to_owned(),
+            ),
+            (
+                Method::POST,
+                "/api/v1/admin/live/orders",
+                r#"{
+                    "connection_id":"00000000-0000-0000-0000-000000000001",
+                    "account_id":"00000000-0000-0000-0000-000000000002",
+                    "instrument_id":"069500.KRX",
+                    "side":"BUY",
+                    "quantity":"1",
+                    "price":"100",
+                    "dry_run":false
+                }"#
+                .to_owned(),
+            ),
+            (
+                Method::GET,
+                "/api/v1/admin/live/reconciliation",
+                String::new(),
+            ),
+        ];
+
+        for (method, path, body) in requests {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(&method)
+                        .uri(path)
+                        .header("content-type", "application/json")
+                        .header("x-request-id", "owner-beta-live-exclusion")
+                        .body(Body::from(body))
+                        .expect("owner-beta Live request"),
+                )
+                .await
+                .expect("owner-beta Live response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {path}");
+            let body = to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("bounded owner-beta Live error body");
+            let body: serde_json::Value = serde_json::from_slice(&body).expect("typed error JSON");
+            assert_eq!(body["error"]["code"], "FORBIDDEN", "{method} {path}");
+            assert_eq!(body["error"]["message"], "forbidden", "{method} {path}");
+        }
+
+        // A handler-side session lookup or Live repository call would need a
+        // database connection. The lazy pools remaining unopened proves the
+        // exclusion ran at the outer route boundary, including for the real
+        // non-dry-run order path above.
+        assert_eq!(state.app_pool.size(), 0);
+        assert_eq!(state.admin_pool.size(), 0);
+        assert_eq!(state.audit_pool.size(), 0);
+
+        // The exclusion is specific to owner-only mode. In the documented
+        // disabled mode, the same real route reaches its ordinary session
+        // boundary instead of inheriting the beta refusal.
+        let normal_state =
+            ApiState::test_without_database(crate::http::state::OwnerBetaAccessMode::Disabled);
+        let normal = api_router(normal_state)
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/admin/live/connections")
+                    .body(Body::empty())
+                    .expect("ordinary Live request"),
+            )
+            .await
+            .expect("ordinary Live response");
+        assert_eq!(normal.status(), StatusCode::UNAUTHORIZED);
+    }
 }

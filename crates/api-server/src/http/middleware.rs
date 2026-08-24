@@ -18,6 +18,15 @@ use std::time::Instant;
 
 pub const HEADER: &str = "x-request-id";
 
+const OWNER_BETA_LIVE_PREFIX: &str = "/api/v1/admin/live";
+
+fn owner_beta_live_excluded(path: &str) -> bool {
+    path == OWNER_BETA_LIVE_PREFIX
+        || path
+            .strip_prefix(OWNER_BETA_LIVE_PREFIX)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 /// The middleware fn mounted around the whole `/api/v1` router.
 pub async fn correlation(req: Request, next: Next) -> Response {
     let started = Instant::now();
@@ -61,6 +70,13 @@ pub async fn owner_beta_admission(
 ) -> Response {
     if !state.cfg.owner_beta_access.requires_owner() {
         return next.run(req).await;
+    }
+    if owner_beta_live_excluded(req.uri().path()) {
+        // Live is intentionally outside the owner-beta release surface. Keep
+        // this denial before session and handler extraction: an Owner-only
+        // beta must not reach connection, node, kill-switch, or order logic.
+        let rid = request_id(req.headers());
+        return code_error("FORBIDDEN", "forbidden", &rid);
     }
     let Some(product) = owner_beta_product(req.uri().path()) else {
         return next.run(req).await;

@@ -164,6 +164,10 @@ const OWNER_BETA_TARGET_PUBLICATION_UP_SQL: &str =
     include_str!("../../../../migrations/0051_owner_beta_target_publication.up.sql");
 const OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0051_owner_beta_target_publication.down.sql");
+const OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL: &str =
+    include_str!("../../../../migrations/0052_owner_beta_strategy_config_lock.up.sql");
+const OWNER_BETA_STRATEGY_CONFIG_LOCK_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0052_owner_beta_strategy_config_lock.down.sql");
 const CANDIDATE_SCHEDULE_RS: &str =
     include_str!("../../../../crates/job-queue/src/candidate/schedule.rs");
 const CANDIDATE_RUNNER_RS: &str =
@@ -528,32 +532,54 @@ fn owner_beta_strategy_snapshots_are_append_only_and_bound_at_insert() {
 
 #[test]
 fn owner_beta_target_publication_is_atomic_append_only_and_reversible() {
-    assert_eq!(
-        MIGRATOR
+    for (version, description) in [
+        (50, "owner beta strategy snapshots"),
+        (51, "owner beta target publication"),
+    ] {
+        let pair = MIGRATOR
             .migrations
             .iter()
-            .filter(|migration| migration.version == 51)
-            .count(),
-        2,
-        "0051 must have exactly one reversible up/down migration pair"
-    );
-    assert_eq!(
-        MIGRATOR
-            .migrations
-            .iter()
-            .map(|migration| migration.version)
-            .max(),
-        Some(51),
-        "0051 must be the append-only migration after 0050"
-    );
-    assert_eq!(
-        MIGRATOR
-            .migrations
-            .iter()
-            .filter(|migration| migration.version == 50)
-            .count(),
-        2,
-        "0051 must append to, not replace, the 0050 pair"
+            .filter(|migration| migration.version == version)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pair.len(),
+            2,
+            "{version:04} must have exactly one reversible up/down migration pair"
+        );
+        assert!(
+            pair.iter()
+                .all(|migration| migration.description == description),
+            "{version:04} must retain the fixed {description:?} name"
+        );
+        assert_eq!(
+            pair.iter()
+                .filter(|migration| migration.migration_type == MigrationType::ReversibleUp)
+                .count(),
+            1,
+            "{version:04} must have exactly one reversible up migration"
+        );
+        assert_eq!(
+            pair.iter()
+                .filter(|migration| migration.migration_type == MigrationType::ReversibleDown)
+                .count(),
+            1,
+            "{version:04} must have exactly one reversible down migration"
+        );
+    }
+    let ordered_up = MIGRATOR
+        .migrations
+        .iter()
+        .filter(|migration| migration.migration_type != MigrationType::ReversibleDown)
+        .map(|migration| (migration.version, migration.description.as_ref()))
+        .collect::<Vec<_>>();
+    assert!(
+        ordered_up.windows(2).any(|pair| {
+            pair == [
+                (50, "owner beta strategy snapshots"),
+                (51, "owner beta target publication"),
+            ]
+        }),
+        "0051 must be the exact append-only successor to 0050"
     );
 
     let lock = OWNER_BETA_TARGET_PUBLICATION_UP_SQL
@@ -686,6 +712,773 @@ fn owner_beta_target_publication_is_atomic_append_only_and_reversible() {
                 .contains("CASCADE"),
         "0051 must not use CASCADE"
     );
+}
+
+#[test]
+fn owner_beta_strategy_config_lock_is_lineage_bound_and_reversible() {
+    const FUNCTION_NAME: &str =
+        "public.owner_beta_recommendation_runs_lock_strategy_config_on_success";
+    const TRIGGER_NAME: &str = "owner_beta_recommendation_runs_lock_strategy_config_on_success";
+    const DESCRIPTION: &str = "owner beta strategy config lock";
+
+    let version_52 = MIGRATOR
+        .migrations
+        .iter()
+        .filter(|migration| migration.version == 52)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        version_52.len(),
+        2,
+        "0052 must have exactly one reversible up/down migration pair"
+    );
+    assert!(
+        version_52
+            .iter()
+            .all(|migration| migration.description == DESCRIPTION),
+        "0052 must retain its fixed migration name"
+    );
+    assert_eq!(
+        version_52
+            .iter()
+            .filter(|migration| migration.migration_type == MigrationType::ReversibleUp)
+            .count(),
+        1,
+        "0052 must have exactly one reversible up migration"
+    );
+    assert_eq!(
+        version_52
+            .iter()
+            .filter(|migration| migration.migration_type == MigrationType::ReversibleDown)
+            .count(),
+        1,
+        "0052 must have exactly one reversible down migration"
+    );
+    let ordered_up = MIGRATOR
+        .migrations
+        .iter()
+        .filter(|migration| migration.migration_type != MigrationType::ReversibleDown)
+        .map(|migration| (migration.version, migration.description.as_ref()))
+        .collect::<Vec<_>>();
+    assert!(
+        ordered_up
+            .windows(2)
+            .any(|pair| { pair == [(51, "owner beta target publication"), (52, DESCRIPTION),] }),
+        "0052 must be the exact append-only successor to 0051"
+    );
+
+    assert_eq!(
+        OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL
+            .matches("CREATE FUNCTION ")
+            .count(),
+        1,
+        "0052 must create exactly one trigger function"
+    );
+    let function_start = OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL
+        .find("CREATE FUNCTION ")
+        .expect("0052 CREATE FUNCTION");
+    let function_end = OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL[function_start..]
+        .find("$lock$;")
+        .map(|offset| function_start + offset + "$lock$;".len())
+        .expect("0052 complete dollar-quoted trigger function");
+    let function = &OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL[function_start..function_end];
+    assert_eq!(
+        function.matches("AS $lock$").count(),
+        1,
+        "0052 must have one fixed dollar-quoted function body"
+    );
+    let expected_header = format!("CREATE FUNCTION {FUNCTION_NAME}()\nRETURNS trigger");
+    assert!(
+        function.contains(&expected_header),
+        "0052 must use the fixed zero-argument trigger-function signature"
+    );
+    let signature = function
+        .split("RETURNS trigger")
+        .next()
+        .expect("0052 trigger function signature");
+    assert_eq!(
+        signature
+            .split("CREATE FUNCTION ")
+            .nth(1)
+            .expect("0052 CREATE FUNCTION header")
+            .trim(),
+        format!("{FUNCTION_NAME}()"),
+        "0052 must reject caller parameters and tenant selectors"
+    );
+    assert!(
+        !function.contains("p_owner_user_id")
+            && !function.contains("p_strategy_config_id")
+            && !function.contains("p_strategy_id")
+            && !function.contains("p_strategy_version")
+            && !function.contains("p_config_json"),
+        "0052 must not restore the rejected caller-selected lock design"
+    );
+    for token in [
+        "SECURITY DEFINER",
+        "SET search_path = pg_catalog, pg_temp",
+        "NEW.status IS DISTINCT FROM 'SUCCEEDED'",
+        "OLD.status IS NOT DISTINCT FROM 'SUCCEEDED'",
+        "pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true)",
+        "config.id = NEW.strategy_config_id",
+        "config.owner_user_id = NEW.owner_user_id",
+        "config.is_active",
+        "config.strategy_id = NEW.strategy_id",
+        "config.strategy_version = NEW.strategy_version",
+        "config.config_json = NEW.strategy_config_json",
+        "FOR SHARE OF config",
+        "USING ERRCODE = '23514'",
+    ] {
+        assert!(
+            function.contains(token),
+            "0052 lock function is missing {token}"
+        );
+    }
+    assert_eq!(
+        function.matches("pg_catalog.set_config(").count(),
+        1,
+        "0052 may derive tenant context only once from NEW owner lineage"
+    );
+    assert!(
+        !function.contains("current_setting(")
+            && !function.contains("SESSION_USER")
+            && !function.contains("CURRENT_USER"),
+        "0052 must not accept an ambient or caller-selected tenant identity"
+    );
+
+    let top_level_ddl = format!(
+        "{}{}",
+        &OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL[..function_start],
+        &OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL[function_end..]
+    );
+    let top_level_executable = top_level_ddl
+        .lines()
+        .map(|line| line.split_once("--").map_or(line, |(sql, _)| sql))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let up_statements = top_level_executable
+        .split(';')
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+        .collect::<Vec<_>>();
+    let normalize = |statement: &str| statement.split_whitespace().collect::<Vec<_>>().join(" ");
+    let owner_statements = up_statements
+        .iter()
+        .copied()
+        .filter(|statement| statement.contains("ALTER FUNCTION "))
+        .map(normalize)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        owner_statements,
+        [format!(
+            "ALTER FUNCTION {FUNCTION_NAME}() OWNER TO migration_owner"
+        )],
+        "0052 must assign exactly the fixed trigger function to migration_owner"
+    );
+    let revoke_statements = up_statements
+        .iter()
+        .copied()
+        .filter(|statement| statement.starts_with("REVOKE "))
+        .map(normalize)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        revoke_statements,
+        [format!(
+            "REVOKE ALL ON FUNCTION {FUNCTION_NAME}() FROM PUBLIC, app, worker, admin, audit_writer, research_writer"
+        )],
+        "0052 must revoke every direct trigger-function caller"
+    );
+    let grant_statements = up_statements
+        .iter()
+        .copied()
+        .filter(|statement| statement.starts_with("GRANT "))
+        .collect::<Vec<_>>();
+    assert!(
+        grant_statements.is_empty(),
+        "0052 must not broaden worker SELECT, UPDATE, or EXECUTE privileges"
+    );
+
+    let trigger_statements = up_statements
+        .iter()
+        .copied()
+        .filter(|statement| statement.contains("CREATE TRIGGER "))
+        .map(normalize)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        trigger_statements,
+        [format!(
+            "CREATE TRIGGER {TRIGGER_NAME} BEFORE UPDATE OF status ON public.owner_beta_recommendation_runs FOR EACH ROW EXECUTE FUNCTION {FUNCTION_NAME}()"
+        )],
+        "0052 trigger must be limited to owner-beta run status updates"
+    );
+
+    let down_drops = OWNER_BETA_STRATEGY_CONFIG_LOCK_DOWN_SQL
+        .split(';')
+        .map(str::trim)
+        .filter(|statement| statement.starts_with("DROP "))
+        .map(normalize)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        down_drops,
+        [
+            format!("DROP TRIGGER {TRIGGER_NAME} ON public.owner_beta_recommendation_runs"),
+            format!("DROP FUNCTION {FUNCTION_NAME}()"),
+        ],
+        "0052 down must drop the exact trigger before the exact function"
+    );
+    assert!(
+        !OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL
+            .to_ascii_uppercase()
+            .contains("CASCADE")
+            && !OWNER_BETA_STRATEGY_CONFIG_LOCK_DOWN_SQL
+                .to_ascii_uppercase()
+                .contains("CASCADE"),
+        "0052 must not use CASCADE"
+    );
+}
+
+// TEST-ONLY migration fixtures.  These construct only the public JSON shape
+// checked by migrations 0049-0051; they are not production owner-beta input
+// constructors and do not represent approved artifact or registry pins.
+struct OwnerBetaRuntimeHashes<'a> {
+    candidate: &'a str,
+    artifact: &'a str,
+    stage5: &'a str,
+    action: &'a str,
+    approval: &'a str,
+    strategy: &'a str,
+}
+
+fn owner_beta_runtime_payload(
+    run_id: Uuid,
+    config_id: Uuid,
+    hashes: &OwnerBetaRuntimeHashes<'_>,
+    strategy_hash: Option<&str>,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "run_id": run_id.to_string(),
+        "strategy_config_id": config_id.to_string(),
+        "as_of": "2026-08-24",
+        "pins": {
+            "candidate_content_sha256": hashes.candidate,
+            "artifact_manifest_sha256": hashes.artifact,
+            "stage5_manifest_sha256": hashes.stage5,
+            "action_manifest_sha256": hashes.action,
+            "approval_registry_sha256": hashes.approval,
+        },
+    });
+    if let Some(strategy_hash) = strategy_hash {
+        payload["strategy"] = serde_json::json!({
+            "strategy_id": "owner_beta_contract",
+            "strategy_version": "1.0.0",
+            "config_json": {"benchmark":"069500.KRX"},
+            "config_sha256": strategy_hash,
+        });
+    }
+    payload
+}
+
+async fn insert_owner_beta_runtime_run(
+    app: &PgPool,
+    owner_id: Uuid,
+    config_id: Uuid,
+    run_id: Uuid,
+    key: &str,
+    hashes: &OwnerBetaRuntimeHashes<'_>,
+) -> Result<Uuid, sqlx::Error> {
+    let payload = owner_beta_runtime_payload(run_id, config_id, hashes, Some(hashes.strategy));
+    let job_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id, job_type, payload_json, idempotency_key) \
+         VALUES ($1, 'owner_beta_price_recommendation', $2, $3) RETURNING id",
+    )
+    .bind(owner_id)
+    .bind(payload)
+    .bind(key)
+    .fetch_one(app)
+    .await?;
+    sqlx::query(
+        "INSERT INTO owner_beta_recommendation_runs \
+         (id, owner_user_id, strategy_config_id, strategy_id, strategy_version, \
+          strategy_config_json, strategy_config_sha256, job_id, as_of, \
+          candidate_content_sha256, artifact_manifest_sha256, stage5_manifest_sha256, \
+          action_manifest_sha256, approval_registry_sha256) \
+         VALUES ($1, $2, $3, 'owner_beta_contract', '1.0.0', \
+                 '{\"benchmark\":\"069500.KRX\"}'::jsonb, $4, $5, '2026-08-24', \
+                 $6, $7, $8, $9, $10)",
+    )
+    .bind(run_id)
+    .bind(owner_id)
+    .bind(config_id)
+    .bind(hashes.strategy)
+    .bind(job_id)
+    .bind(hashes.candidate)
+    .bind(hashes.artifact)
+    .bind(hashes.stage5)
+    .bind(hashes.action)
+    .bind(hashes.approval)
+    .execute(app)
+    .await?;
+    Ok(job_id)
+}
+
+#[tokio::test]
+async fn owner_beta_migrations_enforce_runtime_rls_lineage_and_rollback_guards() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = owner_beta_migration_runtime_body(&super_url, &db, &owner).await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("owner-beta runtime migration contract FAILED: {error}");
+    }
+}
+
+async fn owner_beta_migration_runtime_body(
+    super_url: &str,
+    db: &str,
+    owner: &PgPool,
+) -> Result<(), Box<dyn Error>> {
+    // TEST-ONLY synthetic hashes exercise the SQL shape checks.  They are not
+    // approval-registry pins or an artifact/publication constructor.
+    let test_hash = |digit: char| format!("sha256:{}", digit.to_string().repeat(64));
+    let candidate_hash = test_hash('a');
+    let artifact_hash = test_hash('b');
+    let stage5_hash = test_hash('c');
+    let action_hash = test_hash('d');
+    let approval_hash = test_hash('e');
+    let strategy_hash = test_hash('f');
+    let factor_hash = test_hash('1');
+    let target_hash = test_hash('2');
+    let hashes = OwnerBetaRuntimeHashes {
+        candidate: &candidate_hash,
+        artifact: &artifact_hash,
+        stage5: &stage5_hash,
+        action: &action_hash,
+        approval: &approval_hash,
+        strategy: &strategy_hash,
+    };
+
+    MIGRATOR.run_to(49, owner).await?;
+    assert_eq!(applied_count(owner).await?, 49);
+
+    let owner_a: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://owner-beta.test', 'owner-beta-a', 'owner-beta-a@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    let owner_b: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://owner-beta.test', 'owner-beta-b', 'owner-beta-b@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO strategies (id, display_name, state) \
+         VALUES ('owner_beta_contract', 'Owner beta contract', 'Paper')",
+    )
+    .execute(owner)
+    .await?;
+
+    let app_a = actor_pool(super_url, db, "app", &owner_a.to_string()).await?;
+    let app_b = actor_pool(super_url, db, "app", &owner_b.to_string()).await?;
+    let owner_a_actor = actor_pool(super_url, db, "migration_owner", &owner_a.to_string()).await?;
+    let config_a: Uuid = sqlx::query_scalar(
+        "INSERT INTO user_strategy_configs \
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, 'owner_beta_contract', '1.0.0', '{\"benchmark\":\"069500.KRX\"}'::jsonb) \
+         RETURNING id",
+    )
+    .bind(owner_a)
+    .fetch_one(&app_a)
+    .await?;
+    let config_b: Uuid = sqlx::query_scalar(
+        "INSERT INTO user_strategy_configs \
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, 'owner_beta_contract', '1.0.0', '{\"benchmark\":\"069500.KRX\"}'::jsonb) \
+         RETURNING id",
+    )
+    .bind(owner_b)
+    .fetch_one(&app_b)
+    .await?;
+
+    let legacy_run_id = Uuid::new_v4();
+    let legacy_payload = owner_beta_runtime_payload(legacy_run_id, config_a, &hashes, None);
+    let legacy_job_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id, job_type, payload_json, idempotency_key) \
+         VALUES ($1, 'owner_beta_price_recommendation', $2, 'owner-beta-legacy') RETURNING id",
+    )
+    .bind(owner_a)
+    .bind(&legacy_payload)
+    .fetch_one(&app_a)
+    .await?;
+    sqlx::query(
+        "INSERT INTO owner_beta_recommendation_runs \
+         (id, owner_user_id, strategy_config_id, job_id, as_of, candidate_content_sha256, \
+          artifact_manifest_sha256, stage5_manifest_sha256, action_manifest_sha256, \
+          approval_registry_sha256) \
+         VALUES ($1, $2, $3, $4, '2026-08-24', $5, $6, $7, $8, $9)",
+    )
+    .bind(legacy_run_id)
+    .bind(owner_a)
+    .bind(config_a)
+    .bind(legacy_job_id)
+    .bind(&candidate_hash)
+    .bind(&artifact_hash)
+    .bind(&stage5_hash)
+    .bind(&action_hash)
+    .bind(&approval_hash)
+    .execute(&app_a)
+    .await?;
+
+    let snapshot_guard = MIGRATOR.run_to(50, owner).await.unwrap_err();
+    assert_eq!(migrate_pg_code(&snapshot_guard).as_deref(), Some("55000"));
+    assert_eq!(applied_count(owner).await?, 49);
+    let legacy_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM owner_beta_recommendation_runs WHERE id = $1")
+            .bind(legacy_run_id)
+            .fetch_one(&owner_a_actor)
+            .await?;
+    assert_eq!(legacy_rows, 1, "failed 0050 guard preserves legacy rows");
+    sqlx::query("DELETE FROM owner_beta_recommendation_runs WHERE id = $1")
+        .bind(legacy_run_id)
+        .execute(&owner_a_actor)
+        .await?;
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(legacy_job_id)
+        .execute(&owner_a_actor)
+        .await?;
+
+    MIGRATOR.run_to(50, owner).await?;
+    assert_eq!(applied_count(owner).await?, 50);
+
+    let run_a = Uuid::new_v4();
+    let job_a =
+        insert_owner_beta_runtime_run(&app_a, owner_a, config_a, run_a, "owner-beta-a", &hashes)
+            .await?;
+    let run_b = Uuid::new_v4();
+    let _job_b =
+        insert_owner_beta_runtime_run(&app_b, owner_b, config_b, run_b, "owner-beta-b", &hashes)
+            .await?;
+
+    let mismatched_snapshot_run = Uuid::new_v4();
+    let mismatched_snapshot_job: Uuid = sqlx::query_scalar(
+        "INSERT INTO jobs (owner_user_id, job_type, payload_json, idempotency_key) \
+         VALUES ($1, 'owner_beta_price_recommendation', $2, 'owner-beta-bad-strategy') RETURNING id",
+    )
+    .bind(owner_a)
+    .bind(owner_beta_runtime_payload(
+        mismatched_snapshot_run,
+        config_a,
+        &hashes,
+        Some(&strategy_hash),
+    ))
+    .fetch_one(&app_a)
+    .await?;
+    let mismatched_snapshot = sqlx::query(
+        "INSERT INTO owner_beta_recommendation_runs \
+         (id, owner_user_id, strategy_config_id, strategy_id, strategy_version, \
+          strategy_config_json, strategy_config_sha256, job_id, as_of, \
+          candidate_content_sha256, artifact_manifest_sha256, stage5_manifest_sha256, \
+          action_manifest_sha256, approval_registry_sha256) \
+         VALUES ($1, $2, $3, 'owner_beta_contract', '9.9.9', $4, $5, $6, '2026-08-24', \
+                 $7, $8, $9, $10, $11)",
+    )
+    .bind(mismatched_snapshot_run)
+    .bind(owner_a)
+    .bind(config_a)
+    .bind(serde_json::json!({"benchmark":"069500.KRX"}))
+    .bind(&strategy_hash)
+    .bind(mismatched_snapshot_job)
+    .bind(&candidate_hash)
+    .bind(&artifact_hash)
+    .bind(&stage5_hash)
+    .bind(&action_hash)
+    .bind(&approval_hash)
+    .execute(&app_a)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&mismatched_snapshot).as_deref(), Some("23514"));
+    let linked_job_payload_rewrite =
+        sqlx::query("UPDATE jobs SET payload_json = '{}'::jsonb WHERE id = $1")
+            .bind(job_a)
+            .execute(&owner_a_actor)
+            .await
+            .unwrap_err();
+    assert_eq!(
+        pg_code(&linked_job_payload_rewrite).as_deref(),
+        Some("42501")
+    );
+    let immutable_strategy_snapshot = sqlx::query(
+        "UPDATE owner_beta_recommendation_runs SET strategy_version = '9.9.9' WHERE id = $1",
+    )
+    .bind(run_a)
+    .execute(&owner_a_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        pg_code(&immutable_strategy_snapshot).as_deref(),
+        Some("42501")
+    );
+
+    MIGRATOR.run_to(51, owner).await?;
+    assert_eq!(applied_count(owner).await?, 51);
+    MIGRATOR.run(owner).await?;
+    assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
+
+    sqlx::query(
+        "INSERT INTO instruments (id, symbol, venue, currency) \
+         VALUES ('owner-beta-a.KRX', 'owner-beta-a', 'KRX', 'KRW'), \
+                ('owner-beta-b.KRX', 'owner-beta-b', 'KRX', 'KRW')",
+    )
+    .execute(owner)
+    .await?;
+    let worker = role_pool(super_url, db, "worker").await?;
+    for (run_id, owner_id, instrument_id) in [
+        (run_a, owner_a, "owner-beta-a.KRX"),
+        (run_b, owner_b, "owner-beta-b.KRX"),
+    ] {
+        sqlx::query(
+            "INSERT INTO owner_beta_recommendation_items \
+             (recommendation_run_id, owner_user_id, instrument_id, rank, target_weight) \
+             VALUES ($1, $2, $3, 1, 1.000000)",
+        )
+        .bind(run_id)
+        .bind(owner_id)
+        .bind(instrument_id)
+        .execute(&worker)
+        .await?;
+    }
+
+    let app_a_visible: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM owner_beta_recommendation_runs), \
+                (SELECT count(*) FROM owner_beta_recommendation_items)",
+    )
+    .fetch_one(&app_a)
+    .await?;
+    assert_eq!(app_a_visible, (1, 1), "owner A cannot read owner B rows");
+    let owner_a_cross_mutation =
+        sqlx::query("UPDATE owner_beta_recommendation_runs SET status = 'FAILED' WHERE id = $1")
+            .bind(run_b)
+            .execute(&owner_a_actor)
+            .await?;
+    assert_eq!(
+        owner_a_cross_mutation.rows_affected(),
+        0,
+        "forced RLS prevents owner A from mutating owner B's run"
+    );
+    let unscoped_migration_owner_visible: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM owner_beta_recommendation_runs")
+            .fetch_one(owner)
+            .await?;
+    assert_eq!(
+        unscoped_migration_owner_visible, 0,
+        "FORCE RLS also applies to migration_owner without an actor GUC"
+    );
+    let admin = role_pool(super_url, db, "admin").await?;
+    let admin_visible: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM owner_beta_recommendation_runs), \
+                (SELECT count(*) FROM owner_beta_recommendation_items)",
+    )
+    .fetch_one(&admin)
+    .await?;
+    assert_eq!(admin_visible, (2, 2));
+
+    for (role, run_privileges, item_privileges) in [
+        (
+            "app",
+            (true, false, false, false),
+            (true, false, false, false),
+        ),
+        (
+            "worker",
+            (true, false, false, false),
+            (true, false, false, false),
+        ),
+        (
+            "admin",
+            (true, false, false, false),
+            (true, false, false, false),
+        ),
+    ] {
+        let actual: (bool, bool, bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT \
+               has_table_privilege($1, 'owner_beta_recommendation_runs', 'SELECT'), \
+               has_table_privilege($1, 'owner_beta_recommendation_runs', 'INSERT'), \
+               has_table_privilege($1, 'owner_beta_recommendation_runs', 'UPDATE'), \
+               has_table_privilege($1, 'owner_beta_recommendation_runs', 'DELETE'), \
+               has_table_privilege($1, 'owner_beta_recommendation_items', 'SELECT'), \
+               has_table_privilege($1, 'owner_beta_recommendation_items', 'INSERT'), \
+               has_table_privilege($1, 'owner_beta_recommendation_items', 'UPDATE'), \
+               has_table_privilege($1, 'owner_beta_recommendation_items', 'DELETE')",
+        )
+        .bind(role)
+        .fetch_one(owner)
+        .await?;
+        assert_eq!(
+            actual,
+            (
+                run_privileges.0,
+                run_privileges.1,
+                run_privileges.2,
+                run_privileges.3,
+                item_privileges.0,
+                item_privileges.1,
+                item_privileges.2,
+                item_privileges.3,
+            ),
+            "{role} grants drifted"
+        );
+    }
+    for column in [
+        "id",
+        "owner_user_id",
+        "strategy_config_id",
+        "strategy_id",
+        "strategy_version",
+        "strategy_config_json",
+        "strategy_config_sha256",
+        "job_id",
+        "as_of",
+        "candidate_content_sha256",
+        "artifact_manifest_sha256",
+        "stage5_manifest_sha256",
+        "action_manifest_sha256",
+        "approval_registry_sha256",
+    ] {
+        let allowed: bool = sqlx::query_scalar(
+            "SELECT has_column_privilege('app', 'owner_beta_recommendation_runs', $1, 'INSERT')",
+        )
+        .bind(column)
+        .fetch_one(owner)
+        .await?;
+        assert!(allowed, "app INSERT grant missing for {column}");
+    }
+    let app_result_insert: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'app', 'owner_beta_recommendation_runs', 'factor_snapshot_sha256', 'INSERT')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(!app_result_insert, "app must not insert result columns");
+    for column in [
+        "status",
+        "factor_snapshot_sha256",
+        "target_snapshot_sha256",
+        "cash_weight",
+        "error_code",
+        "started_at",
+        "finished_at",
+        "updated_at",
+    ] {
+        let allowed: bool = sqlx::query_scalar(
+            "SELECT has_column_privilege(\
+                'worker', 'owner_beta_recommendation_runs', $1, 'UPDATE')",
+        )
+        .bind(column)
+        .fetch_one(owner)
+        .await?;
+        assert!(allowed, "worker UPDATE grant missing for {column}");
+    }
+    let worker_lineage_update: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'worker', 'owner_beta_recommendation_runs', 'strategy_version', 'UPDATE')",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert!(
+        !worker_lineage_update,
+        "worker must not update lineage columns"
+    );
+    for column in [
+        "id",
+        "recommendation_run_id",
+        "owner_user_id",
+        "instrument_id",
+        "rank",
+        "target_weight",
+        "reason_codes",
+        "factors_json",
+        "excluded",
+        "exclusion_reason",
+    ] {
+        let allowed: bool = sqlx::query_scalar(
+            "SELECT has_column_privilege(\
+                'worker', 'owner_beta_recommendation_items', $1, 'INSERT')",
+        )
+        .bind(column)
+        .fetch_one(owner)
+        .await?;
+        assert!(allowed, "worker item INSERT grant missing for {column}");
+    }
+    let app_item_insert = sqlx::query(
+        "INSERT INTO owner_beta_recommendation_items \
+         (recommendation_run_id, owner_user_id, instrument_id) \
+         VALUES ($1, $2, 'owner-beta-a.KRX')",
+    )
+    .bind(run_a)
+    .bind(owner_a)
+    .execute(&app_a)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&app_item_insert).as_deref(), Some("42501"));
+    let worker_item_rewrite = sqlx::query(
+        "UPDATE owner_beta_recommendation_items SET rank = 2 WHERE recommendation_run_id = $1",
+    )
+    .bind(run_a)
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&worker_item_rewrite).as_deref(), Some("42501"));
+    let worker_item_delete =
+        sqlx::query("DELETE FROM owner_beta_recommendation_items WHERE recommendation_run_id = $1")
+            .bind(run_a)
+            .execute(&worker)
+            .await
+            .unwrap_err();
+    assert_eq!(pg_code(&worker_item_delete).as_deref(), Some("42501"));
+
+    sqlx::query(
+        "UPDATE owner_beta_recommendation_runs \
+         SET status = 'SUCCEEDED', factor_snapshot_sha256 = $2, \
+             target_snapshot_sha256 = $3, cash_weight = 0.000000 \
+         WHERE id = $1",
+    )
+    .bind(run_a)
+    .bind(&factor_hash)
+    .bind(&target_hash)
+    .execute(&worker)
+    .await?;
+    let rollback_guard = MIGRATOR.undo(owner, 50).await.unwrap_err();
+    assert_eq!(migrate_pg_code(&rollback_guard).as_deref(), Some("55000"));
+    assert_eq!(applied_count(owner).await?, 51);
+    // sqlx uses a session-level advisory lock for migrations. An expected
+    // migration failure can leave that lock on the pooled connection that ran
+    // it, so a second `undo` through another connection in the same pool would
+    // wait on itself. Close the failed-attempt pool and reconnect exactly as
+    // migration_owner before exercising the successful rollback path.
+    owner.close().await;
+    let reconnected_owner = effective_role_pool(super_url, db, "migration_owner", None, 3).await?;
+    let owner = &reconnected_owner;
+    sqlx::query(
+        "UPDATE owner_beta_recommendation_runs \
+         SET status = 'PENDING', factor_snapshot_sha256 = NULL, \
+             target_snapshot_sha256 = NULL, cash_weight = NULL \
+         WHERE id = $1",
+    )
+    .bind(run_a)
+    .execute(&worker)
+    .await?;
+    MIGRATOR.undo(owner, 50).await?;
+    assert_eq!(applied_count(owner).await?, 50);
+    MIGRATOR.run(owner).await?;
+    assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
+    Ok(())
 }
 
 #[test]

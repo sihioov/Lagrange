@@ -12,6 +12,13 @@ mode_seen=0
 stage5_manifest_sha256=
 action_manifest_sha256=
 candidate_content_sha256=
+approved_candidate_content_sha256=sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050
+approved_artifact_manifest_sha256=sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67
+approved_stage5_manifest_sha256=sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4
+approved_action_manifest_sha256=sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd
+approved_registry_sha256=sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380
+approved_ignored_cash_dividend_count=1
+approved_ignored_cash_dividend_rows_sha256=sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48
 
 usage() {
   cat <<'EOF'
@@ -105,9 +112,12 @@ case "$mode" in
   materialize)
     hash_shape "$stage5_manifest_sha256" || die invalid_stage5_manifest_sha256
     hash_shape "$action_manifest_sha256" || die invalid_action_manifest_sha256
+    [ "$stage5_manifest_sha256" = "$approved_stage5_manifest_sha256" ] || die stage5_manifest_sha256_not_approved
+    [ "$action_manifest_sha256" = "$approved_action_manifest_sha256" ] || die action_manifest_sha256_not_approved
     ;;
   check)
     hash_shape "$candidate_content_sha256" || die invalid_candidate_content_sha256
+    [ "$candidate_content_sha256" = "$approved_candidate_content_sha256" ] || die candidate_content_sha256_not_approved
     ;;
   approval-check)
     [ -z "$candidate_content_sha256" ] || die operation_options_not_allowed
@@ -260,7 +270,7 @@ if [ "$mode" = preflight ]; then
 fi
 
 run_artifact_container() {
-  local output success_line line success_count=0
+  local output success_line line expected_line success_count=0
   local entrypoint=/usr/local/bin/kis-historical-price-beta-artifact
   if [ "$mode" = approval-check ]; then
     entrypoint=/usr/local/bin/kis-historical-price-beta-approval-check
@@ -332,13 +342,15 @@ run_artifact_container() {
   [ "$success_count" -eq 1 ] || blocked artifact_success_output_invalid
 
   if [ "$mode" = approval-check ]; then
-    [[ "$success_line" =~ ^HISTORICAL_PRICE_BETA_APPROVAL\ status=ok\ operation=check\ approval_registry_sha256=sha256:[0-9a-f]{64}\ approval_status=APPROVED\ audience=OWNER_ONLY\ vendor_snapshot=true\ strict_pit=false\ capability=PRICE_RETURN_ONLY\ materialization_status=MATERIALIZED\ registration_status=UNREGISTERED\ publication_status=NOT_PUBLISHED\ instrument_count=11\ session_count=1608\ bar_count=17688$ ]] ||
+    expected_line="HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=$approved_registry_sha256 approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688"
+    [ "$success_line" = "$expected_line" ] ||
       blocked artifact_success_output_invalid
   elif [ "$mode" = materialize ]; then
-    [[ "$success_line" =~ ^HISTORICAL_PRICE_BETA_ARTIFACT\ status=ok\ operation=materialize\ candidate_content_sha256=sha256:[0-9a-f]{64}\ stage5_manifest_sha256=$stage5_manifest_sha256\ action_manifest_sha256=$action_manifest_sha256\ instrument_count=11\ session_count=1608\ bar_count=17688\ raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS\ audience=OWNER_ONLY\ vendor_snapshot=true\ strict_pit=false\ capability=PRICE_RETURN_ONLY\ materialization_status=MATERIALIZED\ registration_status=UNREGISTERED\ publication_status=NOT_PUBLISHED$ ]] ||
+    expected_line="HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=materialize candidate_content_sha256=$approved_candidate_content_sha256 artifact_manifest_sha256=$approved_artifact_manifest_sha256 stage5_manifest_sha256=$approved_stage5_manifest_sha256 action_manifest_sha256=$approved_action_manifest_sha256 instrument_count=11 session_count=1608 bar_count=17688 cash_dividend_treatment=CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1 ignored_cash_dividends=$approved_ignored_cash_dividend_count ignored_cash_dividend_rows_sha256=$approved_ignored_cash_dividend_rows_sha256 raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED"
+    [ "$success_line" = "$expected_line" ] ||
       blocked artifact_success_output_invalid
   else
-    expected_line="HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256=$candidate_content_sha256 instrument_count=11 session_count=1608 bar_count=17688 raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED"
+    expected_line="HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256=$approved_candidate_content_sha256 artifact_manifest_sha256=$approved_artifact_manifest_sha256 instrument_count=11 session_count=1608 bar_count=17688 cash_dividend_treatment=CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1 ignored_cash_dividends=$approved_ignored_cash_dividend_count ignored_cash_dividend_rows_sha256=$approved_ignored_cash_dividend_rows_sha256 raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED"
     [ "$success_line" = "$expected_line" ] || blocked artifact_success_output_invalid
   fi
   printf '%s\n' "$success_line"

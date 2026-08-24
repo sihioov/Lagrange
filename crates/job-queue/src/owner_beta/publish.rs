@@ -168,14 +168,6 @@ struct LockedRun {
     error_code: Option<String>,
 }
 
-#[derive(sqlx::FromRow)]
-struct LockedConfig {
-    id: uuid::Uuid,
-    strategy_id: String,
-    strategy_version: String,
-    config_json: Value,
-}
-
 /// Writes one exact eleven-member target, transitions the dedicated run, and
 /// settles its claim within one commit boundary.
 pub async fn publish_owner_beta_success(
@@ -371,20 +363,6 @@ async fn publish_success_in(
     if !entitled {
         return Err(OwnerBetaPublicationError::EntitlementDenied);
     }
-
-    let config: LockedConfig = sqlx::query_as(
-        "SELECT id, strategy_id, strategy_version, config_json \
-         FROM public.user_strategy_configs \
-         WHERE id = $1 AND owner_user_id = $2 AND is_active \
-         FOR SHARE",
-    )
-    .bind(input.strategy_config_id())
-    .bind(claim.job.owner_user_id)
-    .fetch_optional(&mut **transaction)
-    .await
-    .map_err(database_error)?
-    .ok_or(OwnerBetaPublicationError::Integrity)?;
-    validate_locked_config(&config, input)?;
 
     let item_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM public.owner_beta_recommendation_items \
@@ -727,21 +705,6 @@ fn validate_locked_run(
         || run.target_snapshot_sha256.is_some()
         || run.cash_weight.is_some()
         || run.error_code.is_some()
-    {
-        return Err(OwnerBetaPublicationError::Integrity);
-    }
-    Ok(())
-}
-
-fn validate_locked_config(
-    config: &LockedConfig,
-    input: &OwnerBetaPriceRecommendationInput,
-) -> Result<(), OwnerBetaPublicationError> {
-    let strategy = input.strategy_snapshot();
-    if config.id != input.strategy_config_id()
-        || config.strategy_id != strategy.strategy_id()
-        || config.strategy_version != strategy.strategy_version()
-        || config.config_json != *strategy.config_json()
     {
         return Err(OwnerBetaPublicationError::Integrity);
     }
