@@ -17,9 +17,10 @@ use factor_engine::PriceOnlyFactorSnapshot;
 use factor_engine::price_only::{PRICE_ONLY_CAPABILITY, PRICE_ONLY_INPUT_KIND};
 use factor_engine::snapshot::{FactorRow, NormalizationMeta};
 use job_queue::owner_beta::{
-    OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE, OwnerBetaPriceRecommendationInput,
-    OwnerBetaPublicationError, OwnerBetaPublicationOutcome, OwnerBetaStrategySnapshot,
-    build_target_snapshot, publish_owner_beta_success,
+    OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE, OwnerBetaOutcome, OwnerBetaPriceRecommendationInput,
+    OwnerBetaPublicationError, OwnerBetaPublicationOutcome, OwnerBetaRunnerConfig,
+    OwnerBetaRunnerPaths, OwnerBetaStrategySnapshot, build_target_snapshot,
+    publish_owner_beta_success, run_once,
 };
 use job_queue::resolver::ResolvedConfig;
 use job_queue::{AttemptOutcome, AuditActor, JobQueue, JobStatus, QueueConfig, SubmitJob};
@@ -435,6 +436,90 @@ async fn stale_swept_owner_beta_claim_cannot_publish_or_touch_run() {
     .await
     .expect("worker reads owner-beta items");
     assert_eq!(item_count, 0);
+
+    worker.close().await;
+    app.close().await;
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn malformed_owner_beta_payload_is_terminal_without_inventing_a_run() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let owner_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
+    )
+    .bind(format!("owner-beta-malformed-{}", Uuid::new_v4()))
+    .bind(format!(
+        "owner-beta-malformed-{}@example.test",
+        Uuid::new_v4()
+    ))
+    .fetch_one(&db.pool)
+    .await
+    .expect("seed malformed owner");
+    let app = role_pool(&db, "app", Some(owner_id)).await;
+    let worker = role_pool(&db, "worker", None).await;
+    let lease = Duration::from_secs(30);
+    let app_queue = JobQueue::new(app.clone(), None, queue_config(lease));
+    let job = app_queue
+        .submit(SubmitJob {
+            owner_user_id: owner_id,
+            job_type: OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE.to_owned(),
+            payload: json!({"malformed_test_payload": true}),
+            priority: 0,
+            idempotency_key: Some(format!("owner-beta-malformed-{}", Uuid::new_v4())),
+            max_attempts: 2,
+            available_at: None,
+        })
+        .await
+        .expect("app submits malformed owner-beta fixture job");
+    let worker_queue = JobQueue::new(worker.clone(), None, queue_config(lease));
+    let artifact_root = tempfile::tempdir().expect("absolute test artifact root");
+    let outcome = run_once(
+        &worker,
+        &worker_queue,
+        "owner-beta-malformed-worker",
+        &OwnerBetaRunnerPaths {
+            artifact_root: artifact_root.path().to_path_buf(),
+        },
+        &OwnerBetaRunnerConfig::new(Duration::from_secs(1), lease, Duration::from_secs(2))
+            .expect("valid runner timing"),
+    )
+    .await
+    .expect("malformed payload is sealed-terminal");
+    assert_eq!(outcome, OwnerBetaOutcome::Rejected { job_id: job.id });
+
+    let stored: (JobStatus, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT status, error_code, error_message FROM jobs WHERE id = $1")
+            .bind(job.id)
+            .fetch_one(&worker)
+            .await
+            .expect("worker reads rejected job");
+    assert_eq!(stored.0, JobStatus::Failed);
+    assert_eq!(stored.1.as_deref(), Some("OWNER_BETA_INPUT_INVALID"));
+    assert_eq!(stored.2.as_deref(), Some("owner-beta input rejected"));
+    let attempt: (AttemptOutcome, Option<String>) = sqlx::query_as(
+        "SELECT outcome, error_code FROM job_attempts WHERE job_id = $1 AND attempt_no = 1",
+    )
+    .bind(job.id)
+    .fetch_one(&worker)
+    .await
+    .expect("worker reads rejected attempt");
+    assert_eq!(
+        attempt,
+        (
+            AttemptOutcome::Failed,
+            Some("OWNER_BETA_INPUT_INVALID".to_owned())
+        )
+    );
+    let run_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM owner_beta_recommendation_runs WHERE job_id = $1")
+            .bind(job.id)
+            .fetch_one(&worker)
+            .await
+            .expect("worker checks absent fabricated run");
+    assert_eq!(run_count, 0);
 
     worker.close().await;
     app.close().await;

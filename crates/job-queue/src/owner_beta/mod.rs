@@ -1,12 +1,14 @@
 //! Owner-beta job contracts.
 //!
 //! This module contains the sealed price-only recommendation input, pure
-//! computation, target snapshot, and dedicated atomic publication boundary.
-//! Worker process orchestration remains outside this boundary.
+//! computation, target snapshot, dedicated atomic publication boundary, and
+//! its lease-supervised runner.  The runner has no generic recommendation,
+//! Curated, Paper, provider, process, or order path.
 
 pub mod compute;
 pub mod input;
 pub mod publish;
+pub mod runner;
 pub mod target;
 
 pub use compute::{
@@ -22,6 +24,11 @@ pub use input::{
 pub use publish::{
     OwnerBetaPublicationError, OwnerBetaPublicationFailure, OwnerBetaPublicationOutcome,
     publish_owner_beta_success, settle_owner_beta_failure,
+};
+
+pub use runner::{
+    OwnerBetaOutcome, OwnerBetaRunnerConfig, OwnerBetaRunnerConfigError, OwnerBetaRunnerError,
+    OwnerBetaRunnerPaths, run_once,
 };
 
 pub use target::{

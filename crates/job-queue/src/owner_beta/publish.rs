@@ -89,6 +89,7 @@ pub enum OwnerBetaPublicationFailure {
     FactorInvalid,
     TargetInvalid,
     PublicationUnavailable,
+    ComputationUnavailable,
     ComputationFailed,
     Canceled,
 }
@@ -96,7 +97,7 @@ pub enum OwnerBetaPublicationFailure {
 impl OwnerBetaPublicationFailure {
     pub const fn class(self) -> ErrorClass {
         match self {
-            Self::PublicationUnavailable => ErrorClass::Transient,
+            Self::PublicationUnavailable | Self::ComputationUnavailable => ErrorClass::Transient,
             Self::EntitlementDenied => ErrorClass::DataBlocked,
             Self::ComputationFailed => ErrorClass::Determinism,
             Self::InputInvalid | Self::FactorInvalid | Self::TargetInvalid | Self::Canceled => {
@@ -112,6 +113,7 @@ impl OwnerBetaPublicationFailure {
             Self::FactorInvalid => "OWNER_BETA_FACTOR_INVALID",
             Self::TargetInvalid => "OWNER_BETA_TARGET_INVALID",
             Self::PublicationUnavailable => "OWNER_BETA_PUBLICATION_UNAVAILABLE",
+            Self::ComputationUnavailable => "OWNER_BETA_COMPUTATION_UNAVAILABLE",
             Self::ComputationFailed => "OWNER_BETA_COMPUTATION_FAILED",
             Self::Canceled => "CANCELED",
         }
@@ -124,6 +126,7 @@ impl OwnerBetaPublicationFailure {
             Self::FactorInvalid => "owner-beta factor snapshot rejected",
             Self::TargetInvalid => "owner-beta target snapshot rejected",
             Self::PublicationUnavailable => "owner-beta publication unavailable",
+            Self::ComputationUnavailable => "owner-beta computation unavailable",
             Self::ComputationFailed => "owner-beta computation failed",
             Self::Canceled => "owner-beta recommendation canceled",
         }
@@ -222,6 +225,97 @@ pub async fn settle_owner_beta_failure(
             Err(error)
         }
     }
+}
+
+/// Settles a malformed exact owner-beta claim without inventing a sealed
+/// payload. The queue transition is authoritative and occurs before an
+/// optional run mirror selected solely by `job_id` and owner.
+pub(super) async fn settle_malformed_owner_beta_claim(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    if claim.job.job_type != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    let mut transaction = pool.begin().await.map_err(database_error)?;
+    let result = settle_malformed_claim_in(&mut transaction, queue, claim).await;
+    match result {
+        Ok(outcome) => match transaction.commit().await {
+            Ok(()) => Ok(outcome),
+            Err(_) => Err(OwnerBetaPublicationError::CommitUnknown),
+        },
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
+    }
+}
+
+async fn settle_malformed_claim_in(
+    transaction: &mut Transaction<'_, Postgres>,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    let status = match queue
+        .settle_failure_in(
+            transaction,
+            claim,
+            ErrorClass::Integrity,
+            OwnerBetaPublicationFailure::InputInvalid.code(),
+            OwnerBetaPublicationFailure::InputInvalid.message(),
+        )
+        .await
+        .map_err(queue_error)?
+    {
+        SettleResult::Committed(job) | SettleResult::Canceled(job) => job.status,
+    };
+    let (outcome, run_status, error_code) = match status {
+        JobStatus::Failed => (
+            OwnerBetaPublicationOutcome::Failed,
+            "FAILED",
+            OwnerBetaPublicationFailure::InputInvalid.code(),
+        ),
+        JobStatus::Canceled => (
+            OwnerBetaPublicationOutcome::Canceled,
+            "CANCELED",
+            "CANCELED",
+        ),
+        JobStatus::Queued | JobStatus::Running | JobStatus::Succeeded => {
+            return Err(OwnerBetaPublicationError::QueueIntegrity);
+        }
+    };
+    let linked_run: Option<(uuid::Uuid,)> = sqlx::query_as(
+        "SELECT id FROM public.owner_beta_recommendation_runs \
+         WHERE job_id = $1 AND owner_user_id = $2 FOR UPDATE",
+    )
+    .bind(claim.job.id)
+    .bind(claim.job.owner_user_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(database_error)?;
+    if let Some((run_id,)) = linked_run {
+        let updated = sqlx::query(
+            "UPDATE public.owner_beta_recommendation_runs \
+             SET status = $3, factor_snapshot_sha256 = NULL, target_snapshot_sha256 = NULL, \
+                 cash_weight = NULL, error_code = $4, started_at = COALESCE(started_at, now()), \
+                 finished_at = now(), updated_at = now() \
+             WHERE id = $1 AND owner_user_id = $2 AND status = 'PENDING' \
+               AND NOT EXISTS (SELECT 1 FROM public.owner_beta_recommendation_items \
+                               WHERE recommendation_run_id = $1 AND owner_user_id = $2)",
+        )
+        .bind(run_id)
+        .bind(claim.job.owner_user_id)
+        .bind(run_status)
+        .bind(error_code)
+        .execute(&mut **transaction)
+        .await
+        .map_err(database_error)?;
+        if updated.rows_affected() != 1 {
+            return Err(OwnerBetaPublicationError::Integrity);
+        }
+    }
+    Ok(outcome)
 }
 
 async fn publish_success_in(
@@ -691,6 +785,7 @@ mod tests {
             OwnerBetaPublicationFailure::FactorInvalid,
             OwnerBetaPublicationFailure::TargetInvalid,
             OwnerBetaPublicationFailure::PublicationUnavailable,
+            OwnerBetaPublicationFailure::ComputationUnavailable,
             OwnerBetaPublicationFailure::ComputationFailed,
             OwnerBetaPublicationFailure::Canceled,
         ] {
@@ -702,6 +797,28 @@ mod tests {
                     .all(|byte| byte.is_ascii_uppercase() || byte == b'_')
             );
         }
+    }
+
+    #[test]
+    fn malformed_claim_settles_queue_before_optional_run_mirror() {
+        let source = include_str!("publish.rs");
+        let malformed = source
+            .split("async fn settle_malformed_claim_in")
+            .nth(1)
+            .expect("malformed claim seam");
+        let settled = malformed
+            .find(".settle_failure_in(")
+            .expect("queue settles malformed input");
+        let linked = malformed
+            .find("WHERE job_id = $1 AND owner_user_id = $2 FOR UPDATE")
+            .expect("linked run is selected by job and owner");
+        assert!(settled < linked);
+        assert!(malformed.contains("OwnerBetaPublicationFailure::InputInvalid.code()"));
+        assert!(
+            malformed.contains("NOT EXISTS (SELECT 1 FROM public.owner_beta_recommendation_items")
+        );
+        assert!(source.contains("settle_malformed_owner_beta_claim"));
+        assert!(source.contains("Err(_) => Err(OwnerBetaPublicationError::CommitUnknown)"));
     }
 
     #[test]
@@ -741,13 +858,17 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .expect("production source");
-        let queue_lock = production
+        let success = production
+            .split("async fn publish_success_in")
+            .nth(1)
+            .expect("success publisher");
+        let queue_lock = success
             .find("queue.lock_claim_in(transaction, claim)")
             .expect("queue lock");
-        let canceled_mirror = production
+        let canceled_mirror = success
             .find("OwnerBetaPublicationFailure::Canceled")
             .expect("canceled run mirror");
-        let run_lock = production
+        let run_lock = success
             .find("owner_beta_recommendation_runs")
             .expect("run table");
         assert!(queue_lock < run_lock);
