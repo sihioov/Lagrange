@@ -13,8 +13,9 @@ Native subagents: prohibited for worker packages
   execution contract with an explicit simulation convention, owned file scopes, database/API/UI
   shape, tests, and stop conditions. Phase B implementation packages are not launched until that
   contract is written into this plan.
-- Workspace: `/data/worktrees/3puw275b/rural-mouse`, branch `audit-project-status`, starting commit
-  `8a04b0b` or a descendant containing no unrelated worktree changes.
+- Canonical workspace: `/data/workspace/lagrange`, branch `main`, reviewed at
+  `e14936c317e25203c6c61fcb6ab1c631f170f591`. The coordinator may prepare a documentation commit in
+  the clean `audit-project-status` worktree at the same commit and fast-forward it into `main`.
 - In scope: existing sealed artifact/approval/factor/target code, ordinary and owner-beta queue
   patterns, existing Nautilus backtest path, dedicated persistence/API/UI/runtime boundaries, and
   deterministic offline tests.
@@ -145,17 +146,54 @@ questions for both workers but do not replace the required independent analyses:
 
 ## Execution status (2026-08-24)
 
-- The coordinator verified a clean `audit-project-status` worktree at `1afac5b` and prepared both
-  Wave 1 prompts with the mandatory no-delegation sentence.
-- Paseo could not launch either worker package. The sandbox-local attempt could not reach the Paseo
-  service, and the required escalated retry was denied because launching the external Codex workers
-  may transmit repository source outside the workspace. No worker was created, and the coordinator
-  did not substitute native subagents or weaken the required execution skill.
-- Phase A therefore remains blocked before worker launch until the owner explicitly approves sending
-  this repository's source to the Paseo/Codex workers. This is the only approval needed to start the
-  two read-only analyses; it does not authorize network market-data access, DB writes, deployment, or
-  any account/order surface.
-- Safe local verification continued independently: the Web production build, owner-beta Compose
-  static check, historical artifact self-test, production-image static check, full ops static check,
-  production-ops static check, and isolated production release apply/rollback self-test all passed.
-  These checks are not substitutes for the missing Phase A decisions or for QA/production evidence.
+- The owner explicitly approved transmitting repository source to external Paseo/Codex workers for
+  read-only analysis. That approval did not extend to market-data network access, database writes,
+  deployment, service activation, or any account/order surface.
+- WP-1 ran through Paseo as Codex `gpt-5.6-sol`, high, agent
+  `c8f54f53-cc45-4b3c-9d7b-8601a2055305`; WP-2 used the same provider/model as agent
+  `a240148d-7033-412c-84dd-4f4fa30d0b39`. Both finished with Paseo status `idle` after read-only
+  inspection of `main` at `e14936c317e25203c6c61fcb6ab1c631f170f591`.
+- Neither worker changed files, used network market data, accessed a database, deployed, activated a
+  service, or touched the preserved untracked KIS XLSX.
+
+## Coordinator decision and stop condition
+
+The two independent reports agree, and direct source inspection supports the same conclusion:
+
+1. **Stop at the missing conversion/simulation seam.** The embedded approval registry is empty, so
+   there is no constructible approved artifact or authorized five-pin value to enqueue.
+2. **Reject generic Nautilus-path reuse.** That path requires a registered `READY` Curated dataset,
+   timestamped market inputs, one dataset pin, and generic order/fill/benchmark results. It cannot
+   preserve the date-only artifact's five-pin trust chain and fixed owner-only price-return envelope.
+   Its worker request also does not carry the API's requested benchmark or execution profile.
+3. **Use a dedicated owner-beta Rust path only after P0 approval.** Isolation is the narrowest future
+   architecture, but starting it now would invent schedule, timing, price, adjustment, cost,
+   benchmark, warm-up, cash, turnover, timestamp, and result-hash semantics.
+4. **Do not put backtesting on the critical path for the first owner beta release.** Continue the
+   already isolated single-date recommendation launch path when its real artifact pins are approved;
+   keep owner-beta backtesting unavailable rather than delaying or weakening that release.
+
+Phase B remains prohibited until the owner approves and this plan records all of the following as one
+versioned simulation contract:
+
+- the multi-date signal/rebalance schedule and warm-up start;
+- the signal-to-return interval and execution/valuation price fields;
+- raw-versus-adjusted price treatment across splits;
+- missing-session behavior;
+- initial notional, share/lot sizing, rebalance and cash-return rules;
+- cost/slippage model, performance benchmark, and turnover definition;
+- date-only output versus explicitly synthetic timestamps;
+- permitted metrics and canonical result-hash preimage; and
+- one real embedded approval-registry record containing the five reviewed pins.
+
+Once P0 is approved, the conditional implementation order is:
+
+1. dedicated owner-beta result contract and integrity tests;
+2. dedicated job/input/compute/runner and deterministic simulation tests;
+3. dedicated migrations with forced RLS, immutable pin constraints, and atomic publication;
+4. owner-only API/OpenAPI/Web result surface preserving all fixed labels; and
+5. isolated Rust runtime and release/static checks with no Curated, Python, or Nautilus dependency.
+
+No editor worker may start these packages before the P0 gate is satisfied. Until then the honest
+runtime behavior is pre-enqueue refusal with no run/result creation, not a fabricated failed or
+successful backtest.
