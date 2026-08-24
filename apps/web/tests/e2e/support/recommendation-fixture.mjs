@@ -2,6 +2,22 @@ const CONFIG_ID = "00000000-0000-4000-8000-000000000101";
 const RUN_ID = "00000000-0000-4000-8000-000000000201";
 const SUBMITTED_RUN_ID = "00000000-0000-4000-8000-000000000202";
 const DATASET_VERSION_ID = "00000000-0000-4000-8000-000000000401";
+const OWNER_BETA_RUN_ID = "00000000-0000-4000-8000-000000000601";
+const OWNER_BETA_JOB_ID = "00000000-0000-4000-8000-000000000701";
+const OWNER_BETA_SHA256 = `sha256:${"a".repeat(64)}`;
+const OWNER_BETA_ETF_IDS = Object.freeze([
+  "069500.KRX",
+  "102110.KRX",
+  "114260.KRX",
+  "132030.KRX",
+  "138230.KRX",
+  "152100.KRX",
+  "148020.KRX",
+  "305720.KRX",
+  "278530.KRX",
+  "292150.KRX",
+  "360750.KRX",
+]);
 
 let submitted = false;
 let submittedPolls = 0;
@@ -168,6 +184,62 @@ function error(status, code, message) {
 
 function mutationAuthorized(headers) {
   return Boolean(headers["x-csrf-token"] && headers["idempotency-key"]);
+}
+
+function ownerBetaRun() {
+  return {
+    action_manifest_sha256: OWNER_BETA_SHA256,
+    approval_registry_sha256: OWNER_BETA_SHA256,
+    artifact_manifest_sha256: OWNER_BETA_SHA256,
+    as_of: "2026-08-19",
+    audience: "OWNER_ONLY",
+    candidate_content_sha256: OWNER_BETA_SHA256,
+    capability: "PRICE_RETURN_ONLY",
+    cash_weight: "0.200000",
+    created_at: "2026-08-19T06:30:00Z",
+    factor_snapshot_sha256: OWNER_BETA_SHA256,
+    finished_at: "2026-08-19T06:30:02Z",
+    id: OWNER_BETA_RUN_ID,
+    input_kind: "owner_beta_historical_price_only_v1",
+    items: OWNER_BETA_ETF_IDS.map((instrument_id, index) => ({
+      excluded: index !== 0,
+      exclusion_reason: index === 0 ? undefined : "NOT_SELECTED_BY_STRATEGY",
+      factors: { momentum_12_1: index === 0 ? "0.912300" : "0.000000" },
+      instrument_id,
+      rank: index === 0 ? 1 : null,
+      reason_codes: index === 0 ? ["SELECTED_TOP_N"] : ["NOT_SELECTED_BY_STRATEGY"],
+      target_weight: index === 0 ? "0.800000" : null,
+    })),
+    job_id: OWNER_BETA_JOB_ID,
+    stage5_manifest_sha256: OWNER_BETA_SHA256,
+    started_at: "2026-08-19T06:30:01Z",
+    status: "SUCCEEDED",
+    strategy_config_id: CONFIG_ID,
+    strategy_config_sha256: OWNER_BETA_SHA256,
+    strategy_id: "relative_momentum",
+    strategy_version: "1.0.0",
+    strict_pit: false,
+    target_snapshot_sha256: OWNER_BETA_SHA256,
+    updated_at: "2026-08-19T06:30:02Z",
+    vendor_snapshot: true,
+  };
+}
+
+export function ownerBetaRecommendationResponse(request) {
+  const { method, pathname, scenario } = request;
+  const runsPath = "/api/v1/recommendations/owner-beta/price-only/runs";
+  if (!pathname.startsWith(runsPath)) return null;
+  if (scenario.ownerBetaAccessMode !== "owner_only" || scenario.role !== "owner") {
+    return error(403, "FORBIDDEN", "forbidden");
+  }
+  if (method === "GET" && pathname === runsPath) {
+    const { items: _items, ...listItem } = ownerBetaRun();
+    return { body: { has_more: false, items: [listItem], next_cursor: null }, status: 200 };
+  }
+  if (method === "GET" && pathname === `${runsPath}/${OWNER_BETA_RUN_ID}`) {
+    return { body: ownerBetaRun(), status: 200 };
+  }
+  return null;
 }
 
 export function recommendationResponse(request) {

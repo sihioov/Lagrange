@@ -3,7 +3,11 @@ import { backtestResponse } from "./backtest-fixture.mjs";
 import { candidateResponse } from "./candidate-fixture.mjs";
 import { liveResponse } from "./live-fixture.mjs";
 import { paperResponse, paperStrategyConfigs } from "./paper-fixture.mjs";
-import { recommendationConfig, recommendationResponse } from "./recommendation-fixture.mjs";
+import {
+  ownerBetaRecommendationResponse,
+  recommendationConfig,
+  recommendationResponse,
+} from "./recommendation-fixture.mjs";
 
 const port = Number.parseInt(process.env.SYNTHETIC_API_PORT ?? "38180", 10);
 const defaultScenario = Object.freeze({
@@ -30,6 +34,7 @@ const defaultScenario = Object.freeze({
   tradePagination: "normal",
   user: "u1",
   role: "member",
+  ownerBetaAccessMode: "disabled",
 });
 let scenario = { ...defaultScenario };
 
@@ -105,6 +110,17 @@ const server = createServer(async (request, response) => {
     json(response, product.status, product.body);
     return;
   }
+  const ownerBetaRecommendation = ownerBetaRecommendationResponse({
+    body,
+    headers: request.headers,
+    method: request.method ?? "GET",
+    pathname: url.pathname,
+    scenario,
+  });
+  if (ownerBetaRecommendation !== null) {
+    json(response, ownerBetaRecommendation.status, ownerBetaRecommendation.body);
+    return;
+  }
   const backtest = backtestResponse({
     body,
     headers: request.headers,
@@ -152,6 +168,9 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname === "/api/v1/auth/session") {
     json(response, 200, {
       expires_at_secs: 2_000_000_000,
+      owner_beta_access_mode:
+        scenario.ownerBetaAccessMode === "owner_only" ? "owner_only" : "disabled",
+      owner_beta_paper_mode: "disabled",
       role: scenario.role === "owner" ? "owner" : "member",
       user_id: userIdFor(scenario),
     });
