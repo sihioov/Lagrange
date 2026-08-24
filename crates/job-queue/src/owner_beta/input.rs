@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 use domain::{ContentHash, TradingDate};
 use factor_engine::{
@@ -7,10 +7,18 @@ use factor_engine::{
 };
 use market_data::ApprovedHistoricalPriceOnlyArtifact;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use uuid::Uuid;
+
+use crate::resolver::ResolvedConfig;
 
 /// The only job type for an owner-beta price recommendation.
 pub const OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE: &str = "owner_beta_price_recommendation";
+
+/// Domain/schema tag included in every strategy snapshot hash. Changing the
+/// wire shape or the ownership boundary requires a new tag rather than a
+/// silent reinterpretation of an existing payload.
+pub const OWNER_BETA_STRATEGY_CONFIG_SNAPSHOT_SCHEMA: &str = "owner-beta-strategy-config-v1";
 
 /// Sealed, price-only provenance for an owner-beta recommendation job.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,6 +28,19 @@ pub struct OwnerBetaPriceRecommendationInput {
     strategy_config_id: Uuid,
     as_of: TradingDate,
     pins: OwnerBetaPriceRecommendationPins,
+    strategy: OwnerBetaStrategySnapshot,
+}
+
+/// The immutable strategy configuration snapshot carried by an owner-beta
+/// job. The fields remain private so callers can only construct the hash from
+/// one [`ResolvedConfig`], never by independently supplying a hash.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaStrategySnapshot {
+    strategy_id: String,
+    strategy_version: String,
+    config_json: Value,
+    config_sha256: ContentHash,
 }
 
 /// The immutable approval pins carried by an owner-beta recommendation job.
@@ -40,6 +61,10 @@ pub enum OwnerBetaPriceRecommendationInputError {
     ApprovalPinsMismatch,
     #[error("owner-beta price recommendation factor snapshot does not match")]
     FactorSnapshotMismatch,
+    #[error("owner-beta price recommendation strategy snapshot is invalid")]
+    StrategySnapshotInvalid,
+    #[error("owner-beta price recommendation strategy snapshot does not match")]
+    StrategySnapshotMismatch,
 }
 
 impl fmt::Debug for OwnerBetaPriceRecommendationInput {
@@ -50,6 +75,15 @@ impl fmt::Debug for OwnerBetaPriceRecommendationInput {
             .field("as_of", &self.as_of)
             .field("pins", &self.pins)
             .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for OwnerBetaStrategySnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OwnerBetaStrategySnapshot")
+            .field("snapshot", &"<redacted>")
+            .finish()
     }
 }
 
@@ -70,9 +104,10 @@ impl OwnerBetaPriceRecommendationInput {
         strategy_config_id: Uuid,
         as_of: TradingDate,
         artifact: &ApprovedHistoricalPriceOnlyArtifact,
-    ) -> Self {
+        resolved_config: &ResolvedConfig,
+    ) -> Result<Self, OwnerBetaPriceRecommendationInputError> {
         let artifact_pins = artifact.pins();
-        Self {
+        Ok(Self {
             run_id,
             strategy_config_id,
             as_of,
@@ -83,7 +118,8 @@ impl OwnerBetaPriceRecommendationInput {
                 action_manifest_sha256: artifact_pins.action_manifest_sha256().clone(),
                 approval_registry_sha256: artifact_pins.approval_registry_sha256().clone(),
             },
-        }
+            strategy: OwnerBetaStrategySnapshot::from_resolved_config(resolved_config)?,
+        })
     }
 
     /// Named form of [`Self::new`] for call sites that make the trust boundary
@@ -93,8 +129,9 @@ impl OwnerBetaPriceRecommendationInput {
         strategy_config_id: Uuid,
         as_of: TradingDate,
         artifact: &ApprovedHistoricalPriceOnlyArtifact,
-    ) -> Self {
-        Self::new(run_id, strategy_config_id, as_of, artifact)
+        resolved_config: &ResolvedConfig,
+    ) -> Result<Self, OwnerBetaPriceRecommendationInputError> {
+        Self::new(run_id, strategy_config_id, as_of, artifact, resolved_config)
     }
 
     pub fn run_id(&self) -> Uuid {
@@ -111,6 +148,34 @@ impl OwnerBetaPriceRecommendationInput {
 
     pub fn pins(&self) -> &OwnerBetaPriceRecommendationPins {
         &self.pins
+    }
+
+    pub fn strategy_snapshot(&self) -> &OwnerBetaStrategySnapshot {
+        &self.strategy
+    }
+
+    /// Recomputes the domain-tagged hash over the canonical strategy id,
+    /// version, and JSON snapshot. This catches a payload mutation before it
+    /// can be treated as a durable replay.
+    pub fn validate_strategy_snapshot(&self) -> Result<(), OwnerBetaPriceRecommendationInputError> {
+        let canonical_config = canonicalize_json(&self.strategy.config_json);
+        if !canonical_config.is_object()
+            || canonical_config != self.strategy.config_json
+            || self.strategy.strategy_id.is_empty()
+            || self.strategy.strategy_version.is_empty()
+        {
+            return Err(OwnerBetaPriceRecommendationInputError::StrategySnapshotMismatch);
+        }
+        let expected = strategy_config_hash(
+            &self.strategy.strategy_id,
+            &self.strategy.strategy_version,
+            &canonical_config,
+        )
+        .map_err(|_| OwnerBetaPriceRecommendationInputError::StrategySnapshotMismatch)?;
+        if expected != self.strategy.config_sha256 {
+            return Err(OwnerBetaPriceRecommendationInputError::StrategySnapshotMismatch);
+        }
+        Ok(())
     }
 
     /// Rechecks all pins against a newly resolved approved artifact.
@@ -150,6 +215,85 @@ impl OwnerBetaPriceRecommendationInput {
     }
 }
 
+impl OwnerBetaStrategySnapshot {
+    /// Builds a canonical snapshot and computes its hash from one resolved
+    /// configuration. The constructor never accepts a caller-provided hash.
+    pub fn from_resolved_config(
+        resolved_config: &ResolvedConfig,
+    ) -> Result<Self, OwnerBetaPriceRecommendationInputError> {
+        if resolved_config.strategy_id.is_empty() || resolved_config.strategy_version.is_empty() {
+            return Err(OwnerBetaPriceRecommendationInputError::StrategySnapshotInvalid);
+        }
+        let config_json = canonicalize_json(&resolved_config.config);
+        if !config_json.is_object() {
+            return Err(OwnerBetaPriceRecommendationInputError::StrategySnapshotInvalid);
+        }
+        let config_sha256 = strategy_config_hash(
+            &resolved_config.strategy_id,
+            &resolved_config.strategy_version,
+            &config_json,
+        )
+        .map_err(|_| OwnerBetaPriceRecommendationInputError::StrategySnapshotInvalid)?;
+        Ok(Self {
+            strategy_id: resolved_config.strategy_id.clone(),
+            strategy_version: resolved_config.strategy_version.clone(),
+            config_json,
+            config_sha256,
+        })
+    }
+
+    pub fn strategy_id(&self) -> &str {
+        &self.strategy_id
+    }
+
+    pub fn strategy_version(&self) -> &str {
+        &self.strategy_version
+    }
+
+    pub fn config_json(&self) -> &Value {
+        &self.config_json
+    }
+
+    pub fn config_sha256(&self) -> &ContentHash {
+        &self.config_sha256
+    }
+}
+
+fn canonicalize_json(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let mut canonical = Map::new();
+            let mut keys = object.keys().collect::<Vec<_>>();
+            keys.sort_unstable();
+            for key in keys {
+                canonical.insert(key.clone(), canonicalize_json(&object[key]));
+            }
+            Value::Object(canonical)
+        }
+        Value::Array(values) => Value::Array(values.iter().map(canonicalize_json).collect()),
+        other => other.clone(),
+    }
+}
+
+fn strategy_config_hash(
+    strategy_id: &str,
+    strategy_version: &str,
+    config_json: &Value,
+) -> Result<ContentHash, serde_json::Error> {
+    let mut tagged = BTreeMap::new();
+    tagged.insert("config_json", canonicalize_json(config_json));
+    tagged.insert(
+        "schema",
+        Value::String(OWNER_BETA_STRATEGY_CONFIG_SNAPSHOT_SCHEMA.to_owned()),
+    );
+    tagged.insert("strategy_id", Value::String(strategy_id.to_owned()));
+    tagged.insert(
+        "strategy_version",
+        Value::String(strategy_version.to_owned()),
+    );
+    serde_json::to_vec(&tagged).map(|bytes| ContentHash::from_bytes(&bytes))
+}
+
 impl OwnerBetaPriceRecommendationPins {
     pub fn candidate_content_sha256(&self) -> &ContentHash {
         &self.candidate_content_sha256
@@ -187,6 +331,7 @@ mod tests {
     use super::{
         OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE, OwnerBetaPriceRecommendationInput,
         OwnerBetaPriceRecommendationInputError, OwnerBetaPriceRecommendationPins,
+        OwnerBetaStrategySnapshot,
     };
 
     fn date() -> TradingDate {
@@ -195,6 +340,15 @@ mod tests {
 
     fn hash(value: u8) -> ContentHash {
         ContentHash::parse(&format!("sha256:{value:064x}")).expect("valid test hash")
+    }
+
+    fn strategy() -> OwnerBetaStrategySnapshot {
+        OwnerBetaStrategySnapshot::from_resolved_config(&crate::resolver::ResolvedConfig {
+            strategy_id: "buy_and_hold".to_owned(),
+            strategy_version: "1.0.0".to_owned(),
+            config: json!({"z": [2, 1], "a": 7}),
+        })
+        .expect("valid strategy snapshot")
     }
 
     // The production artifact is intentionally nonconstructible. This helper
@@ -211,6 +365,7 @@ mod tests {
                 action_manifest_sha256: hash(4),
                 approval_registry_sha256: hash(5),
             },
+            strategy: strategy(),
         }
     }
 
@@ -255,6 +410,7 @@ mod tests {
                 "pins".to_owned(),
                 "run_id".to_owned(),
                 "strategy_config_id".to_owned(),
+                "strategy".to_owned(),
             ])
         );
         let pins = object["pins"].as_object().expect("pins object");
@@ -273,6 +429,21 @@ mod tests {
                 .expect("deserialize"),
             input
         );
+        let strategy = serde_json::to_value(input.strategy_snapshot()).expect("strategy");
+        assert_eq!(
+            strategy
+                .as_object()
+                .expect("strategy object")
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "config_json".to_owned(),
+                "config_sha256".to_owned(),
+                "strategy_id".to_owned(),
+                "strategy_version".to_owned(),
+            ])
+        );
     }
 
     #[test]
@@ -289,9 +460,22 @@ mod tests {
         assert!(
             serde_json::from_value::<OwnerBetaPriceRecommendationInput>(nested_unknown).is_err()
         );
+        let mut strategy_unknown = encoded.clone();
+        strategy_unknown["strategy"]["capability"] = json!("anything");
+        assert!(
+            serde_json::from_value::<OwnerBetaPriceRecommendationInput>(strategy_unknown).is_err()
+        );
         let mut missing = encoded.clone();
         missing.as_object_mut().expect("object").remove("as_of");
         assert!(serde_json::from_value::<OwnerBetaPriceRecommendationInput>(missing).is_err());
+        let mut missing_strategy = encoded.clone();
+        missing_strategy
+            .as_object_mut()
+            .expect("object")
+            .remove("strategy");
+        assert!(
+            serde_json::from_value::<OwnerBetaPriceRecommendationInput>(missing_strategy).is_err()
+        );
         let mut invalid = encoded;
         invalid["pins"]["candidate_content_sha256"] = json!("not-a-hash");
         assert!(serde_json::from_value::<OwnerBetaPriceRecommendationInput>(invalid).is_err());
@@ -349,6 +533,8 @@ mod tests {
         for error in [
             OwnerBetaPriceRecommendationInputError::ApprovalPinsMismatch,
             OwnerBetaPriceRecommendationInputError::FactorSnapshotMismatch,
+            OwnerBetaPriceRecommendationInputError::StrategySnapshotInvalid,
+            OwnerBetaPriceRecommendationInputError::StrategySnapshotMismatch,
         ] {
             assert!(!format!("{error:?}").contains(sentinel));
             assert!(!error.to_string().contains(sentinel));
@@ -371,6 +557,39 @@ mod tests {
             assert!(!debug.contains(private_pin.as_str()));
         }
         assert!(debug.contains(input.pins.approval_registry_sha256.as_str()));
+        assert!(!debug.contains(input.strategy.strategy_id()));
+        assert!(!debug.contains(input.strategy.strategy_version()));
+        assert!(!debug.contains(input.strategy.config_sha256().as_str()));
+        assert!(!debug.contains("TOP_SECRET_STRATEGY_CONFIG"));
+    }
+
+    #[test]
+    fn strategy_snapshot_hash_is_deterministic_and_catches_tampering() {
+        let input = input();
+        let reordered =
+            OwnerBetaStrategySnapshot::from_resolved_config(&crate::resolver::ResolvedConfig {
+                strategy_id: "buy_and_hold".to_owned(),
+                strategy_version: "1.0.0".to_owned(),
+                config: json!({"a": 7, "z": [2, 1]}),
+            })
+            .expect("snapshot");
+        assert_eq!(
+            input.strategy_snapshot().config_sha256(),
+            reordered.config_sha256()
+        );
+
+        let mut tampered = input.clone();
+        tampered.strategy.config_json["a"] = json!(8);
+        assert_eq!(
+            tampered.validate_strategy_snapshot(),
+            Err(OwnerBetaPriceRecommendationInputError::StrategySnapshotMismatch)
+        );
+        let mut tampered = input;
+        tampered.strategy.config_sha256 = hash(99);
+        assert_eq!(
+            tampered.validate_strategy_snapshot(),
+            Err(OwnerBetaPriceRecommendationInputError::StrategySnapshotMismatch)
+        );
     }
 
     #[test]

@@ -155,6 +155,15 @@ pub async fn create_price_only_run(
                 &rid,
             );
         }
+        Err(crate::repos::owner_beta::OwnerBetaPriceRecommendationError::StrategyUnsupported) => {
+            return api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "OWNER_BETA_STRATEGY_UNSUPPORTED",
+                "owner-beta strategy unsupported",
+                &rid,
+                None,
+            );
+        }
         Err(crate::repos::owner_beta::OwnerBetaPriceRecommendationError::IdempotencyMismatch) => {
             return code_error(
                 "IDEMPOTENCY_KEY_MISMATCH",

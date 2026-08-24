@@ -221,6 +221,11 @@ pub const ERROR_CODES: &[ErrorCodeDef] = &[
         "owner-beta historical price input is unavailable or failed approval",
     ),
     ErrorCodeDef::new(
+        "OWNER_BETA_STRATEGY_UNSUPPORTED",
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "owner-beta strategy configuration is not one of the shipped baselines",
+    ),
+    ErrorCodeDef::new(
         "REBALANCE_PREVIEW_CAPACITY_EXCEEDED",
         StatusCode::TOO_MANY_REQUESTS,
         "per-owner queued Paper preview capacity exceeded",

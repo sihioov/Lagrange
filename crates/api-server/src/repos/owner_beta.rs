@@ -13,7 +13,10 @@ use chrono::{Datelike, NaiveDate};
 use job_queue::owner_beta::{
     OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE, OwnerBetaPriceRecommendationInput,
 };
+use job_queue::recommendation::compute::requirements_for;
+use job_queue::resolver::ResolvedConfig;
 use market_data::ApprovedHistoricalPriceOnlyArtifact;
+use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
@@ -38,6 +41,8 @@ pub enum OwnerBetaPriceRecommendationError {
     Forbidden,
     #[error("owner-beta recommendation capacity exceeded")]
     CapacityExceeded,
+    #[error("owner-beta strategy is unsupported")]
+    StrategyUnsupported,
     #[error("idempotency key was already used with a different owner-beta request")]
     IdempotencyMismatch,
     #[error("internal error")]
@@ -70,6 +75,10 @@ struct OwnerBetaRunBinding {
     job_id: Uuid,
     owner_user_id: Uuid,
     strategy_config_id: Uuid,
+    strategy_id: String,
+    strategy_version: String,
+    strategy_config_json: Value,
+    strategy_config_sha256: String,
     as_of: NaiveDate,
     #[allow(dead_code)]
     status: String,
@@ -144,6 +153,10 @@ impl ReplayExpectation {
 struct SubmissionProjection {
     payload_json: serde_json::Value,
     pins: ApprovalPinStrings,
+    strategy_id: String,
+    strategy_version: String,
+    strategy_config_json: Value,
+    strategy_config_sha256: String,
 }
 
 impl SubmissionProjection {
@@ -152,24 +165,43 @@ impl SubmissionProjection {
         strategy_config_id: Uuid,
         as_of: NaiveDate,
         artifact: &ApprovedHistoricalPriceOnlyArtifact,
+        resolved_config: &ResolvedConfig,
     ) -> Result<Self, OwnerBetaPriceRecommendationError> {
         let as_of = domain::TradingDate::new(as_of.year(), as_of.month(), as_of.day())
             .map_err(|_| OwnerBetaPriceRecommendationError::Internal)?;
-        Self::from_input(OwnerBetaPriceRecommendationInput::from_approved_artifact(
+        let input = OwnerBetaPriceRecommendationInput::from_approved_artifact(
             run_id,
             strategy_config_id,
             as_of,
             artifact,
-        ))
+            resolved_config,
+        )
+        .map_err(|_| OwnerBetaPriceRecommendationError::StrategyUnsupported)?;
+        Self::from_input(input)
     }
 
     fn from_input(
         input: OwnerBetaPriceRecommendationInput,
     ) -> Result<Self, OwnerBetaPriceRecommendationError> {
+        input
+            .validate_strategy_snapshot()
+            .map_err(|_| OwnerBetaPriceRecommendationError::StrategyUnsupported)?;
         let pins = ApprovalPinStrings::from_input(&input);
+        let strategy = input.strategy_snapshot();
+        let strategy_id = strategy.strategy_id().to_owned();
+        let strategy_version = strategy.strategy_version().to_owned();
+        let strategy_config_json = strategy.config_json().clone();
+        let strategy_config_sha256 = strategy.config_sha256().to_string();
         let payload_json =
             serde_json::to_value(input).map_err(|_| OwnerBetaPriceRecommendationError::Internal)?;
-        Ok(Self { payload_json, pins })
+        Ok(Self {
+            payload_json,
+            pins,
+            strategy_id,
+            strategy_version,
+            strategy_config_json,
+            strategy_config_sha256,
+        })
     }
 }
 
@@ -179,11 +211,12 @@ const JOB_INSERT_SQL: &str = "INSERT INTO jobs
      VALUES ($1, $2, $3, 'QUEUED', 10, $4, $5, 3, now())";
 
 const RUN_INSERT_SQL: &str = "INSERT INTO owner_beta_recommendation_runs
-        (id, owner_user_id, strategy_config_id, job_id, as_of,
+        (id, owner_user_id, strategy_config_id, strategy_id, strategy_version,
+         strategy_config_json, strategy_config_sha256, job_id, as_of,
          candidate_content_sha256, artifact_manifest_sha256,
          stage5_manifest_sha256, action_manifest_sha256,
          approval_registry_sha256)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)";
 
 impl OwnerBetaRecommendationRepo {
     pub fn new(pool: sqlx::PgPool) -> Self {
@@ -235,8 +268,8 @@ impl OwnerBetaRecommendationRepo {
 
         // RLS makes a foreign config invisible. Keep the explicit owner
         // predicate as a second invariant, then require the active row lock.
-        let config: Option<(Uuid, bool)> = sqlx::query_as(
-            "SELECT owner_user_id, is_active
+        let config: Option<(Uuid, bool, String, String, Value)> = sqlx::query_as(
+            "SELECT owner_user_id, is_active, strategy_id, strategy_version, config_json
                FROM user_strategy_configs
               WHERE id = $1
                 AND owner_user_id = $2
@@ -247,8 +280,19 @@ impl OwnerBetaRecommendationRepo {
         .fetch_optional(&mut *tx)
         .await
         .map_err(|_| OwnerBetaPriceRecommendationError::Internal)?;
-        if config != Some((owner, true)) {
+        let Some((config_owner, true, strategy_id, strategy_version, config_json)) = config else {
             return Err(OwnerBetaPriceRecommendationError::NotFound);
+        };
+        if config_owner != owner {
+            return Err(OwnerBetaPriceRecommendationError::NotFound);
+        }
+        let resolved_config = ResolvedConfig {
+            strategy_id,
+            strategy_version,
+            config: config_json,
+        };
+        if requirements_for(&resolved_config).is_err() {
+            return Err(OwnerBetaPriceRecommendationError::StrategyUnsupported);
         }
 
         let active_jobs: i64 = sqlx::query_scalar(
@@ -272,6 +316,7 @@ impl OwnerBetaRecommendationRepo {
             strategy_config_id,
             as_of,
             artifact,
+            &resolved_config,
         )?;
 
         // Keep this insert first: a failure in the run insert must roll back
@@ -291,6 +336,10 @@ impl OwnerBetaRecommendationRepo {
             .bind(run_id)
             .bind(owner)
             .bind(strategy_config_id)
+            .bind(projection.strategy_id)
+            .bind(projection.strategy_version)
+            .bind(projection.strategy_config_json)
+            .bind(projection.strategy_config_sha256)
             .bind(job_id)
             .bind(as_of)
             .bind(pins.candidate_content_sha256)
@@ -344,6 +393,8 @@ async fn durable_replay(
     };
     let row: Option<OwnerBetaRunBinding> = sqlx::query_as(
         "SELECT id, job_id, owner_user_id, strategy_config_id, as_of, status,
+                strategy_id, strategy_version, strategy_config_json,
+                strategy_config_sha256,
                 candidate_content_sha256, artifact_manifest_sha256,
                 stage5_manifest_sha256, action_manifest_sha256,
                 approval_registry_sha256
@@ -386,7 +437,11 @@ fn replay_binding_matches(
     binding: &OwnerBetaRunBinding,
     expected: &ReplayExpectation,
 ) -> bool {
+    if input.validate_strategy_snapshot().is_err() {
+        return false;
+    }
     let input_pins = ApprovalPinStrings::from_input(input);
+    let strategy = input.strategy_snapshot();
     job_type == OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
         && input.strategy_config_id() == expected.strategy_config_id
         && input.as_of() == expected.as_of_trading
@@ -395,6 +450,10 @@ fn replay_binding_matches(
         && binding.job_id == job_id
         && binding.owner_user_id == expected.owner_user_id
         && binding.strategy_config_id == expected.strategy_config_id
+        && binding.strategy_id == strategy.strategy_id()
+        && binding.strategy_version == strategy.strategy_version()
+        && binding.strategy_config_json == *strategy.config_json()
+        && binding.strategy_config_sha256 == strategy.config_sha256().as_str()
         && binding.as_of == expected.as_of
         && binding.candidate_content_sha256 == input_pins.candidate_content_sha256
         && binding.artifact_manifest_sha256 == input_pins.artifact_manifest_sha256
@@ -414,6 +473,17 @@ mod tests {
     }
 
     fn input_value() -> Value {
+        let strategy = serde_json::to_value(
+            job_queue::owner_beta::OwnerBetaStrategySnapshot::from_resolved_config(
+                &job_queue::resolver::ResolvedConfig {
+                    strategy_id: "buy_and_hold".to_owned(),
+                    strategy_version: "1.0.0".to_owned(),
+                    config: json!({}),
+                },
+            )
+            .expect("strategy snapshot"),
+        )
+        .expect("serialize strategy snapshot");
         json!({
             "run_id": "00000000-0000-4000-8000-000000000001",
             "strategy_config_id": "00000000-0000-4000-8000-000000000002",
@@ -424,7 +494,8 @@ mod tests {
                 "stage5_manifest_sha256": hash(3),
                 "action_manifest_sha256": hash(4),
                 "approval_registry_sha256": hash(5),
-            }
+            },
+            "strategy": strategy,
         })
     }
 
@@ -448,6 +519,10 @@ mod tests {
             job_id,
             owner_user_id: owner,
             strategy_config_id: input.strategy_config_id(),
+            strategy_id: input.strategy_snapshot().strategy_id().to_owned(),
+            strategy_version: input.strategy_snapshot().strategy_version().to_owned(),
+            strategy_config_json: input.strategy_snapshot().config_json().clone(),
+            strategy_config_sha256: input.strategy_snapshot().config_sha256().to_string(),
             as_of,
             status: "PENDING".to_owned(),
             candidate_content_sha256: pins.candidate_content_sha256.clone(),
@@ -573,6 +648,46 @@ mod tests {
                 &expected,
             ));
         }
+
+        for (field, value) in [
+            ("strategy_id", json!("trend_following")),
+            ("strategy_version", json!("9.9.9")),
+            ("config_json", json!({"changed": true})),
+            ("config_sha256", json!(hash(9))),
+        ] {
+            let mut changed_value = input_value();
+            changed_value["strategy"][field] = value;
+            let changed_input = input_from(changed_value);
+            assert!(
+                !replay_binding_matches(
+                    job_id,
+                    OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE,
+                    &changed_input,
+                    &binding,
+                    &expected,
+                ),
+                "input strategy {field} mismatch must fail"
+            );
+
+            let mut changed_row = binding.clone();
+            match field {
+                "strategy_id" => changed_row.strategy_id = "trend_following".to_owned(),
+                "strategy_version" => changed_row.strategy_version = "9.9.9".to_owned(),
+                "config_json" => changed_row.strategy_config_json = json!({"changed": true}),
+                "config_sha256" => changed_row.strategy_config_sha256 = hash(9),
+                _ => unreachable!(),
+            }
+            assert!(
+                !replay_binding_matches(
+                    job_id,
+                    OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE,
+                    &input,
+                    &changed_row,
+                    &expected,
+                ),
+                "run strategy {field} mismatch must fail"
+            );
+        }
     }
 
     #[test]
@@ -587,6 +702,7 @@ mod tests {
                 "pins".to_owned(),
                 "run_id".to_owned(),
                 "strategy_config_id".to_owned(),
+                "strategy".to_owned(),
             ])
         );
         assert_eq!(
@@ -602,6 +718,20 @@ mod tests {
                 "artifact_manifest_sha256".to_owned(),
                 "candidate_content_sha256".to_owned(),
                 "stage5_manifest_sha256".to_owned(),
+            ])
+        );
+        assert_eq!(
+            object["strategy"]
+                .as_object()
+                .expect("strategy object")
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "config_json".to_owned(),
+                "config_sha256".to_owned(),
+                "strategy_id".to_owned(),
+                "strategy_version".to_owned(),
             ])
         );
         assert!(JOB_INSERT_SQL.starts_with("INSERT INTO jobs"));

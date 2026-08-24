@@ -156,6 +156,10 @@ const OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL: &str =
     include_str!("../../../../migrations/0049_owner_beta_price_recommendations.up.sql");
 const OWNER_BETA_PRICE_RECOMMENDATIONS_DOWN_SQL: &str =
     include_str!("../../../../migrations/0049_owner_beta_price_recommendations.down.sql");
+const OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL: &str =
+    include_str!("../../../../migrations/0050_owner_beta_strategy_snapshots.up.sql");
+const OWNER_BETA_STRATEGY_SNAPSHOTS_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0050_owner_beta_strategy_snapshots.down.sql");
 const CANDIDATE_SCHEDULE_RS: &str =
     include_str!("../../../../crates/job-queue/src/candidate/schedule.rs");
 const CANDIDATE_RUNNER_RS: &str =
@@ -258,6 +262,18 @@ fn owner_beta_price_recommendation_persistence_is_separate_and_fail_closed() {
             .contains("factor_snapshot_sha256 ~ '^sha256:[0-9a-f]{64}$'"),
         "0049 must strictly validate the optional factor snapshot hash"
     );
+    for deferred_snapshot_field in [
+        "strategy_id text",
+        "strategy_version text",
+        "strategy_config_json",
+        "strategy_config_sha256",
+        "v_payload -> 'strategy'",
+    ] {
+        assert!(
+            !OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL.contains(deferred_snapshot_field),
+            "0049 checksum-era contract must not contain 0050 field {deferred_snapshot_field}"
+        );
+    }
 
     let executable_up = OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL.to_ascii_lowercase();
     for forbidden in [
@@ -332,6 +348,163 @@ fn owner_beta_price_recommendation_persistence_is_separate_and_fail_closed() {
             .to_ascii_uppercase()
             .contains("CASCADE"),
         "0049 rollback must not use CASCADE"
+    );
+}
+
+#[test]
+fn owner_beta_strategy_snapshots_are_append_only_and_bound_at_insert() {
+    assert_eq!(
+        MIGRATOR
+            .migrations
+            .iter()
+            .filter(|migration| migration.version == 50)
+            .count(),
+        2,
+        "0050 must have exactly one reversible up/down migration pair"
+    );
+
+    let guard = OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
+        .find("owner beta strategy snapshot migration requires an empty run table")
+        .expect("0050 must fail closed on a legacy owner-beta row");
+    let schema_change = OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
+        .find("ALTER TABLE public.owner_beta_recommendation_runs")
+        .expect("0050 must add the strategy snapshot schema");
+    assert!(
+        guard < schema_change,
+        "0050 must reject every legacy row before adding snapshot columns"
+    );
+
+    for token in [
+        "SET LOCAL lock_timeout = '5s';",
+        "SET LOCAL statement_timeout = '30s';",
+        "LOCK TABLE public.owner_beta_recommendation_runs IN ACCESS EXCLUSIVE MODE;",
+        "SELECT users.id FROM public.users AS users ORDER BY users.id",
+        "pg_catalog.set_config(\n            'app.actor_user_id', v_owner_user_id::text, true",
+        "SELECT 1\n              FROM public.owner_beta_recommendation_runs AS run",
+        "USING ERRCODE = '55000';",
+        "ADD COLUMN strategy_id text NOT NULL",
+        "ADD COLUMN strategy_version text NOT NULL",
+        "ADD COLUMN strategy_config_json jsonb NOT NULL",
+        "ADD COLUMN strategy_config_sha256 text NOT NULL",
+        "strategy_id <> ''",
+        "strategy_version <> ''",
+        "pg_catalog.jsonb_typeof(strategy_config_json) = 'object'",
+        "strategy_config_sha256 ~ '^sha256:[0-9a-f]{64}$'",
+        "GRANT INSERT (\n    strategy_id, strategy_version, strategy_config_json, strategy_config_sha256\n) ON public.owner_beta_recommendation_runs TO app;",
+        "CREATE OR REPLACE FUNCTION public.owner_beta_recommendation_runs_validate_job_binding()",
+        "'as_of', 'pins', 'run_id', 'strategy', 'strategy_config_id'",
+        "'config_json', 'config_sha256', 'strategy_id', 'strategy_version'",
+        "v_payload -> 'strategy' ->> 'strategy_id'\n            IS DISTINCT FROM NEW.strategy_id",
+        "v_payload -> 'strategy' ->> 'strategy_version'\n            IS DISTINCT FROM NEW.strategy_version",
+        "v_payload -> 'strategy' -> 'config_json'\n            IS DISTINCT FROM NEW.strategy_config_json",
+        "v_payload -> 'strategy' ->> 'config_sha256'\n            IS DISTINCT FROM NEW.strategy_config_sha256",
+        "OR NEW.strategy_id IS DISTINCT FROM OLD.strategy_id",
+        "OR NEW.strategy_version IS DISTINCT FROM OLD.strategy_version",
+        "OR NEW.strategy_config_json IS DISTINCT FROM OLD.strategy_config_json",
+        "OR NEW.strategy_config_sha256 IS DISTINCT FROM OLD.strategy_config_sha256",
+        "id, owner_user_id, strategy_config_id, strategy_id, strategy_version,\n        strategy_config_json, strategy_config_sha256, job_id, as_of",
+    ] {
+        assert!(
+            OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL.contains(token),
+            "0050 owner-beta strategy snapshot contract is missing {token}"
+        );
+    }
+
+    let update_branch_start = OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
+        .find("IF TG_OP = 'UPDATE' THEN")
+        .expect("0050 must distinguish UPDATE from INSERT");
+    let insert_branch_start = OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL[update_branch_start..]
+        .find("    ELSE\n        SELECT config.strategy_id")
+        .map(|offset| update_branch_start + offset)
+        .expect("0050 must attest the current config only on INSERT");
+    let update_branch =
+        &OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL[update_branch_start..insert_branch_start];
+    assert!(
+        !update_branch.contains("user_strategy_configs"),
+        "0050 UPDATE must not compare an immutable snapshot to the later-mutable config"
+    );
+    assert_eq!(
+        OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
+            .matches("FROM public.user_strategy_configs AS config")
+            .count(),
+        1,
+        "0050 must read the current config exactly once, in the INSERT branch"
+    );
+    for insert_binding in [
+        "WHERE config.id = NEW.strategy_config_id",
+        "AND config.owner_user_id = NEW.owner_user_id",
+        "AND config.is_active",
+        "FOR SHARE OF config;",
+        "v_config_strategy_id IS DISTINCT FROM NEW.strategy_id",
+        "v_config_strategy_version IS DISTINCT FROM NEW.strategy_version",
+        "v_config_json IS DISTINCT FROM NEW.strategy_config_json",
+    ] {
+        assert!(
+            OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL[insert_branch_start..].contains(insert_binding),
+            "0050 INSERT-time config binding is missing {insert_binding}"
+        );
+    }
+    assert!(
+        !OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL.contains("GRANT UPDATE (")
+            && !OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL.contains("TO worker"),
+        "0050 must not grant snapshot mutation to the worker"
+    );
+    assert!(
+        !OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
+            .contains("jobs_protect_owner_beta_recommendation_lineage"),
+        "0050 must preserve rather than replace the existing jobs lineage trigger"
+    );
+
+    for down_token in [
+        "DROP TRIGGER owner_beta_recommendation_runs_validate_job_binding",
+        "CREATE OR REPLACE FUNCTION public.owner_beta_recommendation_runs_validate_job_binding()",
+        "'as_of', 'pins', 'run_id', 'strategy_config_id'",
+        "PERFORM 1\n      FROM public.user_strategy_configs AS config",
+        "id, owner_user_id, strategy_config_id, job_id, as_of",
+        "REVOKE INSERT (\n    strategy_id, strategy_version, strategy_config_json, strategy_config_sha256\n) ON public.owner_beta_recommendation_runs FROM app;",
+        "DROP COLUMN strategy_config_sha256",
+        "DROP COLUMN strategy_config_json",
+        "DROP COLUMN strategy_version",
+        "DROP COLUMN strategy_id",
+    ] {
+        assert!(
+            OWNER_BETA_STRATEGY_SNAPSHOTS_DOWN_SQL.contains(down_token),
+            "0050 rollback is missing {down_token}"
+        );
+    }
+    assert!(
+        !OWNER_BETA_STRATEGY_SNAPSHOTS_DOWN_SQL.contains("v_payload -> 'strategy'")
+            && !OWNER_BETA_STRATEGY_SNAPSHOTS_DOWN_SQL
+                .contains("jobs_protect_owner_beta_recommendation_lineage")
+            && !OWNER_BETA_STRATEGY_SNAPSHOTS_DOWN_SQL
+                .to_ascii_uppercase()
+                .contains("CASCADE"),
+        "0050 rollback must restore the 0049 payload and preserve job lineage without CASCADE"
+    );
+
+    let original_start = OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL
+        .find("CREATE FUNCTION public.owner_beta_recommendation_runs_validate_job_binding()")
+        .expect("0049 binding function");
+    let original_end = OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL[original_start..]
+        .find("CREATE FUNCTION public.jobs_protect_owner_beta_recommendation_lineage()")
+        .map(|offset| original_start + offset)
+        .expect("0049 jobs lineage function");
+    let restored_start = OWNER_BETA_STRATEGY_SNAPSHOTS_DOWN_SQL
+        .find("CREATE OR REPLACE FUNCTION public.owner_beta_recommendation_runs_validate_job_binding()")
+        .expect("0050 restored binding function");
+    let restored_end = OWNER_BETA_STRATEGY_SNAPSHOTS_DOWN_SQL[restored_start..]
+        .find("REVOKE INSERT (")
+        .map(|offset| restored_start + offset)
+        .expect("0050 snapshot grant rollback");
+    let restored = OWNER_BETA_STRATEGY_SNAPSHOTS_DOWN_SQL[restored_start..restored_end].replacen(
+        "CREATE OR REPLACE FUNCTION",
+        "CREATE FUNCTION",
+        1,
+    );
+    assert_eq!(
+        restored.trim(),
+        OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL[original_start..original_end].trim(),
+        "0050 down must restore the exact 0049-era binding function and trigger"
     );
 }
 
