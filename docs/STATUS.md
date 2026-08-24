@@ -1,10 +1,13 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준 시각: 2026-08-24 (Asia/Seoul), 기준 트리 `1150700` = `origin/main`.**
+**최신 기준 시각: 2026-08-24 (Asia/Seoul), 기준 트리 `1150700` = `origin/main`,
+작업 브랜치 `audit-project-status` = `fd10488`.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
 당시의 기록이다. **현재 상태는 §0.29(이틀치 발행 달성), §0.30(출시 준비도 실측),
 §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업 순서는 §0.15에 정의돼
-있고 그 현재 위치는 §0.32에 있다 — (1)(2)(3) 완료, (4)(5)(6) 미수행. §4.2의 남은
+있고 그 현재 위치는 §0.34에 있다 — 작업 2의 봉인 artifact 코드와 작업 4의 추천 코드
+경로는 완료했지만, 작업 3의 실 승인·등록과 작업 4의 백테스트·운영 개방은 미완료다.
+작업 5·6도 미수행이다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
 이력을 보존한 기록이다. 과거의 "미설치", "KIS credential 없음", "초기 백필 미완료"
@@ -1573,7 +1576,47 @@ consumer, 등록, publication은 여전히 없다. 현재 상태는 구현 완�
 호스트 환경 제한이며 이번 artifact 변경의 회귀로 판정하지 않는다. 실제 QA PostgreSQL이나
 운영 DB를 임의로 대체해 green을 만들지 않았다.
 
----
+### 0.34 소유자 베타 추천 경로 구현 완료, 출시는 아직 차단 (2026-08-24)
+
+`d02d0d9..fd10488`에서 작업 2의 봉인 artifact를 소비하는 **추천 전용 오프라인 코드
+경로**를 끝까지 연결했다. 이 범위는 데이터 승인·운영 배포가 아니라, 승인된 입력이 나중에
+주어졌을 때만 움직이는 fail-closed 구현이다.
+
+- `299296f`는 일반 추천 원장과 분리된 owner-beta run/item 테이블, 강제 RLS, 불변 필드와
+  상태 전이 제약을 추가했다. `a81e951`~`68ed735`는 다섯 승인 pin과 전략 snapshot을 봉인한
+  큐 입력, 가격 전용 factor/target 계산, 원자적 결과 발행을 구현했다.
+- `4d564c4`·`1912a0e`·`3f6bbfb`는 전용 worker 실행, lease 상실·취소·stale claim 복구,
+  commit-pinned release 배포 경계를 추가했다. 기존 recommendation worker나 일반 추천
+  테이블이 이 작업을 대신 claim하지 않는다.
+- `49b1ff5`와 `969bde4`는 소유자 전용 POST enqueue 및 GET history/detail을 제공한다. GET은
+  역사 조회이므로 현재 입력 materialization mode와 독립적이지만, owner role·추천
+  entitlement·actor-scoped RLS를 계속 요구한다. 상세 응답은 실행 당시 `as_of` entitlement를
+  재검사하고, ETF11 정확 집합·고정 6자리 비중·reason/factor 상한·고정 flag·hash·상태별
+  nullability·수명주기 시각을 검증한 뒤에만 반환한다. OpenAPI 72개 operation과 생성
+  TypeScript가 동기화됐다.
+- `fd10488`은 일반 추천 화면과 분리된 소유자 전용 생성·polling·이력·상세 화면을 추가했다.
+  모든 상태 화면에서 `Owner-only`, `Vendor snapshot`, `Non-strict PIT`,
+  `Price-return only`를 유지하고, 클라이언트도 정확한 ETF11과 결과 의미를 엄격히 검증한다.
+  Member는 product client 생성 전에 차단되며 일반 모드는 기존 endpoint를 유지한다.
+
+독립 API/Web 적대 리뷰는 최초 `NEEDS_REMEDIATION` 뒤 수정된 경계를 각각 `ACCEPT`했다.
+최종 로컬 검증은 `cargo test -p api-server` 전체 PASS, owner-beta 단위 17개와 OpenAPI 계약
+11개 PASS, API all-target clippy warning-zero, Web 18파일 104개 PASS, TypeScript PASS,
+OpenAPI check PASS다. Web lint의 기존 `document.cookie` 경고 2개와 Biome 설정 deprecation은
+이번 변경과 무관하게 남아 있다.
+
+이 호스트에는 `DATABASE_URL`이 없으므로 새 DB 통합 테스트와 job-queue publish/recovery
+테스트는 의도된 clean skip이다. 따라서 실제 PostgreSQL에서 RLS 격리, pagination,
+실행일 entitlement, 성공/실패/cancel durable read, claim loss와 audit 동작을 검증했다고
+주장하지 않는다. 브라우저 E2E, production Web build, 새 image build도 아직 실행하지 않았다.
+
+**출시 차단은 그대로다.** embedded approval registry는 비어 있고 정확한 7파일 KSD action
+pin도 아직 독립적으로 확정되지 않았다. 실 artifact·DatasetManifest·5-pin을 만들거나
+등록하지 않았고, 현재 설치 release `66b2a8c`를 교체하거나 systemd/Compose를 활성화하지
+않았다. owner-beta 백테스트 입력·실행·조회/UI도 아직 없다. 다음 안전 순서는 DB가 있는 QA에서
+새 통합 테스트를 실제 실행하고, 백테스트 전용 경로와 운영 정적 게이트를 구현하는 것이다.
+실 승인 pin 없이는 materialize/register/추천·백테스트 실실행으로 넘어가지 않는다.
+
 ---
 
 ## 1. 목표 — 이 시스템은 무엇인가
@@ -2093,6 +2136,16 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 13. **요구사항 갭 6건 (신규, §0.31-④).** 출시를 막지는 않으나 소유자 단독 운영에 실제로
    영향이 있는 둘을 먼저 볼 것 — 관리자 화면(Must인데 웹이 빈 화면)과 알림(`EmailTransport`가
    항상 실패하는 스텁이라 장 마감 추천 도착을 화면 확인 외에 알 방법이 없다).
+14. ~~**owner-beta 가격 전용 추천 코드 경로.**~~ **완료 (2026-08-24,
+    `299296f..fd10488`, §0.34).** 전용 DB/RLS → 봉인 queue 입력 → 계산·원자 발행·복구 →
+    owner-only POST/GET API → 엄격한 Web 화면까지 연결했다. 독립 API/Web 재리뷰 `ACCEPT`,
+    API 전체 테스트와 Web 104개 테스트를 통과했다. 단, DB 통합 테스트는 이 호스트의
+    `DATABASE_URL` 부재로 clean skip이므로 운영 증거가 아니다.
+15. **owner-beta 백테스트와 운영 출시 증거.** 추천 경로와 같은 승인 5-pin·능력 flag를
+    사용하는 전용 백테스트 제출/worker/result/API/UI를 구현하고, QA PostgreSQL에서 RLS·복구
+    통합 테스트를 실제 실행한다. 그 뒤 production Web/image build, 정적 운영 게이트,
+    backup/restore rehearsal을 수행한다. 승인 레지스트리와 정확한 KSD action pin이 비어 있는
+    동안 실 artifact 생성·등록·추천/백테스트 실행은 계속 차단한다.
 
 ### 4.4 Phase 4 잔여
 
