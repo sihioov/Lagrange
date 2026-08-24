@@ -1637,29 +1637,43 @@ PASS했다고 보지 않았다. 당시 suite에는 owner-beta 전용 브라우�
 locator에 `exact: true`를 추가한 뒤 전체 **39/39 PASS**했다. 이로써 로컬 브라우저 계약 증거는
 닫혔지만, 합성 API 증거이므로 실제 PostgreSQL/RLS나 운영 API·데이터를 검증한 것은 아니다.
 
-이 호스트에는 `DATABASE_URL`이 없으므로 새 DB 통합 테스트와 job-queue publish/recovery
-테스트는 의도된 clean skip이다. 따라서 실제 PostgreSQL에서 RLS 격리, pagination,
-실행일 entitlement, 성공/실패/cancel durable read, claim loss와 audit 동작을 검증했다고
-주장하지 않는다. 브라우저 E2E test body와 새 production image build도 아직 실행하지 않았다.
-production Web build는 위에 기록한 대로 PASS했다.
+처음에는 이 호스트에 `DATABASE_URL`이 없어 새 DB 통합 테스트와 job-queue
+publish/recovery 테스트가 clean skip했고, 전체 suite의 `research_worker` 6건도 명시적인
+`required QA DATABASE_URL ... NotPresent`에서 중단됐다. 이후 기존 컨테이너와 분리된
+루프백 전용 일회용 PostgreSQL 18.4를 고정 digest로 기동했다. 여기서 owner-beta
+publish/recovery 5/5, 가격 전용 API 2/2, 중앙 owner 접근 경계 1/1, `research_worker`
+68/68이 실제 실행 PASS했다. 이 증거는 RLS·cancel/claim-loss/recovery 경로를 포함하지만
+합성 fixture와 일회용 DB에 대한 QA 증거이며 운영 DB·실데이터 증거는 아니다.
 
-현재 HEAD에서 `cargo test --workspace --locked --no-fail-fast`도 다시 실행했다. 샌드박스
-실행은 6개 test target만 실패했다. 그중 `api-server --lib`, `paper-runner`,
-`http_oidc_transport`는 listener/Unix socket `EPERM`이 원인이었고, 같은 세 target을 로컬
-격리 환경에서 다시 실행하자 각각 55/55, 5/5, 8/8 PASS했다. `recommendation_child`의
-4건은 존재만 하고 의존성이 설치되지 않은 `nt/.venv` 때문에 자식이 `jsonschema` 없이
-종료한 환경 문제였다. `uv sync --locked`로 그 ignored venv를 잠금 파일 그대로 복구한 뒤
-17/17 PASS했다. `recommendation_compute`의 12건은 기본 `python`에 `pyarrow`가 없는 기존
-호스트 함정이었고, `PYTHON=nt/.venv/bin/python`을 지정하자 16/16 PASS했다. 마지막
-`collectors --test research_worker`는 68건 중 62건 PASS, 6건이 모두 명시적인
-`required QA DATABASE_URL ... NotPresent`에서 중단됐다. 따라서 현재 발견된 코드 회귀는
-없지만, QA PostgreSQL 없는 이 호스트에서 full-workspace exit 0을 주장하지 않는다.
+CI 전제도 그대로 재현했다. `uv sync --locked`로 ignored `nt/.venv`를 복구하고,
+`PYTHON=nt/.venv/bin/python`, 결정론적 `data/phase0`, 위 QA `DATABASE_URL`을 제공했다.
+소켓이 필요한 test는 샌드박스 밖 로컬 격리 환경에서 실행했다. 이 조건에서
+`cargo test --workspace --locked --no-fail-fast`가 최종 **exit 0**으로 끝났고,
+workspace all-target/all-feature strict Clippy `-D warnings`와 rustfmt도 PASS했다.
+
+이 전체 재실행은 기존 계약 테스트가 놓친 새 migration 결함 하나를 실제로 잡았다.
+`0050/0051` guard가 tenant RLS를 순회하며 `app.actor_user_id` custom GUC를 설정한 뒤 빈
+문자열로 복원했는데, PostgreSQL 연결에는 빈 custom GUC가 남아 구버전 strict RLS의 직접
+`::uuid` 변환을 깨뜨렸다. `3f9ba1d`는 이미 `ACCESS EXCLUSIVE`로 잠긴 run table에서만
+guard 동안 `NO FORCE RLS`로 전체 행을 검사하고 즉시 `FORCE RLS`를 복원하도록 바꿨다.
+tenant GUC를 전혀 쓰지 않는 순서 자체를 정적 계약으로 고정했고 migration 통합 31/31이
+통과했다.
+
+독립 PostgreSQL validator는 첫 실실행에서 `deploy/db/Dockerfile`의 필수
+`LAGRANGE_CODE_COMMIT` build arg를 Compose override가 전달하지 않는 별도 하네스 결함도
+찾았다. `4485d23`은 정확한 nonzero 40-hex HEAD를 db-tool build와 sanitized evidence에
+전달하고 self-test로 배선을 고정했다. 재실행은 commit
+`4485d23fffcc23caa4cb96cf0804b8d93f6c94e2`에서 **APPROVED**였다. 고정 PostgreSQL digest,
+직접 service-role 6개 로그인, 0038→0039→0040→0041과 rerun/rollback guard, DB-gated suite가
+skip 없이 통과했다. 검증용 컨테이너·네트워크·임시 볼륨은 모두 제거했다. production Web
+build와 browser 39/39는 위와 같이 PASS했지만 새 production image의 실제 build/install과
+현재 설치 release 변경은 하지 않았다.
 
 **출시 차단은 그대로다.** embedded approval registry는 비어 있고 정확한 7파일 KSD action
 pin도 아직 독립적으로 확정되지 않았다. 실 artifact·DatasetManifest·5-pin을 만들거나
 등록하지 않았고, 현재 설치 release `66b2a8c`를 교체하거나 systemd/Compose를 활성화하지
-않았다. owner-beta 백테스트 입력·실행·조회/UI도 아직 없다. 다음 안전 순서는 DB가 있는 QA에서
-새 통합 테스트를 실제 실행하고, 백테스트 전용 경로와 운영 정적 게이트를 구현하는 것이다.
+않았다. owner-beta 백테스트 입력·실행·조회/UI도 아직 없다. 다음 안전 순서는 아래 Phase A
+분석 승인을 얻어 simulation 의미를 확정하고, 백테스트 전용 경로를 별도 구현하는 것이다.
 실 승인 pin 없이는 materialize/register/추천·백테스트 실실행으로 넘어가지 않는다.
 
 백테스트 Phase A의 두 read-only `$paseo-delegate` 분석은 계획과 프롬프트까지 확정했지만 아직
