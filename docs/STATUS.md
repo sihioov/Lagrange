@@ -1,11 +1,13 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준 시각: 2026-08-24 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
+**최신 기준 시각: 2026-08-25 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.29(이틀치 발행 달성), §0.30(출시 준비도 실측),
-§0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업 순서는 §0.15에 정의돼
-있고 그 현재 위치는 §0.34에 있다 — 작업 2의 봉인 artifact 코드와 작업 4의 추천 코드
-경로는 완료했지만, 작업 3의 실 승인·등록과 작업 4의 백테스트·운영 개방은 미완료다.
+당시의 기록이다. **현재 상태는 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
+§0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.35에 있다 — 작업 2의 봉인 artifact와
+작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로는 완료했지만, 새 immutable
+image/release 설치와 실제 approval-check, 등록·READY·publication·추천 실행과 백테스트·운영
+개방은 미완료다.
 작업 5·6도 미수행이다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
@@ -28,10 +30,10 @@ publication, READY, recommendation use, or live trading.
 
 The separate root-only `--approval-check` mode invokes the compile-time embedded
 checker with only the dedicated artifact leaf read-only; it does not chain from
-`--check`, accept a registry path, or mount Raw/Curated. The checked-in embedded
-approval registry is empty, so real approval-check execution remains blocked
-until a separately reviewed registry commit is rebuilt into a new immutable
-image.
+`--check`, accept a registry path, or mount Raw/Curated. One independently
+reviewed v2 approval record is now committed locally, but the installed immutable
+`research-worker` still embeds the old empty registry. Real approval-check
+execution remains pending until a new image/release is built and installed.
 
 **2026-08-24 historical action-evidence execution.** 소유자가
 `2020-01-31..2026-08-19`, whole-market, KSD 7개 class, pagination 포함 최대
@@ -76,10 +78,10 @@ bonus actions 0, ignored cash-only dividend 1로 성공했다. 그 row commitmen
 `sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050`, artifact
 manifest pin은
 `sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67`다.
-상태는 계속 `UNREGISTERED`, `NOT_PUBLISHED`, `ready=false`이며 embedded approval
-registry는 비어 있다. 따라서 다음 게이트는 이 네 개의 immutable pin과 treatment
-commitment를 분리 검토한 뒤 registry record를 커밋·새 이미지로 재빌드하는 작업이다;
-artifact 생성 과정이 자기 승인하지 않았다.
+상태는 계속 `UNREGISTERED`, `NOT_PUBLISHED`, `ready=false`이며 artifact 생성 과정은
+자기 승인하지 않았다. 당시 다음 게이트였던 분리 검토는 2026-08-25에 완료되어 v2 approval
+record가 로컬에 커밋됐다(§0.35). 다만 설치된 immutable image는 여전히 이전 empty registry를
+embed하므로, 새 image/release build·install과 실제 approval-check가 다음 게이트다.
 
 ## 0. 2026-08-19 현재 운영 스냅샷
 
@@ -1724,12 +1726,12 @@ skip 없이 통과했다. 검증용 컨테이너·네트워크·임시 볼륨은
 build와 browser 39/39는 위와 같이 PASS했지만 새 production image의 실제 build/install과
 현재 설치 release 변경은 하지 않았다.
 
-**출시 차단은 그대로다.** embedded approval registry는 비어 있고 정확한 7파일 KSD action
-pin도 아직 독립적으로 확정되지 않았다. 실 artifact·DatasetManifest·5-pin을 만들거나
-등록하지 않았고, 현재 설치 release `66b2a8c`를 교체하거나 systemd/Compose를 활성화하지
-않았다. owner-beta 백테스트 입력·실행·조회/UI도 아직 없다. 다음 안전 순서는 아래 Phase A
-분석 승인을 얻어 simulation 의미를 확정하고, 백테스트 전용 경로를 별도 구현하는 것이다.
-실 승인 pin 없이는 materialize/register/추천·백테스트 실실행으로 넘어가지 않는다.
+**출시 차단은 남아 있다.** 정확한 v2 artifact와 independent approval record는 이제 로컬에
+있지만, 설치된 release `66b2a8c`의 immutable `research-worker`는 이전 empty registry를
+embed한다. 새 image/release build·install과 실제 approval-check, registration, READY,
+publication, recommendation execution, backtest, service activation, trading, and push are all
+still undone. 아래 Phase A 분석의 역사적 stop condition은 registry가 비어 있던 분석 시점의
+판단이며, 별도 backtest simulation contract와 구현은 여전히 필요하다.
 
 백테스트 Phase A의 두 read-only `$paseo-delegate` 분석은 계획과 프롬프트까지 확정했지만 아직
 실행되지 않았다. 외부 Codex 워커에 저장소 소스가 전달될 수 있어 명시적 소유자 승인이 필요하다는
@@ -1738,6 +1740,29 @@ pin도 아직 독립적으로 확정되지 않았다. 실 artifact·DatasetManif
 계정/주문 API 권한으로 확대되지 않는다.
 
 ---
+
+### 0.35 독립 v2 승인 기록과 release audit (2026-08-25)
+
+독립 검토된 v2 approval record 하나가 로컬에 커밋됐다. 이는 candidate
+`sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050`, artifact
+`sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67`, Stage5
+`sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4`, action
+`sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd`를 함께 고정한다.
+범위는 `2020-01-31..2026-08-19`, ETF11/1,608 sessions/17,688 bars이며,
+`CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1` 아래 ignored cash row 1개를 포함한다.
+상태는 계속 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/`NOT_PUBLISHED`다.
+
+독립 remediation은 다음까지 수용됐다: `owner_only`는 non-dry-run order를 포함한 모든
+`/api/v1/admin/live` route를 거부하고 Web은 Live를 숨긴다; wrapper는 exact v2만 수용하고
+legacy/tamper/pin mismatch를 거부한다; disposable PostgreSQL은 persistence/RLS happy path와
+`0052` lock privilege fix를 입증했다. economics는 trend, decimal half-even/caps,
+future/historical validation, inverse-vol evidence, 6/7-way exact apportionment를 바로잡았고
+R-4A/R-4B/R-5/R-6C/R-7이 수용됐다.
+
+이는 launch readiness가 아니다. 설치된 immutable `research-worker`는 여전히 old empty
+registry를 embed한다. 따라서 새 image/release build·install과 real approval-check가 먼저이며,
+registration, service activation, READY, publication, recommendation execution, backtest,
+trading, and push는 모두 아직 수행되지 않았다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
@@ -2259,13 +2284,16 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 14. ~~**owner-beta 가격 전용 추천 코드 경로.**~~ **완료 (2026-08-24,
     `299296f..fd10488`, §0.34).** 전용 DB/RLS → 봉인 queue 입력 → 계산·원자 발행·복구 →
     owner-only POST/GET API → 엄격한 Web 화면까지 연결했다. 독립 API/Web 재리뷰 `ACCEPT`,
-    API 전체 테스트와 Web 104개 테스트를 통과했다. 단, DB 통합 테스트는 이 호스트의
-    `DATABASE_URL` 부재로 clean skip이므로 운영 증거가 아니다.
+    API 전체 테스트와 Web 104개 테스트를 통과했다. 이후 disposable PostgreSQL에서 RLS·
+    persistence happy path와 `0052` lock privilege fix 증거를 얻었지만, 이는 운영 증거나
+    실제 activation 증거가 아니다.
 15. **owner-beta 백테스트와 운영 출시 증거.** 추천 경로와 같은 승인 5-pin·능력 flag를
     사용하는 전용 백테스트 제출/worker/result/API/UI를 구현하고, QA PostgreSQL에서 RLS·복구
     통합 테스트를 실제 실행한다. 그 뒤 production Web/image build, 정적 운영 게이트,
-    backup/restore rehearsal을 수행한다. 승인 레지스트리와 정확한 KSD action pin이 비어 있는
-    동안 실 artifact 생성·등록·추천/백테스트 실행은 계속 차단한다.
+    backup/restore rehearsal을 수행한다. reviewed v2 approval record와 정확한 KSD action pin은
+    이제 로컬에 커밋됐지만, installed image/release가 old empty registry를 embed하고 실제
+    approval-check가 끝나지 않았으므로 등록·READY·publication·추천/백테스트 실행은 계속
+    차단한다.
 
 ### 4.4 Phase 4 잔여
 

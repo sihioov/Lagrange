@@ -45,10 +45,11 @@ Stage4A session-bar documents are consumed only at schema/normalizer v2. The
 v2 lineage records each source row's canonical content hash and byte size;
 legacy v1 documents are rejected before any canonical candidate is built, so a
 replayed v1 payload cannot collide with a v2 deterministic identity. The
-repository-controlled approved evidence registry is intentionally empty until
-an operator reviews and commits a real package pin; temporary test fixtures use
-an internal test-only loader and cannot self-approve through the production
-loader.
+separate Stage4B approved-evidence registry
+(`configs/evidence/kis-range-canonical-approved-manifests.json`) is intentionally
+empty until an operator reviews and commits a real package pin; temporary test
+fixtures use an internal test-only loader and cannot self-approve through the
+production loader. This is not the historical price-only beta approval registry.
 
 Before accepting the Stage4A document, the loader re-reads its upstream
 `kis-daily-range` manifest by lineage batch ID, checks the serialized manifest
@@ -257,11 +258,20 @@ is no replace, registration, READY, publication, recommendation, backtest, or
 Paper option. The CLI root gate, public API shape, and static output boundary
 passed an independent source review after implementation.
 
-The current production Raw pin discovery is independently blocked on the exact
-seven-file KSD action batch. This implementation work does not authorize a
-replacement pin, a guessed zero-action attestation, or a new historical KIS
-request. No real artifact can be created or registered until the exact action
-evidence is available and passes the existing verifier.
+The independently reviewed v2 approval record now commits the exact Stage5 pin
+`sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4`,
+the seven-file KSD action pin
+`sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd`,
+candidate pin
+`sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050`, and
+artifact pin
+`sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67`.
+It covers `2020-01-31..2026-08-19`, ETF11/1,608 sessions/17,688 bars, and one
+ignored cash row under `CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1`; the
+artifact remains `OWNER_ONLY`, `MATERIALIZED`, `UNREGISTERED`, and
+`NOT_PUBLISHED`. This record authorizes neither a replacement pin nor another
+historical KIS request, registration, READY, publication, recommendation,
+backtest, or trading.
 
 ### Installed production execution seam
 
@@ -279,8 +289,7 @@ sudo scripts/ops/kis-historical-price-beta-artifact.sh --materialize \
   --action-manifest-sha256 sha256:<64-lowercase-hex>
 sudo scripts/ops/kis-historical-price-beta-artifact.sh --check \
   --candidate-content-sha256 sha256:<64-lowercase-hex>
-sudo scripts/ops/kis-historical-price-beta-artifact.sh --approval-check \
-  --candidate-content-sha256 sha256:<64-lowercase-hex>
+sudo scripts/ops/kis-historical-price-beta-artifact.sh --approval-check
 ```
 
 Provisioning creates `<LAGRANGE_ARTIFACTS_DIR>/historical-price-beta-root` as
@@ -301,10 +310,10 @@ because independent bind mounts hide host ancestry inside the container.
 `--check` remains artifact integrity only and never auto-chains to the separate
 `--approval-check`. The checker reads its compile-time embedded approval
 registry and accepts no registry path; it mounts only the dedicated artifact
-leaf read-only, with no Raw, Curated, DB, or provider surface. The checked-in
-registry is empty, so real approval-check execution currently blocks until a
-separately reviewed registry commit is rebuilt into a new immutable
-research-worker image.
+leaf read-only, with no Raw, Curated, DB, or provider surface. The reviewed v2
+record is committed locally, but the installed immutable `research-worker`
+still embeds the old empty registry. Real approval-check execution therefore
+remains blocked pending a new image/release build and install.
 
 ## Deliberate limitations
 

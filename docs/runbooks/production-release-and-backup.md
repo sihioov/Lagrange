@@ -105,9 +105,10 @@ networkless artifact `--approval-check` after validating all ten manifest image
 IDs and before the first Compose `up`. It accepts only the fixed sanitized
 success contract, including the compile-time embedded approval-registry hash;
 failure starts no Compose service and prints no candidate, path, or internal
-error. The committed registry is currently empty, so this remains a deliberate
-launch blocker until a separately reviewed registry commit is rebuilt into the
-same immutable `research-worker` image. Owner-only startup also omits
+error. One independently reviewed v2 approval record is committed locally, but
+the installed immutable `research-worker` still embeds the old empty registry.
+This remains a deliberate launch blocker until a new image/release is built and
+installed and the real approval-check succeeds. Owner-only startup also omits
 `paper-scheduler`; the ten-image manifest is unchanged so a future reviewed
 Paper gate can activate that exact image without changing release provenance.
 

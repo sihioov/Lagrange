@@ -259,18 +259,34 @@ mod tests {
         ContentHash::from_bytes(value.as_bytes())
     }
 
+    fn pinned_hash(value: &str) -> ContentHash {
+        ContentHash::parse(value).unwrap()
+    }
+
     fn record() -> Record {
         Record {
-            candidate_content_sha256: hash("candidate"),
-            artifact_manifest_sha256: hash("artifact"),
-            stage5_manifest_sha256: hash("stage5"),
-            action_manifest_sha256: hash("action"),
+            candidate_content_sha256: pinned_hash(
+                "sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050",
+            ),
+            artifact_manifest_sha256: pinned_hash(
+                "sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67",
+            ),
+            stage5_manifest_sha256: pinned_hash(
+                "sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4",
+            ),
+            action_manifest_sha256: pinned_hash(
+                "sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd",
+            ),
             cash_dividend_treatment_id: crate::HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT.into(),
             ignored_cash_dividend_row_count: 1,
-            ignored_cash_dividend_rows_sha256: hash("dividend-rows"),
-            ignored_cash_dividend_source_file_sha256: hash("dividend-file"),
+            ignored_cash_dividend_rows_sha256: pinned_hash(
+                "sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48",
+            ),
+            ignored_cash_dividend_source_file_sha256: pinned_hash(
+                "sha256:906f3429e5ef366763f5161d924c1fd33eafca073e1a639308f0ad66beb270d8",
+            ),
             ignored_cash_dividend_acquired_at: domain::UtcTimestamp::parse_rfc3339(
-                "2026-08-19T00:00:00Z",
+                "2026-08-24T09:11:17Z",
             )
             .unwrap(),
             artifact_schema_id: "kis-historical-price-only-beta".into(),
@@ -284,7 +300,19 @@ mod tests {
             publication_status: "NOT_PUBLISHED".into(),
             range_start: TradingDate::parse("2020-01-31").unwrap(),
             range_end: TradingDate::parse("2026-08-19").unwrap(),
-            instruments: Vec::new(),
+            instruments: vec![
+                "069500.KRX".into(),
+                "102110.KRX".into(),
+                "114260.KRX".into(),
+                "132030.KRX".into(),
+                "133690.KRX".into(),
+                "143850.KRX".into(),
+                "148070.KRX".into(),
+                "153130.KRX".into(),
+                "192090.KRX".into(),
+                "195930.KRX".into(),
+                "229200.KRX".into(),
+            ],
             instrument_count: 11,
             session_count: 1608,
             bar_count: 17688,
@@ -331,12 +359,62 @@ mod tests {
         }
     }
     #[test]
-    fn embedded_registry_is_canonical_and_empty_blocks() {
+    fn embedded_registry_is_canonical_and_binds_exact_sole_record() {
         let registry = parse_registry(EMBEDDED_REGISTRY).unwrap();
-        assert!(registry.approved_artifacts.is_empty());
+        assert_eq!(registry.schema_id, REGISTRY_SCHEMA_ID);
+        assert_eq!(registry.schema_version, REGISTRY_SCHEMA_VERSION);
+        assert_eq!(registry.approved_artifacts.len(), 1);
+        let record = sole_record(&registry).unwrap();
+        assert_eq!(
+            record.candidate_content_sha256.as_str(),
+            "sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050"
+        );
+        assert_eq!(
+            record.artifact_manifest_sha256.as_str(),
+            "sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67"
+        );
+        assert_eq!(
+            record.stage5_manifest_sha256.as_str(),
+            "sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4"
+        );
+        assert_eq!(
+            record.action_manifest_sha256.as_str(),
+            "sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd"
+        );
+        assert_eq!(
+            record.cash_dividend_treatment_id,
+            "CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1"
+        );
+        assert_eq!(record.ignored_cash_dividend_row_count, 1);
+        assert_eq!(
+            record.ignored_cash_dividend_rows_sha256.as_str(),
+            "sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48"
+        );
+        assert_eq!(
+            record.ignored_cash_dividend_source_file_sha256.as_str(),
+            "sha256:906f3429e5ef366763f5161d924c1fd33eafca073e1a639308f0ad66beb270d8"
+        );
+        assert_eq!(
+            record.ignored_cash_dividend_acquired_at,
+            domain::UtcTimestamp::parse_rfc3339("2026-08-24T09:11:17Z").unwrap()
+        );
+
+        let summary = summary(record);
+        let pins = pins(record);
+        assert!(fixed_envelope(&summary));
+        assert!(record_matches(record, &summary, &pins));
+
+        let mut canonical = serde_json::to_vec(&registry).unwrap();
+        canonical.push(b'\n');
+        assert_eq!(EMBEDDED_REGISTRY, canonical.as_slice());
+        let changed = [EMBEDDED_REGISTRY, b" "].concat();
+        assert!(matches!(
+            parse_registry(&changed),
+            Err(HistoricalPriceOnlyApprovalError::RegistryInvalid)
+        ));
         assert_ne!(
             ContentHash::from_bytes(EMBEDDED_REGISTRY),
-            ContentHash::from_bytes(&[EMBEDDED_REGISTRY, b" "].concat())
+            ContentHash::from_bytes(&changed)
         );
     }
 

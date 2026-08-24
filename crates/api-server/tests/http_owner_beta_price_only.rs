@@ -1,6 +1,6 @@
-//! The sealed price-only input is fail-closed while the embedded approval
-//! registry has no approved artifact.  The handler must reject before the
-//! durable repository can create either queue or run state.
+//! The sealed price-only input is fail-closed when the approved artifact root
+//! is unavailable. The handler must reject before the durable repository can
+//! create either queue or run state.
 
 mod common;
 
@@ -9,7 +9,7 @@ use common::{Harness, status};
 use serde_json::json;
 
 #[tokio::test]
-async fn owner_beta_price_only_empty_registry_is_static_503_without_enqueue_rows() {
+async fn owner_beta_price_only_missing_approved_artifact_root_is_static_503_without_enqueue_rows() {
     let Some(mut h) = Harness::new().await else {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
@@ -41,8 +41,8 @@ async fn owner_beta_price_only_empty_registry_is_static_503_without_enqueue_rows
             "/api/v1/recommendations/owner-beta/price-only/runs",
             Some(&h.owner),
             true,
-            Some("owner-beta-empty-registry"),
-            Some("owner-beta-empty-registry-key"),
+            Some("owner-beta-missing-approved-artifact-root"),
+            Some("owner-beta-missing-approved-artifact-root-key"),
             Some(json!({
                 "strategy_config_id": "00000000-0000-0000-0000-000000000001",
                 "as_of": "2026-08-13"

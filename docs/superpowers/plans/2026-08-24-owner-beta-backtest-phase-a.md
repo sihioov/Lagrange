@@ -93,7 +93,8 @@ questions for both workers but do not replace the required independent analyses:
 - Known facts: `ApprovedHistoricalPriceOnlyArtifact` exposes validated bars and five pins; factors
   consume adjusted close only; owner-beta recommendation input/worker/persistence/API/UI are
   isolated; the existing backtest path consumes registered curated datasets and emits a richer
-  result contract; the embedded registry is empty; real DB evidence is unavailable.
+  result contract; the embedded registry was empty at this analysis time; real DB evidence was
+  unavailable.
 - Inspect at minimum: `crates/market-data/src/historical_price_only_*`,
   `crates/factor-engine/src/{bars,price_only}.rs`, `crates/job-queue/src/owner_beta/**`,
   `crates/job-queue/src/runner.rs`, `crates/result-model/src/backtest.rs`,
@@ -160,8 +161,9 @@ questions for both workers but do not replace the required independent analyses:
 
 The two independent reports agree, and direct source inspection supports the same conclusion:
 
-1. **Stop at the missing conversion/simulation seam.** The embedded approval registry is empty, so
-   there is no constructible approved artifact or authorized five-pin value to enqueue.
+1. **Stop at the missing conversion/simulation seam.** At this analysis time the embedded approval
+   registry was empty, so there was no constructible approved artifact or authorized five-pin value
+   to enqueue.
 2. **Reject generic Nautilus-path reuse.** That path requires a registered `READY` Curated dataset,
    timestamped market inputs, one dataset pin, and generic order/fill/benchmark results. It cannot
    preserve the date-only artifact's five-pin trust chain and fixed owner-only price-return envelope.

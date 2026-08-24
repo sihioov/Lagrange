@@ -54,8 +54,10 @@ The protected env defaults both `OWNER_BETA_ACCESS_MODE` and
 `OWNER_BETA_PAPER_MODE` to `disabled`. Owner-only activation derives the
 candidate only from the canonical registry embedded in the installed verified
 image; `compose-release.sh` supplies no candidate hash to the networkless
-approval wrapper. The embedded approval registry is currently empty, so
-owner-only activation remains blocked.
+approval wrapper. One independently reviewed v2 approval record is committed
+locally, but the installed immutable image still embeds the old empty registry;
+owner-only activation remains blocked pending image/release build and install
+plus a successful real approval-check.
 Paper is also unconditionally rejected in owner-only mode until a separate
 three-unattended-session evidence checker is implemented; `paper-scheduler`
 stays in the immutable ten-image manifest but is omitted from owner-only
@@ -101,9 +103,10 @@ separation check against host-canonical Raw/Curated identities because bind
 mounts hide host ancestry inside a container.
 `--check` is artifact integrity only and never auto-chains to `--approval-check`.
 The approval checker uses its compile-time embedded registry and accepts no
-registry path or Raw/Curated mount. That embedded registry is currently empty,
-so real approval-check execution remains blocked until a separately reviewed
-registry commit is rebuilt into a new immutable research-worker image.
+registry path or Raw/Curated mount. A reviewed v2 record is committed locally,
+but the installed immutable `research-worker` still embeds the old empty
+registry, so real approval-check execution remains pending a new image/release
+build and install.
 
 For a multi-year ETF range, install the recurring backfill timer only after
 reviewing its dry-run and immutable release path. It runs once daily at 03:15
