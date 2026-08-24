@@ -3,8 +3,13 @@
 //! This module deliberately contains only the sealed, price-only recommendation
 //! input. Queue persistence and execution remain outside this boundary.
 
+pub mod compute;
 pub mod input;
 pub mod target;
+
+pub use compute::{
+    OwnerBetaComputation, OwnerBetaComputationError, compute_owner_beta_price_recommendation,
+};
 
 pub use input::{
     OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE, OWNER_BETA_STRATEGY_CONFIG_SNAPSHOT_SCHEMA,

@@ -160,6 +160,10 @@ const OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL: &str =
     include_str!("../../../../migrations/0050_owner_beta_strategy_snapshots.up.sql");
 const OWNER_BETA_STRATEGY_SNAPSHOTS_DOWN_SQL: &str =
     include_str!("../../../../migrations/0050_owner_beta_strategy_snapshots.down.sql");
+const OWNER_BETA_TARGET_PUBLICATION_UP_SQL: &str =
+    include_str!("../../../../migrations/0051_owner_beta_target_publication.up.sql");
+const OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0051_owner_beta_target_publication.down.sql");
 const CANDIDATE_SCHEDULE_RS: &str =
     include_str!("../../../../crates/job-queue/src/candidate/schedule.rs");
 const CANDIDATE_RUNNER_RS: &str =
@@ -505,6 +509,138 @@ fn owner_beta_strategy_snapshots_are_append_only_and_bound_at_insert() {
         restored.trim(),
         OWNER_BETA_PRICE_RECOMMENDATIONS_UP_SQL[original_start..original_end].trim(),
         "0050 down must restore the exact 0049-era binding function and trigger"
+    );
+}
+
+#[test]
+fn owner_beta_target_publication_is_atomic_append_only_and_reversible() {
+    assert_eq!(
+        MIGRATOR
+            .migrations
+            .iter()
+            .filter(|migration| migration.version == 51)
+            .count(),
+        2,
+        "0051 must have exactly one reversible up/down migration pair"
+    );
+    assert_eq!(
+        MIGRATOR
+            .migrations
+            .iter()
+            .map(|migration| migration.version)
+            .max(),
+        Some(51),
+        "0051 must be the append-only migration after 0050"
+    );
+    assert_eq!(
+        MIGRATOR
+            .migrations
+            .iter()
+            .filter(|migration| migration.version == 50)
+            .count(),
+        2,
+        "0051 must append to, not replace, the 0050 pair"
+    );
+
+    let lock = OWNER_BETA_TARGET_PUBLICATION_UP_SQL
+        .find("LOCK TABLE public.owner_beta_recommendation_runs IN ACCESS EXCLUSIVE MODE;")
+        .expect("0051 must take the publication table lock");
+    let guard = OWNER_BETA_TARGET_PUBLICATION_UP_SQL
+        .find("owner beta target publication migration requires unpublished runs")
+        .expect("0051 must reject legacy result state");
+    let alter = OWNER_BETA_TARGET_PUBLICATION_UP_SQL
+        .find("ALTER TABLE public.owner_beta_recommendation_runs")
+        .expect("0051 must extend the run table");
+    assert!(
+        lock < guard && guard < alter,
+        "0051 must lock, guard, then alter the run table"
+    );
+
+    for token in [
+        "SET LOCAL lock_timeout = '5s';",
+        "SET LOCAL statement_timeout = '30s';",
+        "SELECT users.id FROM public.users AS users ORDER BY users.id",
+        "'app.actor_user_id', v_owner_user_id::text, true",
+        "run.status = 'SUCCEEDED'",
+        "OR run.factor_snapshot_sha256 IS NOT NULL",
+        "USING ERRCODE = '55000';",
+        "DROP CONSTRAINT owner_beta_recommendation_runs_success_factor_check",
+        "ADD COLUMN target_snapshot_sha256 text",
+        "ADD COLUMN cash_weight numeric(18, 6)",
+        "target_snapshot_sha256 ~ '^sha256:[0-9a-f]{64}$'",
+        "cash_weight IS NULL OR (cash_weight >= 0 AND cash_weight <= 1)",
+        "ADD CONSTRAINT owner_beta_recommendation_runs_result_state_check CHECK",
+        "status = 'SUCCEEDED'\n            AND factor_snapshot_sha256 IS NOT NULL\n            AND target_snapshot_sha256 IS NOT NULL\n            AND cash_weight IS NOT NULL\n            AND error_code IS NULL",
+        "status <> 'SUCCEEDED'\n            AND factor_snapshot_sha256 IS NULL\n            AND target_snapshot_sha256 IS NULL\n            AND cash_weight IS NULL",
+        "GRANT UPDATE (\n    target_snapshot_sha256, cash_weight\n) ON public.owner_beta_recommendation_runs TO worker;",
+    ] {
+        assert!(
+            OWNER_BETA_TARGET_PUBLICATION_UP_SQL.contains(token),
+            "0051 target publication contract is missing {token}"
+        );
+    }
+    assert_eq!(
+        OWNER_BETA_TARGET_PUBLICATION_UP_SQL
+            .matches("owner_beta_recommendation_runs_success_factor_check")
+            .count(),
+        1,
+        "0051 up must replace rather than duplicate the 0049 success constraint"
+    );
+
+    let executable_up = OWNER_BETA_TARGET_PUBLICATION_UP_SQL.to_ascii_lowercase();
+    let grants = executable_up
+        .split(';')
+        .map(str::trim)
+        .filter(|statement| statement.starts_with("grant "))
+        .collect::<Vec<_>>();
+    assert_eq!(grants.len(), 1, "0051 must add exactly one narrow grant");
+    assert_eq!(
+        grants[0],
+        "grant update (\n    target_snapshot_sha256, cash_weight\n) on public.owner_beta_recommendation_runs to worker",
+        "0051 may grant only the two new run result columns to worker"
+    );
+
+    let down_lock = OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
+        .find("LOCK TABLE public.owner_beta_recommendation_runs IN ACCESS EXCLUSIVE MODE;")
+        .expect("0051 down must take the publication table lock");
+    let down_guard = OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
+        .find("owner beta target publication rollback would discard lineage")
+        .expect("0051 down must preserve published lineage");
+    let down_revoke = OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
+        .find("REVOKE UPDATE (")
+        .expect("0051 down must revoke the new worker grant");
+    let down_alter = OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
+        .find("ALTER TABLE public.owner_beta_recommendation_runs")
+        .expect("0051 down must restore the old schema");
+    assert!(
+        down_lock < down_guard && down_guard < down_revoke && down_revoke < down_alter,
+        "0051 down must lock, guard, revoke, then alter"
+    );
+    for token in [
+        "run.target_snapshot_sha256 IS NOT NULL",
+        "OR run.cash_weight IS NOT NULL",
+        "USING ERRCODE = '55000';",
+        "REVOKE UPDATE (\n    target_snapshot_sha256, cash_weight\n) ON public.owner_beta_recommendation_runs FROM worker;",
+        "DROP CONSTRAINT owner_beta_recommendation_runs_result_state_check",
+        "DROP CONSTRAINT owner_beta_recommendation_runs_cash_weight_check",
+        "DROP CONSTRAINT owner_beta_recommendation_runs_target_hash_check",
+        "DROP COLUMN cash_weight",
+        "DROP COLUMN target_snapshot_sha256",
+        "ADD CONSTRAINT owner_beta_recommendation_runs_success_factor_check CHECK (\n        status <> 'SUCCEEDED' OR factor_snapshot_sha256 IS NOT NULL\n    )",
+    ] {
+        assert!(
+            OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL.contains(token),
+            "0051 rollback contract is missing {token}"
+        );
+    }
+    assert!(
+        !OWNER_BETA_TARGET_PUBLICATION_UP_SQL
+            .to_ascii_uppercase()
+            .contains("CASCADE")
+            && !OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
+                .to_ascii_uppercase()
+                .contains("CASCADE"),
+        "0051 must not use CASCADE"
     );
 }
 
