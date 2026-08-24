@@ -1612,6 +1612,13 @@ release apply/rollback을 수행하는 `production-ops-self-test.sh`가 모두 P
 빌드·설치하거나 현재 설치 release를 바꾸지는 않았으며, 이 결과는 QA DB/RLS·backup/restore
 rehearsal이나 운영 기동 증거를 대신하지 않는다.
 
+추가로 fake-Docker 기반 `build-production-images-self-test.sh`, DB·Docker·KIS·network를 쓰지
+않는 operator attestation self-test, disposable PostgreSQL 검증 workflow의 정적 검사도 PASS했다.
+상위 `scripts/ops/self-test.sh`는 제품 assertion에 도달하기 전, 이 호스트 `fakeroot`가 fixture의
+numeric ownership `10001:10001`을 설정하는 단계에서 `EINVAL`로 중단됐다. 이는 앞서 확인된
+실행환경 제한이며 PASS로 처리하지 않았고, 실제 root/CI 환경에서의 전체 self-test 증거는 남아
+있다.
+
 이 호스트에는 `DATABASE_URL`이 없으므로 새 DB 통합 테스트와 job-queue publish/recovery
 테스트는 의도된 clean skip이다. 따라서 실제 PostgreSQL에서 RLS 격리, pagination,
 실행일 entitlement, 성공/실패/cancel durable read, claim loss와 audit 동작을 검증했다고
