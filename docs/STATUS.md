@@ -2,9 +2,10 @@
 
 **최신 기준 시각: 2026-08-25 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
+당시의 기록이다. **현재 상태는 §0.36(main 병합 완료·다음 release gate),
+§0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.35에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.36에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로는 완료했지만, 새 immutable
 image/release 설치와 실제 approval-check, 등록·READY·publication·추천 실행과 백테스트·운영
 개방은 미완료다.
@@ -1763,6 +1764,39 @@ R-4A/R-4B/R-5/R-6C/R-7이 수용됐다.
 registry를 embed한다. 따라서 새 image/release build·install과 real approval-check가 먼저이며,
 registration, service activation, READY, publication, recommendation execution, backtest,
 trading, and push는 모두 아직 수행되지 않았다.
+
+### 0.36 owner-beta release audit 병합 완료와 다음 gate (2026-08-25)
+
+독립 검토와 remediation을 끝낸 변경을 두 커밋으로 나눠 `main`에 fast-forward 병합했다.
+현재 기준 커밋은 `1b160badff188158c5d1f284377f096fbcdc2f12`다.
+
+- `9465732` (`Harden owner beta release boundary`): owner-only Live 차단/Web 은닉,
+  v2 artifact wrapper, target economics, 실제 PostgreSQL persistence/RLS 회귀, worker의
+  config row-lock 권한 결함과 reversible migration `0052`를 포함한다.
+- `1b160ba` (`Approve reviewed owner beta artifact`): 정확한 v2 approval registry record,
+  approval/API tests, release/runbook/status 동기화를 포함한다. registry file SHA-256은
+  `4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`이다.
+
+최종 통합 리뷰 R-8은 처음에 wrapper가 형식상 유효한 다른 artifact/dividend/registry
+hash를 허용하는 점과 잘못된 `--approval-check` runbook 예시를 발견했다. wrapper를 현재
+승인된 candidate/artifact/Stage5/action/registry pin, cash row count `1`, row hash에 완전
+고정하고 유효한 대체 hash와 count `2` 거부 회귀를 추가했다. 같은 리뷰어의 재검토 결과는
+High/Medium/Low 잔여 지적 없이 `ACCEPT`다.
+
+최종 검증은 registry 반영 뒤 `market-data` 전체 테스트, collector 모든 bin 테스트,
+owner-beta publication 테스트, 관련 네 crate의 all-target Clippy `-D warnings`, Web 104개
+테스트와 TypeScript/Biome, API 전체 테스트, formatter/diff check를 통과했다. disposable
+PostgreSQL 18.4에서 성공 publication, cross-owner/config mismatch 전체 rollback, `0052`
+up/down contract도 실제 실행해 통과했고 모든 임시 container/network/volume을 제거했다.
+artifact wrapper, production ops static, image-build simulation, release apply/rollback
+self-test도 모두 통과했다.
+
+이 문서 커밋 기준 `main`은 `origin/main`보다 49커밋 앞서며 push하지 않았다. 소유자 파일
+`docs/kis_openapi_entiredocs_20260818_030007.xlsx`는 계속 untracked로 보존했다. 새 production
+image/release build·install, 설치 이미지의 networkless real approval-check, registration,
+READY, publication, recommendation execution, backtest, service activation, trading은 아직
+수행하지 않았다. 다음 권장 gate는 현재 `main`을 고정한 새 immutable image/release를
+만들고, service 시작 전에 image ID/revision과 real approval-check를 검증하는 것이다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
