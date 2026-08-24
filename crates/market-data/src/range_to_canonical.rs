@@ -25,7 +25,7 @@ use crate::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_DAILY_RANGE,
     PROVIDER_KIS_DAILY_RANGE_NORMALIZED, RequestMetadata, ResponseKind, StoredFile,
 };
-use crate::normalize::bonus_split_factor_from_percent;
+use crate::normalize::{bonus_split_factor_from_percent, validate_kis_action_row_fields};
 use crate::providers::kis::{KR_ETF_CORE_SYMBOLS, KisActionSpec, kis_action_spec};
 use crate::range_normalize::{
     ExpectedRangeSessions, RANGE_NORMALIZED_SCHEMA_VERSION, RANGE_NORMALIZER,
@@ -189,6 +189,7 @@ pub(crate) struct ActionCoverageEvidence {
     raw_manifest_hash: ContentHash,
     files: Vec<ActionCoverageFileEvidence>,
     actions: Vec<RangeAction>,
+    all_response_arrays_empty: bool,
     acquired_at: UtcTimestamp,
     coverage_hash: ContentHash,
 }
@@ -202,6 +203,7 @@ impl ActionCoverageEvidence {
         raw_manifest_hash: ContentHash,
         files: Vec<ActionCoverageFileEvidence>,
         actions: Vec<RangeAction>,
+        all_response_arrays_empty: bool,
         acquired_at: UtcTimestamp,
     ) -> Self {
         let mut value = Self {
@@ -211,6 +213,7 @@ impl ActionCoverageEvidence {
             raw_manifest_hash,
             files,
             actions,
+            all_response_arrays_empty,
             acquired_at,
             coverage_hash: ContentHash::from_bytes(b"uncomputed"),
         };
@@ -226,6 +229,7 @@ impl ActionCoverageEvidence {
             "raw_manifest_hash": self.raw_manifest_hash,
             "files": self.files,
             "actions": self.actions,
+            "all_response_arrays_empty": self.all_response_arrays_empty,
             "acquired_at": self.acquired_at,
         })
     }
@@ -243,7 +247,7 @@ impl ActionCoverageEvidence {
 
     /// Whether every pinned KSD response was verified as an exact empty array.
     pub fn all_action_responses_empty(&self) -> bool {
-        self.files.len() == REQUIRED_ACTION_KINDS.len() && self.actions.is_empty()
+        self.files.len() == REQUIRED_ACTION_KINDS.len() && self.all_response_arrays_empty
     }
 }
 
@@ -1388,6 +1392,7 @@ fn load_action_evidence_from_entries(
     let stored = raw.read_batch_bytes(PROVIDER_KIS, MARKET_KR, entry)?;
     let mut files = Vec::with_capacity(refs.len());
     let mut actions = Vec::new();
+    let mut all_response_arrays_empty = true;
     for item in refs {
         let Some(metadata) = entry
             .files
@@ -1448,16 +1453,57 @@ fn load_action_evidence_from_entries(
                 reason: format!("action response {} lacks array output1", item.raw_file_name),
             })?;
         if !rows.is_empty() {
+            all_response_arrays_empty = false;
             if item.kind == "bonus-issue" {
                 for row in rows {
-                    actions.push(parse_bonus_action(row, entry.retrieved_at)?);
+                    let action = parse_bonus_action(row, entry.retrieved_at)?;
+                    let RangeAction::BonusIssue {
+                        instrument_id,
+                        record_date,
+                        ex_date,
+                        split_factor,
+                        available_at,
+                    } = &action
+                    else {
+                        unreachable!("bonus parser returns only bonus actions")
+                    };
+                    validate_bonus_action_observation(
+                        *record_date,
+                        *ex_date,
+                        *split_factor,
+                        *available_at,
+                        range_start,
+                        range_end,
+                        entry.retrieved_at,
+                    )?;
+                    if is_fixed_etf11_instrument(instrument_id) {
+                        actions.push(action);
+                    }
                 }
             } else {
-                actions.push(RangeAction::Unsupported {
-                    kind: item.kind.clone(),
-                    reason: "nonempty KSD action output has no reviewed canonical mapping"
-                        .to_owned(),
-                });
+                for row in rows {
+                    let object =
+                        row.as_object()
+                            .ok_or_else(|| RangeCanonicalError::ActionEvidence {
+                                reason: "non-bonus output1 row is not an object".to_owned(),
+                            })?;
+                    let validated = validate_kis_action_row_fields(
+                        &metadata.request.endpoint,
+                        &item.raw_file_name,
+                        object,
+                    )
+                    .map_err(|_| RangeCanonicalError::ActionEvidence {
+                        reason: "non-bonus action row does not match the documented KSD schema"
+                            .to_owned(),
+                    })?;
+                    if KR_ETF_CORE_SYMBOLS.contains(&validated.symbol.as_str()) {
+                        actions.push(RangeAction::Unsupported {
+                            kind: item.kind.clone(),
+                            reason: "nonempty KSD action output has no reviewed canonical mapping"
+                                .to_owned(),
+                        });
+                    }
+                }
             }
         }
         files.push(ActionCoverageFileEvidence {
@@ -1477,6 +1523,7 @@ fn load_action_evidence_from_entries(
         raw_manifest_hash,
         files,
         actions,
+        all_response_arrays_empty,
         entry.retrieved_at,
     ))
 }
@@ -2476,6 +2523,11 @@ fn validate_actions(
             reason: "empty action list requires an attested exact-range zero result".to_owned(),
         });
     }
+    if actions.all_response_arrays_empty && !actions.actions.is_empty() {
+        return Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "empty-response attestation conflicts with retained actions".to_owned(),
+        });
+    }
     for action in &actions.actions {
         match action {
             RangeAction::Unsupported { kind, .. } => {
@@ -2488,23 +2540,84 @@ fn validate_actions(
                 split_factor,
                 available_at,
             } => {
-                if !KR_ETF_CORE_SYMBOLS.iter().any(|symbol| {
-                    instrument_id == &InstrumentId::from_parts(symbol, Venue::Krx).unwrap()
-                }) || *record_date < actions.range_start
-                    || *record_date > actions.range_end
-                    || *ex_date < actions.range_start
-                    || *ex_date > actions.range_end
-                    || *split_factor <= FixedPoint::parse("1").expect("one")
-                    || *available_at != actions.acquired_at
-                {
-                    return Err(RangeCanonicalError::MissingActionEvidence {
-                        reason:
-                            "bonus action dates, instrument, factor, or acquisition time is invalid"
-                                .to_owned(),
-                    });
-                }
+                validate_bonus_action(
+                    instrument_id,
+                    *record_date,
+                    *ex_date,
+                    *split_factor,
+                    *available_at,
+                    actions.range_start,
+                    actions.range_end,
+                    actions.acquired_at,
+                )?;
             }
         }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_bonus_action(
+    instrument_id: &InstrumentId,
+    record_date: TradingDate,
+    ex_date: TradingDate,
+    split_factor: FixedPoint,
+    available_at: UtcTimestamp,
+    range_start: TradingDate,
+    range_end: TradingDate,
+    acquired_at: UtcTimestamp,
+) -> Result<(), RangeCanonicalError> {
+    if !is_fixed_etf11_instrument(instrument_id) {
+        return Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "bonus action instrument is outside the fixed ETF11 universe".to_owned(),
+        });
+    }
+    validate_bonus_action_observation(
+        record_date,
+        ex_date,
+        split_factor,
+        available_at,
+        range_start,
+        range_end,
+        acquired_at,
+    )
+}
+
+fn is_fixed_etf11_instrument(instrument_id: &InstrumentId) -> bool {
+    KR_ETF_CORE_SYMBOLS
+        .iter()
+        .any(|symbol| instrument_id == &InstrumentId::from_parts(symbol, Venue::Krx).unwrap())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_bonus_action_observation(
+    record_date: TradingDate,
+    ex_date: TradingDate,
+    split_factor: FixedPoint,
+    available_at: UtcTimestamp,
+    range_start: TradingDate,
+    range_end: TradingDate,
+    acquired_at: UtcTimestamp,
+) -> Result<(), RangeCanonicalError> {
+    if record_date < range_start || record_date > range_end {
+        return Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "bonus action record date is outside the approved range".to_owned(),
+        });
+    }
+    if ex_date < range_start || ex_date > range_end {
+        return Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "bonus action ex date is outside the approved range".to_owned(),
+        });
+    }
+    if split_factor <= FixedPoint::parse("1").expect("one") {
+        return Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "bonus action split factor is invalid".to_owned(),
+        });
+    }
+    if available_at != acquired_at {
+        return Err(RangeCanonicalError::MissingActionEvidence {
+            reason: "bonus action acquisition time differs from its batch".to_owned(),
+        });
     }
     Ok(())
 }
@@ -3282,10 +3395,78 @@ pub fn write_evidence_package(
 mod tests {
     use super::*;
 
+    fn missing_action_reason(error: RangeCanonicalError) -> String {
+        match error {
+            RangeCanonicalError::MissingActionEvidence { reason } => reason,
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
     #[test]
     fn required_action_kinds_are_stable() {
         assert_eq!(REQUIRED_ACTION_KINDS.len(), 7);
         assert!(REQUIRED_ACTION_KINDS.contains(&"bonus-issue"));
+    }
+
+    #[test]
+    fn bonus_action_validation_reports_each_failed_contract_field() {
+        let start = TradingDate::parse("2020-01-31").unwrap();
+        let end = TradingDate::parse("2026-08-19").unwrap();
+        let acquired_at = UtcTimestamp::parse_rfc3339("2026-08-24T00:00:00Z").unwrap();
+        let instrument = InstrumentId::from_parts(KR_ETF_CORE_SYMBOLS[0], Venue::Krx).unwrap();
+        let factor = FixedPoint::parse("2").unwrap();
+
+        let check =
+            |instrument_id: &InstrumentId, record_date, ex_date, split_factor, available_at| {
+                validate_bonus_action(
+                    instrument_id,
+                    record_date,
+                    ex_date,
+                    split_factor,
+                    available_at,
+                    start,
+                    end,
+                    acquired_at,
+                )
+            };
+
+        let outside = InstrumentId::from_parts("000020", Venue::Krx).unwrap();
+        assert_eq!(
+            missing_action_reason(check(&outside, start, start, factor, acquired_at).unwrap_err()),
+            "bonus action instrument is outside the fixed ETF11 universe"
+        );
+        let before = TradingDate::parse("2020-01-30").unwrap();
+        assert_eq!(
+            missing_action_reason(
+                check(&instrument, before, start, factor, acquired_at).unwrap_err()
+            ),
+            "bonus action record date is outside the approved range"
+        );
+        assert_eq!(
+            missing_action_reason(
+                check(&instrument, start, before, factor, acquired_at).unwrap_err()
+            ),
+            "bonus action ex date is outside the approved range"
+        );
+        assert_eq!(
+            missing_action_reason(
+                check(
+                    &instrument,
+                    start,
+                    start,
+                    FixedPoint::parse("1").unwrap(),
+                    acquired_at,
+                )
+                .unwrap_err(),
+            ),
+            "bonus action split factor is invalid"
+        );
+        let later = UtcTimestamp::parse_rfc3339("2026-08-24T00:00:01Z").unwrap();
+        assert_eq!(
+            missing_action_reason(check(&instrument, start, start, factor, later).unwrap_err()),
+            "bonus action acquisition time differs from its batch"
+        );
+        check(&instrument, start, end, factor, acquired_at).unwrap();
     }
 }
 

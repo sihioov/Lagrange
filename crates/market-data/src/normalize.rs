@@ -947,13 +947,17 @@ fn normalize_actions(
 /// scope.  Only the bonus-issue event has a documented `권리락일` and a
 /// documented allocation rate that can be represented as the existing split
 /// action.  The other KSD event classes deliberately remain typed blockers.
-fn normalize_kis_action_row(
+pub(crate) struct ValidatedKisActionRow {
+    pub(crate) symbol: String,
+    pub(crate) event_dates: Vec<TradingDate>,
+    pub(crate) bonus: Option<(TradingDate, TradingDate, FixedPoint)>,
+}
+
+pub(crate) fn validate_kis_action_row_fields(
     endpoint: &str,
     file_name: &str,
     row: &Map<String, Value>,
-    target_date: TradingDate,
-    retrieved_at: domain::UtcTimestamp,
-) -> Result<Option<(String, Value)>, NormalizeError> {
+) -> Result<ValidatedKisActionRow, NormalizeError> {
     let kind = ResponseKind::CorporateActions;
     let symbol = required_string(kind, file_name, row, "sht_cd")?;
     // Official KSD response examples include domestic short codes such as
@@ -973,7 +977,7 @@ fn normalize_kis_action_row(
         });
     }
 
-    let (event_dates, supported) = if endpoint.ends_with("/bonus-issue") {
+    let (event_dates, bonus) = if endpoint.ends_with("/bonus-issue") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
         let right_date = required_kis_date(kind, file_name, row, "right_dt")?;
         let (_, rate) = required_kis_decimal(kind, file_name, row, "fix_rate")?;
@@ -1023,14 +1027,33 @@ fn normalize_kis_action_row(
         });
     };
 
+    Ok(ValidatedKisActionRow {
+        symbol: symbol.to_owned(),
+        event_dates,
+        bonus,
+    })
+}
+
+fn normalize_kis_action_row(
+    endpoint: &str,
+    file_name: &str,
+    row: &Map<String, Value>,
+    target_date: TradingDate,
+    retrieved_at: domain::UtcTimestamp,
+) -> Result<Option<(String, Value)>, NormalizeError> {
+    let kind = ResponseKind::CorporateActions;
+    let validated = validate_kis_action_row_fields(endpoint, file_name, row)?;
+
     // A valid, non-target KIS security is intentionally outside this fixed
     // dataset.  It is not treated as an unknown/malformed row: all required
     // fields above were validated before this filter.
-    if !KR_ETF_CORE_SYMBOLS.contains(&symbol) || !event_dates.contains(&target_date) {
+    if !KR_ETF_CORE_SYMBOLS.contains(&validated.symbol.as_str())
+        || !validated.event_dates.contains(&target_date)
+    {
         return Ok(None);
     }
 
-    let Some((record_date, right_date, rate)) = supported else {
+    let Some((record_date, right_date, rate)) = validated.bonus else {
         let reason = if endpoint.ends_with("/dividend") {
             "dividend output supplies record/pay dates but no documented ex-date or announcement timestamp"
         } else if endpoint.ends_with("/paidin-capin") {
@@ -1059,7 +1082,7 @@ fn normalize_kis_action_row(
             value: error.to_string(),
         })?;
     let split_factor_string = split_factor.to_string();
-    let instrument = canonical_instrument(symbol);
+    let instrument = canonical_instrument(&validated.symbol);
     let key = format!("{instrument}|split|{}", right_date.to_iso());
     let canonical = Value::Object(json_object([
         ("instrument", Value::String(instrument)),

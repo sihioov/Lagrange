@@ -366,7 +366,26 @@ fn action_entry_with_response_marker(
     tr_cont: Option<Option<&str>>,
 ) -> ManifestEntry {
     let id = BatchId::from_uuid(Uuid::new_v4());
-    let envelopes = action_envelopes(id, bonus, body_marker, tr_cont, None);
+    let bonus_row = bonus.then_some(("069500", DATE, DATE, "5"));
+    let envelopes = action_envelopes(id, bonus_row, body_marker, tr_cont, None);
+    store_action_batch(raw, id, envelopes)
+}
+
+fn action_entry_with_bonus_row(
+    raw: &RawStore,
+    symbol: &str,
+    record_date: &str,
+    ex_date: &str,
+    fix_rate: &str,
+) -> ManifestEntry {
+    let id = BatchId::from_uuid(Uuid::new_v4());
+    let envelopes = action_envelopes(
+        id,
+        Some((symbol, record_date, ex_date, fix_rate)),
+        None,
+        None,
+        None,
+    );
     store_action_batch(raw, id, envelopes)
 }
 
@@ -375,8 +394,16 @@ fn action_entry_with_response_marker(
 /// permissive about content and maps such a row to
 /// `RangeAction::Unsupported`; only `validate_actions` rejects it.
 fn action_entry_with_nonempty_unsupported(raw: &RawStore, kind: &str) -> ManifestEntry {
+    action_entry_with_nonempty_unsupported_symbol(raw, kind, "069500")
+}
+
+fn action_entry_with_nonempty_unsupported_symbol(
+    raw: &RawStore,
+    kind: &str,
+    symbol: &str,
+) -> ManifestEntry {
     let id = BatchId::from_uuid(Uuid::new_v4());
-    let envelopes = action_envelopes(id, false, None, None, Some(kind));
+    let envelopes = action_envelopes(id, None, None, None, Some((kind, symbol)));
     store_action_batch(raw, id, envelopes)
 }
 
@@ -386,7 +413,7 @@ fn action_entry_with_nonempty_unsupported(raw: &RawStore, kind: &str) -> Manifes
 /// loaded and must therefore never be selected as action evidence.
 fn action_entry_with_extra_file(raw: &RawStore) -> ManifestEntry {
     let id = BatchId::from_uuid(Uuid::new_v4());
-    let mut envelopes = action_envelopes(id, false, None, None, None);
+    let mut envelopes = action_envelopes(id, None, None, None, None);
     let bytes = serde_json::to_vec(&json!({
         "rt_cd": "0",
         "output1": {"stck_shrn_iscd": "069500"},
@@ -422,28 +449,62 @@ fn store_action_batch(raw: &RawStore, id: BatchId, envelopes: Vec<RawEnvelope>) 
 
 fn action_envelopes(
     id: BatchId,
-    bonus: bool,
+    bonus_row: Option<(&str, &str, &str, &str)>,
     body_marker: Option<(&str, &str)>,
     tr_cont: Option<Option<&str>>,
-    nonempty_unsupported: Option<&str>,
+    nonempty_unsupported: Option<(&str, &str)>,
 ) -> Vec<RawEnvelope> {
     let date = date();
     REQUIRED_ACTION_KINDS
         .iter()
         .map(|kind| {
-            let output = if bonus && *kind == "bonus-issue" {
+            let output = if let Some((symbol, record_date, ex_date, fix_rate)) = bonus_row
+                && *kind == "bonus-issue"
+            {
                 json!([{
-                    "sht_cd": "069500",
-                    "record_date": DATE,
-                    "right_dt": DATE,
-                    "fix_rate": "5"
+                    "sht_cd": symbol,
+                    "record_date": record_date,
+                    "right_dt": ex_date,
+                    "fix_rate": fix_rate
                 }])
-            } else if nonempty_unsupported == Some(*kind) {
-                json!([{
-                    "sht_cd": "069500",
-                    "record_date": DATE,
-                    "right_dt": DATE
-                }])
+            } else if let Some((unsupported_kind, symbol)) = nonempty_unsupported
+                && unsupported_kind == *kind
+            {
+                let row = match *kind {
+                    "paidin-subscription" | "paidin-record" => json!({
+                        "sht_cd": symbol,
+                        "record_date": DATE,
+                        "right_dt": DATE,
+                        "fix_rate": "5"
+                    }),
+                    "dividend" => json!({
+                        "sht_cd": symbol,
+                        "record_date": DATE,
+                        "divi_pay_dt": DATE,
+                        "per_sto_divi_amt": "100"
+                    }),
+                    "merger-split" => json!({
+                        "sht_cd": symbol,
+                        "record_date": DATE,
+                        "list_dt": DATE,
+                        "merge_rate": "1"
+                    }),
+                    "reverse-split" => json!({
+                        "sht_cd": symbol,
+                        "record_date": DATE,
+                        "list_dt": DATE,
+                        "inter_bf_face_amt": "100",
+                        "inter_af_face_amt": "1000"
+                    }),
+                    "capital-decrease" => json!({
+                        "sht_cd": symbol,
+                        "record_date": DATE,
+                        "list_dt": DATE,
+                        "reduce_cap_rate": "10"
+                    }),
+                    _ => panic!("unexpected unsupported test kind"),
+                };
+                json!([row])
             } else {
                 json!([])
             };
@@ -866,6 +927,57 @@ fn bonus_action_is_target_session_only_and_factor_is_greater_than_one() {
         }
         RangeAction::Unsupported { .. } => panic!("bonus should be mapped"),
     }
+}
+
+#[test]
+fn whole_market_bonus_outside_etf11_is_validated_then_ignored_without_false_zero_claim() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let actions = action_entry_with_bonus_row(&raw, "000020", DATE, DATE, "5");
+    let package_root = TempDir::new().unwrap();
+    let pin = write_package(package_root.path(), &source, &normalized, &actions, false);
+    let evidence =
+        load_with_approved_pin_for_test(&raw, &normalized, package_root.path(), &pin).unwrap();
+    let candidate = build_range_canonical_candidate(&raw, &normalized, &evidence).unwrap();
+
+    assert!(candidate.actions.is_empty());
+    assert!(!candidate.action_coverage_is_zero_result());
+}
+
+#[test]
+fn malformed_whole_market_bonus_is_not_hidden_by_universe_filter() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let actions = action_entry_with_bonus_row(&raw, "000020", "20200130", DATE, "5");
+    let package_root = TempDir::new().unwrap();
+    let pin = write_package(package_root.path(), &source, &normalized, &actions, false);
+
+    assert!(matches!(
+        load_with_approved_pin_for_test(&raw, &normalized, package_root.path(), &pin),
+        Err(RangeCanonicalError::MissingActionEvidence { reason })
+            if reason == "bonus action record date is outside the approved range"
+    ));
+}
+
+#[test]
+fn whole_market_nonbonus_outside_etf11_is_validated_then_ignored() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let normalized = stage4a_entry(&raw, &source);
+    let actions = action_entry_with_nonempty_unsupported_symbol(&raw, "capital-decrease", "000020");
+    let package_root = TempDir::new().unwrap();
+    let pin = write_package(package_root.path(), &source, &normalized, &actions, false);
+    let evidence =
+        load_with_approved_pin_for_test(&raw, &normalized, package_root.path(), &pin).unwrap();
+    let candidate = build_range_canonical_candidate(&raw, &normalized, &evidence).unwrap();
+
+    assert!(candidate.actions.is_empty());
+    assert!(!candidate.action_coverage_is_zero_result());
 }
 
 #[test]

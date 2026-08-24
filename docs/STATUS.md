@@ -34,6 +34,25 @@ approval registry is empty, so real approval-check execution remains blocked
 until a separately reviewed registry commit is rebuilt into a new immutable
 image.
 
+**2026-08-24 historical action-evidence execution.** 소유자가
+`2020-01-31..2026-08-19`, whole-market, KSD 7개 class, pagination 포함 최대
+70 GET의 읽기 전용 운영 수집을 명시적으로 승인했다. 실행은 continuation 없이 정확히
+7 GET/7파일로 끝났고 immutable Raw batch
+`552c811a-d338-4cd1-96bd-fcd61e641bcb`, manifest
+`sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd`를
+커밋했다. 기존 Stage5 manifest
+`sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4`와
+함께 network-none/read-only verifier로 본문을 재인증했다.
+
+whole-market 응답을 고정 ETF11 후보에 투영할 때 타 종목의 정상 행까지 거부하던 결함은,
+일일 KIS 정규화기와 같은 원칙(문서화된 모든 필드를 먼저 검증한 뒤 universe 필터)으로
+수정했다. Raw 응답이 nonempty였다는 사실도 별도 attestation으로 보존해 이를 거짓
+zero-result로 표시하지 않는다. 그 뒤 검증은 ETF11 관련 `dividend` class에서 의도대로
+`unsupported_action_dividend`로 차단됐다. KIS dividend 응답만으로는 현재 계약이 요구하는
+canonical ex-date/announcement-time을 증명할 수 없으므로 값을 추측하지 않았다. 따라서
+sealed artifact 생성, 승인 레지스트리 수정, Curated/DB/READY/추천 연결은 모두 미실행이며,
+다음 게이트는 별도 검토된 dividend evidence/mapping 결정이다.
+
 ## 0. 2026-08-19 현재 운영 스냅샷
 
 ### 0.1 저장소와 실행 환경

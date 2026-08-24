@@ -129,10 +129,10 @@ fn map_verify_error(error: market_data::RangeCanonicalError) -> Failure {
     use market_data::RangeCanonicalError as E;
     match error {
         E::HistoricalBetaContract { .. } => Failure("historical_beta_contract"),
-        E::MissingActionEvidence { .. }
-        | E::ActionEvidence { .. }
-        | E::IncompleteActionPagination { .. } => Failure("action_evidence"),
-        E::UnsupportedAction { .. } => Failure("unsupported_action"),
+        E::MissingActionEvidence { reason } => Failure(map_missing_action_reason(&reason)),
+        E::ActionEvidence { .. } => Failure("action_evidence_invalid"),
+        E::IncompleteActionPagination { .. } => Failure("action_pagination_incomplete"),
+        E::UnsupportedAction { kind } => Failure(map_unsupported_action_kind(&kind)),
         E::InvalidBarValue { .. } => Failure("invalid_bar_value"),
         E::MalformedStage4A { .. }
         | E::UnsupportedLegacyStage4A { .. }
@@ -147,6 +147,47 @@ fn map_verify_error(error: market_data::RangeCanonicalError) -> Failure {
         | E::EvidenceArtifact { .. }
         | E::UnsupportedHistoricalSessionSchedule { .. }
         | E::MissingListingMasterEvidence { .. } => Failure("unexpected_evidence_surface"),
+    }
+}
+
+fn map_missing_action_reason(reason: &str) -> &'static str {
+    match reason {
+        "action coverage identity, range, or hash is invalid" => "action_coverage_invalid",
+        "action file identity, hash/size, or exact query range is invalid" => "action_file_invalid",
+        "all seven KSD response classes are required" => "action_classes_incomplete",
+        "empty action list requires an attested exact-range zero result" => {
+            "action_zero_attestation_invalid"
+        }
+        "empty-response attestation conflicts with retained actions" => {
+            "action_zero_attestation_invalid"
+        }
+        "bonus action instrument is outside the fixed ETF11 universe" => {
+            "action_bonus_instrument_outside_universe"
+        }
+        "bonus action record date is outside the approved range" => {
+            "action_bonus_record_date_outside_range"
+        }
+        "bonus action ex date is outside the approved range" => {
+            "action_bonus_ex_date_outside_range"
+        }
+        "bonus action split factor is invalid" => "action_bonus_factor_invalid",
+        "bonus action acquisition time differs from its batch" => {
+            "action_bonus_acquisition_mismatch"
+        }
+        _ => "action_evidence_missing",
+    }
+}
+
+fn map_unsupported_action_kind(kind: &str) -> &'static str {
+    match kind {
+        "paidin-subscription" => "unsupported_action_paidin_subscription",
+        "paidin-record" => "unsupported_action_paidin_record",
+        "bonus-issue" => "unsupported_action_bonus_issue",
+        "dividend" => "unsupported_action_dividend",
+        "merger-split" => "unsupported_action_merger_split",
+        "reverse-split" => "unsupported_action_reverse_split",
+        "capital-decrease" => "unsupported_action_capital_decrease",
+        _ => "unsupported_action",
     }
 }
 
@@ -195,5 +236,92 @@ mod tests {
             "bad".to_owned(),
         ];
         assert!(parse_args(&repeated).is_err());
+    }
+
+    #[test]
+    fn action_failures_are_distinct_and_sanitized() {
+        let failures = [
+            (
+                market_data::RangeCanonicalError::MissingActionEvidence {
+                    reason: "SENTINEL_MISSING_DETAIL".to_owned(),
+                },
+                "action_evidence_missing",
+            ),
+            (
+                market_data::RangeCanonicalError::ActionEvidence {
+                    reason: "SENTINEL_INVALID_DETAIL".to_owned(),
+                },
+                "action_evidence_invalid",
+            ),
+            (
+                market_data::RangeCanonicalError::IncompleteActionPagination {
+                    kind: "SENTINEL_KIND".to_owned(),
+                    marker: "SENTINEL_MARKER".to_owned(),
+                },
+                "action_pagination_incomplete",
+            ),
+        ];
+
+        for (error, expected) in failures {
+            let Failure(actual) = map_verify_error(error);
+            assert_eq!(actual, expected);
+            assert!(!actual.contains("SENTINEL"));
+        }
+    }
+
+    #[test]
+    fn missing_action_semantics_use_closed_codes() {
+        let cases = [
+            (
+                "bonus action instrument is outside the fixed ETF11 universe",
+                "action_bonus_instrument_outside_universe",
+            ),
+            (
+                "bonus action record date is outside the approved range",
+                "action_bonus_record_date_outside_range",
+            ),
+            (
+                "bonus action ex date is outside the approved range",
+                "action_bonus_ex_date_outside_range",
+            ),
+            (
+                "bonus action split factor is invalid",
+                "action_bonus_factor_invalid",
+            ),
+            (
+                "bonus action acquisition time differs from its batch",
+                "action_bonus_acquisition_mismatch",
+            ),
+        ];
+        for (reason, expected) in cases {
+            assert_eq!(map_missing_action_reason(reason), expected);
+        }
+        assert_eq!(
+            map_missing_action_reason("SENTINEL_PRIVATE_DETAIL"),
+            "action_evidence_missing"
+        );
+    }
+
+    #[test]
+    fn unsupported_action_kinds_use_closed_allowlisted_codes() {
+        let cases = [
+            (
+                "paidin-subscription",
+                "unsupported_action_paidin_subscription",
+            ),
+            ("paidin-record", "unsupported_action_paidin_record"),
+            ("bonus-issue", "unsupported_action_bonus_issue"),
+            ("dividend", "unsupported_action_dividend"),
+            ("merger-split", "unsupported_action_merger_split"),
+            ("reverse-split", "unsupported_action_reverse_split"),
+            ("capital-decrease", "unsupported_action_capital_decrease"),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(map_unsupported_action_kind(kind), expected);
+        }
+        assert_eq!(
+            map_unsupported_action_kind("SENTINEL_KIND"),
+            "unsupported_action"
+        );
     }
 }
