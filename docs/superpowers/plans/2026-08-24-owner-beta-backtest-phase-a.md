@@ -111,3 +111,20 @@ their conclusions.
 4. Final later acceptance: coordinator reruns focused and full Rust/OpenAPI/Web/ops gates, obtains
    independent security review, commits logical units, and records skipped DB/image/production
    evidence explicitly.
+
+## Execution status (2026-08-24)
+
+- The coordinator verified a clean `audit-project-status` worktree at `1afac5b` and prepared both
+  Wave 1 prompts with the mandatory no-delegation sentence.
+- Paseo could not launch either worker package. The sandbox-local attempt could not reach the Paseo
+  service, and the required escalated retry was denied because launching the external Codex workers
+  may transmit repository source outside the workspace. No worker was created, and the coordinator
+  did not substitute native subagents or weaken the required execution skill.
+- Phase A therefore remains blocked before worker launch until the owner explicitly approves sending
+  this repository's source to the Paseo/Codex workers. This is the only approval needed to start the
+  two read-only analyses; it does not authorize network market-data access, DB writes, deployment, or
+  any account/order surface.
+- Safe local verification continued independently: the Web production build, owner-beta Compose
+  static check, historical artifact self-test, production-image static check, full ops static check,
+  production-ops static check, and isolated production release apply/rollback self-test all passed.
+  These checks are not substitutes for the missing Phase A decisions or for QA/production evidence.

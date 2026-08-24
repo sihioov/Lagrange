@@ -1605,6 +1605,13 @@ consumer, 등록, publication은 여전히 없다. 현재 상태는 구현 완�
 OpenAPI check PASS다. Web lint의 기존 `document.cookie` 경고 2개와 Biome 설정 deprecation은
 이번 변경과 무관하게 남아 있다.
 
+후속 출시 게이트에서는 `npm run build --workspace @lagrange/web` 프로덕션 빌드,
+`deploy/compose/owner-beta-static-check.sh`, historical artifact self-test,
+production image·production ops 정적 검사, 전체 `scripts/ops/static-check.sh`, 격리된 임시
+release apply/rollback을 수행하는 `production-ops-self-test.sh`가 모두 PASS했다. 실제 이미지를
+빌드·설치하거나 현재 설치 release를 바꾸지는 않았으며, 이 결과는 QA DB/RLS·backup/restore
+rehearsal이나 운영 기동 증거를 대신하지 않는다.
+
 이 호스트에는 `DATABASE_URL`이 없으므로 새 DB 통합 테스트와 job-queue publish/recovery
 테스트는 의도된 clean skip이다. 따라서 실제 PostgreSQL에서 RLS 격리, pagination,
 실행일 entitlement, 성공/실패/cancel durable read, claim loss와 audit 동작을 검증했다고
@@ -1616,6 +1623,12 @@ pin도 아직 독립적으로 확정되지 않았다. 실 artifact·DatasetManif
 않았다. owner-beta 백테스트 입력·실행·조회/UI도 아직 없다. 다음 안전 순서는 DB가 있는 QA에서
 새 통합 테스트를 실제 실행하고, 백테스트 전용 경로와 운영 정적 게이트를 구현하는 것이다.
 실 승인 pin 없이는 materialize/register/추천·백테스트 실실행으로 넘어가지 않는다.
+
+백테스트 Phase A의 두 read-only `$paseo-delegate` 분석은 계획과 프롬프트까지 확정했지만 아직
+실행되지 않았다. 외부 Codex 워커에 저장소 소스가 전달될 수 있어 명시적 소유자 승인이 필요하다는
+보안 게이트에서 Paseo 실행이 차단됐고, 생성된 워커는 없다. native subagent로 우회하지 않았다.
+소유자가 해당 소스 전달을 승인하면 두 분석만 시작하며, 그 승인은 라이브 데이터·DB 쓰기·배포·
+계정/주문 API 권한으로 확대되지 않는다.
 
 ---
 
