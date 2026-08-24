@@ -447,7 +447,8 @@ elif [ "$scope" = serving-prereqs ]; then
     db-role-bootstrap/db_admin_password:999:999:400 db-migrate/db_migration_owner_password:999:999:400
     postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
     research-worker/db_research_password:10001:10001:440 recommendation-runner/db_worker_password:10001:10001:440
-    candidate-runner/db_worker_password:10001:10001:440 nt-backtest-worker-1/db_worker_password:10001:10001:440
+    candidate-runner/db_worker_password:10001:10001:440 owner-beta-runner/db_worker_password:10001:10001:440
+    nt-backtest-worker-1/db_worker_password:10001:10001:440
     nt-backtest-worker-2/db_worker_password:10001:10001:440 paper-scheduler/db_app_password:10001:10001:440
     paper-scheduler/db_worker_password:10001:10001:440 paper-scheduler/db_admin_password:10001:10001:440
     paper-scheduler/db_audit_password:10001:10001:440
@@ -485,7 +486,8 @@ else
     postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
     research-worker/db_research_password:10001:10001:440 research-worker/kis_app_key:10001:10001:440
     research-worker/kis_app_secret:10001:10001:440 recommendation-runner/db_worker_password:10001:10001:440
-    candidate-runner/db_worker_password:10001:10001:440 nt-backtest-worker-1/db_worker_password:10001:10001:440
+    candidate-runner/db_worker_password:10001:10001:440 owner-beta-runner/db_worker_password:10001:10001:440
+    nt-backtest-worker-1/db_worker_password:10001:10001:440
     nt-backtest-worker-2/db_worker_password:10001:10001:440 paper-scheduler/db_app_password:10001:10001:440
     paper-scheduler/db_worker_password:10001:10001:440 paper-scheduler/db_admin_password:10001:10001:440
     paper-scheduler/db_audit_password:10001:10001:440

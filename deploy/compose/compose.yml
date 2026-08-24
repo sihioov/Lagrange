@@ -18,7 +18,7 @@
 # Every long-lived service below runs its checked-in production entrypoint.
 # Build contexts point at Dockerfiles with digest-pinned base images; one-shot
 # bootstrap/migration/schema services fail closed before serving workloads.
-# All ten owner-beta locally-built serving images embed the exact 40-hex Git
+# All eleven owner-beta locally-built serving images embed the exact 40-hex Git
 # commit in their OCI revision labels. CI must supply LAGRANGE_CODE_COMMIT at
 # build time; Compose intentionally does not override those image-baked values
 # later. Their `image:` names carry the same exact commit tag for build-time
@@ -403,6 +403,8 @@ services:
       # Also on the isolated backtest network so nt-backtest-worker-* can
       # reach the queue DB without ever touching a network that has egress.
       - backtest-iso
+      # The profile-gated owner-beta worker reaches only this database path.
+      - owner-beta-db
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lagrange} -d ${POSTGRES_DB:-lagrange}"]
       interval: 10s
@@ -818,6 +820,72 @@ services:
         condition: service_completed_successfully
 
   # ------------------------------------------------------------------
+  # owner-beta-runner — profile-gated sealed historical-price recommendation
+  # daemon. It sees only the approved artifact leaf and the internal queue DB.
+  # ------------------------------------------------------------------
+  owner-beta-runner:
+    profiles: ["owner-beta"]
+    image: lagrange-station-owner-beta-runner:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: crates/job-queue/Dockerfile.owner-beta-runner
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    init: true
+    restart: unless-stopped
+    # SIGTERM is checked between sealed runs, whose bounded computation may
+    # occupy the full five-minute timeout before returning to the daemon.
+    stop_grace_period: 6m
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/owner-beta-health:uid=10001,gid=10001,mode=0750
+    logging: *default-logging
+    entrypoint: ["/usr/local/bin/owner-beta-runner"]
+    command: ["--artifact-root", "/data/owner-beta-artifacts"]
+    cpus: "1"
+    mem_limit: 1g
+    environment:
+      APP_ENV: production
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-lagrange}
+      DB_USER: worker
+      DB_PASSWORD_FILE: /run/secrets/db_worker_password
+      PRICE_BETA_HEALTH_STATE_PATH: /run/owner-beta-health/health.json
+      PRICE_BETA_HEALTH_MAX_AGE_SECS: ${PRICE_BETA_HEALTH_MAX_AGE_SECS:-180}
+      PRICE_BETA_POLL_SECS: ${PRICE_BETA_POLL_SECS:-2}
+      PRICE_BETA_RECOVERY_SECS: ${PRICE_BETA_RECOVERY_SECS:-30}
+      PRICE_BETA_HEARTBEAT_SECS: ${PRICE_BETA_HEARTBEAT_SECS:-10}
+      PRICE_BETA_LEASE_SECS: ${PRICE_BETA_LEASE_SECS:-60}
+      PRICE_BETA_BACKOFF_SECS: ${PRICE_BETA_BACKOFF_SECS:-30}
+      PRICE_BETA_COMPUTE_TIMEOUT_SECS: ${PRICE_BETA_COMPUTE_TIMEOUT_SECS:-300}
+    secrets:
+      - source: owner_beta_db_worker_password
+        target: db_worker_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+    volumes:
+      - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}/historical-price-beta-root:/data/owner-beta-artifacts:ro
+    networks:
+      - owner-beta-db
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/owner-beta-runner", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+
+  # ------------------------------------------------------------------
   # nt-backtest-worker-1 / nt-backtest-worker-2 — real queue daemons running
   # the checked-in Rust supervisor and pinned NT child image. Design §13.3:
   # NO internet. Attached ONLY to `backtest-iso` (internal: true, no default
@@ -1191,6 +1259,8 @@ secrets:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/recommendation-runner/db_worker_password
   candidate_db_worker_password:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/candidate-runner/db_worker_password
+  owner_beta_db_worker_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/owner-beta-runner/db_worker_password
   backtest_1_db_worker_password:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/nt-backtest-worker-1/db_worker_password
   backtest_2_db_worker_password:
@@ -1216,6 +1286,7 @@ secrets:
 #               not attached to any Compose network.
 #   backtest-iso internal:true — nt-backtest-worker-1/2 + postgres ONLY.
 #               No default route => no internet for backtest workers.
+#   owner-beta-db internal:true — owner-beta-runner + postgres ONLY.
 # ----------------------------------------------------------------------
 networks:
   edge:
@@ -1228,6 +1299,9 @@ networks:
     driver: bridge
     internal: false
   backtest-iso:
+    driver: bridge
+    internal: true
+  owner-beta-db:
     driver: bridge
     internal: true
 

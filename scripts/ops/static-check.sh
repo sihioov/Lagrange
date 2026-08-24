@@ -512,6 +512,10 @@ grep -Fq 'process-local, fail-closed sentinels' "$ops/compose-release.sh" \
   || die 'infrastructure Compose sentinel scope documentation missing'
 grep -Fq 'up --no-deps -d research-worker recommendation-runner candidate-runner' "$ops/compose-release.sh" \
   || die 'data-dependent services must bootstrap without a clean-install health wait'
+grep -Fq 'disabled leaves owner-beta-runner inactive' "$ops/compose-release.sh" \
+  || die 'release plan must retain disabled owner-beta-runner behavior'
+grep -Fq 'candidate-runner owner-beta-runner' "$ops/compose-release.sh" \
+  || die 'owner-only release worker order must include owner-beta-runner'
 grep -Fq 'post-backfill-health.sh --check' "$ops/compose-release.sh" \
   || die 'post-backfill data readiness gate is not documented in Compose release'
 grep -Fq 'research-worker healthcheck' "$ops/post-backfill-health.sh" \

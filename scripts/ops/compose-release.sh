@@ -32,6 +32,7 @@ local_image_services=(
   research-worker
   recommendation-runner
   candidate-runner
+  owner-beta-runner
   nt-backtest-worker-1
   nt-backtest-worker-2
   paper-scheduler
@@ -42,6 +43,7 @@ persistent_local_services=(
   research-worker
   recommendation-runner
   candidate-runner
+  owner-beta-runner
   nt-backtest-worker-1
   nt-backtest-worker-2
   paper-scheduler
@@ -325,7 +327,7 @@ COMPOSE_RELEASE_ORDER:
   4. up --no-build --wait postgres
   5. run --no-build --rm --no-deps db-role-bootstrap and db-migrate
   6. run --no-build --rm --no-deps research-raw-init and research-schema-check
-  7. up --no-build persistent local services; owner_only excludes Paper until a future evidence gate
+  7. up --no-build persistent local services; disabled leaves owner-beta-runner inactive, while owner_only starts it only after step 3; Paper remains excluded pending a future evidence gate
   8. up --no-build reverse-proxy; ps
 No serving image rebuild, manifest-less activation, range-raw profile, or live profile is allowed.
 EOF
@@ -366,7 +368,7 @@ if [ "$scope" = backfill ]; then
 fi
 
 # Owner-beta serving release: the helper above has already bound Compose to the
-# installed manifest. No mutable tag is used for these ten local services.
+# installed manifest. No mutable tag is used for these eleven local services.
 verify_manifest_images
 run_owner_beta_approval_gate
 compose up --no-build --wait postgres
@@ -393,6 +395,13 @@ release_worker_services=(
 )
 if [ "$owner_beta_access_mode" = disabled ]; then
   release_worker_services+=(paper-scheduler)
+elif [ "$owner_beta_access_mode" = owner_only ]; then
+  # Explicitly target this profile service only after the immutable approval
+  # gate above passed; ambient COMPOSE_PROFILES remains cleared in compose().
+  release_worker_services=(
+    research-worker recommendation-runner candidate-runner owner-beta-runner
+    nt-backtest-worker-1 nt-backtest-worker-2
+  )
 fi
 compose up --no-build --no-deps -d "${release_worker_services[@]}"
 for service in "${release_worker_services[@]}"; do

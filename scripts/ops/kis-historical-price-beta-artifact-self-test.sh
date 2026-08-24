@@ -57,7 +57,7 @@ image_id=sha256:1111111111111111111111111111111111111111111111111111111111111111
   printf 'commit|%s\n' "$commit"
   index=0
   for service in db-role-bootstrap db-migrate api-server web research-worker \
-    recommendation-runner candidate-runner nt-backtest-worker-1 \
+    recommendation-runner candidate-runner owner-beta-runner nt-backtest-worker-1 \
     nt-backtest-worker-2 paper-scheduler; do
     index=$((index + 1))
     current_id=$image_id

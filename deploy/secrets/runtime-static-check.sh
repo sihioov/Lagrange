@@ -70,7 +70,7 @@ grep -Fq 'deploy/secrets/provision-runtime-secrets.sh' "$secrets_readme" \
   || die 'secret documentation must reference the provisioner'
 for service in reverse-proxy api-server db-role-bootstrap db-migrate postgres \
   research-schema-check research-worker recommendation-runner candidate-runner \
-  research-range-raw nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler; do
+  owner-beta-runner research-range-raw nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler; do
   grep -Fq "/$service/" "$compose" \
     || die "Compose is missing service-specific runtime path for $service"
 done
@@ -139,6 +139,7 @@ for expected in \
   'research-worker db_research_password db_research_password 10001 10001 0440 yes' \
   'recommendation-runner db_worker_password db_worker_password 10001 10001 0440 yes' \
   'candidate-runner db_worker_password db_worker_password 10001 10001 0440 yes' \
+  'owner-beta-runner db_worker_password db_worker_password 10001 10001 0440 yes' \
   'nt-backtest-worker-1 db_worker_password db_worker_password 10001 10001 0440 yes' \
   'nt-backtest-worker-2 db_worker_password db_worker_password 10001 10001 0440 yes' \
   'paper-scheduler db_app_password db_app_password 10001 10001 0440 yes' \

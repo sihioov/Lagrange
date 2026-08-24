@@ -78,6 +78,7 @@ services=(
   research-worker
   recommendation-runner
   candidate-runner
+  owner-beta-runner
   nt-backtest-worker-1
   nt-backtest-worker-2
   paper-scheduler
@@ -112,6 +113,7 @@ declare -A service_dockerfile=(
   [research-worker]=data-pipelines/collectors/Dockerfile
   [recommendation-runner]=crates/job-queue/Dockerfile
   [candidate-runner]=crates/job-queue/Dockerfile
+  [owner-beta-runner]=crates/job-queue/Dockerfile.owner-beta-runner
   [nt-backtest-worker-1]=crates/job-queue/Dockerfile.backtest-runner
   [nt-backtest-worker-2]=crates/job-queue/Dockerfile.backtest-runner
   [paper-scheduler]=deploy/runtime/Dockerfile.paper-runner

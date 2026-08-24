@@ -159,7 +159,7 @@ write_image_manifest() {
     printf 'commit|%s\n' "$commit"
     index=0
     for service in db-role-bootstrap db-migrate api-server web research-worker \
-      recommendation-runner candidate-runner nt-backtest-worker-1 \
+      recommendation-runner candidate-runner owner-beta-runner nt-backtest-worker-1 \
       nt-backtest-worker-2 paper-scheduler; do
       index=$((index + 1))
       image_id=$(printf 'sha256:%064d' "$index")
@@ -325,9 +325,10 @@ image_id_for_service() {
     research-worker) index=5 ;;
     recommendation-runner) index=6 ;;
     candidate-runner) index=7 ;;
-    nt-backtest-worker-1) index=8 ;;
-    nt-backtest-worker-2) index=9 ;;
-    paper-scheduler) index=10 ;;
+    owner-beta-runner) index=8 ;;
+    nt-backtest-worker-1) index=9 ;;
+    nt-backtest-worker-2) index=10 ;;
+    paper-scheduler) index=11 ;;
     *) exit 97 ;;
   esac
   printf 'sha256:%064d' "$index"
@@ -389,14 +390,14 @@ env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$
   bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
   >"$tmp/compose-pass.out"
 grep -Fq 'COMPOSE_RELEASE: PASS' "$tmp/compose-pass.out"
-[ "$(grep -c '^    image: sha256:' "$override_capture")" -eq 10 ]
-[ "$(grep -c '^    build: !reset null$' "$override_capture")" -eq 10 ]
+[ "$(grep -c '^    image: sha256:' "$override_capture")" -eq 11 ]
+[ "$(grep -c '^    build: !reset null$' "$override_capture")" -eq 11 ]
 if grep -Eq '(^| )build( |$)' "$compose_log"; then
   echo 'production-ops-self-test: immutable release tried to rebuild an image' >&2
   exit 1
 fi
 for service in db-role-bootstrap db-migrate api-server web research-worker \
-  recommendation-runner candidate-runner nt-backtest-worker-1 \
+  recommendation-runner candidate-runner owner-beta-runner nt-backtest-worker-1 \
   nt-backtest-worker-2 paper-scheduler; do
   grep -Fq -- "image inspect --format {{.Id}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}} sha256:" \
     "$compose_log"
@@ -406,14 +407,19 @@ for service in api-server web research-worker recommendation-runner candidate-ru
   grep -Fq "inspect --format {{.Image}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}} ctr-$service" \
     "$compose_log"
 done
+if grep -Fq 'owner-beta-runner' "$compose_log"; then
+  echo 'production-ops-self-test: disabled release activated owner-beta-runner' >&2
+  exit 1
+fi
 if grep -Eiq '(^| )(down|stop)( |$)' "$compose_log"; then
   echo 'production-ops-self-test: successful immutable release stopped a service' >&2
   exit 1
 fi
 
 # Switch only the protected fixture policy to owner-only. The release and its
-# ten-image manifest remain unchanged; the host approval gate must run before
-# the first Compose up, and Paper must remain absent from the started subset.
+# eleven-image manifest remain unchanged; the host approval gate must run before
+# the first Compose up, owner-beta-runner must enter the started subset only
+# after that gate, and Paper must remain absent.
 installed_env=$release_fixture/install/releases/$commit_one/deploy/compose/.env
 cp "$installed_env" "$release_fixture/disabled.env.backup"
 printf '%s\n' \
@@ -439,6 +445,16 @@ if grep -Fq 'paper-scheduler' "$compose_log"; then
   echo 'production-ops-self-test: owner-only release reached Paper scheduler' >&2
   exit 1
 fi
+grep -Fq 'up --no-build --no-deps -d research-worker recommendation-runner candidate-runner owner-beta-runner nt-backtest-worker-1 nt-backtest-worker-2' \
+  "$compose_log" || {
+  echo 'production-ops-self-test: owner-only release did not explicitly start owner-beta-runner' >&2
+  exit 1
+}
+grep -Fq 'inspect --format {{.Image}}|{{index .Config.Labels "org.opencontainers.image.revision"}} ctr-owner-beta-runner' \
+  "$compose_log" || {
+  echo 'production-ops-self-test: owner-only release did not verify owner-beta-runner image' >&2
+  exit 1
+}
 if grep -Fq 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' \
    "$owner_beta_args" "$compose_log" "$tmp/compose-owner-beta-pass.out"; then
   echo 'production-ops-self-test: owner-beta candidate escaped the host approval seam' >&2

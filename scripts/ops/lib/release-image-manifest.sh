@@ -14,6 +14,7 @@ RELEASE_IMAGE_SERVICES=(
   research-worker
   recommendation-runner
   candidate-runner
+  owner-beta-runner
   nt-backtest-worker-1
   nt-backtest-worker-2
   paper-scheduler

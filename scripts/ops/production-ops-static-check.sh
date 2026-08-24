@@ -70,6 +70,14 @@ first_release_up_line=$(grep -n '^compose up --no-build --wait postgres$' "$comp
 [ -n "$approval_gate_line" ] && [ -n "$first_release_up_line" ] &&
   [ "$approval_gate_line" -lt "$first_release_up_line" ] ||
   die 'owner-beta approval gate must precede the first release Compose up'
+grep -Fq 'owner-beta-runner' "$compose_release" ||
+  die 'owner-beta runner release integration missing'
+grep -Fq 'elif [ "$owner_beta_access_mode" = owner_only ]; then' "$compose_release" ||
+  die 'owner-beta runner must be selected only in owner-only mode'
+grep -Fq 'candidate-runner owner-beta-runner' "$compose_release" ||
+  die 'owner-beta runner startup order missing'
+grep -Fq 'disabled leaves owner-beta-runner inactive' "$compose_release" ||
+  die 'release plan must state disabled owner-beta behavior'
 grep -Fq 'approval_registry_sha256=sha256:[0-9a-f]{64}' "$artifact_wrapper" ||
   die 'artifact wrapper approval output must bind the embedded registry hash'
 

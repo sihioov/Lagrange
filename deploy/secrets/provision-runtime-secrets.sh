@@ -157,6 +157,7 @@ add_serving_copies() {
   add_copy research-worker db_research_password db_research_password 10001 10001 0440 yes
   add_copy recommendation-runner db_worker_password db_worker_password 10001 10001 0440 yes
   add_copy candidate-runner db_worker_password db_worker_password 10001 10001 0440 yes
+  add_copy owner-beta-runner db_worker_password db_worker_password 10001 10001 0440 yes
   add_copy nt-backtest-worker-1 db_worker_password db_worker_password 10001 10001 0440 yes
   add_copy nt-backtest-worker-2 db_worker_password db_worker_password 10001 10001 0440 yes
   add_copy paper-scheduler db_app_password db_app_password 10001 10001 0440 yes
