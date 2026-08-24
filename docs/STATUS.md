@@ -1791,12 +1791,21 @@ up/down contract도 실제 실행해 통과했고 모든 임시 container/networ
 artifact wrapper, production ops static, image-build simulation, release apply/rollback
 self-test도 모두 통과했다.
 
-이 문서 커밋 기준 `main`은 `origin/main`보다 49커밋 앞서며 push하지 않았다. 소유자 파일
+이 문서 커밋 기준 `main`은 `origin/main`보다 50커밋 앞서며 push하지 않았다. 소유자 파일
 `docs/kis_openapi_entiredocs_20260818_030007.xlsx`는 계속 untracked로 보존했다. 새 production
 image/release build·install, 설치 이미지의 networkless real approval-check, registration,
 READY, publication, recommendation execution, backtest, service activation, trading은 아직
 수행하지 않았다. 다음 권장 gate는 현재 `main`을 고정한 새 immutable image/release를
 만들고, service 시작 전에 image ID/revision과 real approval-check를 검증하는 것이다.
+
+후속 실행에서 새 기준 커밋 `ddab4947611b55259c80e180a9fc9a0443356ef6`의 image-build
+plan과 Docker Compose preflight, immutable release dry-run, artifact operation plan은 모두
+통과했다. 신규 manifest와 `/opt/lagrange/releases/<commit>` 대상은 존재하지 않아 덮어쓰기
+위험이 없다. 실제 `build-production-images.sh --apply`와 `/etc/lagrange` manifest 작성은
+설계대로 root-only이며, 현재 자동 세션의 `sudo`가 대화형 인증을 요구해 실행하지 않았다.
+보안 경계를 우회하지 않았고 image build, release switch, container start, DB/provider 접근,
+artifact 변경은 없었다. 다음 재개 지점은 운영자가 root 인증을 제공한 세션에서 정확한
+commit의 11개 image와 V2 manifest를 빌드하는 단계다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
