@@ -10,9 +10,9 @@ import { PaperParityPanel } from "@/components/paper/paper-parity-panel";
 import { PaperPerformance } from "@/components/paper/paper-performance";
 import { PaperRebalancePreview } from "@/components/paper/paper-rebalance-preview";
 import { StatePanel } from "@/components/states/state-panel";
+import type { ApiSession } from "@/lib/api/contracts";
 import { ApiProblem } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
-import { getServerSession } from "@/lib/api/server-session";
 import { type PaperDictionary, paperDictionary } from "@/lib/i18n/dictionaries/paper";
 import { getLocale } from "@/lib/i18n/server";
 import {
@@ -64,17 +64,20 @@ export default async function PaperPage(props: PaperPageProps = {}) {
   const locale = await getLocale();
   return OwnerBetaProductRoute({
     product: "paper",
-    renderProduct: () => PaperProductPage(props),
+    renderProduct: (session) => PaperProductPage(props, session),
     title: paperDictionary[locale].pageTitle,
   });
 }
 
-export async function PaperProductPage({ searchParams }: PaperPageProps = {}) {
+export async function PaperProductPage(
+  { searchParams }: PaperPageProps = {},
+  apiSession?: ApiSession,
+) {
   const locale = await getLocale();
   const t = paperDictionary[locale];
   try {
     const api = await getProductApi();
-    const [apiSession, accounts] = await Promise.all([getServerSession(), api.getPaperAccounts()]);
+    const accounts = await api.getPaperAccounts();
     const requestedAccount = (await searchParams)?.account;
     const account =
       accounts.items.find((candidate) => candidate.id === requestedAccount) ??
@@ -203,7 +206,7 @@ export async function PaperProductPage({ searchParams }: PaperPageProps = {}) {
             />
           </section>
         )}
-        {!account.can_manage || apiSession.role !== "owner" ? null : (
+        {!account.can_manage || apiSession?.role !== "owner" ? null : (
           // `can_manage` is record ownership; the three preview endpoints
           // additionally require the platform Owner role and answer a Member
           // with 403. `PaperBindForm` above is correctly gated on `can_manage`

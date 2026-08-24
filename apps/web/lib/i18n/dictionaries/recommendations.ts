@@ -70,6 +70,37 @@ export type RecommendationsDictionary = {
   readonly universeSnapshotLabel: string;
   readonly warningsAriaLabel: string;
   readonly warningsLabel: string;
+  readonly ownerBetaAudienceLabel: string;
+  readonly ownerBetaAudienceValue: string;
+  readonly ownerBetaCapabilityLabel: string;
+  readonly ownerBetaCapabilityValue: string;
+  readonly ownerBetaCanceledMessage: string;
+  readonly ownerBetaCanceledTitle: string;
+  readonly ownerBetaActionManifestHashLabel: string;
+  readonly ownerBetaApprovalRegistryHashLabel: string;
+  readonly ownerBetaArtifactManifestHashLabel: string;
+  readonly ownerBetaHistoryCaption: string;
+  readonly ownerBetaHistoryHeading: string;
+  readonly ownerBetaInputWarning: string;
+  readonly ownerBetaCandidateContentHashLabel: string;
+  readonly ownerBetaItemsCaption: string;
+  readonly ownerBetaItemsHeading: string;
+  readonly ownerBetaNoRunsMessage: string;
+  readonly ownerBetaReportEyebrow: string;
+  readonly ownerBetaReportHeading: string;
+  readonly ownerBetaRouteDescription: string;
+  readonly ownerBetaRouteTitle: string;
+  readonly ownerBetaRunningMessage: string;
+  readonly ownerBetaRunningTitle: string;
+  readonly ownerBetaStrictPitLabel: string;
+  readonly ownerBetaStrictPitValue: string;
+  readonly ownerBetaStrategyConfigHashLabel: string;
+  readonly ownerBetaTargetSnapshotHashLabel: string;
+  readonly ownerBetaSubmit: string;
+  readonly ownerBetaSubmitting: string;
+  readonly ownerBetaStage5ManifestHashLabel: string;
+  readonly ownerBetaVendorSnapshotLabel: string;
+  readonly ownerBetaVendorSnapshotValue: string;
 };
 
 export const recommendationsDictionary: LocaleDictionary<RecommendationsDictionary> = {
@@ -152,6 +183,39 @@ export const recommendationsDictionary: LocaleDictionary<RecommendationsDictiona
     universeSnapshotLabel: "Universe snapshot",
     warningsAriaLabel: "Recommendation warnings",
     warningsLabel: "Warnings",
+    ownerBetaAudienceLabel: "Audience",
+    ownerBetaAudienceValue: "Owner-only",
+    ownerBetaCapabilityLabel: "Capability",
+    ownerBetaCapabilityValue: "Price-return only",
+    ownerBetaCanceledMessage: "The Owner-only run was canceled before it produced an output.",
+    ownerBetaCanceledTitle: "Owner-only run canceled",
+    ownerBetaActionManifestHashLabel: "Action manifest hash",
+    ownerBetaApprovalRegistryHashLabel: "Approval registry hash",
+    ownerBetaArtifactManifestHashLabel: "Artifact manifest hash",
+    ownerBetaCandidateContentHashLabel: "Candidate content hash",
+    ownerBetaHistoryCaption: "Owner-only price-return recommendation runs",
+    ownerBetaHistoryHeading: "Owner-only run history",
+    ownerBetaInputWarning:
+      "This beta uses a vendor snapshot and is not strict point-in-time data. It is for the Owner only and reports price returns, not total returns.",
+    ownerBetaItemsCaption: "ETF11 items and price-return targets",
+    ownerBetaItemsHeading: "ETF11 items",
+    ownerBetaNoRunsMessage: "No owner-only recommendation runs are available.",
+    ownerBetaReportEyebrow: "Owner-only price-return output",
+    ownerBetaReportHeading: "Owner-only recommendation",
+    ownerBetaRouteDescription:
+      "Review the Owner-only price-return recommendation produced from the sealed vendor snapshot.",
+    ownerBetaRouteTitle: "Owner-only recommendations",
+    ownerBetaRunningMessage: "The Owner-only worker is producing this price-return output.",
+    ownerBetaRunningTitle: "Owner-only run is in progress",
+    ownerBetaStrictPitLabel: "Point-in-time mode",
+    ownerBetaStrictPitValue: "Non-strict PIT",
+    ownerBetaStrategyConfigHashLabel: "Strategy config hash",
+    ownerBetaTargetSnapshotHashLabel: "Target snapshot hash",
+    ownerBetaSubmit: "Generate owner-only recommendation",
+    ownerBetaSubmitting: "Starting owner-only run",
+    ownerBetaStage5ManifestHashLabel: "Stage5 manifest hash",
+    ownerBetaVendorSnapshotLabel: "Input source",
+    ownerBetaVendorSnapshotValue: "Vendor snapshot",
   },
   ko: {
     allCashAllocation:
@@ -230,5 +294,38 @@ export const recommendationsDictionary: LocaleDictionary<RecommendationsDictiona
     universeSnapshotLabel: "유니버스 스냅샷",
     warningsAriaLabel: "추천 경고",
     warningsLabel: "경고",
+    ownerBetaAudienceLabel: "대상 범위",
+    ownerBetaAudienceValue: "소유자 전용",
+    ownerBetaCapabilityLabel: "데이터 능력",
+    ownerBetaCapabilityValue: "가격 수익률 전용",
+    ownerBetaCanceledMessage: "소유자 전용 실행이 결과를 만들기 전에 취소되었습니다.",
+    ownerBetaCanceledTitle: "소유자 전용 실행 취소",
+    ownerBetaActionManifestHashLabel: "액션 매니페스트 해시",
+    ownerBetaApprovalRegistryHashLabel: "승인 레지스트리 해시",
+    ownerBetaArtifactManifestHashLabel: "아티팩트 매니페스트 해시",
+    ownerBetaCandidateContentHashLabel: "후보 콘텐츠 해시",
+    ownerBetaHistoryCaption: "소유자 전용 가격 수익률 추천 실행",
+    ownerBetaHistoryHeading: "소유자 전용 실행 이력",
+    ownerBetaInputWarning:
+      "이 베타는 공급자 스냅샷을 사용하며 엄격한 시점 일치(PIT) 데이터가 아닙니다. 소유자 전용이며 가격 수익률만 보고하고 총수익률은 제공하지 않습니다.",
+    ownerBetaItemsCaption: "ETF11 종목 및 가격 수익률 목표 비중",
+    ownerBetaItemsHeading: "ETF11 종목",
+    ownerBetaNoRunsMessage: "이용 가능한 소유자 전용 추천 실행이 없습니다.",
+    ownerBetaReportEyebrow: "소유자 전용 가격 수익률 결과",
+    ownerBetaReportHeading: "소유자 전용 추천",
+    ownerBetaRouteDescription:
+      "봉인된 공급자 스냅샷으로 산출한 소유자 전용 가격 수익률 추천을 확인하세요.",
+    ownerBetaRouteTitle: "소유자 전용 추천",
+    ownerBetaRunningMessage: "소유자 전용 워커가 가격 수익률 결과를 생성하고 있습니다.",
+    ownerBetaRunningTitle: "소유자 전용 실행 진행 중",
+    ownerBetaStrictPitLabel: "시점 일치 모드",
+    ownerBetaStrictPitValue: "비엄격 PIT",
+    ownerBetaStrategyConfigHashLabel: "전략 설정 해시",
+    ownerBetaTargetSnapshotHashLabel: "목표 스냅샷 해시",
+    ownerBetaSubmit: "소유자 전용 추천 생성",
+    ownerBetaSubmitting: "소유자 전용 실행 시작 중",
+    ownerBetaStage5ManifestHashLabel: "Stage5 매니페스트 해시",
+    ownerBetaVendorSnapshotLabel: "입력 출처",
+    ownerBetaVendorSnapshotValue: "공급자 스냅샷",
   },
 };

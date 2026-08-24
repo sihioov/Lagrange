@@ -21,6 +21,7 @@ export function permitsOwnerBetaProduct(session: ApiSession, product: OwnerBetaP
 export type ProductMutationPath =
   | "/api/v1/backtests"
   | "/api/v1/backtests/compare"
+  | "/api/v1/recommendations/owner-beta/price-only/runs"
   | "/api/v1/recommendations/runs"
   | "/api/v1/screener/screens"
   | `/api/v1/backtests/${string}/cancel`
@@ -83,6 +84,9 @@ export const apiErrorEnvelopeSchema = z
           "INVALID_STRATEGY_PARAMETER",
           "UNSUPPORTED_MARKET_CURRENCY",
           "BACKTEST_CAPACITY_EXCEEDED",
+          "RECOMMENDATION_CAPACITY_EXCEEDED",
+          "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+          "OWNER_BETA_STRATEGY_UNSUPPORTED",
           "RESULT_INTEGRITY_FAILED",
           "LIVE_RECONCILIATION_REQUIRED",
           "LIVE_KILL_SWITCH_ENGAGED",

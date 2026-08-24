@@ -1,12 +1,16 @@
 import type { ReactNode } from "react";
 import { OwnerAccessRefusal, OwnerBetaPaperUnavailable } from "@/components/pages/owner-route";
-import { type OwnerBetaProduct, permitsOwnerBetaProduct } from "@/lib/api/contracts";
+import {
+  type ApiSession,
+  type OwnerBetaProduct,
+  permitsOwnerBetaProduct,
+} from "@/lib/api/contracts";
 import { getServerSession } from "@/lib/api/server-session";
 import { getLocale } from "@/lib/i18n/server";
 
 export type OwnerBetaProductRouteProps = {
   readonly product: OwnerBetaProduct;
-  readonly renderProduct: () => ReactNode | Promise<ReactNode>;
+  readonly renderProduct: (session: ApiSession) => ReactNode | Promise<ReactNode>;
   readonly title: string;
 };
 
@@ -33,5 +37,5 @@ export async function OwnerBetaProductRoute({
     }
     return <OwnerAccessRefusal locale={locale} title={title} />;
   }
-  return renderProduct();
+  return renderProduct(session);
 }

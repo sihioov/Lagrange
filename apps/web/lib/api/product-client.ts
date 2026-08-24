@@ -36,6 +36,14 @@ import {
 } from "@/lib/products/contracts";
 import { type LiveConnectionModel, liveConnectionSchema } from "@/lib/products/live-contracts";
 import {
+  OWNER_BETA_PRICE_ONLY_RUNS_PATH,
+  type OwnerBetaRunModel,
+  type OwnerBetaRunPageModel,
+  ownerBetaRunPageSchema,
+  ownerBetaRunPath,
+  ownerBetaRunSchema,
+} from "@/lib/products/owner-beta-contracts";
+import {
   type NotificationModel,
   notificationSchema,
   type PaperAccountModel,
@@ -63,6 +71,8 @@ export type ProductApiClient = {
   readonly getRecommendationRun: (runId: string) => Promise<RecommendationRunModel>;
   readonly getLicensingStatus: () => Promise<LicensingStatusModel>;
   readonly getRecommendationRuns: () => Promise<PageResult<RecommendationRunModel>>;
+  readonly getOwnerBetaRecommendationRuns: () => Promise<OwnerBetaRunPageModel>;
+  readonly getOwnerBetaRecommendationRun: (runId: string) => Promise<OwnerBetaRunModel>;
   readonly getStrategies: () => Promise<PageResult<StrategyCatalogItem>>;
   readonly getPaperAccounts: () => Promise<PageResult<PaperAccountModel>>;
   readonly getPaperAccount: (accountId: string) => Promise<PaperAccountModel>;
@@ -137,6 +147,10 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
     getLicensingStatus: () => getParsed(client, "/api/v1/licensing-status", licensingStatusSchema),
     getRecommendationRuns: () =>
       getParsed(client, "/api/v1/recommendations/runs", recommendationPageSchema),
+    getOwnerBetaRecommendationRuns: () =>
+      getParsed(client, OWNER_BETA_PRICE_ONLY_RUNS_PATH, ownerBetaRunPageSchema),
+    getOwnerBetaRecommendationRun: (runId) =>
+      getParsed(client, ownerBetaRunPath(runId), ownerBetaRunSchema),
     getRecommendationRun: (runId) =>
       getParsed(
         client,
