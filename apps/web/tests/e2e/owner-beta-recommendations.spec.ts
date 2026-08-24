@@ -31,7 +31,10 @@ test("owner reads only the sealed price-return recommendation surface", async ({
   await expect(warnings).toContainText("Price-return only");
   await expect(warnings).toContainText("Vendor snapshot");
   await expect(warnings).toContainText("Non-strict PIT");
-  const report = page.getByRole("region", { name: "Owner-only recommendation" });
+  const report = page.getByRole("region", {
+    name: "Owner-only recommendation",
+    exact: true,
+  });
   await expect(report.getByText("069500.KRX")).toBeVisible();
   await expect(report).toContainText("SELECTED_TOP_N");
   await expect(report).toContainText("Cash allocation: 20.00%");

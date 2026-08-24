@@ -1622,7 +1622,7 @@ numeric ownership `10001:10001`을 설정하는 단계에서 `EINVAL`로 중단�
 합성 API와 로컬 Next 서버만 사용하는 전체 Playwright suite도 시도했다. localhost bind는
 샌드박스 밖 재실행으로 통과했지만 Chromium headless shell이 호스트의 `libasound.so.2` 부재로
 기동하지 못해 36건 모두 test body 이전 launch 단계에서 중단됐다. 따라서 브라우저 E2E를
-PASS했다고 보지 않는다. 현재 suite에는 owner-beta 전용 브라우저 시나리오도 없으므로, 필요한
+PASS했다고 보지 않았다. 당시 suite에는 owner-beta 전용 브라우저 시나리오도 없으므로, 필요한
 시스템 라이브러리가 있는 CI/QA에서 기존 suite와 새 owner-beta owner/member·성공/차단 시나리오를
 실행하는 증거가 남아 있다.
 
@@ -1631,8 +1631,11 @@ PASS했다고 보지 않는다. 현재 suite에는 owner-beta 전용 브라우�
 확인하고, Member는 제품 정보와 payload를 열거하지 못하며, entitlement 차단 시 Owner 화면은
 계약 라벨만 유지하고 종목 payload를 숨긴다. 합성 list/detail 응답은 실제 Zod 계약 파싱 PASS,
 전체 Playwright discovery는 8파일 39건, Web 단위 18파일 104건·TypeScript·lint·프로덕션
-빌드는 PASS했다. 다만 위 `libasound.so.2` 환경 제한 때문에 새 3건을 포함한 browser test body
-실행 증거는 여전히 CI/QA에 남아 있다.
+빌드는 PASS했다. 이후 호스트의 격리된 Chromium 라이브러리 경로를 적용하고 합성 API·Next 서버를
+직접 수명주기 관리하는 공식 `candidate-web-e2e.sh`로 test body를 실행했다. 첫 실행은 기존 36건과
+새 2건이 통과하고 새 성공 시나리오 1건만 접근성 이름 부분 일치로 두 region을 선택해 실패했다.
+locator에 `exact: true`를 추가한 뒤 전체 **39/39 PASS**했다. 이로써 로컬 브라우저 계약 증거는
+닫혔지만, 합성 API 증거이므로 실제 PostgreSQL/RLS나 운영 API·데이터를 검증한 것은 아니다.
 
 이 호스트에는 `DATABASE_URL`이 없으므로 새 DB 통합 테스트와 job-queue publish/recovery
 테스트는 의도된 clean skip이다. 따라서 실제 PostgreSQL에서 RLS 격리, pagination,
