@@ -34,6 +34,16 @@ const ROUTES = [
     audit: true,
     ownerBetaPrice: true,
   }],
+  ["GET", "/api/v1/recommendations/owner-beta/price-only/runs", {
+    owner: true,
+    entitlement: "recommendation",
+    ownerBetaPriceRead: true,
+  }],
+  ["GET", "/api/v1/recommendations/owner-beta/price-only/runs/{run_id}", {
+    owner: true,
+    entitlement: "recommendation",
+    ownerBetaPriceRead: true,
+  }],
   ["GET", "/api/v1/recommendations/runs/{run_id}", { entitlement: "recommendation" }],
   ["GET", "/api/v1/recommendations/runs", { entitlement: "recommendation" }],
   ["GET", "/api/v1/recommendations/latest", { entitlement: "recommendation" }],
@@ -122,6 +132,7 @@ const ERROR_CODES = [
   ["BACKTEST_CAPACITY_EXCEEDED", 429], ["ROBUSTNESS_CAPACITY_EXCEEDED", 429],
   ["RECOMMENDATION_CAPACITY_EXCEEDED", 429],
   ["OWNER_BETA_PRICE_INPUT_UNAVAILABLE", 503],
+  ["OWNER_BETA_STRATEGY_UNSUPPORTED", 422],
   ["REBALANCE_PREVIEW_CAPACITY_EXCEEDED", 429],
   ["REBALANCE_PREVIEW_BINDING_REQUIRED", 409],
   ["REBALANCE_PREVIEW_NOT_READY", 409],
@@ -199,6 +210,8 @@ function operation(route) {
         owner_only: owner,
         scope: flags.ownerBetaPrice
           ? "Owner role; sealed historical price-only input"
+          : flags.ownerBetaPriceRead
+          ? "Owner role; actor-scoped sealed historical price-only read model"
           : owner
           ? "Owner role; all admin operations are audited"
           : shared
@@ -207,6 +220,8 @@ function operation(route) {
       },
       entitlement: entitlement
         ? flags.ownerBetaPrice
+          ? { use: entitlement, fail_closed: true, input: "owner_beta_historical_price_only_v1" }
+          : flags.ownerBetaPriceRead
           ? { use: entitlement, fail_closed: true, input: "owner_beta_historical_price_only_v1" }
           : { use: entitlement, fail_closed: true, dataset: entitlement === "candidate" ? "every exact pinned candidate source dataset" : "krx_eod_bars" }
         : { use: null, fail_closed: true },
@@ -277,6 +292,12 @@ function successResponsesFor(method, path) {
   }
   if (path === "/api/v1/recommendations/owner-beta/price-only/runs" && method === "post") {
     return { "202": json("Owner-beta price-only recommendation accepted", "#/components/schemas/OwnerBetaPriceOnlyRun") };
+  }
+  if (path === "/api/v1/recommendations/owner-beta/price-only/runs" && method === "get") {
+    return { "200": json("Owner-beta price-only recommendation history", "#/components/schemas/OwnerBetaPriceOnlyReadPage") };
+  }
+  if (path === "/api/v1/recommendations/owner-beta/price-only/runs/{run_id}" && method === "get") {
+    return { "200": json("Owner-beta price-only recommendation", "#/components/schemas/OwnerBetaPriceOnlyReadRun") };
   }
   if (path === "/api/v1/recommendations/runs" && method === "get") {
     return { "200": json("Recommendation run history", "#/components/schemas/RecommendationRunPage") };
@@ -373,7 +394,11 @@ function errorCodesFor(route) {
       "RESOURCE_NOT_FOUND",
       "RECOMMENDATION_CAPACITY_EXCEEDED",
       "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+      "OWNER_BETA_STRATEGY_UNSUPPORTED",
     );
+  }
+  if (flags.ownerBetaPriceRead) {
+    codes.push("RESOURCE_NOT_FOUND", "RESULT_INTEGRITY_FAILED");
   }
   if (path.includes("/paper/accounts")) {
     codes.push("UNSUPPORTED_MARKET_CURRENCY", "DUPLICATE_RESOURCE");
@@ -544,6 +569,195 @@ const SCHEMAS = {
     properties: {
       strategy_config_id: uuid,
       as_of: dateStr,
+    },
+  },
+  OwnerBetaPriceOnlyReadItem: {
+    type: "object",
+    required: ["instrument_id", "excluded", "reason_codes", "factors"],
+    additionalProperties: false,
+    properties: {
+      instrument_id: {
+        type: "string",
+        enum: [
+          "069500.KRX", "102110.KRX", "114260.KRX", "132030.KRX", "138230.KRX",
+          "152100.KRX", "148020.KRX", "305720.KRX", "278530.KRX", "292150.KRX",
+          "360750.KRX",
+        ],
+      },
+      rank: { type: ["integer", "null"], minimum: 1, maximum: 11 },
+      target_weight: { type: ["string", "null"], pattern: "^(?:0\\.\\d{6}|1\\.000000)$" },
+      excluded: { type: "boolean" },
+      exclusion_reason: {
+        type: ["string", "null"],
+        enum: [
+          "SELECTED_TOP_N",
+          "NOT_SELECTED_BEYOND_TOP_N",
+          "EXCLUDED_MANDATORY_FACTOR_NULL",
+          "ALL_CASH_NO_ELIGIBLE",
+          "WEIGHT_CAPPED_AT_MAX",
+          "WEIGHT_ROUNDING_RESIDUE_TO_CASH",
+          "CASH_FLOOR_APPLIED",
+          "BENCHMARK_HELD",
+          "TREND_POSITIVE",
+          "TREND_NEGATIVE_CASH",
+          "ABSOLUTE_MOMENTUM_PASSED",
+          "DEFENSIVE_CASH_SELECTED",
+          "INVERSE_VOL_WEIGHTED",
+          "NOT_SELECTED_BY_STRATEGY",
+          null,
+        ],
+      },
+      reason_codes: {
+        type: "array",
+        minItems: 1,
+        maxItems: 16,
+        uniqueItems: true,
+        items: {
+          type: "string",
+          enum: [
+            "SELECTED_TOP_N",
+            "NOT_SELECTED_BEYOND_TOP_N",
+            "EXCLUDED_MANDATORY_FACTOR_NULL",
+            "ALL_CASH_NO_ELIGIBLE",
+            "WEIGHT_CAPPED_AT_MAX",
+            "WEIGHT_ROUNDING_RESIDUE_TO_CASH",
+            "CASH_FLOOR_APPLIED",
+            "BENCHMARK_HELD",
+            "TREND_POSITIVE",
+            "TREND_NEGATIVE_CASH",
+            "ABSOLUTE_MOMENTUM_PASSED",
+            "DEFENSIVE_CASH_SELECTED",
+            "INVERSE_VOL_WEIGHTED",
+            "NOT_SELECTED_BY_STRATEGY",
+          ],
+        },
+      },
+      factors: {
+        type: "object",
+        maxProperties: 64,
+        propertyNames: { minLength: 1, maxLength: 64 },
+        additionalProperties: { type: "string", minLength: 1, maxLength: 64 },
+      },
+    },
+  },
+  OwnerBetaPriceOnlyReadRun: {
+    type: "object",
+    required: [
+      "id",
+      "job_id",
+      "strategy_config_id",
+      "strategy_id",
+      "strategy_version",
+      "as_of",
+      "status",
+      "input_kind",
+      "capability",
+      "audience",
+      "vendor_snapshot",
+      "strict_pit",
+      "strategy_config_sha256",
+      "candidate_content_sha256",
+      "artifact_manifest_sha256",
+      "stage5_manifest_sha256",
+      "action_manifest_sha256",
+      "approval_registry_sha256",
+      "created_at",
+      "updated_at",
+      "items",
+    ],
+    additionalProperties: false,
+    properties: {
+      id: uuid,
+      job_id: uuid,
+      strategy_config_id: uuid,
+      strategy_id: { type: "string", minLength: 1 },
+      strategy_version: { type: "string", minLength: 1 },
+      as_of: dateStr,
+      status: { type: "string", enum: ["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"] },
+      input_kind: { type: "string", const: "owner_beta_historical_price_only_v1" },
+      capability: { type: "string", const: "PRICE_RETURN_ONLY" },
+      audience: { type: "string", const: "OWNER_ONLY" },
+      vendor_snapshot: { type: "boolean", const: true },
+      strict_pit: { type: "boolean", const: false },
+      strategy_config_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      candidate_content_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      artifact_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      stage5_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      action_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      approval_registry_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      factor_snapshot_sha256: { type: ["string", "null"], pattern: "^sha256:[0-9a-f]{64}$" },
+      target_snapshot_sha256: { type: ["string", "null"], pattern: "^sha256:[0-9a-f]{64}$" },
+      cash_weight: { type: ["string", "null"], pattern: "^(?:0\\.\\d{6}|1\\.000000)$" },
+      error_code: { type: ["string", "null"], pattern: "^[A-Z][A-Z0-9_]{0,63}$" },
+      created_at: ts,
+      started_at: { type: ["string", "null"], format: "date-time" },
+      finished_at: { type: ["string", "null"], format: "date-time" },
+      updated_at: ts,
+      items: { type: "array", items: { $ref: "#/components/schemas/OwnerBetaPriceOnlyReadItem" } },
+    },
+  },
+  OwnerBetaPriceOnlyReadListItem: {
+    type: "object",
+    required: [
+      "id",
+      "job_id",
+      "strategy_config_id",
+      "strategy_id",
+      "strategy_version",
+      "as_of",
+      "status",
+      "input_kind",
+      "capability",
+      "audience",
+      "vendor_snapshot",
+      "strict_pit",
+      "strategy_config_sha256",
+      "candidate_content_sha256",
+      "artifact_manifest_sha256",
+      "stage5_manifest_sha256",
+      "action_manifest_sha256",
+      "approval_registry_sha256",
+      "created_at",
+      "updated_at",
+    ],
+    additionalProperties: false,
+    properties: {
+      id: uuid,
+      job_id: uuid,
+      strategy_config_id: uuid,
+      strategy_id: { type: "string", minLength: 1 },
+      strategy_version: { type: "string", minLength: 1 },
+      as_of: dateStr,
+      status: { type: "string", enum: ["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"] },
+      input_kind: { type: "string", const: "owner_beta_historical_price_only_v1" },
+      capability: { type: "string", const: "PRICE_RETURN_ONLY" },
+      audience: { type: "string", const: "OWNER_ONLY" },
+      vendor_snapshot: { type: "boolean", const: true },
+      strict_pit: { type: "boolean", const: false },
+      strategy_config_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      candidate_content_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      artifact_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      stage5_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      action_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      approval_registry_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      factor_snapshot_sha256: { type: ["string", "null"], pattern: "^sha256:[0-9a-f]{64}$" },
+      target_snapshot_sha256: { type: ["string", "null"], pattern: "^sha256:[0-9a-f]{64}$" },
+      cash_weight: { type: ["string", "null"], pattern: "^(?:0\\.\\d{6}|1\\.000000)$" },
+      error_code: { type: ["string", "null"], pattern: "^[A-Z][A-Z0-9_]{0,63}$" },
+      created_at: ts,
+      started_at: { type: ["string", "null"], format: "date-time" },
+      finished_at: { type: ["string", "null"], format: "date-time" },
+      updated_at: ts,
+    },
+  },
+  OwnerBetaPriceOnlyReadPage: {
+    type: "object",
+    required: ["items", "next_cursor", "has_more"],
+    additionalProperties: false,
+    properties: {
+      items: { type: "array", items: { $ref: "#/components/schemas/OwnerBetaPriceOnlyReadListItem" } },
+      next_cursor: { type: ["string", "null"], description: "opaque signed cursor; null when the last page" },
+      has_more: { type: "boolean" },
     },
   },
   CandidateDatasetPins: {

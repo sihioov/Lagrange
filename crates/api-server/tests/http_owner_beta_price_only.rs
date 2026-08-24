@@ -89,3 +89,56 @@ async fn owner_beta_price_only_empty_registry_is_static_503_without_enqueue_rows
 
     h.teardown().await;
 }
+
+#[tokio::test]
+async fn owner_beta_price_only_read_routes_are_owner_only_and_do_not_require_price_mode() {
+    let Some(mut h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    // This enables only the owner-beta admission boundary. The sealed price
+    // input mode remains disabled, proving GET does not approve or gate on an
+    // artifact input that is relevant only to POST.
+    h.restart_api_with_owner_beta_access().await;
+
+    let owner = h
+        .get(
+            "/api/v1/recommendations/owner-beta/price-only/runs",
+            Some(&h.owner),
+        )
+        .await;
+    assert_eq!(status(&owner), StatusCode::OK);
+    let owner_body = Harness::body_json(owner).await;
+    assert_eq!(owner_body["items"], json!([]));
+    assert_eq!(owner_body["has_more"], false);
+    assert!(owner_body.get("next_cursor").is_some());
+
+    let member = h
+        .get(
+            "/api/v1/recommendations/owner-beta/price-only/runs",
+            Some(&h.member),
+        )
+        .await;
+    assert_eq!(status(&member), StatusCode::FORBIDDEN);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(member).await),
+        "FORBIDDEN"
+    );
+
+    let missing = h
+        .get(
+            &format!(
+                "/api/v1/recommendations/owner-beta/price-only/runs/{}",
+                uuid::Uuid::new_v4()
+            ),
+            Some(&h.owner),
+        )
+        .await;
+    assert_eq!(status(&missing), StatusCode::NOT_FOUND);
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(missing).await),
+        "RESOURCE_NOT_FOUND"
+    );
+
+    h.teardown().await;
+}

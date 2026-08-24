@@ -8,18 +8,105 @@
 
 use crate::actor_tx::{actor_uuid, begin_actor_tx};
 use crate::error::TenancyError;
+use crate::http::pagination::Cursor;
 use auth::entitlement::Actor;
-use chrono::{Datelike, NaiveDate};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use job_queue::owner_beta::{
     OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE, OwnerBetaPriceRecommendationInput,
 };
 use job_queue::recommendation::compute::requirements_for;
 use job_queue::resolver::ResolvedConfig;
-use market_data::ApprovedHistoricalPriceOnlyArtifact;
+use market_data::{ApprovedHistoricalPriceOnlyArtifact, KR_ETF_CORE_SYMBOLS};
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
+use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 use uuid::Uuid;
+
+/// Fixed fields of the owner-beta read contract. These values are repeated
+/// here instead of inferred from the queue payload so a durable row cannot
+/// widen the public surface by changing its own metadata.
+pub const OWNER_BETA_PRICE_INPUT_KIND: &str = "owner_beta_historical_price_only_v1";
+pub const OWNER_BETA_PRICE_CAPABILITY: &str = "PRICE_RETURN_ONLY";
+pub const OWNER_BETA_PRICE_AUDIENCE: &str = "OWNER_ONLY";
+
+const OWNER_BETA_STATUSES: [&str; 5] = ["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"];
+
+const OWNER_BETA_REASON_CODES: [&str; 14] = [
+    "SELECTED_TOP_N",
+    "NOT_SELECTED_BEYOND_TOP_N",
+    "EXCLUDED_MANDATORY_FACTOR_NULL",
+    "ALL_CASH_NO_ELIGIBLE",
+    "WEIGHT_CAPPED_AT_MAX",
+    "WEIGHT_ROUNDING_RESIDUE_TO_CASH",
+    "CASH_FLOOR_APPLIED",
+    "BENCHMARK_HELD",
+    "TREND_POSITIVE",
+    "TREND_NEGATIVE_CASH",
+    "ABSOLUTE_MOMENTUM_PASSED",
+    "DEFENSIVE_CASH_SELECTED",
+    "INVERSE_VOL_WEIGHTED",
+    "NOT_SELECTED_BY_STRATEGY",
+];
+
+const OWNER_BETA_ERROR_CODES: [&str; 8] = [
+    "OWNER_BETA_INPUT_INVALID",
+    "OWNER_BETA_ENTITLEMENT_DENIED",
+    "OWNER_BETA_FACTOR_INVALID",
+    "OWNER_BETA_TARGET_INVALID",
+    "OWNER_BETA_PUBLICATION_UNAVAILABLE",
+    "OWNER_BETA_COMPUTATION_UNAVAILABLE",
+    "OWNER_BETA_COMPUTATION_FAILED",
+    "OWNER_BETA_ATTEMPTS_EXHAUSTED",
+];
+
+const OWNER_BETA_CANCELED_CODE: &str = "CANCELED";
+const OWNER_BETA_WEIGHT_SCALE: i64 = 1_000_000;
+
+/// Durable owner-beta run projection used by the read routes. `item_count`
+/// is an internal integrity witness and is never serialized.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OwnerBetaPriceOnlyReadRunRow {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub strategy_config_id: Uuid,
+    pub strategy_id: String,
+    pub strategy_version: String,
+    pub as_of: NaiveDate,
+    pub status: String,
+    pub input_kind: String,
+    pub capability: String,
+    pub audience: String,
+    pub vendor_snapshot: bool,
+    pub strict_pit: bool,
+    pub strategy_config_sha256: String,
+    pub candidate_content_sha256: String,
+    pub artifact_manifest_sha256: String,
+    pub stage5_manifest_sha256: String,
+    pub action_manifest_sha256: String,
+    pub approval_registry_sha256: String,
+    pub factor_snapshot_sha256: Option<String>,
+    pub target_snapshot_sha256: Option<String>,
+    pub cash_weight: Option<String>,
+    pub error_code: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+    pub item_count: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OwnerBetaPriceOnlyReadItemRow {
+    pub recommendation_run_id: Uuid,
+    pub instrument_id: String,
+    pub rank: Option<i32>,
+    pub target_weight: Option<String>,
+    pub reason_codes: Value,
+    pub factors_json: Value,
+    pub excluded: bool,
+    pub exclusion_reason: Option<String>,
+}
 
 /// The public result needed by the HTTP response. `replay` is derived from
 /// the durable queue row, never from the process-local idempotency cache.
@@ -361,6 +448,473 @@ impl OwnerBetaRecommendationRepo {
             replay: false,
         })
     }
+
+    /// Read one owner-beta run and, only for a valid successful publication,
+    /// its fixed ETF11 items. The transaction pins the actor GUC before any
+    /// table read; explicit owner predicates are retained as a second
+    /// defense-in-depth invariant.
+    pub async fn get_price_only_run(
+        &self,
+        actor: &Actor,
+        run_id: Uuid,
+    ) -> crate::error::TenancyResult<(
+        OwnerBetaPriceOnlyReadRunRow,
+        Vec<OwnerBetaPriceOnlyReadItemRow>,
+    )> {
+        let owner = actor_uuid(actor)?;
+        let mut tx = begin_actor_tx(&self.pool, actor).await?;
+        let row = sqlx::query_as::<_, OwnerBetaPriceOnlyReadRunRow>(READ_RUN_SQL)
+            .bind(run_id)
+            .bind(owner)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+        let Some(row) = row else {
+            tx.commit().await.map_err(TenancyError::from_sqlx)?;
+            return Err(TenancyError::NotFound);
+        };
+
+        let items = if row.status == "SUCCEEDED" {
+            sqlx::query_as::<_, OwnerBetaPriceOnlyReadItemRow>(READ_ITEMS_SQL)
+                .bind(row.id)
+                .bind(owner)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(TenancyError::from_sqlx)?
+        } else {
+            Vec::new()
+        };
+        validate_read_model(&row, &items)?;
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        Ok((row, items))
+    }
+
+    /// Fetch only the actor-owned run header. This is used by the detail
+    /// handler to determine the exact entitlement date before it reads any
+    /// result items. No item rows are selected by this method.
+    pub async fn get_price_only_run_header(
+        &self,
+        actor: &Actor,
+        run_id: Uuid,
+    ) -> crate::error::TenancyResult<OwnerBetaPriceOnlyReadRunRow> {
+        let owner = actor_uuid(actor)?;
+        let mut tx = begin_actor_tx(&self.pool, actor).await?;
+        let row = sqlx::query_as::<_, OwnerBetaPriceOnlyReadRunRow>(READ_RUN_HEADER_SQL)
+            .bind(run_id)
+            .bind(owner)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(TenancyError::from_sqlx)?;
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        row.ok_or(TenancyError::NotFound)
+    }
+
+    /// Keyset-paginated actor-scoped list. Successful rows load their items
+    /// solely to prove the durable result is still a valid ETF11 publication;
+    /// those items are intentionally omitted from the returned list rows.
+    pub async fn list_price_only_runs(
+        &self,
+        actor: &Actor,
+        after: Option<&Cursor>,
+        limit: usize,
+    ) -> crate::error::TenancyResult<(Vec<OwnerBetaPriceOnlyReadRunRow>, Option<Cursor>)> {
+        let owner = actor_uuid(actor)?;
+        let mut tx = begin_actor_tx(&self.pool, actor).await?;
+        let rows = match after {
+            Some(cursor) => {
+                let cursor_id = Uuid::parse_str(&cursor.i).map_err(|_| TenancyError::NotFound)?;
+                sqlx::query_as::<_, OwnerBetaPriceOnlyReadRunRow>(READ_RUNS_AFTER_SQL)
+                    .bind(owner)
+                    .bind(cursor.k.clone())
+                    .bind(cursor_id)
+                    .bind(limit as i64 + 1)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(TenancyError::from_sqlx)?
+            }
+            None => sqlx::query_as::<_, OwnerBetaPriceOnlyReadRunRow>(READ_RUNS_SQL)
+                .bind(owner)
+                .bind(limit as i64 + 1)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(TenancyError::from_sqlx)?,
+        };
+
+        let successful_ids = rows
+            .iter()
+            .filter(|row| row.status == "SUCCEEDED")
+            .map(|row| row.id)
+            .collect::<Vec<_>>();
+        let mut items_by_run = BTreeMap::<Uuid, Vec<OwnerBetaPriceOnlyReadItemRow>>::new();
+        if !successful_ids.is_empty() {
+            let item_rows =
+                sqlx::query_as::<_, OwnerBetaPriceOnlyReadItemRow>(READ_ITEMS_FOR_RUNS_SQL)
+                    .bind(&successful_ids)
+                    .bind(owner)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(TenancyError::from_sqlx)?;
+            for item in item_rows {
+                items_by_run
+                    .entry(item.recommendation_run_id)
+                    .or_default()
+                    .push(item);
+            }
+        }
+        for row in &rows {
+            let items = items_by_run.remove(&row.id).unwrap_or_default();
+            validate_read_model(row, &items)?;
+        }
+
+        tx.commit().await.map_err(TenancyError::from_sqlx)?;
+        Ok(crate::repos::split_page(rows, limit, |row| {
+            (row.created_at.to_rfc3339(), row.id.to_string())
+        }))
+    }
+}
+
+const READ_RUN_SQL: &str = "
+    SELECT run.id, run.job_id, run.strategy_config_id, run.strategy_id,
+           run.strategy_version, run.as_of, run.status, run.input_kind,
+           run.capability, run.audience, run.vendor_snapshot, run.strict_pit,
+           run.strategy_config_sha256, run.candidate_content_sha256,
+           run.artifact_manifest_sha256, run.stage5_manifest_sha256,
+           run.action_manifest_sha256, run.approval_registry_sha256,
+           run.factor_snapshot_sha256, run.target_snapshot_sha256,
+           run.cash_weight::text AS cash_weight, run.error_code,
+           run.created_at, run.started_at, run.finished_at, run.updated_at,
+           (SELECT count(*)::bigint
+              FROM owner_beta_recommendation_items AS item
+             WHERE item.recommendation_run_id = run.id
+               AND item.owner_user_id = run.owner_user_id) AS item_count
+      FROM owner_beta_recommendation_runs AS run
+     WHERE run.id = $1 AND run.owner_user_id = $2";
+const READ_RUN_HEADER_SQL: &str =
+    "\n    SELECT run.id, run.job_id, run.strategy_config_id, run.strategy_id,
+           run.strategy_version, run.as_of, run.status, run.input_kind,
+           run.capability, run.audience, run.vendor_snapshot, run.strict_pit,
+           run.strategy_config_sha256, run.candidate_content_sha256,
+           run.artifact_manifest_sha256, run.stage5_manifest_sha256,
+           run.action_manifest_sha256, run.approval_registry_sha256,
+           run.factor_snapshot_sha256, run.target_snapshot_sha256,
+           run.cash_weight::text AS cash_weight, run.error_code,
+           run.created_at, run.started_at, run.finished_at, run.updated_at,
+           0::bigint AS item_count
+      FROM owner_beta_recommendation_runs AS run
+     WHERE run.id = $1 AND run.owner_user_id = $2";
+const READ_RUNS_SQL: &str = "
+    SELECT run.id, run.job_id, run.strategy_config_id, run.strategy_id,
+           run.strategy_version, run.as_of, run.status, run.input_kind,
+           run.capability, run.audience, run.vendor_snapshot, run.strict_pit,
+           run.strategy_config_sha256, run.candidate_content_sha256,
+           run.artifact_manifest_sha256, run.stage5_manifest_sha256,
+           run.action_manifest_sha256, run.approval_registry_sha256,
+           run.factor_snapshot_sha256, run.target_snapshot_sha256,
+           run.cash_weight::text AS cash_weight, run.error_code,
+           run.created_at, run.started_at, run.finished_at, run.updated_at,
+           (SELECT count(*)::bigint
+              FROM owner_beta_recommendation_items AS item
+             WHERE item.recommendation_run_id = run.id
+               AND item.owner_user_id = run.owner_user_id) AS item_count
+      FROM owner_beta_recommendation_runs AS run
+     WHERE run.owner_user_id = $1
+       ORDER BY run.created_at DESC, run.id DESC
+       LIMIT $2";
+const READ_RUNS_AFTER_SQL: &str = "
+    SELECT run.id, run.job_id, run.strategy_config_id, run.strategy_id,
+           run.strategy_version, run.as_of, run.status, run.input_kind,
+           run.capability, run.audience, run.vendor_snapshot, run.strict_pit,
+           run.strategy_config_sha256, run.candidate_content_sha256,
+           run.artifact_manifest_sha256, run.stage5_manifest_sha256,
+           run.action_manifest_sha256, run.approval_registry_sha256,
+           run.factor_snapshot_sha256, run.target_snapshot_sha256,
+           run.cash_weight::text AS cash_weight, run.error_code,
+           run.created_at, run.started_at, run.finished_at, run.updated_at,
+           (SELECT count(*)::bigint
+              FROM owner_beta_recommendation_items AS item
+             WHERE item.recommendation_run_id = run.id
+               AND item.owner_user_id = run.owner_user_id) AS item_count
+      FROM owner_beta_recommendation_runs AS run
+     WHERE run.owner_user_id = $1
+       AND (run.created_at, run.id) < ($2::timestamptz, $3::uuid)
+       ORDER BY run.created_at DESC, run.id DESC
+       LIMIT $4";
+const READ_ITEMS_SQL: &str = "
+    SELECT recommendation_run_id, instrument_id, rank,
+           target_weight::text AS target_weight, reason_codes, factors_json,
+           excluded, exclusion_reason
+      FROM owner_beta_recommendation_items
+     WHERE recommendation_run_id = $1
+       AND owner_user_id = $2
+     ORDER BY instrument_id";
+const READ_ITEMS_FOR_RUNS_SQL: &str = "
+    SELECT recommendation_run_id, instrument_id, rank,
+           target_weight::text AS target_weight, reason_codes, factors_json,
+           excluded, exclusion_reason
+      FROM owner_beta_recommendation_items
+     WHERE recommendation_run_id = ANY($1::uuid[])
+       AND owner_user_id = $2
+     ORDER BY recommendation_run_id, instrument_id";
+
+fn integrity_error() -> TenancyError {
+    TenancyError::ResultIntegrity("owner-beta recommendation result integrity failed".to_owned())
+}
+
+/// Validate every durable field that crosses the owner-beta read boundary.
+/// This function is intentionally pure and does not consult artifacts,
+/// approval registries, queue payloads, or mutable strategy configuration.
+fn validate_read_model(
+    row: &OwnerBetaPriceOnlyReadRunRow,
+    items: &[OwnerBetaPriceOnlyReadItemRow],
+) -> Result<(), TenancyError> {
+    if row.id.is_nil()
+        || row.job_id.is_nil()
+        || row.strategy_config_id.is_nil()
+        || row.strategy_id.is_empty()
+        || row.strategy_version.is_empty()
+        || !OWNER_BETA_STATUSES.contains(&row.status.as_str())
+        || row.input_kind != OWNER_BETA_PRICE_INPUT_KIND
+        || row.capability != OWNER_BETA_PRICE_CAPABILITY
+        || row.audience != OWNER_BETA_PRICE_AUDIENCE
+        || !row.vendor_snapshot
+        || row.strict_pit
+        || !valid_sha256(&row.strategy_config_sha256)
+        || !valid_sha256(&row.candidate_content_sha256)
+        || !valid_sha256(&row.artifact_manifest_sha256)
+        || !valid_sha256(&row.stage5_manifest_sha256)
+        || !valid_sha256(&row.action_manifest_sha256)
+        || !valid_sha256(&row.approval_registry_sha256)
+        || !row
+            .factor_snapshot_sha256
+            .as_deref()
+            .is_none_or(valid_sha256)
+        || !row
+            .target_snapshot_sha256
+            .as_deref()
+            .is_none_or(valid_sha256)
+        || row.item_count < 0
+        || row.item_count != items.len() as i64
+        || row.updated_at < row.created_at
+        || row
+            .started_at
+            .is_some_and(|started| started < row.created_at)
+        || row
+            .started_at
+            .is_some_and(|started| row.updated_at < started)
+        || row
+            .finished_at
+            .is_some_and(|finished| finished < row.created_at)
+        || row
+            .finished_at
+            .is_some_and(|finished| row.started_at.is_some_and(|started| finished < started))
+        || row
+            .finished_at
+            .is_some_and(|finished| row.updated_at < finished)
+    {
+        return Err(integrity_error());
+    }
+
+    match row.status.as_str() {
+        "PENDING" => {
+            if row.started_at.is_some()
+                || row.finished_at.is_some()
+                || row.error_code.is_some()
+                || has_result_fields(row)
+                || !items.is_empty()
+            {
+                return Err(integrity_error());
+            }
+        }
+        "RUNNING" => {
+            if row.started_at.is_none()
+                || row.finished_at.is_some()
+                || row.error_code.is_some()
+                || has_result_fields(row)
+                || !items.is_empty()
+            {
+                return Err(integrity_error());
+            }
+        }
+        "SUCCEEDED" => {
+            if row.started_at.is_none()
+                || row.finished_at.is_none()
+                || row.error_code.is_some()
+                || row.factor_snapshot_sha256.is_none()
+                || row.target_snapshot_sha256.is_none()
+                || row.cash_weight.is_none()
+                || !items_are_valid_success_publication(row, items)
+            {
+                return Err(integrity_error());
+            }
+        }
+        "FAILED" => {
+            if row.started_at.is_none()
+                || row.finished_at.is_none()
+                || !valid_error_code(row.error_code.as_deref(), false)
+                || has_result_fields(row)
+                || !items.is_empty()
+            {
+                return Err(integrity_error());
+            }
+        }
+        "CANCELED" => {
+            if row.finished_at.is_none()
+                || !valid_error_code(row.error_code.as_deref(), true)
+                || has_result_fields(row)
+                || !items.is_empty()
+            {
+                return Err(integrity_error());
+            }
+        }
+        _ => return Err(integrity_error()),
+    }
+    Ok(())
+}
+
+fn has_result_fields(row: &OwnerBetaPriceOnlyReadRunRow) -> bool {
+    row.factor_snapshot_sha256.is_some()
+        || row.target_snapshot_sha256.is_some()
+        || row.cash_weight.is_some()
+}
+
+fn valid_sha256(value: &str) -> bool {
+    let Some(digest) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn valid_error_code(value: Option<&str>, canceled: bool) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    if canceled {
+        value == OWNER_BETA_CANCELED_CODE
+    } else {
+        OWNER_BETA_ERROR_CODES.contains(&value)
+    }
+}
+
+fn items_are_valid_success_publication(
+    row: &OwnerBetaPriceOnlyReadRunRow,
+    items: &[OwnerBetaPriceOnlyReadItemRow],
+) -> bool {
+    let expected = KR_ETF_CORE_SYMBOLS
+        .iter()
+        .map(|symbol| format!("{symbol}.KRX"))
+        .collect::<BTreeSet<_>>();
+    if items.len() != KR_ETF_CORE_SYMBOLS.len()
+        || items
+            .iter()
+            .any(|item| item.recommendation_run_id != row.id)
+        || items
+            .iter()
+            .map(|item| item.instrument_id.as_str())
+            .collect::<BTreeSet<_>>()
+            != expected.iter().map(String::as_str).collect::<BTreeSet<_>>()
+    {
+        return false;
+    }
+
+    let Some(cash_weight) = row.cash_weight.as_deref().and_then(parse_fixed_six) else {
+        return false;
+    };
+    let mut total = cash_weight;
+    let mut seen_ranks = BTreeSet::new();
+    for item in items {
+        let Some(reason_codes) = valid_reason_codes(&item.reason_codes) else {
+            return false;
+        };
+        if !valid_factors(&item.factors_json) {
+            return false;
+        }
+        let valid_selected = !item.excluded
+            && item.target_weight.is_some()
+            && item.rank.is_some()
+            && item.exclusion_reason.is_none();
+        let valid_excluded = item.excluded
+            && item.target_weight.is_none()
+            && item.rank.is_none()
+            && item
+                .exclusion_reason
+                .as_deref()
+                .is_some_and(|reason| reason == reason_codes[0]);
+        if !valid_selected && !valid_excluded {
+            return false;
+        }
+        if let Some(rank) = item.rank
+            && (!(1..=KR_ETF_CORE_SYMBOLS.len() as i32).contains(&rank) || !seen_ranks.insert(rank))
+        {
+            return false;
+        }
+        if let Some(weight) = item.target_weight.as_deref().and_then(parse_fixed_six) {
+            total = match total.checked_add(weight) {
+                Some(total) => total,
+                None => return false,
+            };
+        } else if item.target_weight.is_some() {
+            return false;
+        }
+    }
+    total == OWNER_BETA_WEIGHT_SCALE
+}
+
+fn valid_reason_codes(value: &Value) -> Option<Vec<&str>> {
+    let values = value.as_array()?;
+    if values.is_empty() || values.len() > 16 {
+        return None;
+    }
+    let mut seen = BTreeSet::new();
+    let mut codes = Vec::with_capacity(values.len());
+    for value in values {
+        let code = value.as_str()?;
+        if code.is_empty()
+            || code.len() > 64
+            || !OWNER_BETA_REASON_CODES.contains(&code)
+            || !seen.insert(code)
+        {
+            return None;
+        }
+        codes.push(code);
+    }
+    Some(codes)
+}
+
+fn valid_factors(value: &Value) -> bool {
+    let Some(values) = value.as_object() else {
+        return false;
+    };
+    values.len() <= 64
+        && values.iter().all(|(key, value)| {
+            !key.is_empty()
+                && key.len() <= 64
+                && value
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty() && value.len() <= 64)
+        })
+}
+
+fn parse_fixed_six(value: &str) -> Option<i64> {
+    let (whole, fraction) = value.split_once('.')?;
+    if fraction.len() != 6
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+        || (whole != "0" && whole != "1")
+    {
+        return None;
+    }
+    let fractional = fraction.parse::<i64>().ok()?;
+    if whole == "1" && fractional != 0 {
+        return None;
+    }
+    let result = fractional;
+    Some(if whole == "1" {
+        OWNER_BETA_WEIGHT_SCALE + result
+    } else {
+        result
+    })
 }
 
 async fn durable_replay(
@@ -754,5 +1308,133 @@ mod tests {
                 "existing typed worker must not claim owner-beta jobs"
             );
         }
+    }
+
+    fn read_row(status: &str) -> OwnerBetaPriceOnlyReadRunRow {
+        let created_at = chrono::DateTime::parse_from_rfc3339("2026-08-19T00:00:00Z")
+            .expect("created timestamp")
+            .with_timezone(&chrono::Utc);
+        let started_at = (status != "PENDING" && status != "CANCELED").then_some(created_at);
+        let finished_at = matches!(status, "SUCCEEDED" | "FAILED" | "CANCELED").then_some(
+            chrono::DateTime::parse_from_rfc3339("2026-08-19T00:01:00Z")
+                .expect("finished timestamp")
+                .with_timezone(&chrono::Utc),
+        );
+        OwnerBetaPriceOnlyReadRunRow {
+            id: Uuid::parse_str("00000000-0000-4000-8000-000000000010").unwrap(),
+            job_id: Uuid::parse_str("00000000-0000-4000-8000-000000000011").unwrap(),
+            strategy_config_id: Uuid::parse_str("00000000-0000-4000-8000-000000000012").unwrap(),
+            strategy_id: "buy_and_hold".to_owned(),
+            strategy_version: "1.0.0".to_owned(),
+            as_of: NaiveDate::from_ymd_opt(2026, 8, 19).unwrap(),
+            status: status.to_owned(),
+            input_kind: OWNER_BETA_PRICE_INPUT_KIND.to_owned(),
+            capability: OWNER_BETA_PRICE_CAPABILITY.to_owned(),
+            audience: OWNER_BETA_PRICE_AUDIENCE.to_owned(),
+            vendor_snapshot: true,
+            strict_pit: false,
+            strategy_config_sha256: hash(1),
+            candidate_content_sha256: hash(2),
+            artifact_manifest_sha256: hash(3),
+            stage5_manifest_sha256: hash(4),
+            action_manifest_sha256: hash(5),
+            approval_registry_sha256: hash(6),
+            factor_snapshot_sha256: (status == "SUCCEEDED").then(|| hash(7)),
+            target_snapshot_sha256: (status == "SUCCEEDED").then(|| hash(8)),
+            cash_weight: (status == "SUCCEEDED").then(|| "0.000000".to_owned()),
+            error_code: match status {
+                "FAILED" => Some("OWNER_BETA_COMPUTATION_FAILED".to_owned()),
+                "CANCELED" => Some(OWNER_BETA_CANCELED_CODE.to_owned()),
+                _ => None,
+            },
+            created_at,
+            started_at,
+            finished_at,
+            updated_at: finished_at.unwrap_or(created_at),
+            item_count: if status == "SUCCEEDED" { 11 } else { 0 },
+        }
+    }
+
+    fn read_item(index: usize, selected: bool) -> OwnerBetaPriceOnlyReadItemRow {
+        let instrument_id = format!("{}.KRX", KR_ETF_CORE_SYMBOLS[index]);
+        let reason = if selected {
+            "SELECTED_TOP_N"
+        } else {
+            "NOT_SELECTED_BY_STRATEGY"
+        };
+        OwnerBetaPriceOnlyReadItemRow {
+            recommendation_run_id: Uuid::parse_str("00000000-0000-4000-8000-000000000010").unwrap(),
+            instrument_id,
+            rank: selected.then_some((index + 1) as i32),
+            target_weight: selected.then(|| "0.500000".to_owned()),
+            reason_codes: json!([reason]),
+            factors_json: json!({"close": "100.0"}),
+            excluded: !selected,
+            exclusion_reason: (!selected).then(|| reason.to_owned()),
+        }
+    }
+
+    #[test]
+    fn owner_beta_read_model_accepts_fixed_success_and_canceled_without_start() {
+        let mut row = read_row("SUCCEEDED");
+        let mut items = (0..KR_ETF_CORE_SYMBOLS.len())
+            .map(|index| read_item(index, index < 2))
+            .collect::<Vec<_>>();
+        row.cash_weight = Some("0.000000".to_owned());
+        assert!(validate_read_model(&row, &items).is_ok());
+
+        let canceled = read_row("CANCELED");
+        assert!(canceled.started_at.is_none());
+        assert!(validate_read_model(&canceled, &[]).is_ok());
+
+        items[1].rank = Some(1);
+        assert!(validate_read_model(&row, &items).is_err());
+    }
+
+    #[test]
+    fn owner_beta_read_model_rejects_tampered_fixed_fields_hashes_and_state() {
+        let mut row = read_row("SUCCEEDED");
+        let items = (0..KR_ETF_CORE_SYMBOLS.len())
+            .map(|index| read_item(index, index < 2))
+            .collect::<Vec<_>>();
+        assert!(validate_read_model(&row, &items).is_ok());
+
+        row.input_kind = "other_input".to_owned();
+        assert!(validate_read_model(&row, &items).is_err());
+        row.input_kind = OWNER_BETA_PRICE_INPUT_KIND.to_owned();
+        row.strategy_config_sha256 = format!("sha256:{}", "A".repeat(64));
+        assert!(validate_read_model(&row, &items).is_err());
+        row.strategy_config_sha256 = hash(1);
+        row.cash_weight = Some("0.1".to_owned());
+        assert!(validate_read_model(&row, &items).is_err());
+
+        let mut failed = read_row("FAILED");
+        failed.item_count = 1;
+        assert!(validate_read_model(&failed, &[]).is_err());
+        failed.item_count = 0;
+        failed.error_code = Some("provider leaked detail".to_owned());
+        assert!(validate_read_model(&failed, &[]).is_err());
+    }
+
+    #[test]
+    fn owner_beta_read_model_rejects_impossible_lifecycle_timestamps() {
+        let one_minute = chrono::TimeDelta::minutes(1);
+
+        let mut canceled = read_row("CANCELED");
+        canceled.finished_at = Some(canceled.created_at - one_minute);
+        canceled.updated_at = canceled.created_at;
+        assert!(validate_read_model(&canceled, &[]).is_err());
+
+        let mut running = read_row("RUNNING");
+        running.started_at = Some(running.created_at + one_minute);
+        running.updated_at = running.created_at;
+        assert!(validate_read_model(&running, &[]).is_err());
+
+        let mut failed = read_row("FAILED");
+        failed.updated_at = failed
+            .finished_at
+            .expect("failed fixture has a finish timestamp")
+            - one_minute;
+        assert!(validate_read_model(&failed, &[]).is_err());
     }
 }

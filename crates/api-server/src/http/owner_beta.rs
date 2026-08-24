@@ -4,14 +4,18 @@
 //! filesystem approval read. Approval is re-run for every enqueue and replay;
 //! the durable repository is the only idempotency authority.
 
-use crate::http::dto::{OwnerBetaPriceOnlyRunBody, OwnerBetaPriceOnlyRunDto};
+use crate::http::dto::{
+    OwnerBetaPriceOnlyReadItemDto, OwnerBetaPriceOnlyReadListItemDto, OwnerBetaPriceOnlyReadRunDto,
+    OwnerBetaPriceOnlyRunBody, OwnerBetaPriceOnlyRunDto, PageDto,
+};
 use crate::http::entitlement::require_use;
 use crate::http::error::{api_error, code_error, request_id};
+use crate::http::pagination::Cursor;
 use crate::http::session::{Session, require_csrf};
 use crate::http::state::ApiState;
-use crate::http::{JsonBody, audit};
+use crate::http::{JsonBody, audit, tenancy_response};
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::{Datelike, NaiveDate};
@@ -210,6 +214,215 @@ pub async fn create_price_only_run(
         );
     }
     response
+}
+
+/// GET `/api/v1/recommendations/owner-beta/price-only/runs`.
+///
+/// This is a read-only route: it repeats the owner-beta policy check and
+/// entitlement gate but never checks the sealed input mode, reads an
+/// artifact, re-approves a pin, writes an audit event, or accepts an
+/// idempotency key.
+pub async fn list_price_only_runs(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+    Query(params): Query<crate::http::session::PageParams>,
+) -> Response {
+    let rid = request_id(&headers);
+    if !owner_beta_read_allowed(&state, &session) {
+        return code_error("FORBIDDEN", "forbidden", &rid);
+    }
+    if let Err(response) = require_use(
+        &state,
+        &session,
+        &headers,
+        auth::entitlement::KrUse::Recommendation,
+        &crate::http::entitlement::today_iso(),
+    )
+    .await
+    {
+        return response;
+    }
+    let cursor = match decode_read_cursor(&state, &rid, params.cursor.as_deref()) {
+        Ok(cursor) => cursor,
+        Err(response) => return response,
+    };
+    let limit = params.limit_or(crate::http::session::PageParams::DEFAULT_LIMIT);
+    match state
+        .owner_beta_recommendations()
+        .list_price_only_runs(&session.actor(), cursor.as_ref(), limit)
+        .await
+    {
+        Ok((rows, next)) => {
+            let next = next.map(|cursor| cursor.encode(&state.cfg.cursor_secret));
+            let items = rows.into_iter().map(read_list_item_dto).collect();
+            (StatusCode::OK, Json(PageDto::new(items, next))).into_response()
+        }
+        Err(error) => tenancy_response(error, &rid, "RESOURCE_NOT_FOUND"),
+    }
+}
+
+/// GET `/api/v1/recommendations/owner-beta/price-only/runs/{run_id}`.
+pub async fn get_price_only_run(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> Response {
+    let rid = request_id(&headers);
+    if !owner_beta_read_allowed(&state, &session) {
+        return code_error("FORBIDDEN", "forbidden", &rid);
+    }
+    let run_id = match Uuid::parse_str(&run_id) {
+        Ok(run_id) => run_id,
+        Err(_) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_PARAMETER",
+                "run id must be a uuid",
+                &rid,
+                None,
+            );
+        }
+    };
+    let header = match state
+        .owner_beta_recommendations()
+        .get_price_only_run_header(&session.actor(), run_id)
+        .await
+    {
+        Ok(header) => header,
+        Err(error) => return tenancy_response(error, &rid, "RESOURCE_NOT_FOUND"),
+    };
+    if let Err(response) = require_use(
+        &state,
+        &session,
+        &headers,
+        auth::entitlement::KrUse::Recommendation,
+        &header.as_of.format("%Y-%m-%d").to_string(),
+    )
+    .await
+    {
+        return response;
+    }
+    match state
+        .owner_beta_recommendations()
+        .get_price_only_run(&session.actor(), run_id)
+        .await
+    {
+        Ok((row, items)) => (StatusCode::OK, Json(read_run_dto(row, items))).into_response(),
+        Err(error) => tenancy_response(error, &rid, "RESOURCE_NOT_FOUND"),
+    }
+}
+
+fn owner_beta_read_allowed(state: &ApiState, session: &Session) -> bool {
+    state.cfg.owner_beta_access == crate::http::state::OwnerBetaAccessMode::OwnerOnly
+        && session.actor().is_owner()
+}
+
+#[allow(clippy::result_large_err)]
+fn decode_read_cursor(
+    state: &ApiState,
+    rid: &str,
+    raw: Option<&str>,
+) -> Result<Option<Cursor>, Response> {
+    match raw {
+        None => Ok(None),
+        Some(raw) => Cursor::decode(raw, &state.cfg.cursor_secret)
+            .map(Some)
+            .map_err(|_| code_error("INVALID_CURSOR", "pagination cursor is invalid", rid)),
+    }
+}
+
+fn read_run_dto(
+    row: crate::repos::owner_beta::OwnerBetaPriceOnlyReadRunRow,
+    items: Vec<crate::repos::owner_beta::OwnerBetaPriceOnlyReadItemRow>,
+) -> OwnerBetaPriceOnlyReadRunDto {
+    OwnerBetaPriceOnlyReadRunDto {
+        id: row.id.to_string(),
+        job_id: row.job_id.to_string(),
+        strategy_config_id: row.strategy_config_id.to_string(),
+        strategy_id: row.strategy_id,
+        strategy_version: row.strategy_version,
+        as_of: row.as_of,
+        status: row.status,
+        input_kind: row.input_kind,
+        capability: row.capability,
+        audience: row.audience,
+        vendor_snapshot: row.vendor_snapshot,
+        strict_pit: row.strict_pit,
+        strategy_config_sha256: row.strategy_config_sha256,
+        candidate_content_sha256: row.candidate_content_sha256,
+        artifact_manifest_sha256: row.artifact_manifest_sha256,
+        stage5_manifest_sha256: row.stage5_manifest_sha256,
+        action_manifest_sha256: row.action_manifest_sha256,
+        approval_registry_sha256: row.approval_registry_sha256,
+        factor_snapshot_sha256: row.factor_snapshot_sha256,
+        target_snapshot_sha256: row.target_snapshot_sha256,
+        cash_weight: row.cash_weight,
+        error_code: row.error_code,
+        created_at: row.created_at,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+        updated_at: row.updated_at,
+        items: items.into_iter().map(read_item_dto).collect(),
+    }
+}
+
+fn read_list_item_dto(
+    row: crate::repos::owner_beta::OwnerBetaPriceOnlyReadRunRow,
+) -> OwnerBetaPriceOnlyReadListItemDto {
+    OwnerBetaPriceOnlyReadListItemDto {
+        id: row.id.to_string(),
+        job_id: row.job_id.to_string(),
+        strategy_config_id: row.strategy_config_id.to_string(),
+        strategy_id: row.strategy_id,
+        strategy_version: row.strategy_version,
+        as_of: row.as_of,
+        status: row.status,
+        input_kind: row.input_kind,
+        capability: row.capability,
+        audience: row.audience,
+        vendor_snapshot: row.vendor_snapshot,
+        strict_pit: row.strict_pit,
+        strategy_config_sha256: row.strategy_config_sha256,
+        candidate_content_sha256: row.candidate_content_sha256,
+        artifact_manifest_sha256: row.artifact_manifest_sha256,
+        stage5_manifest_sha256: row.stage5_manifest_sha256,
+        action_manifest_sha256: row.action_manifest_sha256,
+        approval_registry_sha256: row.approval_registry_sha256,
+        factor_snapshot_sha256: row.factor_snapshot_sha256,
+        target_snapshot_sha256: row.target_snapshot_sha256,
+        cash_weight: row.cash_weight,
+        error_code: row.error_code,
+        created_at: row.created_at,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+        updated_at: row.updated_at,
+    }
+}
+
+fn read_item_dto(
+    item: crate::repos::owner_beta::OwnerBetaPriceOnlyReadItemRow,
+) -> OwnerBetaPriceOnlyReadItemDto {
+    let reason_codes = item
+        .reason_codes
+        .as_array()
+        .map(|codes| {
+            codes
+                .iter()
+                .filter_map(|code| code.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    OwnerBetaPriceOnlyReadItemDto {
+        instrument_id: item.instrument_id,
+        rank: item.rank,
+        target_weight: item.target_weight,
+        excluded: item.excluded,
+        exclusion_reason: item.exclusion_reason,
+        reason_codes,
+        factors: item.factors_json,
+    }
 }
 
 #[allow(clippy::result_large_err)]

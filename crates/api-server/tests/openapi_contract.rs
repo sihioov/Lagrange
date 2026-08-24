@@ -273,12 +273,25 @@ fn openapi_contract_documents_recommendation_success_shapes() {
         "RESOURCE_NOT_FOUND",
         "RECOMMENDATION_CAPACITY_EXCEEDED",
         "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+        "OWNER_BETA_STRATEGY_UNSUPPORTED",
     ] {
         assert!(
             error_codes.iter().any(|code| code == expected),
             "owner-beta OpenAPI must document {expected}"
         );
     }
+    assert!(
+        schemas["OwnerBetaPriceOnlyReadRun"]["required"]
+            .as_array()
+            .expect("owner-beta detail required fields")
+            .iter()
+            .any(|field| field == "items"),
+        "owner-beta detail must always carry its complete item array"
+    );
+    assert_eq!(
+        schemas["OwnerBetaPriceOnlyReadListItem"]["properties"]["cash_weight"]["pattern"],
+        "^(?:0\\.\\d{6}|1\\.000000)$"
+    );
 }
 
 #[test]

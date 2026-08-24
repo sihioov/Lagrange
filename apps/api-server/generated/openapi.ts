@@ -177,10 +177,28 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** GET /api/v1/recommendations/owner-beta/price-only/runs */
+        get: operations["get__api_v1_recommendations_owner_beta_price_only_runs"];
         put?: never;
         /** POST /api/v1/recommendations/owner-beta/price-only/runs */
         post: operations["post__api_v1_recommendations_owner_beta_price_only_runs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/recommendations/owner-beta/price-only/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/recommendations/owner-beta/price-only/runs/{run_id} */
+        get: operations["get__api_v1_recommendations_owner_beta_price_only_runs__run_id_"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1078,7 +1096,7 @@ export interface components {
             error: components["schemas"]["Error"];
         };
         /** @enum {string} */
-        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
+        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
         Page: {
             items: Record<string, never>[];
             /** @description opaque signed cursor; null when the last page */
@@ -1184,6 +1202,110 @@ export interface components {
             strategy_config_id: string;
             /** @example 2026-01-31 */
             as_of: string;
+        };
+        OwnerBetaPriceOnlyReadItem: {
+            /** @enum {string} */
+            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "138230.KRX" | "152100.KRX" | "148020.KRX" | "305720.KRX" | "278530.KRX" | "292150.KRX" | "360750.KRX";
+            rank?: number | null;
+            target_weight?: string | null;
+            excluded: boolean;
+            /** @enum {string|null} */
+            exclusion_reason?: "SELECTED_TOP_N" | "NOT_SELECTED_BEYOND_TOP_N" | "EXCLUDED_MANDATORY_FACTOR_NULL" | "ALL_CASH_NO_ELIGIBLE" | "WEIGHT_CAPPED_AT_MAX" | "WEIGHT_ROUNDING_RESIDUE_TO_CASH" | "CASH_FLOOR_APPLIED" | "BENCHMARK_HELD" | "TREND_POSITIVE" | "TREND_NEGATIVE_CASH" | "ABSOLUTE_MOMENTUM_PASSED" | "DEFENSIVE_CASH_SELECTED" | "INVERSE_VOL_WEIGHTED" | "NOT_SELECTED_BY_STRATEGY" | null;
+            reason_codes: ("SELECTED_TOP_N" | "NOT_SELECTED_BEYOND_TOP_N" | "EXCLUDED_MANDATORY_FACTOR_NULL" | "ALL_CASH_NO_ELIGIBLE" | "WEIGHT_CAPPED_AT_MAX" | "WEIGHT_ROUNDING_RESIDUE_TO_CASH" | "CASH_FLOOR_APPLIED" | "BENCHMARK_HELD" | "TREND_POSITIVE" | "TREND_NEGATIVE_CASH" | "ABSOLUTE_MOMENTUM_PASSED" | "DEFENSIVE_CASH_SELECTED" | "INVERSE_VOL_WEIGHTED" | "NOT_SELECTED_BY_STRATEGY")[];
+            factors: {
+                [key: string]: string;
+            };
+        };
+        OwnerBetaPriceOnlyReadRun: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            job_id: string;
+            /** Format: uuid */
+            strategy_config_id: string;
+            strategy_id: string;
+            strategy_version: string;
+            /** @example 2026-01-31 */
+            as_of: string;
+            /** @enum {string} */
+            status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+            /** @constant */
+            input_kind: "owner_beta_historical_price_only_v1";
+            /** @constant */
+            capability: "PRICE_RETURN_ONLY";
+            /** @constant */
+            audience: "OWNER_ONLY";
+            /** @constant */
+            vendor_snapshot: true;
+            /** @constant */
+            strict_pit: false;
+            strategy_config_sha256: string;
+            candidate_content_sha256: string;
+            artifact_manifest_sha256: string;
+            stage5_manifest_sha256: string;
+            action_manifest_sha256: string;
+            approval_registry_sha256: string;
+            factor_snapshot_sha256?: string | null;
+            target_snapshot_sha256?: string | null;
+            cash_weight?: string | null;
+            error_code?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** Format: date-time */
+            updated_at: string;
+            items: components["schemas"]["OwnerBetaPriceOnlyReadItem"][];
+        };
+        OwnerBetaPriceOnlyReadListItem: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            job_id: string;
+            /** Format: uuid */
+            strategy_config_id: string;
+            strategy_id: string;
+            strategy_version: string;
+            /** @example 2026-01-31 */
+            as_of: string;
+            /** @enum {string} */
+            status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+            /** @constant */
+            input_kind: "owner_beta_historical_price_only_v1";
+            /** @constant */
+            capability: "PRICE_RETURN_ONLY";
+            /** @constant */
+            audience: "OWNER_ONLY";
+            /** @constant */
+            vendor_snapshot: true;
+            /** @constant */
+            strict_pit: false;
+            strategy_config_sha256: string;
+            candidate_content_sha256: string;
+            artifact_manifest_sha256: string;
+            stage5_manifest_sha256: string;
+            action_manifest_sha256: string;
+            approval_registry_sha256: string;
+            factor_snapshot_sha256?: string | null;
+            target_snapshot_sha256?: string | null;
+            cash_weight?: string | null;
+            error_code?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        OwnerBetaPriceOnlyReadPage: {
+            items: components["schemas"]["OwnerBetaPriceOnlyReadListItem"][];
+            /** @description opaque signed cursor; null when the last page */
+            next_cursor: string | null;
+            has_more: boolean;
         };
         CandidateDatasetPins: {
             /** Format: uuid */
@@ -2334,6 +2456,40 @@ export interface operations {
             503: components["responses"]["Error503"];
         };
     };
+    get__api_v1_recommendations_owner_beta_price_only_runs: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner-beta price-only recommendation history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaPriceOnlyReadPage"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
     post__api_v1_recommendations_owner_beta_price_only_runs: {
         parameters: {
             query?: never;
@@ -2354,6 +2510,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OwnerBetaPriceOnlyRun"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_recommendations_owner_beta_price_only_runs__run_id_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner-beta price-only recommendation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaPriceOnlyReadRun"];
                 };
             };
             400: components["responses"]["Error400"];

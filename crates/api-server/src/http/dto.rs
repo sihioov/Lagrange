@@ -549,6 +549,101 @@ pub struct OwnerBetaPriceOnlyRunDto {
     pub status: &'static str,
 }
 
+/// The owner-beta price-only read model. This is intentionally separate from
+/// [`OwnerBetaPriceOnlyRunDto`], which is the small POST enqueue response.
+/// Read projections contain only the approved public lineage/result fields;
+/// no owner id, request payload, strategy config JSON, provider detail, or
+/// filesystem path is part of this wire type.
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerBetaPriceOnlyReadRunDto {
+    pub id: String,
+    pub job_id: String,
+    pub strategy_config_id: String,
+    pub strategy_id: String,
+    pub strategy_version: String,
+    pub as_of: NaiveDate,
+    pub status: String,
+    pub input_kind: String,
+    pub capability: String,
+    pub audience: String,
+    pub vendor_snapshot: bool,
+    pub strict_pit: bool,
+    pub strategy_config_sha256: String,
+    pub candidate_content_sha256: String,
+    pub artifact_manifest_sha256: String,
+    pub stage5_manifest_sha256: String,
+    pub action_manifest_sha256: String,
+    pub approval_registry_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub factor_snapshot_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_snapshot_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cash_weight: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+    pub items: Vec<OwnerBetaPriceOnlyReadItemDto>,
+}
+
+/// List entries deliberately omit result items. The list schema is distinct
+/// from the detail schema so a client cannot mistake a history page for a
+/// complete target publication.
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerBetaPriceOnlyReadListItemDto {
+    pub id: String,
+    pub job_id: String,
+    pub strategy_config_id: String,
+    pub strategy_id: String,
+    pub strategy_version: String,
+    pub as_of: NaiveDate,
+    pub status: String,
+    pub input_kind: String,
+    pub capability: String,
+    pub audience: String,
+    pub vendor_snapshot: bool,
+    pub strict_pit: bool,
+    pub strategy_config_sha256: String,
+    pub candidate_content_sha256: String,
+    pub artifact_manifest_sha256: String,
+    pub stage5_manifest_sha256: String,
+    pub action_manifest_sha256: String,
+    pub approval_registry_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub factor_snapshot_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_snapshot_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cash_weight: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerBetaPriceOnlyReadItemDto {
+    pub instrument_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rank: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_weight: Option<String>,
+    pub excluded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclusion_reason: Option<String>,
+    pub reason_codes: Vec<String>,
+    pub factors: Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BacktestBody {

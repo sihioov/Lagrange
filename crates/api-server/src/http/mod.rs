@@ -291,7 +291,11 @@ pub fn api_router(state: ApiState) -> Router {
         .route("/recommendations/runs", post(recommendations::create_run))
         .route(
             "/recommendations/owner-beta/price-only/runs",
-            post(owner_beta::create_price_only_run),
+            post(owner_beta::create_price_only_run).get(owner_beta::list_price_only_runs),
+        )
+        .route(
+            "/recommendations/owner-beta/price-only/runs/{run_id}",
+            get(owner_beta::get_price_only_run),
         )
         .route("/recommendations/runs", get(recommendations::list_runs))
         .route(
