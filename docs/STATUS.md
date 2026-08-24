@@ -1619,6 +1619,13 @@ numeric ownership `10001:10001`을 설정하는 단계에서 `EINVAL`로 중단�
 실행환경 제한이며 PASS로 처리하지 않았고, 실제 root/CI 환경에서의 전체 self-test 증거는 남아
 있다.
 
+합성 API와 로컬 Next 서버만 사용하는 전체 Playwright suite도 시도했다. localhost bind는
+샌드박스 밖 재실행으로 통과했지만 Chromium headless shell이 호스트의 `libasound.so.2` 부재로
+기동하지 못해 36건 모두 test body 이전 launch 단계에서 중단됐다. 따라서 브라우저 E2E를
+PASS했다고 보지 않는다. 현재 suite에는 owner-beta 전용 브라우저 시나리오도 없으므로, 필요한
+시스템 라이브러리가 있는 CI/QA에서 기존 suite와 새 owner-beta owner/member·성공/차단 시나리오를
+실행하는 증거가 남아 있다.
+
 이 호스트에는 `DATABASE_URL`이 없으므로 새 DB 통합 테스트와 job-queue publish/recovery
 테스트는 의도된 clean skip이다. 따라서 실제 PostgreSQL에서 RLS 격리, pagination,
 실행일 entitlement, 성공/실패/cancel durable read, claim loss와 audit 동작을 검증했다고
