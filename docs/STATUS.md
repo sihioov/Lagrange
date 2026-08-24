@@ -1626,6 +1626,14 @@ PASS했다고 보지 않는다. 현재 suite에는 owner-beta 전용 브라우�
 시스템 라이브러리가 있는 CI/QA에서 기존 suite와 새 owner-beta owner/member·성공/차단 시나리오를
 실행하는 증거가 남아 있다.
 
+`857e37f`는 그 누락됐던 owner-beta Web E2E fixture와 3개 시나리오를 추가했다. Owner 성공
+화면은 `OWNER_ONLY`·`PRICE_RETURN_ONLY`·vendor snapshot·non-strict PIT와 ETF11 결과를
+확인하고, Member는 제품 정보와 payload를 열거하지 못하며, entitlement 차단 시 Owner 화면은
+계약 라벨만 유지하고 종목 payload를 숨긴다. 합성 list/detail 응답은 실제 Zod 계약 파싱 PASS,
+전체 Playwright discovery는 8파일 39건, Web 단위 18파일 104건·TypeScript·lint·프로덕션
+빌드는 PASS했다. 다만 위 `libasound.so.2` 환경 제한 때문에 새 3건을 포함한 browser test body
+실행 증거는 여전히 CI/QA에 남아 있다.
+
 이 호스트에는 `DATABASE_URL`이 없으므로 새 DB 통합 테스트와 job-queue publish/recovery
 테스트는 의도된 clean skip이다. 따라서 실제 PostgreSQL에서 RLS 격리, pagination,
 실행일 entitlement, 성공/실패/cancel durable read, claim loss와 audit 동작을 검증했다고
