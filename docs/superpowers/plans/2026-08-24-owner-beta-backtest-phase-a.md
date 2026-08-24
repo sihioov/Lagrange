@@ -48,6 +48,37 @@ Wave 1 is parallel because both packages are read-only. Their scopes may overlap
 they own no mutable files. Phase B packages will be added only after the coordinator gate resolves
 their conclusions.
 
+## Coordinator preflight evidence (not an architecture decision)
+
+The coordinator recorded the following source facts while worker launch was blocked. They narrow the
+questions for both workers but do not replace the required independent analyses:
+
+- `tests/golden/robustness/runner.py` defines a deterministic `T`-close target to next-session-open
+  simulation, sells before buys, integer lots, and `KRX_ETF_DEFAULT` v1 costs. It explicitly says
+  this is `lagrange-golden-sim`, not the NautilusTrader engine.
+- `portfolio-model::CostProfile` fixes the currently shipped ETF profile at version 1 and derives
+  execution prices from raw opens with side-specific 10 bps slippage. This is reusable arithmetic,
+  but its source comments still call the values operator-confirmation placeholders.
+- The generic API accepts a free-form `execution_profile` and a fixed-universe `benchmark`, but
+  `job_queue::runner::BacktestPayload` names neither field and deliberately ignores unused payload
+  fields. The child simulator therefore receives neither choice. Tests use both `next_open` and
+  `daily-close-next-open@1`, so no single enforced profile identity exists at this boundary.
+- `nt/backtest-worker/backtest_worker/simulate.py` computes the reported benchmark as equal-weight
+  buy-and-hold of every dataset instrument. It does not consume the API's requested benchmark. A
+  generic result therefore cannot be reused as evidence that the requested owner-beta benchmark was
+  simulated.
+- The generic worker reads registered Curated Parquet and rebuilds a Nautilus catalog. The approved
+  owner-beta value is a nonconstructible `ApprovedHistoricalPriceOnlyArtifact` with exact five pins
+  and in-memory bars; there is no approved conversion or registration seam between them.
+- Each approved artifact bar contains raw and split-adjusted OHLC plus an adjusted close usable by
+  the factor path, but it is date-only and explicitly carries no market-open or market-close
+  timestamp. Any timestamped order/fill/equity contract needs a documented synthetic convention or
+  a date-only result model; it cannot infer a time from `acquired_at`.
+- A target is recomputed and pin-validated for one `as_of` date. The repository has not yet specified
+  the schedule that turns these point targets into a multi-date owner-beta run, nor whether execution
+  and valuation use raw or adjusted prices across a split. Phase B must not choose those semantics by
+  convenience.
+
 ## Worker briefs
 
 ### WP-1 — architecture and reuse boundary
