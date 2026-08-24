@@ -11,7 +11,7 @@ use crate::{
 };
 
 const REGISTRY_SCHEMA_ID: &str = "kis-historical-price-only-beta-approval-registry";
-const REGISTRY_SCHEMA_VERSION: u32 = 1;
+const REGISTRY_SCHEMA_VERSION: u32 = 2;
 const MAX_REGISTRY_BYTES: usize = 256 * 1024;
 const EMBEDDED_REGISTRY: &[u8] = include_bytes!(
     "../../../configs/evidence/kis-historical-price-only-beta-approved-artifacts.json"
@@ -106,6 +106,11 @@ struct Record {
     artifact_manifest_sha256: ContentHash,
     stage5_manifest_sha256: ContentHash,
     action_manifest_sha256: ContentHash,
+    cash_dividend_treatment_id: String,
+    ignored_cash_dividend_row_count: usize,
+    ignored_cash_dividend_rows_sha256: ContentHash,
+    ignored_cash_dividend_source_file_sha256: ContentHash,
+    ignored_cash_dividend_acquired_at: domain::UtcTimestamp,
     artifact_schema_id: String,
     artifact_schema_version: u32,
     audience: String,
@@ -191,7 +196,10 @@ fn fixed_envelope(summary: &HistoricalPriceOnlyArtifactApprovalSummary) -> bool 
         .collect::<Vec<_>>();
     instruments.sort();
     summary.schema_id() == "kis-historical-price-only-beta"
-        && summary.schema_version() == 1
+        && summary.schema_version() == 2
+        && summary.cash_dividend_treatment_id()
+            == crate::HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT
+        && summary.ignored_cash_dividend_row_count() > 0
         && summary.audience() == "OWNER_ONLY"
         && summary.vendor_snapshot()
         && !summary.strict_pit()
@@ -215,6 +223,12 @@ fn record_matches(
     pins_match(record, pins)
         && record.artifact_schema_id == summary.schema_id()
         && record.artifact_schema_version == summary.schema_version()
+        && record.cash_dividend_treatment_id == summary.cash_dividend_treatment_id()
+        && record.ignored_cash_dividend_row_count == summary.ignored_cash_dividend_row_count()
+        && &record.ignored_cash_dividend_rows_sha256 == summary.ignored_cash_dividend_rows_sha256()
+        && &record.ignored_cash_dividend_source_file_sha256
+            == summary.ignored_cash_dividend_source_file_sha256()
+        && record.ignored_cash_dividend_acquired_at == summary.ignored_cash_dividend_acquired_at()
         && record.audience == summary.audience()
         && record.vendor_snapshot == summary.vendor_snapshot()
         && record.strict_pit == summary.strict_pit()
@@ -251,8 +265,16 @@ mod tests {
             artifact_manifest_sha256: hash("artifact"),
             stage5_manifest_sha256: hash("stage5"),
             action_manifest_sha256: hash("action"),
+            cash_dividend_treatment_id: crate::HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT.into(),
+            ignored_cash_dividend_row_count: 1,
+            ignored_cash_dividend_rows_sha256: hash("dividend-rows"),
+            ignored_cash_dividend_source_file_sha256: hash("dividend-file"),
+            ignored_cash_dividend_acquired_at: domain::UtcTimestamp::parse_rfc3339(
+                "2026-08-19T00:00:00Z",
+            )
+            .unwrap(),
             artifact_schema_id: "kis-historical-price-only-beta".into(),
-            artifact_schema_version: 1,
+            artifact_schema_version: 2,
             audience: "OWNER_ONLY".into(),
             vendor_snapshot: true,
             strict_pit: false,
@@ -276,6 +298,36 @@ mod tests {
             stage5_manifest_sha256: record.stage5_manifest_sha256.clone(),
             action_manifest_sha256: record.action_manifest_sha256.clone(),
             approval_registry_sha256: hash("registry"),
+        }
+    }
+
+    fn summary(record: &Record) -> HistoricalPriceOnlyArtifactApprovalSummary {
+        HistoricalPriceOnlyArtifactApprovalSummary {
+            artifact_manifest_sha256: record.artifact_manifest_sha256.clone(),
+            stage5_manifest_sha256: record.stage5_manifest_sha256.clone(),
+            action_manifest_sha256: record.action_manifest_sha256.clone(),
+            cash_dividend_treatment_id: record.cash_dividend_treatment_id.clone(),
+            ignored_cash_dividend_row_count: record.ignored_cash_dividend_row_count,
+            ignored_cash_dividend_rows_sha256: record.ignored_cash_dividend_rows_sha256.clone(),
+            ignored_cash_dividend_source_file_sha256: record
+                .ignored_cash_dividend_source_file_sha256
+                .clone(),
+            ignored_cash_dividend_acquired_at: record.ignored_cash_dividend_acquired_at,
+            schema_id: record.artifact_schema_id.clone(),
+            schema_version: record.artifact_schema_version,
+            audience: record.audience.clone(),
+            vendor_snapshot: record.vendor_snapshot,
+            strict_pit: record.strict_pit,
+            capability: record.capability.clone(),
+            materialization_status: record.materialization_status.clone(),
+            registration_status: record.registration_status.clone(),
+            publication_status: record.publication_status.clone(),
+            range_start: record.range_start,
+            range_end: record.range_end,
+            instruments: record.instruments.clone(),
+            instrument_count: record.instrument_count,
+            session_count: record.session_count,
+            bar_count: record.bar_count,
         }
     }
     #[test]
@@ -306,15 +358,37 @@ mod tests {
     }
 
     #[test]
+    fn every_cash_dividend_treatment_field_is_registry_bound() {
+        let record = record();
+        let pins = pins(&record);
+        let summary = summary(&record);
+        assert!(record_matches(&record, &summary, &pins));
+        for index in 0..5 {
+            let mut changed = record.clone();
+            match index {
+                0 => changed.cash_dividend_treatment_id = "OTHER".into(),
+                1 => changed.ignored_cash_dividend_row_count += 1,
+                2 => changed.ignored_cash_dividend_rows_sha256 = hash("other-rows"),
+                3 => changed.ignored_cash_dividend_source_file_sha256 = hash("other-source"),
+                _ => {
+                    changed.ignored_cash_dividend_acquired_at =
+                        domain::UtcTimestamp::parse_rfc3339("2026-08-20T00:00:00Z").unwrap()
+                }
+            }
+            assert!(!record_matches(&changed, &summary, &pins));
+        }
+    }
+
+    #[test]
     fn zero_and_multiple_records_are_not_approvable() {
         let empty = Registry {
             schema_id: REGISTRY_SCHEMA_ID.into(),
-            schema_version: 1,
+            schema_version: REGISTRY_SCHEMA_VERSION,
             approved_artifacts: Vec::new(),
         };
         let multiple = Registry {
             schema_id: REGISTRY_SCHEMA_ID.into(),
-            schema_version: 1,
+            schema_version: REGISTRY_SCHEMA_VERSION,
             approved_artifacts: vec![record(), record()],
         };
         assert!(matches!(

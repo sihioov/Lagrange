@@ -1,7 +1,6 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준 시각: 2026-08-24 (Asia/Seoul), 기준 트리 `1150700` = `origin/main`,
-작업 브랜치 `audit-project-status` = `fd10488`.**
+**최신 기준 시각: 2026-08-24 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
 당시의 기록이다. **현재 상태는 §0.29(이틀치 발행 달성), §0.30(출시 준비도 실측),
 §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업 순서는 §0.15에 정의돼
@@ -52,6 +51,35 @@ zero-result로 표시하지 않는다. 그 뒤 검증은 ETF11 관련 `dividend`
 canonical ex-date/announcement-time을 증명할 수 없으므로 값을 추측하지 않았다. 따라서
 sealed artifact 생성, 승인 레지스트리 수정, Curated/DB/READY/추천 연결은 모두 미실행이며,
 다음 게이트는 별도 검토된 dividend evidence/mapping 결정이다.
+
+**2026-08-24 historical cash-dividend v2 decision and artifact.** 공식 KIS
+workbook의 배당 sheet와 현재 공식 sample은 `dividend` 응답이 현금배당금/률뿐 아니라
+`stk_divi_rate`, `stk_div_pay_dt`, `odd_pay_dt`를 함께 제공함을 확인했다. KRX는
+주식배당을 주식수·기준가격 조정 사유로 명시한다. 이에 소유자가 위임한 권장안에 따라
+기존 generic daily/Stage4B 경계는 그대로 모든 target dividend를 차단하고, 별도
+`kis-historical-price-only-beta-v2`에만 다음의 좁은 정책을 확정했다.
+
+- 공식 필드 전부를 universe filter 전에 검증한다. 음수·공백·malformed 비율과
+  `stk_divi_rate=0`인데 stock/odd-lot 지급일이 있는 모순은 fail-closed다.
+- 고정 ETF11이고 exact range 안의 `record_date`이며 `stk_divi_rate`가 정확한 수치 0인
+  cash-only 행만 `PRICE_RETURN_ONLY`에서 제외한다. 현금 credit·재투자·total-return
+  factor·추정 ex-date/PIT 시각은 만들지 않는다.
+- 양수 stock dividend와 다른 non-bonus class는 계속 typed blocker다. 관측한 cash-only
+  행은 zero-result가 아니라 treatment ID, 양수 row count, canonical row hash, source-file
+  hash, KSD manifest pin, retrieval time commitment로 후보와 artifact 신원에 포함한다.
+
+network-none/Raw-read-only 재인증 결과는 sessions 1,608, ETF11 bars 17,688,
+bonus actions 0, ignored cash-only dividend 1로 성공했다. 그 row commitment는
+`sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48`다.
+전용 owner-only root에 v2 artifact를 원자적으로 생성하고 Raw 없이 read-only reader로
+재검증했다. candidate pin은
+`sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050`, artifact
+manifest pin은
+`sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67`다.
+상태는 계속 `UNREGISTERED`, `NOT_PUBLISHED`, `ready=false`이며 embedded approval
+registry는 비어 있다. 따라서 다음 게이트는 이 네 개의 immutable pin과 treatment
+commitment를 분리 검토한 뒤 registry record를 커밋·새 이미지로 재빌드하는 작업이다;
+artifact 생성 과정이 자기 승인하지 않았다.
 
 ## 0. 2026-08-19 현재 운영 스냅샷
 
@@ -1557,6 +1585,11 @@ Phase 4도 이연한다. 연속 3개 거래일 무인 성공 전에는 Paper를 
 Member KR, 새 역사 수집·소스, 엄격 PIT·총수익률 주장 또는 실패한 증거의 승격을 허용하지
 않는다. manifest 생성 경로의 자동 자기승인도 계속 금지하며, 분리된 검증이 계약 전부를
 확인한 경우에만 사전 승인된 등록 절차를 진행한다.
+
+위 “non-bonus fail-closed” 결정은 generic daily/Stage4B action mapping에는 그대로
+적용된다. 2026-08-24의 historical-v2 결정은 cash-only dividend를 action으로 매핑한
+것이 아니라, 가격수익률 계산에서 제외된 관측 evidence로 별도 commitment하는 좁은
+후속 결정이며 §4.2-3을 일반적으로 완화하지 않는다.
 
 ### 0.33 소유자 베타 구현 진행과 현재 외부 차단 (2026-08-24)
 

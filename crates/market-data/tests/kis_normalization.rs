@@ -82,6 +82,23 @@ fn fixture(
     (temp, store, entry, stored)
 }
 
+fn valid_dividend_row(symbol: &str) -> Value {
+    json!({
+        "sht_cd": symbol,
+        "record_date": "20260814",
+        "divi_kind": "",
+        "face_val": "5000",
+        "per_sto_divi_amt": "100",
+        "divi_rate": "2.00",
+        "stk_divi_rate": "0.00",
+        "divi_pay_dt": "20260828",
+        "stk_div_pay_dt": "",
+        "odd_pay_dt": "",
+        "stk_kind": "",
+        "high_divi_gb": ""
+    })
+}
+
 fn valid_wires() -> Vec<Wire> {
     let mut wires = Vec::new();
     for symbol in KR_ETF_CORE_SYMBOLS {
@@ -814,14 +831,51 @@ fn nonempty_corporate_actions_fail_closed_without_inventing_dates_or_values() {
             "output1": [{
                 "sht_cd": "069500",
                 "record_date": "20260814",
+                "divi_kind": "",
+                "face_val": "5000",
                 "per_sto_divi_amt": "100",
-                "divi_pay_dt": "20260828"
+                "divi_rate": "2.00",
+                "stk_divi_rate": "0.00",
+                "divi_pay_dt": "20260828",
+                "stk_div_pay_dt": "",
+                "odd_pay_dt": "",
+                "stk_kind": "",
+                "high_divi_gb": ""
             }]
         }))
         .expect("action bytes");
     });
     let error = normalize_kis_envelopes(&source, &stored).expect_err("unsupported action");
     assert!(matches!(error, NormalizeError::UnsupportedAction { .. }));
+}
+
+#[test]
+fn dividend_stock_rate_and_payment_consistency_fail_closed_before_filtering() {
+    for (field, value, expected_field) in [
+        ("stk_divi_rate", json!(""), "stk_divi_rate"),
+        ("stk_divi_rate", json!("malformed"), "stk_divi_rate"),
+        ("stk_divi_rate", json!("-0.01"), "stk_divi_rate"),
+        ("stk_div_pay_dt", json!("20260828"), "stk_div_pay_dt"),
+    ] {
+        let (_temp, _store, source, stored) = fixture(|wires| {
+            let wire = wires
+                .iter_mut()
+                .find(|wire| wire.file_name.contains("dividend"))
+                .unwrap();
+            let mut row = valid_dividend_row("11138K");
+            row[field] = value;
+            wire.bytes = serde_json::to_vec(&json!({"rt_cd":"0", "output1":[row]})).unwrap();
+        });
+        let error = normalize_kis_envelopes(&source, &stored).unwrap_err();
+        assert!(
+            matches!(error,
+                NormalizeError::InvalidField { ref field, .. }
+                    | NormalizeError::MissingField { ref field, .. }
+                    if field == expected_field
+            ),
+            "unexpected dividend validation error: {error:?}"
+        );
+    }
 }
 
 #[test]
@@ -836,8 +890,16 @@ fn official_alphanumeric_ksd_short_code_is_validated_then_filtered() {
             "output1": [{
                 "sht_cd": "11138K",
                 "record_date": "20260814",
+                "divi_kind": "",
+                "face_val": "5000",
                 "per_sto_divi_amt": "100",
-                "divi_pay_dt": "20260828"
+                "divi_rate": "2.00",
+                "stk_divi_rate": "0.00",
+                "divi_pay_dt": "20260828",
+                "stk_div_pay_dt": "",
+                "odd_pay_dt": "",
+                "stk_kind": "",
+                "high_divi_gb": ""
             }]
         }))
         .expect("official alphanumeric action bytes");
@@ -959,8 +1021,16 @@ fn documented_blank_secondary_action_dates_are_validated_then_filtered() {
                 json!({
                     "sht_cd": "000001",
                     "record_date": "20260814",
+                    "divi_kind": "",
+                    "face_val": "5000",
+                    "per_sto_divi_amt": "100",
+                    "divi_rate": "2.00",
+                    "stk_divi_rate": "0.00",
                     "divi_pay_dt": "",
-                    "per_sto_divi_amt": "100"
+                    "stk_div_pay_dt": "",
+                    "odd_pay_dt": "",
+                    "stk_kind": "",
+                    "high_divi_gb": ""
                 }),
             ),
             (

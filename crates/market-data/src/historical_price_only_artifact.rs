@@ -55,24 +55,29 @@ pub struct VerifiedHistoricalPriceOnlyArtifact {
 /// pin and it conveys neither registration nor publication authority.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HistoricalPriceOnlyArtifactApprovalSummary {
-    artifact_manifest_sha256: ContentHash,
-    stage5_manifest_sha256: ContentHash,
-    action_manifest_sha256: ContentHash,
-    schema_id: String,
-    schema_version: u32,
-    audience: String,
-    vendor_snapshot: bool,
-    strict_pit: bool,
-    capability: String,
-    materialization_status: String,
-    registration_status: String,
-    publication_status: String,
-    range_start: TradingDate,
-    range_end: TradingDate,
-    instruments: Vec<String>,
-    instrument_count: usize,
-    session_count: usize,
-    bar_count: usize,
+    pub(crate) artifact_manifest_sha256: ContentHash,
+    pub(crate) stage5_manifest_sha256: ContentHash,
+    pub(crate) action_manifest_sha256: ContentHash,
+    pub(crate) cash_dividend_treatment_id: String,
+    pub(crate) ignored_cash_dividend_row_count: usize,
+    pub(crate) ignored_cash_dividend_rows_sha256: ContentHash,
+    pub(crate) ignored_cash_dividend_source_file_sha256: ContentHash,
+    pub(crate) ignored_cash_dividend_acquired_at: UtcTimestamp,
+    pub(crate) schema_id: String,
+    pub(crate) schema_version: u32,
+    pub(crate) audience: String,
+    pub(crate) vendor_snapshot: bool,
+    pub(crate) strict_pit: bool,
+    pub(crate) capability: String,
+    pub(crate) materialization_status: String,
+    pub(crate) registration_status: String,
+    pub(crate) publication_status: String,
+    pub(crate) range_start: TradingDate,
+    pub(crate) range_end: TradingDate,
+    pub(crate) instruments: Vec<String>,
+    pub(crate) instrument_count: usize,
+    pub(crate) session_count: usize,
+    pub(crate) bar_count: usize,
 }
 
 impl HistoricalPriceOnlyArtifactApprovalSummary {
@@ -86,6 +91,26 @@ impl HistoricalPriceOnlyArtifactApprovalSummary {
 
     pub fn action_manifest_sha256(&self) -> &ContentHash {
         &self.action_manifest_sha256
+    }
+
+    pub fn cash_dividend_treatment_id(&self) -> &str {
+        &self.cash_dividend_treatment_id
+    }
+
+    pub const fn ignored_cash_dividend_row_count(&self) -> usize {
+        self.ignored_cash_dividend_row_count
+    }
+
+    pub fn ignored_cash_dividend_rows_sha256(&self) -> &ContentHash {
+        &self.ignored_cash_dividend_rows_sha256
+    }
+
+    pub fn ignored_cash_dividend_source_file_sha256(&self) -> &ContentHash {
+        &self.ignored_cash_dividend_source_file_sha256
+    }
+
+    pub const fn ignored_cash_dividend_acquired_at(&self) -> UtcTimestamp {
+        self.ignored_cash_dividend_acquired_at
     }
 
     pub fn schema_id(&self) -> &str {
@@ -330,7 +355,7 @@ fn read_historical_price_only_artifact_with_expected(
         Some(0o700),
     )?;
     ops.after_open(ArtifactReadStage::Control);
-    let (version_fd, version_stat) = open_directory_at(&control_fd, b"v1", owner, Some(0o700))?;
+    let (version_fd, version_stat) = open_directory_at(&control_fd, b"v2", owner, Some(0o700))?;
     ops.after_open(ArtifactReadStage::Version);
 
     let candidate_name = candidate_directory_name(candidate_content_sha256)?;
@@ -399,7 +424,7 @@ fn read_historical_price_only_artifact_with_expected(
         b"kis-historical-price-only-beta",
         &stat_snapshot(&control_stat),
     )?;
-    revalidate_named_identity(&control_fd, b"v1", &stat_snapshot(&version_stat))?;
+    revalidate_named_identity(&control_fd, b"v2", &stat_snapshot(&version_stat))?;
     revalidate_named_identity(
         &version_fd,
         candidate_name.as_bytes(),
@@ -408,7 +433,7 @@ fn read_historical_price_only_artifact_with_expected(
 
     let path = operator_root
         .join("kis-historical-price-only-beta")
-        .join("v1")
+        .join("v2")
         .join(candidate_name);
     Ok(VerifiedHistoricalPriceOnlyArtifact {
         path,
@@ -489,7 +514,7 @@ fn write_historical_price_only_artifact_with_ops(
     let (control_fd, control_stat) =
         open_or_create_directory_at(root.fd(), b"kis-historical-price-only-beta", owner)?;
     ops.checkpoint(ArtifactWriteStage::Control)?;
-    let (version_fd, version_stat) = open_or_create_directory_at(&control_fd, b"v1", owner)?;
+    let (version_fd, version_stat) = open_or_create_directory_at(&control_fd, b"v2", owner)?;
     ops.checkpoint(ArtifactWriteStage::Version)?;
 
     let staging = create_staging_directory(&version_fd, owner)?;
@@ -517,7 +542,7 @@ fn write_historical_price_only_artifact_with_ops(
     ) {
         return fail_before_publish(&version_fd, &staging, Some(&written), error);
     }
-    if let Err(error) = revalidate_named_identity(&control_fd, b"v1", &stat_snapshot(&version_stat))
+    if let Err(error) = revalidate_named_identity(&control_fd, b"v2", &stat_snapshot(&version_stat))
     {
         return fail_before_publish(&version_fd, &staging, Some(&written), error);
     }
@@ -1481,6 +1506,9 @@ fn validate_candidate(
         || candidate.row_count() != 17688
         || candidate.source_file_count() != 187
         || candidate.action_file_count() != 7
+        || candidate.ignored_cash_dividends().treatment_id()
+            != crate::HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT
+        || candidate.ignored_cash_dividends().row_count() == 0
     {
         return Err(HistoricalPriceOnlyArtifactError::InvalidCandidate);
     }
@@ -1545,6 +1573,11 @@ struct KsdDto {
     batch_id: BatchId,
     manifest_sha256: ContentHash,
     file_count: usize,
+    cash_dividend_treatment_id: String,
+    ignored_cash_dividend_row_count: usize,
+    ignored_cash_dividend_rows_sha256: ContentHash,
+    ignored_cash_dividend_source_file_sha256: ContentHash,
+    ignored_cash_dividend_acquired_at: UtcTimestamp,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -1709,6 +1742,14 @@ impl Manifest {
             artifact_manifest_sha256: self.manifest_sha256.clone(),
             stage5_manifest_sha256: self.stage5.manifest_sha256.clone(),
             action_manifest_sha256: self.ksd.manifest_sha256.clone(),
+            cash_dividend_treatment_id: self.ksd.cash_dividend_treatment_id.clone(),
+            ignored_cash_dividend_row_count: self.ksd.ignored_cash_dividend_row_count,
+            ignored_cash_dividend_rows_sha256: self.ksd.ignored_cash_dividend_rows_sha256.clone(),
+            ignored_cash_dividend_source_file_sha256: self
+                .ksd
+                .ignored_cash_dividend_source_file_sha256
+                .clone(),
+            ignored_cash_dividend_acquired_at: self.ksd.ignored_cash_dividend_acquired_at,
             schema_id: self.schema_id.clone(),
             schema_version: self.schema_version,
             audience: self.audience.clone(),
@@ -1771,8 +1812,8 @@ fn project_historical_price_only_artifact(
     instruments.sort();
     let unsigned = UnsignedManifest {
         schema_id: "kis-historical-price-only-beta".into(),
-        schema_version: 1,
-        contract: "PRICE_RETURN_ONLY".into(),
+        schema_version: 2,
+        contract: crate::HISTORICAL_PRICE_ONLY_BETA_CONTRACT.into(),
         materializer_version: HISTORICAL_PRICE_ONLY_MATERIALIZER_VERSION.into(),
         candidate_content_sha256: candidate.content_hash().clone(),
         audience: "OWNER_ONLY".into(),
@@ -1809,6 +1850,20 @@ fn project_historical_price_only_artifact(
             batch_id: candidate.action_batch_id(),
             manifest_sha256: candidate.action_manifest_hash().clone(),
             file_count: 7,
+            cash_dividend_treatment_id: candidate
+                .ignored_cash_dividends()
+                .treatment_id()
+                .to_owned(),
+            ignored_cash_dividend_row_count: candidate.ignored_cash_dividends().row_count(),
+            ignored_cash_dividend_rows_sha256: candidate
+                .ignored_cash_dividends()
+                .rows_sha256()
+                .clone(),
+            ignored_cash_dividend_source_file_sha256: candidate
+                .ignored_cash_dividends()
+                .source_file_sha256()
+                .clone(),
+            ignored_cash_dividend_acquired_at: candidate.ignored_cash_dividends().acquired_at(),
         },
         sessions: candidate
             .session_provenance()
@@ -1889,8 +1944,8 @@ fn validate_manifest_bytes(
     let u = manifest.unsigned();
     if &u.candidate_content_sha256 != expected_candidate_hash
         || u.schema_id != "kis-historical-price-only-beta"
-        || u.schema_version != 1
-        || u.contract != "PRICE_RETURN_ONLY"
+        || u.schema_version != 2
+        || u.contract != crate::HISTORICAL_PRICE_ONLY_BETA_CONTRACT
         || u.materializer_version != HISTORICAL_PRICE_ONLY_MATERIALIZER_VERSION
         || u.audience != "OWNER_ONLY"
         || !u.vendor_snapshot
@@ -1909,6 +1964,8 @@ fn validate_manifest_bytes(
         || u.stage5.file_count != 187
         || u.stage5.files.len() != 187
         || u.ksd.file_count != 7
+        || u.ksd.cash_dividend_treatment_id != crate::HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT
+        || u.ksd.ignored_cash_dividend_row_count == 0
     {
         return Err(HistoricalPriceOnlyArtifactError::InvalidArtifact);
     }
@@ -2254,7 +2311,7 @@ mod tests {
         std::fs::set_permissions(&operator_root, std::fs::Permissions::from_mode(0o750)).unwrap();
         let candidate_dir = operator_root
             .join("kis-historical-price-only-beta")
-            .join("v1")
+            .join("v2")
             .join(format!(
                 "candidate-sha256={}",
                 candidate
@@ -2268,7 +2325,7 @@ mod tests {
             operator_root.join("kis-historical-price-only-beta"),
             operator_root
                 .join("kis-historical-price-only-beta")
-                .join("v1"),
+                .join("v2"),
             candidate_dir.clone(),
         ] {
             std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -2291,7 +2348,7 @@ mod tests {
     ) -> PathBuf {
         operator_root
             .join("kis-historical-price-only-beta")
-            .join("v1")
+            .join("v2")
             .join(format!(
                 "candidate-sha256={}",
                 candidate
@@ -2397,6 +2454,44 @@ mod tests {
     }
 
     #[test]
+    fn cash_dividend_treatment_fields_are_manifest_bound() {
+        let candidate = crate::historical_price_only::artifact_test_candidate();
+        let artifact = project_historical_price_only_artifact(&candidate).unwrap();
+        let manifest: Manifest = serde_json::from_slice(&artifact.manifest_json).unwrap();
+        for index in 0..5 {
+            let mut unsigned = manifest.unsigned();
+            match index {
+                0 => unsigned.ksd.cash_dividend_treatment_id = "OTHER".into(),
+                1 => unsigned.ksd.ignored_cash_dividend_row_count = 0,
+                2 => {
+                    unsigned.ksd.ignored_cash_dividend_rows_sha256 =
+                        ContentHash::from_bytes(b"other-rows")
+                }
+                3 => {
+                    unsigned.ksd.ignored_cash_dividend_source_file_sha256 =
+                        ContentHash::from_bytes(b"other-source")
+                }
+                _ => {
+                    unsigned.ksd.ignored_cash_dividend_acquired_at =
+                        UtcTimestamp::parse_rfc3339("2026-08-20T00:00:00Z").unwrap()
+                }
+            }
+            let resealed = reseal_manifest(unsigned);
+            assert_ne!(resealed, artifact.manifest_json);
+            if index < 2 {
+                assert!(
+                    validate_historical_price_only_artifact_bytes(
+                        candidate.content_hash(),
+                        &artifact.bars_ndjson,
+                        &resealed,
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn terminal_newline_is_semantic_even_when_every_digest_is_resealed() {
         let candidate = crate::historical_price_only::artifact_test_candidate();
         let artifact = project_historical_price_only_artifact(&candidate).unwrap();
@@ -2443,8 +2538,17 @@ mod tests {
                 artifact_manifest_sha256: ContentHash::from_bytes(b"manifest"),
                 stage5_manifest_sha256: ContentHash::from_bytes(b"stage5"),
                 action_manifest_sha256: ContentHash::from_bytes(b"action"),
+                cash_dividend_treatment_id: crate::HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT
+                    .into(),
+                ignored_cash_dividend_row_count: 1,
+                ignored_cash_dividend_rows_sha256: ContentHash::from_bytes(b"dividend-rows"),
+                ignored_cash_dividend_source_file_sha256: ContentHash::from_bytes(b"dividend-file"),
+                ignored_cash_dividend_acquired_at: UtcTimestamp::parse_rfc3339(
+                    "2026-08-19T00:00:00Z",
+                )
+                .unwrap(),
                 schema_id: "kis-historical-price-only-beta".into(),
-                schema_version: 1,
+                schema_version: 2,
                 audience: "OWNER_ONLY".into(),
                 vendor_snapshot: true,
                 strict_pit: false,
@@ -2487,7 +2591,7 @@ mod tests {
             verified.path(),
             &operator_root
                 .join("kis-historical-price-only-beta")
-                .join("v1")
+                .join("v2")
                 .join(format!(
                     "candidate-sha256={}",
                     candidate
@@ -2511,7 +2615,16 @@ mod tests {
             candidate.action_manifest_hash()
         );
         assert_eq!(summary.schema_id(), "kis-historical-price-only-beta");
-        assert_eq!(summary.schema_version(), 1);
+        assert_eq!(summary.schema_version(), 2);
+        assert_eq!(
+            summary.cash_dividend_treatment_id(),
+            crate::HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT
+        );
+        assert_eq!(summary.ignored_cash_dividend_row_count(), 1);
+        assert_eq!(
+            summary.ignored_cash_dividend_rows_sha256(),
+            candidate.ignored_cash_dividends().rows_sha256()
+        );
         assert_eq!(summary.audience(), "OWNER_ONLY");
         assert!(summary.vendor_snapshot());
         assert!(!summary.strict_pit());
@@ -2711,7 +2824,7 @@ mod tests {
         ));
         let version = operator_root
             .join("kis-historical-price-only-beta")
-            .join("v1");
+            .join("v2");
         assert_eq!(std::fs::read_dir(&version).unwrap().count(), 0);
     }
 
@@ -2736,7 +2849,7 @@ mod tests {
         ));
         let version = operator_root
             .join("kis-historical-price-only-beta")
-            .join("v1");
+            .join("v2");
         assert_eq!(std::fs::read_dir(version).unwrap().count(), 0);
     }
 
@@ -2756,7 +2869,7 @@ mod tests {
             action: std::sync::Mutex::new(Some(Box::new(move || {
                 let version = action_root
                     .join("kis-historical-price-only-beta")
-                    .join("v1");
+                    .join("v2");
                 let stage = std::fs::read_dir(&version)
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
@@ -2781,7 +2894,7 @@ mod tests {
         assert!(!fixture_candidate_dir(&operator_root, &candidate).exists());
         let version = operator_root
             .join("kis-historical-price-only-beta")
-            .join("v1");
+            .join("v2");
         let stage = std::fs::read_dir(version)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -2817,7 +2930,7 @@ mod tests {
                 action: std::sync::Mutex::new(Some(Box::new(move || {
                     let version = action_root
                         .join("kis-historical-price-only-beta")
-                        .join("v1");
+                        .join("v2");
                     let stage = std::fs::read_dir(&version)
                         .unwrap()
                         .map(|entry| entry.unwrap().path())
@@ -2851,7 +2964,7 @@ mod tests {
             assert!(saved.exists());
             let version = operator_root
                 .join("kis-historical-price-only-beta")
-                .join("v1");
+                .join("v2");
             let stage = std::fs::read_dir(version)
                 .unwrap()
                 .map(|entry| entry.unwrap().path())
@@ -2886,7 +2999,7 @@ mod tests {
             action: std::sync::Mutex::new(Some(Box::new(move || {
                 let version = action_root
                     .join("kis-historical-price-only-beta")
-                    .join("v1");
+                    .join("v2");
                 let stage = std::fs::read_dir(&version)
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
@@ -2916,7 +3029,7 @@ mod tests {
         assert!(!fixture_candidate_dir(&operator_root, &candidate).exists());
         let version = operator_root
             .join("kis-historical-price-only-beta")
-            .join("v1");
+            .join("v2");
         let stage = std::fs::read_dir(version)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -2958,7 +3071,7 @@ mod tests {
         );
         let version = operator_root
             .join("kis-historical-price-only-beta")
-            .join("v1");
+            .join("v2");
         assert_eq!(std::fs::read_dir(version).unwrap().count(), 1);
     }
 
@@ -3009,7 +3122,7 @@ mod tests {
         ));
         let version = operator_root
             .join("kis-historical-price-only-beta")
-            .join("v1");
+            .join("v2");
         assert_eq!(std::fs::read_dir(version).unwrap().count(), 0);
     }
 
@@ -3051,7 +3164,7 @@ mod tests {
         );
         let version = operator_root
             .join("kis-historical-price-only-beta")
-            .join("v1");
+            .join("v2");
         assert_eq!(std::fs::read_dir(version).unwrap().count(), 1);
     }
 
@@ -3072,7 +3185,7 @@ mod tests {
             if substitute_version {
                 std::fs::create_dir(&control).unwrap();
                 std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o700)).unwrap();
-                symlink(&target, control.join("v1")).unwrap();
+                symlink(&target, control.join("v2")).unwrap();
             } else {
                 symlink(&target, &control).unwrap();
             }
@@ -3095,7 +3208,7 @@ mod tests {
                 .unwrap();
             let (candidate, _) = artifact();
             let control = operator_root.join("kis-historical-price-only-beta");
-            let version = control.join("v1");
+            let version = control.join("v2");
             std::fs::create_dir_all(&version).unwrap();
             std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o700)).unwrap();
             std::fs::set_permissions(&version, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -3142,7 +3255,7 @@ mod tests {
                 action: std::sync::Mutex::new(Some(Box::new(move || {
                     let version = action_root
                         .join("kis-historical-price-only-beta")
-                        .join("v1");
+                        .join("v2");
                     let stage = std::fs::read_dir(&version)
                         .unwrap()
                         .map(|entry| entry.unwrap().path())
@@ -3294,7 +3407,7 @@ mod tests {
 
         for relative in [
             PathBuf::from("kis-historical-price-only-beta"),
-            PathBuf::from("kis-historical-price-only-beta/v1"),
+            PathBuf::from("kis-historical-price-only-beta/v2"),
         ] {
             let (_root, candidate, operator_root) = write_fixture();
             let path = operator_root.join(relative);

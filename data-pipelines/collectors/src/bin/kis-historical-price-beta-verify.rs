@@ -105,7 +105,9 @@ fn print_success(verified: &HistoricalPriceOnlyBetaInput) {
         "KIS_HISTORICAL_PRICE_BETA_VERIFY status=ok contract={} range={}..{} \
          source_batch_id={} source_manifest_sha256={} source_files={} \
          action_batch_id={} action_manifest_sha256={} action_files={} \
-         sessions={} instruments=11 bars={} actions={} audience=OWNER_ONLY \
+         sessions={} instruments=11 bars={} bonus_actions={} \
+         cash_dividend_treatment={} ignored_cash_dividends={} \
+         ignored_cash_dividend_rows_sha256={} audience=OWNER_ONLY \
          vendor_snapshot=true strict_pit=false intended_capability=PRICE_RETURN_ONLY \
          materialized=false bonus_adjustment=NOT_APPLIED ready=false",
         HISTORICAL_PRICE_ONLY_BETA_CONTRACT,
@@ -120,6 +122,9 @@ fn print_success(verified: &HistoricalPriceOnlyBetaInput) {
         verified.sessions().len(),
         verified.bars().len(),
         verified.actions().len(),
+        verified.ignored_cash_dividends().treatment_id(),
+        verified.ignored_cash_dividends().row_count(),
+        verified.ignored_cash_dividends().rows_sha256(),
     );
 }
 

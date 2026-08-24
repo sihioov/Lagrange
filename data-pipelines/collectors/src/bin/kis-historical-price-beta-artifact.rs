@@ -256,8 +256,15 @@ fn execute_materialize(args: MaterializeArgs) -> Result<String, Failure> {
 
     Ok(materialize_success_line(
         verified.candidate_content_sha256(),
+        verified.approval_summary().artifact_manifest_sha256(),
         &args.stage5_manifest_sha256,
         &args.action_manifest_sha256,
+        verified
+            .approval_summary()
+            .ignored_cash_dividend_row_count(),
+        verified
+            .approval_summary()
+            .ignored_cash_dividend_rows_sha256(),
     ))
 }
 
@@ -265,7 +272,16 @@ fn execute_check(args: CheckArgs) -> Result<String, Failure> {
     let verified =
         read_historical_price_only_artifact(&args.artifact_root, &args.candidate_content_sha256)
             .map_err(|error| Failure::new(Operation::Check, map_artifact_error(error)))?;
-    Ok(check_success_line(verified.candidate_content_sha256()))
+    Ok(check_success_line(
+        verified.candidate_content_sha256(),
+        verified.approval_summary().artifact_manifest_sha256(),
+        verified
+            .approval_summary()
+            .ignored_cash_dividend_row_count(),
+        verified
+            .approval_summary()
+            .ignored_cash_dividend_rows_sha256(),
+    ))
 }
 
 #[cfg(not(unix))]
@@ -356,27 +372,43 @@ fn resolve_optional_directory(path: &Path) -> Result<Option<ResolvedDirectory>, 
 
 fn materialize_success_line(
     candidate_content_sha256: &ContentHash,
+    artifact_manifest_sha256: &ContentHash,
     stage5_manifest_sha256: &ContentHash,
     action_manifest_sha256: &ContentHash,
+    ignored_cash_dividend_row_count: usize,
+    ignored_cash_dividend_rows_sha256: &ContentHash,
 ) -> String {
     format!(
-        "HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=materialize candidate_content_sha256={} stage5_manifest_sha256={} action_manifest_sha256={} instrument_count={} session_count={} bar_count={} raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED",
+        "HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=materialize candidate_content_sha256={} artifact_manifest_sha256={} stage5_manifest_sha256={} action_manifest_sha256={} instrument_count={} session_count={} bar_count={} cash_dividend_treatment={} ignored_cash_dividends={} ignored_cash_dividend_rows_sha256={} raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED",
         candidate_content_sha256.as_str(),
+        artifact_manifest_sha256.as_str(),
         stage5_manifest_sha256.as_str(),
         action_manifest_sha256.as_str(),
         INSTRUMENT_COUNT,
         SESSION_COUNT,
         BAR_COUNT,
+        market_data::HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT,
+        ignored_cash_dividend_row_count,
+        ignored_cash_dividend_rows_sha256,
     )
 }
 
-fn check_success_line(candidate_content_sha256: &ContentHash) -> String {
+fn check_success_line(
+    candidate_content_sha256: &ContentHash,
+    artifact_manifest_sha256: &ContentHash,
+    ignored_cash_dividend_row_count: usize,
+    ignored_cash_dividend_rows_sha256: &ContentHash,
+) -> String {
     format!(
-        "HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256={} instrument_count={} session_count={} bar_count={} raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED",
+        "HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256={} artifact_manifest_sha256={} instrument_count={} session_count={} bar_count={} cash_dividend_treatment={} ignored_cash_dividends={} ignored_cash_dividend_rows_sha256={} raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED",
         candidate_content_sha256.as_str(),
+        artifact_manifest_sha256.as_str(),
         INSTRUMENT_COUNT,
         SESSION_COUNT,
         BAR_COUNT,
+        market_data::HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT,
+        ignored_cash_dividend_row_count,
+        ignored_cash_dividend_rows_sha256,
     )
 }
 
@@ -651,7 +683,7 @@ mod tests {
         assert!(std::fs::read_dir(&missing).unwrap().next().is_none());
 
         let corrupt = temp.path().join("corrupt");
-        let version = corrupt.join("kis-historical-price-only-beta").join("v1");
+        let version = corrupt.join("kis-historical-price-only-beta").join("v2");
         std::fs::create_dir_all(&version).unwrap();
         std::fs::write(version.join("unexpected"), b"corrupt").unwrap();
         let before = std::fs::read_dir(&corrupt)
@@ -682,22 +714,29 @@ mod tests {
         let candidate = ContentHash::parse(&hash('c')).unwrap();
         let stage5 = ContentHash::parse(&hash('a')).unwrap();
         let action = ContentHash::parse(&hash('b')).unwrap();
-        let materialize = materialize_success_line(&candidate, &stage5, &action);
+        let dividend_rows = ContentHash::parse(&hash('d')).unwrap();
+        let artifact = ContentHash::parse(&hash('e')).unwrap();
+        let materialize =
+            materialize_success_line(&candidate, &artifact, &stage5, &action, 3, &dividend_rows);
         assert_eq!(
             materialize,
             format!(
-                "HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=materialize candidate_content_sha256={} stage5_manifest_sha256={} action_manifest_sha256={} instrument_count=11 session_count=1608 bar_count=17688 raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED",
+                "HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=materialize candidate_content_sha256={} artifact_manifest_sha256={} stage5_manifest_sha256={} action_manifest_sha256={} instrument_count=11 session_count=1608 bar_count=17688 cash_dividend_treatment=CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1 ignored_cash_dividends=3 ignored_cash_dividend_rows_sha256={} raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED",
                 candidate.as_str(),
+                artifact.as_str(),
                 stage5.as_str(),
                 action.as_str(),
+                dividend_rows.as_str(),
             )
         );
-        let check = check_success_line(&candidate);
+        let check = check_success_line(&candidate, &artifact, 3, &dividend_rows);
         assert_eq!(
             check,
             format!(
-                "HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256={} instrument_count=11 session_count=1608 bar_count=17688 raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED",
+                "HISTORICAL_PRICE_BETA_ARTIFACT status=ok operation=check candidate_content_sha256={} artifact_manifest_sha256={} instrument_count=11 session_count=1608 bar_count=17688 cash_dividend_treatment=CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1 ignored_cash_dividends=3 ignored_cash_dividend_rows_sha256={} raw_authenticity=NOT_REAUTHENTICATED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED",
                 candidate.as_str(),
+                artifact.as_str(),
+                dividend_rows.as_str(),
             )
         );
         assert!(materialize.contains("raw_authenticity=PINNED_RAW_VERIFIED_IN_PROCESS"));

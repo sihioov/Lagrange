@@ -16,7 +16,8 @@ use crate::contract::{RequestMetadata, ResponseKind};
 use crate::curate::Capability;
 use crate::providers::kis::KR_ETF_CORE_SYMBOLS;
 use crate::range_to_canonical::{
-    HISTORICAL_PRICE_ONLY_BETA_CONTRACT, HistoricalPriceOnlyBetaInput,
+    HISTORICAL_PRICE_ONLY_BETA_CONTRACT, HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT,
+    HistoricalPriceOnlyBetaInput, HistoricalPriceOnlyIgnoredCashDividendEvidence,
     HistoricalPriceOnlySessionWitness, REQUIRED_ACTION_KINDS, RangeAction,
     RangeCanonicalBarCandidate,
 };
@@ -24,7 +25,7 @@ use crate::storage::FileEntry;
 
 /// Version of the explicit, non-persisted candidate representation.
 pub const HISTORICAL_PRICE_ONLY_MATERIALIZER_VERSION: &str =
-    "kis-historical-price-only-materializer-v1";
+    "kis-historical-price-only-materializer-v2";
 /// Cumulative reciprocal split-factor scale.
 pub const HISTORICAL_PRICE_ONLY_FACTOR_SCALE: u8 = 8;
 /// Canonical adjusted-price scale.
@@ -147,6 +148,7 @@ pub struct HistoricalPriceOnlyCandidate {
     action_batch_id: BatchId,
     action_manifest_hash: ContentHash,
     action_file_count: usize,
+    ignored_cash_dividends: HistoricalPriceOnlyIgnoredCashDividendEvidence,
     sessions: Vec<HistoricalPriceOnlySessionProvenance>,
     bonus_evidence: Vec<HistoricalPriceOnlyBonusEvidence>,
     bars: Vec<HistoricalPriceOnlyBar>,
@@ -185,6 +187,10 @@ impl HistoricalPriceOnlyCandidate {
 
     pub fn action_file_count(&self) -> usize {
         self.action_file_count
+    }
+
+    pub fn ignored_cash_dividends(&self) -> &HistoricalPriceOnlyIgnoredCashDividendEvidence {
+        &self.ignored_cash_dividends
     }
 
     pub fn session_provenance(&self) -> &[HistoricalPriceOnlySessionProvenance] {
@@ -281,6 +287,7 @@ pub fn materialize_historical_price_only_beta(
         action_batch_id: input.action_batch_id(),
         action_manifest_hash: input.action_manifest_hash().clone(),
         action_file_count: input.action_file_count(),
+        ignored_cash_dividends: input.ignored_cash_dividends().clone(),
         sessions,
         bars: input.bars().to_vec(),
         actions: input.actions().to_vec(),
@@ -299,6 +306,7 @@ struct MaterializationParts {
     action_batch_id: BatchId,
     action_manifest_hash: ContentHash,
     action_file_count: usize,
+    ignored_cash_dividends: HistoricalPriceOnlyIgnoredCashDividendEvidence,
     sessions: Vec<HistoricalPriceOnlySessionProvenance>,
     bars: Vec<RangeCanonicalBarCandidate>,
     actions: Vec<RangeAction>,
@@ -323,6 +331,7 @@ fn materialize_parts(
         action_batch_id: parts.action_batch_id,
         action_manifest_hash: parts.action_manifest_hash,
         action_file_count: parts.action_file_count,
+        ignored_cash_dividends: parts.ignored_cash_dividends,
         sessions: parts.sessions,
         bonus_evidence,
         bars,
@@ -355,6 +364,13 @@ fn validate_parts(parts: &MaterializationParts) -> Result<(), HistoricalPriceOnl
     if parts.action_file_count != REQUIRED_ACTION_KINDS.len() {
         return Err(input_mismatch(
             "action evidence does not contain exactly seven verified files",
+        ));
+    }
+    if parts.ignored_cash_dividends.treatment_id() != HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT
+        || parts.ignored_cash_dividends.row_count() == 0
+    {
+        return Err(input_mismatch(
+            "cash-dividend treatment evidence is missing or invalid",
         ));
     }
     let expected_rows = parts
@@ -793,6 +809,11 @@ struct CanonicalRepresentation<'a> {
     action_batch_id: BatchId,
     action_manifest_hash: &'a ContentHash,
     action_file_count: usize,
+    cash_dividend_treatment_id: &'a str,
+    ignored_cash_dividend_row_count: usize,
+    ignored_cash_dividend_rows_sha256: &'a ContentHash,
+    ignored_cash_dividend_source_file_sha256: &'a ContentHash,
+    ignored_cash_dividend_acquired_at: UtcTimestamp,
     session_count: usize,
     row_count: usize,
     sessions: Vec<CanonicalSession<'a>>,
@@ -889,6 +910,11 @@ fn canonical_representation<'a>(
         action_batch_id: parts.action_batch_id,
         action_manifest_hash: &parts.action_manifest_hash,
         action_file_count: parts.action_file_count,
+        cash_dividend_treatment_id: parts.ignored_cash_dividends.treatment_id(),
+        ignored_cash_dividend_row_count: parts.ignored_cash_dividends.row_count(),
+        ignored_cash_dividend_rows_sha256: parts.ignored_cash_dividends.rows_sha256(),
+        ignored_cash_dividend_source_file_sha256: parts.ignored_cash_dividends.source_file_sha256(),
+        ignored_cash_dividend_acquired_at: parts.ignored_cash_dividends.acquired_at(),
         session_count: parts.sessions.len(),
         row_count: bars.len(),
         sessions: parts
@@ -1005,6 +1031,12 @@ pub(crate) fn artifact_test_candidate() -> HistoricalPriceOnlyCandidate {
         action_batch_id: id(2),
         action_manifest_hash: h("actions"),
         action_file_count: 7,
+        ignored_cash_dividends: HistoricalPriceOnlyIgnoredCashDividendEvidence::new(
+            1,
+            h("ignored-cash-dividend-rows"),
+            h("dividend-source-file"),
+            timestamp,
+        ),
         sessions,
         bonus_evidence: Vec::new(),
         bars,

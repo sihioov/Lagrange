@@ -86,6 +86,12 @@ fn parts(dates: &[&str], actions: Vec<RangeAction>) -> MaterializationParts {
         action_batch_id: batch(2),
         action_manifest_hash: hash("action-manifest"),
         action_file_count: REQUIRED_ACTION_KINDS.len(),
+        ignored_cash_dividends: HistoricalPriceOnlyIgnoredCashDividendEvidence::new(
+            1,
+            hash("ignored-cash-dividend-rows"),
+            hash("dividend-source-file"),
+            timestamp("2026-08-19T00:00:00Z"),
+        ),
         sessions: dates
             .iter()
             .copied()
@@ -459,6 +465,22 @@ fn owner_scope_marker_is_hashed_and_security_provenance_changes_hash() {
             .windows("OWNER_ONLY".len())
             .any(|window| window == b"OWNER_ONLY")
     );
+}
+
+#[test]
+fn ignored_cash_dividend_commitment_changes_identity_but_not_price_rows() {
+    let first = materialize_parts(parts(&["2020-01-01"], Vec::new())).unwrap();
+    let mut changed = parts(&["2020-01-01"], Vec::new());
+    changed.ignored_cash_dividends = HistoricalPriceOnlyIgnoredCashDividendEvidence::new(
+        2,
+        hash("different-ignored-cash-dividend-rows"),
+        hash("different-dividend-source-file"),
+        timestamp("2026-08-20T00:00:00Z"),
+    );
+    let second = materialize_parts(changed).unwrap();
+    assert_eq!(first.bars(), second.bars());
+    assert_eq!(first.bonus_evidence(), second.bonus_evidence());
+    assert_ne!(first.content_hash(), second.content_hash());
 }
 
 #[test]

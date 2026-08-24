@@ -739,6 +739,27 @@ KIS backfill runbook. Per the existing approved contract, the sample's narrow,
 bounded KSD continuation rule remains authoritative; the discrepancy is not
 generalized to any other endpoint.
 
+#### Official `dividend` workbook contract — verified 2026-08-24
+
+The same pinned workbook's sheet `예탁원정보(배당일정)` (`domestic-stock-145`)
+specifies live-only `GET /uapi/domestic-stock/v1/ksdinfo/dividend`, TR ID
+`HHKDB669102C0`. Its response combines cash and stock-dividend facts in one
+row: `record_date`, `sht_cd`, `divi_kind`, `face_val`,
+`per_sto_divi_amt`, `divi_rate`, `stk_divi_rate`, `divi_pay_dt`,
+`stk_div_pay_dt`, `odd_pay_dt`, `stk_kind`, and `high_divi_gb`.
+`stk_div_pay_dt` is the stock-delivery date; the sheet notes that listing or
+book entry is generally the following business day. The response has no
+documented ex-date, announcement time, revision ID, or correction lineage.
+
+The fixed owner historical price-only v2 path therefore classifies a row as
+cash-only only after all fields are present and typed, all numeric amounts and
+rates are nonnegative, `stk_divi_rate` is exactly numeric zero, and the two
+stock-related payment dates are blank. Such evidence is committed and excluded
+from price return without a cash credit or reinvestment. A positive stock rate,
+malformed/blank rate, or contradictory stock-payment date fails closed. This
+exception does not apply to the generic daily normalizer, and it creates no
+total-return or PIT claim.
+
 | dimension | keep KIS `ksdinfo` | add direct KSD/SEIBro |
 |---|---|---|
 | independence | official workbook confirms `bonus-issue` is KSD-supplied; the other five categories were not inferred | same origin, so neither corroborates the other independently |

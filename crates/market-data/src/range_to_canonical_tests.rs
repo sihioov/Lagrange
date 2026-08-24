@@ -15,10 +15,11 @@ use crate::range_normalize::{
 use crate::range_to_canonical::{
     HISTORICAL_PRICE_ONLY_BETA_END, HISTORICAL_PRICE_ONLY_BETA_SOURCE_BATCH_ID,
     HISTORICAL_PRICE_ONLY_BETA_SOURCE_FILE_COUNT, HISTORICAL_PRICE_ONLY_BETA_START,
-    HistoricalBetaVerificationScope, RANGE_CANONICAL_BRIDGE_VERSION, REQUIRED_ACTION_KINDS,
-    RangeAction, RangeCanonicalError, build_range_canonical_candidate,
-    discover_historical_price_only_beta_pins, verify_historical_price_only_beta_input,
-    verify_historical_price_only_beta_input_for_scope, write_evidence_package,
+    HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT, HistoricalBetaVerificationScope,
+    RANGE_CANONICAL_BRIDGE_VERSION, REQUIRED_ACTION_KINDS, RangeAction, RangeCanonicalError,
+    build_range_canonical_candidate, discover_historical_price_only_beta_pins,
+    verify_historical_price_only_beta_input, verify_historical_price_only_beta_input_for_scope,
+    write_evidence_package,
 };
 use crate::{BatchSpec, ManifestEntry, RawStore};
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
@@ -367,7 +368,7 @@ fn action_entry_with_response_marker(
 ) -> ManifestEntry {
     let id = BatchId::from_uuid(Uuid::new_v4());
     let bonus_row = bonus.then_some(("069500", DATE, DATE, "5"));
-    let envelopes = action_envelopes(id, bonus_row, body_marker, tr_cont, None);
+    let envelopes = action_envelopes(id, bonus_row, body_marker, tr_cont, None, None);
     store_action_batch(raw, id, envelopes)
 }
 
@@ -382,6 +383,7 @@ fn action_entry_with_bonus_row(
     let envelopes = action_envelopes(
         id,
         Some((symbol, record_date, ex_date, fix_rate)),
+        None,
         None,
         None,
         None,
@@ -403,7 +405,7 @@ fn action_entry_with_nonempty_unsupported_symbol(
     symbol: &str,
 ) -> ManifestEntry {
     let id = BatchId::from_uuid(Uuid::new_v4());
-    let envelopes = action_envelopes(id, None, None, None, Some((kind, symbol)));
+    let envelopes = action_envelopes(id, None, None, None, Some((kind, symbol)), None);
     store_action_batch(raw, id, envelopes)
 }
 
@@ -413,7 +415,7 @@ fn action_entry_with_nonempty_unsupported_symbol(
 /// loaded and must therefore never be selected as action evidence.
 fn action_entry_with_extra_file(raw: &RawStore) -> ManifestEntry {
     let id = BatchId::from_uuid(Uuid::new_v4());
-    let mut envelopes = action_envelopes(id, None, None, None, None);
+    let mut envelopes = action_envelopes(id, None, None, None, None, None);
     let bytes = serde_json::to_vec(&json!({
         "rt_cd": "0",
         "output1": {"stck_shrn_iscd": "069500"},
@@ -453,6 +455,7 @@ fn action_envelopes(
     body_marker: Option<(&str, &str)>,
     tr_cont: Option<Option<&str>>,
     nonempty_unsupported: Option<(&str, &str)>,
+    cash_dividend_symbol: Option<&str>,
 ) -> Vec<RawEnvelope> {
     let date = date();
     REQUIRED_ACTION_KINDS
@@ -467,6 +470,10 @@ fn action_envelopes(
                     "right_dt": ex_date,
                     "fix_rate": fix_rate
                 }])
+            } else if let Some(symbol) = cash_dividend_symbol
+                && *kind == "dividend"
+            {
+                json!([dividend_row(symbol, "0.00")])
             } else if let Some((unsupported_kind, symbol)) = nonempty_unsupported
                 && unsupported_kind == *kind
             {
@@ -477,12 +484,7 @@ fn action_envelopes(
                         "right_dt": DATE,
                         "fix_rate": "5"
                     }),
-                    "dividend" => json!({
-                        "sht_cd": symbol,
-                        "record_date": DATE,
-                        "divi_pay_dt": DATE,
-                        "per_sto_divi_amt": "100"
-                    }),
+                    "dividend" => dividend_row(symbol, "1.00"),
                     "merger-split" => json!({
                         "sht_cd": symbol,
                         "record_date": DATE,
@@ -537,6 +539,29 @@ fn action_envelopes(
             )
         })
         .collect::<Vec<_>>()
+}
+
+fn dividend_row(symbol: &str, stock_dividend_rate: &str) -> Value {
+    json!({
+        "sht_cd": symbol,
+        "record_date": DATE,
+        "divi_kind": "",
+        "face_val": "5000",
+        "per_sto_divi_amt": "100",
+        "divi_rate": "2.00",
+        "stk_divi_rate": stock_dividend_rate,
+        "divi_pay_dt": DATE,
+        "stk_div_pay_dt": if stock_dividend_rate == "0.00" { "" } else { DATE },
+        "odd_pay_dt": "",
+        "stk_kind": "",
+        "high_divi_gb": ""
+    })
+}
+
+fn action_entry_with_cash_dividend(raw: &RawStore, symbol: &str) -> ManifestEntry {
+    let id = BatchId::from_uuid(Uuid::new_v4());
+    let envelopes = action_envelopes(id, None, None, None, None, Some(symbol));
+    store_action_batch(raw, id, envelopes)
 }
 
 fn write_package(
@@ -652,7 +677,7 @@ fn raw_bound_historical_input_reauthenticates_exact_source_and_action_pins() {
     let raw = RawStore::new(raw_root.path());
     let source = store_source(&raw);
     let normalized = stage4a_entry(&raw, &source);
-    let actions = action_entry(&raw, false);
+    let actions = action_entry_with_cash_dividend(&raw, "069500");
     let source_pin = ContentHash::from_bytes(&serde_json::to_vec(&source).unwrap());
     let action_pin = ContentHash::from_bytes(&serde_json::to_vec(&actions).unwrap());
     let scope = HistoricalBetaVerificationScope {
@@ -675,6 +700,11 @@ fn raw_bound_historical_input_reauthenticates_exact_source_and_action_pins() {
     assert_eq!(verified.action_batch_id(), actions.batch_id);
     assert_eq!(verified.action_manifest_hash(), &action_pin);
     assert_eq!(verified.action_file_count(), 7);
+    assert_eq!(
+        verified.ignored_cash_dividends().treatment_id(),
+        HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT
+    );
+    assert_eq!(verified.ignored_cash_dividends().row_count(), 1);
     assert_eq!(verified.sessions().len(), 1);
     assert_eq!(
         verified.sessions()[0].normalized_batch_id(),
@@ -697,6 +727,10 @@ fn raw_bound_historical_input_reauthenticates_exact_source_and_action_pins() {
         verified.action_manifest_hash()
     );
     assert_eq!(first.action_file_count(), verified.action_file_count());
+    assert_eq!(
+        first.ignored_cash_dividends(),
+        verified.ignored_cash_dividends()
+    );
     assert_eq!(first.row_count(), 11);
     assert_eq!(first.session_count(), 1);
     assert!(first.bonus_evidence().is_empty());
@@ -735,6 +769,33 @@ fn raw_bound_historical_input_reauthenticates_exact_source_and_action_pins() {
         ),
         Err(RangeCanonicalError::MissingActionEvidence { .. })
     ));
+}
+
+#[test]
+fn historical_price_only_v2_rejects_target_stock_dividends() {
+    let raw_root = TempDir::new().unwrap();
+    let raw = RawStore::new(raw_root.path());
+    let source = store_source(&raw);
+    let _normalized = stage4a_entry(&raw, &source);
+    let actions = action_entry_with_nonempty_unsupported(&raw, "dividend");
+    let source_pin = ContentHash::from_bytes(&serde_json::to_vec(&source).unwrap());
+    let action_pin = ContentHash::from_bytes(&serde_json::to_vec(&actions).unwrap());
+    let scope = HistoricalBetaVerificationScope {
+        source_batch_id: source.batch_id,
+        range_start: date(),
+        range_end: date(),
+        sessions: vec![date()],
+        calendar_id: "xkrx-reviewed".to_owned(),
+        calendar_hash: ContentHash::from_bytes(b"calendar"),
+        listing_snapshot_id: "listing-v1".to_owned(),
+        listing_snapshot_hash: listing_hash(),
+    };
+    let result =
+        verify_historical_price_only_beta_input_for_scope(&raw, &source_pin, &action_pin, &scope);
+    assert!(
+        matches!(&result, Err(RangeCanonicalError::UnsupportedAction { kind }) if kind == "dividend"),
+        "unexpected stock-dividend outcome: {result:?}"
+    );
 }
 
 #[test]
@@ -1658,7 +1719,7 @@ fn historical_beta_discovery_returns_metadata_candidate_without_body_reads_or_wr
 
     let pins = discover_historical_price_only_beta_pins(&raw).unwrap();
 
-    assert_eq!(pins.contract(), "kis-historical-price-only-beta-v1");
+    assert_eq!(pins.contract(), "kis-historical-price-only-beta-v2");
     assert_eq!(pins.range_start(), beta_start());
     assert_eq!(pins.range_end(), beta_end());
     assert_eq!(pins.source_batch_id(), source.batch_id);

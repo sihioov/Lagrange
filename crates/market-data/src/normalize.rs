@@ -949,8 +949,31 @@ fn normalize_actions(
 /// action.  The other KSD event classes deliberately remain typed blockers.
 pub(crate) struct ValidatedKisActionRow {
     pub(crate) symbol: String,
+    pub(crate) record_date: TradingDate,
     pub(crate) event_dates: Vec<TradingDate>,
     pub(crate) bonus: Option<(TradingDate, TradingDate, FixedPoint)>,
+    pub(crate) dividend: Option<ValidatedKisDividendRow>,
+}
+
+/// Fully validated KIS dividend wire row.
+///
+/// The KSD dividend endpoint combines cash and stock dividends.  Historical
+/// price-only code may classify a row as cash-only only after every official
+/// field below has been parsed; the generic daily normalizer still rejects all
+/// target-universe dividend rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ValidatedKisDividendRow {
+    pub(crate) record_date: TradingDate,
+    pub(crate) dividend_kind: String,
+    pub(crate) face_value: FixedPoint,
+    pub(crate) cash_dividend_amount: FixedPoint,
+    pub(crate) cash_dividend_rate: FixedPoint,
+    pub(crate) stock_dividend_rate: FixedPoint,
+    pub(crate) cash_payment_date: Option<TradingDate>,
+    pub(crate) stock_payment_date: Option<TradingDate>,
+    pub(crate) odd_lot_payment_date: Option<TradingDate>,
+    pub(crate) stock_kind: String,
+    pub(crate) high_dividend_flag: String,
 }
 
 pub(crate) fn validate_kis_action_row_fields(
@@ -977,7 +1000,7 @@ pub(crate) fn validate_kis_action_row_fields(
         });
     }
 
-    let (event_dates, bonus) = if endpoint.ends_with("/bonus-issue") {
+    let (record_date, event_dates, bonus, dividend) = if endpoint.ends_with("/bonus-issue") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
         let right_date = required_kis_date(kind, file_name, row, "right_dt")?;
         let (_, rate) = required_kis_decimal(kind, file_name, row, "fix_rate")?;
@@ -993,33 +1016,92 @@ pub(crate) fn validate_kis_action_row_fields(
         // (record_date).  The 권리락일 is retained as the canonical ex-date
         // and may legitimately be a later session; filtering by right_dt
         // would silently lose an event on the record-date delivery.
-        (vec![record_date], Some((record_date, right_date, rate)))
+        (
+            record_date,
+            vec![record_date],
+            Some((record_date, right_date, rate)),
+            None,
+        )
     } else if endpoint.ends_with("/paidin-capin") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
         let right_date = required_kis_date(kind, file_name, row, "right_dt")?;
         let _ = required_kis_decimal(kind, file_name, row, "fix_rate")?;
-        (vec![record_date, right_date], None)
+        (record_date, vec![record_date, right_date], None, None)
     } else if endpoint.ends_with("/dividend") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
-        let pay_date = documented_optional_kis_date(kind, file_name, row, "divi_pay_dt")?;
-        let _ = required_kis_decimal(kind, file_name, row, "per_sto_divi_amt")?;
-        (event_dates(record_date, pay_date), None)
+        let dividend_kind = required_present_string(kind, file_name, row, "divi_kind")?;
+        let (_, face_value) = required_kis_decimal(kind, file_name, row, "face_val")?;
+        let (_, cash_dividend_amount) =
+            required_kis_decimal(kind, file_name, row, "per_sto_divi_amt")?;
+        let (_, cash_dividend_rate) = required_kis_decimal(kind, file_name, row, "divi_rate")?;
+        let (_, stock_dividend_rate) = required_kis_decimal(kind, file_name, row, "stk_divi_rate")?;
+        let cash_payment_date = documented_optional_kis_date(kind, file_name, row, "divi_pay_dt")?;
+        let stock_payment_date =
+            documented_optional_kis_date(kind, file_name, row, "stk_div_pay_dt")?;
+        let odd_lot_payment_date =
+            documented_optional_kis_date(kind, file_name, row, "odd_pay_dt")?;
+        let stock_kind = required_present_string(kind, file_name, row, "stk_kind")?;
+        let high_dividend_flag = required_present_string(kind, file_name, row, "high_divi_gb")?;
+        for (field, value) in [
+            ("face_val", face_value),
+            ("per_sto_divi_amt", cash_dividend_amount),
+            ("divi_rate", cash_dividend_rate),
+            ("stk_divi_rate", stock_dividend_rate),
+        ] {
+            if value < FixedPoint::ZERO {
+                return Err(NormalizeError::InvalidField {
+                    kind,
+                    file_name: file_name.to_owned(),
+                    field: field.to_owned(),
+                    value: value.to_string(),
+                });
+            }
+        }
+        if stock_dividend_rate == FixedPoint::ZERO
+            && (stock_payment_date.is_some() || odd_lot_payment_date.is_some())
+        {
+            return Err(NormalizeError::InvalidField {
+                kind,
+                file_name: file_name.to_owned(),
+                field: "stk_div_pay_dt".to_owned(),
+                value: "stock payment date without stock dividend".to_owned(),
+            });
+        }
+        let dividend = ValidatedKisDividendRow {
+            record_date,
+            dividend_kind,
+            face_value,
+            cash_dividend_amount,
+            cash_dividend_rate,
+            stock_dividend_rate,
+            cash_payment_date,
+            stock_payment_date,
+            odd_lot_payment_date,
+            stock_kind,
+            high_dividend_flag,
+        };
+        (
+            record_date,
+            event_dates(record_date, cash_payment_date),
+            None,
+            Some(dividend),
+        )
     } else if endpoint.ends_with("/merger-split") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
         let list_date = documented_optional_kis_date(kind, file_name, row, "list_dt")?;
         let _ = required_kis_decimal(kind, file_name, row, "merge_rate")?;
-        (event_dates(record_date, list_date), None)
+        (record_date, event_dates(record_date, list_date), None, None)
     } else if endpoint.ends_with("/rev-split") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
         let list_date = documented_optional_kis_date(kind, file_name, row, "list_dt")?;
         let _ = required_kis_decimal(kind, file_name, row, "inter_bf_face_amt")?;
         let _ = required_kis_decimal(kind, file_name, row, "inter_af_face_amt")?;
-        (event_dates(record_date, list_date), None)
+        (record_date, event_dates(record_date, list_date), None, None)
     } else if endpoint.ends_with("/cap-dcrs") {
         let record_date = required_kis_date(kind, file_name, row, "record_date")?;
         let list_date = documented_optional_kis_date(kind, file_name, row, "list_dt")?;
         let _ = required_kis_decimal(kind, file_name, row, "reduce_cap_rate")?;
-        (event_dates(record_date, list_date), None)
+        (record_date, event_dates(record_date, list_date), None, None)
     } else {
         return Err(NormalizeError::UnexpectedEndpoint {
             file_name: file_name.to_owned(),
@@ -1029,8 +1111,10 @@ pub(crate) fn validate_kis_action_row_fields(
 
     Ok(ValidatedKisActionRow {
         symbol: symbol.to_owned(),
+        record_date,
         event_dates,
         bonus,
+        dividend,
     })
 }
 
@@ -1402,6 +1486,19 @@ fn required_string<'a>(
         .get(field)
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| missing_field(kind, file_name, field))
+}
+
+fn required_present_string(
+    kind: ResponseKind,
+    file_name: &str,
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<String, NormalizeError> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_owned())
         .ok_or_else(|| missing_field(kind, file_name, field))
 }
 

@@ -65,7 +65,7 @@ listing artifacts even though the approved price-only output makes no
 historical intraday-time or listing-interval claim.
 
 `verify_historical_price_only_beta_input` is a separate, narrower boundary for
-`kis-historical-price-only-beta-v1`. It requires two independently reviewed
+`kis-historical-price-only-beta-v2`. It requires two independently reviewed
 pins as inputs:
 
 - the serialized immutable manifest hash for the fixed Stage5 source batch
@@ -77,10 +77,26 @@ The verifier discovers neither pin. It re-reads the pinned Stage5 files once,
 derives all 1,608 normalized batch IDs from the source manifest and the
 checked-in calendar/listing-snapshot identities, then verifies every Stage4A
 document, ETF11 row, source-row hash/size/query link, and normalized file hash.
-It separately re-reads all seven pinned KSD files, accepts only verified bonus
-issues, and rejects every other nonempty action class. Success yields an
+It separately re-reads all seven pinned KSD files. Bonus issues remain the only
+action mapped into price factors. The historical-v2 seam additionally accepts
+target-universe dividend rows only when the full official dividend schema is
+valid, `record_date` is inside the exact range, `stk_divi_rate` is numeric zero,
+and both stock-dividend and odd-lot payment dates are blank. Those rows are
+recorded as observed cash-only evidence and deliberately excluded from
+`PRICE_RETURN_ONLY`; their cash amount and rate are never added to returns.
+Positive stock dividends and every other target non-bonus class remain typed
+blockers. The generic daily normalizer and Stage4B package path retain their
+original reject-all-target-dividends behavior. Success yields an
 opaque, non-serializable `HistoricalPriceOnlyBetaInput`; callers cannot create
 or deserialize one without `RawStore` verification.
+
+The ignored-cash-dividend evidence binds a fixed treatment ID, positive target
+row count, canonical row commitment hash, dividend source-file hash, pinned KSD
+batch/manifest, and retrieval timestamp. It is not a zero-result attestation:
+`all_response_arrays_empty` remains true only when every Raw response array was
+actually empty. The v2 materializer and sealed artifact include this commitment
+in their candidate/manifest identity, while retaining no Raw response body,
+request metadata, dividend cash flow, inferred ex-date, or total-return factor.
 
 ### Candidate-only historical pin discovery
 
@@ -155,7 +171,9 @@ separate raw `open/high/low/close/volume/trading_value` fields, and separate
 split-adjusted `open/high/low/close` fields. Volume and trading value are kept
 raw; there is no dividend or total-return field.
 
-Only verified `RangeAction::BonusIssue` evidence is accepted. Source files must
+Only verified `RangeAction::BonusIssue` evidence can change prices. The separate
+historical-v2 cash-dividend commitment described above changes candidate
+identity but never enters cumulative split factors or bar arithmetic. Source files must
 already follow the Stage5 producer's fixed ETF11 instrument order and numeric
 range-window order, so `window-9` precedes `window-10` regardless of lexical
 filename order. Bonus actions must be ordered by
@@ -169,7 +187,8 @@ cumulative factor use scale 8 with half-even rounding after each
 multiplication. Adjusted prices use scale 4 with one final half-even round.
 Output ordering is canonical by instrument and date.
 
-The candidate carries the exact Stage5 and KSD batch/manifest pins, source
+The candidate carries the exact Stage5 and KSD batch/manifest pins, the fixed
+cash-dividend treatment/count/row/source commitments, source
 file metadata, normalized-session witnesses, canonical bonus evidence, exact
 source-file/action-file/session/row counts, and a SHA-256 over an explicit
 canonical representation of those values and the rows. Bonus evidence exposes
@@ -304,9 +323,11 @@ current 09:00/15:30 contract.
 The current listing YAML and KIS current-reference responses are not historical
 listing evidence. A listing snapshot with effective intervals is required.
 Actions are not synthesized, and an empty action list without an exact-range
-zero-result attestation is rejected. The only supported action representation
-at this boundary is evidence for an already-reviewed bonus-issue mapping;
-other KSD event rows remain typed blockers.
+Raw response attestation is rejected. The generic Stage4B boundary still maps
+only already-reviewed bonus issues; all target dividends and other KSD event
+rows remain typed blockers. The historical price-only v2 exception is confined
+to its separately authenticated cash-only commitment and does not widen this
+generic boundary.
 
 This stage does not write Raw or Curated data and is not wired to
 `PublicationBundle`, worker backfill, PostgreSQL, recommendation, backtest,

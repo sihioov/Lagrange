@@ -37,7 +37,10 @@ use crate::storage::{FileEntry, ManifestEntry, RawStore, StoreError};
 /// Version of this local, non-persisted bridge contract.
 pub const RANGE_CANONICAL_BRIDGE_VERSION: &str = "kis-range-to-canonical-evidence-v0";
 /// The bounded pre-publication contract approved for the first owner beta.
-pub const HISTORICAL_PRICE_ONLY_BETA_CONTRACT: &str = "kis-historical-price-only-beta-v1";
+pub const HISTORICAL_PRICE_ONLY_BETA_CONTRACT: &str = "kis-historical-price-only-beta-v2";
+/// Explicit treatment recorded for fully validated cash-only KSD dividend rows.
+pub const HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT: &str =
+    "CASH_ONLY_EXCLUDED_FROM_PRICE_RETURN_ONLY_V1";
 /// The one immutable Stage5 source batch named by the owner beta plan.
 pub const HISTORICAL_PRICE_ONLY_BETA_SOURCE_BATCH_ID: &str = "3d4f061f-8b8c-54f3-bb44-4d491b3ad256";
 /// Inclusive first session allowed by the owner beta contract.
@@ -189,6 +192,8 @@ pub(crate) struct ActionCoverageEvidence {
     raw_manifest_hash: ContentHash,
     files: Vec<ActionCoverageFileEvidence>,
     actions: Vec<RangeAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ignored_cash_dividends: Option<HistoricalPriceOnlyIgnoredCashDividendEvidence>,
     all_response_arrays_empty: bool,
     acquired_at: UtcTimestamp,
     coverage_hash: ContentHash,
@@ -203,6 +208,7 @@ impl ActionCoverageEvidence {
         raw_manifest_hash: ContentHash,
         files: Vec<ActionCoverageFileEvidence>,
         actions: Vec<RangeAction>,
+        ignored_cash_dividends: Option<HistoricalPriceOnlyIgnoredCashDividendEvidence>,
         all_response_arrays_empty: bool,
         acquired_at: UtcTimestamp,
     ) -> Self {
@@ -213,6 +219,7 @@ impl ActionCoverageEvidence {
             raw_manifest_hash,
             files,
             actions,
+            ignored_cash_dividends,
             all_response_arrays_empty,
             acquired_at,
             coverage_hash: ContentHash::from_bytes(b"uncomputed"),
@@ -222,7 +229,7 @@ impl ActionCoverageEvidence {
     }
 
     fn hash_view(&self) -> Value {
-        json!({
+        let mut value = json!({
             "range_start": self.range_start,
             "range_end": self.range_end,
             "raw_batch_id": self.raw_batch_id,
@@ -231,7 +238,17 @@ impl ActionCoverageEvidence {
             "actions": self.actions,
             "all_response_arrays_empty": self.all_response_arrays_empty,
             "acquired_at": self.acquired_at,
-        })
+        });
+        if let Some(ignored) = &self.ignored_cash_dividends {
+            value
+                .as_object_mut()
+                .expect("action hash view is an object")
+                .insert(
+                    "ignored_cash_dividends".to_owned(),
+                    serde_json::to_value(ignored).expect("cash-dividend evidence is serializable"),
+                );
+        }
+        value
     }
 
     pub(crate) fn computed_hash(&self) -> ContentHash {
@@ -249,6 +266,79 @@ impl ActionCoverageEvidence {
     pub fn all_action_responses_empty(&self) -> bool {
         self.files.len() == REQUIRED_ACTION_KINDS.len() && self.all_response_arrays_empty
     }
+}
+
+/// Commitment proving that target-universe KSD dividend rows were observed,
+/// fully validated as cash-only, and intentionally excluded from price return.
+///
+/// It carries no Raw payload, cash-flow output, or total-return authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalPriceOnlyIgnoredCashDividendEvidence {
+    treatment_id: String,
+    row_count: usize,
+    rows_sha256: ContentHash,
+    source_file_sha256: ContentHash,
+    acquired_at: UtcTimestamp,
+}
+
+impl HistoricalPriceOnlyIgnoredCashDividendEvidence {
+    pub(crate) fn new(
+        row_count: usize,
+        rows_sha256: ContentHash,
+        source_file_sha256: ContentHash,
+        acquired_at: UtcTimestamp,
+    ) -> Self {
+        Self {
+            treatment_id: HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT.to_owned(),
+            row_count,
+            rows_sha256,
+            source_file_sha256,
+            acquired_at,
+        }
+    }
+
+    pub fn treatment_id(&self) -> &str {
+        &self.treatment_id
+    }
+
+    pub const fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    pub fn rows_sha256(&self) -> &ContentHash {
+        &self.rows_sha256
+    }
+
+    pub fn source_file_sha256(&self) -> &ContentHash {
+        &self.source_file_sha256
+    }
+
+    pub const fn acquired_at(&self) -> UtcTimestamp {
+        self.acquired_at
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+struct IgnoredCashDividendRowCommitment {
+    symbol: String,
+    record_date: TradingDate,
+    dividend_kind: String,
+    face_value: FixedPoint,
+    cash_dividend_amount: FixedPoint,
+    cash_dividend_rate: FixedPoint,
+    stock_dividend_rate: FixedPoint,
+    cash_payment_date: Option<TradingDate>,
+    stock_payment_date: Option<TradingDate>,
+    odd_lot_payment_date: Option<TradingDate>,
+    stock_kind: String,
+    high_dividend_flag: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CashDividendPolicy {
+    Reject,
+    ExcludeForHistoricalPriceOnlyV2,
 }
 
 /// Explicit operator approval required because the KIS historical endpoint
@@ -436,6 +526,7 @@ pub struct HistoricalPriceOnlyBetaInput {
     action_batch_id: BatchId,
     action_manifest_hash: ContentHash,
     action_files: Vec<ActionCoverageFileEvidence>,
+    ignored_cash_dividends: HistoricalPriceOnlyIgnoredCashDividendEvidence,
     sessions: Vec<HistoricalPriceOnlySessionWitness>,
     bars: Vec<RangeCanonicalBarCandidate>,
     actions: Vec<RangeAction>,
@@ -472,6 +563,10 @@ impl HistoricalPriceOnlyBetaInput {
 
     pub fn action_file_count(&self) -> usize {
         self.action_files.len()
+    }
+
+    pub fn ignored_cash_dividends(&self) -> &HistoricalPriceOnlyIgnoredCashDividendEvidence {
+        &self.ignored_cash_dividends
     }
 
     pub fn sessions(&self) -> &[HistoricalPriceOnlySessionWitness] {
@@ -1334,7 +1429,14 @@ fn load_action_evidence(
     range_end: TradingDate,
 ) -> Result<ActionCoverageEvidence, RangeCanonicalError> {
     let entries = raw.read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)?;
-    load_action_evidence_from_entries(raw, &entries, refs, range_start, range_end)
+    load_action_evidence_from_entries(
+        raw,
+        &entries,
+        refs,
+        range_start,
+        range_end,
+        CashDividendPolicy::Reject,
+    )
 }
 
 fn load_action_evidence_from_entries(
@@ -1343,6 +1445,7 @@ fn load_action_evidence_from_entries(
     refs: &[EvidenceActionRef],
     range_start: TradingDate,
     range_end: TradingDate,
+    cash_dividend_policy: CashDividendPolicy,
 ) -> Result<ActionCoverageEvidence, RangeCanonicalError> {
     if refs.len() != REQUIRED_ACTION_KINDS.len() {
         return Err(RangeCanonicalError::MissingActionEvidence {
@@ -1392,6 +1495,8 @@ fn load_action_evidence_from_entries(
     let stored = raw.read_batch_bytes(PROVIDER_KIS, MARKET_KR, entry)?;
     let mut files = Vec::with_capacity(refs.len());
     let mut actions = Vec::new();
+    let mut ignored_cash_dividend_rows = Vec::new();
+    let mut dividend_source_file_sha256 = None;
     let mut all_response_arrays_empty = true;
     for item in refs {
         let Some(metadata) = entry
@@ -1496,15 +1601,56 @@ fn load_action_evidence_from_entries(
                         reason: "non-bonus action row does not match the documented KSD schema"
                             .to_owned(),
                     })?;
-                    if KR_ETF_CORE_SYMBOLS.contains(&validated.symbol.as_str()) {
-                        actions.push(RangeAction::Unsupported {
-                            kind: item.kind.clone(),
-                            reason: "nonempty KSD action output has no reviewed canonical mapping"
-                                .to_owned(),
+                    if !KR_ETF_CORE_SYMBOLS.contains(&validated.symbol.as_str()) {
+                        continue;
+                    }
+                    if validated.record_date < range_start || validated.record_date > range_end {
+                        return Err(RangeCanonicalError::ActionEvidence {
+                            reason:
+                                "target KSD action record date is outside the exact query range"
+                                    .to_owned(),
                         });
                     }
+                    if item.kind == "dividend"
+                        && cash_dividend_policy
+                            == CashDividendPolicy::ExcludeForHistoricalPriceOnlyV2
+                    {
+                        let dividend = validated.dividend.ok_or_else(|| {
+                            RangeCanonicalError::ActionEvidence {
+                                reason: "validated dividend row lacks dividend classification"
+                                    .to_owned(),
+                            }
+                        })?;
+                        if dividend.stock_dividend_rate == FixedPoint::ZERO {
+                            ignored_cash_dividend_rows.push(IgnoredCashDividendRowCommitment {
+                                symbol: validated.symbol,
+                                record_date: dividend.record_date,
+                                dividend_kind: dividend.dividend_kind,
+                                face_value: dividend.face_value,
+                                cash_dividend_amount: dividend.cash_dividend_amount,
+                                cash_dividend_rate: dividend.cash_dividend_rate,
+                                stock_dividend_rate: dividend.stock_dividend_rate,
+                                cash_payment_date: dividend.cash_payment_date,
+                                stock_payment_date: dividend.stock_payment_date,
+                                odd_lot_payment_date: dividend.odd_lot_payment_date,
+                                stock_kind: dividend.stock_kind,
+                                high_dividend_flag: dividend.high_dividend_flag,
+                            });
+                            continue;
+                        }
+                    }
+                    actions.push(RangeAction::Unsupported {
+                        kind: item.kind.clone(),
+                        reason: "nonempty KSD action output has no reviewed canonical mapping"
+                            .to_owned(),
+                    });
                 }
             }
+        }
+        if item.kind == "dividend"
+            && cash_dividend_policy == CashDividendPolicy::ExcludeForHistoricalPriceOnlyV2
+        {
+            dividend_source_file_sha256 = Some(metadata.content_hash.clone());
         }
         files.push(ActionCoverageFileEvidence {
             kind: item.kind.clone(),
@@ -1516,6 +1662,36 @@ fn load_action_evidence_from_entries(
             query_end: range_end,
         });
     }
+    let ignored_cash_dividends =
+        if cash_dividend_policy == CashDividendPolicy::ExcludeForHistoricalPriceOnlyV2 {
+            ignored_cash_dividend_rows.sort();
+            if ignored_cash_dividend_rows
+                .windows(2)
+                .any(|pair| pair[0] == pair[1])
+            {
+                return Err(RangeCanonicalError::ActionEvidence {
+                    reason: "target cash-dividend rows are duplicated".to_owned(),
+                });
+            }
+            let source_file_sha256 =
+                dividend_source_file_sha256.ok_or_else(|| RangeCanonicalError::ActionEvidence {
+                    reason: "pinned dividend source file is missing".to_owned(),
+                })?;
+            let rows_sha256 =
+                ContentHash::from_bytes(&serde_json::to_vec(&ignored_cash_dividend_rows).map_err(
+                    |_| RangeCanonicalError::ActionEvidence {
+                        reason: "cash-dividend commitment could not be serialized".to_owned(),
+                    },
+                )?);
+            Some(HistoricalPriceOnlyIgnoredCashDividendEvidence::new(
+                ignored_cash_dividend_rows.len(),
+                rows_sha256,
+                source_file_sha256,
+                entry.retrieved_at,
+            ))
+        } else {
+            None
+        };
     Ok(ActionCoverageEvidence::new(
         range_start,
         range_end,
@@ -1523,6 +1699,7 @@ fn load_action_evidence_from_entries(
         raw_manifest_hash,
         files,
         actions,
+        ignored_cash_dividends,
         all_response_arrays_empty,
         entry.retrieved_at,
     ))
@@ -2200,7 +2377,7 @@ fn verify_historical_price_only_beta_input_for_scope(
         scope.range_start,
         scope.range_end,
     )?;
-    validate_actions(
+    validate_historical_price_only_actions(
         &action_coverage,
         scope.range_start,
         scope.range_end,
@@ -2216,6 +2393,11 @@ fn verify_historical_price_only_beta_input_for_scope(
         action_batch_id: action_coverage.raw_batch_id,
         action_manifest_hash: action_coverage.raw_manifest_hash.clone(),
         action_files: action_coverage.files.clone(),
+        ignored_cash_dividends: action_coverage.ignored_cash_dividends.clone().ok_or_else(
+            || RangeCanonicalError::HistoricalBetaContract {
+                reason: "verified cash-dividend treatment evidence is missing".to_owned(),
+            },
+        )?,
         sessions,
         bars,
         actions: action_coverage.actions,
@@ -2483,6 +2665,25 @@ fn validate_actions(
     source_end: TradingDate,
     session: TradingDate,
 ) -> Result<(), RangeCanonicalError> {
+    validate_actions_inner(actions, source_start, source_end, session, false)
+}
+
+fn validate_historical_price_only_actions(
+    actions: &ActionCoverageEvidence,
+    source_start: TradingDate,
+    source_end: TradingDate,
+    session: TradingDate,
+) -> Result<(), RangeCanonicalError> {
+    validate_actions_inner(actions, source_start, source_end, session, true)
+}
+
+fn validate_actions_inner(
+    actions: &ActionCoverageEvidence,
+    source_start: TradingDate,
+    source_end: TradingDate,
+    session: TradingDate,
+    allow_ignored_cash_dividends: bool,
+) -> Result<(), RangeCanonicalError> {
     if actions.range_start > actions.range_end
         || actions.range_start != source_start
         || actions.range_end != source_end
@@ -2527,6 +2728,42 @@ fn validate_actions(
         return Err(RangeCanonicalError::MissingActionEvidence {
             reason: "empty-response attestation conflicts with retained actions".to_owned(),
         });
+    }
+    match &actions.ignored_cash_dividends {
+        Some(evidence) if allow_ignored_cash_dividends => {
+            let has_unsupported = actions
+                .actions
+                .iter()
+                .any(|action| matches!(action, RangeAction::Unsupported { .. }));
+            let dividend_file = actions
+                .files
+                .iter()
+                .find(|file| file.kind == "dividend")
+                .ok_or_else(|| RangeCanonicalError::MissingActionEvidence {
+                    reason: "cash-dividend treatment lacks its pinned source file".to_owned(),
+                })?;
+            if evidence.treatment_id != HISTORICAL_PRICE_ONLY_CASH_DIVIDEND_TREATMENT
+                || (evidence.row_count == 0 && !has_unsupported)
+                || evidence.source_file_sha256 != dividend_file.content_hash
+                || evidence.acquired_at != actions.acquired_at
+                || actions.all_response_arrays_empty
+            {
+                return Err(RangeCanonicalError::MissingActionEvidence {
+                    reason: "cash-dividend treatment commitment is invalid".to_owned(),
+                });
+            }
+        }
+        None if allow_ignored_cash_dividends => {
+            return Err(RangeCanonicalError::MissingActionEvidence {
+                reason: "cash-dividend treatment commitment is missing".to_owned(),
+            });
+        }
+        Some(_) => {
+            return Err(RangeCanonicalError::MissingActionEvidence {
+                reason: "generic action evidence cannot ignore cash dividends".to_owned(),
+            });
+        }
+        None => {}
     }
     for action in &actions.actions {
         match action {
@@ -3014,7 +3251,14 @@ fn load_pinned_action_coverage(
             size_bytes: file.size_bytes,
         })
         .collect::<Vec<_>>();
-    load_action_evidence_from_entries(raw, &entries, &refs, range_start, range_end)
+    load_action_evidence_from_entries(
+        raw,
+        &entries,
+        &refs,
+        range_start,
+        range_end,
+        CashDividendPolicy::ExcludeForHistoricalPriceOnlyV2,
+    )
 }
 
 /// Finds the one immutable Raw KIS batch whose files are exactly the seven
