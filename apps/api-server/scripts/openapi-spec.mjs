@@ -26,6 +26,14 @@ const ROUTES = [
   ["GET", "/api/v1/strategy-configs/{config_id}", {}],
   // recommendations
   ["POST", "/api/v1/recommendations/runs", { mutating: true, idem: true, entitlement: "recommendation", audit: true }],
+  ["POST", "/api/v1/recommendations/owner-beta/price-only/runs", {
+    mutating: true,
+    idem: true,
+    owner: true,
+    entitlement: "recommendation",
+    audit: true,
+    ownerBetaPrice: true,
+  }],
   ["GET", "/api/v1/recommendations/runs/{run_id}", { entitlement: "recommendation" }],
   ["GET", "/api/v1/recommendations/runs", { entitlement: "recommendation" }],
   ["GET", "/api/v1/recommendations/latest", { entitlement: "recommendation" }],
@@ -113,6 +121,7 @@ const ERROR_CODES = [
   ["INVALID_STRATEGY_PARAMETER", 422], ["UNSUPPORTED_MARKET_CURRENCY", 422],
   ["BACKTEST_CAPACITY_EXCEEDED", 429], ["ROBUSTNESS_CAPACITY_EXCEEDED", 429],
   ["RECOMMENDATION_CAPACITY_EXCEEDED", 429],
+  ["OWNER_BETA_PRICE_INPUT_UNAVAILABLE", 503],
   ["REBALANCE_PREVIEW_CAPACITY_EXCEEDED", 429],
   ["REBALANCE_PREVIEW_BINDING_REQUIRED", 409],
   ["REBALANCE_PREVIEW_NOT_READY", 409],
@@ -148,6 +157,7 @@ function errorResponses() {
     "429": { $ref: "#/components/responses/Error429" },
     "500": { $ref: "#/components/responses/Error500" },
     "501": { $ref: "#/components/responses/Error501" },
+    "503": { $ref: "#/components/responses/Error503" },
   };
   return responses;
 }
@@ -187,21 +197,38 @@ function operation(route) {
       auth: { required: true, session: "opaque __Host-lagrange_session cookie" },
       ownership: {
         owner_only: owner,
-        scope: owner
+        scope: flags.ownerBetaPrice
+          ? "Owner role; sealed historical price-only input"
+          : owner
           ? "Owner role; all admin operations are audited"
           : shared
             ? "authenticated invite-group read via SELECT-only admin role; mutations remain actor-scoped"
             : "actor-scoped via RLS (foreign resources are indistinguishable from missing)",
       },
       entitlement: entitlement
-        ? { use: entitlement, fail_closed: true, dataset: entitlement === "candidate" ? "every exact pinned candidate source dataset" : "krx_eod_bars" }
+        ? flags.ownerBetaPrice
+          ? { use: entitlement, fail_closed: true, input: "owner_beta_historical_price_only_v1" }
+          : { use: entitlement, fail_closed: true, dataset: entitlement === "candidate" ? "every exact pinned candidate source dataset" : "krx_eod_bars" }
         : { use: null, fail_closed: true },
       idempotency: mutating
         ? natural
           ? { required: false, natural: true, note: "idempotent by nature; no key required" }
-          : { required: idemRequired, header: "Idempotency-Key", replay: "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH" }
+          : {
+              required: idemRequired,
+              header: "Idempotency-Key",
+              replay: flags.ownerBetaPrice
+                ? "same key + same body + current server-selected approval pins returns the durable result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+                : "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH",
+            }
         : { required: false, note: "read-only" },
-      audit: audit ? { writer: "audit_writer (append-only)", fields: "actor/time/target/before-after/reason/correlation_id" } : { writer: null },
+      audit: audit
+        ? {
+            writer: "audit_writer (append-only)",
+            fields: flags.ownerBetaPrice
+              ? "fixed action + run/job/config IDs + as_of"
+              : "actor/time/target/before-after/reason/correlation_id",
+          }
+        : { writer: null },
       cache: {
         policy: "no-store",
         reason: shared
@@ -247,6 +274,9 @@ function successResponsesFor(method, path) {
   });
   if (path === "/api/v1/recommendations/runs" && method === "post") {
     return { "201": json("Recommendation run accepted", "#/components/schemas/RecommendationRun") };
+  }
+  if (path === "/api/v1/recommendations/owner-beta/price-only/runs" && method === "post") {
+    return { "202": json("Owner-beta price-only recommendation accepted", "#/components/schemas/OwnerBetaPriceOnlyRun") };
   }
   if (path === "/api/v1/recommendations/runs" && method === "get") {
     return { "200": json("Recommendation run history", "#/components/schemas/RecommendationRunPage") };
@@ -303,6 +333,9 @@ function pathParams(path) {
 
 function bodySchemaRef(path) {
   if (path.endsWith("/configs")) return "#/components/schemas/NewStrategyConfigBody";
+  if (path === "/api/v1/recommendations/owner-beta/price-only/runs") {
+    return "#/components/schemas/OwnerBetaPriceOnlyRunBody";
+  }
   if (path.endsWith("/recommendations/runs")) return "#/components/schemas/RecommendationRunBody";
   if (path === "/api/v1/backtests") return "#/components/schemas/BacktestBody";
   if (path === "/api/v1/backtests/compare") return "#/components/schemas/CompareBody";
@@ -334,6 +367,13 @@ function errorCodesFor(route) {
   }
   if (path === "/api/v1/recommendations/runs" && route[0] === "POST") {
     codes.push("RECOMMENDATION_CAPACITY_EXCEEDED");
+  }
+  if (flags.ownerBetaPrice) {
+    codes.push(
+      "RESOURCE_NOT_FOUND",
+      "RECOMMENDATION_CAPACITY_EXCEEDED",
+      "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+    );
   }
   if (path.includes("/paper/accounts")) {
     codes.push("UNSUPPORTED_MARKET_CURRENCY", "DUPLICATE_RESOURCE");
@@ -479,6 +519,25 @@ const SCHEMAS = {
     },
   },
   RecommendationRunBody: {
+    type: "object",
+    required: ["strategy_config_id", "as_of"],
+    additionalProperties: false,
+    properties: {
+      strategy_config_id: uuid,
+      as_of: dateStr,
+    },
+  },
+  OwnerBetaPriceOnlyRun: {
+    type: "object",
+    required: ["run_id", "job_id", "status"],
+    additionalProperties: false,
+    properties: {
+      run_id: uuid,
+      job_id: uuid,
+      status: { type: "string", enum: ["PENDING"] },
+    },
+  },
+  OwnerBetaPriceOnlyRunBody: {
     type: "object",
     required: ["strategy_config_id", "as_of"],
     additionalProperties: false,
@@ -1399,7 +1458,7 @@ function build() {
   }
 
   const responses = {};
-  for (const code of ["400", "401", "403", "404", "409", "413", "422", "429", "500", "501"]) {
+  for (const code of ["400", "401", "403", "404", "409", "413", "422", "429", "500", "501", "503"]) {
     responses[`Error${code}`] = {
       description: `${code} typed error envelope`,
       content: {

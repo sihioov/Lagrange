@@ -418,6 +418,7 @@ installed_env=$release_fixture/install/releases/$commit_one/deploy/compose/.env
 cp "$installed_env" "$release_fixture/disabled.env.backup"
 printf '%s\n' \
   'OWNER_BETA_ACCESS_MODE=owner_only' \
+  'OWNER_BETA_PRICE_INPUT_MODE=sealed_v1' \
   'OWNER_BETA_PAPER_MODE=disabled' \
   >>"$installed_env"
 : >"$compose_log"

@@ -29,6 +29,7 @@ use job_queue::JobQueue;
 use job_queue::recommendation::input::DatasetPin;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tokio::sync::Semaphore;
 
 /// Pools the session extractor may use to resolve cookies (the admin role's
 /// `USING (true)` SELECT policy on `web_sessions` is the documented path).
@@ -75,6 +76,23 @@ impl OwnerBetaPaperMode {
     }
 }
 
+/// Explicit activation of the sealed historical price-only recommendation
+/// input. A future input contract must introduce a new versioned mode rather
+/// than silently inheriting this route's approval assumptions.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnerBetaPriceInputMode {
+    #[default]
+    Disabled,
+    SealedV1,
+}
+
+impl OwnerBetaPriceInputMode {
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::SealedV1)
+    }
+}
+
 /// Runtime configuration of the API surface.
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -106,6 +124,8 @@ pub struct ApiConfig {
     pub owner_beta_access: OwnerBetaAccessMode,
     /// Separate Paper activation inside the temporary owner-only beta.
     pub owner_beta_paper: OwnerBetaPaperMode,
+    /// Separate activation for the sealed historical price-only input.
+    pub owner_beta_price_input: OwnerBetaPriceInputMode,
 }
 
 pub fn system_seoul_today() -> chrono::NaiveDate {
@@ -130,6 +150,9 @@ pub struct ApiState {
     pub audit_pool: sqlx::PgPool,
     pub entitlements: Arc<EntitlementService>,
     pub idempotency: Arc<dyn IdempotencyStore>,
+    /// Bounds concurrent filesystem approval reads. Approval is intentionally
+    /// uncached and must run before each enqueue/replay transaction.
+    pub(crate) owner_beta_approval: Arc<Semaphore>,
     actor_pools: Arc<Mutex<HashMap<String, sqlx::PgPool>>>,
 }
 
@@ -156,6 +179,19 @@ impl ApiState {
         owner_beta_access: OwnerBetaAccessMode,
         owner_beta_paper: OwnerBetaPaperMode,
     ) -> Self {
+        Self::test_without_database_with_all_policy(
+            owner_beta_access,
+            owner_beta_paper,
+            OwnerBetaPriceInputMode::Disabled,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_without_database_with_all_policy(
+        owner_beta_access: OwnerBetaAccessMode,
+        owner_beta_paper: OwnerBetaPaperMode,
+        owner_beta_price_input: OwnerBetaPriceInputMode,
+    ) -> Self {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
             .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
@@ -179,12 +215,14 @@ impl ApiState {
                 code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
                 owner_beta_access,
                 owner_beta_paper,
+                owner_beta_price_input,
             }),
             app_pool: pool.clone(),
             admin_pool: pool.clone(),
             audit_pool: pool,
             entitlements: Arc::new(EntitlementService::new(Vec::new())),
             idempotency: Arc::new(InMemoryIdempotencyStore::default()),
+            owner_beta_approval: Arc::new(Semaphore::new(1)),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -205,6 +243,7 @@ impl ApiState {
             audit_pool,
             entitlements: Arc::new(EntitlementService::new(entitlements)),
             idempotency: Arc::new(InMemoryIdempotencyStore::default()),
+            owner_beta_approval: Arc::new(Semaphore::new(1)),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -255,6 +294,11 @@ impl ApiState {
     }
     pub fn recommendations(&self) -> RecommendationRepo {
         RecommendationRepo::new(self.app_pool.clone())
+    }
+    pub fn owner_beta_recommendations(
+        &self,
+    ) -> crate::repos::owner_beta::OwnerBetaRecommendationRepo {
+        crate::repos::owner_beta::OwnerBetaRecommendationRepo::new(self.app_pool.clone())
     }
     pub fn candidates(&self) -> CandidateRepo {
         CandidateRepo::with_close_clock(

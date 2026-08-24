@@ -7,7 +7,8 @@
 
 use crate::http::api_router;
 use crate::http::state::{
-    ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaPaperMode, system_seoul_today,
+    ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaPaperMode, OwnerBetaPriceInputMode,
+    system_seoul_today,
 };
 use api_server_auth::RouterState as AuthRouterState;
 use axum::extract::State;
@@ -63,6 +64,7 @@ pub struct RuntimeConfig {
     pub code_commit: String,
     pub owner_beta_access: OwnerBetaAccessMode,
     pub owner_beta_paper: OwnerBetaPaperMode,
+    pub owner_beta_price_input: OwnerBetaPriceInputMode,
     pub acquire_timeout: Duration,
 }
 
@@ -118,6 +120,7 @@ impl RuntimeConfig {
             code_commit: self.code_commit.clone(),
             owner_beta_access: self.owner_beta_access,
             owner_beta_paper: self.owner_beta_paper,
+            owner_beta_price_input: self.owner_beta_price_input,
         }
     }
 }
@@ -148,6 +151,7 @@ where
     let code_commit = code_commit_from(&get, production)?;
     let owner_beta_access = owner_beta_access_from(&get)?;
     let owner_beta_paper = owner_beta_paper_from(&get, owner_beta_access)?;
+    let owner_beta_price_input = owner_beta_price_input_from(&get, owner_beta_access)?;
 
     let listen_addr = listen_addr_from(&get)?;
     let database = DatabaseConfig {
@@ -198,6 +202,7 @@ where
         code_commit,
         owner_beta_access,
         owner_beta_paper,
+        owner_beta_price_input,
         acquire_timeout: Duration::from_secs(acquire_timeout_secs),
     })
 }
@@ -257,6 +262,40 @@ where
     };
     if mode.is_enabled() && !owner_beta_access.requires_owner() {
         return Err(invalid("OWNER_BETA_PAPER_MODE"));
+    }
+    Ok(mode)
+}
+
+/// Parse the versioned, non-secret owner-beta price input mode. It is kept
+/// separate from the broader owner-only admission and Paper policy so a
+/// future input contract cannot accidentally inherit this route's trust
+/// assumptions. The generic `*_FILE` channel is forbidden for policy values.
+fn owner_beta_price_input_from<F>(
+    get: &F,
+    owner_beta_access: OwnerBetaAccessMode,
+) -> Result<OwnerBetaPriceInputMode, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    if get("OWNER_BETA_PRICE_INPUT_MODE_FILE").is_some() {
+        return Err(invalid("OWNER_BETA_PRICE_INPUT_MODE_FILE"));
+    }
+    let Some(raw) = get("OWNER_BETA_PRICE_INPUT_MODE") else {
+        return Ok(OwnerBetaPriceInputMode::Disabled);
+    };
+    let value = raw.into_string().map_err(|_| ConfigError::NonUnicode {
+        key: "OWNER_BETA_PRICE_INPUT_MODE".to_owned(),
+    })?;
+    if value.trim() != value || value.is_empty() {
+        return Err(invalid("OWNER_BETA_PRICE_INPUT_MODE"));
+    }
+    let mode = match value.as_str() {
+        "disabled" => OwnerBetaPriceInputMode::Disabled,
+        "sealed_v1" => OwnerBetaPriceInputMode::SealedV1,
+        _ => return Err(invalid("OWNER_BETA_PRICE_INPUT_MODE")),
+    };
+    if mode.is_enabled() && !owner_beta_access.requires_owner() {
+        return Err(invalid("OWNER_BETA_PRICE_INPUT_MODE"));
     }
     Ok(mode)
 }
@@ -1494,6 +1533,50 @@ mod tests {
             matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PAPER_MODE_FILE"),
             "the non-secret Paper policy must not accept *_FILE"
         );
+    }
+
+    #[test]
+    fn owner_beta_price_input_mode_is_versioned_and_requires_owner_only_access() {
+        let mut env = base_env();
+        assert_eq!(
+            config(&env).expect("default config").owner_beta_price_input,
+            OwnerBetaPriceInputMode::Disabled
+        );
+
+        env.insert("OWNER_BETA_PRICE_INPUT_MODE".to_owned(), "sealed_v1".into());
+        assert!(matches!(
+            config(&env),
+            Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PRICE_INPUT_MODE"
+        ));
+
+        env.insert("OWNER_BETA_ACCESS_MODE".to_owned(), "owner_only".into());
+        assert_eq!(
+            config(&env)
+                .expect("owner-only sealed price input")
+                .owner_beta_price_input,
+            OwnerBetaPriceInputMode::SealedV1
+        );
+
+        for invalid_value in ["enabled", "SEALED_V1", "sealed_v1 ", "sealed-v1", "true"] {
+            env.insert(
+                "OWNER_BETA_PRICE_INPUT_MODE".to_owned(),
+                invalid_value.into(),
+            );
+            assert!(
+                matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PRICE_INPUT_MODE"),
+                "{invalid_value:?} must fail closed"
+            );
+        }
+
+        env.remove("OWNER_BETA_PRICE_INPUT_MODE");
+        env.insert(
+            "OWNER_BETA_PRICE_INPUT_MODE_FILE".to_owned(),
+            "/not/a/policy-file".into(),
+        );
+        assert!(matches!(
+            config(&env),
+            Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PRICE_INPUT_MODE_FILE"
+        ));
     }
 
     #[test]

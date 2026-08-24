@@ -43,10 +43,10 @@ pub async fn fresh_service(state: &ApiState) -> Result<EntitlementService, Respo
         .await
     {
         Ok(rows) => Ok(EntitlementService::new(rows)),
-        Err(e) => Err(api_error(
+        Err(_) => Err(api_error(
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             "INTERNAL",
-            format!("entitlement load failed: {e}"),
+            "internal error",
             rid,
             None,
         )),
@@ -123,4 +123,29 @@ pub fn today_iso() -> String {
 /// The actor's user id string.
 pub fn user_id_of(session: &Session) -> UserId {
     session.0.user_id.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::http::state::{ApiState, OwnerBetaAccessMode};
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn entitlement_load_failure_is_static_and_redacted() {
+        let state = ApiState::test_without_database(OwnerBetaAccessMode::Disabled);
+        let response = fresh_service(&state)
+            .await
+            .expect_err("unreachable lazy database must fail");
+        let body = to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .expect("bounded error body");
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("error JSON");
+        assert_eq!(body["error"]["code"], "INTERNAL");
+        assert_eq!(body["error"]["message"], "internal error");
+        let serialized = serde_json::to_string(&body).expect("error serializes");
+        for forbidden in ["sqlx", "postgres", "unused", "127.0.0.1"] {
+            assert!(!serialized.contains(forbidden), "leaked {forbidden}");
+        }
+    }
 }

@@ -95,6 +95,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -168,6 +171,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -256,6 +262,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -343,6 +352,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -417,6 +429,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -499,6 +514,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -581,6 +599,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -671,6 +692,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -753,6 +777,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -836,6 +863,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -957,6 +987,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -992,6 +1025,116 @@
             "INVALID_DATE"
           ],
           "phase": "current"
+        }
+      }
+    },
+    "/api/v1/recommendations/owner-beta/price-only/runs": {
+      "post": {
+        "operationId": "post__api_v1_recommendations_owner_beta_price_only_runs",
+        "summary": "POST /api/v1/recommendations/owner-beta/price-only/runs",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "202": {
+            "description": "Owner-beta price-only recommendation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerBetaPriceOnlyRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; sealed historical price-only input"
+          },
+          "entitlement": {
+            "use": "recommendation",
+            "fail_closed": true,
+            "input": "owner_beta_historical_price_only_v1"
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body + current server-selected approval pins returns the durable result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "fixed action + run/job/config IDs + as_of"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "FORBIDDEN",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "RESOURCE_NOT_FOUND",
+            "RECOMMENDATION_CAPACITY_EXCEEDED",
+            "OWNER_BETA_PRICE_INPUT_UNAVAILABLE"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnerBetaPriceOnlyRunBody"
+              }
+            }
+          }
         }
       }
     },
@@ -1052,6 +1195,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -1148,6 +1294,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -1243,6 +1392,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -1347,6 +1499,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -1461,6 +1616,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -1548,6 +1706,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -1646,6 +1807,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -1727,6 +1891,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -1836,6 +2003,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -1926,6 +2096,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2033,6 +2206,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2113,6 +2289,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2230,6 +2409,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2322,6 +2504,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2414,6 +2599,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2523,6 +2711,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2615,6 +2806,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2707,6 +2901,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2799,6 +2996,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2899,6 +3099,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -2982,6 +3185,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -3058,6 +3264,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -3162,6 +3371,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -3249,6 +3461,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -3373,6 +3588,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -3505,6 +3723,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -3619,6 +3840,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -3732,6 +3956,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -3819,6 +4046,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -3906,6 +4136,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -3993,6 +4226,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4080,6 +4316,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4167,6 +4406,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4245,6 +4487,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4329,6 +4574,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4429,6 +4677,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4520,6 +4771,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4604,6 +4858,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4695,6 +4952,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4770,6 +5030,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4845,6 +5108,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4920,6 +5186,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -4995,6 +5264,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5068,6 +5340,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5139,6 +5414,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5229,6 +5507,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5319,6 +5600,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5393,6 +5677,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5485,6 +5772,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5586,6 +5876,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5687,6 +5980,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5779,6 +6075,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5871,6 +6170,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -5963,6 +6265,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -6039,6 +6344,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -6112,6 +6420,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -6194,6 +6505,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -6279,6 +6593,9 @@
           },
           "501": {
             "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
           }
         },
         "x-lagrange": {
@@ -6384,6 +6701,7 @@
           "BACKTEST_CAPACITY_EXCEEDED",
           "ROBUSTNESS_CAPACITY_EXCEEDED",
           "RECOMMENDATION_CAPACITY_EXCEEDED",
+          "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
           "REBALANCE_PREVIEW_CAPACITY_EXCEEDED",
           "REBALANCE_PREVIEW_BINDING_REQUIRED",
           "REBALANCE_PREVIEW_NOT_READY",
@@ -6702,6 +7020,50 @@
         }
       },
       "RecommendationRunBody": {
+        "type": "object",
+        "required": [
+          "strategy_config_id",
+          "as_of"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "strategy_config_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "as_of": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          }
+        }
+      },
+      "OwnerBetaPriceOnlyRun": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "job_id",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING"
+            ]
+          }
+        }
+      },
+      "OwnerBetaPriceOnlyRunBody": {
         "type": "object",
         "required": [
           "strategy_config_id",
@@ -9440,6 +9802,16 @@
       },
       "Error501": {
         "description": "501 typed error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Error503": {
+        "description": "503 typed error envelope",
         "content": {
           "application/json": {
             "schema": {

@@ -253,6 +253,32 @@ fn openapi_contract_documents_recommendation_success_shapes() {
             .iter()
             .any(|code| code == "RECOMMENDATION_CAPACITY_EXCEEDED")
     );
+    let owner_beta = schemas["OwnerBetaPriceOnlyRun"]
+        .as_object()
+        .expect("OwnerBetaPriceOnlyRun schema");
+    assert_eq!(
+        owner_beta["required"],
+        serde_json::json!(["run_id", "job_id", "status"])
+    );
+    assert_eq!(
+        paths["/api/v1/recommendations/owner-beta/price-only/runs"]["post"]["responses"]["202"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/OwnerBetaPriceOnlyRun"
+    );
+    let error_codes =
+        paths["/api/v1/recommendations/owner-beta/price-only/runs"]["post"]["x-lagrange"]["errors"]
+            .as_array()
+            .expect("owner-beta errors");
+    for expected in [
+        "RESOURCE_NOT_FOUND",
+        "RECOMMENDATION_CAPACITY_EXCEEDED",
+        "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+    ] {
+        assert!(
+            error_codes.iter().any(|code| code == expected),
+            "owner-beta OpenAPI must document {expected}"
+        );
+    }
 }
 
 #[test]

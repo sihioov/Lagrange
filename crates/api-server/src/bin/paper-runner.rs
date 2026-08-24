@@ -469,6 +469,7 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
             // the normal non-beta default here.
             owner_beta_access: api_server::http::state::OwnerBetaAccessMode::Disabled,
             owner_beta_paper: api_server::http::state::OwnerBetaPaperMode::Disabled,
+            owner_beta_price_input: api_server::http::state::OwnerBetaPriceInputMode::Disabled,
         },
         app_pool,
         admin_pool,

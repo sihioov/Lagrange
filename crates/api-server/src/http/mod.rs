@@ -14,6 +14,7 @@ pub mod licensing;
 pub mod live;
 pub mod middleware;
 pub mod notifications;
+pub mod owner_beta;
 pub mod pagination;
 pub mod paper;
 pub mod recommendations;
@@ -288,6 +289,10 @@ pub fn api_router(state: ApiState) -> Router {
         .route("/strategy-configs/{config_id}", get(strategies::get_config))
         // recommendations
         .route("/recommendations/runs", post(recommendations::create_run))
+        .route(
+            "/recommendations/owner-beta/price-only/runs",
+            post(owner_beta::create_price_only_run),
+        )
         .route("/recommendations/runs", get(recommendations::list_runs))
         .route(
             "/recommendations/runs/{run_id}",

@@ -1048,6 +1048,13 @@ assert_owner_beta_invalid() {
 }
 set_owner_beta_unknown() { sed -i 's/^OWNER_BETA_ACCESS_MODE=.*/OWNER_BETA_ACCESS_MODE=enabled/' "$1"; }
 set_owner_beta_file_channel() { printf '%s\n' 'OWNER_BETA_ACCESS_MODE_FILE=/not/a/secret' >>"$1"; }
+set_owner_beta_price_unknown() { printf '%s\n' 'OWNER_BETA_PRICE_INPUT_MODE=enabled' >>"$1"; }
+set_owner_beta_price_file_channel() {
+  printf '%s\n' 'OWNER_BETA_PRICE_INPUT_MODE_FILE=/not/a/secret' >>"$1"
+}
+set_owner_beta_price_without_owner_only() {
+  printf '%s\n' 'OWNER_BETA_PRICE_INPUT_MODE=sealed_v1' >>"$1"
+}
 set_owner_beta_paper_enabled() {
   sed -i \
     -e 's/^OWNER_BETA_ACCESS_MODE=.*/OWNER_BETA_ACCESS_MODE=owner_only/' \
@@ -1056,10 +1063,45 @@ set_owner_beta_paper_enabled() {
 }
 assert_owner_beta_invalid unknown owner_beta_access_mode_invalid set_owner_beta_unknown
 assert_owner_beta_invalid file-channel owner_beta_policy_file_forbidden set_owner_beta_file_channel
+assert_owner_beta_invalid price-unknown owner_beta_price_input_mode_invalid set_owner_beta_price_unknown
+assert_owner_beta_invalid price-file-channel owner_beta_price_input_file_forbidden set_owner_beta_price_file_channel
+assert_owner_beta_invalid price-without-owner-only owner_beta_price_input_requires_owner_only set_owner_beta_price_without_owner_only
 assert_owner_beta_invalid paper-enabled owner_beta_paper_evidence_unavailable set_owner_beta_paper_enabled
 
+owner_beta_price_valid=$out_dir/owner-beta-price-valid.env
+cp "$out_dir/.env" "$owner_beta_price_valid"
+sed -i 's/^OWNER_BETA_ACCESS_MODE=.*/OWNER_BETA_ACCESS_MODE=owner_only/' "$owner_beta_price_valid"
+printf '%s\n' 'OWNER_BETA_PRICE_INPUT_MODE=sealed_v1' >>"$owner_beta_price_valid"
+chmod 0600 "$owner_beta_price_valid"
+if LAGRANGE_ENV_FILE="$owner_beta_price_valid" \
+   LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
+   bash "$ops/validate-production-config.sh" --scope infrastructure \
+   >"$out_dir/owner-beta-price-valid.out" 2>&1; then
+  echo 'self-test: incomplete sealed price-input fixture unexpectedly passed' >&2
+  exit 1
+fi
+if grep -Eq 'owner_beta_|OWNER_BETA_' "$out_dir/owner-beta-price-valid.out"; then
+  echo 'self-test: owner-only sealed_v1 price input was rejected' >&2
+  cat "$out_dir/owner-beta-price-valid.out" >&2
+  exit 1
+fi
+
+if OWNER_BETA_PRICE_INPUT_MODE=sealed_v1 \
+   LAGRANGE_ENV_FILE="$out_dir/.env" \
+   LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
+   bash "$ops/validate-production-config.sh" --scope infrastructure \
+   >"$out_dir/owner-beta-price-shell-override.out" 2>&1; then
+  echo 'self-test: protected sealed price-input shell override unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'owner_beta_price_input_shell_override_mismatch' \
+  "$out_dir/owner-beta-price-shell-override.out" || {
+  cat "$out_dir/owner-beta-price-shell-override.out" >&2
+  exit 1
+}
+
 owner_beta_compat=$out_dir/owner-beta-compatible.env
-sed -E '/^OWNER_BETA_(ACCESS_MODE|PAPER_MODE)=/d' \
+sed -E '/^OWNER_BETA_(ACCESS_MODE|PRICE_INPUT_MODE|PAPER_MODE)=/d' \
   "$out_dir/.env" >"$owner_beta_compat"
 chmod 0600 "$owner_beta_compat"
 if LAGRANGE_ENV_FILE="$owner_beta_compat" \

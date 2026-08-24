@@ -533,6 +533,22 @@ pub struct RecommendationRunBody {
     pub as_of: String,
 }
 
+/// The owner-beta price-only request deliberately has no dataset, artifact,
+/// pin, Paper, worker, or root fields. The server derives all trust inputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBetaPriceOnlyRunBody {
+    pub strategy_config_id: String,
+    pub as_of: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerBetaPriceOnlyRunDto {
+    pub run_id: String,
+    pub job_id: String,
+    pub status: &'static str,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BacktestBody {

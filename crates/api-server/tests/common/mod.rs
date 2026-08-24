@@ -368,6 +368,7 @@ impl Harness {
             code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
             owner_beta_access: OwnerBetaAccessMode::Disabled,
             owner_beta_paper: OwnerBetaPaperMode::Disabled,
+            owner_beta_price_input: api_server::http::state::OwnerBetaPriceInputMode::Disabled,
         };
         let state = ApiState::from_pools(
             cfg,
@@ -422,6 +423,13 @@ impl Harness {
         let mut cfg = (*self.state().cfg).clone();
         cfg.owner_beta_access = OwnerBetaAccessMode::OwnerOnly;
         cfg.owner_beta_paper = OwnerBetaPaperMode::Enabled;
+        self.restart_api_with_config(cfg).await;
+    }
+
+    pub async fn restart_api_with_owner_beta_price_input(&mut self) {
+        let mut cfg = (*self.state().cfg).clone();
+        cfg.owner_beta_access = OwnerBetaAccessMode::OwnerOnly;
+        cfg.owner_beta_price_input = api_server::http::state::OwnerBetaPriceInputMode::SealedV1;
         self.restart_api_with_config(cfg).await;
     }
 

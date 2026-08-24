@@ -170,6 +170,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/recommendations/owner-beta/price-only/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/recommendations/owner-beta/price-only/runs */
+        post: operations["post__api_v1_recommendations_owner_beta_price_only_runs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/recommendations/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -1061,7 +1078,7 @@ export interface components {
             error: components["schemas"]["Error"];
         };
         /** @enum {string} */
-        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
+        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
         Page: {
             items: Record<string, never>[];
             /** @description opaque signed cursor; null when the last page */
@@ -1149,6 +1166,20 @@ export interface components {
             latest_run: components["schemas"]["RecommendationRun"];
         };
         RecommendationRunBody: {
+            /** Format: uuid */
+            strategy_config_id: string;
+            /** @example 2026-01-31 */
+            as_of: string;
+        };
+        OwnerBetaPriceOnlyRun: {
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            job_id: string;
+            /** @enum {string} */
+            status: "PENDING";
+        };
+        OwnerBetaPriceOnlyRunBody: {
             /** Format: uuid */
             strategy_config_id: string;
             /** @example 2026-01-31 */
@@ -2001,6 +2032,15 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
+        /** @description 503 typed error envelope */
+        Error503: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
     };
     parameters: never;
     requestBodies: never;
@@ -2028,6 +2068,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_auth_logout: {
@@ -2053,6 +2094,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_auth_csrf: {
@@ -2078,6 +2120,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_auth_step_up_check: {
@@ -2099,6 +2142,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_strategies: {
@@ -2120,6 +2164,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_strategies__strategy_id_: {
@@ -2143,6 +2188,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_strategies__strategy_id__configs: {
@@ -2170,6 +2216,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_strategy_configs: {
@@ -2191,6 +2238,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_strategy_configs__config_id_: {
@@ -2214,6 +2262,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_recommendations_runs: {
@@ -2247,6 +2296,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_recommendations_runs: {
@@ -2281,6 +2331,42 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    post__api_v1_recommendations_owner_beta_price_only_runs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerBetaPriceOnlyRunBody"];
+            };
+        };
+        responses: {
+            /** @description Owner-beta price-only recommendation accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaPriceOnlyRun"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_recommendations_runs__run_id_: {
@@ -2313,6 +2399,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_recommendations_latest: {
@@ -2345,6 +2432,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_candidates_feed_latest: {
@@ -2377,6 +2465,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_candidates_feed__date_: {
@@ -2411,6 +2500,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_stocks__instrument_id__analysis: {
@@ -2446,6 +2536,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_screener_query: {
@@ -2480,6 +2571,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_screener_screens: {
@@ -2510,6 +2602,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_screener_screens: {
@@ -2544,6 +2637,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_screener_screens__id_: {
@@ -2576,6 +2670,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     put__api_v1_screener_screens__id_: {
@@ -2612,6 +2707,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     delete__api_v1_screener_screens__id_: {
@@ -2644,6 +2740,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_backtests: {
@@ -2668,6 +2765,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_backtests: {
@@ -2693,6 +2791,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_backtests__run_id_: {
@@ -2716,6 +2815,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_backtests__run_id__cancel: {
@@ -2743,6 +2843,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_backtests__run_id__metrics: {
@@ -2766,6 +2867,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_backtests__run_id__equity: {
@@ -2789,6 +2891,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_backtests__run_id__trades: {
@@ -2812,6 +2915,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_backtests__run_id__robustness: {
@@ -2839,6 +2943,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_backtests_compare: {
@@ -2860,6 +2965,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_paper_accounts: {
@@ -2881,6 +2987,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_paper_accounts: {
@@ -2906,6 +3013,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_paper_accounts__account_id_: {
@@ -2929,6 +3037,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_paper_accounts__account_id__bind_strategy: {
@@ -2956,6 +3065,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_paper_accounts__account_id__recommendation_previews: {
@@ -3001,6 +3111,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_paper_accounts__account_id__recommendation_previews__preview_id_: {
@@ -3034,6 +3145,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_paper_accounts__account_id__recommendation_previews__preview_id__apply: {
@@ -3071,6 +3183,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_paper_accounts__account_id__orders: {
@@ -3094,6 +3207,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_paper_accounts__account_id__positions: {
@@ -3117,6 +3231,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_paper_accounts__account_id__equity: {
@@ -3140,6 +3255,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_paper_accounts__account_id__performance: {
@@ -3163,6 +3279,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_paper_accounts__account_id__lineage: {
@@ -3186,6 +3303,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_paper_accounts__account_id__parity: {
@@ -3209,6 +3327,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_admin_datasets: {
@@ -3230,6 +3349,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_admin_datasets__dataset_id__approve: {
@@ -3257,6 +3377,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_admin_datasets__dataset_id__block: {
@@ -3284,6 +3405,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_admin_jobs: {
@@ -3305,6 +3427,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_admin_jobs__job_id__retry: {
@@ -3332,6 +3455,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_admin_workers: {
@@ -3353,6 +3477,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_admin_users: {
@@ -3374,6 +3499,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_admin_audit_logs: {
@@ -3395,6 +3521,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_admin_notifications_deliveries: {
@@ -3416,6 +3543,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_notifications: {
@@ -3437,6 +3565,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_notifications_subscriptions: {
@@ -3458,6 +3587,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     put__api_v1_notifications_subscriptions: {
@@ -3483,6 +3613,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_notifications_test: {
@@ -3508,6 +3639,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_admin_live_connections: {
@@ -3529,6 +3661,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_admin_live_connections: {
@@ -3554,6 +3687,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_admin_live_orders: {
@@ -3579,6 +3713,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_admin_live_connections__connection_id__start: {
@@ -3606,6 +3741,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_admin_live_nodes__node_id__stop: {
@@ -3633,6 +3769,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_admin_live_kill_switch_enable: {
@@ -3658,6 +3795,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     post__api_v1_admin_live_kill_switch_disable: {
@@ -3683,6 +3821,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_admin_live_reconciliation: {
@@ -3704,6 +3843,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_licensing_status: {
@@ -3725,6 +3865,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_metrics: {
@@ -3746,6 +3887,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_artifacts__artifact_id_: {
@@ -3769,6 +3911,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
     get__api_v1_artifacts__artifact_id__download: {
@@ -3792,6 +3935,7 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
         };
     };
 }

@@ -29,10 +29,38 @@ if grep -Fq 'PASS (root fixture skipped' "$self_test" || grep -Fq 'fakeroot "$@"
   die 'production ops root fixture must not pass-on-skip or nest fakeroot'
 fi
 
-grep -Fq 'OWNER_BETA_ACCESS_MODE' "$root/deploy/compose/compose.yml" ||
+compose_file=$root/deploy/compose/compose.yml
+grep -Fq 'OWNER_BETA_ACCESS_MODE: ${OWNER_BETA_ACCESS_MODE:-disabled}' "$compose_file" ||
   die 'Compose owner-beta access policy injection missing'
-grep -Fq 'OWNER_BETA_PAPER_MODE' "$root/deploy/compose/compose.yml" ||
+grep -Fq 'OWNER_BETA_PRICE_INPUT_MODE: ${OWNER_BETA_PRICE_INPUT_MODE:-disabled}' "$compose_file" ||
+  die 'Compose owner-beta sealed price-input policy injection missing'
+grep -Fq 'OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}' "$compose_file" ||
   die 'Compose owner-beta Paper policy injection missing'
+[ "$(grep -Ec '^[[:space:]]+OWNER_BETA_[A-Z0-9_]+:' "$compose_file")" -eq 3 ] ||
+  die 'Compose must expose exactly the three approved owner-beta policy modes'
+[ "$(awk '
+  /^  api-server:/ { in_api = 1; next }
+  in_api && /^  [[:alnum:]_-]+:/ { exit }
+  in_api && /OWNER_BETA_PRICE_INPUT_MODE:/ { count++ }
+  END { print count + 0 }
+' "$compose_file")" -eq 1 ] ||
+  die 'sealed price-input mode must reach only api-server'
+if grep -Eq '^[[:space:]]+OWNER_BETA_[A-Z0-9_]*(CANDIDATE|SHA256|HASH|ROOT|PATH|REGISTRY)[A-Z0-9_]*:' \
+   "$compose_file"; then
+  die 'Compose must not expose owner-beta candidate, pin, path, root, or registry state'
+fi
+grep -Fq '${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}:/data/artifacts:ro' "$compose_file" ||
+  die 'api-server sealed artifact mount must remain read-only'
+grep -Fq 'owner_beta_price_input_mode_invalid' "$production_config" ||
+  die 'sealed price-input mode must be exact'
+grep -Fq 'disabled|sealed_v1)' "$production_config" ||
+  die 'sealed price-input mode allowlist must be disabled or sealed_v1'
+grep -Fq 'owner_beta_price_input_file_forbidden' "$production_config" ||
+  die 'sealed price-input file channel must be rejected'
+grep -Fq 'owner_beta_price_input_requires_owner_only' "$production_config" ||
+  die 'sealed price input must require owner-only access'
+grep -Fq 'owner_beta_price_input_shell_override_mismatch' "$production_config" ||
+  die 'sealed price-input shell override must not bypass the protected env file'
 grep -Fq 'owner_beta_paper_evidence_unavailable' "$production_config" ||
   die 'Paper must remain blocked without a future evidence checker'
 grep -Fq 'run_owner_beta_approval_gate' "$compose_release" ||
