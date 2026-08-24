@@ -773,7 +773,7 @@ impl JobQueue {
 /// Exponential backoff in seconds for the attempt that just failed
 /// (`attempt_count` is the failed attempt's number): `base * 2^(n-1)`,
 /// capped at one hour so retries never schedule into the far future.
-fn backoff_seconds(base: Duration, attempt_count: i32) -> f64 {
+pub(crate) fn backoff_seconds(base: Duration, attempt_count: i32) -> f64 {
     let exponent = attempt_count.max(1) as u32 - 1;
     base.as_secs_f64() * 2f64.powi(exponent as i32).min(3600.0)
 }
@@ -803,6 +803,7 @@ impl JobQueue {
         let expired: Vec<(Uuid,)> = sqlx::query_as(
             "SELECT id FROM jobs
              WHERE status IN ('RUNNING', 'CANCELED')
+               AND job_type <> 'owner_beta_price_recommendation'
                AND locked_at <= now() - make_interval(secs => $1)",
         )
         .bind(self.config.lease.as_secs_f64())
@@ -827,6 +828,7 @@ impl JobQueue {
         let row: Option<(i32, i32, String)> = sqlx::query_as(
             "SELECT attempt_count, max_attempts, status FROM jobs
              WHERE id = $1
+               AND job_type <> 'owner_beta_price_recommendation'
                AND locked_at <= now() - make_interval(secs => $2)
              FOR UPDATE",
         )
@@ -954,5 +956,25 @@ impl JobQueue {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn generic_sweep_excludes_owner_beta_jobs_in_both_phases() {
+        let source = include_str!("queue.rs");
+        let sweep = source
+            .split("pub async fn sweep(&self)")
+            .nth(1)
+            .expect("generic sweep implementation");
+        assert_eq!(
+            sweep
+                .matches("job_type <> 'owner_beta_price_recommendation'")
+                .count(),
+            2,
+            "phase-1 scan and locked recheck must both exclude owner-beta"
+        );
+        assert!(sweep.contains("SELECT attempt_count, max_attempts, status FROM jobs"));
     }
 }

@@ -8,6 +8,7 @@
 pub mod compute;
 pub mod input;
 pub mod publish;
+pub mod recovery;
 pub mod runner;
 pub mod target;
 
@@ -25,6 +26,8 @@ pub use publish::{
     OwnerBetaPublicationError, OwnerBetaPublicationFailure, OwnerBetaPublicationOutcome,
     publish_owner_beta_success, settle_owner_beta_failure,
 };
+
+pub use recovery::{OwnerBetaRecoveryError, OwnerBetaRecoveryReport, recover_owner_beta_claims};
 
 pub use runner::{
     OwnerBetaOutcome, OwnerBetaRunnerConfig, OwnerBetaRunnerConfigError, OwnerBetaRunnerError,

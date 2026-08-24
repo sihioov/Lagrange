@@ -20,7 +20,7 @@ use job_queue::owner_beta::{
     OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE, OwnerBetaOutcome, OwnerBetaPriceRecommendationInput,
     OwnerBetaPublicationError, OwnerBetaPublicationOutcome, OwnerBetaRunnerConfig,
     OwnerBetaRunnerPaths, OwnerBetaStrategySnapshot, build_target_snapshot,
-    publish_owner_beta_success, run_once,
+    publish_owner_beta_success, recover_owner_beta_claims, run_once,
 };
 use job_queue::resolver::ResolvedConfig;
 use job_queue::{AttemptOutcome, AuditActor, JobQueue, JobStatus, QueueConfig, SubmitJob};
@@ -38,6 +38,15 @@ struct Fixture {
     factor: PriceOnlyFactorSnapshot,
     target: job_queue::owner_beta::OwnerBetaTargetSnapshot,
 }
+
+type RecoveryRunFailureRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<chrono::DateTime<chrono::Utc>>,
+);
 
 fn sentinel_hash(number: u8) -> String {
     // These values intentionally do not come from an approved artifact.
@@ -380,9 +389,16 @@ async fn stale_swept_owner_beta_claim_cannot_publish_or_touch_run() {
         .execute(&worker)
         .await
         .expect("expire old claim with database clock");
-    let report = queue.sweep().await.expect("worker sweep");
-    assert_eq!(report.attempts_orphaned, 1);
-    assert_eq!(report.jobs_requeued, 1);
+    let generic_report = queue.sweep().await.expect("generic worker sweep");
+    assert_eq!(generic_report.jobs_checked, 0);
+    assert_eq!(generic_report.attempts_orphaned, 0);
+    assert_eq!(generic_report.jobs_requeued, 0);
+
+    let recovery_report = recover_owner_beta_claims(&queue)
+        .await
+        .expect("dedicated owner-beta recovery");
+    assert_eq!(recovery_report.attempts_orphaned, 1);
+    assert_eq!(recovery_report.jobs_requeued, 1);
 
     let publication = publish_owner_beta_success(
         &worker,
@@ -428,6 +444,204 @@ async fn stale_swept_owner_beta_claim_cannot_publish_or_touch_run() {
     .await
     .expect("worker reads pending run");
     assert_eq!(run, ("PENDING".to_owned(), None, None, None, None));
+    let item_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM owner_beta_recommendation_items WHERE recommendation_run_id = $1",
+    )
+    .bind(fixture.input.run_id())
+    .fetch_one(&worker)
+    .await
+    .expect("worker reads owner-beta items");
+    assert_eq!(item_count, 0);
+
+    worker.close().await;
+    app.close().await;
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn owner_beta_recovery_exhaustion_mirrors_failed_run() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let fixture = fixture();
+    let owner_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
+    )
+    .bind(format!("owner-beta-exhausted-{}", Uuid::new_v4()))
+    .bind(format!("owner-beta-exhausted-{}@example.test", Uuid::new_v4()))
+    .fetch_one(&db.pool)
+    .await
+    .expect("seed exhausted owner");
+    let app = role_pool(&db, "app", Some(owner_id)).await;
+    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let worker = role_pool(&db, "worker", None).await;
+    let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(1)));
+    queue
+        .claim_next_for(
+            "owner-beta-exhausted-worker",
+            OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE,
+        )
+        .await
+        .expect("worker claim")
+        .expect("owner-beta job is claimable");
+    sqlx::query(
+        "UPDATE jobs
+         SET max_attempts = 1, locked_at = now() - interval '2 minutes'
+         WHERE id = $1",
+    )
+    .bind(job_id)
+    .execute(&worker)
+    .await
+    .expect("expire exhausted claim");
+
+    let generic_report = queue.sweep().await.expect("generic worker sweep");
+    assert_eq!(generic_report.jobs_checked, 0);
+    let report = recover_owner_beta_claims(&queue)
+        .await
+        .expect("dedicated owner-beta recovery");
+    assert_eq!(report.attempts_orphaned, 1);
+    assert_eq!(report.jobs_failed, 1);
+
+    let job: (
+        JobStatus,
+        Option<String>,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as(
+        "SELECT status, error_code, error_message, started_at FROM jobs WHERE id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&worker)
+    .await
+    .expect("worker reads exhausted job");
+    assert_eq!(job.0, JobStatus::Failed);
+    assert_eq!(job.1.as_deref(), Some("attempts_exhausted"));
+    assert_eq!(
+        job.2.as_deref(),
+        Some("owner-beta worker crash exhausted retries")
+    );
+    assert!(job.3.is_some(), "claimed job has a start time");
+
+    let attempt: AttemptOutcome =
+        sqlx::query_scalar("SELECT outcome FROM job_attempts WHERE job_id = $1 AND attempt_no = 1")
+            .bind(job_id)
+            .fetch_one(&worker)
+            .await
+            .expect("worker reads orphaned attempt");
+    assert_eq!(attempt, AttemptOutcome::Orphaned);
+
+    let run: RecoveryRunFailureRow = sqlx::query_as(
+        "SELECT status, factor_snapshot_sha256, target_snapshot_sha256,
+                cash_weight::text, error_code, started_at
+         FROM owner_beta_recommendation_runs WHERE id = $1",
+    )
+    .bind(fixture.input.run_id())
+    .fetch_one(&worker)
+    .await
+    .expect("worker reads exhausted run");
+    assert_eq!(run.0, "FAILED");
+    assert_eq!(run.1, None);
+    assert_eq!(run.2, None);
+    assert_eq!(run.3, None);
+    assert_eq!(run.4.as_deref(), Some("OWNER_BETA_ATTEMPTS_EXHAUSTED"));
+    assert_eq!(run.5, job.3);
+    let item_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM owner_beta_recommendation_items WHERE recommendation_run_id = $1",
+    )
+    .bind(fixture.input.run_id())
+    .fetch_one(&worker)
+    .await
+    .expect("worker reads owner-beta items");
+    assert_eq!(item_count, 0);
+
+    worker.close().await;
+    app.close().await;
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn owner_beta_recovery_mirrors_unclaimed_cancellation() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let fixture = fixture();
+    let owner_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
+    )
+    .bind(format!("owner-beta-unclaimed-cancel-{}", Uuid::new_v4()))
+    .bind(format!(
+        "owner-beta-unclaimed-cancel-{}@example.test",
+        Uuid::new_v4()
+    ))
+    .fetch_one(&db.pool)
+    .await
+    .expect("seed unclaimed cancellation owner");
+    let app = role_pool(&db, "app", Some(owner_id)).await;
+    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let audit = role_pool(&db, "audit_writer", None).await;
+    let app_queue = JobQueue::new(
+        app.clone(),
+        Some(audit),
+        queue_config(Duration::from_secs(30)),
+    );
+    match app_queue
+        .request_cancel(job_id, &AuditActor::new("owner"))
+        .await
+        .expect("audited unclaimed cancellation")
+    {
+        job_queue::CancelResult::Canceled(job) => assert_eq!(job.status, JobStatus::Canceled),
+        other => panic!("expected cancellation, got {other:?}"),
+    }
+    let worker = role_pool(&db, "worker", None).await;
+    let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(1)));
+    let report = recover_owner_beta_claims(&queue)
+        .await
+        .expect("dedicated owner-beta cancellation recovery");
+    assert_eq!(report.runs_canceled, 1);
+    assert_eq!(report.attempts_orphaned, 0);
+
+    let job: (JobStatus, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT status, locked_by, locked_at::text FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&worker)
+            .await
+            .expect("worker reads canceled job");
+    assert_eq!(job, (JobStatus::Canceled, None, None));
+    let run: (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT status, factor_snapshot_sha256, target_snapshot_sha256,
+                cash_weight::text, error_code
+         FROM owner_beta_recommendation_runs WHERE id = $1",
+    )
+    .bind(fixture.input.run_id())
+    .fetch_one(&worker)
+    .await
+    .expect("worker reads canceled run");
+    assert_eq!(
+        run,
+        (
+            "CANCELED".to_owned(),
+            None,
+            None,
+            None,
+            Some("CANCELED".to_owned())
+        )
+    );
+    let started_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT started_at FROM owner_beta_recommendation_runs WHERE id = $1")
+            .bind(fixture.input.run_id())
+            .fetch_one(&worker)
+            .await
+            .expect("worker reads canceled run start");
+    assert!(
+        started_at.is_none(),
+        "unclaimed cancellation has no fabricated start"
+    );
     let item_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM owner_beta_recommendation_items WHERE recommendation_run_id = $1",
     )
