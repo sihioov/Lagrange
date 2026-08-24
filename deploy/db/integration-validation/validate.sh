@@ -184,11 +184,15 @@ if [ "$self_test" -eq 1 ]; then
     echo 'PG_VALIDATION_SELF_TEST: Compose service separator marker missing' >&2
     exit 1
   }
+  grep -Fq 'LAGRANGE_CODE_COMMIT: ${validation_code_commit}' "$BASH_SOURCE" || {
+    echo 'PG_VALIDATION_SELF_TEST: db-tool revision build argument is missing' >&2
+    exit 1
+  }
   echo 'PG_VALIDATION_SELF_TEST: PASS'
   exit 0
 fi
 
-for command_name in docker openssl mktemp awk sed grep find install date bash cat chmod cp rm tr wc cargo; do
+for command_name in docker openssl mktemp awk sed grep find install date bash cat chmod cp rm tr wc cargo git; do
   command -v "$command_name" >/dev/null 2>&1 || {
     echo "postgres-integration-validation: required command is missing: $command_name" >&2
     exit 2
@@ -196,6 +200,13 @@ for command_name in docker openssl mktemp awk sed grep find install date bash ca
 done
 [ -f "$qa_compose" ] || { echo "postgres-integration-validation: missing $qa_compose" >&2; exit 1; }
 [ -x "$role_script" ] || { echo "postgres-integration-validation: missing $role_script" >&2; exit 1; }
+
+validation_code_commit=$(git -C "$root" rev-parse --verify HEAD 2>/dev/null || true)
+if [[ ! "$validation_code_commit" =~ ^[0-9a-f]{40}$ ]] \
+  || [ "$validation_code_commit" = 0000000000000000000000000000000000000000 ]; then
+  echo 'postgres-integration-validation: repository HEAD is not an exact nonzero 40-hex commit' >&2
+  exit 2
+fi
 
 if [ -n "$evidence_dir" ]; then
   [ ! -L "$evidence_dir" ] || {
@@ -273,6 +284,7 @@ write_evidence() {
     printf '  "detail": "%s",\n' "$escaped_detail"
     printf '  "started_at": "%s",\n' "$escaped_started"
     printf '  "finished_at": "%s",\n' "$escaped_finished"
+    printf '  "code_commit": "%s",\n' "$validation_code_commit"
     printf '  "postgres_image": "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a",\n'
     printf '  "upgrade": {"baseline": "0038", "sequential": ["0039", "0040", "0041"]},\n'
     printf '  "ports": {"upgrade": %s, "tests": %s},\n' "$main_port" "$test_port"
@@ -306,6 +318,7 @@ write_evidence() {
   {
     printf 'verdict\t%s\n' "$outcome"
     printf 'detail\t%s\n' "$detail"
+    printf 'code_commit\t%s\n' "$validation_code_commit"
     printf 'baseline\t0038\n'
     printf 'sequential\t0039,0040,0041\n'
     printf 'stages_run\t%s\n' "$stages_run"
@@ -437,6 +450,8 @@ EOF
     build:
       context: ${root}
       dockerfile: deploy/db/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${validation_code_commit}
     user: "0:0"
     entrypoint: ["/usr/local/bin/lagrange-migrate"]
     environment:
