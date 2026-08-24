@@ -5,28 +5,22 @@ LOCK TABLE public.owner_beta_recommendation_runs IN ACCESS EXCLUSIVE MODE;
 
 -- A pre-0050 row has no enqueue-time strategy snapshot. It cannot be
 -- backfilled from the later-mutable strategy config without inventing lineage.
+-- The access-exclusive lock makes it safe to let the table owner inspect the
+-- complete table for this guard. Do not impersonate each tenant with a custom
+-- GUC here: PostgreSQL retains an empty custom GUC on the pooled migration
+-- connection, which can break older strict RLS policies during rollback.
+ALTER TABLE public.owner_beta_recommendation_runs NO FORCE ROW LEVEL SECURITY;
 DO $legacy_guard$
-DECLARE
-    v_owner_user_id uuid;
 BEGIN
-    FOR v_owner_user_id IN
-        SELECT users.id FROM public.users AS users ORDER BY users.id
-    LOOP
-        PERFORM pg_catalog.set_config(
-            'app.actor_user_id', v_owner_user_id::text, true
-        );
-        IF EXISTS (
-            SELECT 1
-              FROM public.owner_beta_recommendation_runs AS run
-             WHERE run.owner_user_id = v_owner_user_id
-        ) THEN
-            RAISE EXCEPTION 'owner beta strategy snapshot migration requires an empty run table'
-                USING ERRCODE = '55000';
-        END IF;
-    END LOOP;
-    PERFORM pg_catalog.set_config('app.actor_user_id', '', true);
+    IF EXISTS (
+        SELECT 1 FROM public.owner_beta_recommendation_runs
+    ) THEN
+        RAISE EXCEPTION 'owner beta strategy snapshot migration requires an empty run table'
+            USING ERRCODE = '55000';
+    END IF;
 END
 $legacy_guard$;
+ALTER TABLE public.owner_beta_recommendation_runs FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE public.owner_beta_recommendation_runs
     ADD COLUMN strategy_id text NOT NULL,

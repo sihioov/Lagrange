@@ -4,32 +4,23 @@ SET LOCAL statement_timeout = '30s';
 LOCK TABLE public.owner_beta_recommendation_runs IN ACCESS EXCLUSIVE MODE;
 
 -- Dropping published target lineage would make a completed run unverifiable.
+-- The table is access-exclusively locked above, so the owner can inspect every
+-- row without leaving tenant identity in the pooled migration connection.
+ALTER TABLE public.owner_beta_recommendation_runs NO FORCE ROW LEVEL SECURITY;
 DO $rollback_guard$
-DECLARE
-    v_owner_user_id uuid;
 BEGIN
-    FOR v_owner_user_id IN
-        SELECT users.id FROM public.users AS users ORDER BY users.id
-    LOOP
-        PERFORM pg_catalog.set_config(
-            'app.actor_user_id', v_owner_user_id::text, true
-        );
-        IF EXISTS (
-            SELECT 1
-              FROM public.owner_beta_recommendation_runs AS run
-             WHERE run.owner_user_id = v_owner_user_id
-               AND (
-                    run.target_snapshot_sha256 IS NOT NULL
-                    OR run.cash_weight IS NOT NULL
-               )
-        ) THEN
-            RAISE EXCEPTION 'owner beta target publication rollback would discard lineage'
-                USING ERRCODE = '55000';
-        END IF;
-    END LOOP;
-    PERFORM pg_catalog.set_config('app.actor_user_id', '', true);
+    IF EXISTS (
+        SELECT 1
+          FROM public.owner_beta_recommendation_runs AS run
+         WHERE run.target_snapshot_sha256 IS NOT NULL
+            OR run.cash_weight IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'owner beta target publication rollback would discard lineage'
+            USING ERRCODE = '55000';
+    END IF;
 END
 $rollback_guard$;
+ALTER TABLE public.owner_beta_recommendation_runs FORCE ROW LEVEL SECURITY;
 
 REVOKE UPDATE (
     target_snapshot_sha256, cash_weight

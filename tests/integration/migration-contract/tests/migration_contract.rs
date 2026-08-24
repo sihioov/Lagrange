@@ -367,24 +367,33 @@ fn owner_beta_strategy_snapshots_are_append_only_and_bound_at_insert() {
         "0050 must have exactly one reversible up/down migration pair"
     );
 
+    let lock = OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
+        .find("LOCK TABLE public.owner_beta_recommendation_runs IN ACCESS EXCLUSIVE MODE;")
+        .expect("0050 must lock the run table");
+    let no_force = OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
+        .find("ALTER TABLE public.owner_beta_recommendation_runs NO FORCE ROW LEVEL SECURITY;")
+        .expect("0050 must let the locked table owner inspect every legacy row");
     let guard = OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
         .find("owner beta strategy snapshot migration requires an empty run table")
         .expect("0050 must fail closed on a legacy owner-beta row");
+    let force = OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
+        .find("ALTER TABLE public.owner_beta_recommendation_runs FORCE ROW LEVEL SECURITY;")
+        .expect("0050 must restore forced RLS before changing the schema");
     let schema_change = OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
-        .find("ALTER TABLE public.owner_beta_recommendation_runs")
+        .find("ALTER TABLE public.owner_beta_recommendation_runs\n    ADD COLUMN strategy_id")
         .expect("0050 must add the strategy snapshot schema");
     assert!(
-        guard < schema_change,
-        "0050 must reject every legacy row before adding snapshot columns"
+        lock < no_force && no_force < guard && guard < force && force < schema_change,
+        "0050 must lock, inspect every row without tenant GUCs, restore forced RLS, then add snapshot columns"
     );
 
     for token in [
         "SET LOCAL lock_timeout = '5s';",
         "SET LOCAL statement_timeout = '30s';",
         "LOCK TABLE public.owner_beta_recommendation_runs IN ACCESS EXCLUSIVE MODE;",
-        "SELECT users.id FROM public.users AS users ORDER BY users.id",
-        "pg_catalog.set_config(\n            'app.actor_user_id', v_owner_user_id::text, true",
-        "SELECT 1\n              FROM public.owner_beta_recommendation_runs AS run",
+        "ALTER TABLE public.owner_beta_recommendation_runs NO FORCE ROW LEVEL SECURITY;",
+        "SELECT 1 FROM public.owner_beta_recommendation_runs",
+        "ALTER TABLE public.owner_beta_recommendation_runs FORCE ROW LEVEL SECURITY;",
         "USING ERRCODE = '55000';",
         "ADD COLUMN strategy_id text NOT NULL",
         "ADD COLUMN strategy_version text NOT NULL",
@@ -413,6 +422,11 @@ fn owner_beta_strategy_snapshots_are_append_only_and_bound_at_insert() {
             "0050 owner-beta strategy snapshot contract is missing {token}"
         );
     }
+    assert!(
+        !OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL.contains("pg_catalog.set_config")
+            && !OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL.contains("app.actor_user_id"),
+        "0050 migration guards must not contaminate pooled connections with tenant GUCs"
+    );
 
     let update_branch_start = OWNER_BETA_STRATEGY_SNAPSHOTS_UP_SQL
         .find("IF TG_OP = 'UPDATE' THEN")
@@ -545,24 +559,32 @@ fn owner_beta_target_publication_is_atomic_append_only_and_reversible() {
     let lock = OWNER_BETA_TARGET_PUBLICATION_UP_SQL
         .find("LOCK TABLE public.owner_beta_recommendation_runs IN ACCESS EXCLUSIVE MODE;")
         .expect("0051 must take the publication table lock");
+    let no_force = OWNER_BETA_TARGET_PUBLICATION_UP_SQL
+        .find("ALTER TABLE public.owner_beta_recommendation_runs NO FORCE ROW LEVEL SECURITY;")
+        .expect("0051 must let the locked table owner inspect every legacy row");
     let guard = OWNER_BETA_TARGET_PUBLICATION_UP_SQL
         .find("owner beta target publication migration requires unpublished runs")
         .expect("0051 must reject legacy result state");
+    let force = OWNER_BETA_TARGET_PUBLICATION_UP_SQL
+        .find("ALTER TABLE public.owner_beta_recommendation_runs FORCE ROW LEVEL SECURITY;")
+        .expect("0051 must restore forced RLS before changing the schema");
     let alter = OWNER_BETA_TARGET_PUBLICATION_UP_SQL
-        .find("ALTER TABLE public.owner_beta_recommendation_runs")
+        .find(
+            "ALTER TABLE public.owner_beta_recommendation_runs\n    DROP CONSTRAINT owner_beta_recommendation_runs_success_factor_check",
+        )
         .expect("0051 must extend the run table");
     assert!(
-        lock < guard && guard < alter,
-        "0051 must lock, guard, then alter the run table"
+        lock < no_force && no_force < guard && guard < force && force < alter,
+        "0051 must lock, inspect every row without tenant GUCs, restore forced RLS, then alter the run table"
     );
 
     for token in [
         "SET LOCAL lock_timeout = '5s';",
         "SET LOCAL statement_timeout = '30s';",
-        "SELECT users.id FROM public.users AS users ORDER BY users.id",
-        "'app.actor_user_id', v_owner_user_id::text, true",
+        "ALTER TABLE public.owner_beta_recommendation_runs NO FORCE ROW LEVEL SECURITY;",
         "run.status = 'SUCCEEDED'",
         "OR run.factor_snapshot_sha256 IS NOT NULL",
+        "ALTER TABLE public.owner_beta_recommendation_runs FORCE ROW LEVEL SECURITY;",
         "USING ERRCODE = '55000';",
         "DROP CONSTRAINT owner_beta_recommendation_runs_success_factor_check",
         "ADD COLUMN target_snapshot_sha256 text",
@@ -579,6 +601,11 @@ fn owner_beta_target_publication_is_atomic_append_only_and_reversible() {
             "0051 target publication contract is missing {token}"
         );
     }
+    assert!(
+        !OWNER_BETA_TARGET_PUBLICATION_UP_SQL.contains("pg_catalog.set_config")
+            && !OWNER_BETA_TARGET_PUBLICATION_UP_SQL.contains("app.actor_user_id"),
+        "0051 migration guards must not contaminate pooled connections with tenant GUCs"
+    );
     assert_eq!(
         OWNER_BETA_TARGET_PUBLICATION_UP_SQL
             .matches("owner_beta_recommendation_runs_success_factor_check")
@@ -603,18 +630,30 @@ fn owner_beta_target_publication_is_atomic_append_only_and_reversible() {
     let down_lock = OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
         .find("LOCK TABLE public.owner_beta_recommendation_runs IN ACCESS EXCLUSIVE MODE;")
         .expect("0051 down must take the publication table lock");
+    let down_no_force = OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
+        .find("ALTER TABLE public.owner_beta_recommendation_runs NO FORCE ROW LEVEL SECURITY;")
+        .expect("0051 down must let the locked table owner inspect every result row");
     let down_guard = OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
         .find("owner beta target publication rollback would discard lineage")
         .expect("0051 down must preserve published lineage");
+    let down_force = OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
+        .find("ALTER TABLE public.owner_beta_recommendation_runs FORCE ROW LEVEL SECURITY;")
+        .expect("0051 down must restore forced RLS before reverting the schema");
     let down_revoke = OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
         .find("REVOKE UPDATE (")
         .expect("0051 down must revoke the new worker grant");
     let down_alter = OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL
-        .find("ALTER TABLE public.owner_beta_recommendation_runs")
+        .find(
+            "ALTER TABLE public.owner_beta_recommendation_runs\n    DROP CONSTRAINT owner_beta_recommendation_runs_result_state_check",
+        )
         .expect("0051 down must restore the old schema");
     assert!(
-        down_lock < down_guard && down_guard < down_revoke && down_revoke < down_alter,
-        "0051 down must lock, guard, revoke, then alter"
+        down_lock < down_no_force
+            && down_no_force < down_guard
+            && down_guard < down_force
+            && down_force < down_revoke
+            && down_revoke < down_alter,
+        "0051 down must lock, inspect every row without tenant GUCs, restore forced RLS, revoke, then alter"
     );
     for token in [
         "run.target_snapshot_sha256 IS NOT NULL",
@@ -633,6 +672,11 @@ fn owner_beta_target_publication_is_atomic_append_only_and_reversible() {
             "0051 rollback contract is missing {token}"
         );
     }
+    assert!(
+        !OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL.contains("pg_catalog.set_config")
+            && !OWNER_BETA_TARGET_PUBLICATION_DOWN_SQL.contains("app.actor_user_id"),
+        "0051 rollback guards must not contaminate pooled connections with tenant GUCs"
+    );
     assert!(
         !OWNER_BETA_TARGET_PUBLICATION_UP_SQL
             .to_ascii_uppercase()

@@ -7,32 +7,23 @@ LOCK TABLE public.owner_beta_recommendation_runs IN ACCESS EXCLUSIVE MODE;
 -- values cannot be reconstructed honestly here. Older non-success rows were
 -- also allowed to carry a factor hash, which the new atomic result contract
 -- forbids.
+-- The table is access-exclusively locked above, so the owner can inspect every
+-- row without leaving tenant identity in the pooled migration connection.
+ALTER TABLE public.owner_beta_recommendation_runs NO FORCE ROW LEVEL SECURITY;
 DO $legacy_guard$
-DECLARE
-    v_owner_user_id uuid;
 BEGIN
-    FOR v_owner_user_id IN
-        SELECT users.id FROM public.users AS users ORDER BY users.id
-    LOOP
-        PERFORM pg_catalog.set_config(
-            'app.actor_user_id', v_owner_user_id::text, true
-        );
-        IF EXISTS (
-            SELECT 1
-              FROM public.owner_beta_recommendation_runs AS run
-             WHERE run.owner_user_id = v_owner_user_id
-               AND (
-                    run.status = 'SUCCEEDED'
-                    OR run.factor_snapshot_sha256 IS NOT NULL
-               )
-        ) THEN
-            RAISE EXCEPTION 'owner beta target publication migration requires unpublished runs'
-                USING ERRCODE = '55000';
-        END IF;
-    END LOOP;
-    PERFORM pg_catalog.set_config('app.actor_user_id', '', true);
+    IF EXISTS (
+        SELECT 1
+          FROM public.owner_beta_recommendation_runs AS run
+         WHERE run.status = 'SUCCEEDED'
+            OR run.factor_snapshot_sha256 IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'owner beta target publication migration requires unpublished runs'
+            USING ERRCODE = '55000';
+    END IF;
 END
 $legacy_guard$;
+ALTER TABLE public.owner_beta_recommendation_runs FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE public.owner_beta_recommendation_runs
     DROP CONSTRAINT owner_beta_recommendation_runs_success_factor_check,
