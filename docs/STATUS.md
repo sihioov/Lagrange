@@ -1650,6 +1650,9 @@ CI 전제도 그대로 재현했다. `uv sync --locked`로 ignored `nt/.venv`를
 소켓이 필요한 test는 샌드박스 밖 로컬 격리 환경에서 실행했다. 이 조건에서
 `cargo test --workspace --locked --no-fail-fast`가 최종 **exit 0**으로 끝났고,
 workspace all-target/all-feature strict Clippy `-D warnings`와 rustfmt도 PASS했다.
+같은 생성 데이터와 잠금 기반 환경에서 `uv run --project nt pytest -q`는 357 passed / 2
+skipped였다. 경고 6개는 NautilusTrader 내부의 `Timestamp.utcnow` deprecation뿐이며 실패는
+없다. backup policy의 완전성·hash·tamper·secret-exclusion·결정론 검사도 6/6 PASS했다.
 
 이 전체 재실행은 기존 계약 테스트가 놓친 새 migration 결함 하나를 실제로 잡았다.
 `0050/0051` guard가 tenant RLS를 순회하며 `app.actor_user_id` custom GUC를 설정한 뒤 빈
