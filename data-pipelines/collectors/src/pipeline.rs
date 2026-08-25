@@ -411,7 +411,9 @@ impl RecoveryScope {
     }
 }
 
-/// Result of reconciling and normalizing every durable KIS wire source batch.
+/// Result of reconciling every durable KIS wire source and normalizing each
+/// EOD bundle. Corporate-action-only evidence remains in its immutable source
+/// scope and is intentionally absent from this price-publication report.
 ///
 /// Entries are returned in the same append order as
 /// `read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)`.  A repeated call
@@ -432,8 +434,8 @@ impl KisNormalizationRecoveryReport {
     }
 }
 
-/// Reconciles durable KIS wire batches and deterministically materializes their
-/// canonical `kis-normalized/kr` counterparts.
+/// Reconciles durable KIS wire batches and deterministically materializes the
+/// eligible EOD bundles' canonical `kis-normalized/kr` counterparts.
 pub fn recover_kis_normalization(
     store: &RawStore,
 ) -> Result<KisNormalizationRecoveryReport, PipelineError> {
@@ -442,6 +444,19 @@ pub fn recover_kis_normalization(
         .map_err(|source| PipelineError::Manifest { source })?;
     let mut outcomes = Vec::with_capacity(sources.len());
     for source in sources {
+        // Historical KSD evidence is stored under the same immutable KIS Raw
+        // scope, but it is not an EOD bundle and must never be projected onto
+        // the provider-neutral price surface. Keep mixed or empty batches on
+        // the fail-closed normalizer path; only a non-empty batch consisting
+        // exclusively of typed corporate-action responses is evidence-only.
+        if !source.files.is_empty()
+            && source
+                .files
+                .iter()
+                .all(|file| file.kind == market_data::contract::ResponseKind::CorporateActions)
+        {
+            continue;
+        }
         let source_batch_id = source.batch_id;
         let outcome =
             normalize_kis_batch(store, &source).map_err(|source| PipelineError::Normalize {

@@ -77,6 +77,10 @@ grep -Fq 'historical-price-beta-root' "$root/scripts/ops/provision-linux.sh" \
   || die 'dedicated historical artifact provisioning is missing'
 grep -Fq 'worker_uid" "$worker_gid" 750 historical-price-beta-root' \
   "$root/scripts/ops/provision-linux.sh" || die 'dedicated historical artifact ownership fence is missing'
+grep -Fq 'worker_uid" "$worker_gid" 750 backtest-artifacts' \
+  "$root/scripts/ops/provision-linux.sh" || die 'backtest artifact ownership fence is missing'
+grep -Fq 'worker_uid" "$worker_gid" 750 backtest-runs' \
+  "$root/scripts/ops/provision-linux.sh" || die 'backtest run ownership fence is missing'
 grep -Fq 'docker image inspect' "$artifact_ops" || die 'historical artifact image gate is missing'
 grep -Fq 'org.opencontainers.image.revision' "$artifact_ops" \
   || die 'historical artifact revision gate is missing'

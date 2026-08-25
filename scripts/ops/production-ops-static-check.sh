@@ -30,6 +30,15 @@ if grep -Fq 'PASS (root fixture skipped' "$self_test" || grep -Fq 'fakeroot "$@"
 fi
 
 compose_file=$root/deploy/compose/compose.yml
+reverse_proxy_block=$(awk '
+  /^  reverse-proxy:/ { in_proxy = 1 }
+  in_proxy { print }
+  in_proxy && /^  [[:alnum:]_-]+:/ && $0 !~ /^  reverse-proxy:/ { exit }
+' "$compose_file")
+grep -Fq -- '- /var/cache/nginx:uid=101,gid=101,mode=0750' <<<"$reverse_proxy_block" ||
+  die 'reverse-proxy cache tmpfs must be writable only by the unprivileged nginx identity'
+grep -Fq -- '- /var/run:uid=101,gid=101,mode=0750' <<<"$reverse_proxy_block" ||
+  die 'reverse-proxy runtime tmpfs must be writable only by the unprivileged nginx identity'
 api_block=$(awk '
   /^  api-server:/ { in_api = 1 }
   in_api { print }
