@@ -92,7 +92,9 @@ grep -Fq 'status=PENDING' <<<"$plan_output" || fail 'entitlement plan did not re
 ! grep -Fq 'operator-controlled rights fixture' <<<"$plan_output" || fail 'entitlement plan leaked document content'
 
 if [ "$(id -u)" -eq 0 ]; then
-  if "$entitlement" activate --apply --entitlement-id 00000000-0000-4000-8000-000000000002 --managed-by 00000000-0000-4000-8000-000000000001 --activation-date 2026-08-18 --confirm WRONG >"$tmp/activation.out" 2>&1; then
+  compose_env_fixture="$tmp/compose.env"
+  printf '%s\n' 'POSTGRES_DB=lagrange' >"$compose_env_fixture"
+  if LAGRANGE_ENV_FILE="$compose_env_fixture" "$entitlement" activate --apply --entitlement-id 00000000-0000-4000-8000-000000000002 --managed-by 00000000-0000-4000-8000-000000000001 --activation-date 2026-08-18 --confirm WRONG >"$tmp/activation.out" 2>&1; then
     fail 'activation accepted incorrect confirmation'
   fi
   grep -Fq 'I_UNDERSTAND_ACTIVATE_ENTITLEMENT' "$tmp/activation.out" || fail 'activation confirmation guard is missing'
@@ -122,6 +124,33 @@ jq -cn --argjson base "$canonical" --arg hash "sha256:$manifest_hash" '$base + {
 
 dataset_plan=$("$dataset" --plan --manifest-file "$manifest" --dataset-id krx_eod_bars --dataset-version kis-20260818.1 --storage-path /data/curated --entitlement-id 00000000-0000-4000-8000-000000000004 --as-of-date 2026-08-18 --entitlement-reference operator-attestation://self-test/kis-readonly --curated-root "$curated" 2>&1) || fail "dataset plan failed: $dataset_plan"
 grep -Fq 'artifacts=33 parquet_files=33' <<<"$dataset_plan" || fail 'dataset plan did not attest exact ETF artifacts'
+
+if [ "$(id -u)" -eq 0 ]; then
+  env_fixture="$tmp/release.env"
+  printf '%s\n' 'RESEARCH_ENTITLEMENT_REFERENCE=operator-attestation://self-test/kis-readonly' >"$env_fixture"
+  chmod 0600 "$env_fixture"
+  common_dataset_args=(
+    --apply --manifest-file "$manifest" --dataset-id krx_eod_bars
+    --dataset-version kis-20260818.1 --storage-path /data/curated
+    --entitlement-id 00000000-0000-4000-8000-000000000004
+    --as-of-date 2026-08-18
+    --entitlement-reference operator-attestation://self-test/kis-readonly
+    --curated-root "$curated" --write-env-file "$env_fixture"
+  )
+  if "$dataset" "${common_dataset_args[@]}" \
+      --confirm I_UNDERSTAND_REGISTER_READY_DATASET >"$tmp/write-confirm.out" 2>&1; then
+    fail 'dataset env write accepted a missing independent write confirmation'
+  fi
+  grep -Fq -- '--confirm-write I_UNDERSTAND_WRITE_RELEASE_PINS' "$tmp/write-confirm.out" ||
+    fail 'dataset env write does not require its independent confirmation'
+
+  if "$dataset" "${common_dataset_args[@]}" --confirm WRONG \
+      --confirm-write I_UNDERSTAND_WRITE_RELEASE_PINS >"$tmp/register-confirm.out" 2>&1; then
+    fail 'dataset apply accepted an incorrect READY registration confirmation'
+  fi
+  grep -Fq -- '--confirm I_UNDERSTAND_REGISTER_READY_DATASET' "$tmp/register-confirm.out" ||
+    fail 'dataset apply registration confirmation was not kept independent'
+fi
 
 rm -f -- "$curated/bars/market=kr/symbol=069500.KRX/year=2024/version=1/bars.parquet"
 if "$dataset" --plan --manifest-file "$manifest" --dataset-id krx_eod_bars --dataset-version kis-20260818.1 --storage-path /data/curated --entitlement-id 00000000-0000-4000-8000-000000000004 --as-of-date 2026-08-18 --entitlement-reference operator-attestation://self-test/kis-readonly --curated-root "$curated" >"$tmp/dataset-missing.out" 2>&1; then
