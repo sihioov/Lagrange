@@ -20,6 +20,7 @@ env_file=
 pin_file=
 write_env_file=
 confirmation=
+write_confirmation=
 
 usage() {
   cat <<'USAGE'
@@ -29,6 +30,8 @@ Usage:
     --storage-path ABSOLUTE_RUNTIME_ROOT --entitlement-id DB_UUID
     --as-of-date YYYY-MM-DD [--curated-root PATH] [--env-file PATH]
     [--pin-file PATH] [--write-env-file PATH]
+    [--confirm I_UNDERSTAND_REGISTER_READY_DATASET]
+    [--confirm-write I_UNDERSTAND_WRITE_RELEASE_PINS]
 
 Plan is local-only. Check is DB read-only. Apply is root-only and requires
 I_UNDERSTAND_REGISTER_READY_DATASET. It creates no KIS/order/account traffic.
@@ -55,6 +58,7 @@ while [ "$#" -gt 0 ]; do
     --pin-file) [ "$#" -ge 2 ] || die '--pin-file needs a path'; pin_file=$2; shift 2 ;;
     --write-env-file) [ "$#" -ge 2 ] || die '--write-env-file needs a path'; write_env_file=$2; shift 2 ;;
     --confirm) [ "$#" -ge 2 ] || die '--confirm needs a value'; confirmation=$2; shift 2 ;;
+    --confirm-write) [ "$#" -ge 2 ] || die '--confirm-write needs a value'; write_confirmation=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -325,8 +329,8 @@ printf '  manifest_sha256=%s artifacts=%s parquet_files=%s entitlement_reference
 }
 if [ -n "$write_env_file" ]; then
   [ "$mode" = apply ] || die '--write-env-file requires --apply'
-  [ "$confirmation" = I_UNDERSTAND_WRITE_RELEASE_PINS ] ||
-    die '--write-env-file requires --confirm I_UNDERSTAND_WRITE_RELEASE_PINS'
+  [ "$write_confirmation" = I_UNDERSTAND_WRITE_RELEASE_PINS ] ||
+    die '--write-env-file requires --confirm-write I_UNDERSTAND_WRITE_RELEASE_PINS'
   [ -f "$write_env_file" ] && [ ! -L "$write_env_file" ] || die 'env output must be an existing regular file'
   [ "$(stat -c '%a' "$write_env_file")" = 600 ] || die 'env output must be mode 0600'
 fi

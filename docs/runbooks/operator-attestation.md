@@ -57,6 +57,15 @@ sudo scripts/ops/register-dataset-version.sh --check \
   --dataset-id krx_eod_bars --dataset-version kis-YYYYMMDD.1 \
   --storage-path /data/curated --entitlement-id DB-UUID \
   --as-of-date YYYY-MM-DD --env-file deploy/compose/.env
+
+sudo scripts/ops/register-dataset-version.sh --apply \
+  --manifest-file /var/lib/lagrange/data/curated/datasets/krx_eod_bars/version=1/manifest.json \
+  --dataset-id krx_eod_bars --dataset-version kis-YYYYMMDD.1 \
+  --storage-path /data/curated --entitlement-id DB-UUID \
+  --as-of-date YYYY-MM-DD --env-file deploy/compose/.env \
+  --write-env-file /etc/lagrange/compose.env.pending \
+  --confirm I_UNDERSTAND_REGISTER_READY_DATASET \
+  --confirm-write I_UNDERSTAND_WRITE_RELEASE_PINS
 ```
 
 The dataset helper verifies the manifest self-hash, exact artifact list,
