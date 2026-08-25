@@ -30,6 +30,17 @@ if grep -Fq 'PASS (root fixture skipped' "$self_test" || grep -Fq 'fakeroot "$@"
 fi
 
 compose_file=$root/deploy/compose/compose.yml
+api_block=$(awk '
+  /^  api-server:/ { in_api = 1 }
+  in_api { print }
+  in_api && /^  [[:alnum:]_-]+:/ && $0 !~ /^  api-server:/ { exit }
+' "$compose_file")
+for key in RECOMMENDATION_DATASET_VERSION_ID RECOMMENDATION_DATASET_ID \
+  RECOMMENDATION_DATASET_VERSION RECOMMENDATION_CURATED_VERSION \
+  RECOMMENDATION_DATASET_MANIFEST_SHA256; do
+  [ "$(grep -Ec "^[[:space:]]+$key:" <<<"$api_block")" -eq 1 ] ||
+    die "api-server must receive exactly one $key release pin"
+done
 grep -Fq 'OWNER_BETA_ACCESS_MODE: ${OWNER_BETA_ACCESS_MODE:-disabled}' "$compose_file" ||
   die 'Compose owner-beta access policy injection missing'
 grep -Fq 'OWNER_BETA_PRICE_INPUT_MODE: ${OWNER_BETA_PRICE_INPUT_MODE:-disabled}' "$compose_file" ||
