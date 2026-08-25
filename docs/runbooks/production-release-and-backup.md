@@ -92,9 +92,10 @@ sudo /opt/lagrange/current/scripts/ops/compose-release.sh --scope release --appl
 
 That command requires the installed V2 manifest, rechecks every local image ID
 and OCI revision immediately before startup, creates a mode-0600 temporary
-Compose override mapping the ten services to `image: sha256:<image_id>` with
-build reset, and passes `--no-build` to every `up`/`run`. It checks the actual
-`.Image` and OCI revision of each persistent local service after startup. The
+Compose override mapping the eleven services to `image: sha256:<image_id>` with
+build reset, passes `--no-build` to every `up`, and omits the opt-in `--build`
+from every one-shot `run` (Compose v5 has no `run --no-build`). It checks the
+actual `.Image` and OCI revision of each persistent local service after startup. The
 one-shot services consume the same override but are intentionally not claimed as
 post-start inspected after `--rm`. A mismatch returns failure without printing
 container/environment configuration and without automatically stopping or

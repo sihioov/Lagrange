@@ -151,7 +151,16 @@ grep -Fq 'release_image_manifest_write_compose_override' "$compose_release" ||
   die 'immutable Compose override generator missing'
 grep -Fq 'build: !reset null' "$manifest_lib" || die 'Compose build reset contract missing'
 grep -Fq 'compose up --no-build' "$compose_release" || die 'release up must pass --no-build'
-grep -Fq 'compose run --no-build' "$compose_release" || die 'release one-shots must pass --no-build'
+run_without_build_count=$(awk '
+  /^# Owner-beta serving release:/ { in_release = 1 }
+  in_release && /compose run --rm --no-deps/ { count++ }
+  END { print count + 0 }
+' "$compose_release")
+[ "$run_without_build_count" -eq 4 ] || die 'release must have exactly four manifest-bound one-shot runs without --build'
+if awk '/^# Owner-beta serving release:/ { in_release = 1 } in_release { print }' \
+    "$compose_release" | grep -Eq 'compose run .*--build|compose run --no-build'; then
+  die 'release one-shots must omit the opt-in --build and unsupported --no-build flags'
+fi
 grep -Fq 'verify_manifest_images' "$compose_release" || die 'pre-start image_id verification missing'
 grep -Fq "'{{.Image}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}}'" \
   "$compose_release" || die 'running-container image_id/revision inspection missing'
@@ -170,8 +179,11 @@ release_apply_block=$(awk '
 if grep -Fq 'compose build' <<<"$release_apply_block"; then
   die 'owner-beta release apply must not rebuild images'
 fi
-if grep -E '^compose (up|run) ' <<<"$release_apply_block" | grep -Fv -- '--no-build' >/dev/null; then
-  die 'every owner-beta release up/run must pass --no-build'
+if grep -E '^compose up ' <<<"$release_apply_block" | grep -Fv -- '--no-build' >/dev/null; then
+  die 'every owner-beta release up must pass --no-build'
+fi
+if grep -E '^compose run ' <<<"$release_apply_block" | grep -Eq -- '--build|--no-build'; then
+  die 'owner-beta release run must omit both --build and unsupported --no-build'
 fi
 
 # Cargo resolves every workspace member manifest while loading a package, even

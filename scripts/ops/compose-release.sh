@@ -73,8 +73,9 @@ scope. Infrastructure/backfill build their separately approved image sets.
 Release does not build: it validates each manifest image ID/revision immediately
 before startup, applies a temporary mode-0600 image-ID Compose override, and
 checks each persistent local container's actual .Image plus OCI revision after
-it starts. One-shot containers use the same override/--no-build but are not
-claimed as post-start inspected after --rm.
+it starts. One-shot `run` commands use the same build-reset/image-ID override
+and omit the opt-in `--build`; they are not claimed as post-start inspected
+after --rm.
 EOF
 }
 
@@ -325,8 +326,8 @@ COMPOSE_RELEASE_ORDER:
   2. generate a mode-0600 temporary Compose override (image: sha256:<id>; build reset)
   3. owner_only only: require the embedded-registry artifact approval before the first Compose up
   4. up --no-build --wait postgres
-  5. run --no-build --rm --no-deps db-role-bootstrap and db-migrate
-  6. run --no-build --rm --no-deps research-raw-init and research-schema-check
+  5. run --rm --no-deps db-role-bootstrap and db-migrate (no --build)
+  6. run --rm --no-deps research-raw-init and research-schema-check (no --build)
   7. up --no-build persistent local services; disabled leaves owner-beta-runner inactive, while owner_only starts it only after step 3; Paper remains excluded pending a future evidence gate
   8. up --no-build reverse-proxy; ps
 No serving image rebuild, manifest-less activation, range-raw profile, or live profile is allowed.
@@ -373,10 +374,10 @@ verify_manifest_images
 run_owner_beta_approval_gate
 compose up --no-build --wait postgres
 verify_manifest_images
-compose run --no-build --rm --no-deps db-role-bootstrap
-compose run --no-build --rm --no-deps db-migrate
-compose run --no-build --rm --no-deps research-raw-init
-compose run --no-build --rm --no-deps research-schema-check
+compose run --rm --no-deps db-role-bootstrap
+compose run --rm --no-deps db-migrate
+compose run --rm --no-deps research-raw-init
+compose run --rm --no-deps research-schema-check
 verify_manifest_images
 # The legacy ordering contract was `compose up --wait --no-deps api-server`;
 # owner-beta additionally supplies --no-build before it reaches Docker.
