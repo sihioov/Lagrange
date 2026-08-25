@@ -2,13 +2,14 @@
 
 **최신 기준 시각: 2026-08-25 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.36(main 병합 완료·다음 release gate),
+당시의 기록이다. **현재 상태는 §0.37(immutable release 설치·approval-check 통과),
+§0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.36에 있다 — 작업 2의 봉인 artifact와
-작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로는 완료했지만, 새 immutable
-image/release 설치와 실제 approval-check, 등록·READY·publication·추천 실행과 백테스트·운영
-개방은 미완료다.
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.37에 있다 — 작업 2의 봉인 artifact와
+작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
+설치와 설치본의 networkless approval-check까지 완료했다. 등록·READY·publication·추천
+실행과 백테스트·서비스 활성화는 미완료다.
 작업 5·6도 미수행이다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
@@ -1806,6 +1807,47 @@ preflight, immutable release dry-run, artifact operation plan은 모두 통과�
 보안 경계를 우회하지 않았고 image build, release switch, container start, DB/provider 접근,
 artifact 변경은 없었다. 다음 재개 지점은 운영자가 root 인증을 제공한 세션에서 정확한
 commit의 11개 image와 V2 manifest를 빌드하는 단계다.
+
+### 0.37 owner-beta immutable release 설치와 real approval-check 통과 (2026-08-25)
+
+`main`의 최종 release source는 `60ef039a677893bfb474dc0df63c8ca0956025f4`
+(`Fix owner beta registry in production builds`)다. `16884ad` image build에서 embedded
+v2 registry JSON을 복사하지 않던 세 production Dockerfile이 실제 컴파일에서 드러났고,
+`crates/job-queue/Dockerfile`, `crates/job-queue/Dockerfile.backtest-runner`,
+`deploy/runtime/Dockerfile.paper-runner`와 production image static check를 고쳤다.
+
+실제 `main` worktree의 clean HEAD를 preflight로 다시 고정한 뒤 11개 serving image를
+서비스별 직렬·Rust 2 logical CPU 제한으로 빌드했다. 모든 이미지와 OCI revision 검증이
+통과했고 root-owned mode `0600` V2 manifest를 다음 위치에 원자적으로 작성했다.
+
+- manifest: `/etc/lagrange/release-manifests/60ef039a677893bfb474dc0df63c8ca0956025f4.manifest`
+- manifest SHA-256: `538c6be5ed2ccfbdf7456c854cb08ef23934dcca1f8bc13acdb10f92fa0c15a6`
+- build verdict: `PRODUCTION_IMAGE_BUILD: PASS`
+
+이 manifest로 `/opt/lagrange/releases/60ef039a677893bfb474dc0df63c8ca0956025f4`를
+설치하고 `current`를 전환했다. 설치 뒤 `PRODUCTION_RELEASE_CHECK: PASS`를 확인했다.
+wrapper의 첫 실행은 env file이 의도적으로 비운 `LAGRANGE_CODE_COMMIT`을 주입하지 않아
+`release_commit_invalid`로 fail-closed됐고, 정확한 설치 commit을 프로세스 로컬로 전달해
+해소했다. 다음 게이트에서는 historical artifact 전용 leaf가 `10001:982:0750`이어서
+요구 계약 `10001:10001:0750`과 다른 것을 발견했다. symlink나 inode/mode를 바꾸지 않고
+정확한 leaf 하나의 GID만 `10001`로 교정했다. Raw/Curated와 하위 artifact bytes는
+변경하지 않았다.
+
+그 뒤 설치된 current release의 root-only/network-none 경계에서 다음 실검증이 통과했다.
+
+- `HISTORICAL_PRICE_BETA_OPS status=ok mode=preflight image=research-worker-manifest-bound`
+- embedded registry SHA-256:
+  `4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`
+- approval status: `APPROVED`
+- envelope: `OWNER_ONLY`, `vendor_snapshot=true`, `strict_pit=false`,
+  `PRICE_RETURN_ONLY`, `MATERIALIZED`, `UNREGISTERED`, `NOT_PUBLISHED`
+- coverage: ETF11, 1,608 sessions, 17,688 bars
+
+이 단계는 image build·immutable release 설치·실제 approval-check까지만 수행했다. 새 release
+서비스는 시작하지 않았고 기존 healthy PostgreSQL만 유지했다. DB 등록, READY 전환,
+publication, recommendation 실행, 전용 backtest, owner-beta service 활성화, trading, push는
+여전히 수행하지 않았다. 다음 gate는 승인된 artifact 등록과 READY/publication 절차를 각각의
+권한·감사 계약 아래 실행하는 것이다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
