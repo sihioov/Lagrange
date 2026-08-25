@@ -1,16 +1,19 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준 시각: 2026-08-25 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
+**최신 기준 시각: 2026-08-26 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.37(immutable release 설치·approval-check 통과),
+당시의 기록이다. **현재 상태는 §0.38(owner-beta release 운영 적용·복구 검증),
+§0.37(immutable release 설치·approval-check 통과),
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.37에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.38에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
-설치와 설치본의 networkless approval-check까지 완료했다. 등록·READY·publication·추천
-실행과 백테스트·서비스 활성화는 미완료다.
-작업 5·6도 미수행이다. §4.2의 남은
+설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
+price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
+`NOT_PUBLISHED`를 유지하며 generic dataset v4의 별도 `READY` 경로와 섞지 않는다.
+owner-beta 서비스는 활성화됐지만 실제 소유자 추천 실행과 전용 결과 확인, Paper/Live와
+push는 아직 수행하지 않았다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
 이력을 보존한 기록이다. 과거의 "미설치", "KIS credential 없음", "초기 백필 미완료"
@@ -1843,11 +1846,56 @@ wrapper의 첫 실행은 env file이 의도적으로 비운 `LAGRANGE_CODE_COMMI
   `PRICE_RETURN_ONLY`, `MATERIALIZED`, `UNREGISTERED`, `NOT_PUBLISHED`
 - coverage: ETF11, 1,608 sessions, 17,688 bars
 
-이 단계는 image build·immutable release 설치·실제 approval-check까지만 수행했다. 새 release
-서비스는 시작하지 않았고 기존 healthy PostgreSQL만 유지했다. DB 등록, READY 전환,
-publication, recommendation 실행, 전용 backtest, owner-beta service 활성화, trading, push는
-여전히 수행하지 않았다. 다음 gate는 승인된 artifact 등록과 READY/publication 절차를 각각의
-권한·감사 계약 아래 실행하는 것이다.
+이 단계에서는 image build·immutable release 설치·실제 approval-check까지만 수행했고 새 release
+서비스는 아직 시작하지 않았다. 당시 문서가 historical artifact 등록·READY/publication을 다음
+gate로 적었던 것은 generic dataset 경계와 혼동한 판단이며 §0.38에서 바로잡았다. historical
+artifact는 의도적으로 `UNREGISTERED`/`NOT_PUBLISHED`를 유지하고, 실제 다음 gate는 그 승인
+artifact를 소비하는 owner-beta release의 운영 적용과 recovery 검증이었다.
+
+### 0.38 owner-beta release 운영 적용과 publication recovery 검증 (2026-08-26)
+
+§0.37 이후 실제 운영 적용을 막던 두 종류의 runtime 결함을 닫고, 최종 source commit
+`ba3bcdfa4112c7eb26b87d42dc0e53c6f7cab862`를 새 immutable release로 설치·기동했다.
+
+- `db7de37`(audit) / `44af2b4d9b31211b509203764f38c3bda9983d22`(main)는 backtest
+  artifact directory의 `10001:10001:0750` provisioning과 reverse-proxy의 writable tmpfs
+  경계를 바로잡고, KIS recovery가 corporate-action-only Raw batch를 가격 batch로 오인하지
+  않도록 했다. 해당 release의 11개 image build, manifest 검증, 설치, artifact approval-check,
+  Compose 적용은 모두 통과했다.
+- 그 release에서 research-worker 재시작 recovery는 normalized batch
+  `e2c1f6f8-691d-56d6-b62b-c2d3b9d26da4`의 기존 `bars.json`과 새 projection이 다르다며
+  fail-closed됐다. Raw 파일 hash/size와 DB pin은 일치했고, 원인은 durable `batch.json`의
+  초 단위 `retrieved_at`과 최초 DB 발행 시 in-memory microseconds가 달랐던 것이다.
+- `f73c97a`(audit) / `ba3bcdfa4112c7eb26b87d42dc0e53c6f7cab862`(main)는 publication
+  timestamp를 durable whole-second precision으로 정규화하고, 기존 microsecond DB row와의
+  replay도 같은 durable identity로 비교한다. disposable PostgreSQL 18.4에서 정확한 회귀와
+  `publication_sink` 20/20, collectors all-target Clippy `-D warnings`, rustfmt가 통과했다.
+
+최종 `ba3bcdfa` release는 서비스별 직렬, CPU 0–1, `nice=12` 제한으로 11개 이미지를
+1시간 34분 58초에 빌드했다. build verdict는 `PRODUCTION_IMAGE_BUILD: PASS`이고 manifest는
+root-owned mode `0600`으로 다음 위치에 저장됐다.
+
+- manifest: `/etc/lagrange/release-manifests/ba3bcdfa4112c7eb26b87d42dc0e53c6f7cab862.manifest`
+- manifest SHA-256: `7d060db88070d53ae455d2485e33066b46b5daedcbbbb62e6c2fdd08bf0e2e43`
+- install/check: `PRODUCTION_RELEASE_APPLY: PASS`, `PRODUCTION_RELEASE_CHECK: PASS`
+- activation: `COMPOSE_RELEASE: PASS`
+
+설치본의 network-none preflight, embedded registry
+`sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`
+approval-check, 실제 candidate/artifact read-only check가 모두 통과했다. historical artifact는
+ETF11/1,608 sessions/17,688 bars와 ignored cash dividend 1개를 정확히 재검증했고 상태는 계속
+`OWNER_ONLY`, `MATERIALIZED`, `UNREGISTERED`, `NOT_PUBLISHED`다. 이는 의도된 제품 경계이며
+등록·READY·일반 publication으로 승격할 후속 작업이 아니다. release scope가 사용하는 generic
+`krx_eod_bars` v4는 별도 version
+`4d3e16f7-a29a-45c3-97c3-019feb003a83`, manifest
+`00f238ab4e66cd7e06f0518a6b2560e06b1f4f668fb3304a9a218b845da8b1c6`로 계속 고정돼 있다.
+
+운영 적용 뒤 API, Web, recommendation/candidate/owner-beta runner, research-worker, 두 backtest
+worker, reverse-proxy, PostgreSQL은 모두 healthy다. research-worker는 위 실패 batch를 포함한
+기존 normalized batch들을 `phase=recovery`, `class=success`, `event=skipped`로 멱등 복구했고
+`POST_BACKFILL_HEALTH: PASS`가 최신 게시 EOD row의 freshness를 확인했다. Paper와 Live/order
+profile은 시작하지 않았다. 실제 owner 계정의 추천 생성·결과 확인과 전용 backtest product
+smoke, push는 후속으로 남아 있다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
