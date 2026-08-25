@@ -262,7 +262,7 @@ async fn publishes_credentialed_kis_normalized_scope_and_replays_idempotently() 
 }
 
 #[tokio::test]
-async fn fractional_nanosecond_retrieval_time_replays_at_postgres_precision() {
+async fn fractional_retrieval_time_replays_at_durable_manifest_precision() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -279,7 +279,7 @@ async fn fractional_nanosecond_retrieval_time_replays_at_postgres_precision() {
         PublishOutcome::AlreadyPublished
     );
 
-    let expected = UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00.123456Z")
+    let expected = UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00Z")
         .unwrap()
         .as_datetime();
     let batch_times: Vec<chrono::DateTime<chrono::Utc>> =
@@ -311,6 +311,30 @@ async fn fractional_nanosecond_retrieval_time_replays_at_postgres_precision() {
     assert!(
         projection_times.iter().all(|value| *value == expected),
         "stored projection times: {projection_times:?}"
+    );
+
+    // Older releases persisted PostgreSQL's microsecond precision even though
+    // batch.json serialized the same UtcTimestamp at whole-second precision.
+    // Simulate those existing rows, then replay the timestamp reconstructed
+    // from the immutable manifest. The content and lineage still match, so
+    // the subsecond-only legacy difference must remain idempotent.
+    let legacy = UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00.123456Z")
+        .unwrap()
+        .as_datetime();
+    for statement in [
+        "UPDATE data_batches SET retrieved_at=$1",
+        "UPDATE trading_calendars SET retrieved_at=$1",
+    ] {
+        sqlx::query(statement)
+            .bind(legacy)
+            .execute(&db.supervisor)
+            .await
+            .unwrap();
+    }
+    fixture.bundle.retrieved_at = UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00Z").unwrap();
+    assert_eq!(
+        sink.publish(&fixture.bundle).await.unwrap(),
+        PublishOutcome::AlreadyPublished
     );
     db.drop_db().await;
 }

@@ -57,11 +57,19 @@ fn sqlstate_is_retryable(code: &str) -> bool {
         )
 }
 
-fn postgres_retrieved_at(timestamp: UtcTimestamp) -> DateTime<Utc> {
-    let timestamp = timestamp.as_datetime();
+fn canonical_retrieved_at(timestamp: DateTime<Utc>) -> DateTime<Utc> {
     timestamp
-        .with_nanosecond(timestamp.nanosecond() / 1_000 * 1_000)
-        .expect("a truncated nanosecond is always valid")
+        .with_nanosecond(0)
+        .expect("zero nanoseconds are always valid")
+}
+
+fn postgres_retrieved_at(timestamp: UtcTimestamp) -> DateTime<Utc> {
+    // UtcTimestamp's durable JSON contract serializes whole seconds.  An
+    // initial in-process publication can still carry subsecond precision,
+    // while crash recovery reconstructs the same timestamp from batch.json
+    // without those fractions. Persist the durable precision so replay does
+    // not conflict with its own immutable manifest.
+    canonical_retrieved_at(timestamp.as_datetime())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -455,7 +463,11 @@ fn batch_rows_match(
             || row.storage_path != file.storage_path
             || row.content_sha256 != file.content_sha256
             || row.bytes_size != size
-            || row.retrieved_at != retrieved_at
+            // Releases before the whole-second persistence fix may already
+            // contain PostgreSQL microseconds from the initial in-memory
+            // publication. The immutable manifest cannot reproduce those
+            // fractions, so compare at its canonical serialized precision.
+            || canonical_retrieved_at(row.retrieved_at) != retrieved_at
             || row.fetch_mode != bundle.fetch_mode.as_str()
         {
             return Err(SinkError::Conflict(format!(
@@ -726,15 +738,17 @@ async fn verify_or_advance_projections(
                 ));
             }
             None => update_projection(tx, bundle, fact, retrieved_at).await?,
-            Some(existing_time) if incoming_time > existing_time && replay => {
+            Some(existing_time)
+                if incoming_time > canonical_retrieved_at(existing_time) && replay =>
+            {
                 return Err(SinkError::Conflict(
                     "published batch projection is older than its evidence".to_owned(),
                 ));
             }
-            Some(existing_time) if incoming_time > existing_time => {
+            Some(existing_time) if incoming_time > canonical_retrieved_at(existing_time) => {
                 update_projection(tx, bundle, fact, retrieved_at).await?
             }
-            Some(existing_time) if incoming_time == existing_time => {
+            Some(existing_time) if incoming_time == canonical_retrieved_at(existing_time) => {
                 if !projection_matches(&projection, fact) {
                     return Err(SinkError::Conflict(format!(
                         "equal-time calendar facts differ for {} {}",
