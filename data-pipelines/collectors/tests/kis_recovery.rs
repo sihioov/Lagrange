@@ -317,6 +317,35 @@ fn kis_recovery_reconciles_wire_source_and_is_idempotent() {
     ));
 }
 
+#[test]
+fn kis_recovery_ignores_corporate_action_evidence_only_batches() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    let evidence = append_kis_batch(&store, TARGET_DATE, |wires| {
+        wires.retain(|wire| wire.kind == ResponseKind::CorporateActions);
+    });
+    let eod = append_kis_batch(&store, OTHER_DATE, |_| {});
+
+    let normalized = recover_kis_normalization(&store).expect("normalize EOD sources only");
+    assert_eq!(normalized.outcomes.len(), 1);
+    assert_eq!(normalized.outcomes[0].source_batch_id, eod.batch_id);
+    assert_ne!(normalized.outcomes[0].source_batch_id, evidence.batch_id);
+    assert_eq!(
+        store
+            .read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)
+            .expect("both immutable KIS sources remain visible")
+            .len(),
+        2
+    );
+    assert_eq!(
+        store
+            .read_reconciled_manifest(PROVIDER_KIS_NORMALIZED, MARKET_KR)
+            .expect("only the EOD source is normalized")
+            .len(),
+        1
+    );
+}
+
 #[tokio::test]
 async fn normalized_scope_recovery_replays_already_published_without_new_manifest() {
     let (_temp, store, _source) = seed_kis_store(|_| {});

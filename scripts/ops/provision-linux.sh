@@ -127,6 +127,8 @@ declare -a required_dirs=(
   "$data_root/nautilus_catalog"
   "$artifacts_root"
   "$artifacts_root/historical-price-beta-root"
+  "$artifacts_root/backtest"
+  "$artifacts_root/backtest/runs"
   "$data_root/phase0"
 )
 
@@ -243,6 +245,8 @@ if [ "$mode" = preflight ]; then
   check_mode_owner "$data_root/nautilus_catalog" "$worker_uid" "$worker_gid" 750 nautilus_catalog
   check_mode_owner "$artifacts_root" "$service_uid" "$service_gid" 750 artifacts
   check_mode_owner "$artifacts_root/historical-price-beta-root" "$worker_uid" "$worker_gid" 750 historical-price-beta-root
+  check_mode_owner "$artifacts_root/backtest" "$worker_uid" "$worker_gid" 750 backtest-artifacts
+  check_mode_owner "$artifacts_root/backtest/runs" "$worker_uid" "$worker_gid" 750 backtest-runs
   check_mode_owner "$data_root/phase0" "$service_uid" "$service_gid" 750 phase0
   echo "PREFLIGHT: PASS"
   exit 0
@@ -305,6 +309,19 @@ if [ -e "$artifacts_root/historical-price-beta-root" ] ||
 else
   install -d -m 0750 -- "$artifacts_root/historical-price-beta-root"
   chown "$worker_uid:$worker_gid" -- "$artifacts_root/historical-price-beta-root"
+fi
+if [ -e "$artifacts_root/backtest" ] || [ -L "$artifacts_root/backtest" ]; then
+  check_mode_owner "$artifacts_root/backtest" "$worker_uid" "$worker_gid" 750 backtest-artifacts
+else
+  install -d -m 0750 -- "$artifacts_root/backtest"
+  chown "$worker_uid:$worker_gid" -- "$artifacts_root/backtest"
+fi
+if [ -e "$artifacts_root/backtest/runs" ] ||
+   [ -L "$artifacts_root/backtest/runs" ]; then
+  check_mode_owner "$artifacts_root/backtest/runs" "$worker_uid" "$worker_gid" 750 backtest-runs
+else
+  install -d -m 0750 -- "$artifacts_root/backtest/runs"
+  chown "$worker_uid:$worker_gid" -- "$artifacts_root/backtest/runs"
 fi
 install -d -o "$service_uid" -g "$service_gid" -m 0750 -- "$data_root/phase0"
 

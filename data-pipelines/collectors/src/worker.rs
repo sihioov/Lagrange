@@ -4000,6 +4000,8 @@ struct HelperWireRecord {
     #[serde(default)]
     file_name: Option<String>,
     #[serde(default)]
+    detail: Option<String>,
+    #[serde(default)]
     outcome: Option<String>,
     #[serde(default)]
     date: Option<String>,
@@ -4131,6 +4133,7 @@ fn decode_helper_output_with_provider(
                 || record.http_status.is_some()
                 || record.response_kind.is_some()
                 || record.file_name.is_some()
+                || record.detail.is_some()
                 || record.newest_eod_at.is_some()
                 || record.age_seconds.is_some()
                 || record.cursor.is_some()
@@ -5466,7 +5469,7 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
     fn helper_output_validates_the_credentialed_provider_scope() {
         let batch_id = domain::BatchId::generate();
         let output = format!(
-            "{{\"status\":\"error\",\"error_code\":\"PIPELINE_FAILED\",\"provider\":\"KIS-NORMALIZED\",\"market\":\"KR\",\"target_date\":null,\"phase\":\"publication\",\"class\":\"permanent\",\"batch_id\":\"{batch_id}\",\"message\":\"research pipeline failed\"}}"
+            "{{\"status\":\"error\",\"error_code\":\"PIPELINE_FAILED\",\"provider\":\"KIS-NORMALIZED\",\"market\":\"KR\",\"target_date\":null,\"phase\":\"publication\",\"class\":\"permanent\",\"batch_id\":\"{batch_id}\",\"message\":\"research pipeline failed\",\"detail\":\"Normalize\"}}"
         );
         let error = decode_helper_output_with_provider(
             output.as_bytes(),
