@@ -185,11 +185,17 @@ services:
       # routes /auth/* to this API service before the web catch-all.
       AUTH0_REDIRECT_URI: ${AUTH0_REDIRECT_URI:-https://app.lagrange.local/auth/callback}
       AUTH0_CLIENT_SECRET_FILE: /run/secrets/auth0_client_secret
+      # The API validates the generic READY dataset lineage before admitting
+      # recommendation requests. These are non-secret release pins; the
+      # owner-beta candidate and approval identity remain host-side.
+      RECOMMENDATION_DATASET_VERSION_ID: ${RECOMMENDATION_DATASET_VERSION_ID:-}
+      RECOMMENDATION_DATASET_ID: ${RECOMMENDATION_DATASET_ID:-krx_eod_bars}
+      RECOMMENDATION_DATASET_VERSION: ${RECOMMENDATION_DATASET_VERSION:-}
+      RECOMMENDATION_CURATED_VERSION: ${RECOMMENDATION_CURATED_VERSION:-}
+      RECOMMENDATION_DATASET_MANIFEST_SHA256: ${RECOMMENDATION_DATASET_MANIFEST_SHA256:-}
       # Temporary owner beta admission and sealed price input are explicit
-      # non-secret policies. Candidate identity and approval pins remain
-      # host-side and are never passed to a service container. Paper stays
-      # independently disabled until a future three-session evidence checker
-      # exists.
+      # non-secret policies. Paper stays independently disabled until a future
+      # three-session evidence checker exists.
       OWNER_BETA_ACCESS_MODE: ${OWNER_BETA_ACCESS_MODE:-disabled}
       OWNER_BETA_PRICE_INPUT_MODE: ${OWNER_BETA_PRICE_INPUT_MODE:-disabled}
       OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}
