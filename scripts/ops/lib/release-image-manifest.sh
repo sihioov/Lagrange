@@ -339,7 +339,8 @@ release_image_manifest_write_compose_override() {
       printf '  %s:\n' "$service"
       printf '    image: %s\n' "${RELEASE_IMAGE_MANIFEST_IDS[$service]}"
       # Docker Compose's documented !reset tag removes the source build map.
-      # --no-build is also passed to every up/run invocation as defense in depth.
+      # `up --no-build` and the absence of the opt-in `run --build` add defense
+      # in depth; Compose v5 no longer exposes `run --no-build`.
       printf '    build: !reset null\n'
     done
   } >"$path"
