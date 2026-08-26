@@ -14,8 +14,9 @@
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
 `NOT_PUBLISHED`를 유지하며 generic dataset v4의 별도 `READY` 경로와 섞지 않는다.
-owner-beta 서비스는 활성화됐지만 기준 전략 카탈로그의 새 release 적용, 실제 소유자 추천 실행과
-전용 결과 확인, Paper/Live는 아직 수행하지 않았다. 검증된 `main`은 `origin/main`에 push해 원격과 동기화했다. §4.2의 남은
+owner-beta 서비스와 기준 전략 카탈로그 release 적용은 완료됐지만 실제 소유자 config 생성,
+추천 실행과 전용 결과 확인, Paper/Live는 아직 수행하지 않았다. 검증된 `main`은
+`origin/main`에 push해 원격과 동기화했다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
 이력을 보존한 기록이다. 과거의 "미설치", "KIS credential 없음", "초기 백필 미완료"
@@ -1959,10 +1960,24 @@ reverse-proxy의 Docker IP `172.24.0.4`에 묶여 있으므로 다음 release가
 충돌 거부와 트랜잭션 보존이 통과했다. 실제 DB-backed strategy HTTP 계약, Web 105 tests,
 selector 전체 tests, API unit 57 tests, 두 crate all-target Clippy `-D warnings`, OpenAPI
 regeneration/typecheck, Web typecheck/lint, migrate static check, fmt/diff check도 통과했다.
-현재 이 절의 코드는 아직 새 immutable image/release로 설치하지 않았다. 다음 단계는
-source commit을 main에 병합·push하고 낮은 CPU 병렬도로 새 release를 빌드·설치한 뒤,
-DB `5/5/5`, API/Web health, Funnel target을 재확인하는 것이다. 실제 Owner config 생성과
-`as_of=2026-08-19` 추천 실행·결과 확인은 그 다음 사용자 acceptance gate다.
+이후 source commit `0e03baac2676eb41b2eb1e8225f50617631dc5b6`을 `main`에 병합·push하고,
+서비스별 직렬·Rust 2 logical CPU 제한으로 11개 production image를 빌드했다. root-owned
+V2 manifest는
+`/etc/lagrange/release-manifests/0e03baac2676eb41b2eb1e8225f50617631dc5b6.manifest`에
+설치됐고 SHA-256은
+`69f674453924093ad81ea2ab9ebff407157b77f2ab18a022fc2440125ee32767`이다.
+`PRODUCTION_IMAGE_BUILD`, `PRODUCTION_RELEASE_APPLY`, `PRODUCTION_RELEASE_CHECK`가 모두
+PASS했고 `/opt/lagrange/current`를 이 commit으로 전환한 뒤 Compose release apply까지
+완료했다.
+
+운영 확인에서 application container들은 모두 위 commit revision으로 healthy였고,
+PostgreSQL의 `strategies`/`strategy_versions`/`strategy_parameter_schemas`는 정확히
+`5/5/5`였다. 공개 Funnel의 `/healthz`는 200, 익명 strategy API는 401로 인증 경계를
+유지했다. release 재생성 뒤 reverse-proxy IP는 기존 `172.24.0.4`와 같았으며 Serve 443의
+`/log`와 Funnel 8443의 `/`·`/login` handler도 모두 기존 target을 유지하므로 재설정하지
+않았다. 다음 gate는 Owner가 `/strategies`에서 실제 config를 저장하고
+`as_of=2026-08-19` 추천을 1회 실행해 결과를 확인하는 사용자 acceptance다. 그 전까지
+Paper/Live는 계속 비활성 범위다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
