@@ -12,8 +12,8 @@
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
 `NOT_PUBLISHED`를 유지하며 generic dataset v4의 별도 `READY` 경로와 섞지 않는다.
-owner-beta 서비스는 활성화됐지만 실제 소유자 추천 실행과 전용 결과 확인, Paper/Live와
-push는 아직 수행하지 않았다. §4.2의 남은
+owner-beta 서비스는 활성화됐지만 실제 소유자 추천 실행과 전용 결과 확인, Paper/Live는
+아직 수행하지 않았다. 검증된 `main`은 `origin/main`에 push해 원격과 동기화했다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
 이력을 보존한 기록이다. 과거의 "미설치", "KIS credential 없음", "초기 백필 미완료"
@@ -1895,7 +1895,11 @@ worker, reverse-proxy, PostgreSQL은 모두 healthy다. research-worker는 위 �
 기존 normalized batch들을 `phase=recovery`, `class=success`, `event=skipped`로 멱등 복구했고
 `POST_BACKFILL_HEALTH: PASS`가 최신 게시 EOD row의 freshness를 확인했다. Paper와 Live/order
 profile은 시작하지 않았다. 실제 owner 계정의 추천 생성·결과 확인과 전용 backtest product
-smoke, push는 후속으로 남아 있다.
+smoke는 후속으로 남아 있다. release source와 이 운영 상태를 포함한 `main`은
+`https://github.com/sihioov/Lagrange`의 `origin/main`에 push했고, push 직후 local main,
+tracking ref, 원격 `refs/heads/main`이 모두
+`047d800bb1d0316818fdd4eb6810f4bb60a972b2`로 일치함을 확인했다. 소유자 KIS workbook은
+계속 untracked로 보존해 원격에 전송하지 않았다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
