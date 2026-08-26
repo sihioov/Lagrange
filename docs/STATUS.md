@@ -1,8 +1,9 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준 시각: 2026-08-26 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
+**최신 기준 시각: 2026-08-27 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.41(전략 저장 CSRF/RLS 복구·운영 반영),
+당시의 기록이다. **현재 상태는 §0.42(Owner 사용자 수용성 감사와 후속 보정),
+§0.41(전략 저장 CSRF/RLS 복구·운영 반영),
 §0.40(기준 전략 카탈로그·설정 UI 복구),
 §0.39(외부 Owner 접속용 Funnel 분리),
 §0.38(owner-beta release 운영 적용·복구 검증),
@@ -15,8 +16,8 @@
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
 `NOT_PUBLISHED`를 유지하며 generic dataset v4의 별도 `READY` 경로와 섞지 않는다.
-owner-beta 서비스와 기준 전략 카탈로그 release 적용은 완료됐지만 실제 소유자 config 생성,
-추천 실행과 전용 결과 확인, Paper/Live는 아직 수행하지 않았다. 검증된 `main`은
+owner-beta 서비스와 기준 전략 카탈로그 release 적용은 완료됐고 실제 소유자 config도
+1개 저장됐다. 추천 실행과 전용 결과 확인, Paper/Live는 아직 수행하지 않았다. 검증된 `main`은
 `origin/main`에 push해 원격과 동기화했다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
@@ -2013,6 +2014,68 @@ DB-backed 브라우저 동등 흐름과 새 운영 바이너리 배포는 완료
 session의 최종 저장 재시도는 사용자 acceptance이므로 아직 성공으로 기록하지 않는다.
 다음 gate는 Owner가 화면을 새로고침한 뒤 config 저장을 1회 재시도하고, 그 성공을 확인한
 후 `as_of=2026-08-19` 추천 실행으로 이동하는 것이다. Paper/Live는 계속 비활성 범위다.
+
+### 0.42 Owner 사용자 수용성 감사와 후속 보정 (2026-08-27)
+
+Owner는 §0.41 release에서 전략 설정 저장을 다시 실행해 성공을 확인했다. 운영 DB의
+비식별 집계도 strategy config `1`, active config `1`, owner-beta run `0`을 확인했다.
+따라서 전략 저장 gate는 닫혔고, 남은 핵심 사용자 gate는 실제 Auth0 Owner가
+`as_of=2026-08-19` 추천을 한 번 생성해 terminal `SUCCEEDED`, persisted history/report,
+ETF11 전체와 선택·제외 이유, 선택 비중과 현금 합계 `1.0`, immutable commitment를 확인하는
+것이다. 이 사용자 전용 동작은 cookie/token을 추출하거나 Owner를 대리해 실행하지 않았다.
+
+추천 시 `owner-beta price input unavailable`이 발생한 직접 원인은 generic artifact parent
+`/var/lib/lagrange/data/artifacts`가 `0750`, UID `995`, GID `982`여서 API UID/GID `10001`이
+전용 artifact leaf까지 traverse할 수 없었던 것이다. parent의 GID만 `10001`로 교정했고
+owner, mode, device/inode, children, artifact bytes는 보존했다. API UID 10001의 parent/leaf/
+control/v2 stat과 provisioning preflight가 통과했고 API와 owner-beta runner는 healthy다.
+재발 방지를 위해 provisioner는 generic parent를 service UID와 worker/data GID, mode `0750`로
+고정하고 dedicated leaf는 계속 `10001:10001:0750`로 유지한다. world access, recursive
+chown/chmod, Raw/Curated 변경은 추가하지 않았다.
+
+설치된 immutable revision은 계속
+`037e686da1426260521b4c795bde47d7b5b0c5cf`다. 그 설치본에 process-local exact commit을
+전달한 networkless approval-check는 embedded registry
+`sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`,
+`APPROVED`, `OWNER_ONLY`, `vendor_snapshot=true`, `strict_pit=false`,
+`PRICE_RETURN_ONLY`, `MATERIALIZED`, `UNREGISTERED`, `NOT_PUBLISHED`, ETF11/1,608/17,688을
+확인했다. process-local commit이 없거나 다른 source wrapper를 사용한 시도는 artifact를
+읽기 전에 fail-closed됐다.
+
+`$paseo-delegate-plan`과 `$paseo-delegate`로 기본 Owner 기능 22개를 분류하고 사용자 가치,
+정상·빈·오류·정책 차단 상태를 감사했다. 핵심 결과는 다음과 같다.
+
+- PostgreSQL 18.4의 브라우저 동등 API 테스트는 session, CSRF 회전, active config 저장,
+  missing-CSRF 거부, fixture artifact 부재 시 `OWNER_BETA_PRICE_INPUT_UNAVAILABLE`, run/job
+  무생성, 같은 idempotency-key 안전 재시도를 1/1 통과했다. 승인 artifact bytes와 production
+  approval type을 테스트에서 조작하지 않았으므로 이 증거를 `SUCCEEDED` 발행으로 과장하지
+  않는다.
+- Web의 owner-beta instrument enum에 남아 있던 구형 7개 symbol을 sole v2 registry와
+  `kr-etf-core-v1`의 정확한 ETF11로 교체했다. 같은 registry의 five commitments를 strict
+  parse한 응답을 실제 report에 연결해 ETF11 전체, 80% cash + 20% selected, factors/reasons,
+  price-return/vendor-snapshot/non-strict-PIT 제한과 commitment 표시를 검증했다.
+- Owner-only beta dashboard와 navigation은 공통 product policy를 사용한다. 비활성 Paper,
+  Live, 빈 Admin placeholder는 광고하지 않고 direct route의 fail-closed guard는 유지한다.
+  normal mode Owner와 Member policy는 그대로다.
+- layout과 dashboard의 중복 session 조회는 React `cache`의 request-local memoization으로
+  합쳤다. cookie-derived 요청은 계속 dynamic이고 transport는 `no-store`이며 persistent/
+  cross-request/user cache를 추가하지 않았다. 설치된 Next 16.3 문서와 React server 구현도
+  이 request isolation을 확인한다.
+- 후보·스크리너·종목 상세·백테스트는 fixture/contract 기준의 의미 있는 상태와 복구 UI를
+  통과했지만 production data와 실제 Owner 실행은 아직 사용자 수용성 증거가 아니다.
+  Paper/Live는 의도된 `EXPECTED_BLOCK`이고 주문·계좌 경로는 호출하지 않았다.
+
+focused Web 검증은 4파일/18 tests와 7파일/33 tests를 통과했고, 각 보정의 전용 tests,
+typecheck, Biome, shell syntax, rustfmt, `git diff --check`도 통과했다. Chromium Playwright는
+host에 `libasound.so.2`가 없어 launch 전에 중단됐으며 시스템 패키지는 설치하지 않았다.
+따라서 실제 브라우저 자동화 성공을 주장하지 않는다. 독립 최종 리뷰는 보정 뒤 source
+readiness를 `ACCEPT`했고 새 P0/P1/P2/P3 finding은 없었다.
+
+이 절의 source/test 변경은 이 문서가 포함된 commit 기준이며 아직 §0.41의 운영 release에
+배포되지 않았다. 실제 추천 `SUCCEEDED`와 production 후보·스크리너·종목·백테스트 가치는
+계속 `USER_ACCEPTANCE_PENDING`이다. 세부 테스트 순서와 판정 근거는
+`docs/superpowers/plans/2026-08-26-owner-user-acceptance-audit.md`와
+`docs/reviews/2026-08-26-owner-user-feature-matrix.md`에 있다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
