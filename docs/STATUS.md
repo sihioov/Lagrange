@@ -2,8 +2,8 @@
 
 **최신 기준 시각: 2026-08-26 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.39(외부 Owner 접속용 Funnel 분리),
-§0.40(기준 전략 카탈로그·설정 UI 복구),
+당시의 기록이다. **현재 상태는 §0.40(기준 전략 카탈로그·설정 UI 복구),
+§0.39(외부 Owner 접속용 Funnel 분리),
 §0.38(owner-beta release 운영 적용·복구 검증),
 §0.37(immutable release 설치·approval-check 통과),
 §0.36(main 병합 완료·release gate),

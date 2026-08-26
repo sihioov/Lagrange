@@ -126,6 +126,13 @@ for service in "${services[@]}"; do
     die "Dockerfile OCI revision label missing: $service"
   grep -Fq "grep -Eq '^[0-9a-f]{40}$'" "$dockerfile" ||
     die "Dockerfile exact revision validation missing: $service"
+  case "$service" in
+    db-role-bootstrap|db-migrate|web) ;;
+    *)
+      grep -Fq 'COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' "$dockerfile" ||
+        die "Dockerfile missing embedded historical-price-only approval registry: $service"
+      ;;
+  esac
 done
 
 # The profile-gated range service has a deliberately different, operator-gated
