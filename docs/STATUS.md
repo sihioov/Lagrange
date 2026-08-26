@@ -2,14 +2,15 @@
 
 **최신 기준 시각: 2026-08-26 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.40(기준 전략 카탈로그·설정 UI 복구),
+당시의 기록이다. **현재 상태는 §0.41(전략 저장 CSRF/RLS 복구·운영 반영),
+§0.40(기준 전략 카탈로그·설정 UI 복구),
 §0.39(외부 Owner 접속용 Funnel 분리),
 §0.38(owner-beta release 운영 적용·복구 검증),
 §0.37(immutable release 설치·approval-check 통과),
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.38에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.41에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
@@ -1978,6 +1979,40 @@ PostgreSQL의 `strategies`/`strategy_versions`/`strategy_parameter_schemas`는 �
 않았다. 다음 gate는 Owner가 `/strategies`에서 실제 config를 저장하고
 `as_of=2026-08-19` 추천을 1회 실행해 결과를 확인하는 사용자 acceptance다. 그 전까지
 Paper/Live는 계속 비활성 범위다.
+
+### 0.41 전략 저장 CSRF/RLS 복구와 운영 반영 (2026-08-26)
+
+Owner가 기준 전략 5개를 확인한 뒤 설정 폼에서 `저장`을 눌러도 반영되지 않는 현상을
+운영 요청 흐름으로 재현했다. `/api/v1/auth/csrf`는 200을 반환했지만 이어지는 전략 config
+POST는 403 `CSRF_DENIED`였다. 원인은 CSRF 회전 handler가 FORCE RLS 대상
+`web_sessions`를 actor GUC 없는 application pool로 UPDATE한 것이다. RLS 때문에 실제
+갱신은 0행이었지만 handler가 이를 성공으로 취급해, 브라우저에는 DB에 저장되지 않은 CSRF
+token을 돌려주고 있었다.
+
+commit `037e686da1426260521b4c795bde47d7b5b0c5cf`에서 CSRF 회전을 actor transaction으로
+옮기고 actor UUID를 먼저 검증하며, 정확히 1행이 갱신되고 transaction commit까지 성공한
+경우에만 token을 반환하도록 fail-closed했다. 일회용 PostgreSQL 18.4에서 실제 브라우저와
+같은 `GET CSRF -> POST strategy config` 흐름이 201을 반환했고, 회전 전 token은 403,
+회전 후 token을 사용한 logout은 204, 이후 session은 401임을 확인했다. API unit 57 tests,
+관련 DB-backed tests, api-server all-target Clippy `-D warnings`, fmt/diff check가 통과했다.
+
+이 commit은 `main`과 `origin/main`에 반영했다. 35W·14-thread·16GiB 운영 호스트의 자원
+경계를 지키기 위해 서비스 단위 직렬 빌드, build process `nice=12`, build cgroup 약 1.8
+logical CPU 상한을 사용했다. Compose/Bake 전체 동시 빌드는 여러 Rust builder가 메모리를
+동시에 점유하므로 중단했고, 그 뒤 `rustc` 1개 중심의 직렬 빌드로 11개 이미지를 모두
+완성했다. root-owned mode-0600 V2 manifest는
+`/etc/lagrange/release-manifests/037e686da1426260521b4c795bde47d7b5b0c5cf.manifest`이며
+SHA-256은 `4066cddcaa4bd80a3f099e7df79e9b45ccfe8dbbbaed82998fc89029224c64b6`다.
+`PRODUCTION_IMAGE_BUILD`, `PRODUCTION_RELEASE_APPLY`, `PRODUCTION_RELEASE_CHECK`,
+`COMPOSE_RELEASE`, credentialed `POST_BACKFILL_HEALTH`가 모두 PASS했다.
+
+운영 application container 8개는 모두 exact revision
+`037e686da1426260521b4c795bde47d7b5b0c5cf`로 healthy이고 전략 catalog는 계속 `5/5/5`다.
+Funnel `/healthz`는 200, 익명 `/api/v1/strategies`는 401로 인증 경계를 유지한다. 코드·
+DB-backed 브라우저 동등 흐름과 새 운영 바이너리 배포는 완료됐지만, 실제 Auth0 Owner
+session의 최종 저장 재시도는 사용자 acceptance이므로 아직 성공으로 기록하지 않는다.
+다음 gate는 Owner가 화면을 새로고침한 뒤 config 저장을 1회 재시도하고, 그 성공을 확인한
+후 `as_of=2026-08-19` 추천 실행으로 이동하는 것이다. Paper/Live는 계속 비활성 범위다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
