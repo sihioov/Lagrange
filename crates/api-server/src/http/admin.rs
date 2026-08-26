@@ -101,22 +101,42 @@ pub async fn csrf_token(
     let token_hash = auth::sessions::cookie::hash(&cookie_value);
     let token = auth::csrf::generate_token();
     let new_hash = auth::csrf::hash_token(&token);
+    let actor_id = match crate::actor_tx::actor_uuid(&actor) {
+        Ok(actor_id) => actor_id,
+        Err(error) => return tenancy_response(error, &rid, "RESOURCE_NOT_FOUND"),
+    };
+    let mut tx = match crate::actor_tx::begin_actor_tx(&state.app_pool, &actor).await {
+        Ok(tx) => tx,
+        Err(error) => return tenancy_response(error, &rid, "RESOURCE_NOT_FOUND"),
+    };
     let updated = sqlx::query(
         "UPDATE web_sessions SET csrf_hash = $1 \
          WHERE session_hash = $2 AND user_id = $3 AND revoked_at IS NULL",
     )
     .bind(&new_hash)
     .bind(&token_hash)
-    .bind(crate::actor_tx::actor_uuid(&actor).unwrap_or_default())
-    .execute(&state.app_pool)
+    .bind(actor_id)
+    .execute(&mut *tx)
     .await;
-    if let Err(e) = updated {
-        return api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "INTERNAL",
-            format!("csrf rotation failed: {e}"),
+    let updated = match updated {
+        Ok(updated) if updated.rows_affected() == 1 => updated,
+        Ok(_) => {
+            return code_error("INTERNAL", "csrf rotation failed", &rid);
+        }
+        Err(error) => {
+            return tenancy_response(
+                crate::error::TenancyError::from_sqlx(error),
+                &rid,
+                "RESOURCE_NOT_FOUND",
+            );
+        }
+    };
+    debug_assert_eq!(updated.rows_affected(), 1);
+    if let Err(error) = tx.commit().await {
+        return tenancy_response(
+            crate::error::TenancyError::from_sqlx(error),
             &rid,
-            None,
+            "RESOURCE_NOT_FOUND",
         );
     }
     (

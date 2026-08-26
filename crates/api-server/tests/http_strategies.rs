@@ -7,6 +7,36 @@ use common::{Harness, status};
 use serde_json::json;
 
 #[tokio::test]
+async fn http_strategies_browser_csrf_rotation_then_create() {
+    let Some(h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+
+    // Match the browser client exactly: fetch a fresh synchronizer token,
+    // then submit the strategy mutation with that returned token.
+    let resp = h.get("/api/v1/auth/csrf", Some(&h.member)).await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let body = Harness::body_json(resp).await;
+    let mut rotated_member = h.member.clone();
+    rotated_member.csrf_token = body["csrf_token"].as_str().unwrap().to_owned();
+
+    let resp = h
+        .post(
+            "/api/v1/strategies/buy_and_hold/configs",
+            Some(&rotated_member),
+            true,
+            json!({ "strategy_version": "1.0.0", "config": { "lookback": 200 }, "is_active": true }),
+        )
+        .await;
+    assert_eq!(status(&resp), StatusCode::CREATED);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(body["strategy_id"], "buy_and_hold");
+    assert_eq!(body["config"]["lookback"], 200);
+    h.teardown().await;
+}
+
+#[tokio::test]
 async fn http_strategies_config_create_happy() {
     let Some(h) = Harness::new().await else {
         eprintln!("SKIP: DATABASE_URL not set");

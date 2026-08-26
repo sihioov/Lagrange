@@ -407,7 +407,20 @@ async fn http_auth_session_routes() {
     let resp = h.get("/api/v1/auth/csrf", Some(&h.member)).await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = Harness::body_json(resp).await;
-    assert!(body["csrf_token"].as_str().unwrap().len() >= 32);
+    let rotated_csrf = body["csrf_token"].as_str().unwrap().to_owned();
+    assert!(rotated_csrf.len() >= 32);
+
+    // Rotation must update the FORCE-RLS session row.  The old synchronizer
+    // token is invalid immediately, while the returned token authorizes the
+    // next mutation.  A response-only assertion missed a production bug where
+    // the UPDATE ran without the actor GUC, touched zero rows, and still
+    // returned 200.
+    let resp = h
+        .post("/api/v1/auth/logout", Some(&h.member), true, json!({}))
+        .await;
+    assert_eq!(status(&resp), StatusCode::FORBIDDEN);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(Harness::error_code(&body), "CSRF_DENIED");
 
     // Owner step-up is fail-closed for DB-resolved sessions (no amr column).
     let resp = h.get("/api/v1/auth/step-up-check", Some(&h.owner)).await;
@@ -416,8 +429,15 @@ async fn http_auth_session_routes() {
     assert_eq!(Harness::error_code(&body), "STEP_UP_MFA_REQUIRED");
 
     // Logout (CSRF) revokes the session; the cookie no longer resolves.
+    let mut rotated_member = h.member.clone();
+    rotated_member.csrf_token = rotated_csrf;
     let resp = h
-        .post("/api/v1/auth/logout", Some(&h.member), true, json!({}))
+        .post(
+            "/api/v1/auth/logout",
+            Some(&rotated_member),
+            true,
+            json!({}),
+        )
         .await;
     assert_eq!(status(&resp), StatusCode::NO_CONTENT);
     let resp = h.get("/api/v1/auth/session", Some(&h.member)).await;
