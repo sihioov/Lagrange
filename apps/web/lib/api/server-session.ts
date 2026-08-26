@@ -1,6 +1,7 @@
 import "server-only";
 
 import { cookies } from "next/headers";
+import { cache } from "react";
 import type { ApiSession } from "./contracts";
 import {
   createServerApiClient,
@@ -37,7 +38,7 @@ export async function serverApiClientOptions(): Promise<ServerApiClientOptions> 
       };
 }
 
-export async function getServerSession(): Promise<ApiSession> {
+export const getServerSession = cache(async (): Promise<ApiSession> => {
   const client = createServerApiClient(await serverApiClientOptions());
   return client.getSession();
-}
+});

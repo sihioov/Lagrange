@@ -31,13 +31,13 @@ const ETF_IDS = [
   "102110.KRX",
   "114260.KRX",
   "132030.KRX",
-  "138230.KRX",
-  "152100.KRX",
-  "148020.KRX",
-  "305720.KRX",
-  "278530.KRX",
-  "292150.KRX",
-  "360750.KRX",
+  "133690.KRX",
+  "143850.KRX",
+  "148070.KRX",
+  "153130.KRX",
+  "192090.KRX",
+  "195930.KRX",
+  "229200.KRX",
 ] as const;
 
 function ownerRun(overrides: Record<string, unknown> = {}) {
@@ -241,7 +241,9 @@ describe("owner-beta recommendation surface", () => {
     expect(markup).toContain("Price-return only");
     expect(markup).toContain("Vendor snapshot");
     expect(markup).toContain("Non-strict PIT");
-    expect(markup).toContain("069500.KRX");
+    for (const instrumentId of ETF_IDS) {
+      expect(markup).toContain(instrumentId);
+    }
     expect(markup).toContain("0.912300");
     expect(markup).toContain("SELECTED_TOP_N");
     expect(api.paths).toContain(OWNER_BETA_PRICE_ONLY_RUNS_PATH);

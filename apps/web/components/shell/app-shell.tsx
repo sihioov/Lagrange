@@ -88,15 +88,13 @@ function navigationForRole(
   if (session.role === "member") {
     return member;
   }
-  const ownerItems: PrimaryNavigationItem[] = [
-    ...member,
-    {
+  const ownerItems: PrimaryNavigationItem[] = [...member];
+  if (session.owner_beta_access_mode === "disabled") {
+    ownerItems.push({
       href: "/admin",
       icon: <GaugeIcon aria-hidden={true} size={NAV_ICON_SIZE} weight="regular" />,
       label: t.navAdministration,
-    },
-  ];
-  if (session.owner_beta_access_mode === "disabled") {
+    });
     ownerItems.push({
       href: "/live",
       icon: <BroadcastIcon aria-hidden={true} size={NAV_ICON_SIZE} weight="regular" />,

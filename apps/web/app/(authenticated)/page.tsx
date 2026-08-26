@@ -2,11 +2,23 @@ import { ArrowUpRightIcon } from "@phosphor-icons/react/ssr";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { RoutePage } from "@/components/pages/route-page";
+import {
+  type ApiSession,
+  type OwnerBetaProduct,
+  permitsOwnerBetaProduct,
+} from "@/lib/api/contracts";
+import { getServerSession } from "@/lib/api/server-session";
 import { type ShellDictionary, shellDictionary } from "@/lib/i18n/dictionaries/shell";
 import { getLocale } from "@/lib/i18n/server";
 
-function workspaces(t: ShellDictionary) {
-  return [
+const OWNER_BETA_DESTINATIONS = {
+  "/backtests": "backtests",
+  "/paper": "paper",
+  "/recommendations": "recommendations",
+} as const satisfies Record<string, OwnerBetaProduct>;
+
+function workspaces(t: ShellDictionary, session: ApiSession) {
+  const items = [
     { description: t.strategiesDescription, href: "/strategies", label: t.navStrategies },
     {
       description: t.recommendationsDescription,
@@ -16,6 +28,11 @@ function workspaces(t: ShellDictionary) {
     { description: t.backtestsDescription, href: "/backtests", label: t.navBacktests },
     { description: t.paperAccountDescription, href: "/paper", label: t.navPaperAccount },
   ] as const;
+
+  return items.filter((workspace) => {
+    const product = OWNER_BETA_DESTINATIONS[workspace.href as keyof typeof OWNER_BETA_DESTINATIONS];
+    return product === undefined || permitsOwnerBetaProduct(session, product);
+  });
 }
 
 export const metadata: Metadata = {
@@ -23,7 +40,7 @@ export const metadata: Metadata = {
 };
 
 export default async function DashboardPage() {
-  const locale = await getLocale();
+  const [locale, session] = await Promise.all([getLocale(), getServerSession()]);
   const t = shellDictionary[locale];
   return (
     <RoutePage description={t.dashboardDescription} title={t.dashboardTitle}>
@@ -37,7 +54,7 @@ export default async function DashboardPage() {
           <p>{t.chooseWorkspaceDescription}</p>
         </div>
         <div className="workspace-grid">
-          {workspaces(t).map((workspace) => (
+          {workspaces(t, session).map((workspace) => (
             <Link className="workspace-link" href={workspace.href} key={workspace.href}>
               <span>
                 <strong>{workspace.label}</strong>

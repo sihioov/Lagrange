@@ -10,13 +10,13 @@ const OWNER_BETA_ETF_IDS = Object.freeze([
   "102110.KRX",
   "114260.KRX",
   "132030.KRX",
-  "138230.KRX",
-  "152100.KRX",
-  "148020.KRX",
-  "305720.KRX",
-  "278530.KRX",
-  "292150.KRX",
-  "360750.KRX",
+  "133690.KRX",
+  "143850.KRX",
+  "148070.KRX",
+  "153130.KRX",
+  "192090.KRX",
+  "195930.KRX",
+  "229200.KRX",
 ]);
 
 let submitted = false;
