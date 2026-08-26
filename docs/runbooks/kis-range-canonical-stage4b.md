@@ -293,8 +293,10 @@ sudo scripts/ops/kis-historical-price-beta-artifact.sh --approval-check
 ```
 
 Provisioning creates `<LAGRANGE_ARTIFACTS_DIR>/historical-price-beta-root` as
-`10001:10001` mode `0750`; the generic artifact root remains owned by its
-existing service account. The fixed leaf derivation uses the existing
+`10001:10001` mode `0750`. The generic artifact root is `service UID:10001`
+mode `0750`, allowing the API's read-only parent mount to traverse through the
+data/worker group without world access while the dedicated leaf stays
+`10001:10001`. The fixed leaf derivation uses the existing
 `LAGRANGE_ARTIFACTS_DIR` setting and adds no required owner-only environment
 key. Materialize uses a direct image-ID run bound to the manifest's
 `research-worker` ID and OCI revision, with host Raw mounted only at
@@ -310,10 +312,29 @@ because independent bind mounts hide host ancestry inside the container.
 `--check` remains artifact integrity only and never auto-chains to the separate
 `--approval-check`. The checker reads its compile-time embedded approval
 registry and accepts no registry path; it mounts only the dedicated artifact
-leaf read-only, with no Raw, Curated, DB, or provider surface. The reviewed v2
-record is committed locally, but the installed immutable `research-worker`
-still embeds the old empty registry. Real approval-check execution therefore
-remains blocked pending a new image/release build and install.
+leaf read-only, with no Raw, Curated, DB, or provider surface. The installed
+immutable `research-worker` embeds the approved v2 registry. A real
+approval-check passed on 2026-08-27 with registry SHA-256
+`sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`,
+reporting `APPROVED`, `OWNER_ONLY`, `vendor_snapshot=true`, `strict_pit=false`,
+`PRICE_RETURN_ONLY`, `MATERIALIZED`, `UNREGISTERED`, `NOT_PUBLISHED`, and
+ETF11/1,608 sessions/17,688 bars. The installed protected environment
+intentionally leaves `LAGRANGE_CODE_COMMIT` unset, so the wrapper requires the
+exact installed release commit as a process-local value; without it the call
+fails closed as `release_commit_invalid`.
+
+The verified invocation supplied the commit from the operator's pinned release
+process, not mutable worktree `HEAD`:
+
+```sh
+sudo env LAGRANGE_CODE_COMMIT=037e686da1426260521b4c795bde47d7b5b0c5cf \
+  /opt/lagrange/current/scripts/ops/kis-historical-price-beta-artifact.sh --approval-check
+```
+
+Do not write that process-local value into the protected `.env`. This evidence
+does not claim recommendation success, readiness, publication, strict PIT,
+total return, or production user acceptance; source changes after the
+installed revision are not deployed.
 
 ## Deliberate limitations
 

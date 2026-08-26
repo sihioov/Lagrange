@@ -228,9 +228,22 @@ python3 "$ops/test_xkrx_calendar_bootstrap.py" >/dev/null
 dry_run=$(LAGRANGE_CONFIG_ROOT="$out_dir/etc" \
   LAGRANGE_DEPLOY_ROOT="$out_dir/opt" \
   LAGRANGE_DATA_ROOT="$out_dir/data" \
+  LAGRANGE_ARTIFACTS_DIR="$out_dir/artifacts" \
   LAGRANGE_HOST_SECRET_ROOT="$out_dir/etc/secrets" \
   bash "$ops/provision-linux.sh" --dry-run)
 grep -Fq 'DRY_RUN: no host changes made' <<<"$dry_run"
+grep -Fq 'artifacts-root owner=service-uid:10001 mode=0750; dedicated leaves=10001:10001 mode=0750' <<<"$dry_run"
+
+# Numeric ownership is host-account dependent, so this bounded static fixture
+# verifies the exact root and leaf contracts without invoking a live apply.
+grep -Fq 'check_mode_owner "$artifacts_root" "$service_uid" "$worker_gid" 750 artifacts' \
+  "$ops/provision-linux.sh"
+grep -Fq 'chown "$service_uid:$worker_gid" -- "$artifacts_root"' \
+  "$ops/provision-linux.sh"
+grep -Fq 'check_mode_owner "$artifacts_root/historical-price-beta-root" "$worker_uid" "$worker_gid" 750 historical-price-beta-root' \
+  "$ops/provision-linux.sh"
+grep -Fq 'check_mode_owner "$artifacts_root/backtest" "$worker_uid" "$worker_gid" 750 backtest-artifacts' \
+  "$ops/provision-linux.sh"
 
 # The canonical host directories are root-owned and mode 0750, so preflight is
 # intentionally root-only. Exercise that guard as an unprivileged user even

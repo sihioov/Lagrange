@@ -54,10 +54,14 @@ The protected env defaults both `OWNER_BETA_ACCESS_MODE` and
 `OWNER_BETA_PAPER_MODE` to `disabled`. Owner-only activation derives the
 candidate only from the canonical registry embedded in the installed verified
 image; `compose-release.sh` supplies no candidate hash to the networkless
-approval wrapper. One independently reviewed v2 approval record is committed
-locally, but the installed immutable image still embeds the old empty registry;
-owner-only activation remains blocked pending image/release build and install
-plus a successful real approval-check.
+approval wrapper. The installed immutable image embeds the approved v2 registry,
+and a real approval-check passed on 2026-08-27 with registry SHA-256
+`sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`.
+The check reported `APPROVED`, `OWNER_ONLY`, `vendor_snapshot=true`,
+`strict_pit=false`, `PRICE_RETURN_ONLY`, `MATERIALIZED`, `UNREGISTERED`,
+`NOT_PUBLISHED`, and coverage of ETF11/1,608 sessions/17,688 bars. This is
+installed-release evidence only; source changes after the installed revision
+are not deployed.
 Paper is also unconditionally rejected in owner-only mode until a separate
 three-unattended-session evidence checker is implemented; `paper-scheduler`
 stays in the immutable ten-image manifest but is omitted from owner-only
@@ -91,11 +95,13 @@ sudo scripts/ops/kis-historical-price-beta-artifact.sh --approval-check
 
 `provision-linux.sh --apply` creates the dedicated
 `<LAGRANGE_ARTIFACTS_DIR>/historical-price-beta-root` leaf as `10001:10001`
-mode `0750`; it does not change the generic artifact root ownership. The leaf
-name is a fixed derivation from the existing `LAGRANGE_ARTIFACTS_DIR`, so no
-new owner-only `.env` variable is required. If an operator uses a custom
-artifact directory, pass the already-supported `LAGRANGE_ARTIFACTS_DIR` to
-provisioning and keep it identical to the protected Compose env value.
+mode `0750`. The generic artifact root is `service UID:10001` mode `0750`, so
+the API's read-only parent mount can traverse it through the data/worker group
+without world access; the dedicated leaf remains `10001:10001`. The leaf name
+is a fixed derivation from the existing `LAGRANGE_ARTIFACTS_DIR`, so no new
+owner-only `.env` variable is required. If an operator uses a custom artifact
+directory, pass the already-supported `LAGRANGE_ARTIFACTS_DIR` to provisioning
+and keep it identical to the protected Compose env value.
 Materialize mounts only host `raw/` read-only plus that leaf read-write;
 `check` mounts only the leaf read-only. Both operations pass `/data` and
 `/artifact-root` as container-local roots, while the wrapper repeats the
@@ -103,10 +109,22 @@ separation check against host-canonical Raw/Curated identities because bind
 mounts hide host ancestry inside a container.
 `--check` is artifact integrity only and never auto-chains to `--approval-check`.
 The approval checker uses its compile-time embedded registry and accepts no
-registry path or Raw/Curated mount. A reviewed v2 record is committed locally,
-but the installed immutable `research-worker` still embeds the old empty
-registry, so real approval-check execution remains pending a new image/release
-build and install.
+registry path or Raw/Curated mount. The installed immutable `research-worker`
+approval-check passed using the exact installed release commit supplied
+process-locally by the operator:
+
+```sh
+sudo env LAGRANGE_CODE_COMMIT=037e686da1426260521b4c795bde47d7b5b0c5cf \
+  /opt/lagrange/current/scripts/ops/kis-historical-price-beta-artifact.sh --approval-check
+```
+
+The protected environment intentionally leaves `LAGRANGE_CODE_COMMIT` unset;
+without that process-local value the wrapper fails closed as
+`release_commit_invalid`. Derive or read the value from the operator's pinned
+installed-release process, never from mutable worktree `HEAD`, and do not write
+it into the protected `.env`. The approval result does not claim recommendation
+success, readiness, publication, strict PIT, total return, or production user
+acceptance. Source changes after the installed revision are not deployed.
 
 For a multi-year ETF range, install the recurring backfill timer only after
 reviewing its dry-run and immutable release path. It runs once daily at 03:15

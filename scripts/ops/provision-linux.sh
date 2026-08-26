@@ -144,6 +144,7 @@ print_plan() {
     use) echo "  use existing group $data_group with GID $worker_gid" ;;
   esac
   echo "  config=$config_root deploy=$deploy_root data=$data_root artifacts=$artifacts_root"
+  echo "  artifacts-root owner=service-uid:$worker_gid mode=0750; dedicated leaves=$worker_uid:$worker_gid mode=0750"
   echo "  no deletion, truncation, secret generation, Docker start, or API call"
   for dir in "${required_dirs[@]}"; do
     echo "  ensure directory $dir"
@@ -243,7 +244,7 @@ if [ "$mode" = preflight ]; then
   check_mode_owner "$data_root/raw" "$worker_uid" "$worker_gid" 750 raw
   check_mode_owner "$data_root/curated" "$worker_uid" "$worker_gid" 750 curated
   check_mode_owner "$data_root/nautilus_catalog" "$worker_uid" "$worker_gid" 750 nautilus_catalog
-  check_mode_owner "$artifacts_root" "$service_uid" "$service_gid" 750 artifacts
+  check_mode_owner "$artifacts_root" "$service_uid" "$worker_gid" 750 artifacts
   check_mode_owner "$artifacts_root/historical-price-beta-root" "$worker_uid" "$worker_gid" 750 historical-price-beta-root
   check_mode_owner "$artifacts_root/backtest" "$worker_uid" "$worker_gid" 750 backtest-artifacts
   check_mode_owner "$artifacts_root/backtest/runs" "$worker_uid" "$worker_gid" 750 backtest-runs
@@ -299,9 +300,10 @@ chown "$worker_uid:$worker_gid" -- "$data_root/curated"
 install -d -m 0750 -- "$data_root/nautilus_catalog"
 chown "$worker_uid:$worker_gid" -- "$data_root/nautilus_catalog"
 if [ -e "$artifacts_root" ] || [ -L "$artifacts_root" ]; then
-  check_mode_owner "$artifacts_root" "$service_uid" "$service_gid" 750 artifacts
+  check_mode_owner "$artifacts_root" "$service_uid" "$worker_gid" 750 artifacts
 else
-  install -d -o "$service_uid" -g "$service_gid" -m 0750 -- "$artifacts_root"
+  install -d -m 0750 -- "$artifacts_root"
+  chown "$service_uid:$worker_gid" -- "$artifacts_root"
 fi
 if [ -e "$artifacts_root/historical-price-beta-root" ] ||
    [ -L "$artifacts_root/historical-price-beta-root" ]; then
