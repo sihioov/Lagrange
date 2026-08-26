@@ -2,7 +2,9 @@
 
 **최신 기준 시각: 2026-08-26 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.38(owner-beta release 운영 적용·복구 검증),
+당시의 기록이다. **현재 상태는 §0.39(외부 Owner 접속용 Funnel 분리),
+§0.40(기준 전략 카탈로그·설정 UI 복구),
+§0.38(owner-beta release 운영 적용·복구 검증),
 §0.37(immutable release 설치·approval-check 통과),
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
@@ -12,8 +14,8 @@
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
 `NOT_PUBLISHED`를 유지하며 generic dataset v4의 별도 `READY` 경로와 섞지 않는다.
-owner-beta 서비스는 활성화됐지만 실제 소유자 추천 실행과 전용 결과 확인, Paper/Live는
-아직 수행하지 않았다. 검증된 `main`은 `origin/main`에 push해 원격과 동기화했다. §4.2의 남은
+owner-beta 서비스는 활성화됐지만 기준 전략 카탈로그의 새 release 적용, 실제 소유자 추천 실행과
+전용 결과 확인, Paper/Live는 아직 수행하지 않았다. 검증된 `main`은 `origin/main`에 push해 원격과 동기화했다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
 이력을 보존한 기록이다. 과거의 "미설치", "KIS credential 없음", "초기 백필 미완료"
@@ -1900,6 +1902,67 @@ smoke는 후속으로 남아 있다. release source와 이 운영 상태를 포�
 tracking ref, 원격 `refs/heads/main`이 모두
 `047d800bb1d0316818fdd4eb6810f4bb60a972b2`로 일치함을 확인했다. 소유자 KIS workbook은
 계속 untracked로 보존해 원격에 전송하지 않았다.
+
+### 0.39 외부 Owner 접속용 Funnel 분리 (2026-08-26)
+
+Tailscale이 없는 Owner 기기에서도 추천 전용 베타를 확인할 수 있도록 runtime의 공개 경계를
+분리했다. 기존 `https://l1nnx-sh.taild74a33.ts.net/log`는 443의 tailnet-only Serve
+handler로 그대로 유지하고, Lagrange만
+`https://l1nnx-sh.taild74a33.ts.net:8443/`의 Funnel로 공개했다. Tailscale은 한 포트에서
+Serve와 Funnel을 섞지 못하므로 443을 공개해 `/log`까지 노출하는 구성은 사용하지 않았다.
+
+- Funnel 8443 handler는 `/`를 running reverse-proxy의 TLS 8443으로, `/login`을 같은
+  reverse-proxy의 `/auth/login`으로 전달한다. Auth0 tenant에는 Owner가 정확한
+  `https://l1nnx-sh.taild74a33.ts.net:8443/auth/callback`을 먼저 등록했다.
+- root-owned `0600`의 `/etc/lagrange/compose.env.pending`과 설치 release `.env`에서
+  `AUTH0_REDIRECT_URI`만 위 주소로 바꾸고 Compose config를 검증했다. 빌드는 하지 않았고,
+  API만 같은 immutable image digest
+  `sha256:539d39c9d6b8f5e50b6e07ddae58bb8e5179983d40581ffd06a9eca79f446a0b`로 재생성해
+  healthy를 확인했다.
+- 공개 DNS의 Funnel relay IP를 `curl --resolve`로 직접 지정한 외부 경로 검증에서 `/`는
+  `/login`으로 307, `/healthz`는 200, `/login`은 Auth0 authorize로 303이었고 인코딩된
+  callback은 정확히 `:8443/auth/callback`이었다. 익명 strategy와 owner-beta API는 401,
+  공개 `:8443/log`는 404였다. 같은 relay의 443 TLS 연결은 성립하지 않았고 tailnet 내부
+  443 `/log`는 기존처럼 `/log/`로 307을 유지했다.
+
+이 적용은 source/image 변경이 없는 운영 설정이다. Funnel backend는 현재 running
+reverse-proxy의 Docker IP `172.24.0.4`에 묶여 있으므로 다음 release가 컨테이너를
+재생성하기 전에는 target 재해석/재적용을 release 절차에 넣어야 한다. 실제 Auth0 Owner
+로그인, 전략 config 생성, 추천 실행과 결과 확인은 여전히 다음 사용자 acceptance gate다.
+
+### 0.40 기준 전략 카탈로그와 설정 UI 복구 (2026-08-26)
+
+실제 Auth0 Owner 로그인 뒤 전략 화면에서 할 수 있는 작업이 없던 직접 원인은 운영 DB의
+`strategies`, `strategy_versions`, `strategy_parameter_schemas`가 모두 0행이었던 것이다.
+추가로 API의 `StrategyDto`가 DB에 이미 존재하는 parameter schema를 반환하지 않아, 행만
+수동으로 넣어도 Web 설정 폼은 `noSchemaAvailable`에 머무는 두 번째 결함이 있었다. 전략
+실행 코드는 계속 immutable binary 안의 baseline package가 권위이며 DB에는 실행 코드를
+넣지 않는다.
+
+다음 release source에 이 경계를 결정적으로 복구했다.
+
+- `configs/strategies/baseline-v1.json`은 selector 코드 레지스트리의 고정 5개 전략과
+  version `1.0.0`, metadata, factors/lookback, JSON Schema, defaults를 exact projection한다.
+  selector 통합테스트가 코드와 manifest의 모든 필드를 비교한다. catalog SHA-256은
+  `ea2a4aa41c6a5c81f902cb82bdd140a4fa9f101b73c8b10c314f54e2472fdd6b`다.
+- immutable `db-migrate` image가 모든 SQL migration 성공 뒤 이 manifest를 동기화한다.
+  누락 행만 삽입하고 기존 값이 하나라도 다르면 덮어쓰지 않고 fail-closed한다. 동일 재실행은
+  무변경이며 실제 변경 1회만 `strategy_catalog.installed` audit outbox를 남긴다.
+- API는 최신 DB parameter schema를 반환한다. defaults는 같은 ID/version의 embedded
+  baseline과 schema가 정확히 일치할 때만 반환하므로 DB metadata가 코드보다 앞서거나
+  변조된 경우 기본값을 추측하지 않는다.
+- Web은 baseline JSON Schema가 실제 사용하는 제목 없는 필드, numeric enum,
+  `exclusiveMinimum`, `pattern`, top-level `$schema`/`additionalProperties`를 처리하고 코드
+  기본값으로 설정 폼을 즉시 채운다. 저장 시 서버가 같은 JSON Schema로 다시 검증한다.
+
+일회용 PostgreSQL 18.4에서 최초 설치 `5/5/5`, 두 번째 멱등 재실행, audit 1건, 고의
+충돌 거부와 트랜잭션 보존이 통과했다. 실제 DB-backed strategy HTTP 계약, Web 105 tests,
+selector 전체 tests, API unit 57 tests, 두 crate all-target Clippy `-D warnings`, OpenAPI
+regeneration/typecheck, Web typecheck/lint, migrate static check, fmt/diff check도 통과했다.
+현재 이 절의 코드는 아직 새 immutable image/release로 설치하지 않았다. 다음 단계는
+source commit을 main에 병합·push하고 낮은 CPU 병렬도로 새 release를 빌드·설치한 뒤,
+DB `5/5/5`, API/Web health, Funnel target을 재확인하는 것이다. 실제 Owner config 생성과
+`as_of=2026-08-19` 추천 실행·결과 확인은 그 다음 사용자 acceptance gate다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 

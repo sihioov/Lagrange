@@ -10,7 +10,19 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use serde_json::Value;
 use uuid::Uuid;
+
+fn baseline_defaults(strategy_id: &str, version: &str, published_schema: &Value) -> Option<Value> {
+    selector::baseline::baseline_packages()
+        .into_iter()
+        .find(|package| {
+            package.strategy_id == strategy_id
+                && package.version.to_string() == version
+                && package.parameter_schema == *published_schema
+        })
+        .map(|package| package.default_parameters)
+}
 
 pub async fn list(State(state): State<ApiState>, session: Session, headers: HeaderMap) -> Response {
     let actor = session.actor();
@@ -19,7 +31,29 @@ pub async fn list(State(state): State<ApiState>, session: Session, headers: Head
     match catalog.list(&actor).await {
         Ok(rows) => {
             for row in rows {
-                let latest = catalog.latest_version(&actor, &row.id).await.ok().flatten();
+                let latest = match catalog.latest_version(&actor, &row.id).await {
+                    Ok(version) => version,
+                    Err(e) => {
+                        return tenancy_response(e, &request_id(&headers), "RESOURCE_NOT_FOUND");
+                    }
+                };
+                let (parameter_schema, default_parameters) = match latest.as_deref() {
+                    Some(version) => {
+                        let schema = match catalog.param_schema(&actor, &row.id, version).await {
+                            Ok(schema) => schema,
+                            Err(e) => {
+                                return tenancy_response(
+                                    e,
+                                    &request_id(&headers),
+                                    "RESOURCE_NOT_FOUND",
+                                );
+                            }
+                        };
+                        let defaults = baseline_defaults(&row.id, version, &schema);
+                        (Some(schema), defaults)
+                    }
+                    None => (None, None),
+                };
                 items.push(StrategyDto {
                     id: row.id,
                     display_name: row.display_name,
@@ -27,6 +61,8 @@ pub async fn list(State(state): State<ApiState>, session: Session, headers: Head
                     risk_description: row.risk_description,
                     state: row.state,
                     latest_version: latest,
+                    parameter_schema,
+                    default_parameters,
                 });
             }
         }
@@ -47,11 +83,23 @@ pub async fn get(
         Ok(r) => r,
         Err(e) => return tenancy_response(e, &request_id(&headers), "RESOURCE_NOT_FOUND"),
     };
-    let latest = catalog
-        .latest_version(&actor, &strategy_id)
-        .await
-        .ok()
-        .flatten();
+    let latest = match catalog.latest_version(&actor, &strategy_id).await {
+        Ok(version) => version,
+        Err(e) => return tenancy_response(e, &request_id(&headers), "RESOURCE_NOT_FOUND"),
+    };
+    let (parameter_schema, default_parameters) = match latest.as_deref() {
+        Some(version) => {
+            let schema = match catalog.param_schema(&actor, &strategy_id, version).await {
+                Ok(schema) => schema,
+                Err(e) => {
+                    return tenancy_response(e, &request_id(&headers), "RESOURCE_NOT_FOUND");
+                }
+            };
+            let defaults = baseline_defaults(&strategy_id, version, &schema);
+            (Some(schema), defaults)
+        }
+        None => (None, None),
+    };
     (
         StatusCode::OK,
         Json(StrategyDto {
@@ -61,6 +109,8 @@ pub async fn get(
             risk_description: row.risk_description,
             state: row.state,
             latest_version: latest,
+            parameter_schema,
+            default_parameters,
         }),
     )
         .into_response()
@@ -256,5 +306,34 @@ fn validate_params(schema: &serde_json::Value, config: &serde_json::Value) -> Re
                 "strategy parameters violate the published schema: {first}"
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_exposed_only_for_the_exact_embedded_schema() {
+        let package = selector::baseline::baseline_packages()
+            .into_iter()
+            .find(|package| package.strategy_id == "buy_and_hold")
+            .expect("baseline package");
+        let version = package.version.to_string();
+        assert_eq!(
+            baseline_defaults(&package.strategy_id, &version, &package.parameter_schema),
+            Some(package.default_parameters.clone())
+        );
+
+        let mut mismatched_schema = package.parameter_schema.clone();
+        mismatched_schema["additionalProperties"] = serde_json::json!(true);
+        assert_eq!(
+            baseline_defaults(&package.strategy_id, &version, &mismatched_schema),
+            None
+        );
+        assert_eq!(
+            baseline_defaults(&package.strategy_id, "2.0.0", &package.parameter_schema),
+            None
+        );
     }
 }

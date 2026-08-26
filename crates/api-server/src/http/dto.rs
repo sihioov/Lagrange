@@ -18,6 +18,10 @@ pub struct StrategyDto {
     pub risk_description: String,
     pub state: String,
     pub latest_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameter_schema: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_parameters: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -29,6 +29,17 @@ function invalid(message: string): ValidationResult {
   return { kind: "invalid", message };
 }
 
+function parameterTitle(name: string, definition: ParameterDefinition): string {
+  return (
+    definition.title ??
+    name
+      .split("_")
+      .filter((part) => part.length > 0)
+      .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+      .join(" ")
+  );
+}
+
 function parseParameter(
   name: string,
   definition: ParameterDefinition,
@@ -36,34 +47,56 @@ function parseParameter(
   t: StrategiesDictionary,
 ): ValidationResult {
   const raw = formData.get(name);
+  const title = parameterTitle(name, definition);
   switch (definition.type) {
     case "boolean":
       return { kind: "valid", value: raw === "on" };
     case "integer":
     case "number": {
       if (typeof raw !== "string" || raw.trim() === "") {
-        return invalid(t.fieldRequired(definition.title));
+        return invalid(t.fieldRequired(title));
       }
       const value = Number(raw);
       if (!Number.isFinite(value) || (definition.type === "integer" && !Number.isInteger(value))) {
-        return invalid(t.fieldMustBeValidType(definition.title, definition.type));
+        return invalid(t.fieldMustBeValidType(title, definition.type));
+      }
+      if (definition.enum !== undefined && !definition.enum.includes(value)) {
+        return invalid(t.fieldMustBeOneOf(title));
+      }
+      if (definition.exclusiveMinimum !== undefined && value <= definition.exclusiveMinimum) {
+        return invalid(t.fieldMustBeGreaterThan(title, String(definition.exclusiveMinimum)));
       }
       if (definition.minimum !== undefined && value < definition.minimum) {
         const maximum =
           definition.maximum === undefined ? t.allowedMaximumFallback : String(definition.maximum);
-        return invalid(t.fieldMustBeBetween(definition.title, String(definition.minimum), maximum));
+        return invalid(t.fieldMustBeBetween(title, String(definition.minimum), maximum));
       }
       if (definition.maximum !== undefined && value > definition.maximum) {
         const minimum =
           definition.minimum === undefined ? t.allowedMinimumFallback : String(definition.minimum);
-        return invalid(t.fieldMustBeBetween(definition.title, minimum, String(definition.maximum)));
+        return invalid(t.fieldMustBeBetween(title, minimum, String(definition.maximum)));
       }
       return { kind: "valid", value };
     }
-    case "string":
-      return typeof raw === "string" && raw.trim() !== ""
-        ? { kind: "valid", value: raw.trim() }
-        : invalid(t.fieldRequired(definition.title));
+    case "string": {
+      if (typeof raw !== "string" || raw.trim() === "") {
+        return invalid(t.fieldRequired(title));
+      }
+      const value = raw.trim();
+      if (definition.enum !== undefined && !definition.enum.includes(value)) {
+        return invalid(t.fieldMustBeOneOf(title));
+      }
+      if (definition.pattern !== undefined) {
+        try {
+          if (!new RegExp(definition.pattern).test(value)) {
+            return invalid(t.fieldMustMatchPattern(title));
+          }
+        } catch {
+          return invalid(t.fieldMustMatchPattern(title));
+        }
+      }
+      return { kind: "valid", value };
+    }
   }
 }
 
@@ -129,19 +162,22 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
         <div className="field-grid">
           {Object.entries(activeSchema.properties).map(([name, definition]) => {
             const fieldId = `strategy-${strategy.id}-${name}`;
+            const title = parameterTitle(name, definition);
+            const defaultValue = strategy.default_parameters?.[name] ?? definition.default;
             return (
               <label className="form-field" htmlFor={fieldId} key={name}>
-                <span>{definition.title}</span>
+                <span>{title}</span>
                 {definition.enum === undefined ? (
                   <input
-                    defaultChecked={definition.type === "boolean" && definition.default === true}
+                    defaultChecked={definition.type === "boolean" && defaultValue === true}
                     defaultValue={
-                      definition.type === "boolean" ? undefined : String(definition.default ?? "")
+                      definition.type === "boolean" ? undefined : String(defaultValue ?? "")
                     }
                     id={fieldId}
                     max={definition.maximum}
                     min={definition.minimum}
                     name={name}
+                    pattern={definition.pattern}
                     required={activeSchema.required.includes(name) && definition.type !== "boolean"}
                     step={definition.type === "integer" ? 1 : "any"}
                     type={
@@ -154,12 +190,12 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
                   />
                 ) : (
                   <select
-                    defaultValue={String(definition.default ?? definition.enum[0] ?? "")}
+                    defaultValue={String(defaultValue ?? definition.enum[0] ?? "")}
                     id={fieldId}
                     name={name}
                   >
                     {definition.enum.map((option) => (
-                      <option key={option} value={option}>
+                      <option key={String(option)} value={String(option)}>
                         {option}
                       </option>
                     ))}

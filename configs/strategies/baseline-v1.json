@@ -1,0 +1,192 @@
+{
+  "schema_id": "lagrange-baseline-strategy-catalog",
+  "schema_version": 1,
+  "released_at_epoch": 1787670000,
+  "strategies": [
+    {
+      "strategy_id": "buy_and_hold",
+      "version": "1.0.0",
+      "display_name": "BuyAndHold",
+      "description": "Benchmark buy-and-hold: hold the benchmark ETF (069500.KRX) at the declared target weight from the first session open; no market timing.",
+      "risk_description": "Full market exposure with no drawdown control; single-instrument concentration in the benchmark; no exit mechanism beyond the optional monthly rebalance.",
+      "state": "Draft",
+      "required_factors": [],
+      "min_lookback": 0,
+      "supported_market": "KRX",
+      "cadence": "daily",
+      "parameter_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "benchmark_instrument": {
+            "type": "string",
+            "pattern": "^[0-9]{6}\\.KRX$",
+            "description": "The canonical KRX ETF id to hold."
+          },
+          "target_weight": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "maximum": 1.0,
+            "description": "Fraction of equity held in the benchmark."
+          },
+          "rebalance_cadence": {
+            "type": "string",
+            "enum": ["none", "monthly"],
+            "description": "When to re-apply the target (none = hold)."
+          }
+        },
+        "required": ["benchmark_instrument", "target_weight"],
+        "additionalProperties": false
+      },
+      "default_parameters": {
+        "benchmark_instrument": "069500.KRX",
+        "target_weight": 1.0,
+        "rebalance_cadence": "none"
+      }
+    },
+    {
+      "strategy_id": "trend_following",
+      "version": "1.0.0",
+      "display_name": "TrendFollowing",
+      "description": "Moving-average trend following on the benchmark ETF: long the benchmark while the fast average exceeds the slow average, cash otherwise; signals at T-close execute at T+1 open.",
+      "risk_description": "Whipsaw losses in choppy sideways regimes; concentrated single-position exposure; cash drag when out of the market; one-session signal lag (T-close -> T+1 open) by construction.",
+      "state": "Draft",
+      "required_factors": ["trend_200", "trend_50"],
+      "min_lookback": 200,
+      "supported_market": "KRX",
+      "cadence": "daily",
+      "parameter_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "benchmark_instrument": {
+            "type": "string",
+            "pattern": "^[0-9]{6}\\.KRX$"
+          },
+          "fast_ma": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 250,
+            "description": "Fast moving-average window (sessions)."
+          },
+          "slow_ma": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 500,
+            "description": "Slow moving-average window (sessions)."
+          }
+        },
+        "required": ["benchmark_instrument", "fast_ma", "slow_ma"],
+        "additionalProperties": false
+      },
+      "default_parameters": {
+        "benchmark_instrument": "069500.KRX",
+        "fast_ma": 50,
+        "slow_ma": 200
+      }
+    },
+    {
+      "strategy_id": "relative_momentum",
+      "version": "1.0.0",
+      "display_name": "RelativeMomentum",
+      "description": "Relative momentum: rank the fixed Korean ETF universe by 12-minus-1 month momentum and hold the top N equally weighted, rebalanced at the monthly close and executed at the next open.",
+      "risk_description": "Momentum crash and reversal risk; concentration in the top-N names; monthly rotation turnover and cost drag; the lookback excludes the most recent month (12-minus-1) by design.",
+      "state": "Draft",
+      "required_factors": ["momentum_12_1"],
+      "min_lookback": 252,
+      "supported_market": "KRX",
+      "cadence": "daily",
+      "parameter_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "top_n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Number of highest-momentum ETFs held."
+          },
+          "lookback_months": {
+            "type": "integer",
+            "enum": [6, 12],
+            "description": "Momentum lookback in months."
+          }
+        },
+        "required": ["top_n", "lookback_months"],
+        "additionalProperties": false
+      },
+      "default_parameters": {
+        "top_n": 3,
+        "lookback_months": 12
+      }
+    },
+    {
+      "strategy_id": "dual_momentum",
+      "version": "1.0.0",
+      "display_name": "DualMomentum",
+      "description": "Dual momentum (design §8.2): invest fully in the strongest 12-month performer of the universe when its return exceeds the absolute threshold; otherwise hold defensive cash.  Rebalanced monthly, executed at the next open.",
+      "risk_description": "All-or-nothing switching between a single risky asset and cash; threshold flips can trigger large full repositions; no diversification; single-name failure risk while invested.",
+      "state": "Draft",
+      "required_factors": ["return_12m"],
+      "min_lookback": 252,
+      "supported_market": "KRX",
+      "cadence": "daily",
+      "parameter_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "absolute_threshold": {
+            "type": "number",
+            "description": "Minimum 12-month return (decimal) of the top risky asset to stay invested."
+          },
+          "lookback_months": {
+            "type": "integer",
+            "enum": [6, 12],
+            "description": "Return lookback in months."
+          }
+        },
+        "required": ["absolute_threshold", "lookback_months"],
+        "additionalProperties": false
+      },
+      "default_parameters": {
+        "absolute_threshold": 0.0,
+        "lookback_months": 12
+      }
+    },
+    {
+      "strategy_id": "inverse_volatility",
+      "version": "1.0.0",
+      "display_name": "InverseVolatility",
+      "description": "Inverse volatility weighting: each eligible ETF receives weight inversely proportional to its realized volatility (default 60 sessions), so calmer names receive more capital; rebalanced monthly at the next open.",
+      "risk_description": "Low-volatility concentration during calm markets; underweights high-volatility momentum winners; monthly rebalancing turnover; volatility estimation lag.",
+      "state": "Draft",
+      "required_factors": ["vol_60"],
+      "min_lookback": 60,
+      "supported_market": "KRX",
+      "cadence": "daily",
+      "parameter_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "vol_window": {
+            "type": "integer",
+            "enum": [20, 60, 120],
+            "description": "Realized-volatility window in sessions."
+          },
+          "max_weight": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "maximum": 1.0,
+            "description": "Per-instrument weight ceiling."
+          }
+        },
+        "required": ["vol_window", "max_weight"],
+        "additionalProperties": false
+      },
+      "default_parameters": {
+        "vol_window": 60,
+        "max_weight": 0.3
+      }
+    }
+  ]
+}

@@ -14,6 +14,9 @@ export type StrategiesDictionary = {
   readonly configurationUnavailableMessage: string;
   readonly configureAriaLabel: (displayName: string) => string;
   readonly fieldMustBeBetween: (title: string, minimum: string, maximum: string) => string;
+  readonly fieldMustBeGreaterThan: (title: string, minimum: string) => string;
+  readonly fieldMustMatchPattern: (title: string) => string;
+  readonly fieldMustBeOneOf: (title: string) => string;
   readonly fieldMustBeValidType: (title: string, type: string) => string;
   readonly fieldRequired: (title: string) => string;
   readonly noRiskDescriptionReported: string;
@@ -51,6 +54,9 @@ export const strategiesDictionary: LocaleDictionary<StrategiesDictionary> = {
     configureAriaLabel: (displayName) => `Configure ${displayName}`,
     fieldMustBeBetween: (title, minimum, maximum) =>
       `${title} must be between ${minimum} and ${maximum}.`,
+    fieldMustBeGreaterThan: (title, minimum) => `${title} must be greater than ${minimum}.`,
+    fieldMustMatchPattern: (title) => `${title} has an invalid format.`,
+    fieldMustBeOneOf: (title) => `${title} must be one of the allowed values.`,
     fieldMustBeValidType: (title, type) => `${title} must be a valid ${type}.`,
     fieldRequired: (title) => `${title} is required.`,
     noRiskDescriptionReported: "No additional risk description was reported.",
@@ -88,6 +94,9 @@ export const strategiesDictionary: LocaleDictionary<StrategiesDictionary> = {
     configureAriaLabel: (displayName) => `${displayName} 설정`,
     fieldMustBeBetween: (title, minimum, maximum) =>
       `${title}은(는) ${minimum}에서 ${maximum} 사이여야 합니다.`,
+    fieldMustBeGreaterThan: (title, minimum) => `${title}은(는) ${minimum}보다 커야 합니다.`,
+    fieldMustMatchPattern: (title) => `${title}의 형식이 올바르지 않습니다.`,
+    fieldMustBeOneOf: (title) => `${title}은(는) 허용된 값 중 하나여야 합니다.`,
     fieldMustBeValidType: (title, type) => `${title}은(는) 유효한 ${type} 값이어야 합니다.`,
     fieldRequired: (title) => `${title}은(는) 필수입니다.`,
     noRiskDescriptionReported: "추가 리스크 설명이 보고되지 않았습니다.",

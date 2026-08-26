@@ -20,6 +20,10 @@ die_static() {
 [ -f "$dockerfile" ] || die_static 'missing database one-shot Dockerfile'
 grep -Fxq 'USER 999:999' "$dockerfile" \
   || die_static 'database one-shot image must remain non-root UID/GID 999:999'
+grep -Fq 'COPY configs/strategies/baseline-v1.json /opt/lagrange/configs/strategies/baseline-v1.json' "$dockerfile" \
+  || die_static 'database one-shot image must contain the pinned baseline catalog'
+grep -Fq 'COPY deploy/db/sync-baseline-strategy-catalog.sql /opt/lagrange/db/sync-baseline-strategy-catalog.sql' "$dockerfile" \
+  || die_static 'database one-shot image must contain the catalog sync contract'
 [ -f "$compose" ] || die_static 'missing Compose file'
 [ -x "$provision" ] || die_static 'missing executable secret provisioner'
 
@@ -88,8 +92,18 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-migrate-check.XXXXXX")
 trap 'rm -rf -- "$tmp"' EXIT HUP INT TERM
 
 mkdir -p "$tmp/bin" "$tmp/migrations"
-printf '%s\n' '#!/bin/sh' 'printf "%s" "${DATABASE_URL-}" >"${CAPTURE_PATH:?}"' >"$tmp/bin/sqlx"
-chmod 0755 "$tmp/bin/sqlx"
+printf '%s\n' \
+  '#!/bin/sh' \
+  '[ "${FAIL_SQLX:-0}" = 0 ] || exit 42' \
+  'printf "%s" "${DATABASE_URL-}" >"${CAPTURE_PATH:?}"' \
+  ': >"${CAPTURE_PATH}.sqlx-done"' >"$tmp/bin/sqlx"
+printf '%s\n' \
+  '#!/bin/sh' \
+  '[ -e "${CAPTURE_PATH:?}.sqlx-done" ] || exit 43' \
+  'printf "%s|%s|%s|%s|%s" "${PGHOST-}" "${PGPORT-}" "${PGUSER-}" "${PGPASSWORD-}" "${PGDATABASE-}" >"${CAPTURE_PATH}.libpq"' \
+  ': >"${CAPTURE_PATH}.psql"' \
+  "printf '%s\\n' 'STRATEGY_CATALOG_SYNC: PASS strategies=5'" >"$tmp/bin/psql"
+chmod 0755 "$tmp/bin/sqlx" "$tmp/bin/psql"
 
 secret="p@ss:word /%?#[]!\$&'()*+,;="
 printf '%s' "$secret" >"$tmp/password"
@@ -111,6 +125,35 @@ actual=$(<"$capture")
   echo 'MIGRATE_STATIC: component URL encoding mismatch' >&2
   exit 1
 }
+[ -e "$capture.psql" ] || {
+  echo 'MIGRATE_STATIC: catalog sync did not run after successful migrations' >&2
+  exit 1
+}
+expected_libpq='db.example|5432|u@ser+|p@ss:word /%?#[]!$&'"'"'()*+,;=|db/name?'
+actual_libpq=$(<"$capture.libpq")
+[ "$actual_libpq" = "$expected_libpq" ] || {
+  echo 'MIGRATE_STATIC: component libpq parameters mismatch' >&2
+  exit 1
+}
+
+failed_capture="$tmp/failed-migration"
+if FAIL_SQLX=1 \
+  PATH="$tmp/bin:$PATH" \
+  CAPTURE_PATH="$failed_capture" \
+  DB_HOST='db.example' \
+  DB_PORT=5432 \
+  DB_NAME='lagrange' \
+  DB_USER='migration_owner' \
+  DB_PASSWORD_FILE="$tmp/password" \
+  MIGRATIONS_DIR="$tmp/migrations" \
+    bash "$root/deploy/db/migrate.sh" >/dev/null 2>&1; then
+  echo 'MIGRATE_STATIC: failed sqlx migration was accepted' >&2
+  exit 1
+fi
+[ ! -e "$failed_capture.psql" ] || {
+  echo 'MIGRATE_STATIC: catalog sync ran after failed migrations' >&2
+  exit 1
+}
 
 run_url_file_mode() {
   local file=$1 output=$2
@@ -120,6 +163,23 @@ run_url_file_mode() {
     DATABASE_URL_FILE="$file" \
     MIGRATIONS_DIR="$tmp/migrations" \
     bash "$root/deploy/db/migrate.sh"
+}
+
+printf '%s' 'postgresql://uri%40user:p%40ss%2Fword@db.example:5444/db%2Fname' >"$tmp/database-url-valid"
+run_url_file_mode "$tmp/database-url-valid" "$tmp/valid-url"
+[ "$(<"$tmp/valid-url.libpq")" = 'db.example|5444|uri@user|p@ss/word|db/name' ] || {
+  echo 'MIGRATE_STATIC: URL-file libpq parameters mismatch' >&2
+  exit 1
+}
+
+printf '%s' 'postgresql://user:password@db.example:5432/lagrange?sslmode=require' >"$tmp/database-url-query"
+if run_url_file_mode "$tmp/database-url-query" "$tmp/query-url" >/dev/null 2>&1; then
+  echo 'MIGRATE_STATIC: URL-file query component was accepted' >&2
+  exit 1
+fi
+[ ! -e "$tmp/query-url.psql" ] || {
+  echo 'MIGRATE_STATIC: psql ran for rejected URL-file query component' >&2
+  exit 1
 }
 
 for suffix in lf cr crlf; do

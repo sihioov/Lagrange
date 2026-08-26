@@ -33,13 +33,19 @@ read-only in the migration contract.
 
 ## Migration runtime
 
-`migrate.sh` is a one-shot wrapper around `sqlx migrate run`. It requires an
+`migrate.sh` is a one-shot wrapper around `sqlx migrate run` followed by an
+exact, conflict-detecting sync of the commit-pinned five-strategy baseline
+catalog. It requires an
 explicit migration-owner URL file (or complete DB component configuration and
 `DB_PASSWORD_FILE`), sets finite lock/statement timeouts, and refuses direct
-password values. It always enforces five-second lock and sixty-second statement
-timeouts, regardless of inherited `PGOPTIONS`. It exits non-zero on any failed migration; workers must depend
-on this one-shot completing successfully. The command is safe to rerun because
-SQLx records checksums and migration state in `_sqlx_migrations`.
+password values. URL-file mode accepts a strict PostgreSQL URI with encoded
+userinfo/database components and no query or fragment; component mode remains
+the production Compose path. It always enforces five-second lock and sixty-second statement
+timeouts, regardless of inherited `PGOPTIONS`. It exits non-zero on any failed
+migration or catalog conflict; workers must depend on this one-shot completing
+successfully. The command is safe to rerun because SQLx records checksums and
+migration state in `_sqlx_migrations`, while the catalog sync accepts only
+byte-equivalent existing metadata and schemas.
 
 Both Compose one-shot database services use the pinned `deploy/db/Dockerfile`
 image and run as non-root UID/GID `999:999`. Their service-specific secret

@@ -465,6 +465,16 @@ const SCHEMAS = {
       risk_description: { type: "string" },
       state: { type: "string", enum: ["Draft", "Validated", "Paper", "LiveCandidate", "Retired"] },
       latest_version: { type: ["string", "null"] },
+      parameter_schema: {
+        type: "object",
+        additionalProperties: true,
+        description: "JSON Schema constraining this version's configurable parameters",
+      },
+      default_parameters: {
+        type: "object",
+        additionalProperties: true,
+        description: "Defaults from the exact embedded baseline package when its schema matches",
+      },
     },
   },
   StrategyConfig: {

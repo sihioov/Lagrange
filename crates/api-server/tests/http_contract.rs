@@ -186,6 +186,15 @@ async fn http_contract_strategy_catalog_happy() {
     let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
     assert!(ids.contains(&"buy_and_hold"));
     assert!(ids.contains(&"trend_following"));
+    let buy_and_hold = items
+        .iter()
+        .find(|item| item["id"] == "buy_and_hold")
+        .expect("buy-and-hold strategy");
+    assert_eq!(
+        buy_and_hold["parameter_schema"]["properties"]["lookback"]["type"],
+        "integer"
+    );
+    assert!(buy_and_hold.get("default_parameters").is_none());
     // No database model leakage: no owner_user_id / internal columns.
     let serialized = body.to_string();
     assert!(
@@ -205,6 +214,11 @@ async fn http_contract_strategy_catalog_happy() {
     assert_eq!(body["id"], "buy_and_hold");
     assert_eq!(body["state"], "Validated");
     assert_eq!(body["latest_version"], "1.0.0");
+    assert_eq!(
+        body["parameter_schema"]["properties"]["lookback"]["maximum"],
+        500
+    );
+    assert!(body.get("default_parameters").is_none());
     h.teardown().await;
 }
 

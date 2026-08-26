@@ -1111,6 +1111,14 @@ export interface components {
             /** @enum {string} */
             state: "Draft" | "Validated" | "Paper" | "LiveCandidate" | "Retired";
             latest_version?: string | null;
+            /** @description JSON Schema constraining this version's configurable parameters */
+            parameter_schema?: {
+                [key: string]: unknown;
+            };
+            /** @description Defaults from the exact embedded baseline package when its schema matches */
+            default_parameters?: {
+                [key: string]: unknown;
+            };
         };
         StrategyConfig: {
             /** Format: uuid */

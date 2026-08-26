@@ -13,10 +13,12 @@ export const parameterDefinitionSchema = z
   .object({
     default: z.union([z.boolean(), z.number(), z.string()]).optional(),
     description: z.string().optional(),
-    enum: z.array(z.string()).optional(),
+    enum: z.array(z.union([z.number(), z.string()])).optional(),
+    exclusiveMinimum: z.number().optional(),
     maximum: z.number().optional(),
     minimum: z.number().optional(),
-    title: z.string().min(1),
+    pattern: z.string().optional(),
+    title: z.string().min(1).optional(),
     type: z.enum(["boolean", "integer", "number", "string"]),
   })
   .strict();
@@ -25,6 +27,8 @@ export type ParameterDefinition = z.infer<typeof parameterDefinitionSchema>;
 
 export const parameterSchema = z
   .object({
+    $schema: z.string().url().optional(),
+    additionalProperties: z.boolean().optional(),
     properties: z.record(z.string(), parameterDefinitionSchema),
     required: z.array(z.string()),
     type: z.literal("object"),
@@ -35,6 +39,9 @@ export type ParameterSchema = z.infer<typeof parameterSchema>;
 export const strategySchema = z
   .object({
     description: z.string().optional(),
+    default_parameters: z
+      .record(z.string(), z.union([z.boolean(), z.number(), z.string()]))
+      .optional(),
     display_name: z.string(),
     id: z.string(),
     latest_version: z.string().nullable().optional(),

@@ -19,6 +19,8 @@ LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"
 
 COPY --from=builder /usr/local/cargo/bin/sqlx /usr/local/bin/sqlx
 COPY migrations /opt/lagrange/migrations
+COPY configs/strategies/baseline-v1.json /opt/lagrange/configs/strategies/baseline-v1.json
+COPY deploy/db/sync-baseline-strategy-catalog.sql /opt/lagrange/db/sync-baseline-strategy-catalog.sql
 COPY deploy/db/migrate.sh /usr/local/bin/lagrange-migrate
 COPY deploy/db/bootstrap-roles.sh /usr/local/bin/lagrange-bootstrap-roles
 RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles
