@@ -2,7 +2,8 @@
 
 **최신 기준 시각: 2026-08-27 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.42(Owner 사용자 수용성 감사와 후속 보정),
+당시의 기록이다. **현재 상태는 §0.43(Owner 수용성 보정 release 운영 배포),
+§0.42(Owner 사용자 수용성 감사와 후속 보정),
 §0.41(전략 저장 CSRF/RLS 복구·운영 반영),
 §0.40(기준 전략 카탈로그·설정 UI 복구),
 §0.39(외부 Owner 접속용 Funnel 분리),
@@ -11,7 +12,7 @@
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.41에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.43에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
@@ -2076,6 +2077,43 @@ readiness를 `ACCEPT`했고 새 P0/P1/P2/P3 finding은 없었다.
 계속 `USER_ACCEPTANCE_PENDING`이다. 세부 테스트 순서와 판정 근거는
 `docs/superpowers/plans/2026-08-26-owner-user-acceptance-audit.md`와
 `docs/reviews/2026-08-26-owner-user-feature-matrix.md`에 있다.
+
+### 0.43 Owner 수용성 보정 release 운영 배포 (2026-08-27)
+
+§0.42의 독립 리뷰 `ACCEPT` 이후 source commit
+`2a53c092a7bd19b0942df474d640ab672e8111fc`를 `main`과 `origin/main`에 일치시킨 뒤,
+같은 exact commit으로 운영 이미지 11개를 새로 만들고 immutable release를 설치·전환했다.
+35W·14-thread·16GiB 호스트의 자원 경계를 지키기 위해 서비스 단위 직렬 빌드,
+Cargo/rustc CPU `0-1` 고정, `nice=12`, Compose parallel `1`을 사용했다. build systemd
+unit은 wall clock 약 1시간 15분 동안 CPU 약 10분 49초, peak memory 71.5MiB를 보고하고
+exit `0`으로 종료됐다. root-owned mode-0600 V2 manifest는
+`/etc/lagrange/release-manifests/2a53c092a7bd19b0942df474d640ab672e8111fc.manifest`이며
+SHA-256은 `aa81099474005ffeb3e3f822a2ea15aa40c5d298e825f4b209a70a5911b638eb`다.
+
+`PRODUCTION_IMAGE_BUILD`, `PRODUCTION_RELEASE_APPLY`, `PRODUCTION_RELEASE_CHECK`,
+`COMPOSE_RELEASE`가 모두 PASS했다. 최초 Compose 호출은 process-local
+`LAGRANGE_CODE_COMMIT`이 없어 변경 전에 fail-closed됐고, exact commit을 명시한 재호출만
+적용됐다. owner-only approval gate와 migration/bootstrap/schema check, 전략 catalog sync
+`5`가 통과했으며 지속 application container 8개는 모두 exact revision `2a53c092...`로,
+Web/API와 reverse proxy를 포함한 운영 container 10개는 모두 healthy다. Paper와 Live/order
+profile은 계속 비활성이고 provider/order 호출은 없었다.
+
+credentialed `POST_BACKFILL_HEALTH --scope release --check`는 검사 당시 최신 EOD
+`2026-08-27T07:30:00Z`, age `620`초로 PASS했다. networkless approval-check는 registry
+`sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`와 exact
+`APPROVED` envelope를 확인했고, descriptor-safe artifact check는 candidate
+`sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050`, ETF11,
+1,608 sessions, 17,688 bars, ignored cash dividend 1행을 확인했다. generic dataset READY와
+섞지 않고 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/`NOT_PUBLISHED`를 유지한다.
+
+운영 DB의 비식별 집계는 strategy catalog/version `5/5`, user config `1`/active `1`,
+owner-beta run `0`, migration max `52`다. Funnel backend는 기존 `172.24.0.4`를 유지했고
+공개 `:8443`에서 `/healthz` 200, `/` 307 → `/login`, `/login` 303 → Auth0,
+익명 `/api/v1/strategies` 401, `/log` 404를 확인했다. 따라서 §0.42의 "아직 운영 release에
+배포되지 않았다"는 역사 문장은 이 절로 대체된다. 남은 gate는 실제 Auth0 Owner가 추천을
+한 번 실행해 terminal `SUCCEEDED`와 report/history를 확인하고, 후보·스크리너·종목 상세·
+백테스트의 production 사용자 가치를 확인하는 것이다. 이는 계속
+`USER_ACCEPTANCE_PENDING`이며 Paper/Live 활성화는 이 배포의 범위가 아니다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
