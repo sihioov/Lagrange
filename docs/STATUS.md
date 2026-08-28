@@ -1,8 +1,9 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준 시각: 2026-08-28 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
+**최신 기준 시각: 2026-08-29 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.45(Owner-beta 추천 remediation 운영 배포와 직접 QA),
+당시의 기록이다. **현재 상태는 §0.46(세션 만료 로그인 복구 운영 배포와 직접 QA),
+§0.45(Owner-beta 추천 remediation 운영 배포와 직접 QA),
 §0.44(Owner-beta 추천 remediation source-ready closeout),
 §0.43(Owner 수용성 보정 release 운영 배포),
 §0.42(Owner 사용자 수용성 감사와 후속 보정),
@@ -14,7 +15,7 @@
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.45에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.46에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
@@ -2180,6 +2181,45 @@ dataset/publication이나 주문·계좌 상태 변화를 관찰하지 않았다
 cookie 또는 session을 추출·가장하지 않았으므로 authenticated supported-as-of 200 응답과 새
 보고서의 실제 브라우저 체감은 Owner 로그인 재검증 전까지 `USER_ACCEPTANCE_PENDING`이다.
 Paper/Live는 계속 disabled/out of scope이고, backtest Phase B도 §0.44의 P0 승인 전 보류다.
+
+### 0.46 세션 만료 로그인 복구 운영 배포와 직접 QA (2026-08-29)
+
+새로고침 시 만료된 세션이 로그인으로 복구되지 않고 `We could not load this workspace`를
+표시하던 결함을 수정했다. API session lookup이 만료 row를 SQL `WHERE`에서 제거해
+`SESSION_UNKNOWN`으로 뭉개던 부분은, 취소되지 않은 row를 먼저 찾고 만료 여부를 계산해
+`SESSION_EXPIRED`와 실제 unknown을 구분하도록 바꿨다. Web은 두 typed code만 로그인 필요로
+분류한다. Server Component의 모든 인증 제품 page와 공통 session loader는 `/login`으로
+redirect하고, client mutation/polling/CSRF 경계는 full navigation으로 같은 복구를 수행한다.
+DB 장애나 malformed response 같은 내부 오류는 로그인 만료로 오분류하지 않으며, 최후의
+authenticated error 화면에도 명시적인 다시 로그인 링크를 제공한다.
+
+source commit `9ad4bc8b505e70e4a43037d477021b04e64bc452`은 `origin/main`에 push됐다.
+Web unit 148/148, typecheck, lint(기존 `noDocumentCookie` warning만 존재), production build,
+전체 Playwright 44/44와 focused session-recovery 4/4가 통과했다. API는 fmt와 strict clippy,
+격리된 임시 PostgreSQL을 사용한 `http_admin` 6/6을 통과했다. 이 브라우저 QA를 위한 호스트
+의존성은 2026-08-28 APT 이력상 `libasound2t64` 1회와 자동 의존성 `libasound2-data` 1회만
+system-wide 설치됐다. 이전 작업은 패키지를 임시 경로에 추출해 `LD_LIBRARY_PATH`로 쓴
+것이어서 중복 system install이 아니다.
+
+같은 exact revision으로 serving image 11개를 빌드해 root-only strict V2 manifest를 생성하고,
+`/opt/lagrange/releases/9ad4bc8b505e70e4a43037d477021b04e64bc452`에 immutable release로
+설치한 뒤 `current`를 원자적으로 전환했다. production config, owner-beta release gate, DB role
+bootstrap/migration, strategy catalog sync 5, Raw/schema check와 manifest image ID/revision 검증이
+모두 통과했다. API, Web, research/recommendation/candidate/owner-beta/backtest worker는 exact
+revision `9ad4bc8...`, `healthy`, restart count 0이다. Reverse proxy도 healthy/restart 0이며
+별도 content-pinned upstream image를 유지한다. Post-backfill release health는 credentialed EOD
+`2026-08-28T07:30:00Z`, age `37,101`초로 PASS했다. KIS 경계는 read-only이고 Live/order
+profile은 계속 disabled다.
+
+공개 Funnel `:8443` 직접 QA는 `/healthz` 200, `/` 307 → `/login`, `/login` 303 → 승인된
+Auth0, 익명 `/api/v1/auth/session` 401, `/api/v1/admin/live` 404를 확인했다. 무효/오래된 세션
+cookie를 넣은 `/strategies`도 307 → `/login`으로 복구되어 generic workspace error를 표시하지
+않는다. synthetic E2E는 valid 상태에서 페이지를 연 뒤 session을 `SESSION_EXPIRED` 또는
+`SESSION_UNKNOWN`으로 전환하고 reload했을 때 `/auth/login` handoff와 기존 오류 문구 부재를
+검증하며, `INTERNAL`은 로그인으로 잘못 보내지 않음을 별도로 검증한다. 실제 Auth0 Owner
+credential/cookie는 추출하거나 가장하지 않았으므로 실사용 세션의 자연 만료를 24시간 기다리는
+장기 관측은 하지 않았다. 배포와 재현 가능한 만료 복구 QA는 `PASS`이고 Paper/Live는 이번
+변경 범위 밖이다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
