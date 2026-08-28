@@ -18,7 +18,9 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   production-ops-static-check.sh production-ops-self-test.sh \
   kis-range-raw-backfill.sh kis-action-range-raw-backfill.sh \
   kis-action-range-raw-with-worker-pause.sh kis-historical-price-beta-artifact.sh \
-  kis-historical-price-beta-artifact-self-test.sh; do
+  kis-historical-price-beta-artifact-self-test.sh \
+  kis-historical-price-v3-input-check.sh \
+  kis-historical-price-v3-input-check-self-test.sh; do
   bash -n "$ops/$script"
 done
 
@@ -225,6 +227,7 @@ bash "$ops/static-check.sh" >/dev/null
 bash "$ops/tailscale-tls-self-test.sh" >/dev/null
 bash "$ops/build-production-images-self-test.sh" >/dev/null
 bash "$ops/kis-historical-price-beta-artifact-self-test.sh" >/dev/null
+bash "$ops/kis-historical-price-v3-input-check-self-test.sh" >/dev/null
 bash "$ops/backfill-review-report-self-test.sh" >/dev/null
 bash "$ops/backfill-resume-self-test.sh" >/dev/null
 python3 - "$ops/lib/backfill-progress.py" <<'PY'

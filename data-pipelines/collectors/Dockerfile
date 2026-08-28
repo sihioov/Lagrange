@@ -27,7 +27,8 @@ COPY tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contra
 RUN cargo build --locked --release --package collectors --bin research-worker \
     && cargo build --locked --release --package collectors --bin kis-historical-price-beta-artifact \
     && cargo build --locked --release --package collectors --bin kis-historical-price-beta-approval-check \
-    && cargo build --locked --release --package collectors --bin kis-action-range-raw
+    && cargo build --locked --release --package collectors --bin kis-action-range-raw \
+    && cargo build --locked --release --package collectors --bin kis-historical-price-v3-input-check
 
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 
@@ -44,6 +45,7 @@ COPY --from=builder /build/target/release/research-worker /usr/local/bin/researc
 COPY --from=builder /build/target/release/kis-historical-price-beta-artifact /usr/local/bin/kis-historical-price-beta-artifact
 COPY --from=builder /build/target/release/kis-historical-price-beta-approval-check /usr/local/bin/kis-historical-price-beta-approval-check
 COPY --from=builder /build/target/release/kis-action-range-raw /usr/local/bin/kis-action-range-raw
+COPY --from=builder /build/target/release/kis-historical-price-v3-input-check /usr/local/bin/kis-historical-price-v3-input-check
 COPY --from=builder /build/tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
 COPY --from=builder /build/tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contract
 

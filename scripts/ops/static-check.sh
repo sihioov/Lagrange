@@ -26,7 +26,9 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   kis-daily-calendar-refresh.sh install-kis-daily.sh \
   fsc-krx-listed-self-test.sh kind-daily.sh install-kind-daily.sh \
   kind-daily-self-test.sh kis-historical-price-beta-artifact.sh \
-  kis-historical-price-beta-artifact-self-test.sh; do
+  kis-historical-price-beta-artifact-self-test.sh \
+  kis-historical-price-v3-input-check.sh \
+  kis-historical-price-v3-input-check-self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
@@ -833,4 +835,70 @@ grep -Fq -- '--confirm KIND_DAILY_OPERATOR_CONFIRMATION' "$kind_service" \
   || die 'KIND manual service confirmation is missing'
 bash "$kis_daily_self_test" >/dev/null || die 'KIS daily focused self-test failed'
 bash "$kind_self_test" >/dev/null || die 'KIND focused self-test failed'
+
+v3_input_check="$ops/kis-historical-price-v3-input-check.sh"
+v3_input_self_test="$ops/kis-historical-price-v3-input-check-self-test.sh"
+v3_input_binary="$root/data-pipelines/collectors/src/bin/kis-historical-price-v3-input-check.rs"
+v3_input_dockerfile="$root/data-pipelines/collectors/Dockerfile"
+v3_input_compose_block=$(awk '
+  $0 == "  research-v3-input-check:" { inside=1; print; next }
+  inside && $0 ~ /^  [^[:space:]][^:]*:/ { exit }
+  inside { print }
+' "$root/deploy/compose/compose.yml")
+[ -n "$v3_input_compose_block" ] || die 'V3 input checker Compose service is missing'
+grep -Fq 'read_committed_manifest(source.provider, MARKET_KR)' "$v3_input_binary" \
+  || die 'V3 checker must use strict committed Raw manifest readers'
+grep -Fq 'read_batch_bytes(source.provider, MARKET_KR, &entry)' "$v3_input_binary" \
+  || die 'V3 checker must reverify all Raw evidence leaves through RawStore'
+grep -Fq 'verify_historical_price_only_v3_action_input' "$v3_input_binary" \
+  || die 'V3 action verifier call is missing'
+grep -Fq 'verify_historical_price_only_v3_price_input' "$v3_input_binary" \
+  || die 'V3 price verifier call is missing'
+grep -Fq 'PROVIDER_KIS_DAILY_RANGE' "$v3_input_binary" \
+  || die 'V3 price provider scope is missing'
+grep -Fq 'HISTORICAL_PRICE_ONLY_V3_PRICE_MANIFEST_LINE_SHA256' "$v3_input_binary" \
+  || die 'V3 price manifest pin is missing'
+grep -Fq 'HISTORICAL_PRICE_ONLY_V3_ACTION_MANIFEST_LINE_SHA256' "$v3_input_binary" \
+  || die 'V3 action manifest pin is missing'
+grep -Fq 'PriceSummary' "$v3_input_binary" || die 'V3 price safe summary is missing'
+grep -Fq 'ActionSummary' "$v3_input_binary" || die 'V3 action safe summary is missing'
+grep -Fq 'OFlags::NOFOLLOW' "$v3_input_binary" || die 'V3 checker no-follow read is missing'
+grep -Fq 'OFlags::CLOEXEC' "$v3_input_binary" || die 'V3 checker close-on-exec read is missing'
+grep -Fq 'BATCH_JSON_MAX_BYTES: u64 = 1024 * 1024' "$v3_input_binary" \
+  || die 'V3 batch metadata size cap is missing'
+grep -Fq 'MANIFEST_MAX_BYTES: u64 = 64 * 1024 * 1024' "$v3_input_binary" \
+  || die 'V3 manifest size cap is missing'
+grep -Fq 'ContentHash::from_bytes(manifest_line)' "$v3_input_binary" \
+  || die 'V3 manifest line hash must cover the selected bytes including newline'
+grep -Fq -- '--scope range-raw --env-file' "$v3_input_check" \
+  || die 'V3 checker wrapper production range-raw gate is missing'
+grep -Fq 'status --porcelain=v1 --untracked-files=all' "$v3_input_check" \
+  || die 'V3 checker wrapper clean-tree gate is missing'
+grep -Fq 'compose build --pull=false "$compose_service"' "$v3_input_check" \
+  || die 'V3 checker wrapper immutable image build is missing'
+grep -Fq 'org.opencontainers.image.revision' "$v3_input_check" \
+  || die 'V3 checker wrapper OCI revision gate is missing'
+grep -Fq 'image_commit' "$v3_input_check" \
+  || die 'V3 checker wrapper image ENV commit gate is missing'
+grep -Fq 'compose run --rm --no-deps "$compose_service"' "$v3_input_check" \
+  || die 'V3 checker wrapper no-deps run is missing'
+if grep -Eiq 'docker[[:space:]]+compose.*(up|start|stop|restart)|systemctl|sudo' "$v3_input_check"; then
+  die 'V3 checker wrapper must not manage ordinary worker/container lifecycle'
+fi
+grep -Fq 'cargo build --locked --release --package collectors --bin kis-historical-price-v3-input-check' \
+  "$v3_input_dockerfile" || die 'V3 checker Docker build is missing'
+grep -Fq 'COPY --from=builder /build/target/release/kis-historical-price-v3-input-check /usr/local/bin/kis-historical-price-v3-input-check' \
+  "$v3_input_dockerfile" || die 'V3 checker Docker copy is missing'
+for required in 'profiles: ["v3-input-check"]' \
+  'image: lagrange-station-research-v3-input-check:' \
+  'entrypoint: ["/usr/local/bin/kis-historical-price-v3-input-check"]' \
+  'user: "10001:10001"' 'read_only: true' 'network_mode: none' \
+  '${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw:ro'; do
+  grep -Fq -- "$required" <<<"$v3_input_compose_block" ||
+    die "V3 checker Compose fence is missing: $required"
+done
+if grep -Eiq '^[[:space:]]+(environment|secrets|depends_on|restart|healthcheck|networks):|DB_|KIS_APP|backend|curated|account|order' <<<"$v3_input_compose_block"; then
+  die 'V3 checker Compose service exposes a forbidden runtime surface'
+fi
+bash "$v3_input_self_test" >/dev/null || die 'V3 input checker focused self-test failed'
 echo 'OPS_STATIC: PASS'

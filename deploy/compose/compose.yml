@@ -694,6 +694,40 @@ services:
       - range-raw-egress
 
   # ------------------------------------------------------------------
+  # research-v3-input-check — provider-free, one-shot verification of the
+  # owner-approved immutable V3 KIS price and action batches. It has no credentials, DB,
+  # Curated mount, backend dependency, restart/health lifecycle, or network
+  # namespace. The checker receives only a read-only Raw view.
+  # ------------------------------------------------------------------
+  research-v3-input-check:
+    profiles: ["v3-input-check"]
+    image: lagrange-station-research-v3-input-check:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    entrypoint: ["/usr/local/bin/kis-historical-price-v3-input-check"]
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging: *default-logging
+    cpus: "2"
+    mem_limit: 4g
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - --raw-root
+      - /data
+      - --check
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw:ro
+
+  # ------------------------------------------------------------------
   # research-range-raw-recovery — explicit Stage5 immutable-source recovery.
   # This is intentionally a separate profile/service from the KIS capture
   # job: it has no KIS environment variables, no Compose secrets, no DB or
