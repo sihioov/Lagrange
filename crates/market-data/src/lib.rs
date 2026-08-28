@@ -61,6 +61,7 @@ pub mod quality;
 pub mod range_normalize;
 pub mod range_to_canonical;
 pub mod range_to_canonical_v3;
+pub mod range_to_canonical_v3_price;
 pub mod redact;
 pub mod storage;
 pub mod validate;
@@ -217,5 +218,15 @@ pub use range_to_canonical::{
     RangeCanonicalError, VerifiedRangeCanonicalEvidence, build_range_canonical_candidate,
     discover_historical_price_only_beta_pins, load_verified_range_canonical_evidence,
     verify_historical_price_only_beta_input, write_evidence_package,
+};
+pub use range_to_canonical_v3_price::{
+    HISTORICAL_PRICE_ONLY_V3_PRICE_BAR_COUNT, HISTORICAL_PRICE_ONLY_V3_PRICE_BATCH_ID,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_BATCH_JSON_SHA256, HISTORICAL_PRICE_ONLY_V3_PRICE_DATE,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_FILE_COUNT, HISTORICAL_PRICE_ONLY_V3_PRICE_MANIFEST_LINE_SHA256,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_PIT_POLICY, HISTORICAL_PRICE_ONLY_V3_PRICE_RANGE_END,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_RANGE_START, HISTORICAL_PRICE_ONLY_V3_PRICE_SESSION_COUNT,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_WINDOW_COUNT, HistoricalPriceOnlyV3PriceError,
+    HistoricalPriceOnlyV3PriceEvidence, HistoricalPriceOnlyV3PriceFileEvidence,
+    verify_historical_price_only_v3_price_input,
 };
 pub use storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};
