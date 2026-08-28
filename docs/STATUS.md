@@ -2,7 +2,8 @@
 
 **최신 기준 시각: 2026-08-28 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.44(Owner-beta 추천 remediation source-ready closeout),
+당시의 기록이다. **현재 상태는 §0.45(Owner-beta 추천 remediation 운영 배포와 직접 QA),
+§0.44(Owner-beta 추천 remediation source-ready closeout),
 §0.43(Owner 수용성 보정 release 운영 배포),
 §0.42(Owner 사용자 수용성 감사와 후속 보정),
 §0.41(전략 저장 CSRF/RLS 복구·운영 반영),
@@ -13,13 +14,15 @@
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.44에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.45에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
 `NOT_PUBLISHED`를 유지하며 generic dataset v4의 별도 `READY` 경로와 섞지 않는다.
 owner-beta 서비스와 기준 전략 카탈로그 release 적용은 완료됐고 실제 소유자 config도
-1개 저장됐다. 추천 실행과 전용 결과 확인, Paper/Live는 아직 수행하지 않았다. 검증된 `main`은
+1개 저장됐다. 추천 remediation release도 운영 적용됐고 기존 production run 2건의 durable
+`SUCCEEDED`/ETF11 결과를 비식별로 재확인했다. 다만 새 화면의 실제 Auth0 Owner 세션 수용
+확인과 Paper/Live는 아직 수행하지 않았다. 검증된 `main`은
 `origin/main`에 push해 원격과 동기화했다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
@@ -2144,6 +2147,39 @@ Owner-beta backtest Phase B는 `docs/superpowers/plans/2026-08-28-owner-beta-bac
 문서의 권고나 source remediation은 그 선택을 대신하지 않는다. 이번 closeout에서는 migration,
 production network call, deployment, provider expansion, KIS/OpenDART boundary 변경, order/account,
 Paper/Live surface 변경을 수행하거나 승인하지 않았다.
+
+### 0.45 Owner-beta 추천 remediation 운영 배포와 직접 QA (2026-08-28)
+
+source remediation commit `90a793d315cf2565fa46a4ddc7cb026169cd2a80`을 `origin/main`에
+fast-forward push하고, 같은 exact revision으로 로컬 serving image 11개를 빌드해 strict V2
+manifest를 생성했다. `/opt/lagrange/releases/90a793d315cf2565fa46a4ddc7cb026169cd2a80`을
+immutable release로 설치하고 `current`를 전환했다. owner가 승인한 임시 운영 권한은 72시간
+뒤 자동 회수되는 systemd timer로 제한했으며, sudoers 전체 구문 검증이 통과했다.
+
+첫 `compose-release` 호출은 process-local `LAGRANGE_CODE_COMMIT`이 빠져 production validator가
+서비스 변경 전에 `BLOCKED_EXTERNAL`로 거부했다. exact installed commit을 process-local로
+주입해 재실행했고 production config, embedded-registry networkless approval, DB role bootstrap,
+migration/strategy catalog `5`, Raw/schema check와 모든 manifest image ID/revision 검증이 통과했다.
+API, Web, research/recommendation/candidate/owner-beta/backtest worker 전부 새 revision으로 교체됐고
+health `healthy`, restart count `0`을 확인했다. Post-backfill release health는 credentialed EOD
+`2026-08-27T07:30:00Z`, age `82,390`초로 PASS했다.
+
+공개 Funnel `:8443` 직접 QA 결과는 `/healthz` 200, `/` 307, 익명 `/api/v1/auth/session` 401,
+신규 `/api/v1/recommendations/owner-beta/price-only/supported-as-of` 401(경로 설치 및 인증 보호),
+`/api/v1/admin/live` 404다. `/login` 최초 응답은 303이며 승인된
+`lagrange-station.jp.auth0.com`으로 이동했다. networkless artifact check는 `APPROVED`, ETF11,
+1,608 sessions/17,688 bars와 고정 `OWNER_ONLY`/`PRICE_RETURN_ONLY`/`vendor_snapshot=true`/
+`strict_pit=false` envelope를 재확인했다.
+
+운영 PostgreSQL에는 읽기 전용 트랜잭션만 사용했다. Owner-beta run은 2건 모두 `SUCCEEDED`,
+최신 `as_of=2026-08-19`, 최신 item 11개이며 `public.instruments`의 ETF11 name/asset_class도
+각각 11/11 존재한다. 이번 읽기 전용 QA 범위에서는 새 run, session, strategy config,
+dataset/publication이나 주문·계좌 상태 변화를 관찰하지 않았다.
+
+따라서 release와 비인증/운영 경계 QA는 `PASS`다. 그러나 agent는 Auth0 Owner credential,
+cookie 또는 session을 추출·가장하지 않았으므로 authenticated supported-as-of 200 응답과 새
+보고서의 실제 브라우저 체감은 Owner 로그인 재검증 전까지 `USER_ACCEPTANCE_PENDING`이다.
+Paper/Live는 계속 disabled/out of scope이고, backtest Phase B도 §0.44의 P0 승인 전 보류다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
