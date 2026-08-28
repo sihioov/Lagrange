@@ -2225,6 +2225,7 @@ mod daily_range_source_selection_tests {
             file_name: "symbol.json".to_owned(),
             content_hash: ContentHash::from_bytes(b"{}"),
             size_bytes: 2,
+            response_continuation: None,
             request: RequestMetadata {
                 endpoint: "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
                     .to_owned(),
@@ -2257,6 +2258,7 @@ mod daily_range_source_selection_tests {
                     file_name: format!("daily-bars-range-window-{window}-{symbol}.json"),
                     content_hash: ContentHash::from_bytes(&bytes),
                     size_bytes: bytes.len() as u64,
+                    response_continuation: None,
                     request: RequestMetadata {
                         endpoint: DAILY_RANGE_ENDPOINT.to_owned(),
                         query: vec![

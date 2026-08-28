@@ -2,6 +2,7 @@ mod candidate_pipeline;
 mod candidate_sink;
 mod pipeline;
 mod sink;
+mod v3_historical_input;
 mod worker;
 
 pub use candidate_pipeline::{
@@ -24,6 +25,10 @@ pub use pipeline::{
 };
 pub use sink::{
     PostgresPublicationSink, PublicationSink, PublicationState, PublishOutcome, SinkError,
+};
+pub use v3_historical_input::{
+    BATCH_JSON_MAX_BYTES, HistoricalPriceOnlyV3Input, HistoricalPriceOnlyV3InputError,
+    MANIFEST_MAX_BYTES, load_historical_price_only_v3_input, verify_historical_price_only_v3_input,
 };
 pub use worker::{
     AppEnvironment, ChildResponseContext, DailyRangeRawSummary, DatabaseConfig, HealthFailure,
