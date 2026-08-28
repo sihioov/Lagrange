@@ -49,6 +49,8 @@ pub mod freshness;
 pub mod historical_price_only;
 mod historical_price_only_approval;
 mod historical_price_only_artifact;
+pub mod historical_price_only_v3;
+mod historical_price_only_v3_artifact;
 pub mod ingest;
 pub mod instrument_master;
 pub mod kind_correction_normalize;
@@ -118,6 +120,24 @@ pub use historical_price_only_artifact::{
     HistoricalPriceOnlyArtifactApprovalSummary, HistoricalPriceOnlyArtifactError,
     VerifiedHistoricalPriceOnlyArtifact, read_historical_price_only_artifact,
     write_historical_price_only_artifact,
+};
+pub use historical_price_only_v3::{
+    HISTORICAL_PRICE_ONLY_V3_ACTION_FILES, HISTORICAL_PRICE_ONLY_V3_BAR_COUNT,
+    HISTORICAL_PRICE_ONLY_V3_CANDIDATE_SCHEMA_VERSION, HISTORICAL_PRICE_ONLY_V3_CASH_ROW_COUNT,
+    HISTORICAL_PRICE_ONLY_V3_CASH_ROWS_SHA256, HISTORICAL_PRICE_ONLY_V3_CASH_TREATMENT,
+    HISTORICAL_PRICE_ONLY_V3_CONTRACT, HISTORICAL_PRICE_ONLY_V3_INSTRUMENT_COUNT,
+    HISTORICAL_PRICE_ONLY_V3_MATERIALIZER_VERSION, HISTORICAL_PRICE_ONLY_V3_PIT_POLICY,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_FILES, HISTORICAL_PRICE_ONLY_V3_RANGE_END,
+    HISTORICAL_PRICE_ONLY_V3_RANGE_START, HISTORICAL_PRICE_ONLY_V3_SCHEMA_ID,
+    HISTORICAL_PRICE_ONLY_V3_SCHEMA_VERSION, HISTORICAL_PRICE_ONLY_V3_SESSION_COUNT,
+    HistoricalPriceOnlyV3Candidate, HistoricalPriceOnlyV3CashDividendCommitment,
+    HistoricalPriceOnlyV3Error, materialize_historical_price_only_v3,
+};
+pub use historical_price_only_v3_artifact::{
+    HISTORICAL_PRICE_ONLY_V3_ARTIFACT_SCHEMA_ID, HISTORICAL_PRICE_ONLY_V3_ARTIFACT_SCHEMA_VERSION,
+    HistoricalPriceOnlyV3ArtifactApprovalSummary, HistoricalPriceOnlyV3ArtifactError,
+    VerifiedHistoricalPriceOnlyV3Artifact, read_historical_price_only_v3_artifact,
+    write_historical_price_only_v3_artifact,
 };
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,
