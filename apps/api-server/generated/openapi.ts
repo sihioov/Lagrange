@@ -170,6 +170,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/recommendations/owner-beta/price-only/supported-as-of": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/recommendations/owner-beta/price-only/supported-as-of */
+        get: operations["get__api_v1_recommendations_owner_beta_price_only_supported_as_of"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/recommendations/owner-beta/price-only/runs": {
         parameters: {
             query?: never;
@@ -1211,9 +1228,22 @@ export interface components {
             /** @example 2026-01-31 */
             as_of: string;
         };
+        OwnerBetaPriceOnlySupportedAsOf: {
+            /** @example 2026-08-19 */
+            default_as_of: string;
+            supported_as_of: string[];
+        };
         OwnerBetaPriceOnlyReadItem: {
             /** @enum {string} */
-            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "138230.KRX" | "152100.KRX" | "148020.KRX" | "305720.KRX" | "278530.KRX" | "292150.KRX" | "360750.KRX";
+            instrument_id: "069500.KRX" | "102110.KRX" | "229200.KRX" | "143850.KRX" | "133690.KRX" | "195930.KRX" | "192090.KRX" | "148070.KRX" | "114260.KRX" | "153130.KRX" | "132030.KRX";
+            instrument: {
+                /** @enum {string} */
+                id: "069500.KRX" | "102110.KRX" | "229200.KRX" | "143850.KRX" | "133690.KRX" | "195930.KRX" | "192090.KRX" | "148070.KRX" | "114260.KRX" | "153130.KRX" | "132030.KRX";
+                name: string | null;
+                asset_class: string | null;
+                tracking_index: null;
+                exposure_group: null;
+            };
             rank?: number | null;
             target_weight?: string | null;
             excluded: boolean;
@@ -2461,6 +2491,30 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_recommendations_owner_beta_price_only_supported_as_of: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Supported owner-beta price-only artifact sessions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaPriceOnlySupportedAsOf"];
+                };
+            };
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            500: components["responses"]["Error500"];
             503: components["responses"]["Error503"];
         };
     };

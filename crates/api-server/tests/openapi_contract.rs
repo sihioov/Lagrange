@@ -5,6 +5,7 @@
 //! stable error-code table matches the code constants.
 
 use api_server::contract::{CONTRACT_ROUTES, ERROR_CODES, Phase, RouteSpec};
+use market_data::KR_ETF_CORE_SYMBOLS;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -288,9 +289,57 @@ fn openapi_contract_documents_recommendation_success_shapes() {
             .any(|field| field == "items"),
         "owner-beta detail must always carry its complete item array"
     );
+    let supported_as_of = schemas["OwnerBetaPriceOnlySupportedAsOf"]
+        .as_object()
+        .expect("OwnerBetaPriceOnlySupportedAsOf schema");
+    assert_eq!(
+        supported_as_of["required"],
+        serde_json::json!(["default_as_of", "supported_as_of"])
+    );
+    assert_eq!(
+        paths["/api/v1/recommendations/owner-beta/price-only/supported-as-of"]["get"]["responses"]
+            ["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/OwnerBetaPriceOnlySupportedAsOf"
+    );
+    let instrument = schemas["OwnerBetaPriceOnlyReadItem"]["properties"]["instrument"]
+        .as_object()
+        .expect("owner-beta instrument projection");
+    assert_eq!(
+        instrument["required"],
+        serde_json::json!([
+            "id",
+            "name",
+            "asset_class",
+            "tracking_index",
+            "exposure_group"
+        ])
+    );
+    assert_eq!(instrument["properties"]["tracking_index"]["type"], "null");
+    assert_eq!(instrument["properties"]["exposure_group"]["type"], "null");
     assert_eq!(
         schemas["OwnerBetaPriceOnlyReadListItem"]["properties"]["cash_weight"]["pattern"],
         "^(?:0\\.\\d{6}|1\\.000000)$"
+    );
+}
+
+#[test]
+fn openapi_contract_owner_beta_enums_match_runtime_etf11_universe() {
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let item = &spec["components"]["schemas"]["OwnerBetaPriceOnlyReadItem"];
+    let expected_ids = KR_ETF_CORE_SYMBOLS
+        .iter()
+        .map(|symbol| format!("{symbol}.KRX"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        item["properties"]["instrument_id"]["enum"],
+        serde_json::json!(expected_ids),
+        "owner-beta instrument_id enum must match the runtime ETF11 universe"
+    );
+    assert_eq!(
+        item["properties"]["instrument"]["properties"]["id"]["enum"],
+        serde_json::json!(expected_ids),
+        "owner-beta nested instrument.id enum must match the runtime ETF11 universe"
     );
 }
 

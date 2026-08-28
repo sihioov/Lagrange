@@ -106,10 +106,14 @@ async function OwnerBetaRecommendationsProductPage(
       return ownerBetaBlockedPage(t.entitlementInactiveMessage, t);
     }
 
-    const [configs, history] = await Promise.all([
+    const [discovery, configs, history] = await Promise.all([
+      api.getOwnerBetaSupportedAsOf(),
       api.getStrategyConfigs(),
       api.getOwnerBetaRecommendationRuns(),
     ]);
+    if (discovery.supported_as_of.length === 0) {
+      return ownerBetaUnavailablePage(t);
+    }
     const selectedRunId =
       requestedRunId === undefined || requestedRunId === "" ? history.items[0]?.id : requestedRunId;
     const selected =
@@ -143,7 +147,8 @@ async function OwnerBetaRecommendationsProductPage(
                 id: config.id,
                 label: configLabel(config),
               }))}
-              defaultAsOf={licensing.as_of}
+              defaultAsOf={discovery.default_as_of}
+              supportedAsOf={discovery.supported_as_of}
             />
           </section>
         )}

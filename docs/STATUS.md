@@ -1,8 +1,9 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준 시각: 2026-08-27 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
+**최신 기준 시각: 2026-08-28 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.43(Owner 수용성 보정 release 운영 배포),
+당시의 기록이다. **현재 상태는 §0.44(Owner-beta 추천 remediation source-ready closeout),
+§0.43(Owner 수용성 보정 release 운영 배포),
 §0.42(Owner 사용자 수용성 감사와 후속 보정),
 §0.41(전략 저장 CSRF/RLS 복구·운영 반영),
 §0.40(기준 전략 카탈로그·설정 UI 복구),
@@ -12,7 +13,7 @@
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.43에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.44에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
@@ -2114,6 +2115,35 @@ owner-beta run `0`, migration max `52`다. Funnel backend는 기존 `172.24.0.4`
 한 번 실행해 terminal `SUCCEEDED`와 report/history를 확인하고, 후보·스크리너·종목 상세·
 백테스트의 production 사용자 가치를 확인하는 것이다. 이는 계속
 `USER_ACCEPTANCE_PENDING`이며 Paper/Live 활성화는 이 배포의 범위가 아니다.
+
+### 0.44 Owner-beta 추천 remediation source-ready closeout (2026-08-28)
+
+두 차례의 기존 production Owner recommendation run은 기술적으로 `SUCCEEDED`에 도달했지만,
+사용자 수용성은 실패했다. 보고서의 기준일이 licensing status에서 제시됐고, instrument metadata가
+없었으며, factor/reason 표시가 불투명했고, audit hash가 주 보고서를 지배했다. 이 기록은 원래의
+운영 수용성 실패가 해소됐다는 뜻이 아니다.
+
+현재 worktree의 source remediation은 독립 검토에서 `ACCEPT`됐다. 승인 artifact에서
+supported-as-of를 발견하고 기본값으로 사용하며, 정확한 ETF11 POST/discovery semantics를 적용하고,
+`public.instruments`의 name/asset_class는 표시 전용으로 bounded read한다. tracking/exposure 추론은
+하지 않고, 14개 bilingual reason code는 정적 매핑으로 표시하며, producer-compatible raw factor
+percentages와 접힌 audit details를 사용한다. 생성 OpenAPI contract도 동기화됐다.
+
+Web typecheck, targeted Biome, 다섯 개 focused Owner-beta Web suite, API `openapi:check`와 generator
+equality, Rust owner-beta unit tests와 clippy, `git diff --check`가 통과했다. `DATABASE_URL`이 설정되지
+않아 DB-backed integration branch는 실행하지 않았고/skipped 상태다.
+
+이 상태는 `SOURCE_READY`뿐이다. 이 변경은 agent가 commit하지 않았고, 배포·활성화·production 재실행도
+하지 않았다. 따라서 Owner acceptance는 별도 production deployment와 retest가 끝날 때까지
+`USER_ACCEPTANCE_PENDING`이며, 원래 acceptance failure를 operationally closed로 기록하지 않는다.
+일반 recommendation, Owner-beta price-only, backtest는 서로 다른 capability로 유지한다. Paper와
+Live는 기존처럼 disabled/out of scope다.
+
+Owner-beta backtest Phase B는 `docs/superpowers/plans/2026-08-28-owner-beta-backtest-p0-owner-decision.md`
+의 P0 simulation contract fields를 Owner가 명시적으로 승인하기 전까지 deferred/prohibited다. 이
+문서의 권고나 source remediation은 그 선택을 대신하지 않는다. 이번 closeout에서는 migration,
+production network call, deployment, provider expansion, KIS/OpenDART boundary 변경, order/account,
+Paper/Live surface 변경을 수행하거나 승인하지 않았다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 

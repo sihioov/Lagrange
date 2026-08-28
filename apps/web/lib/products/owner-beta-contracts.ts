@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const fixedWeightSchema = z.string().regex(/^(?:0\.\d{6}|1\.000000)$/);
-const ownerBetaInstrumentSchema = z.enum([
+export const ownerBetaInstrumentIdSchema = z.enum([
   "069500.KRX",
   "102110.KRX",
   "114260.KRX",
@@ -15,7 +15,21 @@ const ownerBetaInstrumentSchema = z.enum([
   "195930.KRX",
   "229200.KRX",
 ]);
-const ownerBetaReasonCodeSchema = z.enum([
+export type OwnerBetaInstrumentId = z.infer<typeof ownerBetaInstrumentIdSchema>;
+
+export const ownerBetaInstrumentSchema = z
+  .object({
+    asset_class: z.string().nullable(),
+    exposure_group: z.null(),
+    id: ownerBetaInstrumentIdSchema,
+    name: z.string().nullable(),
+    tracking_index: z.null(),
+  })
+  .strict();
+
+export type OwnerBetaInstrumentModel = z.infer<typeof ownerBetaInstrumentSchema>;
+
+export const ownerBetaReasonCodeSchema = z.enum([
   "SELECTED_TOP_N",
   "NOT_SELECTED_BEYOND_TOP_N",
   "EXCLUDED_MANDATORY_FACTOR_NULL",
@@ -31,14 +45,99 @@ const ownerBetaReasonCodeSchema = z.enum([
   "INVERSE_VOL_WEIGHTED",
   "NOT_SELECTED_BY_STRATEGY",
 ]);
+export type OwnerBetaReasonCode = z.infer<typeof ownerBetaReasonCodeSchema>;
+
 const ownerBetaReasonCodesSchema = z
   .array(ownerBetaReasonCodeSchema)
   .min(1)
-  .max(16)
+  .max(14)
   .refine((codes) => new Set(codes).size === codes.length, "reason codes must be unique");
-const ownerBetaFactorsSchema = z
-  .record(z.string().min(1).max(64), z.string().min(1).max(64))
-  .refine((factors) => Object.keys(factors).length <= 64, "too many factor values");
+// Mirrors the finite `python_float_string` text persisted by the durable
+// producer: a plain f64 spelling always has a fractional part, while a
+// scientific spelling uses lowercase `e`, a mandatory sign, and at least two
+// exponent digits.
+const CANONICAL_FACTOR_DECIMAL_PATTERN =
+  /^-?(?:(?:0|[1-9]\d*)\.\d+|(?:0|[1-9]\d*)(?:\.\d+)?e[+-]\d{2,})$/;
+const TREND_FACTOR_ID_PATTERN = /^trend_([1-9]\d*)$/;
+
+function hasSafeFactorExponent(value: string): boolean {
+  const exponent = /e([+-]\d{2,})$/.exec(value)?.[1];
+  return exponent === undefined || Number.isSafeInteger(Number(exponent));
+}
+
+const ownerBetaFactorValueSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(CANONICAL_FACTOR_DECIMAL_PATTERN)
+  .refine(hasSafeFactorExponent, "factor exponent must be safe")
+  .refine((value) => Number.isFinite(Number(value)), "factor value must be finite");
+
+function isAllowedOwnerBetaFactorId(id: string): boolean {
+  const trend = TREND_FACTOR_ID_PATTERN.exec(id);
+  if (trend !== null) {
+    const window = Number(trend[1]);
+    return Number.isSafeInteger(window) && window >= 5 && window <= 500;
+  }
+  return (
+    id === "momentum_12_1" ||
+    id === "return_12m" ||
+    id === "vol_20" ||
+    id === "vol_60" ||
+    id === "vol_120"
+  );
+}
+
+export const ownerBetaFactorsSchema = z
+  .record(z.string().min(1).max(64), ownerBetaFactorValueSchema)
+  .superRefine((factors, context) => {
+    if (Object.keys(factors).length > 64) {
+      context.addIssue({ code: "custom", message: "too many factor values" });
+    }
+    for (const id of Object.keys(factors)) {
+      if (!isAllowedOwnerBetaFactorId(id)) {
+        context.addIssue({ code: "custom", message: "unknown owner-beta factor" });
+      } else {
+        const factor = factors[id];
+        if (factor === undefined) {
+          context.addIssue({ code: "custom", message: "missing owner-beta factor" });
+          continue;
+        }
+        if (id.startsWith("vol_") && factor.startsWith("-")) {
+          context.addIssue({ code: "custom", message: "volatility factor must not be negative" });
+        }
+      }
+    }
+  });
+
+export type OwnerBetaFactors = z.infer<typeof ownerBetaFactorsSchema>;
+
+const ownerBetaSupportedAsOfDateSchema = z.iso.date();
+
+export const ownerBetaSupportedAsOfSchema = z
+  .object({
+    default_as_of: ownerBetaSupportedAsOfDateSchema,
+    supported_as_of: z.array(ownerBetaSupportedAsOfDateSchema).min(1),
+  })
+  .strict()
+  .superRefine((discovery, context) => {
+    const supported = discovery.supported_as_of;
+    if (new Set(supported).size !== supported.length) {
+      context.addIssue({ code: "custom", message: "supported_as_of values must be unique" });
+    }
+    const sorted = [...supported].sort();
+    if (sorted.some((date, index) => date !== supported[index])) {
+      context.addIssue({ code: "custom", message: "supported_as_of values must be sorted" });
+    }
+    if (discovery.default_as_of !== sorted.at(-1)) {
+      context.addIssue({
+        code: "custom",
+        message: "default_as_of must be the maximum supported date",
+      });
+    }
+  });
+
+export type OwnerBetaSupportedAsOfModel = z.infer<typeof ownerBetaSupportedAsOfSchema>;
 
 /**
  * The owner-beta response is intentionally independent from the ordinary
@@ -60,13 +159,20 @@ export const ownerBetaItemSchema = z
     excluded: z.boolean(),
     exclusion_reason: ownerBetaReasonCodeSchema.nullable().optional(),
     factors: ownerBetaFactorsSchema,
-    instrument_id: ownerBetaInstrumentSchema,
+    instrument: ownerBetaInstrumentSchema,
+    instrument_id: ownerBetaInstrumentIdSchema,
     rank: z.number().int().min(1).max(11).nullable().optional(),
     reason_codes: ownerBetaReasonCodesSchema,
     target_weight: fixedWeightSchema.nullable().optional(),
   })
   .strict()
   .superRefine((item, context) => {
+    if (item.instrument.id !== item.instrument_id) {
+      context.addIssue({
+        code: "custom",
+        message: "instrument metadata id must match instrument_id",
+      });
+    }
     const hasRank = item.rank !== undefined && item.rank !== null;
     const hasWeight = item.target_weight !== undefined && item.target_weight !== null;
     const hasExclusion = item.exclusion_reason !== undefined && item.exclusion_reason !== null;
@@ -122,6 +228,28 @@ function weightUnits(value: string): number {
 const ownerBetaRunObjectSchema = z.object(ownerBetaRunFields).strict();
 
 export const ownerBetaRunSchema = ownerBetaRunObjectSchema.superRefine((run, context) => {
+  if (run.strategy_id === "buy_and_hold") {
+    for (const item of run.items) {
+      if (Object.keys(item.factors).length !== 0) {
+        context.addIssue({
+          code: "custom",
+          message: "buy-and-hold items cannot carry factor evidence",
+        });
+        break;
+      }
+    }
+  } else {
+    for (const item of run.items) {
+      if (!item.excluded && Object.keys(item.factors).length === 0) {
+        context.addIssue({
+          code: "custom",
+          message: "selected owner-beta item lacks factor evidence",
+        });
+        break;
+      }
+    }
+  }
+
   if (run.status === "SUCCEEDED") {
     const instrumentIds = new Set(run.items.map((item) => item.instrument_id));
     const ranks = run.items.flatMap((item) => (item.rank == null ? [] : [item.rank]));
@@ -131,8 +259,8 @@ export const ownerBetaRunSchema = ownerBetaRunObjectSchema.superRefine((run, con
       run.cash_weight == null ? 0 : weightUnits(run.cash_weight),
     );
     if (
-      run.items.length !== ownerBetaInstrumentSchema.options.length ||
-      instrumentIds.size !== ownerBetaInstrumentSchema.options.length ||
+      run.items.length !== ownerBetaInstrumentIdSchema.options.length ||
+      instrumentIds.size !== ownerBetaInstrumentIdSchema.options.length ||
       new Set(ranks).size !== ranks.length ||
       run.factor_snapshot_sha256 === undefined ||
       run.factor_snapshot_sha256 === null ||
@@ -199,6 +327,9 @@ export type OwnerBetaPriceOnlyRunResponse = z.infer<typeof ownerBetaPriceOnlyRun
 /** The one server-owned route used by both owner-beta reads and its form. */
 export const OWNER_BETA_PRICE_ONLY_RUNS_PATH =
   "/api/v1/recommendations/owner-beta/price-only/runs" as const;
+
+export const OWNER_BETA_PRICE_ONLY_SUPPORTED_AS_OF_PATH =
+  "/api/v1/recommendations/owner-beta/price-only/supported-as-of" as const;
 
 export function ownerBetaRunPath(runId: string): string {
   return `${OWNER_BETA_PRICE_ONLY_RUNS_PATH}/${encodeURIComponent(runId)}`;

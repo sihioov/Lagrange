@@ -26,6 +26,11 @@ const ROUTES = [
   ["GET", "/api/v1/strategy-configs/{config_id}", {}],
   // recommendations
   ["POST", "/api/v1/recommendations/runs", { mutating: true, idem: true, entitlement: "recommendation", audit: true }],
+  ["GET", "/api/v1/recommendations/owner-beta/price-only/supported-as-of", {
+    owner: true,
+    entitlement: "recommendation",
+    ownerBetaSupportedAsOf: true,
+  }],
   ["POST", "/api/v1/recommendations/owner-beta/price-only/runs", {
     mutating: true,
     idem: true,
@@ -156,7 +161,15 @@ if (ERROR_CODES_SET.size !== ERROR_CODES.length) {
 
 const ENVELOPE = { $ref: "#/components/schemas/ErrorEnvelope" };
 
-function errorResponses() {
+function errorResponses(route) {
+  if (route?.[2]?.ownerBetaSupportedAsOf) {
+    return {
+      "401": { $ref: "#/components/responses/Error401" },
+      "403": { $ref: "#/components/responses/Error403" },
+      "500": { $ref: "#/components/responses/Error500" },
+      "503": { $ref: "#/components/responses/Error503" },
+    };
+  }
   const responses = {
     "400": { $ref: "#/components/responses/Error400" },
     "401": { $ref: "#/components/responses/Error401" },
@@ -202,13 +215,15 @@ function operation(route) {
     parameters: [],
     responses: {
       ...successResponsesFor(method, path),
-      ...errorResponses(),
+      ...errorResponses(route),
     },
     "x-lagrange": {
       auth: { required: true, session: "opaque __Host-lagrange_session cookie" },
       ownership: {
         owner_only: owner,
-        scope: flags.ownerBetaPrice
+        scope: flags.ownerBetaSupportedAsOf
+          ? "Owner role; approved sealed historical price-only artifact"
+          : flags.ownerBetaPrice
           ? "Owner role; sealed historical price-only input"
           : flags.ownerBetaPriceRead
           ? "Owner role; actor-scoped sealed historical price-only read model"
@@ -219,9 +234,7 @@ function operation(route) {
             : "actor-scoped via RLS (foreign resources are indistinguishable from missing)",
       },
       entitlement: entitlement
-        ? flags.ownerBetaPrice
-          ? { use: entitlement, fail_closed: true, input: "owner_beta_historical_price_only_v1" }
-          : flags.ownerBetaPriceRead
+        ? flags.ownerBetaPrice || flags.ownerBetaPriceRead || flags.ownerBetaSupportedAsOf
           ? { use: entitlement, fail_closed: true, input: "owner_beta_historical_price_only_v1" }
           : { use: entitlement, fail_closed: true, dataset: entitlement === "candidate" ? "every exact pinned candidate source dataset" : "krx_eod_bars" }
         : { use: null, fail_closed: true },
@@ -292,6 +305,9 @@ function successResponsesFor(method, path) {
   }
   if (path === "/api/v1/recommendations/owner-beta/price-only/runs" && method === "post") {
     return { "202": json("Owner-beta price-only recommendation accepted", "#/components/schemas/OwnerBetaPriceOnlyRun") };
+  }
+  if (path === "/api/v1/recommendations/owner-beta/price-only/supported-as-of" && method === "get") {
+    return { "200": json("Supported owner-beta price-only artifact sessions", "#/components/schemas/OwnerBetaPriceOnlySupportedAsOf") };
   }
   if (path === "/api/v1/recommendations/owner-beta/price-only/runs" && method === "get") {
     return { "200": json("Owner-beta price-only recommendation history", "#/components/schemas/OwnerBetaPriceOnlyReadPage") };
@@ -373,6 +389,16 @@ function bodySchemaRef(path) {
 function errorCodesFor(route) {
   const path = route[1];
   const flags = route[2];
+  if (flags.ownerBetaSupportedAsOf) {
+    return [
+      "SESSION_UNKNOWN",
+      "SESSION_EXPIRED",
+      "FORBIDDEN",
+      "DATA_ENTITLEMENT_REQUIRED",
+      "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+      "INTERNAL",
+    ];
+  }
   const codes = ["SESSION_UNKNOWN", "SESSION_EXPIRED", "INTERNAL"];
   if (flags.entitlement) codes.push("DATA_ENTITLEMENT_REQUIRED", "INVALID_DATE");
   if (flags.owner) codes.push("FORBIDDEN");
@@ -581,18 +607,50 @@ const SCHEMAS = {
       as_of: dateStr,
     },
   },
+  OwnerBetaPriceOnlySupportedAsOf: {
+    type: "object",
+    required: ["default_as_of", "supported_as_of"],
+    additionalProperties: false,
+    properties: {
+      default_as_of: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$", example: "2026-08-19" },
+      supported_as_of: {
+        type: "array",
+        minItems: 1,
+        items: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+      },
+    },
+  },
   OwnerBetaPriceOnlyReadItem: {
     type: "object",
-    required: ["instrument_id", "excluded", "reason_codes", "factors"],
+    required: ["instrument_id", "instrument", "excluded", "reason_codes", "factors"],
     additionalProperties: false,
     properties: {
       instrument_id: {
         type: "string",
         enum: [
-          "069500.KRX", "102110.KRX", "114260.KRX", "132030.KRX", "138230.KRX",
-          "152100.KRX", "148020.KRX", "305720.KRX", "278530.KRX", "292150.KRX",
-          "360750.KRX",
+          "069500.KRX", "102110.KRX", "229200.KRX", "143850.KRX", "133690.KRX",
+          "195930.KRX", "192090.KRX", "148070.KRX", "114260.KRX", "153130.KRX",
+          "132030.KRX",
         ],
+      },
+      instrument: {
+        type: "object",
+        required: ["id", "name", "asset_class", "tracking_index", "exposure_group"],
+        additionalProperties: false,
+        properties: {
+          id: {
+            type: "string",
+            enum: [
+              "069500.KRX", "102110.KRX", "229200.KRX", "143850.KRX", "133690.KRX",
+              "195930.KRX", "192090.KRX", "148070.KRX", "114260.KRX", "153130.KRX",
+              "132030.KRX",
+            ],
+          },
+          name: { type: ["string", "null"] },
+          asset_class: { type: ["string", "null"] },
+          tracking_index: { type: "null" },
+          exposure_group: { type: "null" },
+        },
       },
       rank: { type: ["integer", "null"], minimum: 1, maximum: 11 },
       target_weight: { type: ["string", "null"], pattern: "^(?:0\\.\\d{6}|1\\.000000)$" },

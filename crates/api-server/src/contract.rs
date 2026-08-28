@@ -527,6 +527,17 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
     ),
     route(
         "GET",
+        "/api/v1/recommendations/owner-beta/price-only/supported-as-of",
+        Phase::Current,
+        false,
+        false,
+        false,
+        true,
+        Some("recommendation"),
+        false,
+    ),
+    route(
+        "GET",
         "/api/v1/recommendations/owner-beta/price-only/runs",
         Phase::Current,
         false,

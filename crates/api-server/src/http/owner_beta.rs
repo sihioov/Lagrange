@@ -5,8 +5,9 @@
 //! the durable repository is the only idempotency authority.
 
 use crate::http::dto::{
-    OwnerBetaPriceOnlyReadItemDto, OwnerBetaPriceOnlyReadListItemDto, OwnerBetaPriceOnlyReadRunDto,
-    OwnerBetaPriceOnlyRunBody, OwnerBetaPriceOnlyRunDto, PageDto,
+    OwnerBetaInstrumentDto, OwnerBetaPriceOnlyReadItemDto, OwnerBetaPriceOnlyReadListItemDto,
+    OwnerBetaPriceOnlyReadRunDto, OwnerBetaPriceOnlyRunBody, OwnerBetaPriceOnlyRunDto,
+    OwnerBetaPriceOnlySupportedAsOfDto, PageDto,
 };
 use crate::http::entitlement::require_use;
 use crate::http::error::{api_error, code_error, request_id};
@@ -21,7 +22,7 @@ use axum::response::{IntoResponse, Response};
 use chrono::{Datelike, NaiveDate};
 use domain::TradingDate;
 use market_data::{ApprovedHistoricalPriceOnlyArtifact, KR_ETF_CORE_SYMBOLS};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 /// POST `/api/v1/recommendations/owner-beta/price-only/runs`.
@@ -262,6 +263,53 @@ pub async fn list_price_only_runs(
     }
 }
 
+/// GET `/api/v1/recommendations/owner-beta/price-only/supported-as-of`.
+pub async fn get_supported_as_of(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+) -> Response {
+    let rid = request_id(&headers);
+    if !owner_beta_read_allowed(&state, &session) {
+        return code_error("FORBIDDEN", "forbidden", &rid);
+    }
+    if let Err(response) = require_use(
+        &state,
+        &session,
+        &headers,
+        auth::entitlement::KrUse::Recommendation,
+        &crate::http::entitlement::today_iso(),
+    )
+    .await
+    {
+        return response;
+    }
+
+    let artifact = match approve_artifact(&state).await {
+        Ok(artifact) => artifact,
+        Err(()) => {
+            return api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+                "owner-beta price input unavailable",
+                &rid,
+                None,
+            );
+        }
+    };
+    let Some(supported_as_of) = supported_as_of_response(artifact.bars()) else {
+        return api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+            "owner-beta price input unavailable",
+            &rid,
+            None,
+        );
+    };
+
+    (StatusCode::OK, Json(supported_as_of)).into_response()
+}
+
 /// GET `/api/v1/recommendations/owner-beta/price-only/runs/{run_id}`.
 pub async fn get_price_only_run(
     State(state): State<ApiState>,
@@ -415,7 +463,14 @@ fn read_item_dto(
         })
         .unwrap_or_default();
     OwnerBetaPriceOnlyReadItemDto {
-        instrument_id: item.instrument_id,
+        instrument_id: item.instrument_id.clone(),
+        instrument: OwnerBetaInstrumentDto {
+            id: item.instrument_id,
+            name: item.instrument_name,
+            asset_class: item.instrument_asset_class,
+            tracking_index: None,
+            exposure_group: None,
+        },
         rank: item.rank,
         target_weight: item.target_weight,
         excluded: item.excluded,
@@ -490,17 +545,46 @@ async fn approve_artifact(state: &ApiState) -> Result<ApprovedHistoricalPriceOnl
 }
 
 fn has_exact_session(artifact: &ApprovedHistoricalPriceOnlyArtifact, as_of: TradingDate) -> bool {
-    let expected = KR_ETF_CORE_SYMBOLS
-        .iter()
-        .map(|symbol| format!("{symbol}.KRX"))
-        .collect::<BTreeSet<_>>();
     let actual = artifact
         .bars()
         .iter()
         .filter(|bar| bar.session_date == as_of)
         .map(|bar| bar.instrument_id.to_string())
         .collect::<BTreeSet<_>>();
-    actual == expected
+    has_exact_etf11_set(&actual)
+}
+
+fn has_exact_etf11_set(actual: &BTreeSet<String>) -> bool {
+    let expected = KR_ETF_CORE_SYMBOLS
+        .iter()
+        .map(|symbol| format!("{symbol}.KRX"))
+        .collect::<BTreeSet<_>>();
+    actual == &expected
+}
+
+fn supported_as_of_dates(bars: &[market_data::HistoricalPriceOnlyBar]) -> Vec<NaiveDate> {
+    let mut instruments_by_date = BTreeMap::<NaiveDate, BTreeSet<String>>::new();
+    for bar in bars {
+        instruments_by_date
+            .entry(bar.session_date.as_naive_date())
+            .or_default()
+            .insert(bar.instrument_id.to_string());
+    }
+    instruments_by_date
+        .into_iter()
+        .filter_map(|(date, instruments)| has_exact_etf11_set(&instruments).then_some(date))
+        .collect()
+}
+
+fn supported_as_of_response(
+    bars: &[market_data::HistoricalPriceOnlyBar],
+) -> Option<OwnerBetaPriceOnlySupportedAsOfDto> {
+    let supported_as_of = supported_as_of_dates(bars);
+    let default_as_of = supported_as_of.last().copied()?;
+    Some(OwnerBetaPriceOnlySupportedAsOfDto {
+        default_as_of,
+        supported_as_of,
+    })
 }
 
 #[cfg(test)]
@@ -513,6 +597,7 @@ mod tests {
     use auth::entitlement::{Role, UserId};
     use auth::sessions::SessionInfo;
     use axum::body::to_bytes;
+    use domain::{FixedPoint, InstrumentId, Venue};
     use serde_json::json;
     use std::collections::BTreeSet;
 
@@ -604,6 +689,29 @@ mod tests {
         assert_eq!(state.audit_pool.size(), 0);
     }
 
+    #[tokio::test]
+    async fn supported_as_of_policy_rejection_precedes_entitlement_and_approval() {
+        let state = ApiState::test_without_database(OwnerBetaAccessMode::Disabled);
+        let response = get_supported_as_of(
+            State(state.clone()),
+            owner_session(),
+            HeaderMap::from_iter([(
+                "x-request-id".parse().unwrap(),
+                "policy-test".parse().unwrap(),
+            )]),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .expect("bounded policy rejection body");
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("error JSON");
+        assert_eq!(body["error"]["code"], "FORBIDDEN");
+        assert_eq!(state.app_pool.size(), 0);
+        assert_eq!(state.admin_pool.size(), 0);
+        assert_eq!(state.audit_pool.size(), 0);
+    }
+
     #[test]
     fn request_dto_has_only_strategy_config_and_as_of() {
         let value = json!({
@@ -675,5 +783,123 @@ mod tests {
         for invalid in ["2026-8-19", "2026-08-19 ", "2026/08/19", "2026-02-30"] {
             assert!(parse_strict_date(invalid).is_none(), "{invalid:?}");
         }
+    }
+
+    fn test_bar(symbol: &str, date: &str) -> market_data::HistoricalPriceOnlyBar {
+        let value = || FixedPoint::parse("1").expect("valid fixed point");
+        market_data::HistoricalPriceOnlyBar {
+            instrument_id: InstrumentId::from_parts(symbol, Venue::Krx).expect("valid instrument"),
+            session_date: TradingDate::parse(date).expect("valid date"),
+            raw_open: value(),
+            raw_high: value(),
+            raw_low: value(),
+            raw_close: value(),
+            raw_volume: 1,
+            raw_trading_value: Some(value()),
+            adjusted_open: value(),
+            adjusted_high: value(),
+            adjusted_low: value(),
+            adjusted_close: value(),
+        }
+    }
+
+    #[test]
+    fn supported_as_of_dates_are_sorted_and_require_every_exact_etf11_id() {
+        let mut bars = Vec::new();
+        for date in ["2026-08-19", "2026-08-16", "2026-08-17", "2026-08-18"] {
+            for (index, symbol) in KR_ETF_CORE_SYMBOLS.iter().enumerate() {
+                if date == "2026-08-16" && index == KR_ETF_CORE_SYMBOLS.len() - 1 {
+                    continue;
+                }
+                bars.push(test_bar(symbol, date));
+            }
+        }
+        // A complete ETF11 session with an unrelated instrument is not an
+        // exact session and must not be advertised as supported.
+        bars.push(test_bar("SPY", "2026-08-17"));
+
+        assert_eq!(
+            supported_as_of_dates(&bars),
+            vec![
+                NaiveDate::from_ymd_opt(2026, 8, 18).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 8, 19).unwrap()
+            ]
+        );
+        assert!(supported_as_of_dates(&[]).is_empty());
+        let response = supported_as_of_response(&bars).expect("supported response");
+        assert_eq!(
+            response.default_as_of,
+            NaiveDate::from_ymd_opt(2026, 8, 19).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(response).expect("response JSON"),
+            json!({
+                "default_as_of": "2026-08-19",
+                "supported_as_of": ["2026-08-18", "2026-08-19"]
+            })
+        );
+        assert!(supported_as_of_response(&[]).is_none());
+    }
+
+    fn read_item_fixture(
+        name: Option<&str>,
+        asset_class: Option<&str>,
+    ) -> crate::repos::owner_beta::OwnerBetaPriceOnlyReadItemRow {
+        crate::repos::owner_beta::OwnerBetaPriceOnlyReadItemRow {
+            recommendation_run_id: Uuid::new_v4(),
+            instrument_id: "069500.KRX".to_owned(),
+            instrument_name: name.map(str::to_owned),
+            instrument_asset_class: asset_class.map(str::to_owned),
+            rank: Some(1),
+            target_weight: Some("0.500000".to_owned()),
+            reason_codes: json!(["SELECTED_TOP_N"]),
+            factors_json: json!({"close": "1"}),
+            excluded: false,
+            exclusion_reason: None,
+        }
+    }
+
+    #[test]
+    fn item_projection_preserves_id_and_allows_present_or_null_metadata() {
+        let missing = serde_json::to_value(read_item_dto(read_item_fixture(None, None)))
+            .expect("missing metadata serializes");
+        let present = serde_json::to_value(read_item_dto(read_item_fixture(
+            Some("KODEX 200"),
+            Some("ETF"),
+        )))
+        .expect("present metadata serializes");
+
+        for key in [
+            "instrument_id",
+            "rank",
+            "target_weight",
+            "excluded",
+            "exclusion_reason",
+            "reason_codes",
+            "factors",
+        ] {
+            assert_eq!(missing[key], present[key], "metadata changed {key}");
+        }
+        assert_eq!(
+            missing["instrument"],
+            json!({
+                "id": "069500.KRX",
+                "name": null,
+                "asset_class": null,
+                "tracking_index": null,
+                "exposure_group": null
+            })
+        );
+        assert_eq!(
+            present["instrument"],
+            json!({
+                "id": "069500.KRX",
+                "name": "KODEX 200",
+                "asset_class": "ETF",
+                "tracking_index": null,
+                "exposure_group": null
+            })
+        );
+        assert_eq!(missing["instrument_id"], missing["instrument"]["id"]);
     }
 }

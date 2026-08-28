@@ -1,4 +1,5 @@
 import type { LocaleDictionary } from "@/lib/i18n/locale";
+import type { OwnerBetaReasonCode } from "@/lib/products/owner-beta-contracts";
 
 export type RecommendationsDictionary = {
   readonly allCashAllocation: string;
@@ -79,26 +80,48 @@ export type RecommendationsDictionary = {
   readonly ownerBetaActionManifestHashLabel: string;
   readonly ownerBetaApprovalRegistryHashLabel: string;
   readonly ownerBetaArtifactManifestHashLabel: string;
+  readonly ownerBetaAssetClassMissing: string;
+  readonly ownerBetaAuditDetails: string;
   readonly ownerBetaHistoryCaption: string;
   readonly ownerBetaHistoryHeading: string;
   readonly ownerBetaInputWarning: string;
   readonly ownerBetaCandidateContentHashLabel: string;
+  readonly ownerBetaFactorEvidence: string;
+  readonly ownerBetaFinishedAtLabel: string;
   readonly ownerBetaItemsCaption: string;
   readonly ownerBetaItemsHeading: string;
+  readonly ownerBetaInstrumentNameMissing: string;
+  readonly ownerBetaJobIdLabel: string;
+  readonly ownerBetaLatestSupportedAsOfLabel: string;
   readonly ownerBetaNoRunsMessage: string;
+  readonly ownerBetaNoFactorEvidence: string;
   readonly ownerBetaReportEyebrow: string;
   readonly ownerBetaReportHeading: string;
+  readonly ownerBetaReasonExplanations: Readonly<Record<OwnerBetaReasonCode, string>>;
   readonly ownerBetaRouteDescription: string;
   readonly ownerBetaRouteTitle: string;
   readonly ownerBetaRunningMessage: string;
   readonly ownerBetaRunningTitle: string;
+  readonly ownerBetaRunAsOfLabel: string;
+  readonly ownerBetaRunIdLabel: string;
+  readonly ownerBetaSealedAsOfLabel: string;
+  readonly ownerBetaStartedAtLabel: string;
   readonly ownerBetaStrictPitLabel: string;
   readonly ownerBetaStrictPitValue: string;
+  readonly ownerBetaStrategyConfigIdLabel: string;
   readonly ownerBetaStrategyConfigHashLabel: string;
+  readonly ownerBetaStrategyIdentityLabel: string;
   readonly ownerBetaTargetSnapshotHashLabel: string;
   readonly ownerBetaSubmit: string;
   readonly ownerBetaSubmitting: string;
   readonly ownerBetaStage5ManifestHashLabel: string;
+  readonly ownerBetaTrackingIndexMissing: string;
+  readonly ownerBetaTrendFactorLabel: (window: string) => string;
+  readonly ownerBetaMomentumFactorLabel: string;
+  readonly ownerBetaReturnFactorLabel: string;
+  readonly ownerBetaVolatilityFactorLabel: (window: string) => string;
+  readonly ownerBetaUnsupportedAsOf: string;
+  readonly ownerBetaUpdatedAtLabel: string;
   readonly ownerBetaVendorSnapshotLabel: string;
   readonly ownerBetaVendorSnapshotValue: string;
 };
@@ -192,28 +215,67 @@ export const recommendationsDictionary: LocaleDictionary<RecommendationsDictiona
     ownerBetaActionManifestHashLabel: "Action manifest hash",
     ownerBetaApprovalRegistryHashLabel: "Approval registry hash",
     ownerBetaArtifactManifestHashLabel: "Artifact manifest hash",
+    ownerBetaAssetClassMissing: "Asset class not provided",
+    ownerBetaAuditDetails: "Audit details",
     ownerBetaCandidateContentHashLabel: "Candidate content hash",
+    ownerBetaFactorEvidence: "Factor evidence",
+    ownerBetaFinishedAtLabel: "Finished",
     ownerBetaHistoryCaption: "Owner-only price-return recommendation runs",
     ownerBetaHistoryHeading: "Owner-only run history",
     ownerBetaInputWarning:
       "This beta uses a vendor snapshot and is not strict point-in-time data. It is for the Owner only and reports price returns, not total returns.",
+    ownerBetaInstrumentNameMissing: "Instrument name not provided",
     ownerBetaItemsCaption: "ETF11 items and price-return targets",
     ownerBetaItemsHeading: "ETF11 items",
+    ownerBetaJobIdLabel: "Job ID",
+    ownerBetaLatestSupportedAsOfLabel: "Latest supported as-of date",
+    ownerBetaNoFactorEvidence: "No factor evidence (buy and hold strategy)",
     ownerBetaNoRunsMessage: "No owner-only recommendation runs are available.",
     ownerBetaReportEyebrow: "Owner-only price-return output",
     ownerBetaReportHeading: "Owner-only recommendation",
+    ownerBetaReasonExplanations: {
+      SELECTED_TOP_N: "Selected under the selection criteria. Rank is shown separately.",
+      NOT_SELECTED_BEYOND_TOP_N: "Did not meet the selection criteria.",
+      EXCLUDED_MANDATORY_FACTOR_NULL: "Excluded because a required factor value was unavailable.",
+      ALL_CASH_NO_ELIGIBLE: "No eligible instruments; the portfolio remains fully in cash.",
+      WEIGHT_CAPPED_AT_MAX: "Applied the maximum weight cap.",
+      WEIGHT_ROUNDING_RESIDUE_TO_CASH: "Allocated rounding residue to cash.",
+      CASH_FLOOR_APPLIED: "Maintained the minimum cash weight.",
+      BENCHMARK_HELD: "Held as the benchmark. Weight is shown separately as target weight.",
+      TREND_POSITIVE: "Met the positive trend condition.",
+      TREND_NEGATIVE_CASH: "Did not meet the trend condition; cash is maintained.",
+      ABSOLUTE_MOMENTUM_PASSED: "Met the absolute momentum condition.",
+      DEFENSIVE_CASH_SELECTED:
+        "Did not meet the absolute momentum condition; cash was selected defensively.",
+      INVERSE_VOL_WEIGHTED: "Allocated weight using inverse volatility.",
+      NOT_SELECTED_BY_STRATEGY: "This fixed-universe instrument was not selected by the strategy.",
+    },
     ownerBetaRouteDescription:
       "Review the Owner-only price-return recommendation produced from the sealed vendor snapshot.",
     ownerBetaRouteTitle: "Owner-only recommendations",
     ownerBetaRunningMessage: "The Owner-only worker is producing this price-return output.",
     ownerBetaRunningTitle: "Owner-only run is in progress",
+    ownerBetaReturnFactorLabel: "12-month return",
+    ownerBetaRunAsOfLabel: "Run as-of date",
+    ownerBetaRunIdLabel: "Run ID",
+    ownerBetaSealedAsOfLabel: "Sealed input as-of date",
+    ownerBetaStartedAtLabel: "Started",
     ownerBetaStrictPitLabel: "Point-in-time mode",
+    ownerBetaStrategyConfigIdLabel: "Strategy config ID",
     ownerBetaStrictPitValue: "Non-strict PIT",
     ownerBetaStrategyConfigHashLabel: "Strategy config hash",
+    ownerBetaStrategyIdentityLabel: "Strategy identity",
     ownerBetaTargetSnapshotHashLabel: "Target snapshot hash",
     ownerBetaSubmit: "Generate owner-only recommendation",
     ownerBetaSubmitting: "Starting owner-only run",
     ownerBetaStage5ManifestHashLabel: "Stage5 manifest hash",
+    ownerBetaTrackingIndexMissing: "Tracking index: not provided",
+    ownerBetaTrendFactorLabel: (window) => `${window}-day price deviation from moving average`,
+    ownerBetaMomentumFactorLabel: "12-month momentum excluding the most recent month",
+    ownerBetaVolatilityFactorLabel: (window) =>
+      `${window}-trading-day annualized realized volatility`,
+    ownerBetaUnsupportedAsOf: "Select a supported sealed input date.",
+    ownerBetaUpdatedAtLabel: "Updated",
     ownerBetaVendorSnapshotLabel: "Input source",
     ownerBetaVendorSnapshotValue: "Vendor snapshot",
   },
@@ -303,28 +365,65 @@ export const recommendationsDictionary: LocaleDictionary<RecommendationsDictiona
     ownerBetaActionManifestHashLabel: "액션 매니페스트 해시",
     ownerBetaApprovalRegistryHashLabel: "승인 레지스트리 해시",
     ownerBetaArtifactManifestHashLabel: "아티팩트 매니페스트 해시",
+    ownerBetaAssetClassMissing: "자산군 미제공",
+    ownerBetaAuditDetails: "감사 세부정보",
     ownerBetaCandidateContentHashLabel: "후보 콘텐츠 해시",
+    ownerBetaFactorEvidence: "팩터 근거",
+    ownerBetaFinishedAtLabel: "종료 시각",
     ownerBetaHistoryCaption: "소유자 전용 가격 수익률 추천 실행",
     ownerBetaHistoryHeading: "소유자 전용 실행 이력",
     ownerBetaInputWarning:
       "이 베타는 공급자 스냅샷을 사용하며 엄격한 시점 일치(PIT) 데이터가 아닙니다. 소유자 전용이며 가격 수익률만 보고하고 총수익률은 제공하지 않습니다.",
+    ownerBetaInstrumentNameMissing: "종목명 미제공",
     ownerBetaItemsCaption: "ETF11 종목 및 가격 수익률 목표 비중",
     ownerBetaItemsHeading: "ETF11 종목",
+    ownerBetaJobIdLabel: "작업 ID",
+    ownerBetaLatestSupportedAsOfLabel: "지원되는 최신 기준일",
+    ownerBetaNoFactorEvidence: "팩터 근거 없음(매수·보유 전략)",
     ownerBetaNoRunsMessage: "이용 가능한 소유자 전용 추천 실행이 없습니다.",
     ownerBetaReportEyebrow: "소유자 전용 가격 수익률 결과",
     ownerBetaReportHeading: "소유자 전용 추천",
+    ownerBetaReasonExplanations: {
+      SELECTED_TOP_N: "선정 기준에 따라 선택되었습니다. 순위는 별도 순위 필드에 표시합니다.",
+      NOT_SELECTED_BEYOND_TOP_N: "선정 기준에 들지 않았습니다.",
+      EXCLUDED_MANDATORY_FACTOR_NULL: "필수 팩터 값이 없어 제외되었습니다.",
+      ALL_CASH_NO_ELIGIBLE: "선정 가능한 종목이 없어 전액 현금을 유지합니다.",
+      WEIGHT_CAPPED_AT_MAX: "최대 비중 상한을 적용했습니다.",
+      WEIGHT_ROUNDING_RESIDUE_TO_CASH: "반올림 잔여를 현금으로 배분했습니다.",
+      CASH_FLOOR_APPLIED: "현금 최소 비중을 유지했습니다.",
+      BENCHMARK_HELD: "이 종목을 벤치마크로 보유합니다. 비중은 별도 목표 비중 필드에 표시합니다.",
+      TREND_POSITIVE: "상승 추세 조건을 충족했습니다.",
+      TREND_NEGATIVE_CASH: "추세 조건을 충족하지 않아 현금을 유지합니다.",
+      ABSOLUTE_MOMENTUM_PASSED: "절대 모멘텀 조건을 충족했습니다.",
+      DEFENSIVE_CASH_SELECTED: "절대 모멘텀 조건을 충족하지 않아 방어적으로 현금을 선택했습니다.",
+      INVERSE_VOL_WEIGHTED: "변동성을 고려한 역변동성 방식으로 비중을 배정했습니다.",
+      NOT_SELECTED_BY_STRATEGY: "이 고정 유니버스 종목은 해당 전략에서 선택하지 않았습니다.",
+    },
     ownerBetaRouteDescription:
       "봉인된 공급자 스냅샷으로 산출한 소유자 전용 가격 수익률 추천을 확인하세요.",
     ownerBetaRouteTitle: "소유자 전용 추천",
     ownerBetaRunningMessage: "소유자 전용 워커가 가격 수익률 결과를 생성하고 있습니다.",
     ownerBetaRunningTitle: "소유자 전용 실행 진행 중",
+    ownerBetaReturnFactorLabel: "12개월 수익률",
+    ownerBetaRunAsOfLabel: "실행 기준일",
+    ownerBetaRunIdLabel: "실행 ID",
+    ownerBetaSealedAsOfLabel: "봉인된 입력 기준일",
+    ownerBetaStartedAtLabel: "시작 시각",
     ownerBetaStrictPitLabel: "시점 일치 모드",
+    ownerBetaStrategyConfigIdLabel: "전략 설정 ID",
     ownerBetaStrictPitValue: "비엄격 PIT",
     ownerBetaStrategyConfigHashLabel: "전략 설정 해시",
+    ownerBetaStrategyIdentityLabel: "전략 식별자",
     ownerBetaTargetSnapshotHashLabel: "목표 스냅샷 해시",
     ownerBetaSubmit: "소유자 전용 추천 생성",
     ownerBetaSubmitting: "소유자 전용 실행 시작 중",
     ownerBetaStage5ManifestHashLabel: "Stage5 매니페스트 해시",
+    ownerBetaTrackingIndexMissing: "추적지수: 미제공",
+    ownerBetaTrendFactorLabel: (window) => `${window}일 이동평균 대비 가격 괴리`,
+    ownerBetaMomentumFactorLabel: "12개월-최근 1개월 제외 모멘텀",
+    ownerBetaVolatilityFactorLabel: (window) => `${window}거래일 연율화 실현변동성`,
+    ownerBetaUnsupportedAsOf: "지원되는 봉인된 입력 기준일을 선택하세요.",
+    ownerBetaUpdatedAtLabel: "갱신 시각",
     ownerBetaVendorSnapshotLabel: "입력 출처",
     ownerBetaVendorSnapshotValue: "공급자 스냅샷",
   },

@@ -37,11 +37,14 @@ import {
 import { type LiveConnectionModel, liveConnectionSchema } from "@/lib/products/live-contracts";
 import {
   OWNER_BETA_PRICE_ONLY_RUNS_PATH,
+  OWNER_BETA_PRICE_ONLY_SUPPORTED_AS_OF_PATH,
   type OwnerBetaRunModel,
   type OwnerBetaRunPageModel,
+  type OwnerBetaSupportedAsOfModel,
   ownerBetaRunPageSchema,
   ownerBetaRunPath,
   ownerBetaRunSchema,
+  ownerBetaSupportedAsOfSchema,
 } from "@/lib/products/owner-beta-contracts";
 import {
   type NotificationModel,
@@ -73,6 +76,7 @@ export type ProductApiClient = {
   readonly getRecommendationRuns: () => Promise<PageResult<RecommendationRunModel>>;
   readonly getOwnerBetaRecommendationRuns: () => Promise<OwnerBetaRunPageModel>;
   readonly getOwnerBetaRecommendationRun: (runId: string) => Promise<OwnerBetaRunModel>;
+  readonly getOwnerBetaSupportedAsOf: () => Promise<OwnerBetaSupportedAsOfModel>;
   readonly getStrategies: () => Promise<PageResult<StrategyCatalogItem>>;
   readonly getPaperAccounts: () => Promise<PageResult<PaperAccountModel>>;
   readonly getPaperAccount: (accountId: string) => Promise<PaperAccountModel>;
@@ -151,6 +155,8 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
       getParsed(client, OWNER_BETA_PRICE_ONLY_RUNS_PATH, ownerBetaRunPageSchema),
     getOwnerBetaRecommendationRun: (runId) =>
       getParsed(client, ownerBetaRunPath(runId), ownerBetaRunSchema),
+    getOwnerBetaSupportedAsOf: () =>
+      getParsed(client, OWNER_BETA_PRICE_ONLY_SUPPORTED_AS_OF_PATH, ownerBetaSupportedAsOfSchema),
     getRecommendationRun: (runId) =>
       getParsed(
         client,

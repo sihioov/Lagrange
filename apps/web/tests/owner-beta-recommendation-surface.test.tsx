@@ -45,7 +45,7 @@ function ownerRun(overrides: Record<string, unknown> = {}) {
     id: RUN_ID,
     job_id: JOB_ID,
     strategy_config_id: CONFIG_ID,
-    strategy_id: "buy_and_hold",
+    strategy_id: "relative_momentum",
     strategy_version: "1.0.0",
     as_of: "2026-08-19",
     status: "SUCCEEDED",
@@ -69,18 +69,33 @@ function ownerRun(overrides: Record<string, unknown> = {}) {
     updated_at: "2026-08-19T06:30:02Z",
     items: ETF_IDS.map((instrument_id, index) => ({
       instrument_id,
+      instrument: {
+        asset_class: index === 0 ? "ETF" : null,
+        exposure_group: null,
+        id: instrument_id,
+        name: index === 0 ? "Core ETF" : null,
+        tracking_index: null,
+      },
       rank: index === 0 ? 1 : null,
       target_weight: index === 0 ? "0.800000" : null,
       excluded: index !== 0,
       exclusion_reason: index === 0 ? undefined : "NOT_SELECTED_BY_STRATEGY",
       reason_codes: index === 0 ? ["SELECTED_TOP_N"] : ["NOT_SELECTED_BY_STRATEGY"],
-      factors: { momentum: index === 0 ? "0.912300" : "0.000000" },
+      factors: { momentum_12_1: index === 0 ? "0.912300" : "0.000000" },
     })),
     ...overrides,
   };
 }
 
-function ownerApi(entitlementState: "ACTIVE" | "REVOKED" = "ACTIVE"): {
+function ownerApi(
+  entitlementState: "ACTIVE" | "REVOKED" = "ACTIVE",
+  licensingAsOf = "2026-08-01",
+  discoveryStatus = 200,
+  discoveryBody: unknown = {
+    default_as_of: "2026-08-19",
+    supported_as_of: ["2026-08-15", "2026-08-18", "2026-08-19"],
+  },
+): {
   readonly paths: string[];
   readonly fetcher: typeof fetch;
 } {
@@ -100,7 +115,7 @@ function ownerApi(entitlementState: "ACTIVE" | "REVOKED" = "ACTIVE"): {
     }
     if (pathname === "/api/v1/licensing-status") {
       return Response.json({
-        as_of: "2026-08-19",
+        as_of: licensingAsOf,
         datasets: [
           {
             covered: true,
@@ -111,6 +126,9 @@ function ownerApi(entitlementState: "ACTIVE" | "REVOKED" = "ACTIVE"): {
         ],
       });
     }
+    if (pathname === "/api/v1/recommendations/owner-beta/price-only/supported-as-of") {
+      return Response.json(discoveryBody, { status: discoveryStatus });
+    }
     if (pathname === "/api/v1/strategy-configs") {
       return Response.json({
         has_more: false,
@@ -120,7 +138,7 @@ function ownerApi(entitlementState: "ACTIVE" | "REVOKED" = "ACTIVE"): {
             created_at: "2026-08-19T06:00:00Z",
             id: CONFIG_ID,
             is_active: true,
-            strategy_id: "buy_and_hold",
+            strategy_id: "relative_momentum",
             strategy_version: "1.0.0",
             updated_at: "2026-08-19T06:00:00Z",
           },
@@ -241,11 +259,15 @@ describe("owner-beta recommendation surface", () => {
     expect(markup).toContain("Price-return only");
     expect(markup).toContain("Vendor snapshot");
     expect(markup).toContain("Non-strict PIT");
+    expect(markup).toContain("Sealed input as-of date");
+    expect(markup).toContain('value="2026-08-19" selected=""');
+    expect(markup).not.toContain("2026-08-01");
     for (const instrumentId of ETF_IDS) {
       expect(markup).toContain(instrumentId);
     }
-    expect(markup).toContain("0.912300");
-    expect(markup).toContain("SELECTED_TOP_N");
+    expect(markup).toContain("+91.23%");
+    expect(markup).toContain("Selected under the selection criteria. Rank is shown separately.");
+    expect(markup).not.toContain("SELECTED_TOP_N");
     expect(api.paths).toContain(OWNER_BETA_PRICE_ONLY_RUNS_PATH);
     expect(api.paths).toContain(`${OWNER_BETA_PRICE_ONLY_RUNS_PATH}/${RUN_ID}`);
     expect(api.paths).not.toContain("/api/v1/recommendations/latest");
@@ -323,6 +345,46 @@ describe("owner-beta recommendation surface", () => {
     expect(markup).toContain("Vendor snapshot");
     expect(markup).toContain("Non-strict PIT");
     expect(api.paths).not.toContain(OWNER_BETA_PRICE_ONLY_RUNS_PATH);
+  });
+
+  it("uses supported-as-of discovery instead of licensing.as_of", async () => {
+    const api = ownerApi("ACTIVE", "2026-08-28");
+    vi.stubGlobal("fetch", api.fetcher);
+    vi.stubEnv("API_INTERNAL_URL", "https://api.internal");
+
+    const markup = renderToStaticMarkup(await RecommendationsPage());
+
+    expect(markup).toContain('value="2026-08-19" selected=""');
+    expect(markup).toContain("Latest supported as-of date: 2026-08-19");
+    expect(markup).not.toContain("2026-08-28");
+    expect(api.paths).toContain("/api/v1/recommendations/owner-beta/price-only/supported-as-of");
+  });
+
+  it("hides submission when supported-as-of discovery is unavailable or malformed", async () => {
+    for (const [status, body] of [
+      [
+        503,
+        {
+          error: {
+            code: "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
+            message: "unavailable",
+            request_id: "r",
+          },
+        },
+      ],
+      [200, { default_as_of: "2026-08-19", supported_as_of: [] }],
+    ] as const) {
+      const api = ownerApi("ACTIVE", "2026-08-28", status, body);
+      vi.stubGlobal("fetch", api.fetcher);
+      vi.stubEnv("API_INTERNAL_URL", "https://api.internal");
+
+      const markup = renderToStaticMarkup(await RecommendationsPage());
+
+      expect(markup).toContain("Recommendations unavailable");
+      expect(markup).not.toContain("Generate owner-only recommendation");
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("fails closed on a duplicated owner-beta run query", async () => {

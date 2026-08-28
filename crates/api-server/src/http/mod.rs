@@ -294,6 +294,10 @@ pub fn api_router(state: ApiState) -> Router {
             post(owner_beta::create_price_only_run).get(owner_beta::list_price_only_runs),
         )
         .route(
+            "/recommendations/owner-beta/price-only/supported-as-of",
+            get(owner_beta::get_supported_as_of),
+        )
+        .route(
             "/recommendations/owner-beta/price-only/runs/{run_id}",
             get(owner_beta::get_price_only_run),
         )
