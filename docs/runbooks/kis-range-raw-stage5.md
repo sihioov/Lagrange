@@ -80,11 +80,14 @@ operator terminal closing:
 
 ```sh
 commit=$(git rev-parse HEAD)
+release_root=$(readlink -f /opt/lagrange/current)
+[[ "$release_root" =~ ^/opt/lagrange/releases/[0-9a-f]{40}$ ]] || exit 1
+env_file=$release_root/deploy/compose/.env
 sudo systemd-run --unit="lagrange-etf11-10y-raw-${commit%${commit#????????}}" \
   --collect --property=Type=exec --property=KillMode=control-group \
   "$(pwd)/scripts/ops/kis-range-raw-with-worker-pause.sh" \
   --start 2016-08-29 --end 2026-08-28 --commit "$commit" \
-  --env-file /opt/lagrange/deploy/compose/.env \
+  --env-file "$env_file" \
   --state-file /var/lib/lagrange/state/range-raw/etf11-10y.tsv
 ```
 

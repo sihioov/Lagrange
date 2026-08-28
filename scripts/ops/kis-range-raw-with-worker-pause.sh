@@ -9,7 +9,7 @@ root=$(cd "$script_dir/../.." && pwd)
 start_date=
 end_date=
 commit=
-env_file=/opt/lagrange/deploy/compose/.env
+env_file=
 state_file=/var/lib/lagrange/state/range-raw/etf11-10y.tsv
 
 usage() {
@@ -39,6 +39,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$(id -u)" -eq 0 ] || die 'must run as root'
+[ -n "$env_file" ] || die '--env-file must name an immutable release env file'
 [[ "$start_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die 'invalid --start'
 [[ "$end_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die 'invalid --end'
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die 'invalid --commit'
