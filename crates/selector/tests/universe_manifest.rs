@@ -86,7 +86,7 @@ fn instrument(symbol: &str, name: &str) -> Instrument {
         asset_class: AssetClass::Etf,
         currency: domain::Currency::KRW,
         venue: Venue::Krx,
-        listed_at: TradingDate::new(2019, 1, 1).expect("valid listing date"),
+        listed_at: TradingDate::new(2016, 8, 29).expect("valid coverage floor"),
         delisted_at: None,
         price_increment: Price::parse("1").expect("valid tick"),
         size_increment: Quantity::parse("1").expect("valid size"),
@@ -108,7 +108,8 @@ fn master_with_mods(
     for symbol in symbols {
         let mut record = instrument(symbol, &format!("SYNTHETIC-{symbol}"));
         if delisted.contains(symbol) {
-            record.delisted_at = Some(TradingDate::new(2020, 1, 30).expect("valid delisting"));
+            record.listed_at = TradingDate::new(2016, 1, 1).expect("valid listing");
+            record.delisted_at = Some(TradingDate::new(2016, 8, 28).expect("valid delisting"));
         }
         if suspended.contains(symbol) {
             record.status = InstrumentStatus::Suspended;
@@ -143,7 +144,7 @@ fn entitlement(lifecycle: EntitlementState) -> Entitlement {
         ))
         .lifecycle(lifecycle)
         .effective(
-            CalendarDate::parse("2019-01-01").expect("valid window"),
+            CalendarDate::parse("2016-08-29").expect("valid window"),
             CalendarDate::parse("2030-12-31").expect("valid window"),
         )
         .covered_datasets([DatasetId::krx_eod_bars()])
@@ -213,7 +214,7 @@ fn parses_fixed_v1_manifest_to_exactly_11_unique_krw_etfs_plus_benchmark() {
     // Effective window.
     assert_eq!(
         snapshot.effective_from,
-        TradingDate::new(2020, 1, 31).expect("valid date")
+        TradingDate::new(2016, 8, 29).expect("valid date")
     );
     assert_eq!(snapshot.effective_until, None);
 }

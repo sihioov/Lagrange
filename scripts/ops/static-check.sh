@@ -222,7 +222,7 @@ bash "$ops/production-ops-static-check.sh" >/dev/null ||
 
 xkrx_bootstrap="$ops/xkrx-calendar-bootstrap.py"
 [ -x "$xkrx_bootstrap" ] || die 'XKRX calendar bootstrap must be executable'
-python3 "$xkrx_bootstrap" --check --end 2026-08-19 >/dev/null ||
+python3 "$xkrx_bootstrap" --check --end 2026-08-28 >/dev/null ||
   die 'checked-in XKRX calendar bootstrap artifact failed validation'
 grep -Fq 'exchange_calendars==4.13.2' "$root/nt/pyproject.toml" ||
   die 'XKRX bootstrap dependency pin is missing'

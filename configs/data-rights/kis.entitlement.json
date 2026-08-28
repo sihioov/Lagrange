@@ -5,7 +5,7 @@
   "contract_document": {
     "document_hash": {
       "algorithm": "SHA-256",
-      "hex": "b888942df6b03d7920c404610ce21f1f3bc54e44c5647519a28e6ae6c68dad36"
+      "hex": "5904a9c5ee00af734c762e877227761ab23391acf65220715f90d08b61947ea9"
     },
     "document_reference": "repo://docs/decisions/0005-kis-personal-use-entitlement.md"
   },
@@ -33,7 +33,7 @@
     "download"
   ],
   "covered_users": ["usr_owner"],
-  "effective_from": "2020-01-31",
+  "effective_from": "2016-08-29",
   "effective_until": "9999-12-31",
   "lifecycle": "ACTIVE"
 }

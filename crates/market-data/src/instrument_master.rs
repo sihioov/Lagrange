@@ -428,18 +428,22 @@ fn intervals_overlap(
 }
 
 /// The fixed Korean ETF v1 universe seed (plan Todo 12 symbol set), all
-/// active on 2020-01-31: canonical KRX records, KRX + provider aliases, and
-/// KIS broker aliases for the benchmark-related seeds.
+/// active on the owner-approved 2016-08-29 retrospective coverage floor:
+/// canonical KRX records, KRX + provider aliases, and KIS broker aliases for
+/// the benchmark-related seeds.
 ///
 /// Metadata follows the Todo 6 fixture: `lot_size = 100`, KRW currency,
 /// integer-KRW price ticks. Names are synthetic (`SYNTHETIC-` prefix); real
-/// ticker codes are public identifiers used solely for universe shape.
+/// ticker codes are public identifiers used solely for universe shape. The
+/// seed's `listed_at` is deliberately the approved platform coverage floor,
+/// not an asserted exchange listing date; real exchange dates require a
+/// separately evidenced instrument-master source.
 pub fn seed_universe() -> InstrumentMaster {
     let mut master = InstrumentMaster::new();
     let price_inc = Price::parse("1").expect("valid tick");
     let size_inc = Quantity::parse("1").expect("valid size");
     let lot = Quantity::parse("100").expect("valid lot");
-    let listed_at = TradingDate::new(2019, 1, 1).expect("valid listing date");
+    let listed_at = TradingDate::new(2016, 8, 29).expect("valid coverage floor");
     let source = "krx-reference-2019-v1";
 
     let symbols = [

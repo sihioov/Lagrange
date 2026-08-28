@@ -436,7 +436,7 @@ fn custom_calendar_hash_and_weekend_session_are_rejected() {
 
 #[test]
 fn calendar_loader_rejects_outside_approved_effective_range() {
-    let error = ExpectedRangeSessions::approved_xkrx(date("2019-12-31"), date("2020-01-31"))
+    let error = ExpectedRangeSessions::approved_xkrx(date("2016-08-28"), date("2016-08-29"))
         .expect_err("pre-effective range must fail closed");
     assert!(matches!(
         error,

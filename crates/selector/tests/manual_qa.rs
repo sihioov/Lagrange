@@ -46,7 +46,7 @@ fn active_entitlement() -> Entitlement {
         ))
         .lifecycle(EntitlementState::Active)
         .effective(
-            CalendarDate::parse("2019-01-01").expect("valid window"),
+            CalendarDate::parse("2016-08-29").expect("valid window"),
             CalendarDate::parse("2030-12-31").expect("valid window"),
         )
         .covered_datasets([DatasetId::krx_eod_bars()])

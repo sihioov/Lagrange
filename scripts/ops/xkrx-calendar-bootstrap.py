@@ -39,7 +39,7 @@ CALENDAR_NAME = "XKRX"
 UPSTREAM_REVISION = "dbe38b1"
 UPSTREAM_LICENSE = "Apache-2.0"
 TIMEZONE = "Asia/Seoul"
-DEFAULT_START = "2020-01-31"
+DEFAULT_START = "2016-08-29"
 SUPPORTED_START = dt.date(1956, 1, 1)
 SUPPORTED_END = dt.date(2050, 12, 31)
 ARTIFACT_SCHEMA_VERSION = 3
@@ -521,7 +521,7 @@ def validate_artifact(artifact: dict[str, Any], expected_start: dt.date, expecte
     if artifact["source_authority"] != "third-party-derived":
         raise BootstrapError("calendar artifact must not claim official/KIS authority")
     if artifact["effective_from"] != DEFAULT_START:
-        raise BootstrapError("calendar artifact effective_from must remain 2020-01-31")
+        raise BootstrapError("calendar artifact effective_from must remain 2016-08-29")
     if artifact["timezone"] != TIMEZONE:
         raise BootstrapError("calendar artifact timezone must be Asia/Seoul")
     if artifact["utc_offset"] != "+09:00":
