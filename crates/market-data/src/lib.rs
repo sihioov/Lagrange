@@ -60,6 +60,7 @@ pub mod publication;
 pub mod quality;
 pub mod range_normalize;
 pub mod range_to_canonical;
+pub mod range_to_canonical_v3;
 pub mod redact;
 pub mod storage;
 pub mod validate;
