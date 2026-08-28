@@ -84,6 +84,17 @@ pub(crate) struct SessionRejection {
     message: &'static str,
 }
 
+#[derive(sqlx::FromRow)]
+struct SessionLookupRow {
+    user_id: Uuid,
+    role_id: String,
+    csrf_hash: String,
+    expires_at_secs: i64,
+    auth_time_secs: i64,
+    amr: Vec<String>,
+    expired: bool,
+}
+
 impl SessionRejection {
     fn status(&self) -> StatusCode {
         self.status
@@ -111,16 +122,17 @@ pub(crate) async fn resolve_session(
     cookie_value: &str,
 ) -> Result<SessionInfo, SessionRejection> {
     let token_hash = cookie::hash(cookie_value);
-    let row: Option<(Uuid, String, String, i64, i64, Vec<String>)> = sqlx::query_as(
-        "SELECT s.user_id, r.id, s.csrf_hash, \
-                EXTRACT(EPOCH FROM s.expires_at)::bigint, \
-                EXTRACT(EPOCH FROM coalesce(s.auth_time, s.created_at))::bigint, \
-                s.amr \
+    let row = sqlx::query_as::<_, SessionLookupRow>(
+        "SELECT s.user_id, r.id AS role_id, s.csrf_hash, \
+                EXTRACT(EPOCH FROM s.expires_at)::bigint AS expires_at_secs, \
+                EXTRACT(EPOCH FROM coalesce(s.auth_time, s.created_at))::bigint AS auth_time_secs, \
+                s.amr, \
+                s.expires_at <= now() AS expired \
          FROM web_sessions s \
          JOIN users u ON u.id = s.user_id \
          JOIN user_roles ur ON ur.user_id = u.id \
          JOIN roles r ON r.id = ur.role_id \
-         WHERE s.session_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()",
+         WHERE s.session_hash = $1 AND s.revoked_at IS NULL",
     )
     .bind(&token_hash)
     .fetch_optional(backend.admin_pool())
@@ -137,14 +149,21 @@ pub(crate) async fn resolve_session(
         code: "INTERNAL",
         message: "session store unavailable",
     })?;
-    let Some((user_id, role_id, csrf_hash, expires_at_secs, auth_time_secs, amr)) = row else {
+    let Some(row) = row else {
         return Err(SessionRejection {
             status: StatusCode::UNAUTHORIZED,
             code: "SESSION_UNKNOWN",
             message: "no session",
         });
     };
-    let role = match role_id.as_str() {
+    if row.expired {
+        return Err(SessionRejection {
+            status: StatusCode::UNAUTHORIZED,
+            code: "SESSION_EXPIRED",
+            message: "session expired",
+        });
+    }
+    let role = match row.role_id.as_str() {
         "owner" => Role::Owner,
         "member" => Role::Member,
         _ => {
@@ -156,12 +175,12 @@ pub(crate) async fn resolve_session(
         }
     };
     Ok(SessionInfo {
-        user_id: auth::entitlement::UserId::new(user_id.to_string()),
+        user_id: auth::entitlement::UserId::new(row.user_id.to_string()),
         role,
-        auth_time_secs,
-        amr,
-        expires_at_secs,
-        csrf_token_hash: csrf_hash,
+        auth_time_secs: row.auth_time_secs,
+        amr: row.amr,
+        expires_at_secs: row.expires_at_secs,
+        csrf_token_hash: row.csrf_hash,
     })
 }
 

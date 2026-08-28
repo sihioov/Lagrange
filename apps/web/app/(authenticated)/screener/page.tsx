@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { RoutePage } from "@/components/pages/route-page";
 import { SavedScreens } from "@/components/screener/saved-screens";
 import { ScreenerControls } from "@/components/screener/screener-controls";
 import { ScreenerResults } from "@/components/screener/screener-results";
 import { StatePanel } from "@/components/states/state-panel";
-import { ApiProblem } from "@/lib/api/response";
+import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import {
   DEFAULT_UNIVERSE,
@@ -129,12 +130,12 @@ function frame(children: React.ReactNode) {
 }
 
 export default async function ScreenerPage({ searchParams }: ScreenerPageProps = {}) {
+  const api = await getProductApi();
   try {
     const params = (await searchParams) ?? {};
     const criteria = criteriaFrom(params);
     const selectedUniverses = criteria.universes ?? [DEFAULT_UNIVERSE];
     const primaryUniverse = selectedUniverses[0] ?? DEFAULT_UNIVERSE;
-    const api = await getProductApi();
     const requestedAsOf = first(params["as_of"]);
     const feed = await api.getCandidateFeed(requestedAsOf, primaryUniverse);
     const runId = feed.items[0]?.run_id;
@@ -164,6 +165,9 @@ export default async function ScreenerPage({ searchParams }: ScreenerPageProps =
       </>,
     );
   } catch (error) {
+    if (isLoginRequiredError(error)) {
+      redirect("/login");
+    }
     if (error instanceof InvalidScreenFilters) {
       return frame(
         <StatePanel kind="error" message={error.message} title="Screen filters are invalid" />,

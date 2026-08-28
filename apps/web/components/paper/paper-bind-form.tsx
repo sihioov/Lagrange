@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import { paperDictionary } from "@/lib/i18n/dictionaries/paper";
 import { bindStrategySchema } from "@/lib/products/paper-contracts";
@@ -47,7 +47,7 @@ export function PaperBindForm({ accountId, activeStrategy, configs }: PaperBindF
         `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/bind-strategy`,
         { json: { strategy_config_id: configId }, method: "POST" },
       );
-      const bound = await parseApiResponse(response, bindStrategySchema);
+      const bound = await parseBrowserApiResponse(response, bindStrategySchema);
       setState({
         kind: "bound",
         message: t.bindFormBoundMessage(bound.strategy_id, bound.strategy_version),

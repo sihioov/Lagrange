@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import { backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
 import { backtestCreateSchema } from "@/lib/products/backtest-contracts";
@@ -64,7 +64,7 @@ export function BacktestCreateForm(props: BacktestCreateFormProps) {
         },
         method: "POST",
       });
-      const created = await parseApiResponse(response, backtestCreateSchema);
+      const created = await parseBrowserApiResponse(response, backtestCreateSchema);
       setState({ kind: "queued", message: t.backtestQueuedMessage(created.id) });
       router.refresh();
     } catch (error) {

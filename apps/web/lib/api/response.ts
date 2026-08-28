@@ -26,6 +26,14 @@ export class ApiContractError extends Error {
   }
 }
 
+/** Only an absent or expired session should send the user back to login. */
+export function isLoginRequiredError(error: unknown): error is ApiProblem {
+  return (
+    error instanceof ApiProblem &&
+    (error.code === "SESSION_UNKNOWN" || error.code === "SESSION_EXPIRED")
+  );
+}
+
 async function responseJson(response: Response): Promise<unknown> {
   try {
     return await response.json();

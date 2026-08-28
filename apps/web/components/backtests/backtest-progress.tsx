@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import { backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
 import {
@@ -29,7 +29,7 @@ export function BacktestProgress({ run }: BacktestProgressProps) {
         json: {},
         method: "POST",
       });
-      await parseApiResponse(response, cancelBacktestSchema);
+      await parseBrowserApiResponse(response, cancelBacktestSchema);
       setMessage(t.cancellationRequestedMessage);
     } catch (error) {
       if (error instanceof Error) {

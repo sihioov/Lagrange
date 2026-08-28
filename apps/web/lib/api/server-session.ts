@@ -1,8 +1,10 @@
 import "server-only";
 
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { cache } from "react";
 import type { ApiSession } from "./contracts";
+import { isLoginRequiredError } from "./response";
 import {
   createServerApiClient,
   SESSION_COOKIE_NAME,
@@ -39,6 +41,13 @@ export async function serverApiClientOptions(): Promise<ServerApiClientOptions> 
 }
 
 export const getServerSession = cache(async (): Promise<ApiSession> => {
-  const client = createServerApiClient(await serverApiClientOptions());
-  return client.getSession();
+  try {
+    const client = createServerApiClient(await serverApiClientOptions());
+    return await client.getSession();
+  } catch (error) {
+    if (isLoginRequiredError(error)) {
+      redirect("/login");
+    }
+    throw error;
+  }
 });

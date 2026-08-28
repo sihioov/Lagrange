@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import { backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
 import { robustnessQueuedSchema } from "@/lib/products/backtest-contracts";
@@ -24,7 +24,7 @@ export function RobustnessControl({ runId }: RobustnessControlProps) {
         json: {},
         method: "POST",
       });
-      await parseApiResponse(response, robustnessQueuedSchema);
+      await parseBrowserApiResponse(response, robustnessQueuedSchema);
       setMessage(t.robustnessQueuedMessage);
     } catch (error) {
       if (error instanceof Error) {

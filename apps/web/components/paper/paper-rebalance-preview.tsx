@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import { type PaperDictionary, paperDictionary } from "@/lib/i18n/dictionaries/paper";
 import {
@@ -301,7 +301,7 @@ export function PaperRebalancePreview({ accountId, runs }: PaperRebalancePreview
             `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/recommendation-previews/${encodeURIComponent(state.preview.id)}`,
             { cache: "no-store", credentials: "same-origin" },
           );
-          const next = await parseApiResponse(response, rebalancePreviewSchema);
+          const next = await parseBrowserApiResponse(response, rebalancePreviewSchema);
           if (cancelled) {
             return;
           }
@@ -338,7 +338,7 @@ export function PaperRebalancePreview({ accountId, runs }: PaperRebalancePreview
         `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/recommendation-previews`,
         { json: { recommendation_run_id: selectedRunId }, method: "POST" },
       );
-      const preview = await parseApiResponse(response, rebalancePreviewSchema);
+      const preview = await parseBrowserApiResponse(response, rebalancePreviewSchema);
       setState(settledPreviewState(preview) ?? { kind: "polling", attempt: 0, preview });
     } catch (error) {
       setState({
@@ -358,7 +358,7 @@ export function PaperRebalancePreview({ accountId, runs }: PaperRebalancePreview
         `/api/v1/paper/accounts/${encodeURIComponent(accountId)}/recommendation-previews/${encodeURIComponent(preview.id)}/apply`,
         { json: { preview_token: preview.preview_token }, method: "POST" },
       );
-      const applied = await parseApiResponse(response, appliedRebalancePreviewSchema);
+      const applied = await parseBrowserApiResponse(response, appliedRebalancePreviewSchema);
       setState({ kind: "applied", applied });
       router.refresh();
     } catch (error) {

@@ -36,6 +36,7 @@ export type ShellDictionary = {
   readonly roleOwner: string;
   readonly signOut: string;
   readonly signOutFailed: string;
+  readonly signInAgain: string;
   readonly signingOut: string;
   readonly skipToMain: string;
   readonly strategiesDescription: string;
@@ -87,6 +88,7 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     roleOwner: "Owner",
     signOut: "Sign out",
     signOutFailed: "Sign out failed. Check your connection and retry.",
+    signInAgain: "Sign in again",
     signingOut: "Signing out",
     skipToMain: "Skip to main content",
     strategiesDescription: "Review approved strategies and their constrained parameters.",
@@ -135,6 +137,7 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     roleOwner: "오너",
     signOut: "로그아웃",
     signOutFailed: "로그아웃에 실패했습니다. 연결 상태를 확인한 후 다시 시도하세요.",
+    signInAgain: "다시 로그인",
     signingOut: "로그아웃 중",
     skipToMain: "본문으로 건너뛰기",
     strategiesDescription: "승인된 전략과 제한된 파라미터를 확인하세요.",

@@ -112,4 +112,96 @@ describe("CSRF-aware browser mutations", () => {
     // Then
     expect(response.status).toBe(204);
   });
+
+  it.each(["SESSION_UNKNOWN", "SESSION_EXPIRED"] as const)(
+    "navigates to login when the CSRF session is %s",
+    async (code) => {
+      const calls: string[] = [];
+      const navigations: string[] = [];
+      const fetcher: typeof fetch = async (input, init) => {
+        const request = new Request(input, init);
+        calls.push(`${request.method} ${request.url}`);
+        return Response.json(
+          {
+            error: {
+              code,
+              message: "session failure",
+              request_id: "request-csrf-session",
+            },
+          },
+          { status: 401 },
+        );
+      };
+
+      await expect(
+        logout({
+          fetcher,
+          navigate: (href) => navigations.push(href),
+          origin: "https://lagrange.test",
+        }),
+      ).rejects.toMatchObject({ code });
+
+      expect(navigations).toEqual(["/login"]);
+      expect(calls).toEqual(["GET https://lagrange.test/api/v1/auth/csrf"]);
+    },
+  );
+
+  it("does not navigate for an internal CSRF failure", async () => {
+    const navigations: string[] = [];
+    const fetcher: typeof fetch = async () =>
+      Response.json(
+        {
+          error: {
+            code: "INTERNAL",
+            message: "session store unavailable",
+            request_id: "request-csrf-internal",
+          },
+        },
+        { status: 500 },
+      );
+
+    await expect(
+      logout({
+        fetcher,
+        navigate: (href) => navigations.push(href),
+        origin: "https://lagrange.test",
+      }),
+    ).rejects.toMatchObject({ code: "INTERNAL" });
+    expect(navigations).toEqual([]);
+  });
+
+  it("navigates when the session expires after the CSRF preflight", async () => {
+    const navigations: string[] = [];
+    const calls: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      calls.push(`${request.method} ${request.url}`);
+      if (request.url.endsWith("/api/v1/auth/csrf")) {
+        return Response.json({ csrf_token: "synchronizer-owner" });
+      }
+      return Response.json(
+        {
+          error: {
+            code: "SESSION_EXPIRED",
+            message: "session expired",
+            request_id: "request-logout-session-expired",
+          },
+        },
+        { status: 401 },
+      );
+    };
+
+    await expect(
+      logout({
+        fetcher,
+        navigate: (href) => navigations.push(href),
+        origin: "https://lagrange.test",
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_EXPIRED" });
+    expect(navigations).toEqual(["/login"]);
+    expect(calls).toEqual([
+      "GET https://lagrange.test/api/v1/auth/csrf",
+      "POST https://lagrange.test/api/v1/auth/logout",
+    ]);
+  });
 });

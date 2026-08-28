@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { CandidateFeedReport } from "@/components/candidates/candidate-feed";
 import { RoutePage } from "@/components/pages/route-page";
 import { StatePanel } from "@/components/states/state-panel";
-import { ApiProblem } from "@/lib/api/response";
+import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import {
   DEFAULT_UNIVERSE,
@@ -57,14 +58,12 @@ function frame(children: React.ReactNode) {
 }
 
 export default async function CandidatesPage({ searchParams }: CandidatesPageProps = {}) {
+  const api = await getProductApi();
   try {
     const params = (await searchParams) ?? {};
     const date = params.date;
     const universe = selectedUniverse(params.universe);
-    const feed = await (await getProductApi()).getCandidateFeed(
-      date === "" ? undefined : date,
-      universe,
-    );
+    const feed = await api.getCandidateFeed(date === "" ? undefined : date, universe);
     return frame(
       <>
         <nav aria-label="Candidate universes" className="universe-tabs">
@@ -101,6 +100,9 @@ export default async function CandidatesPage({ searchParams }: CandidatesPagePro
       </>,
     );
   } catch (error) {
+    if (isLoginRequiredError(error)) {
+      redirect("/login");
+    }
     if (error instanceof InvalidCandidateUniverse) {
       return frame(
         <StatePanel

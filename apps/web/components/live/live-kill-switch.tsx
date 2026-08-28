@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import { liveDictionary } from "@/lib/i18n/dictionaries/live";
 import { killSwitchSchema, liveUnavailableReason } from "@/lib/products/live-contracts";
@@ -42,7 +42,7 @@ export function LiveKillSwitch({ engaged }: LiveKillSwitchProps) {
         json: { reason: reason.trim() || `${target}d from the Live controls page` },
         method: "POST",
       });
-      const result = await parseApiResponse(response, killSwitchSchema);
+      const result = await parseBrowserApiResponse(response, killSwitchSchema);
       setState({
         kind: "done",
         message: result.engaged ? t.engagedMessage : t.disengagedMessage,

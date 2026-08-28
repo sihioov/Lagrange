@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { type BrowserClientOptions, mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import { recommendationsDictionary } from "@/lib/i18n/dictionaries/recommendations";
 import {
@@ -39,7 +39,7 @@ export async function submitOwnerBetaRun(
     json: body,
     method: "POST",
   });
-  return parseApiResponse(response, ownerBetaPriceOnlyRunResponseSchema);
+  return parseBrowserApiResponse(response, ownerBetaPriceOnlyRunResponseSchema);
 }
 
 export function OwnerBetaRunForm({ configs, defaultAsOf, supportedAsOf }: OwnerBetaRunFormProps) {

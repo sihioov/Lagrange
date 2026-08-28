@@ -403,6 +403,33 @@ async fn http_auth_session_routes() {
     assert_eq!(body["owner_beta_access_mode"], "disabled");
     assert_eq!(body["owner_beta_paper_mode"], "disabled");
 
+    // An otherwise valid session whose expiry is in the past must be
+    // distinguishable from an unknown or revoked cookie.  Set created_at as
+    // well so the table's expiry check remains satisfied, and use PostgreSQL
+    // `now()` for both values so the fixture follows the database clock.
+    let expired = h
+        .seed_user(
+            auth::entitlement::Role::Member,
+            "expired@lagrange.test",
+            "expired-iss",
+            "expired-sub",
+        )
+        .await;
+    h.seed_tenant(
+        &expired,
+        &format!(
+            "UPDATE web_sessions SET created_at = now() - interval '2 hours', \
+                    expires_at = now() - interval '1 second' \
+             WHERE user_id = '{}'",
+            expired.user_id
+        ),
+    )
+    .await;
+    let resp = h.get("/api/v1/auth/session", Some(&expired)).await;
+    assert_eq!(status(&resp), StatusCode::UNAUTHORIZED);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(Harness::error_code(&body), "SESSION_EXPIRED");
+
     // GET /api/v1/auth/csrf -> rotates the synchronizer token.
     let resp = h.get("/api/v1/auth/csrf", Some(&h.member)).await;
     assert_eq!(status(&resp), StatusCode::OK);
@@ -442,5 +469,7 @@ async fn http_auth_session_routes() {
     assert_eq!(status(&resp), StatusCode::NO_CONTENT);
     let resp = h.get("/api/v1/auth/session", Some(&h.member)).await;
     assert_eq!(status(&resp), StatusCode::UNAUTHORIZED);
+    let body = Harness::body_json(resp).await;
+    assert_eq!(Harness::error_code(&body), "SESSION_UNKNOWN");
     h.teardown().await;
 }

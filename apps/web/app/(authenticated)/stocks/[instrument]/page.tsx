@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { StockAnalysisReport } from "@/components/candidates/stock-analysis";
 import { RoutePage } from "@/components/pages/route-page";
 import { StatePanel } from "@/components/states/state-panel";
-import { ApiProblem } from "@/lib/api/response";
+import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import {
   DEFAULT_UNIVERSE,
@@ -55,9 +56,10 @@ export default async function StockPage({ params, searchParams }: StockPageProps
   const { instrument } = await params;
   const search = (await searchParams) ?? {};
   const date = search.date;
+  const api = await getProductApi();
   try {
     const universe = selectedUniverse(search.universe);
-    const report = await (await getProductApi()).getStockAnalysis(instrument, date, universe);
+    const report = await api.getStockAnalysis(instrument, date, universe);
     return frame(
       instrument,
       <>
@@ -77,6 +79,9 @@ export default async function StockPage({ params, searchParams }: StockPageProps
       </>,
     );
   } catch (error) {
+    if (isLoginRequiredError(error)) {
+      redirect("/login");
+    }
     if (error instanceof InvalidStockUniverse) {
       return frame(
         instrument,

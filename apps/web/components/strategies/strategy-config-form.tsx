@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import {
   type StrategiesDictionary,
@@ -136,7 +136,7 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
         json: { config, is_active: true, strategy_version: version },
         method: "POST",
       });
-      const saved = await parseApiResponse(response, strategyConfigSchema);
+      const saved = await parseBrowserApiResponse(response, strategyConfigSchema);
       setState({ kind: "saved", message: t.configurationSaved(saved.id) });
     } catch (error) {
       if (error instanceof Error) {

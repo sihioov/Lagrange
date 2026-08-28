@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { RoutePage } from "@/components/pages/route-page";
 import { PaperBindForm } from "@/components/paper/paper-bind-form";
@@ -11,7 +12,7 @@ import { PaperPerformance } from "@/components/paper/paper-performance";
 import { PaperRebalancePreview } from "@/components/paper/paper-rebalance-preview";
 import { StatePanel } from "@/components/states/state-panel";
 import type { ApiSession } from "@/lib/api/contracts";
-import { ApiProblem } from "@/lib/api/response";
+import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import { type PaperDictionary, paperDictionary } from "@/lib/i18n/dictionaries/paper";
 import { getLocale } from "@/lib/i18n/server";
@@ -75,8 +76,8 @@ export async function PaperProductPage(
 ) {
   const locale = await getLocale();
   const t = paperDictionary[locale];
+  const api = await getProductApi();
   try {
-    const api = await getProductApi();
     const accounts = await api.getPaperAccounts();
     const requestedAccount = (await searchParams)?.account;
     const account =
@@ -111,9 +112,12 @@ export async function PaperProductPage(
         // the all-or-nothing settlement would let one refused optional dropdown
         // withhold holdings, performance, parity, lineage and notifications, so
         // it degrades to "no runs" on its own instead.
-        api
-          .getRecommendationRuns()
-          .catch(() => ({ has_more: false, items: [], next_cursor: null })),
+        api.getRecommendationRuns().catch((error: unknown) => {
+          if (isLoginRequiredError(error)) {
+            throw error;
+          }
+          return { has_more: false, items: [], next_cursor: null };
+        }),
       ]);
 
     const session = latestSession(lineage);
@@ -224,6 +228,9 @@ export async function PaperProductPage(
       t,
     );
   } catch (error) {
+    if (isLoginRequiredError(error)) {
+      redirect("/login");
+    }
     if (error instanceof ApiProblem && BLOCKED_CODES.has(error.code)) {
       return shell(
         <StatePanel

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import {
   deleteSavedScreenSchema,
   type SavedScreen,
@@ -39,7 +39,7 @@ export function SavedScreens({
         json: { criteria, name: name.trim() },
         method: "POST",
       });
-      const saved = await parseApiResponse(response, savedScreenSchema);
+      const saved = await parseBrowserApiResponse(response, savedScreenSchema);
       form.reset();
       setState({ kind: "saved", message: `Saved “${saved.name}”.` });
       router.refresh();
@@ -58,7 +58,7 @@ export function SavedScreens({
         json: {},
         method: "DELETE",
       });
-      await parseApiResponse(response, deleteSavedScreenSchema);
+      await parseBrowserApiResponse(response, deleteSavedScreenSchema);
       setState({ kind: "saved", message: "Saved screen deleted." });
       router.refresh();
     } catch (error) {
