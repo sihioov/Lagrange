@@ -20,7 +20,9 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   build-production-images-self-test.sh deploy-production-release.sh \
   run-production-backup.sh install-production-backup.sh \
   production-ops-static-check.sh production-ops-self-test.sh \
-  kis-range-raw-backfill.sh kis-daily-production.sh kis-daily-production-self-test.sh \
+  kis-range-raw-backfill.sh kis-action-range-raw-backfill.sh \
+  kis-action-range-raw-with-worker-pause.sh \
+  kis-daily-production.sh kis-daily-production-self-test.sh \
   kis-daily-calendar-refresh.sh install-kis-daily.sh \
   fsc-krx-listed-self-test.sh kind-daily.sh install-kind-daily.sh \
   kind-daily-self-test.sh kis-historical-price-beta-artifact.sh \
@@ -32,6 +34,8 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
 done
 
 range_raw="$ops/kis-range-raw-backfill.sh"
+action_range_raw="$ops/kis-action-range-raw-backfill.sh"
+action_range_guard="$ops/kis-action-range-raw-with-worker-pause.sh"
 grep -Fq 'KIS_RANGE_RAW_CONFIRM=I_UNDERSTAND_READ_ONLY_DAILY_RANGE_KIS_CALLS' "$range_raw" \
   || die 'Stage5 range raw execute confirmation missing'
 grep -Fq 'research-range-raw' "$range_raw" \
@@ -167,6 +171,84 @@ if grep -Fq '      - backend' <<<"$range_service_block"; then
 fi
 if grep -Fq 'depends_on:' <<<"$range_service_block"; then
   die 'Stage5 service must not depend on PostgreSQL or another Compose service'
+fi
+
+# KIS KSD action-range capture has a separate one-shot image/profile and must
+# never inherit Stage5 daily-bars lifecycle or account/order surfaces.
+[ -f "$action_range_raw" ] || die 'KIS action-range Raw wrapper is missing'
+grep -Fq 'KIS_ACTION_RANGE_CONFIRM=I_UNDERSTAND_READ_ONLY_KIS_ACTION_RANGE_CALLS' \
+  "$action_range_raw" || die 'KIS action-range execute confirmation missing'
+grep -Fq 'compose_profile=action-range-raw' "$action_range_raw" \
+  || die 'KIS action-range Compose profile selection missing'
+grep -Fq 'compose_service=research-action-range-raw' "$action_range_raw" \
+  || die 'KIS action-range Compose service selection missing'
+grep -Fq 'compose build --pull=false "$compose_service"' "$action_range_raw" \
+  || die 'KIS action-range image build gate missing'
+grep -Fq 'docker image inspect "$image"' "$action_range_raw" \
+  || die 'KIS action-range image provenance gate missing'
+grep -Fq 'compose run --rm --no-deps' "$action_range_raw" \
+  || die 'KIS action-range must run one isolated no-deps container'
+grep -Fq 'research-worker daemon is running' "$action_range_raw" \
+  || die 'KIS action-range ordinary-worker overlap guard missing'
+grep -Fq 'another research-action-range-raw one-shot is already running' "$action_range_raw" \
+  || die 'KIS action-range duplicate-run guard missing'
+grep -Fq 'status --porcelain=v1 --untracked-files=all' "$action_range_raw" \
+  || die 'KIS action-range clean-tree guard missing'
+grep -Fq -- '--scope range-raw --env-file' "$action_range_raw" \
+  || die 'KIS action-range production read-only scope gate missing'
+if grep -Eiq 'docker[[:space:]]+compose[^\n]*(up|start|stop|restart)|systemctl|sudo' "$action_range_raw"; then
+  die 'KIS action-range wrapper must not manage worker/container lifecycle'
+fi
+if grep -Eiq 'KIS_ACCOUNT_REF|(^|[^[:alnum:]_])CANO([^[:alnum:]_]|$)|ACNT_PRDT_CD|--profile[[:space:]]+live' "$action_range_raw"; then
+  die 'KIS action-range wrapper must not add account/order/live surface'
+fi
+grep -Fq 'cargo build --locked --release --package collectors --bin kis-action-range-raw' \
+  "$worker_dockerfile" || die 'KIS action-range binary build is missing'
+grep -Fq 'COPY --from=builder /build/target/release/kis-action-range-raw /usr/local/bin/kis-action-range-raw' \
+  "$worker_dockerfile" || die 'KIS action-range binary copy is missing'
+action_service_block=$(awk '
+  $0 == "  research-action-range-raw:" { inside=1; print; next }
+  inside && $0 ~ /^  [^[:space:]][^:]*:/ { exit }
+  inside { print }
+' "$root/deploy/compose/compose.yml")
+grep -Fq 'profiles: ["action-range-raw"]' <<<"$action_service_block" \
+  || die 'KIS action-range service profile is missing'
+grep -Fq 'image: lagrange-station-research-action-range-raw:' <<<"$action_service_block" \
+  || die 'KIS action-range service image tag is missing'
+grep -Fq 'entrypoint: ["/usr/local/bin/kis-action-range-raw"]' <<<"$action_service_block" \
+  || die 'KIS action-range service entrypoint is missing'
+grep -Fq 'user: "10001:10001"' <<<"$action_service_block" \
+  || die 'KIS action-range service UID/GID fence is missing'
+grep -Fq 'read_only: true' <<<"$action_service_block" \
+  || die 'KIS action-range service rootfs must be read-only'
+grep -Fq '      - /tmp' <<<"$action_service_block" \
+  || die 'KIS action-range service tmpfs is missing'
+grep -Fq '${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw' <<<"$action_service_block" \
+  || die 'KIS action-range Raw write mount is missing'
+grep -Fq '      - range-raw-egress' <<<"$action_service_block" \
+  || die 'KIS action-range service must use dedicated Raw egress'
+if grep -Eiq '^[[:space:]]+- backend$|depends_on:|restart:|healthcheck:|RESEARCH_CURATED_ROOT|DB_|KIS_ACCOUNT_REF|CANO|ACNT_PRDT_CD|COMPOSE_PROFILES|--profile[[:space:]]+live' <<<"$action_service_block"; then
+  die 'KIS action-range service exposes a forbidden dependency, credential, or lifecycle surface'
+fi
+[ "$(grep -Ec '^      - source:' <<<"$action_service_block")" -eq 2 ] \
+  || die 'KIS action-range service must mount exactly two KIS secrets'
+grep -Fq 'source: research_range_raw_kis_app_key' <<<"$action_service_block" \
+  || die 'KIS action-range service must reuse the existing KIS key secret'
+grep -Fq 'source: research_range_raw_kis_app_secret' <<<"$action_service_block" \
+  || die 'KIS action-range service must reuse the existing KIS secret secret'
+[ -f "$action_range_guard" ] || die 'KIS action-range worker protection wrapper is missing'
+grep -Fq 'lagrange-station/research-worker' "$action_range_guard" \
+  || die 'KIS action-range worker protection must verify exact Compose labels'
+grep -Fq 'docker stop --time 300 "$worker_id"' "$action_range_guard" \
+  || die 'KIS action-range worker protection must stop the exact worker'
+grep -Fq 'docker start "$worker_id"' "$action_range_guard" \
+  || die 'KIS action-range worker protection must restore the same worker'
+grep -Fq 'KIS_ACTION_RANGE_CONFIRM=I_UNDERSTAND_READ_ONLY_KIS_ACTION_RANGE_CALLS' \
+  "$action_range_guard" || die 'KIS action-range worker protection confirmation missing'
+grep -Fq -- '--scope etf11' "$action_range_guard" \
+  || die 'KIS action-range worker protection scope must stay ETF11'
+if grep -Eiq 'KIS_ACCOUNT_REF|(^|[^[:alnum:]_])CANO([^[:alnum:]_]|$)|ACNT_PRDT_CD|--profile[[:space:]]+live' "$action_range_guard"; then
+  die 'KIS action-range worker protection must not add account/order/live surface'
 fi
 state_line=$(grep -nF 'write_state RUNNING' "$range_raw" | head -n1 | cut -d: -f1)
 build_line=$(grep -nF 'compose build --pull=false "$compose_service"' "$range_raw" | head -n1 | cut -d: -f1)

@@ -251,6 +251,8 @@ async fn exact_m_then_n_pagination_preserves_query_and_chain() {
     assert_eq!(calls[0].continuation, None);
     assert_eq!(calls[1].continuation.as_deref(), Some("N"));
     assert_eq!(calls[0].query, calls[1].query);
+    assert_eq!(envelopes[0].response_continuation.as_deref(), Some("M"));
+    assert_eq!(envelopes[1].response_continuation.as_deref(), Some("F"));
 }
 
 #[tokio::test]

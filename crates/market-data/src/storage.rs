@@ -39,6 +39,12 @@ pub struct FileEntry {
     pub content_hash: ContentHash,
     pub size_bytes: u64,
     pub request: crate::contract::RequestMetadata,
+    /// The provider response `tr_cont` marker, if one was returned.
+    ///
+    /// This is optional for backward compatibility with manifests written
+    /// before response continuation evidence was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_continuation: Option<String>,
 }
 
 /// One append-only manifest row: exactly one per ingestion batch.
@@ -778,6 +784,7 @@ impl RawStore {
                     content_hash: e.content_hash.clone(),
                     size_bytes: e.bytes.len() as u64,
                     request: e.request.clone(),
+                    response_continuation: e.response_continuation.clone(),
                 })
                 .collect(),
         };

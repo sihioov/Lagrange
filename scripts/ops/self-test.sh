@@ -16,7 +16,8 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   build-production-images-self-test.sh deploy-production-release.sh \
   run-production-backup.sh install-production-backup.sh \
   production-ops-static-check.sh production-ops-self-test.sh \
-  kis-range-raw-backfill.sh kis-historical-price-beta-artifact.sh \
+  kis-range-raw-backfill.sh kis-action-range-raw-backfill.sh \
+  kis-action-range-raw-with-worker-pause.sh kis-historical-price-beta-artifact.sh \
   kis-historical-price-beta-artifact-self-test.sh; do
   bash -n "$ops/$script"
 done
@@ -53,6 +54,14 @@ range_plan=$(bash "$ops/kis-range-raw-backfill.sh" \
   --env-file "$range_env" --start 2020-01-31 --end 2020-02-03 --plan)
 grep -Fq 'KIS_RANGE_RAW_PLAN mode=plan' <<<"$range_plan"
 grep -Fq 'PLAN_ONLY: no Docker, KIS, secret read, file write, or state write made' <<<"$range_plan"
+
+# The KSD action-range wrapper has its own profile/image and its default plan
+# must remain usable without a protected production env or any Docker command.
+action_plan=$(bash "$ops/kis-action-range-raw-backfill.sh" \
+  --start 2020-01-31 --end 2020-02-03 --scope etf11 --plan)
+grep -Fq 'KIS_ACTION_RANGE_RAW_PLAN mode=plan' <<<"$action_plan"
+grep -Fq 'initial_requests=77' <<<"$action_plan"
+grep -Fq 'PLAN_ONLY: no Docker, secret, production-env, data-root write, or network action made' <<<"$action_plan"
 
 # Exercise the Stage5 execute gate against a throw-away clean Git fixture and
 # a fake Docker CLI. This proves the wrapper's state ordering and image

@@ -131,6 +131,80 @@ fn identical_bytes_twice_two_batches_same_hash_first_untouched() {
 }
 
 #[test]
+fn response_continuation_marker_survives_commit_orphan_and_readback() {
+    let root = temp_root("response-continuation");
+    let store = RawStore::new(&root);
+    let at = now("2026-08-05T00:30:00Z");
+    let d = date("2020-01-31");
+    let batch = BatchId::generate();
+    let bytes = br#"{"dataset":"synthetic","bars":[]}"#;
+    let envelope = envelope(
+        batch,
+        ResponseKind::CorporateActions,
+        "actions.json",
+        bytes,
+        at,
+    )
+    .with_response_continuation(Some("M".to_owned()));
+
+    let entry = store
+        .store_batch(&spec(batch, &d, None), &[envelope])
+        .expect("response marker batch stores");
+    assert_eq!(entry.files[0].response_continuation.as_deref(), Some("M"));
+
+    let batch_json_path = store
+        .batch_dir(PROVIDER_KRX, MARKET_KR, &d, &batch)
+        .join("batch.json");
+    let batch_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&batch_json_path).unwrap()).unwrap();
+    assert_eq!(
+        batch_json["files"][0]["response_continuation"],
+        serde_json::json!("M")
+    );
+    let manifest_path = store.manifest_path(PROVIDER_KRX, MARKET_KR);
+    let manifest_line = fs::read_to_string(&manifest_path).unwrap();
+    let manifest_json: serde_json::Value = serde_json::from_str(manifest_line.trim()).unwrap();
+    assert_eq!(
+        manifest_json["files"][0]["response_continuation"],
+        serde_json::json!("M")
+    );
+
+    let stored = store
+        .read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry)
+        .expect("committed evidence remains readable");
+    assert_eq!(stored[0].bytes, bytes);
+
+    // Leave the immutable batch and batch.json in place but remove its
+    // manifest row. Recovery must discover the orphan and preserve the
+    // response marker from batch.json exactly.
+    fs::remove_file(&manifest_path).unwrap();
+    let recovered = store
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("orphan is discoverable");
+    assert_eq!(recovered, vec![entry]);
+    assert_eq!(
+        recovered[0].files[0].response_continuation.as_deref(),
+        Some("M")
+    );
+}
+
+#[test]
+fn absent_response_continuation_is_omitted_and_defaults_when_reading_legacy_json() {
+    let file = FileEntry {
+        kind: ResponseKind::Bars,
+        file_name: "bars.json".to_owned(),
+        content_hash: ContentHash::from_bytes(b"{}"),
+        size_bytes: 2,
+        request: meta(FetchMode::Synthetic),
+        response_continuation: None,
+    };
+    let json = serde_json::to_value(&file).expect("serialize legacy file metadata");
+    assert!(json.get("response_continuation").is_none());
+    let decoded: FileEntry = serde_json::from_value(json).expect("decode legacy file metadata");
+    assert_eq!(decoded, file);
+}
+
+#[test]
 fn manifest_is_append_only() {
     let root = temp_root("manifest");
     let store = RawStore::new(&root);
@@ -1559,6 +1633,7 @@ fn read_rejects_batch_ancestor_redirect_outside_trusted_raw_root() {
             content_hash: env.content_hash,
             size_bytes: env.bytes.len() as u64,
             request: env.request,
+            response_continuation: env.response_continuation,
         }],
     };
 

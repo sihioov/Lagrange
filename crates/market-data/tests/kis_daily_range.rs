@@ -266,6 +266,37 @@ async fn range_uses_oldest_date_minus_one_without_tr_continuation() {
 }
 
 #[tokio::test]
+async fn strict_single_page_preserves_blank_response_continuation_marker() {
+    let reader = FixtureReader::with_continuation_marker("");
+    let calls = reader.calls.clone();
+    let provider = KisProvider::kr_etf_core(reader);
+    let envelopes = provider
+        .fetch_daily_bars_range(
+            MARKET_KR,
+            TradingDate::parse("2020-04-09").expect("start"),
+            TradingDate::parse("2020-04-09").expect("end"),
+            UtcTimestamp::parse_rfc3339(NOW).expect("timestamp"),
+            BatchId::generate(),
+        )
+        .await
+        .expect("blank response marker is a valid strict-single terminal");
+
+    assert_eq!(envelopes.len(), KR_ETF_CORE_SYMBOLS.len());
+    assert!(
+        envelopes
+            .iter()
+            .all(|envelope| envelope.response_continuation.as_deref() == Some(""))
+    );
+    assert!(
+        calls
+            .lock()
+            .expect("calls lock")
+            .iter()
+            .all(|call| call.continuation.is_none())
+    );
+}
+
+#[tokio::test]
 async fn range_rejects_nonempty_terminal_continuation_headers_m_n_f_unknown_and_whitespace() {
     for marker in ["M", "N", "F", "X", " "] {
         let provider = KisProvider::kr_etf_core(FixtureReader::with_continuation_marker(marker));

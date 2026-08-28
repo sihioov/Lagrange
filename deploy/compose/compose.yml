@@ -647,6 +647,53 @@ services:
       - range-raw-egress
 
   # ------------------------------------------------------------------
+  # research-action-range-raw — explicitly invoked KIS KSD corporate-action
+  # Raw-only range job. It is a separate profile and image from both the
+  # ordinary EOD worker and the Stage5 daily-bars range job. The service has
+  # only the two existing KIS read credentials, a Raw write mount, and the
+  # dedicated Raw egress network; it has no DB/catalog/trading surface or
+  # daemon lifecycle.
+  # ------------------------------------------------------------------
+  research-action-range-raw:
+    profiles: ["action-range-raw"]
+    image: lagrange-station-research-action-range-raw:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    entrypoint: ["/usr/local/bin/kis-action-range-raw"]
+    init: true
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging: *default-logging
+    cpus: "2"
+    mem_limit: 4g
+    environment:
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+      RESEARCH_RAW_ROOT: /data
+      RESEARCH_ENTITLEMENT_REFERENCE: ${RESEARCH_ENTITLEMENT_REFERENCE:?RESEARCH_ENTITLEMENT_REFERENCE must identify the exact active data-use contract}
+      KIS_APP_KEY_FILE: /run/secrets/kis_app_key
+      KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret
+    secrets:
+      - source: research_range_raw_kis_app_key
+        target: kis_app_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_range_raw_kis_app_secret
+        target: kis_app_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
+    networks:
+      - range-raw-egress
+
+  # ------------------------------------------------------------------
   # research-range-raw-recovery — explicit Stage5 immutable-source recovery.
   # This is intentionally a separate profile/service from the KIS capture
   # job: it has no KIS environment variables, no Compose secrets, no DB or
@@ -1283,11 +1330,11 @@ secrets:
 # ----------------------------------------------------------------------
 # Networks (design §13.3).
 #   edge        internal:true — reverse-proxy/web/api-server only.
-#   backend     has egress — api-server (Auth0), research-worker (KIS),
-#               paper-scheduler (queue). The profile-gated live-node-owner
-#               uses network_mode:none and has no external dependency.
-#   range-raw-egress — dedicated Stage5 KIS-only egress; no PostgreSQL/backend
-#               attachment is possible for the isolated historical job.
+#   backend     has egress — api-server (Auth0), research-worker (KIS), and
+#               paper-scheduler (queue). The profile-gated live-node-owner uses
+#               network_mode:none and has no external dependency.
+#   range-raw-egress — dedicated KIS Raw-only egress for historical price and
+#               action jobs; no PostgreSQL/backend attachment is possible.
 #   research-range-raw-recovery uses network_mode:none and is intentionally
 #               not attached to any Compose network.
 #   backtest-iso internal:true — nt-backtest-worker-1/2 + postgres ONLY.
