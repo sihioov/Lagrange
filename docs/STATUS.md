@@ -93,12 +93,35 @@ action 77 files / cash-only 157 rows / normalized action 0,
 통과했다. 두 입력은 `vendor_snapshot=true`, `strict_pit=false`, `PRICE_RETURN_ONLY`로
 일치한다. 이는 Raw admission 증명이며 아직 artifact/approval/publication은 아니다.
 
-**현재 사용자 영향.** 새 10년 Raw는 아직 화면·추천 입력이 아니다. 기존 v2 owner-only
-artifact가 계속 serving되며 서비스 4개(API/Web/Proxy/Research worker)는 모두 healthy다.
-다음 gate는 검증된 v3 Raw로 deterministic artifact 생성 → 독립 approval registry →
-persisted five-pin으로 v2/v3를 고르는 dual resolver → immutable release 직접 QA다. 그
-전에는 `vendor_snapshot=true`, `strict_pit=false`,
-`PRICE_RETURN_ONLY`, `UNREGISTERED`, `NOT_PUBLISHED`를 유지한다.
+**v3 artifact와 독립 승인 완료.** production Raw를 provider/network 없이 다시 읽어
+deterministic candidate
+`sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d`와
+artifact-manifest commitment
+`sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6`를
+생성했다. 전용 artifact directory는 UID/GID `10001:10001`, mode `0700`, 파일은 `0600`이며
+`bars.ndjson`은 7,672,914 bytes / 26,972 rows,
+`sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe`다.
+Raw mount를 제거하고 존재하지 않는 Raw root를 준 `--check`도 같은 candidate/artifact pin으로
+통과해 artifact-only readback임을 확인했다.
+
+별도 canonical one-line v3 approval registry는
+`sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707`이며,
+기존 v2 registry bytes/hash
+`sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`는
+변경하지 않았다. 기본 resolver는 v3를 선택하고, queue worker는 persisted five-pin의
+registry hash로 v2/v3를 정확히 고른다. unknown registry와 어느 하나라도 다른 pin/source/
+policy/envelope 값은 artifact open 전에 또는 readback 비교에서 fail-closed한다. focused
+approval 9/9, market-data lib 182/182, job-queue compute 2/2, network-none UID 10001 실제
+production artifact approval-check가 11 instruments / 2,452 sessions / 26,972 bars로
+통과했다.
+
+**현재 사용자 영향.** 새 10년 artifact는 승인됐지만 아직 화면·추천 입력으로 배포되지
+않았다. 현재 `/opt/lagrange/current`는 계속 `9ad4bc8b505e70e4a43037d477021b04e64bc452`
+v2 release다. 다음 gate는 V3 registry와 artifact reader를 포함한 production image build →
+immutable release 설치·전환 → 설치본 networkless approval check → API/Web/worker와 실제
+추천 경로 직접 QA다. 전환 뒤에도 범위는 `OWNER_ONLY`, `vendor_snapshot=true`,
+`strict_pit=false`, `PRICE_RETURN_ONLY`, `UNREGISTERED`, `NOT_PUBLISHED`이며 generic READY나
+Paper/Live 승격은 아니다.
 
 **2026-08-24 owner-beta execution seam.** The next immutable `research-worker`
 image definition now includes historical price beta materialize/check and exposes

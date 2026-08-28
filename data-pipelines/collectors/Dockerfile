@@ -16,6 +16,7 @@ COPY data-pipelines/collectors ./data-pipelines/collectors
 COPY apps/api-server/auth ./apps/api-server/auth
 COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
 COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json
+COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json
 COPY configs/universes/kr-etf-core-v1.yaml ./configs/universes/kr-etf-core-v1.yaml
 COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json
 COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json
@@ -26,6 +27,7 @@ COPY tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contra
 
 RUN cargo build --locked --release --package collectors --bin research-worker \
     && cargo build --locked --release --package collectors --bin kis-historical-price-beta-artifact \
+    && cargo build --locked --release --package collectors --bin kis-historical-price-v3-artifact \
     && cargo build --locked --release --package collectors --bin kis-historical-price-beta-approval-check \
     && cargo build --locked --release --package collectors --bin kis-action-range-raw \
     && cargo build --locked --release --package collectors --bin kis-historical-price-v3-input-check
@@ -43,6 +45,7 @@ RUN apk add --no-cache ca-certificates libgcc libpq libssl3 \
 WORKDIR /opt/lagrange
 COPY --from=builder /build/target/release/research-worker /usr/local/bin/research-worker
 COPY --from=builder /build/target/release/kis-historical-price-beta-artifact /usr/local/bin/kis-historical-price-beta-artifact
+COPY --from=builder /build/target/release/kis-historical-price-v3-artifact /usr/local/bin/kis-historical-price-v3-artifact
 COPY --from=builder /build/target/release/kis-historical-price-beta-approval-check /usr/local/bin/kis-historical-price-beta-approval-check
 COPY --from=builder /build/target/release/kis-action-range-raw /usr/local/bin/kis-action-range-raw
 COPY --from=builder /build/target/release/kis-historical-price-v3-input-check /usr/local/bin/kis-historical-price-v3-input-check

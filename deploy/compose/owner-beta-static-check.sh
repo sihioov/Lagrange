@@ -37,6 +37,7 @@ awk '/^  postgres:/{active=1; next} active && /^  [^[:space:]][^:]*:/{exit} acti
   | grep -Fxq '      - owner-beta-db' || die "postgres is not attached to owner-beta-db"
 for required in 'COPY configs/evidence/kis-range-canonical-approved-manifests.json' \
   'COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' \
+  'COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json' \
   '--bin owner-beta-runner' 'FROM alpine@sha256:' 'ca-certificates libgcc libstdc++ libpq libssl3' \
   'USER 10001:10001' 'org.opencontainers.image.revision'; do
   grep -Fq -- "$required" "$dockerfile" || die "Dockerfile missing $required"

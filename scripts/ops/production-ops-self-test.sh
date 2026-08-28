@@ -132,7 +132,7 @@ if [ "${OWNER_BETA_FAKE_APPROVAL_BAD_OUTPUT:-0}" = 1 ]; then
   printf 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_status=APPROVED\n'
   exit 0
 fi
-printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
+printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=2452 bar_count=26972'
 SH
 chmod 0755 "$release_fixture/repo/scripts/ops/"*.sh
 printf '%s\n' 'services: {}' >"$release_fixture/repo/deploy/compose/compose.yml"

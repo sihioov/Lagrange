@@ -82,13 +82,13 @@ fn execute_check(args: &CheckArgs) -> Result<String, Failure> {
         approve_historical_price_only_artifact(&args.artifact_root).map_err(|_| Failure {
             reason: "artifact_not_approved",
         })?;
-    if approved.bars().len() != 17688 {
+    if approved.bars().len() != 26972 {
         return Err(Failure {
             reason: "artifact_not_approved",
         });
     }
     Ok(format!(
-        "HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256={} approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688",
+        "HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256={} approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=2452 bar_count=26972",
         approved.pins().approval_registry_sha256(),
     ))
 }

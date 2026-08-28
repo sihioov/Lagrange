@@ -131,6 +131,8 @@ for service in "${services[@]}"; do
     *)
       grep -Fq 'COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' "$dockerfile" ||
         die "Dockerfile missing embedded historical-price-only approval registry: $service"
+      grep -Fq 'COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json' "$dockerfile" ||
+        die "Dockerfile missing embedded historical-price-only V3 approval registry: $service"
       ;;
   esac
 done

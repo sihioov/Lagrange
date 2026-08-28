@@ -75,10 +75,20 @@ grep -Fq 'cargo build --locked --release --package collectors --bin kis-historic
   "$worker_dockerfile" || die 'historical artifact binary build is missing'
 grep -Fq 'COPY --from=builder /build/target/release/kis-historical-price-beta-artifact' \
   "$worker_dockerfile" || die 'historical artifact binary copy is missing'
+grep -Fq 'kis-historical-price-v3-artifact' "$worker_dockerfile" \
+  || die 'historical V3 artifact binary is missing from the research-worker image'
+grep -Fq 'cargo build --locked --release --package collectors --bin kis-historical-price-v3-artifact' \
+  "$worker_dockerfile" || die 'historical V3 artifact binary build is missing'
+grep -Fq 'COPY --from=builder /build/target/release/kis-historical-price-v3-artifact /usr/local/bin/kis-historical-price-v3-artifact' \
+  "$worker_dockerfile" || die 'historical V3 artifact binary copy is missing'
 grep -Fq 'cargo build --locked --release --package collectors --bin kis-historical-price-beta-approval-check' \
   "$worker_dockerfile" || die 'historical approval-check binary build is missing'
 grep -Fq 'COPY --from=builder /build/target/release/kis-historical-price-beta-approval-check /usr/local/bin/kis-historical-price-beta-approval-check' \
   "$worker_dockerfile" || die 'historical approval-check binary copy is missing'
+grep -Fq 'COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' \
+  "$worker_dockerfile" || die 'historical V2 approval registry copy is missing'
+grep -Fq 'COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json' \
+  "$worker_dockerfile" || die 'historical V3 approval registry copy is missing'
 grep -Fq 'historical-price-beta-root' "$root/scripts/ops/provision-linux.sh" \
   || die 'dedicated historical artifact provisioning is missing'
 grep -Fq 'worker_uid" "$worker_gid" 750 historical-price-beta-root' \

@@ -151,3 +151,23 @@ zero normalized price actions, and committed those rows as
 Both sides agree on `vendor_snapshot=true`, `strict_pit=false`, and
 `PRICE_RETURN_ONLY`; no artifact, approval, registration, or publication was
 created by this check.
+
+The verified inputs were subsequently materialized without provider access as
+candidate
+`sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d`
+and artifact-manifest commitment
+`sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6`.
+The artifact contains exactly 26,972 canonical bars; its `bars.ndjson` is
+7,672,914 bytes with SHA-256
+`sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe`.
+An artifact-only check with Raw absent reproduced the same identity.
+
+Independent approval is recorded in the canonical V3 registry with byte hash
+`sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707`.
+The prior V2 registry remains byte-identical at
+`sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`.
+New work selects V3 by default, while durable queued work resolves V2 or V3
+only from its exact persisted five-pin set. This approval remains owner-only,
+vendor-snapshot, non-strict-PIT, price-return-only, unregistered, and not
+published; it does not authorize a generic READY dataset, Paper, Live, account,
+or order path.

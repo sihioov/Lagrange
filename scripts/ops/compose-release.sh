@@ -229,7 +229,7 @@ run_owner_beta_approval_gate() {
   # artifact identity or approval hashes in this release workflow's output.
   output=$("$wrapper" --approval-check 2>/dev/null) ||
     blocked 'owner_beta_artifact_not_approved'
-  [[ "$output" =~ ^HISTORICAL_PRICE_BETA_APPROVAL\ status=ok\ operation=check\ approval_registry_sha256=sha256:[0-9a-f]{64}\ approval_status=APPROVED\ audience=OWNER_ONLY\ vendor_snapshot=true\ strict_pit=false\ capability=PRICE_RETURN_ONLY\ materialization_status=MATERIALIZED\ registration_status=UNREGISTERED\ publication_status=NOT_PUBLISHED\ instrument_count=11\ session_count=1608\ bar_count=17688$ ]] ||
+  [[ "$output" =~ ^HISTORICAL_PRICE_BETA_APPROVAL\ status=ok\ operation=check\ approval_registry_sha256=sha256:[0-9a-f]{64}\ approval_status=APPROVED\ audience=OWNER_ONLY\ vendor_snapshot=true\ strict_pit=false\ capability=PRICE_RETURN_ONLY\ materialization_status=MATERIALIZED\ registration_status=UNREGISTERED\ publication_status=NOT_PUBLISHED\ instrument_count=11\ session_count=2452\ bar_count=26972$ ]] ||
     blocked 'owner_beta_artifact_not_approved'
   printf 'OWNER_BETA_RELEASE_GATE: PASS access=owner_only paper=disabled\n'
 }

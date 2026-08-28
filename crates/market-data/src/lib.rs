@@ -115,6 +115,7 @@ pub use historical_price_only::{
 pub use historical_price_only_approval::{
     ApprovedHistoricalPriceOnlyArtifact, HistoricalPriceOnlyApprovalError,
     HistoricalPriceOnlyArtifactPins, approve_historical_price_only_artifact,
+    approve_historical_price_only_artifact_for_pin_values,
 };
 pub use historical_price_only_artifact::{
     HistoricalPriceOnlyArtifactApprovalSummary, HistoricalPriceOnlyArtifactError,

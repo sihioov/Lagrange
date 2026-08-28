@@ -16,7 +16,7 @@ approved_candidate_content_sha256=sha256:0877d42eab6626de5066c5d38d1c11959b7e2da
 approved_artifact_manifest_sha256=sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67
 approved_stage5_manifest_sha256=sha256:6f1414852fd50ccf35c7604c63af70fedc83020fc71685d8db5c2a5c431cbdc4
 approved_action_manifest_sha256=sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f0bd
-approved_registry_sha256=sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380
+approved_registry_sha256=sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707
 approved_ignored_cash_dividend_count=1
 approved_ignored_cash_dividend_rows_sha256=sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48
 
@@ -342,7 +342,7 @@ run_artifact_container() {
   [ "$success_count" -eq 1 ] || blocked artifact_success_output_invalid
 
   if [ "$mode" = approval-check ]; then
-    expected_line="HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=$approved_registry_sha256 approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688"
+    expected_line="HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=$approved_registry_sha256 approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=2452 bar_count=26972"
     [ "$success_line" = "$expected_line" ] ||
       blocked artifact_success_output_invalid
   elif [ "$mode" = materialize ]; then

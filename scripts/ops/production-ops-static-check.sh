@@ -98,7 +98,7 @@ grep -Fq 'candidate-runner owner-beta-runner' "$compose_release" ||
   die 'owner-beta runner startup order missing'
 grep -Fq 'disabled leaves owner-beta-runner inactive' "$compose_release" ||
   die 'release plan must state disabled owner-beta behavior'
-grep -Fq 'approved_registry_sha256=sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380' "$artifact_wrapper" ||
+grep -Fq 'approved_registry_sha256=sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707' "$artifact_wrapper" ||
   die 'artifact wrapper approval output must bind the embedded registry hash'
 
 grep -Fq 'status --porcelain=v1 --untracked-files=all' "$release" ||
