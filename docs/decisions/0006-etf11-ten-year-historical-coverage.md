@@ -86,3 +86,45 @@ This request budget is an operating estimate, not permission to use the code's
 much larger absolute safety bound. The actual source-file/window count is
 recorded after the provider response is verified; it may not be asserted from
 the request estimate alone.
+
+## Execution evidence (2026-08-29)
+
+The daily-price collection completed as immutable KIS Raw batch
+`d746ef9f-7eed-5333-97db-cb064331bd06`. It contains 275 payload files, exactly
+25 windows for each of the eleven symbols. Range normalization verified all
+2,452 approved XKRX sessions from `2016-08-29` through `2026-08-28`. The source
+`batch.json` hash is
+`sha256:1673cdc3f29ecd13cc5117ce15d1d2e26a22db4328fc8b49926608721a67d5e6`.
+This result remains Raw/intermediate evidence with `vendor_snapshot=true`,
+`strict_pit=false`, and no publication or recommendation cutover.
+
+Before collecting the matching action evidence, the Raw contract was extended
+with an optional, backward-compatible `response_continuation` field. It records
+the provider's non-secret response `tr_cont` header separately from the request
+header, is omitted for legacy `None` values, and survives `batch.json`, the
+append-only manifest, and orphan recovery. This closes the audit gap where the
+live collector could validate an `M -> N` walk but a later verifier could not
+prove from immutable metadata that the last retained page was terminal. The
+contract and isolated action runtime are commit
+`8c42a091cedd1031538cb9f3d97ccfeb3a17905c`.
+
+The fixed-ETF11 KSD collection then completed as immutable Raw batch
+`fbec8b5d-d87a-4d62-86fa-7af8ebce982b`, retrieved at
+`2026-08-28T18:54:49Z`. It contains exactly 77 payloads: eleven symbols times
+the seven logical action classes. Every group terminated on page 1, every
+request `tr_cont` was blank, and every stored response marker was `E`, which is
+a non-`M` terminal marker under the approved KSD policy. The source
+`batch.json` hash is
+`sha256:73a6c3e18b4cd90ea8aa2daa5a13a6c7572adc6ceed8cbe074e61bc6b5580cf2`;
+the exact append-only manifest line hash including its newline is
+`sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550`.
+
+Metadata-only QA verified the exact range, endpoint/TR-ID pairs, ETF11 matrix,
+redacted credential headers, content hashes and sizes. Body values were not
+printed. A local aggregate classification found 157 documented dividend rows,
+all with zero stock-dividend rate; the other six classes and positive stock
+dividends had zero rows. Numeric parsing, negative-value, and zero-rate
+stock/odd-lot payment consistency checks found no error. This classification
+is not by itself v3 admission: a committed v3 Raw replay verifier, deterministic
+artifact, independent approval record, dual v2/v3 resolver, and immutable
+release QA remain required before the ten-year data can serve users.

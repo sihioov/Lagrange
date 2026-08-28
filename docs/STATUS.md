@@ -2,7 +2,8 @@
 
 **최신 기준 시각: 2026-08-29 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.46(세션 만료 로그인 복구 운영 배포와 직접 QA),
+당시의 기록이다. **현재 상태는 §0.47(ETF11 10년 Raw 확장과 v3 승격 진행),
+§0.46(세션 만료 로그인 복구 운영 배포와 직접 QA),
 §0.45(Owner-beta 추천 remediation 운영 배포와 직접 QA),
 §0.44(Owner-beta 추천 remediation source-ready closeout),
 §0.43(Owner 수용성 보정 release 운영 배포),
@@ -15,7 +16,7 @@
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.46에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.47에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
@@ -32,6 +33,51 @@ owner-beta 서비스와 기준 전략 카탈로그 release 적용은 완료됐�
 보여주듯 **"완료"·"처음" 같은 서사 문장도 나중에 철회된 전례가 있다** — 새 사실을
 쓸 때는 반증이 될 수 있는 가장 가까운 곳을 먼저 열어볼 것(§0.23). 코드가 바뀌면
 게이트와 판정은 다시 실행해 갱신해야 한다.
+
+### 0.47 ETF11 10년 Raw 확장과 v3 승격 진행 (2026-08-29)
+
+**원인 판정.** `2020-01-31` 시작일은 KIS나 XKRX의 기술적 한계가 아니었다. 최초
+fixed-universe v1 범위로 선택된 제품 스코프였고, 2026-08-24 소유자 결정은 이미 수집된
+`2020-01-31..2026-08-19` 6.5년 v2를 먼저 owner beta로 출시하면서 설계 SC-02의 10년
+목표를 명시적으로 deferred했다. 2026-08-29 소유자 지시가 그 수집 deferral을 해제했다.
+과거 v2 artifact와 approval은 회귀·기존 작업 재생을 위해 그대로 보존한다.
+
+**10년 가격 Raw 완료.** 새 승인 범위는 최근 완료 XKRX session 기준 정확히
+`2016-08-29..2026-08-28`이다. XKRX calendar를 2,452 sessions로 재생성했고, KIS
+daily-bars source batch `d746ef9f-7eed-5333-97db-cb064331bd06`을 새로 수집했다. ETF11
+각 25 windows, payload 275개이고 source `batch.json`은
+`sha256:1673cdc3f29ecd13cc5117ce15d1d2e26a22db4328fc8b49926608721a67d5e6`다.
+정규화는 2,452 sessions 전부 성공했다. source payload는 7,827,445 bytes이고 새
+normalized leaf는 4,904 files / 435,534,444 logical bytes다. transient unit
+`lagrange-etf11-10y-raw-23a01b49.service`는 `Result=success`; ordinary
+`research-worker`는 같은 컨테이너로 healthy 복구됐다.
+
+**10년 action Raw 완료.** 사후 verifier가 KSD pagination 종료를 독립 증명할 수 있도록
+`RawEnvelope`/`FileEntry`에 backward-compatible `response_continuation` evidence를
+추가했다. `batch.json`, append-only manifest, committed readback와 orphan recovery를
+검증했고 `market-data` 전체(153 unit + 모든 integration), action CLI 3/3,
+`OPS_STATIC`, `OPS_SELF_TEST`, release build가 통과했다. commit
+`8c42a091cedd1031538cb9f3d97ccfeb3a17905c`는 `origin/main`에 push했다.
+
+격리된 root-owned transient unit `lagrange-etf11-10y-action-8c42a09.service`로 fixed
+ETF11 × 7 KSD classes를 순차 수집했다. unit은 exit 0/`Result=success`, worker pause와
+동일 컨테이너 restore가 모두 PASS다. immutable batch는
+`fbec8b5d-d87a-4d62-86fa-7af8ebce982b`, payload 77개/54,981 bytes,
+`batch.json sha256:73a6c3e18b4cd90ea8aa2daa5a13a6c7572adc6ceed8cbe074e61bc6b5580cf2`,
+manifest-line
+`sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550`다.
+각 symbol은 정확히 7 classes이고 전부 page 1에서 request `tr_cont=""`, response
+`response_continuation="E"`로 terminal이었다. endpoint/TR-ID/range/symbol/redaction/
+hash/size metadata QA가 모두 통과했다. 본문을 출력하지 않은 집계는 dividend 157 rows가
+모두 cash-only(`stk_divi_rate=0`), positive stock dividend와 다른 6 classes는 0 rows였고
+숫자·음수·지급일 모순도 0건이었다.
+
+**현재 사용자 영향.** 새 10년 Raw는 아직 화면·추천 입력이 아니다. 기존 v2 owner-only
+artifact가 계속 serving되며 서비스 4개(API/Web/Proxy/Research worker)는 모두 healthy다.
+다음 gate는 v2를 바꾸지 않는 별도 v3 replay verifier → deterministic artifact → 독립
+approval registry → persisted five-pin으로 v2/v3를 고르는 dual resolver → immutable
+release 직접 QA다. 그 전에는 `vendor_snapshot=true`, `strict_pit=false`,
+`PRICE_RETURN_ONLY`, `UNREGISTERED`, `NOT_PUBLISHED`를 유지한다.
 
 **2026-08-24 owner-beta execution seam.** The next immutable `research-worker`
 image definition now includes historical price beta materialize/check and exposes
