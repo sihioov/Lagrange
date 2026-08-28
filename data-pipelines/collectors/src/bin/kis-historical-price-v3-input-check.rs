@@ -19,13 +19,13 @@ use market_data::StoredFile;
 use market_data::range_to_canonical_v3::{
     HISTORICAL_PRICE_ONLY_V3_ACTION_BATCH_ID, HISTORICAL_PRICE_ONLY_V3_ACTION_BATCH_JSON_SHA256,
     HISTORICAL_PRICE_ONLY_V3_ACTION_FILE_COUNT,
-    HISTORICAL_PRICE_ONLY_V3_ACTION_MANIFEST_LINE_SHA256,
+    HISTORICAL_PRICE_ONLY_V3_ACTION_MANIFEST_LINE_SHA256, HistoricalPriceOnlyV3ActionError,
     verify_historical_price_only_v3_action_input,
 };
 use market_data::range_to_canonical_v3_price::{
     HISTORICAL_PRICE_ONLY_V3_PRICE_BATCH_ID, HISTORICAL_PRICE_ONLY_V3_PRICE_BATCH_JSON_SHA256,
     HISTORICAL_PRICE_ONLY_V3_PRICE_FILE_COUNT, HISTORICAL_PRICE_ONLY_V3_PRICE_MANIFEST_LINE_SHA256,
-    verify_historical_price_only_v3_price_input,
+    HistoricalPriceOnlyV3PriceError, verify_historical_price_only_v3_price_input,
 };
 use market_data::storage::{ManifestEntry, RawStore};
 use market_data::{MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_DAILY_RANGE};
@@ -69,7 +69,25 @@ enum ErrorCode {
     ManifestLineDuplicate,
     ManifestLineMalformed,
     ManifestLineMismatch,
-    V3Verification,
+    SourceFileCount,
+    PriceInvalidSource,
+    PriceIncompleteMatrix,
+    PriceInvalidFileMetadata,
+    PriceInvalidPagination,
+    PriceStoredFileMismatch,
+    PriceInvalidResponse,
+    PriceSymbolConflict,
+    PriceDuplicateObservation,
+    PriceInvalidCoverage,
+    ActionInvalidSource,
+    ActionIncompleteMatrix,
+    ActionInvalidFileMetadata,
+    ActionInvalidPagination,
+    ActionStoredFileMismatch,
+    ActionInvalidResponse,
+    ActionSymbolConflict,
+    ActionUnsupported,
+    PolicyMismatch,
 }
 
 impl ErrorCode {
@@ -89,7 +107,25 @@ impl ErrorCode {
             Self::ManifestLineDuplicate => "manifest_line_duplicate",
             Self::ManifestLineMalformed => "manifest_line_malformed",
             Self::ManifestLineMismatch => "manifest_line_mismatch",
-            Self::V3Verification => "v3_verification",
+            Self::SourceFileCount => "source_file_count",
+            Self::PriceInvalidSource => "price_invalid_source",
+            Self::PriceIncompleteMatrix => "price_incomplete_matrix",
+            Self::PriceInvalidFileMetadata => "price_invalid_file_metadata",
+            Self::PriceInvalidPagination => "price_invalid_pagination",
+            Self::PriceStoredFileMismatch => "price_stored_file_mismatch",
+            Self::PriceInvalidResponse => "price_invalid_response",
+            Self::PriceSymbolConflict => "price_symbol_conflict",
+            Self::PriceDuplicateObservation => "price_duplicate_observation",
+            Self::PriceInvalidCoverage => "price_invalid_coverage",
+            Self::ActionInvalidSource => "action_invalid_source",
+            Self::ActionIncompleteMatrix => "action_incomplete_matrix",
+            Self::ActionInvalidFileMetadata => "action_invalid_file_metadata",
+            Self::ActionInvalidPagination => "action_invalid_pagination",
+            Self::ActionStoredFileMismatch => "action_stored_file_mismatch",
+            Self::ActionInvalidResponse => "action_invalid_response",
+            Self::ActionSymbolConflict => "action_symbol_conflict",
+            Self::ActionUnsupported => "action_unsupported",
+            Self::PolicyMismatch => "policy_mismatch",
         }
     }
 }
@@ -247,19 +283,19 @@ fn run_check(raw_root: &Path) -> Result<SuccessRecord, CheckError> {
         &price.batch_json_hash,
         &price.manifest_line_hash,
     )
-    .map_err(|_| CheckError::new(ErrorCode::V3Verification))?;
+    .map_err(map_price_verification_error)?;
     let action_verified = verify_historical_price_only_v3_action_input(
         &action.entry,
         &action.stored,
         &action.batch_json_hash,
         &action.manifest_line_hash,
     )
-    .map_err(|_| CheckError::new(ErrorCode::V3Verification))?;
+    .map_err(map_action_verification_error)?;
     if price_verified.vendor_snapshot() != action_verified.vendor_snapshot()
         || price_verified.strict_pit() != action_verified.strict_pit()
         || price_verified.pit_policy() != action_verified.pit_policy()
     {
-        return Err(CheckError::new(ErrorCode::V3Verification));
+        return Err(CheckError::new(ErrorCode::PolicyMismatch));
     }
     Ok(SuccessRecord {
         status: "ok",
@@ -281,6 +317,39 @@ fn run_check(raw_root: &Path) -> Result<SuccessRecord, CheckError> {
         strict_pit: price_verified.strict_pit(),
         pit_policy: price_verified.pit_policy().to_owned(),
     })
+}
+
+fn map_price_verification_error(error: HistoricalPriceOnlyV3PriceError) -> CheckError {
+    let code = match error {
+        HistoricalPriceOnlyV3PriceError::InvalidSource => ErrorCode::PriceInvalidSource,
+        HistoricalPriceOnlyV3PriceError::IncompleteMatrix => ErrorCode::PriceIncompleteMatrix,
+        HistoricalPriceOnlyV3PriceError::InvalidFileMetadata => ErrorCode::PriceInvalidFileMetadata,
+        HistoricalPriceOnlyV3PriceError::InvalidPagination => ErrorCode::PriceInvalidPagination,
+        HistoricalPriceOnlyV3PriceError::StoredFileMismatch => ErrorCode::PriceStoredFileMismatch,
+        HistoricalPriceOnlyV3PriceError::InvalidResponse => ErrorCode::PriceInvalidResponse,
+        HistoricalPriceOnlyV3PriceError::SymbolConflict => ErrorCode::PriceSymbolConflict,
+        HistoricalPriceOnlyV3PriceError::DuplicateObservation => {
+            ErrorCode::PriceDuplicateObservation
+        }
+        HistoricalPriceOnlyV3PriceError::InvalidCoverage => ErrorCode::PriceInvalidCoverage,
+    };
+    CheckError::new(code)
+}
+
+fn map_action_verification_error(error: HistoricalPriceOnlyV3ActionError) -> CheckError {
+    let code = match error {
+        HistoricalPriceOnlyV3ActionError::InvalidSource => ErrorCode::ActionInvalidSource,
+        HistoricalPriceOnlyV3ActionError::IncompleteMatrix => ErrorCode::ActionIncompleteMatrix,
+        HistoricalPriceOnlyV3ActionError::InvalidFileMetadata => {
+            ErrorCode::ActionInvalidFileMetadata
+        }
+        HistoricalPriceOnlyV3ActionError::InvalidPagination => ErrorCode::ActionInvalidPagination,
+        HistoricalPriceOnlyV3ActionError::StoredFileMismatch => ErrorCode::ActionStoredFileMismatch,
+        HistoricalPriceOnlyV3ActionError::InvalidResponse => ErrorCode::ActionInvalidResponse,
+        HistoricalPriceOnlyV3ActionError::SymbolConflict => ErrorCode::ActionSymbolConflict,
+        HistoricalPriceOnlyV3ActionError::UnsupportedAction { .. } => ErrorCode::ActionUnsupported,
+    };
+    CheckError::new(code)
 }
 
 fn map_raw_root_read_error(error: SafeReadError) -> CheckError {
@@ -348,7 +417,7 @@ fn read_source(store: &RawStore, source: SourceSpec) -> Result<SourceInput, Chec
         _ => return Err(CheckError::new(ErrorCode::TargetBatchDuplicate)),
     };
     if entry.files.len() != source.file_count {
-        return Err(CheckError::new(ErrorCode::V3Verification));
+        return Err(CheckError::new(ErrorCode::SourceFileCount));
     }
 
     // RawStore performs its established immutable leaf hash checks.  The
@@ -642,6 +711,22 @@ mod tests {
         let mut line = serde_json::to_vec(entry).unwrap();
         line.push(b'\n');
         line
+    }
+
+    #[test]
+    fn typed_verification_failures_keep_price_and_action_boundaries_distinct() {
+        assert_eq!(
+            map_price_verification_error(HistoricalPriceOnlyV3PriceError::InvalidPagination),
+            CheckError::new(ErrorCode::PriceInvalidPagination)
+        );
+        assert_eq!(
+            map_action_verification_error(HistoricalPriceOnlyV3ActionError::InvalidPagination),
+            CheckError::new(ErrorCode::ActionInvalidPagination)
+        );
+        assert_ne!(
+            ErrorCode::PriceInvalidPagination.as_str(),
+            ErrorCode::ActionInvalidPagination.as_str()
+        );
     }
 
     #[test]
