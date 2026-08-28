@@ -393,8 +393,8 @@ fn parse_file_metadata<'a>(
             let query = query.clone();
             KR_ETF_CORE_SYMBOLS.iter().filter_map(move |symbol| {
                 (file.request.endpoint == spec.path
-                    && &query == &expected_query(spec, symbol, range_start, range_end))
-                    .then_some((spec, *symbol))
+                    && query == expected_query(spec, symbol, range_start, range_end))
+                .then_some((spec, *symbol))
             })
         })
         .collect::<Vec<_>>();

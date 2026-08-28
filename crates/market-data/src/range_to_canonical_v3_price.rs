@@ -401,7 +401,7 @@ pub fn verify_historical_price_only_v3_price_input(
     }
 
     let mut trading_dates = BTreeMap::<TradingDate, BTreeSet<String>>::new();
-    for (key, _) in &bars_by_key {
+    for key in bars_by_key.keys() {
         trading_dates
             .entry(key.1)
             .or_default()
@@ -726,10 +726,10 @@ fn validate_optional_row_symbol(
     expected_symbol: &str,
 ) -> Result<(), HistoricalPriceOnlyV3PriceError> {
     for key in ["stck_shrn_iscd", "sht_cd", "isu_srt_cd"] {
-        if let Some(value) = row.get(key) {
-            if value.as_str() != Some(expected_symbol) {
-                return Err(HistoricalPriceOnlyV3PriceError::SymbolConflict);
-            }
+        if let Some(value) = row.get(key)
+            && value.as_str() != Some(expected_symbol)
+        {
+            return Err(HistoricalPriceOnlyV3PriceError::SymbolConflict);
         }
     }
     Ok(())
