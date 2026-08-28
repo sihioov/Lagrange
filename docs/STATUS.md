@@ -52,6 +52,18 @@ normalized leaf는 4,904 files / 435,534,444 logical bytes다. transient unit
 `lagrange-etf11-10y-raw-23a01b49.service`는 `Result=success`; ordinary
 `research-worker`는 같은 컨테이너로 healthy 복구됐다.
 
+이 price batch는 `response_continuation` 저장 필드가 추가되기 전 exact capture commit
+`23a01b49114943f93b3c8b240843d360c7485e94`에서 생성돼 275개 marker key가 모두
+미기록이다. 빈 marker를 사후 생성하지 않는다. 대신 그 capture contract와 당시 focused
+tests가 모든 요청 continuation `None`, nonempty response header `M/N/F/unknown/whitespace`
+및 body cursor의 Raw visibility를 fail-closed했음을 pin하고 evidence를
+`UNRECORDED_CAPTURE_CONTRACT_REJECTED_NONEMPTY_V1`로 명시한다. 현재 collector의 신규
+strict test는 빈 response marker `Some("")` 보존도 검증한다. 동일 범위 재수집을 시도한
+transient unit `lagrange-etf11-10y-price-marker-0b04fee-v2.service`는 provider construction/
+KIS 호출 전에 기존 immutable source 중복 방지 gate의 `KIS_RANGE_BATCH_CONFLICT`로
+종료됐고 새 source batch는 0개다. ordinary worker는 healthy 복구됐으며 기존 Raw는
+변경되지 않았다.
+
 **10년 action Raw 완료.** 사후 verifier가 KSD pagination 종료를 독립 증명할 수 있도록
 `RawEnvelope`/`FileEntry`에 backward-compatible `response_continuation` evidence를
 추가했다. `batch.json`, append-only manifest, committed readback와 orphan recovery를
@@ -72,11 +84,20 @@ hash/size metadata QA가 모두 통과했다. 본문을 출력하지 않은 집�
 모두 cash-only(`stk_divi_rate=0`), positive stock dividend와 다른 6 classes는 0 rows였고
 숫자·음수·지급일 모순도 0건이었다.
 
+**v3 Raw replay QA.** 별도 price/action verifier와 `network_mode:none`, Raw read-only,
+no-secrets/no-DB/no-backend combined checker를 추가했다. 실제 production Raw readback은
+price 275 files / 2,452 observed sessions / 26,972 bars,
+`bars_sha256:20c750f0ca415073da37650ae2bb0c942a181b4c86f167defe95895e4499dcf2`;
+action 77 files / cash-only 157 rows / normalized action 0,
+`cash_rows_sha256:b22a5c9808a8a1a2c892aa3ff46d529672c909620a2c45c0e46d48d0538d17e8`로
+통과했다. 두 입력은 `vendor_snapshot=true`, `strict_pit=false`, `PRICE_RETURN_ONLY`로
+일치한다. 이는 Raw admission 증명이며 아직 artifact/approval/publication은 아니다.
+
 **현재 사용자 영향.** 새 10년 Raw는 아직 화면·추천 입력이 아니다. 기존 v2 owner-only
 artifact가 계속 serving되며 서비스 4개(API/Web/Proxy/Research worker)는 모두 healthy다.
-다음 gate는 v2를 바꾸지 않는 별도 v3 replay verifier → deterministic artifact → 독립
-approval registry → persisted five-pin으로 v2/v3를 고르는 dual resolver → immutable
-release 직접 QA다. 그 전에는 `vendor_snapshot=true`, `strict_pit=false`,
+다음 gate는 검증된 v3 Raw로 deterministic artifact 생성 → 독립 approval registry →
+persisted five-pin으로 v2/v3를 고르는 dual resolver → immutable release 직접 QA다. 그
+전에는 `vendor_snapshot=true`, `strict_pit=false`,
 `PRICE_RETURN_ONLY`, `UNREGISTERED`, `NOT_PUBLISHED`를 유지한다.
 
 **2026-08-24 owner-beta execution seam.** The next immutable `research-worker`

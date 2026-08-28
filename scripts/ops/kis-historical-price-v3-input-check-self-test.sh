@@ -34,6 +34,8 @@ for required in \
   'session_count' \
   'bar_count' \
   'bars_sha256' \
+  'capture_contract_commit' \
+  'response_marker_evidence' \
   'cash_rows_sha256' \
   'ContentHash::from_bytes' \
   'OFlags::RDONLY' \

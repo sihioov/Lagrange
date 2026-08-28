@@ -862,6 +862,10 @@ grep -Fq 'HISTORICAL_PRICE_ONLY_V3_ACTION_MANIFEST_LINE_SHA256' "$v3_input_binar
   || die 'V3 action manifest pin is missing'
 grep -Fq 'PriceSummary' "$v3_input_binary" || die 'V3 price safe summary is missing'
 grep -Fq 'ActionSummary' "$v3_input_binary" || die 'V3 action safe summary is missing'
+grep -Fq 'capture_contract_commit' "$v3_input_binary" \
+  || die 'V3 price capture-contract provenance is missing'
+grep -Fq 'response_marker_evidence' "$v3_input_binary" \
+  || die 'V3 price response-marker provenance is missing'
 grep -Fq 'OFlags::NOFOLLOW' "$v3_input_binary" || die 'V3 checker no-follow read is missing'
 grep -Fq 'OFlags::CLOEXEC' "$v3_input_binary" || die 'V3 checker close-on-exec read is missing'
 grep -Fq 'BATCH_JSON_MAX_BYTES: u64 = 1024 * 1024' "$v3_input_binary" \

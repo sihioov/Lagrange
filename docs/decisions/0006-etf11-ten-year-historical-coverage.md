@@ -98,6 +98,18 @@ The daily-price collection completed as immutable KIS Raw batch
 This result remains Raw/intermediate evidence with `vendor_snapshot=true`,
 `strict_pit=false`, and no publication or recommendation cutover.
 
+The price batch predates persistence of `response_continuation`: all 275
+`FileEntry` records omit that optional key. Replay must not rewrite the absence
+as a recorded blank marker. The exact capture commit is
+`23a01b49114943f93b3c8b240843d360c7485e94`; its daily-range contract and
+focused tests already rejected every non-empty response-header marker
+(`M`, `N`, `F`, unknown, or whitespace), every body cursor, and every request
+continuation before Raw visibility. V3 therefore labels this exact pinned input
+`UNRECORDED_CAPTURE_CONTRACT_REJECTED_NONEMPTY_V1`. A replacement capture was
+attempted only through the approved isolated wrapper, but the pre-provider
+duplicate-source gate correctly returned `KIS_RANGE_BATCH_CONFLICT`; no second
+source batch or KIS request was created and the ordinary worker was restored.
+
 Before collecting the matching action evidence, the Raw contract was extended
 with an optional, backward-compatible `response_continuation` field. It records
 the provider's non-secret response `tr_cont` header separately from the request
@@ -128,3 +140,14 @@ stock/odd-lot payment consistency checks found no error. This classification
 is not by itself v3 admission: a committed v3 Raw replay verifier, deterministic
 artifact, independent approval record, dual v2/v3 resolver, and immutable
 release QA remain required before the ten-year data can serve users.
+
+The committed V3 price/action replay code was also run against the actual
+production Raw tree without provider access. Price verification admitted 275
+files, 2,452 observed dates, and 26,972 bars with deterministic commitment
+`sha256:20c750f0ca415073da37650ae2bb0c942a181b4c86f167defe95895e4499dcf2`.
+Action verification admitted 77 files and 157 cash-only dividend rows, produced
+zero normalized price actions, and committed those rows as
+`sha256:b22a5c9808a8a1a2c892aa3ff46d529672c909620a2c45c0e46d48d0538d17e8`.
+Both sides agree on `vendor_snapshot=true`, `strict_pit=false`, and
+`PRICE_RETURN_ONLY`; no artifact, approval, registration, or publication was
+created by this check.

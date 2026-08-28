@@ -174,6 +174,8 @@ struct PriceSummary {
     session_count: usize,
     bar_count: usize,
     bars_sha256: String,
+    capture_contract_commit: String,
+    response_marker_evidence: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -305,6 +307,8 @@ fn run_check(raw_root: &Path) -> Result<SuccessRecord, CheckError> {
             session_count: price_verified.session_count(),
             bar_count: price_verified.bar_count(),
             bars_sha256: price_verified.bars_sha256().to_string(),
+            capture_contract_commit: price_verified.capture_contract_commit().to_owned(),
+            response_marker_evidence: price_verified.response_marker_evidence().to_owned(),
         },
         action: ActionSummary {
             batch_id: action_verified.source_batch_id().to_string(),

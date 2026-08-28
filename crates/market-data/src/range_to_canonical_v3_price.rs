@@ -43,6 +43,15 @@ pub const HISTORICAL_PRICE_ONLY_V3_PRICE_BATCH_JSON_SHA256: &str =
 /// its terminating newline.
 pub const HISTORICAL_PRICE_ONLY_V3_PRICE_MANIFEST_LINE_SHA256: &str =
     "sha256:5b2900594e03e322d4e81adaa79fc6c40ae70035213786972ed5cb7a22870d2a";
+/// Exact collector commit that captured the approved batch.  Its daily-range
+/// contract rejects every non-empty response header marker and body cursor,
+/// but predates persistence of the response marker in `FileEntry`.
+pub const HISTORICAL_PRICE_ONLY_V3_PRICE_CAPTURE_COMMIT: &str =
+    "23a01b49114943f93b3c8b240843d360c7485e94";
+/// Honest marker provenance for this one pinned legacy batch.  No blank
+/// response marker is fabricated during replay.
+pub const HISTORICAL_PRICE_ONLY_V3_PRICE_RESPONSE_MARKER_EVIDENCE: &str =
+    "UNRECORDED_CAPTURE_CONTRACT_REJECTED_NONEMPTY_V1";
 /// This evidence is a vendor snapshot, not strict point-in-time evidence.
 pub const HISTORICAL_PRICE_ONLY_V3_PRICE_PIT_POLICY: &str = "PRICE_RETURN_ONLY";
 
@@ -65,7 +74,7 @@ pub struct HistoricalPriceOnlyV3PriceFileEvidence {
     endpoint: String,
     tr_id: String,
     request_continuation: String,
-    response_continuation: String,
+    response_continuation: Option<String>,
     query_start: TradingDate,
     query_end: TradingDate,
 }
@@ -113,8 +122,8 @@ impl HistoricalPriceOnlyV3PriceFileEvidence {
         self.request_continuation.is_empty()
     }
 
-    pub fn response_continuation(&self) -> &str {
-        &self.response_continuation
+    pub fn response_continuation(&self) -> Option<&str> {
+        self.response_continuation.as_deref()
     }
 
     pub const fn query_start(&self) -> TradingDate {
@@ -135,6 +144,8 @@ pub struct HistoricalPriceOnlyV3PriceEvidence {
     source_batch_id: BatchId,
     source_batch_json_sha256: ContentHash,
     source_manifest_line_sha256: ContentHash,
+    capture_contract_commit: String,
+    response_marker_evidence: String,
     range_start: TradingDate,
     range_end: TradingDate,
     vendor_snapshot: bool,
@@ -158,6 +169,14 @@ impl HistoricalPriceOnlyV3PriceEvidence {
 
     pub fn source_manifest_line_sha256(&self) -> &ContentHash {
         &self.source_manifest_line_sha256
+    }
+
+    pub fn capture_contract_commit(&self) -> &str {
+        &self.capture_contract_commit
+    }
+
+    pub fn response_marker_evidence(&self) -> &str {
+        &self.response_marker_evidence
     }
 
     /// Alias for callers that name the pins after their verifier arguments.
@@ -370,7 +389,7 @@ pub fn verify_historical_price_only_v3_price_input(
                 endpoint: parsed.file.request.endpoint.clone(),
                 tr_id: DAILY_BARS_TR_ID.to_owned(),
                 request_continuation: String::new(),
-                response_continuation: String::new(),
+                response_continuation: parsed.file.response_continuation.clone(),
                 query_start: parsed.query_start,
                 query_end: parsed.query_end,
             });
@@ -427,6 +446,9 @@ pub fn verify_historical_price_only_v3_price_input(
         source_batch_id: batch_id,
         source_batch_json_sha256: batch_json_hash.clone(),
         source_manifest_line_sha256: manifest_line_hash.clone(),
+        capture_contract_commit: HISTORICAL_PRICE_ONLY_V3_PRICE_CAPTURE_COMMIT.to_owned(),
+        response_marker_evidence: HISTORICAL_PRICE_ONLY_V3_PRICE_RESPONSE_MARKER_EVIDENCE
+            .to_owned(),
         range_start,
         range_end,
         vendor_snapshot: true,
@@ -502,7 +524,11 @@ fn parse_file_metadata<'a>(
     if file.request.endpoint != DAILY_BARS_ENDPOINT {
         return Err(HistoricalPriceOnlyV3PriceError::InvalidFileMetadata);
     }
-    if file.response_continuation.as_deref() != Some("") {
+    // The exact approved d746... batch predates FileEntry marker persistence.
+    // Its capture commit rejected every non-empty header/body cursor before
+    // Raw visibility.  Require the legacy absence here and never rewrite it
+    // into a claimed blank response marker.
+    if file.response_continuation.is_some() {
         return Err(HistoricalPriceOnlyV3PriceError::InvalidPagination);
     }
     if file.request.headers
@@ -882,7 +908,7 @@ mod tests {
                 headers: headers(),
                 mode: FetchMode::Credentialed,
             },
-            response_continuation: Some(String::new()),
+            response_continuation: None,
         };
         let stored = StoredFile {
             file_name,
@@ -980,6 +1006,14 @@ mod tests {
             HISTORICAL_PRICE_ONLY_V3_PRICE_PIT_POLICY
         );
         assert_eq!(evidence.acquired_at(), manifest.retrieved_at);
+        assert_eq!(
+            evidence.capture_contract_commit(),
+            HISTORICAL_PRICE_ONLY_V3_PRICE_CAPTURE_COMMIT
+        );
+        assert_eq!(
+            evidence.response_marker_evidence(),
+            HISTORICAL_PRICE_ONLY_V3_PRICE_RESPONSE_MARKER_EVIDENCE
+        );
         assert_eq!(evidence.trading_dates().first(), Some(&date("2016-08-29")));
         assert_eq!(evidence.trading_dates().last(), Some(&date("2026-08-28")));
         assert!(evidence.bars().windows(2).all(|pair| {
@@ -991,6 +1025,12 @@ mod tests {
                 .files()
                 .iter()
                 .all(|file| file.request_continuation_is_none())
+        );
+        assert!(
+            evidence
+                .files()
+                .iter()
+                .all(|file| file.response_continuation().is_none())
         );
     }
 
@@ -1038,7 +1078,7 @@ mod tests {
         );
 
         let (mut manifest, stored) = fixture();
-        manifest.files[0].response_continuation = None;
+        manifest.files[0].response_continuation = Some(String::new());
         assert_eq!(
             verify(&manifest, &stored),
             Err(HistoricalPriceOnlyV3PriceError::InvalidPagination)
