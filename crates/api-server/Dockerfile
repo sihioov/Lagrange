@@ -11,6 +11,7 @@ COPY crates ./crates
 COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
 COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json
 COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json
+COPY configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json ./configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json
 COPY configs/universes ./configs/universes
 COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json
 COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json

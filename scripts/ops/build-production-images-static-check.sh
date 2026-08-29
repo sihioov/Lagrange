@@ -133,9 +133,14 @@ for service in "${services[@]}"; do
         die "Dockerfile missing embedded historical-price-only approval registry: $service"
       grep -Fq 'COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json' "$dockerfile" ||
         die "Dockerfile missing embedded historical-price-only V3 approval registry: $service"
+      grep -Fq 'COPY configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json ./configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json' "$dockerfile" ||
+        die "Dockerfile missing embedded fixed-stock beta approval registry: $service"
       ;;
   esac
 done
+
+grep -Fqx '!configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json' "$root/.dockerignore" ||
+  die 'Docker build context is missing the fixed-stock beta approval registry allowlist entry'
 
 # The profile-gated range service has a deliberately different, operator-gated
 # history-capture contract and may not enter the serving build/manifest scope.
