@@ -5,10 +5,15 @@ export type ApiPath = keyof paths;
 export type ApiSession = components["schemas"]["Session"];
 export type ApiErrorCode = components["schemas"]["ErrorCode"];
 export type ApiErrorEnvelope = components["schemas"]["ErrorEnvelope"];
-export type OwnerBetaProduct = "recommendations" | "backtests" | "paper";
+export type OwnerBetaProduct = "recommendations" | "backtests" | "paper" | "stock-beta";
 
 /** Web defense in depth only; the API admission middleware is authoritative. */
 export function permitsOwnerBetaProduct(session: ApiSession, product: OwnerBetaProduct): boolean {
+  // The stock-signal beta is Owner-only in every session mode. It is a
+  // separate research surface, not part of the legacy multi-user beta gate.
+  if (product === "stock-beta") {
+    return session.role === "owner";
+  }
   if (session.owner_beta_access_mode === "disabled") {
     return true;
   }
@@ -87,6 +92,8 @@ export const apiErrorEnvelopeSchema = z
           "RECOMMENDATION_CAPACITY_EXCEEDED",
           "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
           "OWNER_BETA_STRATEGY_UNSUPPORTED",
+          "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE",
+          "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED",
           "RESULT_INTEGRITY_FAILED",
           "LIVE_RECONCILIATION_REQUIRED",
           "LIVE_KILL_SWITCH_ENGAGED",

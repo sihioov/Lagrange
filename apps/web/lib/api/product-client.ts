@@ -34,6 +34,19 @@ import {
   type StrategyCatalogItem,
   strategySchema,
 } from "@/lib/products/contracts";
+import {
+  OWNER_BETA_EQUITY_SIGNALS_LATEST_PATH,
+  OWNER_BETA_EQUITY_SIGNALS_SCREEN_PATH,
+  type OwnerBetaEquitySignalsDetailModel,
+  type OwnerBetaEquitySignalsLatestModel,
+  type OwnerBetaEquitySignalsScreenBody,
+  type OwnerBetaEquitySignalsScreenModel,
+  ownerBetaEquitySignalsDetailPath,
+  ownerBetaEquitySignalsDetailSchema,
+  ownerBetaEquitySignalsLatestSchema,
+  ownerBetaEquitySignalsScreenBodySchema,
+  ownerBetaEquitySignalsScreenSchema,
+} from "@/lib/products/equity-signals-contracts";
 import { type LiveConnectionModel, liveConnectionSchema } from "@/lib/products/live-contracts";
 import {
   OWNER_BETA_PRICE_ONLY_RUNS_PATH,
@@ -77,6 +90,13 @@ export type ProductApiClient = {
   readonly getOwnerBetaRecommendationRuns: () => Promise<OwnerBetaRunPageModel>;
   readonly getOwnerBetaRecommendationRun: (runId: string) => Promise<OwnerBetaRunModel>;
   readonly getOwnerBetaSupportedAsOf: () => Promise<OwnerBetaSupportedAsOfModel>;
+  readonly getOwnerBetaEquitySignalsLatest: () => Promise<OwnerBetaEquitySignalsLatestModel>;
+  readonly screenOwnerBetaEquitySignals: (
+    body: OwnerBetaEquitySignalsScreenBody,
+  ) => Promise<OwnerBetaEquitySignalsScreenModel>;
+  readonly getOwnerBetaEquitySignalDetail: (
+    instrumentId: string,
+  ) => Promise<OwnerBetaEquitySignalsDetailModel>;
   readonly getStrategies: () => Promise<PageResult<StrategyCatalogItem>>;
   readonly getPaperAccounts: () => Promise<PageResult<PaperAccountModel>>;
   readonly getPaperAccount: (accountId: string) => Promise<PaperAccountModel>;
@@ -157,6 +177,21 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
       getParsed(client, ownerBetaRunPath(runId), ownerBetaRunSchema),
     getOwnerBetaSupportedAsOf: () =>
       getParsed(client, OWNER_BETA_PRICE_ONLY_SUPPORTED_AS_OF_PATH, ownerBetaSupportedAsOfSchema),
+    getOwnerBetaEquitySignalsLatest: () =>
+      getParsed(client, OWNER_BETA_EQUITY_SIGNALS_LATEST_PATH, ownerBetaEquitySignalsLatestSchema),
+    screenOwnerBetaEquitySignals: async (body) => {
+      const requestBody = ownerBetaEquitySignalsScreenBodySchema.parse(body);
+      const response = await client.post(OWNER_BETA_EQUITY_SIGNALS_SCREEN_PATH.slice(1), {
+        json: requestBody,
+      });
+      return parseApiResponse(response, ownerBetaEquitySignalsScreenSchema);
+    },
+    getOwnerBetaEquitySignalDetail: (instrumentId) =>
+      getParsed(
+        client,
+        ownerBetaEquitySignalsDetailPath(instrumentId),
+        ownerBetaEquitySignalsDetailSchema,
+      ),
     getRecommendationRun: (runId) =>
       getParsed(
         client,

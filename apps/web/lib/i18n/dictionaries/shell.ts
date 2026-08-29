@@ -40,6 +40,8 @@ export type ShellDictionary = {
   readonly signingOut: string;
   readonly skipToMain: string;
   readonly strategiesDescription: string;
+  readonly stockBetaDescription: string;
+  readonly navStockBeta: string;
   readonly themeToggleToDark: string;
   readonly themeToggleToLight: string;
   readonly tryAgain: string;
@@ -72,6 +74,7 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     navRecommendations: "Recommendations",
     navScreener: "Stock screener",
     navStrategies: "Strategies",
+    navStockBeta: "Stock signal beta",
     ownerAccessRequiredMessage:
       "This workspace requires the Owner role. Your current session remains signed in with Member access.",
     ownerAccessRequiredTitle: "Owner access required",
@@ -92,6 +95,7 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     signingOut: "Signing out",
     skipToMain: "Skip to main content",
     strategiesDescription: "Review approved strategies and their constrained parameters.",
+    stockBetaDescription: "Explore read-only price and volume signals for the fixed Owner list.",
     themeToggleToDark: "Switch to dark theme",
     themeToggleToLight: "Switch to light theme",
     tryAgain: "Try again",
@@ -121,6 +125,7 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     navRecommendations: "추천",
     navScreener: "종목 스크리너",
     navStrategies: "전략",
+    navStockBeta: "종목 신호 베타",
     ownerAccessRequiredMessage:
       "이 워크스페이스는 오너 권한이 필요합니다. 현재 세션은 멤버 권한으로 로그인된 상태입니다.",
     ownerAccessRequiredTitle: "오너 권한이 필요합니다",
@@ -141,6 +146,7 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     signingOut: "로그아웃 중",
     skipToMain: "본문으로 건너뛰기",
     strategiesDescription: "승인된 전략과 제한된 파라미터를 확인하세요.",
+    stockBetaDescription: "오너 전용 고정 목록의 읽기 전용 가격·거래량 신호를 확인하세요.",
     themeToggleToDark: "다크 테마로 전환",
     themeToggleToLight: "라이트 테마로 전환",
     tryAgain: "다시 시도",

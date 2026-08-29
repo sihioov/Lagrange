@@ -8,6 +8,7 @@ import {
   recommendationConfig,
   recommendationResponse,
 } from "./recommendation-fixture.mjs";
+import { stockBetaResponse } from "./stock-beta-fixture.mjs";
 
 const port = Number.parseInt(process.env.SYNTHETIC_API_PORT ?? "38180", 10);
 const defaultScenario = Object.freeze({
@@ -36,6 +37,7 @@ const defaultScenario = Object.freeze({
   user: "u1",
   role: "member",
   ownerBetaAccessMode: "disabled",
+  stockBeta: "available",
 });
 let scenario = { ...defaultScenario };
 
@@ -169,6 +171,17 @@ const server = createServer(async (request, response) => {
   });
   if (ownerBetaRecommendation !== null) {
     json(response, ownerBetaRecommendation.status, ownerBetaRecommendation.body);
+    return;
+  }
+  const stockBeta = stockBetaResponse({
+    body,
+    headers: request.headers,
+    method: request.method ?? "GET",
+    pathname: url.pathname,
+    scenario,
+  });
+  if (stockBeta !== null) {
+    json(response, stockBeta.status, stockBeta.body);
     return;
   }
   const backtest = backtestResponse({

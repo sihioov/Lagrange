@@ -71,6 +71,7 @@ describe("role-aware primary navigation", () => {
     expect(markup).toContain('href="/paper"');
     expect(markup).not.toContain('href="/admin"');
     expect(markup).not.toContain('href="/live"');
+    expect(markup).not.toContain('href="/stock-beta"');
   });
 
   it("adds explicit administration destinations for the Owner", () => {
@@ -83,6 +84,7 @@ describe("role-aware primary navigation", () => {
     // Then
     expect(markup).toContain('href="/admin"');
     expect(markup).toContain('href="/live"');
+    expect(markup).toContain('href="/stock-beta"');
   });
 
   it("removes only owner-beta product destinations for a Member", () => {

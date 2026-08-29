@@ -15,6 +15,7 @@ const OWNER_BETA_DESTINATIONS = {
   "/backtests": "backtests",
   "/paper": "paper",
   "/recommendations": "recommendations",
+  "/stock-beta": "stock-beta",
 } as const satisfies Record<string, OwnerBetaProduct>;
 
 function workspaces(t: ShellDictionary, session: ApiSession) {
@@ -27,6 +28,7 @@ function workspaces(t: ShellDictionary, session: ApiSession) {
     },
     { description: t.backtestsDescription, href: "/backtests", label: t.navBacktests },
     { description: t.paperAccountDescription, href: "/paper", label: t.navPaperAccount },
+    { description: t.stockBetaDescription, href: "/stock-beta", label: t.navStockBeta },
   ] as const;
 
   return items.filter((workspace) => {
