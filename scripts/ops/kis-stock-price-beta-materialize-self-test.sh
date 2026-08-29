@@ -97,6 +97,9 @@ cat >"$root/bin/stat" <<'EOF'
 target=${!#}
 if [ -n "${FAKE_ENV_PATH:-}" ] && [ "$target" = "$FAKE_ENV_PATH" ] && [ -n "${FAKE_ENV_STAT:-}" ]; then
   echo "$FAKE_ENV_STAT"
+elif [ "${1:-}" = -c ] && [ "${2:-}" = %u:%g:%a ] &&
+     { [ "$target" = "${FAKE_ARTIFACT_PATH:-}" ] || [ "$target" = "${FAKE_OUT_PATH:-}" ]; }; then
+  echo 10001:10001:700
 elif [ "${1:-}" = -c ] && [ "${2:-}" = %u:%g:%a ]; then
   echo 0:0:600
 elif [ "${1:-}" = -c ] && [ "${2:-}" = %u ]; then
@@ -105,6 +108,23 @@ else
   exit 96
 fi
 EOF
+
+for command in chown chmod; do
+  cat >"$root/bin/$command" <<'EOF'
+#!/usr/bin/env bash
+{
+  printf '%s' "${0##*/}"
+  printf ' %q' "$@"
+  printf '\n'
+} >>"$FAKE_LOG"
+{
+  printf '%s' "${0##*/}"
+  printf ' %q' "$@"
+  printf '\n'
+} >>"$FAKE_AUDIT_LOG"
+exit 0
+EOF
+done
 
 cat >"$root/bin/readlink" <<'EOF'
 #!/usr/bin/env bash
@@ -211,6 +231,8 @@ invoke() {
   FAKE_UID="${FAKE_UID:-0}" \
   FAKE_ENV_PATH="${FAKE_ENV_PATH:-}" \
   FAKE_ENV_STAT="${FAKE_ENV_STAT:-}" \
+  FAKE_ARTIFACT_PATH="$data/stock-price-beta-artifacts" \
+  FAKE_OUT_PATH="$root/out" \
   FAKE_CONFIG_FAIL="${FAKE_CONFIG_FAIL:-0}" \
   FAKE_BUILD_FAIL="${FAKE_BUILD_FAIL:-0}" \
   FAKE_RUN_FAIL="${FAKE_RUN_FAIL:-0}" \

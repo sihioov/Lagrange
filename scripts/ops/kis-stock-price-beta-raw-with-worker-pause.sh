@@ -155,9 +155,12 @@ installed_commit=$(dotenv_effective_get LAGRANGE_CODE_COMMIT)
 
 command -v docker >/dev/null 2>&1 || blocked 'docker is not installed'
 docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavailable'
+compose_range_raw_batch_id=$(dotenv_effective_get RANGE_RAW_BATCH_ID)
+[ -n "$compose_range_raw_batch_id" ] || compose_range_raw_batch_id=compose-config-disabled
 
 compose() {
   LAGRANGE_CODE_COMMIT="$commit" \
+  RANGE_RAW_BATCH_ID="$compose_range_raw_batch_id" \
     docker compose --profile stock-price-beta-raw --env-file "$env_file" \
     --file "$compose_file" "$@"
 }

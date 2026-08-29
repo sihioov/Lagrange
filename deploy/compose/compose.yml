@@ -199,6 +199,11 @@ services:
       OWNER_BETA_ACCESS_MODE: ${OWNER_BETA_ACCESS_MODE:-disabled}
       OWNER_BETA_PRICE_INPUT_MODE: ${OWNER_BETA_PRICE_INPUT_MODE:-disabled}
       OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}
+      # Independent fixed-equity price/volume research beta. The mode is
+      # owner-only and the artifact location is a fixed in-container path,
+      # never an operator-selected host path.
+      OWNER_BETA_EQUITY_SIGNALS_MODE: ${OWNER_BETA_EQUITY_SIGNALS_MODE:-disabled}
+      STOCK_PRICE_BETA_ARTIFACT_ROOT: /data/stock-price-beta-artifacts
     secrets:
       - source: api_db_app_password
         target: db_app_password
@@ -242,6 +247,7 @@ services:
       # directories; legacy replicas may still write only the old canonical
       # run names without being able to alter a settled generation.
       - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}:/data/artifacts:ro
+      - ${LAGRANGE_DATA_DIR:-../data}/stock-price-beta-artifacts:/data/stock-price-beta-artifacts:ro
     networks:
       - edge
       - backend

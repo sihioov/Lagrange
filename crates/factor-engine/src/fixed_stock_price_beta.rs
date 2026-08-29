@@ -167,7 +167,7 @@ impl PriceVolumeSignalSnapshot {
         }
         assign_scores_and_ranks(&mut rows)?;
 
-        let mut snapshot = Self {
+        let snapshot = Self {
             schema_id: FIXED_STOCK_PRICE_BETA_SIGNAL_SCHEMA_ID.to_owned(),
             schema_version: FIXED_STOCK_PRICE_BETA_SIGNAL_SCHEMA_VERSION,
             factor_version: FIXED_STOCK_PRICE_BETA_SIGNAL_FACTOR_VERSION.to_owned(),
@@ -187,6 +187,15 @@ impl PriceVolumeSignalSnapshot {
             rows,
             content_sha256: String::new(),
         };
+        // `serde_json` is the persistence boundary for this contract.  Some
+        // finite f64 values can deserialize to an adjacent representable bit
+        // pattern even though their JSON text is stable. Canonicalize through
+        // that exact boundary before deriving the self-hash so a written
+        // snapshot verifies identically after descriptor-safe readback.
+        let canonical =
+            serde_json::to_vec(&snapshot).map_err(|_| PriceVolumeSignalError::Serialize)?;
+        let mut snapshot: Self =
+            serde_json::from_slice(&canonical).map_err(|_| PriceVolumeSignalError::Serialize)?;
         snapshot.content_sha256 = snapshot.compute_hash()?;
         Ok(snapshot)
     }

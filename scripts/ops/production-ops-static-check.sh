@@ -56,8 +56,10 @@ grep -Fq 'OWNER_BETA_PRICE_INPUT_MODE: ${OWNER_BETA_PRICE_INPUT_MODE:-disabled}'
   die 'Compose owner-beta sealed price-input policy injection missing'
 grep -Fq 'OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}' "$compose_file" ||
   die 'Compose owner-beta Paper policy injection missing'
-[ "$(grep -Ec '^[[:space:]]+OWNER_BETA_[A-Z0-9_]+:' "$compose_file")" -eq 3 ] ||
-  die 'Compose must expose exactly the three approved owner-beta policy modes'
+grep -Fq 'OWNER_BETA_EQUITY_SIGNALS_MODE: ${OWNER_BETA_EQUITY_SIGNALS_MODE:-disabled}' "$compose_file" ||
+  die 'Compose fixed-equity owner-beta policy injection missing'
+[ "$(grep -Ec '^[[:space:]]+OWNER_BETA_[A-Z0-9_]+:' "$compose_file")" -eq 4 ] ||
+  die 'Compose must expose exactly the four approved owner-beta policy modes'
 [ "$(awk '
   /^  api-server:/ { in_api = 1; next }
   in_api && /^  [[:alnum:]_-]+:/ { exit }
@@ -71,6 +73,17 @@ if grep -Eq '^[[:space:]]+OWNER_BETA_[A-Z0-9_]*(CANDIDATE|SHA256|HASH|ROOT|PATH|
 fi
 grep -Fq '${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}:/data/artifacts:ro' "$compose_file" ||
   die 'api-server sealed artifact mount must remain read-only'
+grep -Fq '${LAGRANGE_DATA_DIR:-../data}/stock-price-beta-artifacts:/data/stock-price-beta-artifacts:ro' "$compose_file" ||
+  die 'api-server fixed-equity artifact mount must remain read-only'
+grep -Fq 'STOCK_PRICE_BETA_ARTIFACT_ROOT: /data/stock-price-beta-artifacts' "$compose_file" ||
+  die 'api-server fixed-equity artifact root must be a fixed in-container path'
+for token in owner_beta_equity_signals_mode_invalid \
+  owner_beta_equity_signals_file_forbidden \
+  owner_beta_equity_signals_requires_owner_only \
+  owner_beta_equity_signals_shell_override_mismatch; do
+  grep -Fq "$token" "$production_config" ||
+    die "fixed-equity owner-beta production gate missing: $token"
+done
 grep -Fq 'owner_beta_price_input_mode_invalid' "$production_config" ||
   die 'sealed price-input mode must be exact'
 grep -Fq 'disabled|sealed_v1)' "$production_config" ||

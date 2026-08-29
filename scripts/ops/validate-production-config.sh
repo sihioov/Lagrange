@@ -147,12 +147,20 @@ owner_beta_paper_mode=$(get OWNER_BETA_PAPER_MODE)
 if ! dotenv_has OWNER_BETA_PAPER_MODE; then
   owner_beta_paper_mode=disabled
 fi
+owner_beta_equity_signals_mode=$(get OWNER_BETA_EQUITY_SIGNALS_MODE)
+if ! dotenv_has OWNER_BETA_EQUITY_SIGNALS_MODE; then
+  owner_beta_equity_signals_mode=disabled
+fi
 for key in OWNER_BETA_ACCESS_MODE_FILE OWNER_BETA_PAPER_MODE_FILE; do
   dotenv_has "$key" && invalid+=("owner_beta_policy_file_forbidden")
 done
 if dotenv_has OWNER_BETA_PRICE_INPUT_MODE_FILE ||
    [[ -v OWNER_BETA_PRICE_INPUT_MODE_FILE ]]; then
   invalid+=("owner_beta_price_input_file_forbidden")
+fi
+if dotenv_has OWNER_BETA_EQUITY_SIGNALS_MODE_FILE ||
+   [[ -v OWNER_BETA_EQUITY_SIGNALS_MODE_FILE ]]; then
+  invalid+=("owner_beta_equity_signals_file_forbidden")
 fi
 # Compose lets a process environment override its protected env file. Keep the
 # new mode protected without widening the shared dotenv key inventory: a shell
@@ -161,16 +169,27 @@ if [[ -v OWNER_BETA_PRICE_INPUT_MODE ]] &&
    [ "${OWNER_BETA_PRICE_INPUT_MODE-}" != "$owner_beta_price_input_mode" ]; then
   invalid+=("owner_beta_price_input_shell_override_mismatch")
 fi
+if [[ -v OWNER_BETA_EQUITY_SIGNALS_MODE ]] &&
+   [ "${OWNER_BETA_EQUITY_SIGNALS_MODE-}" != "$owner_beta_equity_signals_mode" ]; then
+  invalid+=("owner_beta_equity_signals_shell_override_mismatch")
+fi
 
 case "$owner_beta_access_mode" in
   disabled)
     [ "$owner_beta_price_input_mode" = disabled ] ||
       invalid+=("owner_beta_price_input_requires_owner_only")
+    [ "$owner_beta_equity_signals_mode" = disabled ] ||
+      invalid+=("owner_beta_equity_signals_requires_owner_only")
     [ "$owner_beta_paper_mode" = disabled ] ||
       invalid+=("owner_beta_paper_requires_owner_only")
     ;;
   owner_only) ;;
   *) invalid+=("owner_beta_access_mode_invalid") ;;
+esac
+
+case "$owner_beta_equity_signals_mode" in
+  disabled|sealed_v1) ;;
+  *) invalid+=("owner_beta_equity_signals_mode_invalid") ;;
 esac
 
 case "$owner_beta_price_input_mode" in

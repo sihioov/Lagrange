@@ -50,8 +50,11 @@ pre-staging, data, and serving approvals:
 5. the full
    serving release (`compose-release.sh --scope release --apply`).
 
-The protected env defaults both `OWNER_BETA_ACCESS_MODE` and
-`OWNER_BETA_PAPER_MODE` to `disabled`. Owner-only activation derives the
+The protected env defaults `OWNER_BETA_ACCESS_MODE`,
+`OWNER_BETA_EQUITY_SIGNALS_MODE`, and `OWNER_BETA_PAPER_MODE` to `disabled`.
+The fixed-equity signal mode may be set to `sealed_v1` only with owner-only
+access and reads its immutable artifact from a fixed read-only Compose mount.
+Owner-only activation derives the
 candidate only from the canonical registry embedded in the installed verified
 image; `compose-release.sh` supplies no candidate hash to the networkless
 approval wrapper. The installed immutable image embeds the approved v3 registry,

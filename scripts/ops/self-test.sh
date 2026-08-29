@@ -1086,6 +1086,15 @@ set_owner_beta_price_file_channel() {
 set_owner_beta_price_without_owner_only() {
   printf '%s\n' 'OWNER_BETA_PRICE_INPUT_MODE=sealed_v1' >>"$1"
 }
+set_owner_beta_equity_unknown() {
+  printf '%s\n' 'OWNER_BETA_EQUITY_SIGNALS_MODE=enabled' >>"$1"
+}
+set_owner_beta_equity_file_channel() {
+  printf '%s\n' 'OWNER_BETA_EQUITY_SIGNALS_MODE_FILE=/not/a/secret' >>"$1"
+}
+set_owner_beta_equity_without_owner_only() {
+  printf '%s\n' 'OWNER_BETA_EQUITY_SIGNALS_MODE=sealed_v1' >>"$1"
+}
 set_owner_beta_paper_enabled() {
   sed -i \
     -e 's/^OWNER_BETA_ACCESS_MODE=.*/OWNER_BETA_ACCESS_MODE=owner_only/' \
@@ -1097,12 +1106,16 @@ assert_owner_beta_invalid file-channel owner_beta_policy_file_forbidden set_owne
 assert_owner_beta_invalid price-unknown owner_beta_price_input_mode_invalid set_owner_beta_price_unknown
 assert_owner_beta_invalid price-file-channel owner_beta_price_input_file_forbidden set_owner_beta_price_file_channel
 assert_owner_beta_invalid price-without-owner-only owner_beta_price_input_requires_owner_only set_owner_beta_price_without_owner_only
+assert_owner_beta_invalid equity-unknown owner_beta_equity_signals_mode_invalid set_owner_beta_equity_unknown
+assert_owner_beta_invalid equity-file-channel owner_beta_equity_signals_file_forbidden set_owner_beta_equity_file_channel
+assert_owner_beta_invalid equity-without-owner-only owner_beta_equity_signals_requires_owner_only set_owner_beta_equity_without_owner_only
 assert_owner_beta_invalid paper-enabled owner_beta_paper_evidence_unavailable set_owner_beta_paper_enabled
 
 owner_beta_price_valid=$out_dir/owner-beta-price-valid.env
 cp "$out_dir/.env" "$owner_beta_price_valid"
 sed -i 's/^OWNER_BETA_ACCESS_MODE=.*/OWNER_BETA_ACCESS_MODE=owner_only/' "$owner_beta_price_valid"
 printf '%s\n' 'OWNER_BETA_PRICE_INPUT_MODE=sealed_v1' >>"$owner_beta_price_valid"
+printf '%s\n' 'OWNER_BETA_EQUITY_SIGNALS_MODE=sealed_v1' >>"$owner_beta_price_valid"
 chmod 0600 "$owner_beta_price_valid"
 if LAGRANGE_ENV_FILE="$owner_beta_price_valid" \
    LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
@@ -1131,8 +1144,22 @@ grep -Fq 'owner_beta_price_input_shell_override_mismatch' \
   exit 1
 }
 
+if OWNER_BETA_EQUITY_SIGNALS_MODE=sealed_v1 \
+   LAGRANGE_ENV_FILE="$out_dir/.env" \
+   LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \
+   bash "$ops/validate-production-config.sh" --scope infrastructure \
+   >"$out_dir/owner-beta-equity-shell-override.out" 2>&1; then
+  echo 'self-test: protected fixed-equity signals shell override unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'owner_beta_equity_signals_shell_override_mismatch' \
+  "$out_dir/owner-beta-equity-shell-override.out" || {
+  cat "$out_dir/owner-beta-equity-shell-override.out" >&2
+  exit 1
+}
+
 owner_beta_compat=$out_dir/owner-beta-compatible.env
-sed -E '/^OWNER_BETA_(ACCESS_MODE|PRICE_INPUT_MODE|PAPER_MODE)=/d' \
+sed -E '/^OWNER_BETA_(ACCESS_MODE|PRICE_INPUT_MODE|PAPER_MODE|EQUITY_SIGNALS_MODE)=/d' \
   "$out_dir/.env" >"$owner_beta_compat"
 chmod 0600 "$owner_beta_compat"
 if LAGRANGE_ENV_FILE="$owner_beta_compat" \

@@ -131,6 +131,26 @@ fn snapshot(days: usize, slope: i64) -> (FixedStockPriceBetaArtifact, PriceVolum
     (value, signal)
 }
 
+#[test]
+fn computed_snapshot_is_canonical_across_json_round_trip() {
+    let mut value = artifact(261, 1);
+    for (index, bar) in value.bars.iter_mut().enumerate() {
+        let delta = ((index * 7_919 + index / 17) % 2_003) as i64;
+        bar.close += delta;
+        bar.open = bar.close - 3;
+        bar.high = bar.close + 7;
+        bar.low = bar.close - 11;
+        bar.volume += ((index * 104_729) % 90_001) as i64;
+    }
+    value.content_sha256 = value.compute_hash().unwrap();
+    let signal =
+        PriceVolumeSignalSnapshot::compute(&value, value.sessions.last().unwrap()).unwrap();
+    let bytes = serde_json::to_vec(&signal).unwrap();
+    let reparsed: PriceVolumeSignalSnapshot = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(reparsed.compute_hash().unwrap(), signal.content_sha256);
+    reparsed.verify_against(&value).unwrap();
+}
+
 #[cfg(unix)]
 fn secure_root(path: &Path) {
     use std::os::unix::fs::PermissionsExt;

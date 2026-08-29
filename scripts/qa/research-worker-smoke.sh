@@ -23,6 +23,10 @@ export CANDIDATE_APP_ENV=qa
 export RESEARCH_FETCH_MODE=synthetic
 export RESEARCH_CANDIDATE_ENABLED=true
 export RESEARCH_ENTITLEMENT_REFERENCE="${RESEARCH_ENTITLEMENT_REFERENCE:-REPLACE_WITH_EXACT_CONTRACT_REFERENCE}"
+# Compose also resolves the fixed-equity Raw profile during semantic static
+# validation. Supply a deterministic non-secret fixture hash only for QA when
+# the caller has not provided an active contract hash.
+export RESEARCH_ENTITLEMENT_SHA256="${RESEARCH_ENTITLEMENT_SHA256:-0000000000000000000000000000000000000000000000000000000000000000}"
 # The functional smoke resolves the complete Compose model before it starts a
 # service subset. Keep the profile-gated Stage5 range input required in
 # Compose, while supplying a deterministic non-secret UUID for this QA run.
