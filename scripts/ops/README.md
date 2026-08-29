@@ -54,17 +54,17 @@ The protected env defaults both `OWNER_BETA_ACCESS_MODE` and
 `OWNER_BETA_PAPER_MODE` to `disabled`. Owner-only activation derives the
 candidate only from the canonical registry embedded in the installed verified
 image; `compose-release.sh` supplies no candidate hash to the networkless
-approval wrapper. The installed immutable image embeds the approved v2 registry,
-and a real approval-check passed on 2026-08-27 with registry SHA-256
-`sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`.
+approval wrapper. The installed immutable image embeds the approved v3 registry,
+and a real approval-check passed on 2026-08-29 with registry SHA-256
+`sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707`.
 The check reported `APPROVED`, `OWNER_ONLY`, `vendor_snapshot=true`,
 `strict_pit=false`, `PRICE_RETURN_ONLY`, `MATERIALIZED`, `UNREGISTERED`,
-`NOT_PUBLISHED`, and coverage of ETF11/1,608 sessions/17,688 bars. This is
+`NOT_PUBLISHED`, and coverage of ETF11/2,452 sessions/26,972 bars. This is
 installed-release evidence only; source changes after the installed revision
 are not deployed.
 Paper is also unconditionally rejected in owner-only mode until a separate
 three-unattended-session evidence checker is implemented; `paper-scheduler`
-stays in the immutable ten-image manifest but is omitted from owner-only
+stays in the immutable eleven-image manifest but is omitted from owner-only
 startup. These guards do not constitute a launch or dataset registration.
 
 No script enables Compose `live`, asks for a KIS account/order credential, or

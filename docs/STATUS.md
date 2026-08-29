@@ -2,7 +2,7 @@
 
 **최신 기준 시각: 2026-08-29 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.47(ETF11 10년 Raw 확장과 v3 승격 진행),
+당시의 기록이다. **현재 상태는 §0.47(ETF11 10년 Raw 확장·v3 운영 배포와 직접 QA),
 §0.46(세션 만료 로그인 복구 운영 배포와 직접 QA),
 §0.45(Owner-beta 추천 remediation 운영 배포와 직접 QA),
 §0.44(Owner-beta 추천 remediation source-ready closeout),
@@ -34,7 +34,7 @@ owner-beta 서비스와 기준 전략 카탈로그 release 적용은 완료됐�
 쓸 때는 반증이 될 수 있는 가장 가까운 곳을 먼저 열어볼 것(§0.23). 코드가 바뀌면
 게이트와 판정은 다시 실행해 갱신해야 한다.
 
-### 0.47 ETF11 10년 Raw 확장과 v3 승격 진행 (2026-08-29)
+### 0.47 ETF11 10년 Raw 확장·v3 운영 배포와 직접 QA (2026-08-29)
 
 **원인 판정.** `2020-01-31` 시작일은 KIS나 XKRX의 기술적 한계가 아니었다. 최초
 fixed-universe v1 범위로 선택된 제품 스코프였고, 2026-08-24 소유자 결정은 이미 수집된
@@ -115,13 +115,35 @@ approval 9/9, market-data lib 182/182, job-queue compute 2/2, network-none UID 1
 production artifact approval-check가 11 instruments / 2,452 sessions / 26,972 bars로
 통과했다.
 
-**현재 사용자 영향.** 새 10년 artifact는 승인됐지만 아직 화면·추천 입력으로 배포되지
-않았다. 현재 `/opt/lagrange/current`는 계속 `9ad4bc8b505e70e4a43037d477021b04e64bc452`
-v2 release다. 다음 gate는 V3 registry와 artifact reader를 포함한 production image build →
-immutable release 설치·전환 → 설치본 networkless approval check → API/Web/worker와 실제
-추천 경로 직접 QA다. 전환 뒤에도 범위는 `OWNER_ONLY`, `vendor_snapshot=true`,
-`strict_pit=false`, `PRICE_RETURN_ONLY`, `UNREGISTERED`, `NOT_PUBLISHED`이며 generic READY나
-Paper/Live 승격은 아니다.
+**운영 배포 완료.** v3 registry와 dual v2/v3 resolver, persisted five-pin replay, v3 artifact
+reader를 포함한 source commit `c958c6d277aa5baecdf40577ccc10bb63780a8ca`를
+`origin/main`에 push했다. exact revision production image 11개를 빌드했고 root-only `0600`
+release manifest는 13 lines / 2,374 bytes,
+`sha256:69e404e2b2150a1d2b884db2ca1b8d2960e752689c6f6a006322bd78ee95e0eb`다. 최초 병렬
+빌드는 호스트 OOM으로 Paseo daemon이 종료돼 완료 manifest 없이 image 3개만 남았으며,
+running production release에는 영향을 주지 않았다. 재시도는 11개 서비스를 순차 빌드한 뒤
+공식 manifest builder를 cache-only로 실행해 PASS했다.
+
+릴리스를 `/opt/lagrange/releases/c958c6d277aa5baecdf40577ccc10bb63780a8ca`에
+immutable 설치하고 `current`를 원자 전환했다. 설치본 networkless approval-check는 registry
+`sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707`,
+ETF11 / 2,452 sessions / 26,972 bars를 다시 읽어 PASS했다. production config, owner-beta
+release gate, DB role bootstrap/migration, strategy catalog sync, Raw/schema check, manifest image
+ID/revision 검증과 Compose release가 모두 통과했다. API/Web/research/recommendation/candidate/
+owner-beta/backtest application container 8개는 전부 `healthy`, exact `c958c6d...`, 최근
+panic/fatal/OOM match 0이다. post-backfill health는 credentialed EOD
+`2026-08-28T07:30:00Z`, age 60,642초로 PASS했다.
+
+**현재 사용자 영향과 직접 QA.** 새로 생성하는 owner-beta 추천은 기본 v3 10년 artifact를
+사용하고, 기존 v2 five-pin 작업은 v2 registry로 재생 가능하다. 공개 Funnel backend는 새
+reverse-proxy IP `172.24.0.4`와 일치한다. `:8443`에서 `/healthz` 200, `/` 307 → `/login`,
+`/login` 303 → 승인된 Auth0, 익명 session 및 supported-as-of API 401,
+`/api/v1/admin/live` 404를 확인했다. 무효 session cookie로 `/strategies`를 새로고침하면
+307 → `/login`이고 `We could not load this workspace` 문구는 없었다. 실제 Auth0 Owner
+credential/cookie를 추출하거나 가장하지 않았으므로 로그인 후 새 추천 1회 생성의 브라우저
+수용성만 `USER_ACCEPTANCE_PENDING`이다. 범위는 계속 `OWNER_ONLY`,
+`vendor_snapshot=true`, `strict_pit=false`, `PRICE_RETURN_ONLY`, `UNREGISTERED`,
+`NOT_PUBLISHED`이며 generic READY나 Paper/Live 승격은 아니다.
 
 **2026-08-24 owner-beta execution seam.** The next immutable `research-worker`
 image definition now includes historical price beta materialize/check and exposes

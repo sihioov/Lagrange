@@ -16,10 +16,11 @@ KIS XLSX.
 This is a single-host, single-platform owner-beta release. Its V2 manifest
 records Docker's exact local immutable `.Id` as `image_id` (`sha256:` plus 64
 lowercase hex), not a `RepoDigest`, registry digest, or multi-architecture
-claim. The manifest scope is exactly these ten locally built serving services:
+claim. The manifest scope is exactly these eleven locally built serving services:
 
 - `db-role-bootstrap`, `db-migrate`, `api-server`, `web`, `research-worker`
-- `recommendation-runner`, `candidate-runner`, `nt-backtest-worker-1`,
+- `recommendation-runner`, `candidate-runner`, `owner-beta-runner`,
+  `nt-backtest-worker-1`,
   `nt-backtest-worker-2`, `paper-scheduler`
 
 Postgres and reverse-proxy are independently content-pinned upstream images and
@@ -102,15 +103,15 @@ container/environment configuration and without automatically stopping or
 rolling back services.
 
 When `OWNER_BETA_ACCESS_MODE=owner_only`, the command runs the installed
-networkless artifact `--approval-check` after validating all ten manifest image
+networkless artifact `--approval-check` after validating all eleven manifest image
 IDs and before the first Compose `up`. It accepts only the fixed sanitized
 success contract, including the compile-time embedded approval-registry hash;
 failure starts no Compose service and prints no candidate, path, or internal
-error. One independently reviewed v2 approval record is committed locally, but
-the installed immutable `research-worker` still embeds the old empty registry.
-This remains a deliberate launch blocker until a new image/release is built and
-installed and the real approval-check succeeds. Owner-only startup also omits
-`paper-scheduler`; the ten-image manifest is unchanged so a future reviewed
+error. The installed immutable `research-worker` embeds the reviewed v2 and v3
+approval records. The default v3 approval-check passed on 2026-08-29 with
+ETF11/2,452 sessions/26,972 bars; persisted five-pin v2 work remains replayable.
+Owner-only startup also omits `paper-scheduler`; the eleven-image manifest is
+unchanged so a future reviewed
 Paper gate can activate that exact image without changing release provenance.
 
 Because installation switches `current` without starting services, an approval
