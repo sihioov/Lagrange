@@ -369,6 +369,9 @@ impl Harness {
             owner_beta_access: OwnerBetaAccessMode::Disabled,
             owner_beta_paper: OwnerBetaPaperMode::Disabled,
             owner_beta_price_input: api_server::http::state::OwnerBetaPriceInputMode::Disabled,
+            owner_beta_equity_signals:
+                api_server::http::state::OwnerBetaEquitySignalsMode::Disabled,
+            stock_price_beta_artifact_root: h.artifact_root.clone(),
         };
         let state = ApiState::from_pools(
             cfg,

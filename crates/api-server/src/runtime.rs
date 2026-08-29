@@ -7,8 +7,8 @@
 
 use crate::http::api_router;
 use crate::http::state::{
-    ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaPaperMode, OwnerBetaPriceInputMode,
-    system_seoul_today,
+    ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaEquitySignalsMode, OwnerBetaPaperMode,
+    OwnerBetaPriceInputMode, system_seoul_today,
 };
 use api_server_auth::RouterState as AuthRouterState;
 use axum::extract::State;
@@ -65,6 +65,8 @@ pub struct RuntimeConfig {
     pub owner_beta_access: OwnerBetaAccessMode,
     pub owner_beta_paper: OwnerBetaPaperMode,
     pub owner_beta_price_input: OwnerBetaPriceInputMode,
+    pub owner_beta_equity_signals: OwnerBetaEquitySignalsMode,
+    pub stock_price_beta_artifact_root: PathBuf,
     pub acquire_timeout: Duration,
 }
 
@@ -121,6 +123,8 @@ impl RuntimeConfig {
             owner_beta_access: self.owner_beta_access,
             owner_beta_paper: self.owner_beta_paper,
             owner_beta_price_input: self.owner_beta_price_input,
+            owner_beta_equity_signals: self.owner_beta_equity_signals,
+            stock_price_beta_artifact_root: self.stock_price_beta_artifact_root.clone(),
         }
     }
 }
@@ -152,6 +156,7 @@ where
     let owner_beta_access = owner_beta_access_from(&get)?;
     let owner_beta_paper = owner_beta_paper_from(&get, owner_beta_access)?;
     let owner_beta_price_input = owner_beta_price_input_from(&get, owner_beta_access)?;
+    let owner_beta_equity_signals = owner_beta_equity_signals_from(&get, owner_beta_access)?;
 
     let listen_addr = listen_addr_from(&get)?;
     let database = DatabaseConfig {
@@ -184,6 +189,8 @@ where
             key: "ARTIFACT_ROOT".to_owned(),
         });
     }
+    let stock_price_beta_artifact_root =
+        stock_price_beta_artifact_root_from(&get, owner_beta_equity_signals, &artifact_root)?;
 
     let acquire_timeout_secs = positive_u64(
         &get,
@@ -203,6 +210,8 @@ where
         owner_beta_access,
         owner_beta_paper,
         owner_beta_price_input,
+        owner_beta_equity_signals,
+        stock_price_beta_artifact_root,
         acquire_timeout: Duration::from_secs(acquire_timeout_secs),
     })
 }
@@ -296,6 +305,38 @@ where
     };
     if mode.is_enabled() && !owner_beta_access.requires_owner() {
         return Err(invalid("OWNER_BETA_PRICE_INPUT_MODE"));
+    }
+    Ok(mode)
+}
+
+/// Parse the versioned fixed-equity research activation.  A sealed mode is
+/// only meaningful inside the established owner-only beta admission boundary.
+fn owner_beta_equity_signals_from<F>(
+    get: &F,
+    owner_beta_access: OwnerBetaAccessMode,
+) -> Result<OwnerBetaEquitySignalsMode, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    if get("OWNER_BETA_EQUITY_SIGNALS_MODE_FILE").is_some() {
+        return Err(invalid("OWNER_BETA_EQUITY_SIGNALS_MODE_FILE"));
+    }
+    let Some(raw) = get("OWNER_BETA_EQUITY_SIGNALS_MODE") else {
+        return Ok(OwnerBetaEquitySignalsMode::Disabled);
+    };
+    let value = raw.into_string().map_err(|_| ConfigError::NonUnicode {
+        key: "OWNER_BETA_EQUITY_SIGNALS_MODE".to_owned(),
+    })?;
+    if value.trim() != value || value.is_empty() {
+        return Err(invalid("OWNER_BETA_EQUITY_SIGNALS_MODE"));
+    }
+    let mode = match value.as_str() {
+        "disabled" => OwnerBetaEquitySignalsMode::Disabled,
+        "sealed_v1" => OwnerBetaEquitySignalsMode::SealedV1,
+        _ => return Err(invalid("OWNER_BETA_EQUITY_SIGNALS_MODE")),
+    };
+    if mode.is_enabled() && !owner_beta_access.requires_owner() {
+        return Err(invalid("OWNER_BETA_EQUITY_SIGNALS_MODE"));
     }
     Ok(mode)
 }
@@ -711,6 +752,35 @@ where
     Ok(configured
         .map(|(_, value)| PathBuf::from(value))
         .unwrap_or_else(|| PathBuf::from(DEFAULT_ARTIFACT_ROOT)))
+}
+
+fn stock_price_beta_artifact_root_from<F>(
+    get: &F,
+    mode: OwnerBetaEquitySignalsMode,
+    disabled_fallback: &Path,
+) -> Result<PathBuf, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    if get("STOCK_PRICE_BETA_ARTIFACT_ROOT_FILE").is_some() {
+        return Err(invalid("STOCK_PRICE_BETA_ARTIFACT_ROOT_FILE"));
+    }
+    let Some(value) = optional_text(get, "STOCK_PRICE_BETA_ARTIFACT_ROOT")? else {
+        return if mode.is_enabled() {
+            Err(ConfigError::Missing {
+                key: "STOCK_PRICE_BETA_ARTIFACT_ROOT".to_owned(),
+            })
+        } else {
+            Ok(disabled_fallback.to_owned())
+        };
+    };
+    let root = PathBuf::from(value);
+    if !root.is_absolute() {
+        return Err(ConfigError::InvalidPath {
+            key: "STOCK_PRICE_BETA_ARTIFACT_ROOT".to_owned(),
+        });
+    }
+    Ok(root)
 }
 
 fn positive_u32<F>(get: &F, key: &str, default: u32) -> Result<u32, ConfigError>
@@ -1577,6 +1647,51 @@ mod tests {
             config(&env),
             Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PRICE_INPUT_MODE_FILE"
         ));
+    }
+
+    #[test]
+    fn equity_signals_mode_requires_owner_only_and_an_absolute_artifact_root() {
+        let mut env = base_env();
+        assert_eq!(
+            config(&env)
+                .expect("default config")
+                .owner_beta_equity_signals,
+            OwnerBetaEquitySignalsMode::Disabled
+        );
+        env.insert(
+            "OWNER_BETA_EQUITY_SIGNALS_MODE".to_owned(),
+            "sealed_v1".into(),
+        );
+        assert!(matches!(
+            config(&env),
+            Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_EQUITY_SIGNALS_MODE"
+        ));
+        env.insert("OWNER_BETA_ACCESS_MODE".to_owned(), "owner_only".into());
+        assert!(matches!(
+            config(&env),
+            Err(ConfigError::Missing { ref key }) if key == "STOCK_PRICE_BETA_ARTIFACT_ROOT"
+        ));
+        env.insert(
+            "STOCK_PRICE_BETA_ARTIFACT_ROOT".to_owned(),
+            "relative/root".into(),
+        );
+        assert!(matches!(
+            config(&env),
+            Err(ConfigError::InvalidPath { ref key }) if key == "STOCK_PRICE_BETA_ARTIFACT_ROOT"
+        ));
+        env.insert(
+            "STOCK_PRICE_BETA_ARTIFACT_ROOT".to_owned(),
+            "/sealed/equity-signals".into(),
+        );
+        let loaded = config(&env).expect("sealed config");
+        assert_eq!(
+            loaded.owner_beta_equity_signals,
+            OwnerBetaEquitySignalsMode::SealedV1
+        );
+        assert_eq!(
+            loaded.stock_price_beta_artifact_root,
+            PathBuf::from("/sealed/equity-signals")
+        );
     }
 
     #[test]

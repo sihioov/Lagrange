@@ -2,6 +2,8 @@ mod candidate_pipeline;
 mod candidate_sink;
 mod pipeline;
 mod sink;
+pub mod stock_price_beta_materialize;
+pub mod stock_price_beta_raw;
 mod v3_historical_input;
 mod worker;
 

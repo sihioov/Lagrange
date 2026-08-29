@@ -694,6 +694,80 @@ services:
       - range-raw-egress
 
   # ------------------------------------------------------------------
+  # research-stock-price-beta-raw — explicitly invoked fixed-30 KIS daily
+  # bars Raw-only capture. It has no database, Curated, artifact, or daemon
+  # lifecycle surface; the operator wrapper supplies the exact acknowledgement
+  # only for a one-shot `compose run --no-deps` invocation.
+  # ------------------------------------------------------------------
+  research-stock-price-beta-raw:
+    profiles: ["stock-price-beta-raw"]
+    image: lagrange-station-research-stock-price-beta-raw:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    entrypoint: ["/usr/local/bin/kis-stock-price-beta-raw"]
+    init: true
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging: *default-logging
+    cpus: "2"
+    mem_limit: 4g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+      RESEARCH_RAW_ROOT: /data
+      RESEARCH_ENTITLEMENT_REFERENCE: ${RESEARCH_ENTITLEMENT_REFERENCE:?RESEARCH_ENTITLEMENT_REFERENCE must identify the exact active data-use contract}
+      RESEARCH_ENTITLEMENT_SHA256: ${RESEARCH_ENTITLEMENT_SHA256:?RESEARCH_ENTITLEMENT_SHA256 must identify the exact active data-use contract hash}
+      KIS_APP_KEY_FILE: /run/secrets/kis_app_key
+      KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret
+    secrets:
+      - source: research_range_raw_kis_app_key
+        target: kis_app_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_range_raw_kis_app_secret
+        target: kis_app_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
+      - ../../configs/data-rights/kis.entitlement.json:/opt/lagrange/configs/data-rights/kis.entitlement.json:ro
+    networks:
+      - range-raw-egress
+
+  research-stock-price-beta-materialize:
+    profiles: ["stock-price-beta-materialize"]
+    image: lagrange-station-research-stock-price-beta-materialize:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    entrypoint: ["/usr/local/bin/kis-stock-price-beta-materialize"]
+    init: true
+    user: "10001:10001"
+    network_mode: none
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw:ro
+      - ${LAGRANGE_DATA_DIR:-../data}/stock-price-beta-artifacts:/data/artifacts
+      - ../../configs/universes/kr-stock-price-beta-v1.json:/opt/lagrange/configs/universes/kr-stock-price-beta-v1.json:ro
+      - ../../configs/data-rights/kis.entitlement.json:/opt/lagrange/configs/data-rights/kis.entitlement.json:ro
+      - ../../configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json:/opt/lagrange/configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json:ro
+
+  # ------------------------------------------------------------------
   # research-v3-input-check — provider-free, one-shot verification of the
   # owner-approved immutable V3 KIS price and action batches. It has no credentials, DB,
   # Curated mount, backend dependency, restart/health lifecycle, or network
@@ -1367,8 +1441,9 @@ secrets:
 #   backend     has egress — api-server (Auth0), research-worker (KIS), and
 #               paper-scheduler (queue). The profile-gated live-node-owner uses
 #               network_mode:none and has no external dependency.
-#   range-raw-egress — dedicated KIS Raw-only egress for historical price and
-#               action jobs; no PostgreSQL/backend attachment is possible.
+#   range-raw-egress — dedicated KIS Raw-only egress for historical price,
+#               action, and fixed-stock beta jobs; no PostgreSQL/backend
+#               attachment is possible.
 #   research-range-raw-recovery uses network_mode:none and is intentionally
 #               not attached to any Compose network.
 #   backtest-iso internal:true — nt-backtest-worker-1/2 + postgres ONLY.

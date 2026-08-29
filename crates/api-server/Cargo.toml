@@ -25,6 +25,7 @@ axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 domain = { path = "../domain" }
+factor-engine = { path = "../factor-engine" }
 risk-gateway = { path = "../risk-gateway" }
 kis-client = { path = "../kis-client" }
 async-trait = "0.1"

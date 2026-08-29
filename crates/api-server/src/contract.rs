@@ -221,6 +221,16 @@ pub const ERROR_CODES: &[ErrorCodeDef] = &[
         "owner-beta historical price input is unavailable or failed approval",
     ),
     ErrorCodeDef::new(
+        "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE",
+        StatusCode::SERVICE_UNAVAILABLE,
+        "owner-beta equity signals are unavailable or have no approved artifact",
+    ),
+    ErrorCodeDef::new(
+        "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED",
+        StatusCode::SERVICE_UNAVAILABLE,
+        "owner-beta equity signals failed immutable input verification",
+    ),
+    ErrorCodeDef::new(
         "OWNER_BETA_STRATEGY_UNSUPPORTED",
         StatusCode::UNPROCESSABLE_ENTITY,
         "owner-beta strategy configuration is not one of the shipped baselines",
@@ -342,6 +352,7 @@ pub const OWNER_BETA_PRODUCT_PREFIXES: &[&str] = &[
     "/api/v1/recommendations",
     "/api/v1/backtests",
     "/api/v1/paper",
+    "/api/v1/research/owner-beta/equity-price-signals",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,6 +360,7 @@ pub(crate) enum OwnerBetaProduct {
     Recommendations,
     Backtests,
     Paper,
+    EquitySignals,
 }
 
 pub(crate) fn owner_beta_product(path: &str) -> Option<OwnerBetaProduct> {
@@ -359,6 +371,10 @@ pub(crate) fn owner_beta_product(path: &str) -> Option<OwnerBetaProduct> {
         ),
         (OWNER_BETA_PRODUCT_PREFIXES[1], OwnerBetaProduct::Backtests),
         (OWNER_BETA_PRODUCT_PREFIXES[2], OwnerBetaProduct::Paper),
+        (
+            OWNER_BETA_PRODUCT_PREFIXES[3],
+            OwnerBetaProduct::EquitySignals,
+        ),
     ];
     groups.into_iter().find_map(|(prefix, product)| {
         (path == prefix
@@ -1173,6 +1189,42 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
         None,
         true,
     ),
+    // --- sealed owner-beta fixed-equity research -------------------------------
+    route(
+        "GET",
+        "/api/v1/research/owner-beta/equity-price-signals/latest",
+        Phase::Current,
+        false,
+        false,
+        false,
+        true,
+        None,
+        false,
+    ),
+    // Filtering only reads the immutable snapshot; this is intentionally
+    // not a saved-screen creation route.
+    route(
+        "POST",
+        "/api/v1/research/owner-beta/equity-price-signals/screen",
+        Phase::Current,
+        false,
+        false,
+        false,
+        true,
+        None,
+        false,
+    ),
+    route(
+        "GET",
+        "/api/v1/research/owner-beta/equity-price-signals/instruments/{instrument_id}",
+        Phase::Current,
+        false,
+        false,
+        false,
+        true,
+        None,
+        false,
+    ),
     // --- licensing / artifacts --------------------------------------------------
     route(
         "GET",
@@ -1234,6 +1286,7 @@ mod tests {
                     path if path.starts_with("/api/v1/recommendations/")
                         || path.starts_with("/api/v1/backtests")
                         || path.starts_with("/api/v1/paper/")
+                        || path.starts_with("/api/v1/research/owner-beta/equity-price-signals/")
                 )
             })
             .map(|route| route.path)
@@ -1252,6 +1305,7 @@ mod tests {
             "/api/v1/backtests/anything",
             "/api/v1/paper",
             "/api/v1/paper/accounts",
+            "/api/v1/research/owner-beta/equity-price-signals/latest",
         ] {
             assert!(owner_beta_applies(path), "{path} must be gated");
         }

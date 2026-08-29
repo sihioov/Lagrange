@@ -8,6 +8,7 @@ pub mod backtests;
 pub mod candidates;
 pub mod dto;
 pub mod entitlement;
+pub mod equity_signals;
 pub mod error;
 pub mod idempotency;
 pub mod licensing;
@@ -307,6 +308,19 @@ pub fn api_router(state: ApiState) -> Router {
             get(recommendations::get_run),
         )
         .route("/recommendations/latest", get(recommendations::latest))
+        // sealed, owner-only fixed-equity price/volume research
+        .route(
+            "/research/owner-beta/equity-price-signals/latest",
+            get(equity_signals::latest),
+        )
+        .route(
+            "/research/owner-beta/equity-price-signals/screen",
+            post(equity_signals::screen),
+        )
+        .route(
+            "/research/owner-beta/equity-price-signals/instruments/{instrument_id}",
+            get(equity_signals::detail),
+        )
         // common individual-stock research (separate from ETF recommendations)
         .route("/candidates/feed/latest", get(candidates::latest_feed))
         .route("/candidates/feed/{date}", get(candidates::feed_on_date))

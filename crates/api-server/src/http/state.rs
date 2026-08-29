@@ -93,6 +93,22 @@ impl OwnerBetaPriceInputMode {
     }
 }
 
+/// Explicit activation of the fixed-equity price/volume research snapshot.
+/// The version binds this API to the immutable artifact and factor contracts.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnerBetaEquitySignalsMode {
+    #[default]
+    Disabled,
+    SealedV1,
+}
+
+impl OwnerBetaEquitySignalsMode {
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::SealedV1)
+    }
+}
+
 /// Runtime configuration of the API surface.
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -126,6 +142,10 @@ pub struct ApiConfig {
     pub owner_beta_paper: OwnerBetaPaperMode,
     /// Separate activation for the sealed historical price-only input.
     pub owner_beta_price_input: OwnerBetaPriceInputMode,
+    /// Separate activation for the sealed fixed-equity research snapshot.
+    pub owner_beta_equity_signals: OwnerBetaEquitySignalsMode,
+    /// Absolute root containing content-hash artifact and snapshot directories.
+    pub stock_price_beta_artifact_root: std::path::PathBuf,
 }
 
 pub fn system_seoul_today() -> chrono::NaiveDate {
@@ -179,10 +199,11 @@ impl ApiState {
         owner_beta_access: OwnerBetaAccessMode,
         owner_beta_paper: OwnerBetaPaperMode,
     ) -> Self {
-        Self::test_without_database_with_all_policy(
+        Self::test_without_database_with_all_policy_and_equity_signals(
             owner_beta_access,
             owner_beta_paper,
             OwnerBetaPriceInputMode::Disabled,
+            OwnerBetaEquitySignalsMode::Disabled,
         )
     }
 
@@ -191,6 +212,21 @@ impl ApiState {
         owner_beta_access: OwnerBetaAccessMode,
         owner_beta_paper: OwnerBetaPaperMode,
         owner_beta_price_input: OwnerBetaPriceInputMode,
+    ) -> Self {
+        Self::test_without_database_with_all_policy_and_equity_signals(
+            owner_beta_access,
+            owner_beta_paper,
+            owner_beta_price_input,
+            OwnerBetaEquitySignalsMode::Disabled,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_without_database_with_all_policy_and_equity_signals(
+        owner_beta_access: OwnerBetaAccessMode,
+        owner_beta_paper: OwnerBetaPaperMode,
+        owner_beta_price_input: OwnerBetaPriceInputMode,
+        owner_beta_equity_signals: OwnerBetaEquitySignalsMode,
     ) -> Self {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
@@ -216,6 +252,8 @@ impl ApiState {
                 owner_beta_access,
                 owner_beta_paper,
                 owner_beta_price_input,
+                owner_beta_equity_signals,
+                stock_price_beta_artifact_root: std::path::PathBuf::from("/unused"),
             }),
             app_pool: pool.clone(),
             admin_pool: pool.clone(),

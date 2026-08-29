@@ -25,6 +25,7 @@ pub mod bars;
 pub mod candidate;
 pub mod contract;
 pub mod factors;
+pub mod fixed_stock_price_beta;
 pub mod fundamentals;
 pub mod lazy_util;
 pub mod months;
@@ -39,6 +40,22 @@ pub use candidate::{
     score_candidates, top_five,
 };
 pub use contract::{Factor, FactorContext, FactorError, FactorFrame, FactorValue, Field};
+pub use fixed_stock_price_beta::{
+    BEARISH_DRAWDOWN_MAX, BEARISH_RETURN_20_MAX, BULLISH_RETURN_20_MIN, BULLISH_VOLATILITY_120_MAX,
+    FIXED_STOCK_PRICE_BETA_FACTOR_VERSION, FIXED_STOCK_PRICE_BETA_SIGNAL_ACTIVITY_LABEL,
+    FIXED_STOCK_PRICE_BETA_SIGNAL_AUDIENCE, FIXED_STOCK_PRICE_BETA_SIGNAL_CAPABILITY,
+    FIXED_STOCK_PRICE_BETA_SIGNAL_FACTOR_VERSION, FIXED_STOCK_PRICE_BETA_SIGNAL_FLOAT_TOLERANCE,
+    FIXED_STOCK_PRICE_BETA_SIGNAL_INDEX_MEMBERSHIP, FIXED_STOCK_PRICE_BETA_SIGNAL_SCHEMA_ID,
+    FIXED_STOCK_PRICE_BETA_SIGNAL_SCHEMA_VERSION, FIXED_STOCK_PRICE_BETA_SIGNAL_SELECTION_BASIS,
+    FIXED_STOCK_PRICE_BETA_SIGNAL_UNIVERSE_ID, FIXED_STOCK_PRICE_BETA_SIGNAL_WARNING,
+    ORIGINAL_PRICE_WARNING, PRICE_VOLUME_SIGNAL_ACTIVITY_LABEL, PRICE_VOLUME_SIGNAL_AUDIENCE,
+    PRICE_VOLUME_SIGNAL_CAPABILITY, PRICE_VOLUME_SIGNAL_INDEX_MEMBERSHIP,
+    PRICE_VOLUME_SIGNAL_SCHEMA_ID, PRICE_VOLUME_SIGNAL_SCHEMA_VERSION,
+    PRICE_VOLUME_SIGNAL_SELECTION_BASIS, PRICE_VOLUME_SIGNAL_WARNING, PriceVolumeSignalError,
+    PriceVolumeSignalRow, PriceVolumeSignalSnapshot, ResearchCondition,
+    read_fixed_stock_price_beta_snapshot, read_fixed_stock_price_beta_snapshot_against,
+    write_fixed_stock_price_beta_snapshot, write_fixed_stock_price_beta_snapshot_against,
+};
 pub use normalize::{NormalizePolicy, PercentilePolicy, WinsorizePolicy, ZScorePolicy};
 pub use price_only::{PriceOnlyFactorSnapshot, PriceOnlyFactorSnapshotBuilder};
 pub use snapshot::{FactorRow, FactorSnapshot, FactorSnapshotBuilder, FrozenUniverse};

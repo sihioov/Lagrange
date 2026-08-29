@@ -52,6 +52,20 @@ const ROUTES = [
   ["GET", "/api/v1/recommendations/runs/{run_id}", { entitlement: "recommendation" }],
   ["GET", "/api/v1/recommendations/runs", { entitlement: "recommendation" }],
   ["GET", "/api/v1/recommendations/latest", { entitlement: "recommendation" }],
+  // sealed owner-beta fixed-equity research
+  ["GET", "/api/v1/research/owner-beta/equity-price-signals/latest", {
+    owner: true,
+    ownerBetaEquitySignals: true,
+  }],
+  ["POST", "/api/v1/research/owner-beta/equity-price-signals/screen", {
+    owner: true,
+    body: true,
+    ownerBetaEquitySignals: true,
+  }],
+  ["GET", "/api/v1/research/owner-beta/equity-price-signals/instruments/{instrument_id}", {
+    owner: true,
+    ownerBetaEquitySignals: true,
+  }],
   // common individual-stock research (separate from ETF recommendations)
   ["GET", "/api/v1/candidates/feed/latest", { entitlement: "candidate" }],
   ["GET", "/api/v1/candidates/feed/{date}", { entitlement: "candidate" }],
@@ -138,6 +152,8 @@ const ERROR_CODES = [
   ["RECOMMENDATION_CAPACITY_EXCEEDED", 429],
   ["OWNER_BETA_PRICE_INPUT_UNAVAILABLE", 503],
   ["OWNER_BETA_STRATEGY_UNSUPPORTED", 422],
+  ["OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE", 503],
+  ["OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED", 503],
   ["REBALANCE_PREVIEW_CAPACITY_EXCEEDED", 429],
   ["REBALANCE_PREVIEW_BINDING_REQUIRED", 409],
   ["REBALANCE_PREVIEW_NOT_READY", 409],
@@ -223,6 +239,8 @@ function operation(route) {
         owner_only: owner,
         scope: flags.ownerBetaSupportedAsOf
           ? "Owner role; approved sealed historical price-only artifact"
+          : flags.ownerBetaEquitySignals
+          ? "Owner role; sealed fixed-equity price/volume research"
           : flags.ownerBetaPrice
           ? "Owner role; sealed historical price-only input"
           : flags.ownerBetaPriceRead
@@ -309,6 +327,15 @@ function successResponsesFor(method, path) {
   if (path === "/api/v1/recommendations/owner-beta/price-only/supported-as-of" && method === "get") {
     return { "200": json("Supported owner-beta price-only artifact sessions", "#/components/schemas/OwnerBetaPriceOnlySupportedAsOf") };
   }
+  if (path === "/api/v1/research/owner-beta/equity-price-signals/latest" && method === "get") {
+    return { "200": json("Latest owner-beta equity price/volume signals", "#/components/schemas/OwnerBetaEquitySignalsLatest") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-price-signals/screen" && method === "post") {
+    return { "200": json("Owner-beta equity price/volume signal screen", "#/components/schemas/OwnerBetaEquitySignalsScreen") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-price-signals/instruments/{instrument_id}" && method === "get") {
+    return { "200": json("Owner-beta equity price/volume signal detail", "#/components/schemas/OwnerBetaEquitySignalsDetail") };
+  }
   if (path === "/api/v1/recommendations/owner-beta/price-only/runs" && method === "get") {
     return { "200": json("Owner-beta price-only recommendation history", "#/components/schemas/OwnerBetaPriceOnlyReadPage") };
   }
@@ -370,6 +397,9 @@ function pathParams(path) {
 
 function bodySchemaRef(path) {
   if (path.endsWith("/configs")) return "#/components/schemas/NewStrategyConfigBody";
+  if (path === "/api/v1/research/owner-beta/equity-price-signals/screen") {
+    return "#/components/schemas/OwnerBetaEquitySignalsScreenBody";
+  }
   if (path === "/api/v1/recommendations/owner-beta/price-only/runs") {
     return "#/components/schemas/OwnerBetaPriceOnlyRunBody";
   }
@@ -389,6 +419,23 @@ function bodySchemaRef(path) {
 function errorCodesFor(route) {
   const path = route[1];
   const flags = route[2];
+  if (flags.ownerBetaEquitySignals) {
+    const codes = [
+      "SESSION_UNKNOWN",
+      "SESSION_EXPIRED",
+      "FORBIDDEN",
+      "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE",
+      "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED",
+      "INTERNAL",
+    ];
+    if (path === "/api/v1/research/owner-beta/equity-price-signals/screen") {
+      codes.push("INVALID_PARAMETER");
+    }
+    if (path === "/api/v1/research/owner-beta/equity-price-signals/instruments/{instrument_id}") {
+      codes.push("RESOURCE_NOT_FOUND");
+    }
+    return codes;
+  }
   if (flags.ownerBetaSupportedAsOf) {
     return [
       "SESSION_UNKNOWN",
@@ -826,6 +873,207 @@ const SCHEMAS = {
       items: { type: "array", items: { $ref: "#/components/schemas/OwnerBetaPriceOnlyReadListItem" } },
       next_cursor: { type: ["string", "null"], description: "opaque signed cursor; null when the last page" },
       has_more: { type: "boolean" },
+    },
+  },
+  OwnerBetaEquitySignalsLatest: {
+    type: "object",
+    required: ["provenance", "rows", "top5"],
+    additionalProperties: false,
+    properties: {
+      provenance: { $ref: "#/components/schemas/OwnerBetaEquitySignalsProvenance" },
+      rows: {
+        type: "array",
+        items: { $ref: "#/components/schemas/OwnerBetaEquitySignalRow" },
+      },
+      top5: {
+        type: "array",
+        maxItems: 5,
+        items: { $ref: "#/components/schemas/OwnerBetaEquitySignalRow" },
+      },
+    },
+  },
+  OwnerBetaEquitySignalsScreen: {
+    type: "object",
+    required: ["provenance", "rows"],
+    additionalProperties: false,
+    properties: {
+      provenance: { $ref: "#/components/schemas/OwnerBetaEquitySignalsProvenance" },
+      rows: {
+        type: "array",
+        items: { $ref: "#/components/schemas/OwnerBetaEquitySignalRow" },
+      },
+    },
+  },
+  OwnerBetaEquitySignalsDetail: {
+    type: "object",
+    required: ["provenance", "signal", "factor_explanations", "condition_reasons"],
+    additionalProperties: false,
+    properties: {
+      provenance: { $ref: "#/components/schemas/OwnerBetaEquitySignalsProvenance" },
+      signal: { $ref: "#/components/schemas/OwnerBetaEquitySignalRow" },
+      factor_explanations: {
+        type: "array",
+        items: { $ref: "#/components/schemas/OwnerBetaEquitySignalFactor" },
+      },
+      condition_reasons: {
+        type: "array",
+        items: { $ref: "#/components/schemas/OwnerBetaEquitySignalReasonClause" },
+      },
+    },
+  },
+  OwnerBetaEquitySignalsProvenance: {
+    type: "object",
+    required: [
+      "audience",
+      "capability",
+      "selection_basis",
+      "index_membership",
+      "redistribution",
+      "publication_status",
+      "materialization_status",
+      "registration_status",
+      "universe_sha256",
+      "entitlement_sha256",
+      "registry_sha256",
+      "artifact_content_sha256",
+      "snapshot_content_sha256",
+      "batch_id",
+      "as_of",
+      "factor_version",
+      "vendor_snapshot",
+      "strict_pit",
+      "original_price",
+      "warning",
+      "activity_proxy",
+    ],
+    additionalProperties: false,
+    properties: {
+      audience: { type: "string" },
+      capability: { type: "string" },
+      selection_basis: { type: "string" },
+      index_membership: { type: "string" },
+      redistribution: { type: "string" },
+      publication_status: { type: "string" },
+      materialization_status: { type: "string" },
+      registration_status: { type: "string" },
+      universe_sha256: { type: "string" },
+      entitlement_sha256: { type: "string" },
+      registry_sha256: { type: "string" },
+      artifact_content_sha256: { type: "string" },
+      snapshot_content_sha256: { type: "string" },
+      batch_id: { type: "string" },
+      as_of: { type: "string" },
+      factor_version: { type: "string" },
+      vendor_snapshot: { type: "boolean" },
+      strict_pit: { type: "boolean" },
+      original_price: { type: "boolean" },
+      warning: { $ref: "#/components/schemas/OwnerBetaEquitySignalWarning" },
+      activity_proxy: { type: "string" },
+    },
+  },
+  OwnerBetaEquitySignalRow: {
+    type: "object",
+    required: [
+      "instrument_id",
+      "instrument_name",
+      "rank",
+      "score",
+      "condition",
+      "return_20",
+      "return_60",
+      "return_120",
+      "volatility_20",
+      "volatility_60",
+      "volatility_120",
+      "max_drawdown_120",
+      "sma_20",
+      "sma_60",
+      "average_volume_20",
+      "volume_ratio_20_60",
+      "average_trading_value_20",
+    ],
+    additionalProperties: false,
+    properties: {
+      instrument_id: { type: "string" },
+      instrument_name: { type: "string" },
+      rank: { type: "integer" },
+      score: { type: "number" },
+      condition: { $ref: "#/components/schemas/OwnerBetaEquitySignalCondition" },
+      return_20: { type: "number" },
+      return_60: { type: "number" },
+      return_120: { type: "number" },
+      volatility_20: { type: "number" },
+      volatility_60: { type: "number" },
+      volatility_120: { type: "number" },
+      max_drawdown_120: { type: "number" },
+      sma_20: { type: "number" },
+      sma_60: { type: "number" },
+      average_volume_20: { type: "number" },
+      volume_ratio_20_60: { type: "number" },
+      average_trading_value_20: { type: "number" },
+    },
+  },
+  OwnerBetaEquitySignalFactor: {
+    type: "object",
+    required: ["factor", "value", "interpretation"],
+    additionalProperties: false,
+    properties: {
+      factor: { type: "string" },
+      value: { type: "number" },
+      interpretation: { type: "string" },
+    },
+  },
+  OwnerBetaEquitySignalWarning: {
+    type: "string",
+  },
+  OwnerBetaEquitySignalReasonClause: {
+    type: "string",
+  },
+  OwnerBetaEquitySignalCondition: {
+    type: "string",
+    enum: ["BULLISH", "NEUTRAL", "BEARISH"],
+  },
+  OwnerBetaEquitySignalsScreenBody: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      instrument_ids: {
+        type: ["array", "null"],
+        maxItems: 30,
+        uniqueItems: true,
+        items: { type: "string" },
+      },
+      conditions: { $ref: "#/components/schemas/OwnerBetaEquitySignalsScreenConditions" },
+      condition: {
+        type: ["array", "null"],
+        minItems: 1,
+        uniqueItems: true,
+        items: { $ref: "#/components/schemas/OwnerBetaEquitySignalCondition" },
+      },
+    },
+  },
+  OwnerBetaEquitySignalsScreenConditions: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      score: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaEquitySignalsFiniteRange" }, { type: "null" }] },
+      return_20: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaEquitySignalsFiniteRange" }, { type: "null" }] },
+      return_60: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaEquitySignalsFiniteRange" }, { type: "null" }] },
+      return_120: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaEquitySignalsFiniteRange" }, { type: "null" }] },
+      volatility_20: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaEquitySignalsFiniteRange" }, { type: "null" }] },
+      volatility_60: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaEquitySignalsFiniteRange" }, { type: "null" }] },
+      volatility_120: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaEquitySignalsFiniteRange" }, { type: "null" }] },
+      max_drawdown_120: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaEquitySignalsFiniteRange" }, { type: "null" }] },
+      average_trading_value_20: { anyOf: [{ $ref: "#/components/schemas/OwnerBetaEquitySignalsFiniteRange" }, { type: "null" }] },
+      trend_up: { type: ["boolean", "null"] },
+    },
+  },
+  OwnerBetaEquitySignalsFiniteRange: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      min: { type: ["number", "null"] },
+      max: { type: ["number", "null"] },
     },
   },
   CandidateDatasetPins: {
@@ -1762,6 +2010,7 @@ function build() {
       { name: "auth", description: "Session, CSRF, and Owner step-up" },
       { name: "strategies", description: "Strategy catalog and schema-bound user configs" },
       { name: "recommendations", description: "Recommendation runs (entitlement-gated)" },
+      { name: "research", description: "Owner-only equity price/volume research signals" },
       { name: "candidates", description: "Common point-in-time stock research feed" },
       { name: "stocks", description: "Point-in-time deep stock analysis" },
       { name: "screener", description: "Candidate screening and actor-owned saved criteria" },

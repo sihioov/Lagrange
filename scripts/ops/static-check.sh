@@ -28,7 +28,10 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   kind-daily-self-test.sh kis-historical-price-beta-artifact.sh \
   kis-historical-price-beta-artifact-self-test.sh \
   kis-historical-price-v3-input-check.sh \
-  kis-historical-price-v3-input-check-self-test.sh; do
+  kis-historical-price-v3-input-check-self-test.sh \
+  kis-stock-price-beta-raw.sh kis-stock-price-beta-raw-self-test.sh \
+  kis-stock-price-beta-raw-with-worker-pause.sh \
+  kis-stock-price-beta-raw-with-worker-pause-self-test.sh; do
   path="$ops/$script"
   [ -x "$path" ] || die "$script must be executable"
   [ ! -L "$path" ] || die "$script must not be a symlink"
@@ -262,6 +265,190 @@ grep -Fq -- '--scope etf11' "$action_range_guard" \
 if grep -Eiq 'KIS_ACCOUNT_REF|(^|[^[:alnum:]_])CANO([^[:alnum:]_]|$)|ACNT_PRDT_CD|--profile[[:space:]]+live' "$action_range_guard"; then
   die 'KIS action-range worker protection must not add account/order/live surface'
 fi
+# Fixed-stock price-beta capture is a separate KIS daily-bars Raw one-shot.
+# Keep its operator gate and Compose service isolated from worker/publication
+# paths, and verify that it reuses the existing token/rate infrastructure.
+stock_price_raw="$ops/kis-stock-price-beta-raw.sh"
+stock_price_self_test="$ops/kis-stock-price-beta-raw-self-test.sh"
+stock_price_module="$root/data-pipelines/collectors/src/stock_price_beta_raw.rs"
+stock_price_binary="$root/data-pipelines/collectors/src/bin/kis-stock-price-beta-raw.rs"
+grep -Fq 'KIS_STOCK_PRICE_BETA_CONFIRM=I_UNDERSTAND_READ_ONLY_KIS_STOCK_PRICE_BETA_CALLS' \
+  "$stock_price_raw" || die 'fixed-stock Raw execute confirmation missing'
+grep -Fq 'compose_profile=stock-price-beta-raw' "$stock_price_raw" \
+  || die 'fixed-stock Raw Compose profile selection missing'
+grep -Fq 'compose_service=research-stock-price-beta-raw' "$stock_price_raw" \
+  || die 'fixed-stock Raw Compose service selection missing'
+grep -Fq 'compose build --pull=false "$compose_service"' "$stock_price_raw" \
+  || die 'fixed-stock Raw image build gate missing'
+grep -Fq 'docker image inspect "$image"' "$stock_price_raw" \
+  || die 'fixed-stock Raw image provenance gate missing'
+grep -Fq 'compose run --rm --no-deps' "$stock_price_raw" \
+  || die 'fixed-stock Raw must run one isolated no-deps container'
+grep -Fq 'status --porcelain=v1 --untracked-files=all' "$stock_price_raw" \
+  || die 'fixed-stock Raw clean-tree guard missing'
+grep -Fq 'STOCK_PRICE_BETA_RAW_SELF_TEST: PASS' "$stock_price_self_test" \
+  || die 'fixed-stock Raw provider-free self-test is missing'
+grep -Fq 'FIXED_STOCK_SYMBOLS' "$stock_price_module" \
+  || die 'fixed-stock Raw exact symbol contract is missing'
+grep -Fq 'MAX_PLANNED_GETS' "$stock_price_module" \
+  || die 'fixed-stock Raw request ceiling is missing'
+grep -Fq '2a0d55143df0274fcfa357f2824ed752e2969469f93254ed7dfa64766a00dde1' \
+  "$stock_price_module" || die 'fixed-stock Raw reviewed universe hash is missing'
+grep -Fq 'FIXED_CAPTURE_WINDOWS' "$stock_price_module" \
+  || die 'fixed-stock Raw common window contract is missing'
+grep -Fq 'window-01' "$stock_price_module" \
+  || die 'fixed-stock Raw newest fixed window is missing'
+grep -Fq 'window-02' "$stock_price_module" \
+  || die 'fixed-stock Raw middle fixed window is missing'
+grep -Fq 'window-03' "$stock_price_module" \
+  || die 'fixed-stock Raw oldest fixed window is missing'
+grep -Fq 'selection_basis' "$stock_price_module" \
+  || die 'fixed-stock universe selection claim validation is missing'
+grep -Fq 'FIXED_STOCK_NAMES' "$stock_price_module" \
+  || die 'fixed-stock universe name validation is missing'
+grep -Fq 'RESPONSE_PAGE_TRUNCATED' "$stock_price_module" \
+  || die 'fixed-stock Raw full-page truncation guard is missing'
+grep -Fq 'RESPONSE_OHLCV_RANGE' "$stock_price_module" \
+  || die 'fixed-stock Raw OHLCV relationship validation is missing'
+grep -Fq '56bc018f748e2a1cfa78c4b94c18adccb2e0afd6a2d66fea4ecd3654db56b36e' \
+  "$stock_price_module" || die 'fixed-stock entitlement file hash is missing'
+grep -Fq 'ent_kis_personal_owner_20260821' "$stock_price_module" \
+  || die 'fixed-stock entitlement id pin is missing'
+grep -Fq 'ENTITLEMENT_DOCUMENT_REFERENCE' "$stock_price_module" \
+  || die 'fixed-stock entitlement document reference pin is missing'
+grep -Fq 'TokenManager' "$stock_price_binary" \
+  || die 'fixed-stock Raw must reuse the existing TokenManager'
+awk '
+  /^  research-stock-price-beta-raw:/ { in_fixed_stock_raw = 1; next }
+  /^  research-stock-price-beta-materialize:/ { in_fixed_stock_raw = 0 }
+  in_fixed_stock_raw && $0 ~ /^[[:space:]]+RESEARCH_RAW_ROOT: \/data[[:space:]]*$/ { found = 1 }
+  END { exit(found ? 0 : 1) }
+' "$root/deploy/compose/compose.yml" \
+  || die 'fixed-stock Raw data root must resolve writes through its /data/raw mount'
+grep -Fq 'args=("$mode" --raw-root /data --artifact-root /data/artifacts' \
+  "$ops/kis-stock-price-beta-materialize.sh" \
+  || die 'fixed-stock materializer must pass the RawStore data root, not the raw leaf'
+grep -Fq 'RateLimiter' "$stock_price_binary" \
+  || die 'fixed-stock Raw endpoint rate limiter is missing'
+grep -Fq 'Quota::new(1, 1)' "$stock_price_binary" \
+  || die 'fixed-stock Raw one-request-per-second quota is missing'
+grep -Fq '/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice' \
+  "$stock_price_module" || die 'fixed-stock Raw daily-bars endpoint is missing'
+grep -Fq 'FHKST03010100' "$stock_price_module" \
+  || die 'fixed-stock Raw daily-bars TR ID is missing'
+grep -Fq 'FID_ORG_ADJ_PRC' "$stock_price_module" \
+  || die 'fixed-stock Raw original-price query field is missing'
+grep -Fq 'load_entitlement' "$stock_price_binary" \
+  || die 'fixed-stock CLI entitlement file validation is missing'
+grep -Fq 'validate_entitlement_binding' "$stock_price_binary" \
+  || die 'fixed-stock CLI entitlement override guard is missing'
+if grep -Eiq 'current_end|oldest|previous_day' "$stock_price_module"; then
+  die 'fixed-stock Raw must not derive paging windows from response observations'
+fi
+if grep -Eiq 'docker[[:space:]]+compose[^\n]*(up|start|stop|restart)|systemctl|sudo' "$stock_price_raw"; then
+  die 'fixed-stock Raw wrapper must not manage worker/container lifecycle'
+fi
+if grep -Eiq 'KIS_ACCOUNT_REF|(^|[^[:alnum:]_])CANO([^[:alnum:]_]|$)|ACNT_PRDT_CD|(^|[^[:alnum:]_])order([^[:alnum:]_]|$)|(^|[^[:alnum:]_])balance([^[:alnum:]_]|$)|(^|[^[:alnum:]_])execution([^[:alnum:]_]|$)|(^|[^[:alnum:]_])websocket([^[:alnum:]_]|$)|(^|[^[:alnum:]_])paper([^[:alnum:]_]|$)' \
+  "$stock_price_raw" "$stock_price_module" "$stock_price_binary"; then
+  die 'fixed-stock Raw code must not add account, order, or Paper surface'
+fi
+if grep -Eiq '/uapi/domestic-stock/v1/quotations/inquire-price|/uapi/domestic-stock/v1/quotations/chk-holiday|/uapi/domestic-stock/v1/ksdinfo/|corporate-action' \
+  "$stock_price_module" "$stock_price_binary"; then
+  die 'fixed-stock Raw code must stay on the daily-bars endpoint only'
+fi
+stock_price_service_block=$(awk '
+  $0 == "  research-stock-price-beta-raw:" { inside=1; print; next }
+  inside && $0 ~ /^  [^[:space:]][^:]*:/ { exit }
+  inside { print }
+' "$root/deploy/compose/compose.yml")
+grep -Fq 'profiles: ["stock-price-beta-raw"]' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw service profile is missing'
+grep -Fq 'image: lagrange-station-research-stock-price-beta-raw:' \
+  <<<"$stock_price_service_block" || die 'fixed-stock Raw service image tag is missing'
+grep -Fq 'entrypoint: ["/usr/local/bin/kis-stock-price-beta-raw"]' \
+  <<<"$stock_price_service_block" || die 'fixed-stock Raw service entrypoint is missing'
+grep -Fq 'user: "10001:10001"' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw service UID/GID fence is missing'
+grep -Fq 'read_only: true' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw service rootfs must be read-only'
+grep -Fq '      - /tmp' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw service tmpfs is missing'
+grep -Fq '      - ALL' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw service capability drop is missing'
+grep -Fq 'no-new-privileges:true' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw service privilege fence is missing'
+grep -Fq '${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw write mount is missing'
+grep -Fq '      - range-raw-egress' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw service must use dedicated KIS egress'
+grep -Fq 'RESEARCH_ENTITLEMENT_SHA256:' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw entitlement hash binding is missing'
+grep -Fq '../../configs/data-rights/kis.entitlement.json:/opt/lagrange/configs/data-rights/kis.entitlement.json:ro' \
+  <<<"$stock_price_service_block" || die 'fixed-stock entitlement provenance mount is missing'
+if grep -Eiq '^[[:space:]]+- backend$|depends_on:|restart:|healthcheck:|DB_|RESEARCH_CURATED_ROOT|/data/curated|/data/artifacts|CANO|ACNT_PRDT_CD|COMPOSE_PROFILES|--profile[[:space:]]+live' <<<"$stock_price_service_block"; then
+  die 'fixed-stock Raw service exposes a forbidden dependency, mount, credential, or lifecycle surface'
+fi
+[ "$(grep -Ec '^      - source:' <<<"$stock_price_service_block")" -eq 2 ] \
+  || die 'fixed-stock Raw service must mount exactly two existing KIS secrets'
+grep -Fq 'source: research_range_raw_kis_app_key' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw service must reuse the existing KIS key secret'
+grep -Fq 'source: research_range_raw_kis_app_secret' <<<"$stock_price_service_block" \
+  || die 'fixed-stock Raw service must reuse the existing KIS secret secret'
+grep -Fq 'cargo build --locked --release --package collectors --bin kis-stock-price-beta-raw' \
+  "$worker_dockerfile" || die 'fixed-stock Raw binary build is missing'
+grep -Fq 'COPY --from=builder /build/target/release/kis-stock-price-beta-raw /usr/local/bin/kis-stock-price-beta-raw' \
+  "$worker_dockerfile" || die 'fixed-stock Raw binary copy is missing'
+grep -Fq 'COPY configs/universes/kr-stock-price-beta-v1.json' "$worker_dockerfile" \
+  || die 'fixed-stock Raw universe build copy is missing'
+grep -Fq 'mkdir -p /opt/lagrange/configs/data-rights' "$worker_dockerfile" \
+  || die 'fixed-stock entitlement mount target directory is missing'
+
+stock_price_pause="$ops/kis-stock-price-beta-raw-with-worker-pause.sh"
+stock_price_pause_self_test="$ops/kis-stock-price-beta-raw-with-worker-pause-self-test.sh"
+grep -Fq 'KIS_STOCK_PRICE_BETA_RAW_WITH_WORKER_PAUSE_PLAN' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause local plan is missing'
+grep -Fq 'release_root=/opt/lagrange/current' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause installed release root default is missing'
+grep -Fq -- '--release-root' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause root-owned test release override is missing'
+grep -Fq 'release root must be root-owned' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause release root ownership gate is missing'
+grep -Fq 'release root must resolve below a releases directory' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause immutable releases-path gate is missing'
+grep -Fq 'release root basename does not match the requested commit' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause immutable release commit-directory gate is missing'
+if grep -Fq 'git -c "safe.directory=$release_root" -C "$release_root"' "$stock_price_pause"; then
+  die 'fixed-stock worker-pause must not assume Git metadata in an installed release'
+fi
+grep -Fq 'requested commit does not match installed release' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause installed env binding is missing'
+grep -Fq 'prepare_exact_raw_image' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause image preparation gate is missing'
+grep -Fq 'compose build --pull=false research-stock-price-beta-raw' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause must prepare the exact Raw image'
+grep -Fq 'KIS_STOCK_PRICE_BETA_IMAGE_PREPARED=1' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause prepared-image handoff is missing'
+grep -Fq 'KIS_STOCK_PRICE_BETA_IMAGE_PREPARED' "$stock_price_raw" \
+  || die 'fixed-stock inner wrapper prepared-image seam is missing'
+grep -Fq 'docker stop --time "$stop_timeout_secs" "$worker_id"' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause bounded exact stop is missing'
+grep -Fq 'docker start "$worker_id"' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause exact restore start is missing'
+grep -Fq 'worker_identity_is_expected' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause container/image identity gate is missing'
+grep -Fq 'multiple running research-worker containers found' "$stock_price_pause" \
+  || die 'fixed-stock worker-pause multiple-worker refusal is missing'
+grep -Fq 'STOCK_PRICE_BETA_RAW_WITH_WORKER_PAUSE_SELF_TEST: PASS' "$stock_price_pause_self_test" \
+  || die 'fixed-stock worker-pause fake-Docker self-test is missing'
+prepare_line=$(grep -nF 'prepare_exact_raw_image' "$stock_price_pause" | tail -n1 | cut -d: -f1)
+stop_line=$(grep -nF 'docker stop --time "$stop_timeout_secs" "$worker_id"' "$stock_price_pause" | cut -d: -f1)
+[ "$prepare_line" -lt "$stop_line" ] ||
+  die 'fixed-stock worker-pause must prepare the Raw image before stopping research-worker'
+if grep -Eiq 'KIS_ACCOUNT_REF|(^|[^[:alnum:]_])CANO([^[:alnum:]_]|$)|ACNT_PRDT_CD|(^|[^[:alnum:]_])order([^[:alnum:]_]|$)|(^|[^[:alnum:]_])balance([^[:alnum:]_]|$)|(^|[^[:alnum:]_])execution([^[:alnum:]_]|$)|(^|[^[:alnum:]_])websocket([^[:alnum:]_]|$)|(^|[^[:alnum:]_])paper([^[:alnum:]_]|$)|(^|[^[:alnum:]_])live([^[:alnum:]_]|$)' \
+  "$stock_price_pause"; then
+  die 'fixed-stock worker-pause must not add account, order, Paper, or live surface'
+fi
+
 state_line=$(grep -nF 'write_state RUNNING' "$range_raw" | head -n1 | cut -d: -f1)
 build_line=$(grep -nF 'compose build --pull=false "$compose_service"' "$range_raw" | head -n1 | cut -d: -f1)
 run_line=$(grep -nF 'RANGE_RAW_BATCH_ID="$stored_batch_id" compose run' "$range_raw" | head -n1 | cut -d: -f1)
@@ -677,6 +864,23 @@ grep -Fq -- '--backfill-session-dates "$session_dates_csv"' \
   "$ops/backfill-production.sh" || die 'backfill must pass only validated session dates to the worker'
 grep -Fq 'SESSION_DATES_CSV' "$ops/lib/backfill-progress.py" \
   || die 'backfill progress must validate the exact session sequence'
+materialize_service=$(awk '
+  $0 == "  research-stock-price-beta-materialize:" { inside=1; print; next }
+  inside && /^  [a-zA-Z0-9_-]+:$/ { exit }
+  inside { print }
+' "$root/deploy/compose/compose.yml")
+grep -Fq 'profiles: ["stock-price-beta-materialize"]' <<<"$materialize_service" \
+  || die 'provider-free stock-price-beta materialize Compose profile is missing'
+grep -Fq 'entrypoint: ["/usr/local/bin/kis-stock-price-beta-materialize"]' <<<"$materialize_service" \
+  || die 'provider-free stock-price-beta materialize entrypoint is missing'
+grep -Fq 'network_mode: none' <<<"$materialize_service" \
+  || die 'provider-free stock-price-beta materialize must disable networking'
+if grep -Eq 'networks:|secrets:|KIS_APP_|DATABASE_URL|curated' <<<"$materialize_service"; then
+  die 'provider-free stock-price-beta materialize service exposes a forbidden surface'
+fi
+grep -Fq 'kis-stock-price-beta-materialize' "$root/data-pipelines/collectors/Dockerfile" \
+  || die 'provider-free stock-price-beta materialize image wiring is missing'
+
 if grep -Fq -- '--backfill-range' "$root/data-pipelines/collectors/src/bin/research-worker.rs"; then
   die 'public research-worker backfill range bypass must be removed'
 fi

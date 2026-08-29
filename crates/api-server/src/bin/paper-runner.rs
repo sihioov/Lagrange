@@ -470,6 +470,9 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
             owner_beta_access: api_server::http::state::OwnerBetaAccessMode::Disabled,
             owner_beta_paper: api_server::http::state::OwnerBetaPaperMode::Disabled,
             owner_beta_price_input: api_server::http::state::OwnerBetaPriceInputMode::Disabled,
+            owner_beta_equity_signals:
+                api_server::http::state::OwnerBetaEquitySignalsMode::Disabled,
+            stock_price_beta_artifact_root: repo_root.join("artifacts"),
         },
         app_pool,
         admin_pool,

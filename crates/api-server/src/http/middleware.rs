@@ -115,6 +115,7 @@ mod tests {
             OwnerBetaProduct::Recommendations,
             OwnerBetaProduct::Backtests,
             OwnerBetaProduct::Paper,
+            OwnerBetaProduct::EquitySignals,
         ] {
             assert!(!owner_beta_product_allowed(
                 product,
@@ -129,6 +130,11 @@ mod tests {
         ));
         assert!(owner_beta_product_allowed(
             OwnerBetaProduct::Backtests,
+            true,
+            OwnerBetaPaperMode::Disabled
+        ));
+        assert!(owner_beta_product_allowed(
+            OwnerBetaProduct::EquitySignals,
             true,
             OwnerBetaPaperMode::Disabled
         ));

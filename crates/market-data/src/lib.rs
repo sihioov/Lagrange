@@ -45,6 +45,8 @@ pub mod candidate_normalize;
 pub mod contract;
 pub mod curate;
 pub mod entitlement;
+pub mod fixed_stock_price_beta;
+pub mod fixed_stock_price_beta_approval;
 pub mod freshness;
 pub mod historical_price_only;
 mod historical_price_only_approval;
@@ -104,6 +106,23 @@ pub use curate::{
     DatasetManifest, PriceCurationEvidence, PriceInstrumentCoverage, SourceBatchRef, curate_batch,
     curate_generation, curation_inputs_from_raw, curation_inputs_from_raw_entries,
     dataset_manifest_hash, price_curation_evidence, price_curation_evidence_for_generation,
+};
+pub use fixed_stock_price_beta::{
+    DailyBar, FIXED_30_ID_LIST_SHA256, FIXED_30_INSTRUMENT_IDS,
+    FIXED_STOCK_PRICE_BETA_MIN_COMMON_SESSIONS, FIXED_STOCK_PRICE_BETA_RANGE_END,
+    FIXED_STOCK_PRICE_BETA_RANGE_START, FIXED_STOCK_PRICE_BETA_RAW_CONTRACT_VERSION,
+    FIXED_STOCK_PRICE_BETA_RAW_PROVIDER_SCOPE, FIXED_STOCK_PRICE_BETA_UNIVERSE_FILE_SHA256,
+    FixedStockPriceBetaArtifact, FixedStockPriceBetaError, FixedStockPriceBetaRawBatchEvidence,
+    FixedStockPriceBetaRawFileEvidence, FixedStockPriceBetaRawSourceFile,
+    FixedStockPriceBetaRawWindow, FixedStockPriceBetaUniverse,
+    FixedStockPriceBetaUniverseInstrument, ORIGINAL_PRICE_WARNING,
+    parse_fixed_stock_price_beta_raw_sources, parse_fixed_stock_price_beta_universe,
+    read_fixed_stock_price_beta_artifact, write_fixed_stock_price_beta_artifact,
+};
+pub use fixed_stock_price_beta_approval::{
+    FixedStockPriceBetaApprovalError, FixedStockPriceBetaApprovalRegistry,
+    FixedStockPriceBetaApprovedArtifact, FixedStockPriceBetaVerifiedBundle,
+    parse_fixed_stock_price_beta_approval_registry, verify_fixed_stock_price_beta_approval,
 };
 pub use historical_price_only::{
     HISTORICAL_PRICE_ONLY_FACTOR_SCALE, HISTORICAL_PRICE_ONLY_MATERIALIZER_VERSION,

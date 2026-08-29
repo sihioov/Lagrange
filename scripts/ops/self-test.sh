@@ -20,7 +20,10 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   kis-action-range-raw-with-worker-pause.sh kis-historical-price-beta-artifact.sh \
   kis-historical-price-beta-artifact-self-test.sh \
   kis-historical-price-v3-input-check.sh \
-  kis-historical-price-v3-input-check-self-test.sh; do
+  kis-historical-price-v3-input-check-self-test.sh \
+  kis-stock-price-beta-raw.sh kis-stock-price-beta-raw-self-test.sh \
+  kis-stock-price-beta-raw-with-worker-pause.sh \
+  kis-stock-price-beta-raw-with-worker-pause-self-test.sh; do
   bash -n "$ops/$script"
 done
 
@@ -228,6 +231,9 @@ bash "$ops/tailscale-tls-self-test.sh" >/dev/null
 bash "$ops/build-production-images-self-test.sh" >/dev/null
 bash "$ops/kis-historical-price-beta-artifact-self-test.sh" >/dev/null
 bash "$ops/kis-historical-price-v3-input-check-self-test.sh" >/dev/null
+bash "$ops/kis-stock-price-beta-raw-self-test.sh" >/dev/null
+bash "$ops/kis-stock-price-beta-raw-with-worker-pause-self-test.sh" >/dev/null
+bash "$ops/kis-stock-price-beta-materialize-self-test.sh" >/dev/null
 bash "$ops/backfill-review-report-self-test.sh" >/dev/null
 bash "$ops/backfill-resume-self-test.sh" >/dev/null
 python3 - "$ops/lib/backfill-progress.py" <<'PY'

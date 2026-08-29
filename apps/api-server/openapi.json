@@ -24,6 +24,10 @@
       "description": "Recommendation runs (entitlement-gated)"
     },
     {
+      "name": "research",
+      "description": "Owner-only equity price/volume research signals"
+    },
+    {
       "name": "candidates",
       "description": "Common point-in-time stock research feed"
     },
@@ -1610,6 +1614,294 @@
             "INTERNAL",
             "DATA_ENTITLEMENT_REQUIRED",
             "INVALID_DATE"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/research/owner-beta/equity-price-signals/latest": {
+      "get": {
+        "operationId": "get__api_v1_research_owner_beta_equity_price_signals_latest",
+        "summary": "GET /api/v1/research/owner-beta/equity-price-signals/latest",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Latest owner-beta equity price/volume signals",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerBetaEquitySignalsLatest"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; sealed fixed-equity price/volume research"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE",
+            "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        }
+      }
+    },
+    "/api/v1/research/owner-beta/equity-price-signals/screen": {
+      "post": {
+        "operationId": "post__api_v1_research_owner_beta_equity_price_signals_screen",
+        "summary": "POST /api/v1/research/owner-beta/equity-price-signals/screen",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Owner-beta equity price/volume signal screen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerBetaEquitySignalsScreen"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; sealed fixed-equity price/volume research"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE",
+            "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED",
+            "INTERNAL",
+            "INVALID_PARAMETER"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnerBetaEquitySignalsScreenBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/research/owner-beta/equity-price-signals/instruments/{instrument_id}": {
+      "get": {
+        "operationId": "get__api_v1_research_owner_beta_equity_price_signals_instruments__instrument_id_",
+        "summary": "GET /api/v1/research/owner-beta/equity-price-signals/instruments/{instrument_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "instrument_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner-beta equity price/volume signal detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerBetaEquitySignalsDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; sealed fixed-equity price/volume research"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE",
+            "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED",
+            "INTERNAL",
+            "RESOURCE_NOT_FOUND"
           ],
           "phase": "current"
         }
@@ -6983,6 +7275,8 @@
           "RECOMMENDATION_CAPACITY_EXCEEDED",
           "OWNER_BETA_PRICE_INPUT_UNAVAILABLE",
           "OWNER_BETA_STRATEGY_UNSUPPORTED",
+          "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE",
+          "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED",
           "REBALANCE_PREVIEW_CAPACITY_EXCEEDED",
           "REBALANCE_PREVIEW_BINDING_REQUIRED",
           "REBALANCE_PREVIEW_NOT_READY",
@@ -7896,6 +8190,435 @@
           },
           "has_more": {
             "type": "boolean"
+          }
+        }
+      },
+      "OwnerBetaEquitySignalsLatest": {
+        "type": "object",
+        "required": [
+          "provenance",
+          "rows",
+          "top5"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "provenance": {
+            "$ref": "#/components/schemas/OwnerBetaEquitySignalsProvenance"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnerBetaEquitySignalRow"
+            }
+          },
+          "top5": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/components/schemas/OwnerBetaEquitySignalRow"
+            }
+          }
+        }
+      },
+      "OwnerBetaEquitySignalsScreen": {
+        "type": "object",
+        "required": [
+          "provenance",
+          "rows"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "provenance": {
+            "$ref": "#/components/schemas/OwnerBetaEquitySignalsProvenance"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnerBetaEquitySignalRow"
+            }
+          }
+        }
+      },
+      "OwnerBetaEquitySignalsDetail": {
+        "type": "object",
+        "required": [
+          "provenance",
+          "signal",
+          "factor_explanations",
+          "condition_reasons"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "provenance": {
+            "$ref": "#/components/schemas/OwnerBetaEquitySignalsProvenance"
+          },
+          "signal": {
+            "$ref": "#/components/schemas/OwnerBetaEquitySignalRow"
+          },
+          "factor_explanations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnerBetaEquitySignalFactor"
+            }
+          },
+          "condition_reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnerBetaEquitySignalReasonClause"
+            }
+          }
+        }
+      },
+      "OwnerBetaEquitySignalsProvenance": {
+        "type": "object",
+        "required": [
+          "audience",
+          "capability",
+          "selection_basis",
+          "index_membership",
+          "redistribution",
+          "publication_status",
+          "materialization_status",
+          "registration_status",
+          "universe_sha256",
+          "entitlement_sha256",
+          "registry_sha256",
+          "artifact_content_sha256",
+          "snapshot_content_sha256",
+          "batch_id",
+          "as_of",
+          "factor_version",
+          "vendor_snapshot",
+          "strict_pit",
+          "original_price",
+          "warning",
+          "activity_proxy"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "selection_basis": {
+            "type": "string"
+          },
+          "index_membership": {
+            "type": "string"
+          },
+          "redistribution": {
+            "type": "string"
+          },
+          "publication_status": {
+            "type": "string"
+          },
+          "materialization_status": {
+            "type": "string"
+          },
+          "registration_status": {
+            "type": "string"
+          },
+          "universe_sha256": {
+            "type": "string"
+          },
+          "entitlement_sha256": {
+            "type": "string"
+          },
+          "registry_sha256": {
+            "type": "string"
+          },
+          "artifact_content_sha256": {
+            "type": "string"
+          },
+          "snapshot_content_sha256": {
+            "type": "string"
+          },
+          "batch_id": {
+            "type": "string"
+          },
+          "as_of": {
+            "type": "string"
+          },
+          "factor_version": {
+            "type": "string"
+          },
+          "vendor_snapshot": {
+            "type": "boolean"
+          },
+          "strict_pit": {
+            "type": "boolean"
+          },
+          "original_price": {
+            "type": "boolean"
+          },
+          "warning": {
+            "$ref": "#/components/schemas/OwnerBetaEquitySignalWarning"
+          },
+          "activity_proxy": {
+            "type": "string"
+          }
+        }
+      },
+      "OwnerBetaEquitySignalRow": {
+        "type": "object",
+        "required": [
+          "instrument_id",
+          "instrument_name",
+          "rank",
+          "score",
+          "condition",
+          "return_20",
+          "return_60",
+          "return_120",
+          "volatility_20",
+          "volatility_60",
+          "volatility_120",
+          "max_drawdown_120",
+          "sma_20",
+          "sma_60",
+          "average_volume_20",
+          "volume_ratio_20_60",
+          "average_trading_value_20"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "type": "string"
+          },
+          "instrument_name": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer"
+          },
+          "score": {
+            "type": "number"
+          },
+          "condition": {
+            "$ref": "#/components/schemas/OwnerBetaEquitySignalCondition"
+          },
+          "return_20": {
+            "type": "number"
+          },
+          "return_60": {
+            "type": "number"
+          },
+          "return_120": {
+            "type": "number"
+          },
+          "volatility_20": {
+            "type": "number"
+          },
+          "volatility_60": {
+            "type": "number"
+          },
+          "volatility_120": {
+            "type": "number"
+          },
+          "max_drawdown_120": {
+            "type": "number"
+          },
+          "sma_20": {
+            "type": "number"
+          },
+          "sma_60": {
+            "type": "number"
+          },
+          "average_volume_20": {
+            "type": "number"
+          },
+          "volume_ratio_20_60": {
+            "type": "number"
+          },
+          "average_trading_value_20": {
+            "type": "number"
+          }
+        }
+      },
+      "OwnerBetaEquitySignalFactor": {
+        "type": "object",
+        "required": [
+          "factor",
+          "value",
+          "interpretation"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "factor": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          },
+          "interpretation": {
+            "type": "string"
+          }
+        }
+      },
+      "OwnerBetaEquitySignalWarning": {
+        "type": "string"
+      },
+      "OwnerBetaEquitySignalReasonClause": {
+        "type": "string"
+      },
+      "OwnerBetaEquitySignalCondition": {
+        "type": "string",
+        "enum": [
+          "BULLISH",
+          "NEUTRAL",
+          "BEARISH"
+        ]
+      },
+      "OwnerBetaEquitySignalsScreenBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "instrument_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 30,
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "conditions": {
+            "$ref": "#/components/schemas/OwnerBetaEquitySignalsScreenConditions"
+          },
+          "condition": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/OwnerBetaEquitySignalCondition"
+            }
+          }
+        }
+      },
+      "OwnerBetaEquitySignalsScreenConditions": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "score": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaEquitySignalsFiniteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "return_20": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaEquitySignalsFiniteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "return_60": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaEquitySignalsFiniteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "return_120": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaEquitySignalsFiniteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "volatility_20": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaEquitySignalsFiniteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "volatility_60": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaEquitySignalsFiniteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "volatility_120": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaEquitySignalsFiniteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_drawdown_120": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaEquitySignalsFiniteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "average_trading_value_20": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaEquitySignalsFiniteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trend_up": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "OwnerBetaEquitySignalsFiniteRange": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ]
           }
         }
       },
