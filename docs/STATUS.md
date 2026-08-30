@@ -1,8 +1,9 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준 시각: 2026-08-29 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
+**최신 기준 시각: 2026-08-30 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.47(ETF11 10년 Raw 확장·v3 운영 배포와 직접 QA),
+당시의 기록이다. **현재 상태는 §0.48(고정 30종목 가격·거래량 빠른 베타 운영 배포와 직접 QA),
+§0.47(ETF11 10년 Raw 확장·v3 운영 배포와 직접 QA),
 §0.46(세션 만료 로그인 복구 운영 배포와 직접 QA),
 §0.45(Owner-beta 추천 remediation 운영 배포와 직접 QA),
 §0.44(Owner-beta 추천 remediation source-ready closeout),
@@ -16,7 +17,7 @@
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.47에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.48에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
@@ -33,6 +34,61 @@ owner-beta 서비스와 기준 전략 카탈로그 release 적용은 완료됐�
 보여주듯 **"완료"·"처음" 같은 서사 문장도 나중에 철회된 전례가 있다** — 새 사실을
 쓸 때는 반증이 될 수 있는 가장 가까운 곳을 먼저 열어볼 것(§0.23). 코드가 바뀌면
 게이트와 판정은 다시 실행해 갱신해야 한다.
+
+### 0.48 고정 30종목 가격·거래량 빠른 베타 운영 배포와 직접 QA (2026-08-30)
+
+**제품 경계.** 개인종목 확대는 기존 ETF11 추천과 formal six-source PIT candidate를 수정하지
+않고 별도 `kr-stock-price-beta-v1` owner-only research vertical로 구현했다. universe는 소유자가
+설정한 고정 30종목 목록이며 현재 또는 과거 지수 구성종목이라는 주장을 하지 않는다. 출력은
+가격·거래량 기반 조건 신호뿐이고 목표가, 상승확률, 매수·매도, 종목 비중, 주문·계좌 경로는 없다.
+원가격(`FID_ORG_ADJ_PRC=1`) vendor snapshot이므로 corporate action 미조정 경고를 항상 보이며,
+`OWNER_ONLY`/`PRICE_VOLUME_RESEARCH_ONLY`/`vendor_snapshot=true`/`strict_pit=false`/
+`UNREGISTERED`/`NOT_PUBLISHED`를 유지한다.
+
+**실데이터와 봉인 artifact.** KIS daily-bars 허용 GET/TR `FHKST03010100`만 사용해
+`2025-08-04..2026-08-28`을 종목당 3 windows, 총 90 GET로 1 rps 순차 수집했다. 계좌·잔고·주문
+API는 호출하지 않았다. immutable Raw batch는
+`050dfdf3-6a7e-5beb-a9ca-231d5bd457a3`, payload 90개/2,232,505 bytes이고 `batch.json`은
+`sha256:fc751254a57cc7b73880eea3df8a7e894c5ed4cc884336ff55170e23df38360c`다. exact 30종목 공통
+261 sessions / 7,830 bars artifact는
+`sha256:0f79c6feff67d1668c2bc811d4dcb89b82effc4e5c769c5243b23cec4e8a5dc9`, signal snapshot은
+`sha256:65e99ff5264bc9e2e97f53bcf7c9b72128ceaf878ce6e555c53b475edd1164ec`다. 별도 approval
+registry는 이 batch/source count/range/policy와 두 content pin을 정확히 묶고 설치본의
+provider-free checker가 `approval=verified`로 재검증했다.
+
+**구현과 검증.** 20/60/120-session 수익률·실현변동성, 120-session 최대낙폭, 20/60 SMA,
+20-session 평균 거래량·거래대금과 20/60 거래량 비율을 deterministic score/rank와
+`BULLISH`/`NEUTRAL`/`BEARISH` 조건으로 만든다. 최초 materialization 감사에서 부동소수점
+snapshot을 JSON round-trip 전 hashing해 persisted JSON의 self-hash가 달라지는 결함을 발견했고,
+canonical JSON round-trip 뒤 hash하도록 수정해 회귀 테스트를 추가했다. factor-engine,
+market-data, API 전체 target과 fixed-stock focused 15/15, Web 167 unit/typecheck/lint/production build,
+provider-free Playwright 4/4가 통과했다. collectors 전체에서 남은 6개 실패는 QA
+`DATABASE_URL` 부재로 시작 전에 중단되는 기존 DB integration뿐이며 fixed-stock 경로 실패는 0이다.
+
+**사용자 기능.** Owner는 `/stock-beta`에서 실제 30종목 순위 전체와 Top 5 카드를 보고, 조건,
+수익률·변동성·낙폭 범위, 추세로 필터링하며 종목 상세에서 각 factor 값과 조건 선정 이유,
+source/approval provenance를 확인할 수 있다. 최신 snapshot은 2026-08-28 기준이고 실제 분포는
+Bullish 3 / Neutral 8 / Bearish 19다. Member에게는 내비게이션과 API가 모두 닫혀 있다. 이는
+투자 추천이 아니라 가격·거래량 연구 화면이며, 빠른 베타 범위라 10년 PIT 개인종목 데이터나
+corporate-action 조정은 후속 formal product로 남는다.
+
+**운영 배포와 직접 QA.** source commit
+`69ad55db478e16306c22bbe41affccc2907f8742`를 `origin/main`에 push하고 exact revision production
+image 11개를 순차 빌드했다. root-only `0600` release manifest는 13 lines / 2,374 bytes,
+`sha256:e49a7ee6a6539db68a4888b322f95e063445e21454aa9f82cc22ef3ba6ccc52c`이며 11개 image ID/OCI
+revision을 독립 대조했다. immutable release를
+`/opt/lagrange/releases/69ad55db478e16306c22bbe41affccc2907f8742`에 설치하고 `current`를 원자 전환했다.
+production config, 기존 ETF owner-beta gate, DB role/migration/catalog sync, Raw/schema check,
+stock artifact check와 Compose release가 모두 PASS했다. application container 8개는 exact
+`69ad55d...`, healthy, restart 0, OOM false이고 최근 panic/fatal/OOM match는 0이다. credentialed
+EOD freshness gate도 PASS했다.
+
+공개 Funnel은 유지된 reverse-proxy `172.24.0.4`를 가리킨다. 실제 `:8443`에서 `/healthz` 200,
+`/` 307 → `/login`, `/login` 303 → 승인된 Auth0, 무효 session의 새 equity-signals API 401
+`SESSION_UNKNOWN`, 무효 session으로 `/stock-beta` 새로고침 시 307 → `/login`이며
+`We could not load this workspace` 문구가 없음을 확인했다. `/api/v1/admin/live`는 계속 404다.
+실제 Auth0 Owner credential/cookie를 추출하거나 가장하지 않았으므로 로그인 후 실화면의 마지막
+사용자 수용 확인만 `USER_ACCEPTANCE_PENDING`이고, Paper/Live는 활성화하지 않았다.
 
 ### 0.47 ETF11 10년 Raw 확장·v3 운영 배포와 직접 QA (2026-08-29)
 
