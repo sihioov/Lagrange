@@ -90,6 +90,18 @@ EOD freshness gate도 PASS했다.
 실제 Auth0 Owner credential/cookie를 추출하거나 가장하지 않았으므로 로그인 후 실화면의 마지막
 사용자 수용 확인만 `USER_ACCEPTANCE_PENDING`이고, Paper/Live는 활성화하지 않았다.
 
+**2026-08-30 재QA.** 배포 약 10시간 뒤 설치본 provider-free approval check와 actual artifact의
+30 instruments × 261 sessions 완전 행렬, 7,830 bars, factor numeric/bounds, universe 30/30 매핑,
+deterministic rank와 Top 5를 다시 검산해 모두 PASS했다. 공개 Funnel의 TLS 검증을 켠 상태에서
+health 200, 목록·상세 두 화면의 만료 session 307 → `/login` 303 → Auth0, latest/detail/screen
+세 API의 401 `SESSION_UNKNOWN`, Live 404를 확인했다. 실제 Chromium 두 경로에도 workspace 오류가
+없었다. 첫 단독 Playwright 호출은 synthetic API를 기동하지 않아 화면 assertion 전에 4건 모두
+`ECONNREFUSED`였고, 정식 QA wrapper로 mock과 Next를 함께 소유·기동해 전체 browser regression
+48/48을 통과시켰다. Web unit 167/167와 typecheck도 PASS했고 lint는 기존 direct-cookie 경고 2건만
+남았다. application container 8개는 계속 healthy/restart 0/OOM false, 12시간 severe/integrity
+error 0이며 reverse-proxy access 24건 중 5xx 0, Funnel target `172.24.0.4`, EOD freshness gate가
+모두 PASS했다. 실제 Auth0 Owner 로그인 후 시각적 수용 확인은 계속 `USER_ACCEPTANCE_PENDING`이다.
+
 ### 0.47 ETF11 10년 Raw 확장·v3 운영 배포와 직접 QA (2026-08-29)
 
 **원인 판정.** `2020-01-31` 시작일은 KIS나 XKRX의 기술적 한계가 아니었다. 최초
