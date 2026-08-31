@@ -16,11 +16,11 @@ KIS XLSX.
 This is a single-host, single-platform owner-beta release. Its V2 manifest
 records Docker's exact local immutable `.Id` as `image_id` (`sha256:` plus 64
 lowercase hex), not a `RepoDigest`, registry digest, or multi-architecture
-claim. The manifest scope is exactly these eleven locally built serving services:
+claim. The manifest scope is exactly these twelve locally built serving services:
 
 - `db-role-bootstrap`, `db-migrate`, `api-server`, `web`, `research-worker`
 - `recommendation-runner`, `candidate-runner`, `owner-beta-runner`,
-  `nt-backtest-worker-1`,
+  `owner-equity-v2-runner`, `nt-backtest-worker-1`,
   `nt-backtest-worker-2`, `paper-scheduler`
 
 Postgres and reverse-proxy are independently content-pinned upstream images and
@@ -93,7 +93,7 @@ sudo /opt/lagrange/current/scripts/ops/compose-release.sh --scope release --appl
 
 That command requires the installed V2 manifest, rechecks every local image ID
 and OCI revision immediately before startup, creates a mode-0600 temporary
-Compose override mapping the eleven services to `image: sha256:<image_id>` with
+Compose override mapping the twelve services to `image: sha256:<image_id>` with
 build reset, passes `--no-build` to every `up`, and omits the opt-in `--build`
 from every one-shot `run` (Compose v5 has no `run --no-build`). It checks the
 actual `.Image` and OCI revision of each persistent local service after startup. The
@@ -103,14 +103,14 @@ container/environment configuration and without automatically stopping or
 rolling back services.
 
 When `OWNER_BETA_ACCESS_MODE=owner_only`, the command runs the installed
-networkless artifact `--approval-check` after validating all eleven manifest image
+networkless artifact `--approval-check` after validating all twelve manifest image
 IDs and before the first Compose `up`. It accepts only the fixed sanitized
 success contract, including the compile-time embedded approval-registry hash;
 failure starts no Compose service and prints no candidate, path, or internal
 error. The installed immutable `research-worker` embeds the reviewed v2 and v3
 approval records. The default v3 approval-check passed on 2026-08-29 with
 ETF11/2,452 sessions/26,972 bars; persisted five-pin v2 work remains replayable.
-Owner-only startup also omits `paper-scheduler`; the eleven-image manifest is
+Owner-only startup also omits `paper-scheduler`; the twelve-image manifest is
 unchanged so a future reviewed
 Paper gate can activate that exact image without changing release provenance.
 

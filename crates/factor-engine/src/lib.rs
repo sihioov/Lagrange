@@ -30,6 +30,7 @@ pub mod fundamentals;
 pub mod lazy_util;
 pub mod months;
 pub mod normalize;
+pub mod owner_equity_v2;
 pub mod price_only;
 pub mod snapshot;
 

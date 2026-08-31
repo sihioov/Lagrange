@@ -23,6 +23,7 @@ release_override=
 release_commit=
 owner_beta_access_mode=disabled
 owner_beta_paper_mode=disabled
+owner_equity_v2_runtime_mode=disabled
 
 local_image_services=(
   db-role-bootstrap
@@ -33,6 +34,7 @@ local_image_services=(
   recommendation-runner
   candidate-runner
   owner-beta-runner
+  owner-equity-v2-runner
   nt-backtest-worker-1
   nt-backtest-worker-2
   paper-scheduler
@@ -44,6 +46,7 @@ persistent_local_services=(
   recommendation-runner
   candidate-runner
   owner-beta-runner
+  owner-equity-v2-runner
   nt-backtest-worker-1
   nt-backtest-worker-2
   paper-scheduler
@@ -63,7 +66,7 @@ Usage: scripts/ops/compose-release.sh
                     not require KIS, Auth0/TLS, or future dataset pins.
   --scope backfill  Bootstrap PostgreSQL/migrations/raw/research-worker only;
                     it does not require serving Auth0/TLS or dataset pins.
-  --scope release    Installed owner-beta serving release after approved data.
+  --scope release    Installed owner-beta/V2 serving release after approved data.
                     It requires the installed strict V2 manifest and starts
                     every local service by exact local Docker image_id with
                     --no-build. It never enables the live profile.
@@ -119,6 +122,8 @@ owner_beta_access_mode=$(dotenv_effective_get OWNER_BETA_ACCESS_MODE)
 [ -n "$owner_beta_access_mode" ] || owner_beta_access_mode=disabled
 owner_beta_paper_mode=$(dotenv_effective_get OWNER_BETA_PAPER_MODE)
 [ -n "$owner_beta_paper_mode" ] || owner_beta_paper_mode=disabled
+owner_equity_v2_runtime_mode=$(dotenv_effective_get OWNER_EQUITY_V2_RUNTIME_MODE)
+[ -n "$owner_equity_v2_runtime_mode" ] || owner_equity_v2_runtime_mode=disabled
 
 if [ "$mode" != plan ]; then
   # Host preparation remains a distinct operator action. The release workflow
@@ -234,6 +239,15 @@ run_owner_beta_approval_gate() {
   printf 'OWNER_BETA_RELEASE_GATE: PASS access=owner_only paper=disabled\n'
 }
 
+run_owner_equity_v2_release_gate() {
+  [ "$owner_equity_v2_runtime_mode" = owner_only ] || return 0
+  [ "$mode" = apply ] || return 0
+  [ "${OWNER_EQUITY_V2_ROLLOUT_CONFIRM:-}" = \
+    I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS ] ||
+    blocked 'owner_equity_v2_rollout_confirmation_required'
+  printf 'OWNER_EQUITY_V2_RELEASE_GATE: PASS mode=owner_only confirmation=process_local\n'
+}
+
 verify_running_container() {
   local service=$1 expected_id expected_revision container_id inspected actual_id actual_revision
   expected_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}
@@ -328,7 +342,7 @@ COMPOSE_RELEASE_ORDER:
   4. up --no-build --wait postgres
   5. run --rm --no-deps db-role-bootstrap and db-migrate (no --build)
   6. run --rm --no-deps research-raw-init and research-schema-check (no --build)
-  7. up --no-build persistent local services; disabled leaves owner-beta-runner inactive, while owner_only starts it only after step 3; Paper remains excluded pending a future evidence gate
+  7. up --no-build persistent local services; disabled leaves owner-beta-runner inactive and owner-equity-v2-runner inactive, while each owner_only service starts only after its separate gate; the existing Paper policy remains disabled and its scheduler selection is unchanged
   8. up --no-build reverse-proxy; ps
 No serving image rebuild, manifest-less activation, range-raw profile, or live profile is allowed.
 EOF
@@ -368,10 +382,12 @@ if [ "$scope" = backfill ]; then
   exit 0
 fi
 
-# Owner-beta serving release: the helper above has already bound Compose to the
-# installed manifest. No mutable tag is used for these eleven local services.
+# Owner-beta serving release: optional owner-equity-v2 is added only after its
+# separate owner gate. The helper above has bound Compose to the installed
+# manifest; no mutable tag is used for these twelve local services.
 verify_manifest_images
 run_owner_beta_approval_gate
+run_owner_equity_v2_release_gate
 compose up --no-build --wait postgres
 verify_manifest_images
 compose run --rm --no-deps db-role-bootstrap
@@ -389,7 +405,7 @@ verify_running_container web
 # require approved EOD/curated data. post-backfill-health.sh owns that gate;
 # use post-backfill-health.sh --check only after the approved backfill path.
 # The legacy ordering contract was `compose up --no-deps -d research-worker recommendation-runner candidate-runner`;
-# owner-beta additionally supplies --no-build before it reaches Docker.
+# owner-beta/V2 additionally supply --no-build before they reach Docker.
 release_worker_services=(
   research-worker recommendation-runner candidate-runner
   nt-backtest-worker-1 nt-backtest-worker-2
@@ -403,6 +419,11 @@ elif [ "$owner_beta_access_mode" = owner_only ]; then
     research-worker recommendation-runner candidate-runner owner-beta-runner
     nt-backtest-worker-1 nt-backtest-worker-2
   )
+fi
+if [ "$owner_equity_v2_runtime_mode" = owner_only ]; then
+  # Explicitly target the V2 profile service only after its separate rollout
+  # gate passed; ambient COMPOSE_PROFILES remains cleared in compose().
+  release_worker_services+=(owner-equity-v2-runner)
 fi
 compose up --no-build --no-deps -d "${release_worker_services[@]}"
 for service in "${release_worker_services[@]}"; do

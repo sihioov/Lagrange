@@ -8,7 +8,7 @@
 use crate::http::api_router;
 use crate::http::state::{
     ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaEquitySignalsMode, OwnerBetaPaperMode,
-    OwnerBetaPriceInputMode, system_seoul_today,
+    OwnerBetaPriceInputMode, OwnerEquityV2RuntimePins, system_seoul_today,
 };
 use api_server_auth::RouterState as AuthRouterState;
 use axum::extract::State;
@@ -67,6 +67,7 @@ pub struct RuntimeConfig {
     pub owner_beta_price_input: OwnerBetaPriceInputMode,
     pub owner_beta_equity_signals: OwnerBetaEquitySignalsMode,
     pub stock_price_beta_artifact_root: PathBuf,
+    pub owner_equity_v2_pins: Option<OwnerEquityV2RuntimePins>,
     pub acquire_timeout: Duration,
 }
 
@@ -125,6 +126,7 @@ impl RuntimeConfig {
             owner_beta_price_input: self.owner_beta_price_input,
             owner_beta_equity_signals: self.owner_beta_equity_signals,
             stock_price_beta_artifact_root: self.stock_price_beta_artifact_root.clone(),
+            owner_equity_v2_pins: self.owner_equity_v2_pins.clone(),
         }
     }
 }
@@ -157,6 +159,7 @@ where
     let owner_beta_paper = owner_beta_paper_from(&get, owner_beta_access)?;
     let owner_beta_price_input = owner_beta_price_input_from(&get, owner_beta_access)?;
     let owner_beta_equity_signals = owner_beta_equity_signals_from(&get, owner_beta_access)?;
+    let owner_equity_v2_pins = owner_equity_v2_pins_from(&get)?;
 
     let listen_addr = listen_addr_from(&get)?;
     let database = DatabaseConfig {
@@ -212,8 +215,32 @@ where
         owner_beta_price_input,
         owner_beta_equity_signals,
         stock_price_beta_artifact_root,
+        owner_equity_v2_pins,
         acquire_timeout: Duration::from_secs(acquire_timeout_secs),
     })
+}
+
+fn owner_equity_v2_pins_from<F>(get: &F) -> Result<Option<OwnerEquityV2RuntimePins>, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    let reference = optional_text(get, "OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE")?;
+    let hash = optional_text(get, "OWNER_EQUITY_V2_ENTITLEMENT_SHA256")?;
+    match (reference, hash) {
+        (None, None) => Ok(None),
+        (Some(reference), Some(entitlement_sha256))
+            if !reference.is_empty()
+                && reference.len() <= 512
+                && !reference.chars().any(char::is_control)
+                && domain::ContentHash::parse(&entitlement_sha256).is_ok() =>
+        {
+            Ok(Some(OwnerEquityV2RuntimePins {
+                entitlement_reference: reference,
+                entitlement_sha256,
+            }))
+        }
+        _ => Err(invalid("OWNER_EQUITY_V2_ENTITLEMENT_PINS")),
+    }
 }
 
 /// Parse the deliberately narrow, non-secret owner-beta access mode.  This is
@@ -1327,6 +1354,48 @@ mod tests {
 
     fn config(env: &HashMap<String, OsString>) -> Result<RuntimeConfig, ConfigError> {
         load_config_from(|key| env.get(key).cloned())
+    }
+
+    #[test]
+    fn owner_equity_v2_entitlement_pins_are_all_or_nothing_and_typed() {
+        let mut env = base_env();
+        env.insert(
+            "OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE".to_owned(),
+            "repo://docs/decisions/entitlement.md".into(),
+        );
+        let error = match config(&env) {
+            Ok(_) => panic!("partial pins must fail closed"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error,
+            ConfigError::Invalid {
+                key: "OWNER_EQUITY_V2_ENTITLEMENT_PINS".to_owned()
+            }
+        );
+
+        env.insert(
+            "OWNER_EQUITY_V2_ENTITLEMENT_SHA256".to_owned(),
+            format!("sha256:{}", "a".repeat(64)).into(),
+        );
+        let pins = config(&env)
+            .expect("paired pins are valid")
+            .owner_equity_v2_pins
+            .expect("pins configured");
+        assert_eq!(
+            pins.entitlement_reference,
+            "repo://docs/decisions/entitlement.md"
+        );
+        assert_eq!(
+            pins.entitlement_sha256,
+            format!("sha256:{}", "a".repeat(64))
+        );
+
+        env.insert(
+            "OWNER_EQUITY_V2_ENTITLEMENT_SHA256".to_owned(),
+            "sha256:NOT_CANONICAL".into(),
+        );
+        assert!(matches!(config(&env), Err(ConfigError::Invalid { .. })));
     }
 
     #[test]

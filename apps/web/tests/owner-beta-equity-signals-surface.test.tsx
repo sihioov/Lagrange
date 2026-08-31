@@ -5,8 +5,11 @@ import StockBetaPage from "@/app/(authenticated)/stock-beta/page";
 import { type ApiSession, apiErrorEnvelopeSchema } from "@/lib/api/contracts";
 import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import {
-  ownerBetaEquitySignalsLatestSchema,
-  ownerBetaEquitySignalsScreenSchema,
+  type OwnerEquityV2LatestSignalsModel,
+  type OwnerEquityV2MembershipListModel,
+  ownerEquityV2LatestSignalsSchema,
+  ownerEquityV2MembershipListSchema,
+  ownerEquityV2SignalDetailSchema,
 } from "@/lib/products/equity-signals-contracts";
 
 const mocks = vi.hoisted(() => ({
@@ -43,38 +46,18 @@ const MEMBER_SESSION = {
 } as const satisfies ApiSession;
 
 const SHA = `sha256:${"a".repeat(64)}`;
-const IDS = Array.from({ length: 30 }, (_, index) => `${String(index + 1).padStart(6, "0")}.KRX`);
-const provenance = {
-  activity_proxy: "20-session average trading value",
-  artifact_content_sha256: SHA,
-  as_of: "2026-08-29",
-  audience: "OWNER_ONLY",
-  batch_id: "batch-stock-beta-1",
-  capability: "PRICE_VOLUME_RESEARCH_ONLY",
-  entitlement_sha256: SHA,
-  factor_version: "stock-price-beta-v1",
-  index_membership: "not an index membership universe",
-  materialization_status: "MATERIALIZED",
-  original_price: true,
-  publication_status: "OWNER_ONLY_API",
-  redistribution: "restricted",
-  registration_status: "registered",
-  registry_sha256: SHA,
-  selection_basis: "configured fixed observation list",
-  snapshot_content_sha256: SHA,
-  strict_pit: false,
-  universe_sha256: SHA,
-  vendor_snapshot: true,
-  warning: "Corporate actions can distort returns and drawdowns.",
-} as const;
+const BASE_TIME = "2026-08-30T06:00:00Z";
 
-function row(index: number) {
+function instrumentId(index: number): string {
+  return `${String(index + 1).padStart(6, "0")}.KRX`;
+}
+
+function signal(index: number) {
   return {
     average_trading_value_20: 1_000_000 + index,
     average_volume_20: 100_000 + index,
     condition: index % 3 === 0 ? "BULLISH" : index % 3 === 1 ? "NEUTRAL" : "BEARISH",
-    instrument_id: IDS[index] as string,
-    instrument_name: `Instrument ${index + 1}`,
+    instrument_id: instrumentId(index),
     max_drawdown_120: -0.1 - index / 1_000,
     rank: index + 1,
     return_120: 0.4 - index / 100,
@@ -87,55 +70,72 @@ function row(index: number) {
     volatility_20: 0.1 + index / 1_000,
     volatility_60: 0.15 + index / 1_000,
     volume_ratio_20_60: 1.2 + index / 1_000,
+    generation: 1,
   } as const;
 }
 
-const rows = IDS.map((_, index) => row(index));
-const latest = ownerBetaEquitySignalsLatestSchema.parse({
-  provenance,
-  rows,
-  top5: rows.slice(0, 5),
-});
-const screened = ownerBetaEquitySignalsScreenSchema.parse({
-  provenance,
-  rows: rows.slice(0, 2),
-});
-const detail = {
-  condition_reasons: [
-    "return_20 is at least 0.050000",
-    "trend_up is true",
-    "volatility_120 is at most 0.350000",
+function latestFor(rowCount: number): OwnerEquityV2LatestSignalsModel {
+  const rows = Array.from({ length: rowCount }, (_, index) => signal(index));
+  return ownerEquityV2LatestSignalsSchema.parse({
+    snapshot: {
+      as_of: "2026-08-29",
+      published_at: BASE_TIME,
+      row_count: rows.length,
+      snapshot_id: "00000000-0000-4000-8000-000000000401",
+      universe_sha256: SHA,
+    },
+    rows,
+    top5: rows.slice(0, 5),
+  });
+}
+
+function membershipsFor(
+  memberships: readonly { readonly index: number; readonly lifecycle?: "READY" | "FAILED" }[] = [
+    { index: 0 },
   ],
-  factor_explanations: [
-    { factor: "return_20", interpretation: "20-session price return", value: 0.1 },
-    { factor: "return_60", interpretation: "60-session price return", value: 0.2 },
-    { factor: "return_120", interpretation: "120-session price return", value: 0.4 },
-    {
-      factor: "volatility_120",
-      interpretation: "120-session annualized volatility",
-      value: 0.2,
+): OwnerEquityV2MembershipListModel {
+  return ownerEquityV2MembershipListSchema.parse({
+    memberships: memberships.map(({ index, lifecycle = "READY" }) => ({
+      coverage: {
+        first_session: "2025-08-01",
+        last_session: "2026-08-29",
+        minimum_observed_sessions: 121,
+        observed_sessions: lifecycle === "READY" ? 261 : 40,
+        target_observed_sessions: 261,
+      },
+      failure:
+        lifecycle === "FAILED"
+          ? { code: "OWNER_EQUITY_BACKFILL_RETRYABLE", retryable: true }
+          : undefined,
+      generation: 1,
+      id: `00000000-0000-4000-8000-${String(index + 501).padStart(12, "0")}`,
+      instrument_id: instrumentId(index),
+      lifecycle,
+      requested_at: BASE_TIME,
+      updated_at: BASE_TIME,
+    })),
+    policy: {
+      active_instruments: memberships.length,
+      max_active_instruments: 100,
+      minimum_observed_sessions: 121,
+      remaining_capacity: 100 - memberships.length,
+      target_observed_sessions: 261,
     },
-    {
-      factor: "max_drawdown_120",
-      interpretation: "120-session maximum drawdown",
-      value: -0.1,
-    },
-    {
-      factor: "average_trading_value_20",
-      interpretation: "20-session activity proxy, not execution liquidity",
-      value: 1_000_000,
-    },
-    { factor: "trend", interpretation: "sma20 minus sma60", value: 1 },
-  ],
-  provenance,
-  signal: rows[0],
-};
+  });
+}
+
+const latest = latestFor(31);
+const memberships = membershipsFor();
+const detail = ownerEquityV2SignalDetailSchema.parse({
+  signal: latest.rows[0],
+  snapshot: latest.snapshot,
+});
 
 function apiFor(overrides: Record<string, unknown> = {}) {
   return {
-    getOwnerBetaEquitySignalDetail: vi.fn(async () => detail),
-    getOwnerBetaEquitySignalsLatest: vi.fn(async () => latest),
-    screenOwnerBetaEquitySignals: vi.fn(async () => screened),
+    getOwnerEquityV2LatestSignals: vi.fn(async () => latest),
+    getOwnerEquityV2Memberships: vi.fn(async () => memberships),
+    getOwnerEquityV2SignalDetail: vi.fn(async () => detail),
     ...overrides,
   };
 }
@@ -158,82 +158,69 @@ afterEach(() => {
   mocks.getLocale.mockResolvedValue("en");
 });
 
-describe("Owner-beta stock signal workspace", () => {
-  it("renders Top 5 cards and the complete ranked table for the latest view", async () => {
+describe("Owner stock signal beta V2 surface", () => {
+  it.each([31, 100])("renders a dynamic %s-row ranked snapshot", async (rowCount) => {
     session();
-    const api = apiFor();
+    const api = apiFor({ getOwnerEquityV2LatestSignals: vi.fn(async () => latestFor(rowCount)) });
+    mocks.getProductApi.mockResolvedValue(api);
+
+    const markup = renderToStaticMarkup(await StockBetaPage());
+    const tableBody = markup.slice(markup.indexOf("<tbody>"), markup.indexOf("</tbody>") + 8);
+
+    expect(markup).toContain("Latest signals");
+    expect(markup).toContain('data-testid="stock-beta-top-five"');
+    expect(markup.match(/stock-beta-top-card/g)).toHaveLength(5);
+    expect(tableBody.match(/<tr>/g)).toHaveLength(rowCount);
+    expect(markup).toContain(`${String(rowCount).padStart(6, "0")}.KRX`);
+    expect(markup).not.toContain("30-row");
+    expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
+    expect(api.getOwnerEquityV2LatestSignals).toHaveBeenCalledOnce();
+  });
+
+  it("renders an empty managed universe and server-provided capacity without signal rows", async () => {
+    session();
+    const emptyMemberships = membershipsFor([]);
+    const api = apiFor({
+      getOwnerEquityV2LatestSignals: vi.fn(async () => {
+        throw new ApiProblem(
+          404,
+          apiErrorEnvelopeSchema.parse({
+            error: {
+              code: "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE",
+              message: "not rendered",
+              request_id: "request-test",
+            },
+          }),
+        );
+      }),
+      getOwnerEquityV2Memberships: vi.fn(async () => emptyMemberships),
+    });
     mocks.getProductApi.mockResolvedValue(api);
 
     const markup = renderToStaticMarkup(await StockBetaPage());
 
-    expect(markup).toContain("Top 5");
-    expect(markup).toContain('data-testid="stock-beta-top-five"');
-    expect(markup.match(/stock-beta-top-card/g)).toHaveLength(5);
-    expect(markup).toContain('data-testid="stock-beta-rank-table"');
-    const tableBody = markup.slice(markup.indexOf("<tbody>"), markup.indexOf("</tbody>") + 8);
-    expect(tableBody.match(/<tr>/g)).toHaveLength(30);
-    expect(markup).toContain("Instrument 30");
-    expect(api.getOwnerBetaEquitySignalsLatest).toHaveBeenCalledOnce();
-    expect(api.screenOwnerBetaEquitySignals).not.toHaveBeenCalled();
+    expect(markup).toContain("No configured instruments");
+    expect(markup).toContain('data-testid="stock-beta-policy-capacity"');
+    expect(markup).toContain("100");
+    expect(markup).toContain("Signals are not ready");
+    expect(markup).not.toContain('data-testid="stock-beta-rank-table"');
   });
 
-  it("maps GET filters to the exact screen body and keeps the URL form server-owned", async () => {
+  it("renders V2 detail metadata and does not render V1 factors or provenance", async () => {
     session();
     const api = apiFor();
     mocks.getProductApi.mockResolvedValue(api);
 
     const markup = renderToStaticMarkup(
-      await StockBetaPage({
-        searchParams: Promise.resolve({
-          activity_min: "1000",
-          condition: ["BULLISH", "BEARISH"],
-          max_drawdown_120_max: "-0.1",
-          return_20_max: "0.2",
-          return_20_min: "0.1",
-          trend: "up",
-          volatility_60_min: "0.3",
-        }),
-      }),
+      await StockBetaDetailPage({ params: Promise.resolve({ instrument: "000001.KRX" }) }),
     );
 
-    expect(api.getOwnerBetaEquitySignalsLatest).not.toHaveBeenCalled();
-    expect(api.screenOwnerBetaEquitySignals).toHaveBeenCalledWith({
-      condition: ["BULLISH", "BEARISH"],
-      conditions: {
-        average_trading_value_20: { min: 1000 },
-        max_drawdown_120: { max: -0.1 },
-        return_20: { max: 0.2, min: 0.1 },
-        trend_up: true,
-        volatility_60: { min: 0.3 },
-      },
-    });
-    expect(markup).toContain('method="get"');
-    expect(markup).toContain('action="/stock-beta"');
-  });
-
-  it("renders every factor, exact condition reason, rank, condition, and provenance", async () => {
-    session();
-    const api = apiFor();
-    mocks.getProductApi.mockResolvedValue(api);
-
-    const markup = renderToStaticMarkup(
-      await StockBetaDetailPage({
-        params: Promise.resolve({ instrument: "000001.KRX" }),
-      }),
-    );
-
-    for (const factor of detail.factor_explanations) {
-      expect(markup).toContain(factor.factor);
-      expect(markup).toContain(factor.interpretation);
-      expect(markup).toContain(String(factor.value));
-    }
-    for (const reason of detail.condition_reasons) expect(markup).toContain(reason);
-    expect(markup).toContain("Rank 1");
-    expect(markup).toContain("BULLISH");
-    expect(markup).toContain("OWNER_ONLY");
-    expect(markup).toContain(provenance.batch_id);
-    expect(markup).toContain(provenance.registry_sha256);
-    expect(markup).toContain(provenance.snapshot_content_sha256);
+    expect(markup).toContain("000001.KRX");
+    expect(markup).toContain("Snapshot");
+    expect(markup).toContain(SHA);
+    expect(markup).not.toContain("Exact condition reasons");
+    expect(markup).not.toContain("API provenance");
+    expect(api.getOwnerEquityV2SignalDetail).toHaveBeenCalledWith("000001.KRX");
   });
 
   it("blocks a Member direct visit before constructing the product client or rendering rows", async () => {
@@ -245,78 +232,39 @@ describe("Owner-beta stock signal workspace", () => {
     const markup = renderToStaticMarkup(await StockBetaPage());
 
     expect(markup).toContain("Owner access required");
-    expect(markup).not.toContain("Instrument 1");
+    expect(markup).not.toContain("000001.KRX");
     expect(markup).not.toContain("stock-beta-rank-table");
     expect(mocks.getProductApi).not.toHaveBeenCalled();
   });
 
-  it.each(["SESSION_EXPIRED", "SESSION_UNKNOWN"] as const)(
-    "redirects after the initial session load when the latest product request returns %s",
-    async (code) => {
-      session();
-      const api = apiFor({
-        getOwnerBetaEquitySignalsLatest: vi.fn(async () => {
-          throw loginError(code);
-        }),
-      });
-      mocks.getProductApi.mockResolvedValue(api);
-
-      await expect(StockBetaPage()).rejects.toMatchObject({
-        destination: "/login",
-        message: "NEXT_REDIRECT",
-      });
-      expect(mocks.getServerSession).toHaveBeenCalledOnce();
-      expect(mocks.redirect).toHaveBeenCalledWith("/login");
-    },
-  );
-
-  it.each(["SESSION_EXPIRED", "SESSION_UNKNOWN"] as const)(
-    "redirects after the initial session load when the detail product request returns %s",
-    async (code) => {
-      session();
-      const api = apiFor({
-        getOwnerBetaEquitySignalDetail: vi.fn(async () => {
-          throw loginError(code);
-        }),
-      });
-      mocks.getProductApi.mockResolvedValue(api);
-
-      await expect(
-        StockBetaDetailPage({ params: Promise.resolve({ instrument: "000001.KRX" }) }),
-      ).rejects.toMatchObject({ destination: "/login", message: "NEXT_REDIRECT" });
-      expect(mocks.redirect).toHaveBeenCalledWith("/login");
-    },
-  );
-
-  it.each(["SESSION_EXPIRED", "SESSION_UNKNOWN"] as const)(
-    "redirects after the initial session load when the screen product request returns %s",
-    async (code) => {
-      session();
-      const api = apiFor({
-        screenOwnerBetaEquitySignals: vi.fn(async () => {
-          throw loginError(code);
-        }),
-      });
-      mocks.getProductApi.mockResolvedValue(api);
-
-      await expect(
-        StockBetaPage({ searchParams: Promise.resolve({ condition: "BULLISH" }) }),
-      ).rejects.toMatchObject({ destination: "/login", message: "NEXT_REDIRECT" });
-      expect(mocks.redirect).toHaveBeenCalledWith("/login");
-    },
-  );
-
-  it.each([
-    ["OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE", "Signal data unavailable"],
-    ["OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED", "Signal snapshot integrity failed"],
-  ] as const)("renders no data for %s", async (code, title) => {
+  it("redirects to login when the authenticated V2 request expires", async () => {
     session();
     const api = apiFor({
-      getOwnerBetaEquitySignalsLatest: vi.fn(async () => {
+      getOwnerEquityV2Memberships: vi.fn(async () => {
+        throw loginError("SESSION_EXPIRED");
+      }),
+    });
+    mocks.getProductApi.mockResolvedValue(api);
+
+    await expect(StockBetaPage()).rejects.toMatchObject({
+      destination: "/login",
+      message: "NEXT_REDIRECT",
+    });
+    expect(mocks.redirect).toHaveBeenCalledWith("/login");
+  });
+
+  it("renders a typed integrity failure without provider prose or rows", async () => {
+    session();
+    const api = apiFor({
+      getOwnerEquityV2LatestSignals: vi.fn(async () => {
         throw new ApiProblem(
           503,
           apiErrorEnvelopeSchema.parse({
-            error: { code, message: "static product failure", request_id: "request-test" },
+            error: {
+              code: "OWNER_EQUITY_INTEGRITY_FAILED",
+              message: "provider response must not be rendered",
+              request_id: "request-test",
+            },
           }),
         );
       }),
@@ -325,31 +273,29 @@ describe("Owner-beta stock signal workspace", () => {
 
     const markup = renderToStaticMarkup(await StockBetaPage());
 
-    expect(markup).toContain(title);
-    expect(markup).not.toContain("Instrument 1");
-    expect(markup).not.toContain("stock-beta-rank-table");
+    expect(markup).toContain("Signal snapshot integrity failed");
+    expect(markup).not.toContain("provider response must not be rendered");
+    expect(markup).not.toContain('data-testid="stock-beta-rank-table"');
   });
 
-  it("keeps the policy boundary prominent in both locales and avoids affirmative prohibited claims", async () => {
+  it("keeps the policy boundary prominent in both locales", async () => {
     session();
-    const api = apiFor();
-    mocks.getProductApi.mockResolvedValue(api);
+    mocks.getProductApi.mockResolvedValue(apiFor());
 
     const english = renderToStaticMarkup(await StockBetaPage());
-    expect(english).toContain("Owner-only configured fixed observation list");
-    expect(english).toContain("not current or historical index membership");
-    expect(english).toContain("Original/unadjusted price");
+    expect(english).toContain("Owner-only configured research instrument universe");
+    expect(english).toContain("vendor snapshot");
+    expect(english).toContain("Original/unadjusted prices");
+    expect(english).toContain("not point-in-time (PIT)");
     expect(english).toContain("not execution liquidity");
-    expect(english).toContain(
-      "not probabilities, target prices, buy/sell calls, weights, or orders",
-    );
 
     mocks.getLocale.mockResolvedValue("ko");
     const korean = renderToStaticMarkup(await StockBetaPage());
-    expect(korean).toContain("오너 전용으로 구성된 고정 관찰 목록");
+    expect(korean).toContain("오너 전용으로 구성된 연구 종목군");
+    expect(korean).toContain("벤더 스냅샷");
     expect(korean).toContain("원주가(비조정 가격)");
+    expect(korean).toContain("PIT(시점 일치)");
     expect(korean).toContain("체결 유동성을 뜻하지 않습니다");
-    expect(korean).toContain("확률, 목표가, 매수·매도 신호, 비중 또는 주문이 아닙니다");
   });
 
   it("does not advertise the stock beta to Members but does add it to Owner navigation", async () => {

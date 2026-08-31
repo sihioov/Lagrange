@@ -395,3 +395,255 @@ export function ownerBetaEquitySignalsScreenBody(
   };
   return ownerBetaEquitySignalsScreenBodySchema.parse(body);
 }
+
+// V2 is intentionally a separate contract. Keep the fixed V1 schemas above
+// unchanged so the legacy read path remains byte- and behavior-compatible.
+export type OwnerEquityV2AddBodyContract = components["schemas"]["OwnerEquityV2AddBody"];
+export type OwnerEquityV2Lifecycle = components["schemas"]["OwnerEquityV2Lifecycle"];
+export type OwnerEquityV2PolicyContract = components["schemas"]["OwnerEquityV2Policy"];
+export type OwnerEquityV2CoverageContract = components["schemas"]["OwnerEquityV2Coverage"];
+export type OwnerEquityV2FailureContract = components["schemas"]["OwnerEquityV2Failure"];
+export type OwnerEquityV2MembershipContract = components["schemas"]["OwnerEquityV2Membership"];
+export type OwnerEquityV2MembershipListContract =
+  components["schemas"]["OwnerEquityV2MembershipList"];
+export type OwnerEquityV2MembershipStatusContract =
+  components["schemas"]["OwnerEquityV2MembershipStatus"];
+export type OwnerEquityV2MutationContract = components["schemas"]["OwnerEquityV2Mutation"];
+export type OwnerEquityV2SnapshotContract = components["schemas"]["OwnerEquityV2Snapshot"];
+export type OwnerEquityV2SignalContract = components["schemas"]["OwnerEquityV2Signal"];
+export type OwnerEquityV2LatestSignalsContract =
+  components["schemas"]["OwnerEquityV2LatestSignals"];
+export type OwnerEquityV2ScreenSignalsContract =
+  components["schemas"]["OwnerEquityV2ScreenSignals"];
+export type OwnerEquityV2SignalDetailContract = components["schemas"]["OwnerEquityV2SignalDetail"];
+export type OwnerEquityV2ScreenBodyContract = components["schemas"]["OwnerEquityV2ScreenBody"];
+
+export const OWNER_EQUITY_V2_MEMBERSHIPS_PATH =
+  "/api/v1/research/owner-beta/equity-universe-v2/memberships" as const;
+export const OWNER_EQUITY_V2_SIGNALS_LATEST_PATH =
+  "/api/v1/research/owner-beta/equity-universe-v2/signals/latest" as const;
+export const OWNER_EQUITY_V2_SIGNALS_SCREEN_PATH =
+  "/api/v1/research/owner-beta/equity-universe-v2/signals/screen" as const;
+export const OWNER_EQUITY_V2_SIGNALS_DETAIL_PATH =
+  "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments" as const;
+
+export const OWNER_EQUITY_V2_LIFECYCLE_VALUES = [
+  "REQUESTED",
+  "VALIDATING",
+  "BACKFILLING",
+  "MATERIALIZING",
+  "READY",
+  "INSUFFICIENT_HISTORY",
+  "FAILED",
+  "DISABLED",
+] as const satisfies readonly OwnerEquityV2Lifecycle[];
+
+export const ownerEquityV2LifecycleSchema = z.enum(OWNER_EQUITY_V2_LIFECYCLE_VALUES);
+
+const ownerEquityV2FailureCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/);
+
+export const ownerEquityV2AddBodySchema = z
+  .object({ instrument_code: z.string().regex(/^\d{6}$/) })
+  .strict();
+
+export type OwnerEquityV2AddBody = z.infer<typeof ownerEquityV2AddBodySchema>;
+
+export const ownerEquityV2PolicySchema = z
+  .object({
+    max_active_instruments: z.number().int().nonnegative(),
+    active_instruments: z.number().int().nonnegative(),
+    remaining_capacity: z.number().int().nonnegative(),
+    target_observed_sessions: z.number().int().nonnegative(),
+    minimum_observed_sessions: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((policy, context) => {
+    if (policy.active_instruments > policy.max_active_instruments) {
+      context.addIssue({ code: "custom", message: "active instruments exceed policy capacity" });
+    }
+    if (policy.remaining_capacity !== policy.max_active_instruments - policy.active_instruments) {
+      context.addIssue({ code: "custom", message: "remaining capacity does not match policy" });
+    }
+    if (policy.minimum_observed_sessions > policy.target_observed_sessions) {
+      context.addIssue({ code: "custom", message: "minimum coverage exceeds target coverage" });
+    }
+  });
+
+export type OwnerEquityV2PolicyModel = z.infer<typeof ownerEquityV2PolicySchema>;
+
+export const ownerEquityV2CoverageSchema = z
+  .object({
+    observed_sessions: z.number().int().nonnegative(),
+    target_observed_sessions: z.number().int().nonnegative(),
+    minimum_observed_sessions: z.number().int().nonnegative(),
+    first_session: z.iso.date().optional(),
+    last_session: z.iso.date().optional(),
+  })
+  .strict()
+  .superRefine((coverage, context) => {
+    if (coverage.minimum_observed_sessions > coverage.target_observed_sessions) {
+      context.addIssue({ code: "custom", message: "minimum coverage exceeds target coverage" });
+    }
+  });
+
+export type OwnerEquityV2CoverageModel = z.infer<typeof ownerEquityV2CoverageSchema>;
+
+export const ownerEquityV2FailureSchema = z
+  .object({ code: ownerEquityV2FailureCodeSchema, retryable: z.boolean() })
+  .strict();
+
+export type OwnerEquityV2FailureModel = z.infer<typeof ownerEquityV2FailureSchema>;
+
+export const ownerEquityV2MembershipSchema = z
+  .object({
+    id: z.uuid(),
+    instrument_id: instrumentIdSchema,
+    lifecycle: ownerEquityV2LifecycleSchema,
+    // A newly accepted membership has no materialized generation yet.  The
+    // API deliberately reports that lifecycle as generation 0 until the
+    // first immutable candidate is admitted.
+    generation: z.number().int().nonnegative(),
+    coverage: ownerEquityV2CoverageSchema,
+    failure: ownerEquityV2FailureSchema.optional(),
+    requested_at: z.iso.datetime(),
+    disabled_at: z.iso.datetime().optional(),
+    updated_at: z.iso.datetime(),
+  })
+  .strict();
+
+export type OwnerEquityV2MembershipModel = z.infer<typeof ownerEquityV2MembershipSchema>;
+
+export const ownerEquityV2MembershipListSchema = z
+  .object({
+    policy: ownerEquityV2PolicySchema,
+    memberships: z.array(ownerEquityV2MembershipSchema),
+  })
+  .strict();
+
+export type OwnerEquityV2MembershipListModel = z.infer<typeof ownerEquityV2MembershipListSchema>;
+
+export const ownerEquityV2MembershipStatusSchema = z
+  .object({
+    policy: ownerEquityV2PolicySchema,
+    membership: ownerEquityV2MembershipSchema,
+  })
+  .strict();
+
+export type OwnerEquityV2MembershipStatusModel = z.infer<
+  typeof ownerEquityV2MembershipStatusSchema
+>;
+
+export const ownerEquityV2MutationSchema = z
+  .object({
+    resource: ownerEquityV2MembershipSchema,
+    job_id: z.uuid(),
+    duplicate_active: z.boolean(),
+  })
+  .strict();
+
+export type OwnerEquityV2MutationModel = z.infer<typeof ownerEquityV2MutationSchema>;
+
+export const ownerEquityV2SnapshotSchema = z
+  .object({
+    snapshot_id: z.uuid(),
+    as_of: z.iso.date(),
+    universe_sha256: nonEmptyStringSchema,
+    row_count: z.number().int().nonnegative(),
+    published_at: z.iso.datetime(),
+  })
+  .strict();
+
+export type OwnerEquityV2SnapshotModel = z.infer<typeof ownerEquityV2SnapshotSchema>;
+
+export const ownerEquityV2SignalSchema = z
+  .object({
+    instrument_id: instrumentIdSchema,
+    generation: z.number().int().positive(),
+    rank: z.number().int().positive(),
+    score: finiteNumberSchema,
+    condition: ownerBetaEquitySignalConditionSchema,
+    return_20: finiteNumberSchema,
+    return_60: finiteNumberSchema,
+    return_120: finiteNumberSchema,
+    volatility_20: finiteNumberSchema,
+    volatility_60: finiteNumberSchema,
+    volatility_120: finiteNumberSchema,
+    max_drawdown_120: finiteNumberSchema,
+    sma_20: finiteNumberSchema,
+    sma_60: finiteNumberSchema,
+    average_volume_20: finiteNumberSchema,
+    volume_ratio_20_60: finiteNumberSchema,
+    average_trading_value_20: finiteNumberSchema,
+  })
+  .strict();
+
+export type OwnerEquityV2SignalModel = z.infer<typeof ownerEquityV2SignalSchema>;
+
+export const ownerEquityV2LatestSignalsSchema = z
+  .object({
+    snapshot: ownerEquityV2SnapshotSchema,
+    rows: z.array(ownerEquityV2SignalSchema),
+    top5: z.array(ownerEquityV2SignalSchema),
+  })
+  .strict();
+
+export type OwnerEquityV2LatestSignalsModel = z.infer<typeof ownerEquityV2LatestSignalsSchema>;
+
+export const ownerEquityV2ScreenSignalsSchema = z
+  .object({
+    snapshot: ownerEquityV2SnapshotSchema,
+    rows: z.array(ownerEquityV2SignalSchema),
+  })
+  .strict();
+
+export type OwnerEquityV2ScreenSignalsModel = z.infer<typeof ownerEquityV2ScreenSignalsSchema>;
+
+export const ownerEquityV2SignalDetailSchema = z
+  .object({
+    snapshot: ownerEquityV2SnapshotSchema,
+    signal: ownerEquityV2SignalSchema,
+  })
+  .strict();
+
+export type OwnerEquityV2SignalDetailModel = z.infer<typeof ownerEquityV2SignalDetailSchema>;
+
+const uniqueOwnerEquityV2InstrumentIdsSchema = z
+  .array(instrumentIdSchema)
+  .superRefine((ids, context) => {
+    if (new Set(ids).size !== ids.length) {
+      context.addIssue({ code: "custom", message: "instrument_ids must be unique" });
+    }
+  });
+
+const uniqueOwnerEquityV2ConditionsSchema = z
+  .array(ownerBetaEquitySignalConditionSchema)
+  .superRefine((conditions, context) => {
+    if (new Set(conditions).size !== conditions.length) {
+      context.addIssue({ code: "custom", message: "conditions must be unique" });
+    }
+  });
+
+export const ownerEquityV2ScreenBodySchema = z
+  .object({
+    instrument_ids: uniqueOwnerEquityV2InstrumentIdsSchema.nullable().optional(),
+    conditions: uniqueOwnerEquityV2ConditionsSchema.nullable().optional(),
+  })
+  .strict();
+
+export type OwnerEquityV2ScreenBody = z.infer<typeof ownerEquityV2ScreenBodySchema>;
+
+export function ownerEquityV2MembershipPath(membershipId: string): string {
+  return `${OWNER_EQUITY_V2_MEMBERSHIPS_PATH}/${encodeURIComponent(membershipId)}`;
+}
+
+export function ownerEquityV2RetryPath(membershipId: string): string {
+  return `${ownerEquityV2MembershipPath(membershipId)}/retry`;
+}
+
+export function ownerEquityV2DisablePath(membershipId: string): string {
+  return `${ownerEquityV2MembershipPath(membershipId)}/disable`;
+}
+
+export function ownerEquityV2SignalDetailPath(instrumentId: string): string {
+  return `${OWNER_EQUITY_V2_SIGNALS_DETAIL_PATH}/${encodeURIComponent(instrumentId)}`;
+}

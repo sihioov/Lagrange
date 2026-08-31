@@ -168,6 +168,10 @@ const OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL: &str =
     include_str!("../../../../migrations/0052_owner_beta_strategy_config_lock.up.sql");
 const OWNER_BETA_STRATEGY_CONFIG_LOCK_DOWN_SQL: &str =
     include_str!("../../../../migrations/0052_owner_beta_strategy_config_lock.down.sql");
+const OWNER_EQUITY_UNIVERSE_V2_UP_SQL: &str =
+    include_str!("../../../../migrations/0053_owner_managed_equity_universe_v2.up.sql");
+const OWNER_EQUITY_UNIVERSE_V2_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0053_owner_managed_equity_universe_v2.down.sql");
 const CANDIDATE_SCHEDULE_RS: &str =
     include_str!("../../../../crates/job-queue/src/candidate/schedule.rs");
 const CANDIDATE_RUNNER_RS: &str =
@@ -935,6 +939,170 @@ fn owner_beta_strategy_config_lock_is_lineage_bound_and_reversible() {
     );
 }
 
+#[test]
+fn owner_equity_universe_v2_schema_is_separate_actor_scoped_and_fail_closed() {
+    const DESCRIPTION: &str = "owner managed equity universe v2";
+    let version_53 = MIGRATOR
+        .migrations
+        .iter()
+        .filter(|migration| migration.version == 53)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        version_53.len(),
+        2,
+        "0053 must have exactly one reversible up/down migration pair"
+    );
+    assert!(
+        version_53
+            .iter()
+            .all(|migration| migration.description == DESCRIPTION),
+        "0053 must retain its fixed migration name"
+    );
+    assert_eq!(
+        version_53
+            .iter()
+            .filter(|migration| migration.migration_type == MigrationType::ReversibleUp)
+            .count(),
+        1
+    );
+    assert_eq!(
+        version_53
+            .iter()
+            .filter(|migration| migration.migration_type == MigrationType::ReversibleDown)
+            .count(),
+        1
+    );
+    let ordered_up = MIGRATOR
+        .migrations
+        .iter()
+        .filter(|migration| migration.migration_type != MigrationType::ReversibleDown)
+        .map(|migration| (migration.version, migration.description.as_ref()))
+        .collect::<Vec<_>>();
+    assert!(
+        ordered_up
+            .windows(2)
+            .any(|pair| { pair == [(52, "owner beta strategy config lock"), (53, DESCRIPTION),] }),
+        "0053 must be the exact append-only successor to 0052"
+    );
+
+    for token in [
+        "CREATE TABLE public.owner_equity_universe_policies",
+        "INSERT INTO public.owner_equity_universe_policies",
+        "CREATE FUNCTION public.provision_owner_equity_universe_policy()",
+        "CREATE TRIGGER user_roles_provision_owner_equity_universe_policy",
+        "max_active_instruments integer NOT NULL",
+        "target_observed_sessions integer NOT NULL",
+        "minimum_observed_sessions integer NOT NULL",
+        "minimum_observed_sessions >= 121",
+        "CREATE TABLE public.owner_equity_memberships",
+        "owner_equity_memberships_one_active_instrument",
+        "WHERE state <> 'DISABLED'",
+        "'REQUESTED', 'VALIDATING', 'BACKFILLING', 'MATERIALIZING'",
+        "'READY', 'INSUFFICIENT_HISTORY', 'FAILED', 'DISABLED'",
+        "CREATE TABLE public.owner_equity_membership_events",
+        "CREATE TABLE public.owner_equity_instrument_generations",
+        "owner equity generation must be monotonically consecutive",
+        "CREATE TABLE public.owner_equity_generation_admissions",
+        "raw_manifest_sha256 text NOT NULL",
+        "artifact_manifest_sha256 text NOT NULL",
+        "entitlement_sha256 text NOT NULL",
+        "capture_code_commit text NOT NULL",
+        "materializer_code_commit text NOT NULL",
+        "CREATE TABLE public.owner_equity_signal_snapshots",
+        "CREATE TABLE public.owner_equity_signal_snapshot_rows",
+        "owner_equity_signal_snapshot_rows_admission_fkey",
+        "owner equity signal snapshot universe is not exact",
+        "pg_catalog.string_agg(",
+        "E'\\n' ORDER BY snapshot_row.instrument_id",
+        "owner equity memberships are soft-disabled, never deleted",
+        "owner equity lineage is append-only",
+        "error_code ~ '^[A-Z][A-Z0-9_]{0,63}$'",
+        "error_retryable boolean",
+    ] {
+        assert!(
+            OWNER_EQUITY_UNIVERSE_V2_UP_SQL.contains(token),
+            "0053 domain/schema contract is missing {token}"
+        );
+    }
+
+    for table in [
+        "owner_equity_universe_policies",
+        "owner_equity_memberships",
+        "owner_equity_membership_events",
+        "owner_equity_instrument_generations",
+        "owner_equity_generation_admissions",
+        "owner_equity_signal_snapshots",
+        "owner_equity_signal_snapshot_rows",
+    ] {
+        for token in [
+            format!("ALTER TABLE public.{table} OWNER TO migration_owner"),
+            format!("ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY"),
+            format!("ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY"),
+            format!("REVOKE ALL ON TABLE public.{table}"),
+        ] {
+            assert!(
+                OWNER_EQUITY_UNIVERSE_V2_UP_SQL.contains(&token),
+                "0053 RLS/ownership contract is missing {token}"
+            );
+        }
+    }
+    for token in [
+        "pg_catalog.current_setting('app.actor_user_id', true)",
+        "CREATE POLICY owner_equity_memberships_app_select",
+        "CREATE POLICY owner_equity_memberships_app_insert",
+        "CREATE POLICY owner_equity_memberships_worker_all",
+        "CREATE POLICY owner_equity_memberships_admin_select",
+        "CREATE POLICY owner_equity_memberships_owner_all",
+        "GRANT UPDATE (published_at) ON public.owner_equity_signal_snapshots TO worker",
+        "GRANT EXECUTE ON FUNCTION public.retry_owner_equity_membership",
+        "GRANT EXECUTE ON FUNCTION public.disable_owner_equity_membership",
+        "GRANT EXECUTE ON FUNCTION\n    public.schedule_owner_equity_incremental",
+    ] {
+        assert!(
+            OWNER_EQUITY_UNIVERSE_V2_UP_SQL.contains(token),
+            "0053 actor/grant contract is missing {token}"
+        );
+    }
+
+    let executable_up = OWNER_EQUITY_UNIVERSE_V2_UP_SQL.to_ascii_lowercase();
+    for forbidden in [
+        "cano",
+        "acnt_prdt_cd",
+        "kis_account_ref",
+        "order_intent",
+        "broker_connection",
+        "error_message",
+        "provider_message",
+        "kr-stock-price-beta-v1",
+    ] {
+        assert!(
+            !executable_up.contains(forbidden),
+            "0053 must not introduce forbidden/adjacent surface {forbidden}"
+        );
+    }
+    for sql in [
+        OWNER_EQUITY_UNIVERSE_V2_UP_SQL,
+        OWNER_EQUITY_UNIVERSE_V2_DOWN_SQL,
+    ] {
+        assert!(
+            !sql.to_ascii_uppercase().contains("CASCADE"),
+            "0053 must not use CASCADE"
+        );
+    }
+    for token in [
+        "IN ACCESS EXCLUSIVE MODE",
+        "NO FORCE ROW LEVEL SECURITY",
+        "owner equity universe V2 rollback would discard durable state",
+        "USING ERRCODE = '55000'",
+        "DROP TABLE public.owner_equity_universe_policies",
+    ] {
+        assert!(
+            OWNER_EQUITY_UNIVERSE_V2_DOWN_SQL.contains(token),
+            "0053 fail-closed down contract is missing {token}"
+        );
+    }
+}
+
 // TEST-ONLY migration fixtures.  These construct only the public JSON shape
 // checked by migrations 0049-0051; they are not production owner-beta input
 // constructors and do not represent approved artifact or registry pins.
@@ -1230,6 +1398,12 @@ async fn owner_beta_migration_runtime_body(
     assert_eq!(applied_count(owner).await?, 51);
     MIGRATOR.run(owner).await?;
     assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
+    // 0053 has its own runtime/rollback contract below. Keep this 0049--0052
+    // failure/reconnect scenario at its original migration frontier so the
+    // expected failed 0051 down migration remains the first failed attempt and
+    // SQLx cannot strand a lock after first successfully reverting 0053.
+    MIGRATOR.undo(owner, 52).await?;
+    assert_eq!(applied_count(owner).await?, 52);
 
     sqlx::query(
         "INSERT INTO instruments (id, symbol, venue, currency) \
@@ -10094,5 +10268,377 @@ async fn recommendation_pipeline_index_preflight_body(
             .await?;
         assert!(present.is_some(), "preflight cleanup must allow {index}");
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn owner_equity_universe_v2_rls_lifecycle_and_lineage_contract() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = owner_equity_universe_v2_contract_body(&super_url, &db, &owner).await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("owner equity universe V2 contract FAILED: {error}");
+    }
+}
+
+async fn owner_equity_universe_v2_contract_body(
+    super_url: &str,
+    db: &str,
+    owner: &PgPool,
+) -> Result<(), Box<dyn Error>> {
+    const CODE_COMMIT: &str = "3aef74d1a5cdf4368733a8bf45fae66d7de38da7";
+    const ENTITLEMENT_REFERENCE: &str = "repo://configs/data-rights/kis.entitlement.json";
+    let entitlement_hash = format!("sha256:{}", "a".repeat(64));
+    let raw_hash = format!("sha256:{}", "b".repeat(64));
+    let artifact_hash = format!("sha256:{}", "c".repeat(64));
+
+    MIGRATOR.run(owner).await?;
+    let owner_a: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://owner-equity.test', 'owner-a', 'equity-a@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    let owner_b: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (issuer, subject, email) \
+         VALUES ('https://owner-equity.test', 'owner-b', 'equity-b@example.test') \
+         RETURNING id",
+    )
+    .fetch_one(owner)
+    .await?;
+    let owner_a_actor = actor_pool(super_url, db, "migration_owner", &owner_a.to_string()).await?;
+    let owner_b_actor = actor_pool(super_url, db, "migration_owner", &owner_b.to_string()).await?;
+    for (actor, owner_id) in [(&owner_a_actor, owner_a), (&owner_b_actor, owner_b)] {
+        sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, 'owner')")
+            .bind(owner_id)
+            .execute(owner)
+            .await?;
+        let defaults: (i32, i32, i32) = sqlx::query_as(
+            "SELECT max_active_instruments, target_observed_sessions, \
+                    minimum_observed_sessions \
+               FROM owner_equity_universe_policies WHERE owner_user_id = $1",
+        )
+        .bind(owner_id)
+        .fetch_one(actor)
+        .await?;
+        assert_eq!(defaults, (100, 261, 121));
+    }
+    for (actor, owner_id) in [(&owner_a_actor, owner_a), (&owner_b_actor, owner_b)] {
+        sqlx::query(
+            "UPDATE owner_equity_universe_policies \
+                SET max_active_instruments = 2, updated_at = clock_timestamp() \
+              WHERE owner_user_id = $1",
+        )
+        .bind(owner_id)
+        .execute(actor)
+        .await?;
+    }
+
+    let app_a = actor_pool(super_url, db, "app", &owner_a.to_string()).await?;
+    let app_b = actor_pool(super_url, db, "app", &owner_b.to_string()).await?;
+    let membership_a: Uuid = sqlx::query_scalar(
+        "INSERT INTO owner_equity_memberships \
+         (owner_user_id, instrument_id, transition_actor_user_id, \
+          transition_code_commit, transition_entitlement_sha256) \
+         VALUES ($1, '005930.KRX', $1, $2, $3) RETURNING id",
+    )
+    .bind(owner_a)
+    .bind(CODE_COMMIT)
+    .bind(&entitlement_hash)
+    .fetch_one(&app_a)
+    .await?;
+    let duplicate = sqlx::query(
+        "INSERT INTO owner_equity_memberships \
+         (owner_user_id, instrument_id, transition_actor_user_id, \
+          transition_code_commit, transition_entitlement_sha256) \
+         VALUES ($1, '005930.KRX', $1, $2, $3)",
+    )
+    .bind(owner_a)
+    .bind(CODE_COMMIT)
+    .bind(&entitlement_hash)
+    .execute(&app_a)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&duplicate).as_deref(), Some("23505"));
+    let _membership_b: Uuid = sqlx::query_scalar(
+        "INSERT INTO owner_equity_memberships \
+         (owner_user_id, instrument_id, transition_actor_user_id, \
+          transition_code_commit, transition_entitlement_sha256) \
+         VALUES ($1, '005930.KRX', $1, $2, $3) RETURNING id",
+    )
+    .bind(owner_b)
+    .bind(CODE_COMMIT)
+    .bind(&entitlement_hash)
+    .fetch_one(&app_b)
+    .await?;
+    let app_a_counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM owner_equity_memberships), \
+                (SELECT count(*) FROM owner_equity_membership_events)",
+    )
+    .fetch_one(&app_a)
+    .await?;
+    assert_eq!(app_a_counts, (1, 1), "owner A cannot read owner B lineage");
+    let unscoped_count: i64 = sqlx::query_scalar("SELECT count(*) FROM owner_equity_memberships")
+        .fetch_one(owner)
+        .await?;
+    assert_eq!(unscoped_count, 0, "FORCE RLS fails closed without actor");
+    let direct_owner_state_change =
+        sqlx::query("UPDATE owner_equity_memberships SET state = 'READY' WHERE id = $1")
+            .bind(membership_a)
+            .execute(&app_a)
+            .await
+            .unwrap_err();
+    assert_eq!(
+        pg_code(&direct_owner_state_change).as_deref(),
+        Some("42501")
+    );
+
+    let worker = role_pool(super_url, db, "worker").await?;
+    let entitlement_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO data_entitlements \
+         (contract_document_sha256, contract_reference, status, covered_datasets, \
+          covered_uses, effective_from, effective_until, managed_by) \
+         VALUES ($1, $2, 'ACTIVE', '[\"krx_eod_bars\"]'::jsonb, \
+                 '[\"owner_research\"]'::jsonb, DATE '2026-01-01', \
+                 DATE '2026-12-31', $3) RETURNING id",
+    )
+    .bind("a".repeat(64))
+    .bind(ENTITLEMENT_REFERENCE)
+    .bind(owner_a)
+    .fetch_one(owner)
+    .await?;
+    let calendar_batch_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO data_batches \
+         (provider, market, batch_date, kind, storage_path, content_sha256, \
+          bytes_size, retrieved_at) \
+         VALUES ('kis', 'KR', DATE '2026-08-28', 'CALENDAR', \
+                 'raw://owner-equity-v2-calendar', $1, 1, \
+                 TIMESTAMPTZ '2026-08-28 08:00:00+00') RETURNING id",
+    )
+    .bind("d".repeat(64))
+    .fetch_one(owner)
+    .await?;
+    sqlx::query(
+        "INSERT INTO trading_calendars \
+         (exchange, session_date, session_type, timezone, source, source_version, \
+          source_batch_id, content_sha256, retrieved_at) \
+         VALUES ('KRX', DATE '2026-08-28', 'TRADING', 'Asia/Seoul', 'kis', 'test', \
+                 $1, $2, TIMESTAMPTZ '2026-08-28 08:00:00+00')",
+    )
+    .bind(calendar_batch_id)
+    .bind("d".repeat(64))
+    .execute(owner)
+    .await?;
+    let illegal_transition = sqlx::query(
+        "UPDATE owner_equity_memberships \
+         SET state = 'BACKFILLING', transition_actor_user_id = $2, \
+             transition_code_commit = $3, transition_entitlement_sha256 = $4, \
+             updated_at = now() WHERE id = $1",
+    )
+    .bind(membership_a)
+    .bind(owner_a)
+    .bind(CODE_COMMIT)
+    .bind(&entitlement_hash)
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&illegal_transition).as_deref(), Some("23514"));
+    for state in ["VALIDATING", "BACKFILLING", "MATERIALIZING"] {
+        sqlx::query(
+            "UPDATE owner_equity_memberships \
+             SET state = $2, transition_actor_user_id = $3, \
+                 transition_code_commit = $4, transition_entitlement_sha256 = $5, \
+                 updated_at = now() WHERE id = $1",
+        )
+        .bind(membership_a)
+        .bind(state)
+        .bind(owner_a)
+        .bind(CODE_COMMIT)
+        .bind(&entitlement_hash)
+        .execute(&worker)
+        .await?;
+    }
+
+    let skipped_generation = sqlx::query(
+        "INSERT INTO owner_equity_instrument_generations \
+         (membership_id, owner_user_id, instrument_id, generation, \
+          target_observed_sessions, minimum_observed_sessions, observed_sessions, \
+          first_session, last_session) \
+         VALUES ($1, $2, '005930.KRX', 2, 261, 121, 121, \
+                 '2026-01-02', '2026-06-30')",
+    )
+    .bind(membership_a)
+    .bind(owner_a)
+    .execute(&worker)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&skipped_generation).as_deref(), Some("23514"));
+    let generation_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO owner_equity_instrument_generations \
+         (membership_id, owner_user_id, instrument_id, generation, \
+          target_observed_sessions, minimum_observed_sessions, observed_sessions, \
+          first_session, last_session) \
+         VALUES ($1, $2, '005930.KRX', 1, 261, 121, 121, \
+                 '2026-01-02', '2026-06-30') RETURNING id",
+    )
+    .bind(membership_a)
+    .bind(owner_a)
+    .fetch_one(&worker)
+    .await?;
+    sqlx::query(
+        "INSERT INTO owner_equity_generation_admissions \
+         (generation_id, owner_user_id, membership_id, instrument_id, generation, \
+          raw_manifest_sha256, artifact_manifest_sha256, entitlement_sha256, \
+          capture_code_commit, materializer_code_commit) \
+         VALUES ($1, $2, $3, '005930.KRX', 1, $4, $5, $6, $7, $7)",
+    )
+    .bind(generation_id)
+    .bind(owner_a)
+    .bind(membership_a)
+    .bind(&raw_hash)
+    .bind(&artifact_hash)
+    .bind(&entitlement_hash)
+    .bind(CODE_COMMIT)
+    .execute(&worker)
+    .await?;
+    sqlx::query(
+        "UPDATE owner_equity_memberships \
+         SET state = 'READY', transition_actor_user_id = $2, \
+             transition_code_commit = $3, transition_entitlement_sha256 = $4, \
+             updated_at = now() WHERE id = $1",
+    )
+    .bind(membership_a)
+    .bind(owner_a)
+    .bind(CODE_COMMIT)
+    .bind(&entitlement_hash)
+    .execute(&worker)
+    .await?;
+
+    let scheduled: (Uuid, bool) = sqlx::query_as(
+        "SELECT job_id, inserted FROM schedule_owner_equity_incremental(\
+            $1, $2, DATE '2026-08-28', $3, $4, $5)",
+    )
+    .bind(owner_a)
+    .bind(membership_a)
+    .bind(CODE_COMMIT)
+    .bind(ENTITLEMENT_REFERENCE)
+    .bind(&entitlement_hash)
+    .fetch_one(&worker)
+    .await?;
+    assert!(scheduled.1);
+    let scheduled_replay: (Uuid, bool) = sqlx::query_as(
+        "SELECT job_id, inserted FROM schedule_owner_equity_incremental(\
+            $1, $2, DATE '2026-08-28', $3, $4, $5)",
+    )
+    .bind(owner_a)
+    .bind(membership_a)
+    .bind(CODE_COMMIT)
+    .bind(ENTITLEMENT_REFERENCE)
+    .bind(&entitlement_hash)
+    .fetch_optional(&worker)
+    .await?
+    .unwrap_or((scheduled.0, false));
+    assert_eq!(scheduled_replay, (scheduled.0, false));
+    let incremental_payload: serde_json::Value =
+        sqlx::query_scalar("SELECT payload_json FROM jobs WHERE id = $1")
+            .bind(scheduled.0)
+            .fetch_one(&worker)
+            .await?;
+    assert_eq!(incremental_payload["action"], "INCREMENTAL");
+    assert_eq!(incremental_payload["expected_generation"], 2);
+
+    let universe_hash: String = sqlx::query_scalar(
+        "SELECT 'sha256:' || encode(sha256(convert_to('005930.KRX', 'UTF8')), 'hex')",
+    )
+    .fetch_one(owner)
+    .await?;
+    let snapshot_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO owner_equity_signal_snapshots \
+         (owner_user_id, as_of_session, universe_sha256, row_count, signal_code_commit) \
+         VALUES ($1, '2026-08-31', $2, 1, $3) RETURNING id",
+    )
+    .bind(owner_a)
+    .bind(&universe_hash)
+    .bind(CODE_COMMIT)
+    .fetch_one(&worker)
+    .await?;
+    sqlx::query(
+        "INSERT INTO owner_equity_signal_snapshot_rows \
+         (snapshot_id, owner_user_id, instrument_id, membership_id, \
+          generation_id, generation, rank, signals_json) \
+         VALUES ($1, $2, '005930.KRX', $3, $4, 1, 1, '{\"return_120\":\"0.1\"}')",
+    )
+    .bind(snapshot_id)
+    .bind(owner_a)
+    .bind(membership_a)
+    .bind(generation_id)
+    .execute(&worker)
+    .await?;
+    let draft_visibility: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM owner_equity_signal_snapshots), \
+                (SELECT count(*) FROM owner_equity_signal_snapshot_rows)",
+    )
+    .fetch_one(&app_a)
+    .await?;
+    assert_eq!(
+        draft_visibility,
+        (0, 0),
+        "app RLS must hide unpublished signal headers and rows"
+    );
+    sqlx::query("UPDATE owner_equity_signal_snapshots SET published_at = now() WHERE id = $1")
+        .bind(snapshot_id)
+        .execute(&worker)
+        .await?;
+    let immutable_admission = sqlx::query(
+        "UPDATE owner_equity_generation_admissions \
+         SET artifact_manifest_sha256 = $2 WHERE generation_id = $1",
+    )
+    .bind(generation_id)
+    .bind(&raw_hash)
+    .execute(&owner_a_actor)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&immutable_admission).as_deref(), Some("42501"));
+
+    sqlx::query("SELECT disable_owner_equity_membership($1, $2, $3)")
+        .bind(membership_a)
+        .bind(CODE_COMMIT)
+        .bind(&entitlement_hash)
+        .execute(&app_a)
+        .await?;
+    let replacement: Uuid = sqlx::query_scalar(
+        "INSERT INTO owner_equity_memberships \
+         (owner_user_id, instrument_id, transition_actor_user_id, \
+          transition_code_commit, transition_entitlement_sha256) \
+         VALUES ($1, '005930.KRX', $1, $2, $3) RETURNING id",
+    )
+    .bind(owner_a)
+    .bind(CODE_COMMIT)
+    .bind(&entitlement_hash)
+    .fetch_one(&app_a)
+    .await?;
+    assert_ne!(
+        replacement, membership_a,
+        "disable is soft and re-add is new lineage"
+    );
+    let hard_delete = sqlx::query("DELETE FROM owner_equity_memberships WHERE id = $1")
+        .bind(membership_a)
+        .execute(&owner_a_actor)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&hard_delete).as_deref(), Some("42501"));
+
+    let rollback = MIGRATOR.undo(owner, 1).await.unwrap_err();
+    assert_eq!(migrate_pg_code(&rollback).as_deref(), Some("55000"));
+    assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
+    let _ = (entitlement_id, calendar_batch_id);
     Ok(())
 }

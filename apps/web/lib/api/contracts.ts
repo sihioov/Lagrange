@@ -36,7 +36,10 @@ export type ProductMutationPath =
   | `/api/v1/paper/accounts/${string}/recommendation-previews`
   | `/api/v1/paper/accounts/${string}/recommendation-previews/${string}/apply`
   | `/api/v1/screener/screens/${string}`
-  | `/api/v1/strategies/${string}/configs`;
+  | `/api/v1/strategies/${string}/configs`
+  | "/api/v1/research/owner-beta/equity-universe-v2/memberships"
+  | `/api/v1/research/owner-beta/equity-universe-v2/memberships/${string}/retry`
+  | `/api/v1/research/owner-beta/equity-universe-v2/memberships/${string}/disable`;
 
 export const AUTH_API_PATHS = {
   csrf: "/api/v1/auth/csrf",
@@ -94,6 +97,13 @@ export const apiErrorEnvelopeSchema = z
           "OWNER_BETA_STRATEGY_UNSUPPORTED",
           "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE",
           "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED",
+          "OWNER_EQUITY_POLICY_UNAVAILABLE",
+          "OWNER_EQUITY_CAPACITY_EXCEEDED",
+          "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND",
+          "OWNER_EQUITY_INVALID_STATE",
+          "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE",
+          "OWNER_EQUITY_INTEGRITY_FAILED",
+          "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE",
           "RESULT_INTEGRITY_FAILED",
           "LIVE_RECONCILIATION_REQUIRED",
           "LIVE_KILL_SWITCH_ENGAGED",

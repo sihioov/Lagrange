@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { createProductApiClient } from "@/lib/api/product-client";
 import {
+  addOwnerEquityV2Membership,
+  disableOwnerEquityV2Membership,
+  retryOwnerEquityV2Membership,
+} from "@/lib/products/equity-signals-client";
+import {
+  type OwnerEquityV2LatestSignalsModel,
+  type OwnerEquityV2MembershipListModel,
   ownerBetaEquitySignalsDetailSchema,
   ownerBetaEquitySignalsLatestSchema,
   ownerBetaEquitySignalsScreenBody,
   ownerBetaEquitySignalsScreenBodySchema,
   ownerBetaEquitySignalsScreenSchema,
+  ownerEquityV2AddBodySchema,
+  ownerEquityV2LatestSignalsSchema,
+  ownerEquityV2MembershipListSchema,
+  ownerEquityV2MembershipStatusSchema,
+  ownerEquityV2MutationSchema,
+  ownerEquityV2ScreenBodySchema,
+  ownerEquityV2SignalDetailSchema,
   parseOwnerBetaEquitySignalsSearchParams,
 } from "@/lib/products/equity-signals-contracts";
 
@@ -94,6 +108,105 @@ const detail = ownerBetaEquitySignalsDetailSchema.parse({
   ],
   provenance,
   signal: rows[0],
+});
+
+const V2_IDS = Array.from(
+  { length: 100 },
+  (_, index) => `${String(index + 1).padStart(6, "0")}.KRX`,
+);
+const V2_SHA = `sha256:${"b".repeat(64)}`;
+const V2_SNAPSHOT = {
+  as_of: "2026-08-29",
+  published_at: "2026-08-30T06:00:00Z",
+  row_count: V2_IDS.length,
+  snapshot_id: "00000000-0000-4000-8000-000000000501",
+  universe_sha256: V2_SHA,
+};
+
+function v2Row(index: number) {
+  return {
+    average_trading_value_20: 2_000_000 + index,
+    average_volume_20: 200_000 + index,
+    condition: index % 3 === 0 ? "BULLISH" : index % 3 === 1 ? "NEUTRAL" : "BEARISH",
+    generation: 1,
+    instrument_id: V2_IDS[index] as string,
+    max_drawdown_120: -0.08 - index / 1_000,
+    rank: index + 1,
+    return_120: 0.32 - index / 100,
+    return_20: 0.08 - index / 1_000,
+    return_60: 0.16 - index / 1_000,
+    score: 80 - index / 10,
+    sma_20: 120 + index,
+    sma_60: 118 + index,
+    volatility_120: 0.18 + index / 1_000,
+    volatility_20: 0.09 + index / 1_000,
+    volatility_60: 0.13 + index / 1_000,
+    volume_ratio_20_60: 1.1 + index / 1_000,
+  } as const;
+}
+
+const v2Rows = V2_IDS.map((_, index) => v2Row(index));
+const v2Latest: OwnerEquityV2LatestSignalsModel = ownerEquityV2LatestSignalsSchema.parse({
+  rows: v2Rows,
+  snapshot: V2_SNAPSHOT,
+  top5: v2Rows.slice(0, 5),
+});
+const v2MembershipList: OwnerEquityV2MembershipListModel = ownerEquityV2MembershipListSchema.parse({
+  memberships: [
+    {
+      coverage: {
+        first_session: "2025-08-01",
+        last_session: "2026-08-29",
+        minimum_observed_sessions: 121,
+        observed_sessions: 261,
+        target_observed_sessions: 261,
+      },
+      generation: 1,
+      id: "00000000-0000-4000-8000-000000000601",
+      instrument_id: "000001.KRX",
+      lifecycle: "READY",
+      requested_at: "2026-08-29T06:00:00Z",
+      updated_at: "2026-08-30T06:00:00Z",
+    },
+  ],
+  policy: {
+    active_instruments: 1,
+    max_active_instruments: 100,
+    minimum_observed_sessions: 121,
+    remaining_capacity: 99,
+    target_observed_sessions: 261,
+  },
+});
+const v2Status = ownerEquityV2MembershipStatusSchema.parse({
+  membership: v2MembershipList.memberships[0],
+  policy: v2MembershipList.policy,
+});
+const v2Mutation = ownerEquityV2MutationSchema.parse({
+  duplicate_active: false,
+  job_id: "00000000-0000-4000-8000-000000000701",
+  resource: v2MembershipList.memberships[0],
+});
+
+const v2RequestedMutation = ownerEquityV2MutationSchema.parse({
+  duplicate_active: false,
+  job_id: "00000000-0000-4000-8000-000000000702",
+  resource: {
+    coverage: {
+      minimum_observed_sessions: 121,
+      observed_sessions: 0,
+      target_observed_sessions: 261,
+    },
+    generation: 0,
+    id: "00000000-0000-4000-8000-000000000602",
+    instrument_id: "000002.KRX",
+    lifecycle: "REQUESTED",
+    requested_at: "2026-08-30T06:00:00Z",
+    updated_at: "2026-08-30T06:00:00Z",
+  },
+});
+const v2Detail = ownerEquityV2SignalDetailSchema.parse({
+  signal: v2Rows[99],
+  snapshot: V2_SNAPSHOT,
 });
 
 describe("Owner-beta equity signal contracts", () => {
@@ -192,5 +305,145 @@ describe("Owner-beta equity signal contracts", () => {
     expect(requests[1]?.headers.get("x-csrf-token")).toBeNull();
     expect(requests[1]?.headers.get("idempotency-key")).toBeNull();
     await expect(requests[1]?.clone().json()).resolves.toEqual(body);
+  });
+
+  it("accepts the V2 contract at policy-defined capacity, including 100 rows and ranks above 30", () => {
+    expect(v2Latest.rows).toHaveLength(100);
+    expect(v2Latest.rows[99]?.rank).toBe(100);
+    expect(v2MembershipList.policy.max_active_instruments).toBe(100);
+    expect(v2RequestedMutation.resource.generation).toBe(0);
+    expect(v2RequestedMutation.resource.lifecycle).toBe("REQUESTED");
+    expect(
+      ownerEquityV2LatestSignalsSchema.safeParse({
+        ...v2Latest,
+        unknown: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      ownerEquityV2LatestSignalsSchema.safeParse({
+        ...v2Latest,
+        rows: [{ ...v2Rows[0], rank: 0 }, ...v2Rows.slice(1)],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires an exact six-digit V2 add body and rejects undocumented fields", () => {
+    expect(ownerEquityV2AddBodySchema.safeParse({ instrument_code: "005930" }).success).toBe(true);
+    for (const instrument_code of ["5930", "0059300", "00593A", " 005930"]) {
+      expect(ownerEquityV2AddBodySchema.safeParse({ instrument_code }).success).toBe(false);
+    }
+    expect(
+      ownerEquityV2AddBodySchema.safeParse({ instrument_code: "005930", name: "not accepted" })
+        .success,
+    ).toBe(false);
+    expect(
+      ownerEquityV2ScreenBodySchema.safeParse({
+        conditions: ["BULLISH", "BULLISH"],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("uses the exact V2 read paths and validates membership, screen, latest, and detail payloads", async () => {
+    const requests: Request[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (request.method === "GET" && path.endsWith("/memberships")) {
+        return Response.json(v2MembershipList);
+      }
+      if (request.method === "GET" && path.endsWith("/00000000-0000-4000-8000-000000000601")) {
+        return Response.json(v2Status);
+      }
+      if (request.method === "GET" && path.endsWith("/signals/latest")) {
+        return Response.json(v2Latest);
+      }
+      if (request.method === "POST" && path.endsWith("/signals/screen")) {
+        return Response.json({ snapshot: V2_SNAPSHOT, rows: v2Rows.slice(0, 1) });
+      }
+      if (request.method === "GET" && path.endsWith("/signals/instruments/000100.KRX")) {
+        return Response.json(v2Detail);
+      }
+      throw new Error(`unexpected V2 request ${request.method} ${path}`);
+    };
+    const client = createProductApiClient({ baseUrl: "https://api.internal", fetcher });
+
+    await expect(client.getOwnerEquityV2Memberships()).resolves.toEqual(v2MembershipList);
+    await expect(
+      client.getOwnerEquityV2MembershipStatus("00000000-0000-4000-8000-000000000601"),
+    ).resolves.toEqual(v2Status);
+    await expect(client.getOwnerEquityV2LatestSignals()).resolves.toEqual(v2Latest);
+    await expect(
+      client.screenOwnerEquityV2Signals({
+        conditions: ["BULLISH"],
+        instrument_ids: ["000100.KRX"],
+      }),
+    ).resolves.toEqual({ snapshot: V2_SNAPSHOT, rows: v2Rows.slice(0, 1) });
+    await expect(client.getOwnerEquityV2SignalDetail("000100.KRX")).resolves.toEqual(v2Detail);
+
+    expect(requests.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual(
+      [
+        "GET /api/v1/research/owner-beta/equity-universe-v2/memberships",
+        "GET /api/v1/research/owner-beta/equity-universe-v2/memberships/00000000-0000-4000-8000-000000000601",
+        "GET /api/v1/research/owner-beta/equity-universe-v2/signals/latest",
+        "POST /api/v1/research/owner-beta/equity-universe-v2/signals/screen",
+        "GET /api/v1/research/owner-beta/equity-universe-v2/signals/instruments/000100.KRX",
+      ],
+    );
+  });
+
+  it("sends CSRF and idempotency headers for V2 add, retry, and soft-disable mutations", async () => {
+    const requests: Request[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (request.method === "GET" && path.endsWith("/auth/csrf")) {
+        return Response.json({ csrf_token: "synthetic-csrf" });
+      }
+      if (request.method === "POST" && path.includes("equity-universe-v2")) {
+        return Response.json(v2Mutation);
+      }
+      throw new Error(`unexpected V2 mutation ${request.method} ${path}`);
+    };
+
+    await expect(
+      addOwnerEquityV2Membership(
+        { instrument_code: "005930" },
+        {
+          fetcher,
+          origin: "https://app.test",
+        },
+      ),
+    ).resolves.toEqual(v2Mutation);
+    await expect(
+      retryOwnerEquityV2Membership(v2Mutation.resource.id, {
+        fetcher,
+        origin: "https://app.test",
+      }),
+    ).resolves.toEqual(v2Mutation);
+    await expect(
+      disableOwnerEquityV2Membership(v2Mutation.resource.id, {
+        fetcher,
+        origin: "https://app.test",
+      }),
+    ).resolves.toEqual(v2Mutation);
+
+    expect(requests.filter((request) => request.method === "POST")).toHaveLength(3);
+    for (const request of requests.filter((item) => item.method === "POST")) {
+      expect(request.headers.get("x-csrf-token")).toBe("synthetic-csrf");
+      expect(request.headers.get("idempotency-key")).toBeTruthy();
+      await expect(request.clone().json()).resolves.toEqual(
+        request.url.endsWith("/memberships") ? { instrument_code: "005930" } : {},
+      );
+    }
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      "/api/v1/auth/csrf",
+      "/api/v1/research/owner-beta/equity-universe-v2/memberships",
+      "/api/v1/auth/csrf",
+      "/api/v1/research/owner-beta/equity-universe-v2/memberships/00000000-0000-4000-8000-000000000601/retry",
+      "/api/v1/auth/csrf",
+      "/api/v1/research/owner-beta/equity-universe-v2/memberships/00000000-0000-4000-8000-000000000601/disable",
+    ]);
   });
 });

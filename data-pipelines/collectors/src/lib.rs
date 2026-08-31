@@ -1,5 +1,6 @@
 mod candidate_pipeline;
 mod candidate_sink;
+pub mod owner_equity_v2;
 mod pipeline;
 mod sink;
 pub mod stock_price_beta_materialize;

@@ -710,6 +710,161 @@ thead th {
   padding-inline-start: var(--space-1);
 }
 
+.stock-beta-management,
+.stock-beta-memberships,
+.stock-beta-signals {
+  min-inline-size: 0;
+}
+
+.stock-beta-policy-capacity {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 0.0625rem solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.stock-beta-policy-capacity-heading {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.stock-beta-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.stock-beta-policy-grid div,
+.stock-beta-membership-meta div {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.stock-beta-policy-grid dt,
+.stock-beta-membership-meta dt {
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+}
+
+.stock-beta-policy-grid dd,
+.stock-beta-membership-meta dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.stock-beta-add-form {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) auto;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.stock-beta-add-form > button {
+  min-block-size: 2.75rem;
+}
+
+.stock-beta-membership-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  gap: var(--space-3);
+}
+
+.stock-beta-membership-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  min-inline-size: 0;
+  padding: var(--space-4);
+  border: 0.0625rem solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.stock-beta-membership-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.stock-beta-membership-heading > div {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.stock-beta-membership-heading h3 {
+  overflow-wrap: anywhere;
+}
+
+.stock-beta-membership-meta {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.stock-beta-membership-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stock-beta-detail-link {
+  margin-inline-start: auto;
+}
+
+.stock-beta-failure {
+  margin: 0;
+  color: var(--status-error);
+  font-size: 0.875rem;
+}
+
+.stock-beta-failure code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-weight: 560;
+}
+
+.stock-beta-disable-confirmation {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-inline-start: var(--space-1) solid var(--status-warning);
+  background: var(--surface-panel);
+}
+
+.stock-beta-disable-confirmation p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.stock-beta-snapshot {
+  display: grid;
+  gap: var(--space-5);
+  min-inline-size: 0;
+  padding: var(--space-6);
+  border: 0.0625rem solid var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel);
+}
+
+.stock-beta-signals {
+  display: grid;
+  gap: var(--space-5);
+}
+
 @container (max-width: 36rem) {
   .section-heading,
   .panel-heading,
@@ -732,5 +887,17 @@ thead th {
   .saved-screen-list li {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .stock-beta-add-form {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-beta-detail-link {
+    margin-inline-start: 0;
+  }
+
+  .stock-beta-snapshot {
+    padding: var(--space-4);
   }
 }

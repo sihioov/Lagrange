@@ -70,9 +70,10 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
     lagrange-station-recommendation-runner:"${LAGRANGE_CODE_COMMIT}") index=6 ;;
     lagrange-station-candidate-runner:"${LAGRANGE_CODE_COMMIT}") index=7 ;;
     lagrange-station-owner-beta-runner:"${LAGRANGE_CODE_COMMIT}") index=8 ;;
-    lagrange-station-nt-backtest-worker-1:"${LAGRANGE_CODE_COMMIT}") index=9 ;;
-    lagrange-station-nt-backtest-worker-2:"${LAGRANGE_CODE_COMMIT}") index=10 ;;
-    lagrange-station-paper-scheduler:"${LAGRANGE_CODE_COMMIT}") index=11 ;;
+    lagrange-station-owner-equity-v2-runner:"${LAGRANGE_CODE_COMMIT}") index=9 ;;
+    lagrange-station-nt-backtest-worker-1:"${LAGRANGE_CODE_COMMIT}") index=10 ;;
+    lagrange-station-nt-backtest-worker-2:"${LAGRANGE_CODE_COMMIT}") index=11 ;;
+    lagrange-station-paper-scheduler:"${LAGRANGE_CODE_COMMIT}") index=12 ;;
     *) echo "unexpected fake Docker image: $image_ref" >&2; exit 1 ;;
   esac
   image_id=$(printf 'sha256:%064d' "$index")
@@ -113,10 +114,10 @@ grep -Fq 'PRODUCTION_IMAGE_BUILD: PASS' "$out_dir/apply.out"
 [ "$(stat -c %a "$manifest_file")" = 600 ]
 grep -Fxq 'LAGRANGE_RELEASE_MANIFEST_V2' "$manifest_file"
 grep -Fxq "commit|$commit" "$manifest_file"
-[ "$(grep -c '^image|' "$manifest_file")" -eq 11 ]
+[ "$(grep -c '^image|' "$manifest_file")" -eq 12 ]
 index=0
 for service in db-role-bootstrap db-migrate api-server web research-worker \
-  recommendation-runner candidate-runner owner-beta-runner nt-backtest-worker-1 \
+  recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
   nt-backtest-worker-2 paper-scheduler; do
   index=$((index + 1))
   image_id=$(printf 'sha256:%064d' "$index")
@@ -130,7 +131,7 @@ build_count=$(grep -Fc "commit=$commit args=compose --env-file $env_file --file 
 [ "$build_count" -eq 1 ]
 build_line=$(grep "commit=$commit args=compose --env-file $env_file --file $compose_file build --pull=false" "$docker_log")
 for service in db-role-bootstrap db-migrate api-server web research-worker \
-  recommendation-runner candidate-runner owner-beta-runner nt-backtest-worker-1 \
+  recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
   nt-backtest-worker-2 paper-scheduler; do
   grep -Fq -- " $service" <<<"$build_line"
 done

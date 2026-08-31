@@ -79,6 +79,7 @@ services=(
   recommendation-runner
   candidate-runner
   owner-beta-runner
+  owner-equity-v2-runner
   nt-backtest-worker-1
   nt-backtest-worker-2
   paper-scheduler
@@ -114,6 +115,7 @@ declare -A service_dockerfile=(
   [recommendation-runner]=crates/job-queue/Dockerfile
   [candidate-runner]=crates/job-queue/Dockerfile
   [owner-beta-runner]=crates/job-queue/Dockerfile.owner-beta-runner
+  [owner-equity-v2-runner]=crates/job-queue/Dockerfile.owner-equity-v2-runner
   [nt-backtest-worker-1]=crates/job-queue/Dockerfile.backtest-runner
   [nt-backtest-worker-2]=crates/job-queue/Dockerfile.backtest-runner
   [paper-scheduler]=deploy/runtime/Dockerfile.paper-runner

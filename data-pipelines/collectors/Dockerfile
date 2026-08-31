@@ -34,7 +34,9 @@ RUN cargo build --locked --release --package collectors --bin research-worker \
     && cargo build --locked --release --package collectors --bin kis-action-range-raw \
     && cargo build --locked --release --package collectors --bin kis-stock-price-beta-raw \
     && cargo build --locked --release --package collectors --bin kis-stock-price-beta-materialize \
-    && cargo build --locked --release --package collectors --bin kis-historical-price-v3-input-check
+    && cargo build --locked --release --package collectors --bin kis-historical-price-v3-input-check \
+    && cargo build --locked --release --package collectors --bin owner-equity-v2-check \
+    && cargo build --locked --release --package collectors --bin owner-equity-v2-materialize
 
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 
@@ -56,6 +58,8 @@ COPY --from=builder /build/target/release/kis-action-range-raw /usr/local/bin/ki
 COPY --from=builder /build/target/release/kis-stock-price-beta-raw /usr/local/bin/kis-stock-price-beta-raw
 COPY --from=builder /build/target/release/kis-stock-price-beta-materialize /usr/local/bin/kis-stock-price-beta-materialize
 COPY --from=builder /build/target/release/kis-historical-price-v3-input-check /usr/local/bin/kis-historical-price-v3-input-check
+COPY --from=builder /build/target/release/owner-equity-v2-check /usr/local/bin/owner-equity-v2-check
+COPY --from=builder /build/target/release/owner-equity-v2-materialize /usr/local/bin/owner-equity-v2-materialize
 COPY --from=builder /build/tests/fixtures/kr-etf/contract ./tests/fixtures/kr-etf/contract
 COPY --from=builder /build/tests/fixtures/kr-candidates/contract ./tests/fixtures/kr-candidates/contract
 COPY --from=builder /build/configs/universes/kr-stock-price-beta-v1.json ./configs/universes/kr-stock-price-beta-v1.json

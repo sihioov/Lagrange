@@ -8,7 +8,7 @@ import {
   recommendationConfig,
   recommendationResponse,
 } from "./recommendation-fixture.mjs";
-import { stockBetaResponse } from "./stock-beta-fixture.mjs";
+import { resetStockBetaFixture, stockBetaResponse } from "./stock-beta-fixture.mjs";
 
 const port = Number.parseInt(process.env.SYNTHETIC_API_PORT ?? "38180", 10);
 const defaultScenario = Object.freeze({
@@ -127,6 +127,7 @@ const server = createServer(async (request, response) => {
     // Every call site is unaffected: each states the keys it varies and wants
     // documented defaults for the rest, which is now what it gets.
     scenario = { ...defaultScenario, ...body };
+    resetStockBetaFixture(scenario);
     json(response, 200, { scenario });
     return;
   }

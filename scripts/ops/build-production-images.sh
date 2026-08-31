@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the eleven owner-beta serving images without starting a container. The
+# Build the twelve owner-beta serving images without starting a container. The
 # default is a read-only plan; --preflight only expands Compose; --apply is the
 # only mode that builds and writes a strict V2 host-local image manifest.
 #
@@ -44,7 +44,7 @@ locally to Compose and never edits the env file. Docker may fetch pinned base
 or language dependencies if its cache is incomplete; no provider/API credential
 is read or used.
 
-The V2 manifest has one canonical record for each of the eleven local serving
+The V2 manifest has one canonical record for each of the twelve local serving
 images: exact configured commit tag, exact Docker local image_id (`sha256:...`),
 and OCI revision. This is host-local single-platform provenance, not a
 RepoDigest, registry digest, or multi-architecture claim.
@@ -204,7 +204,7 @@ print_plan() {
   echo '  LAGRANGE_CODE_COMMIT=validated-process-value'
   echo "  services=${local_image_services[*]}"
   echo '  excluded=postgres reverse-proxy (upstream content-pinned); research-range-raw (operator-gated historical capture); live-node/live (forbidden)'
-  echo '  command: docker compose --env-file <env> --file <compose> build --pull=false <eleven local services>'
+  echo '  command: docker compose --env-file <env> --file <compose> build --pull=false <twelve local services>'
   echo '  no up/run/restart/start, migration, database, provider/API, or secret provisioning action'
   echo '  network caveat: Docker may fetch base/language dependencies when its cache is incomplete'
   echo 'PLAN_ONLY: no Docker command or env-file write made'
@@ -246,4 +246,4 @@ fi
 compose build --pull=false "${local_image_services[@]}"
 inspect_built_images
 write_manifest
-echo "PRODUCTION_IMAGE_BUILD: PASS (eleven images built and V2 manifest written: $manifest_file)"
+echo "PRODUCTION_IMAGE_BUILD: PASS (twelve images built and V2 manifest written: $manifest_file)"

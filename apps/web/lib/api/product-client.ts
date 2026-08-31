@@ -37,15 +37,31 @@ import {
 import {
   OWNER_BETA_EQUITY_SIGNALS_LATEST_PATH,
   OWNER_BETA_EQUITY_SIGNALS_SCREEN_PATH,
+  OWNER_EQUITY_V2_MEMBERSHIPS_PATH,
+  OWNER_EQUITY_V2_SIGNALS_LATEST_PATH,
+  OWNER_EQUITY_V2_SIGNALS_SCREEN_PATH,
   type OwnerBetaEquitySignalsDetailModel,
   type OwnerBetaEquitySignalsLatestModel,
   type OwnerBetaEquitySignalsScreenBody,
   type OwnerBetaEquitySignalsScreenModel,
+  type OwnerEquityV2LatestSignalsModel,
+  type OwnerEquityV2MembershipListModel,
+  type OwnerEquityV2MembershipStatusModel,
+  type OwnerEquityV2ScreenBody,
+  type OwnerEquityV2ScreenSignalsModel,
+  type OwnerEquityV2SignalDetailModel,
   ownerBetaEquitySignalsDetailPath,
   ownerBetaEquitySignalsDetailSchema,
   ownerBetaEquitySignalsLatestSchema,
   ownerBetaEquitySignalsScreenBodySchema,
   ownerBetaEquitySignalsScreenSchema,
+  ownerEquityV2LatestSignalsSchema,
+  ownerEquityV2MembershipListSchema,
+  ownerEquityV2MembershipStatusSchema,
+  ownerEquityV2ScreenBodySchema,
+  ownerEquityV2ScreenSignalsSchema,
+  ownerEquityV2SignalDetailPath,
+  ownerEquityV2SignalDetailSchema,
 } from "@/lib/products/equity-signals-contracts";
 import { type LiveConnectionModel, liveConnectionSchema } from "@/lib/products/live-contracts";
 import {
@@ -97,6 +113,17 @@ export type ProductApiClient = {
   readonly getOwnerBetaEquitySignalDetail: (
     instrumentId: string,
   ) => Promise<OwnerBetaEquitySignalsDetailModel>;
+  readonly getOwnerEquityV2Memberships: () => Promise<OwnerEquityV2MembershipListModel>;
+  readonly getOwnerEquityV2MembershipStatus: (
+    membershipId: string,
+  ) => Promise<OwnerEquityV2MembershipStatusModel>;
+  readonly getOwnerEquityV2LatestSignals: () => Promise<OwnerEquityV2LatestSignalsModel>;
+  readonly screenOwnerEquityV2Signals: (
+    body: OwnerEquityV2ScreenBody,
+  ) => Promise<OwnerEquityV2ScreenSignalsModel>;
+  readonly getOwnerEquityV2SignalDetail: (
+    instrumentId: string,
+  ) => Promise<OwnerEquityV2SignalDetailModel>;
   readonly getStrategies: () => Promise<PageResult<StrategyCatalogItem>>;
   readonly getPaperAccounts: () => Promise<PageResult<PaperAccountModel>>;
   readonly getPaperAccount: (accountId: string) => Promise<PaperAccountModel>;
@@ -191,6 +218,29 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
         client,
         ownerBetaEquitySignalsDetailPath(instrumentId),
         ownerBetaEquitySignalsDetailSchema,
+      ),
+    getOwnerEquityV2Memberships: () =>
+      getParsed(client, OWNER_EQUITY_V2_MEMBERSHIPS_PATH, ownerEquityV2MembershipListSchema),
+    getOwnerEquityV2MembershipStatus: (membershipId) =>
+      getParsed(
+        client,
+        `${OWNER_EQUITY_V2_MEMBERSHIPS_PATH}/${encodeURIComponent(membershipId)}`,
+        ownerEquityV2MembershipStatusSchema,
+      ),
+    getOwnerEquityV2LatestSignals: () =>
+      getParsed(client, OWNER_EQUITY_V2_SIGNALS_LATEST_PATH, ownerEquityV2LatestSignalsSchema),
+    screenOwnerEquityV2Signals: async (body) => {
+      const requestBody = ownerEquityV2ScreenBodySchema.parse(body);
+      const response = await client.post(OWNER_EQUITY_V2_SIGNALS_SCREEN_PATH.slice(1), {
+        json: requestBody,
+      });
+      return parseApiResponse(response, ownerEquityV2ScreenSignalsSchema);
+    },
+    getOwnerEquityV2SignalDetail: (instrumentId) =>
+      getParsed(
+        client,
+        ownerEquityV2SignalDetailPath(instrumentId),
+        ownerEquityV2SignalDetailSchema,
       ),
     getRecommendationRun: (runId) =>
       getParsed(

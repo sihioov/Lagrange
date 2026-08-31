@@ -58,6 +58,7 @@ pub mod instrument_master;
 pub mod kind_correction_normalize;
 pub mod kind_normalize;
 pub mod normalize;
+pub mod owner_equity_v2;
 pub mod provider;
 pub mod providers;
 pub mod publication;

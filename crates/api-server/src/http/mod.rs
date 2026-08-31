@@ -16,6 +16,7 @@ pub mod live;
 pub mod middleware;
 pub mod notifications;
 pub mod owner_beta;
+pub mod owner_equity_v2;
 pub mod pagination;
 pub mod paper;
 pub mod recommendations;
@@ -321,6 +322,35 @@ pub fn api_router(state: ApiState) -> Router {
             "/research/owner-beta/equity-price-signals/instruments/{instrument_id}",
             get(equity_signals::detail),
         )
+        // owner-managed individual-equity universe V2 (separate from sealed V1)
+        .route(
+            "/research/owner-beta/equity-universe-v2/memberships",
+            get(owner_equity_v2::list_memberships).post(owner_equity_v2::add_membership),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/memberships/{membership_id}",
+            get(owner_equity_v2::membership_status),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/memberships/{membership_id}/retry",
+            post(owner_equity_v2::retry_membership),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/memberships/{membership_id}/disable",
+            post(owner_equity_v2::disable_membership),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/signals/latest",
+            get(owner_equity_v2::latest_signals),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/signals/screen",
+            post(owner_equity_v2::screen_signals),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}",
+            get(owner_equity_v2::signal_detail),
+        )
         // common individual-stock research (separate from ETF recommendations)
         .route("/candidates/feed/latest", get(candidates::latest_feed))
         .route("/candidates/feed/{date}", get(candidates::feed_on_date))
@@ -482,6 +512,8 @@ mod tests {
             .replace("{run_id}", "00000000-0000-0000-0000-000000000001")
             .replace("{account_id}", "00000000-0000-0000-0000-000000000002")
             .replace("{preview_id}", "00000000-0000-0000-0000-000000000003")
+            .replace("{membership_id}", "00000000-0000-0000-0000-000000000004")
+            .replace("{instrument_id}", "005930.KRX")
     }
 
     #[tokio::test]

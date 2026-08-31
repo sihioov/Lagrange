@@ -18,13 +18,15 @@
 # Every long-lived service below runs its checked-in production entrypoint.
 # Build contexts point at Dockerfiles with digest-pinned base images; one-shot
 # bootstrap/migration/schema services fail closed before serving workloads.
-# All eleven owner-beta locally-built serving images embed the exact 40-hex Git
+# All twelve locally-built serving images embed the exact 40-hex Git
 # commit in their OCI revision labels. CI must supply LAGRANGE_CODE_COMMIT at
 # build time; Compose intentionally does not override those image-baked values
 # later. Their `image:` names carry the same exact commit tag for build-time
 # lookup only: the installed release workflow replaces them with Docker local
 # image IDs. These are host-local single-platform IDs, never RepoDigest or
 # multi-architecture provenance claims.
+# This remains the owner-beta serving manifest; owner-equity-v2-runner is
+# additionally profile-gated and owner-authorized at release time.
 
 name: lagrange-station
 
@@ -204,6 +206,10 @@ services:
       # never an operator-selected host path.
       OWNER_BETA_EQUITY_SIGNALS_MODE: ${OWNER_BETA_EQUITY_SIGNALS_MODE:-disabled}
       STOCK_PRICE_BETA_ARTIFACT_ROOT: /data/stock-price-beta-artifacts
+      # Typed, non-secret V2 entitlement pins only. API/Web never receive the
+      # KIS credential files or the V2 Raw/artifact write roots.
+      OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE: ${OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE:-}
+      OWNER_EQUITY_V2_ENTITLEMENT_SHA256: ${OWNER_EQUITY_V2_ENTITLEMENT_SHA256:-}
     secrets:
       - source: api_db_app_password
         target: db_app_password
@@ -417,6 +423,9 @@ services:
       - backtest-iso
       # The profile-gated owner-beta worker reaches only this database path.
       - owner-beta-db
+      # The profile-gated Owner Equity V2 worker reaches its queue DB and
+      # read-only KIS egress through this separate network.
+      - owner-equity-v2-egress
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lagrange} -d ${POSTGRES_DB:-lagrange}"]
       interval: 10s
@@ -1053,6 +1062,104 @@ services:
         condition: service_completed_successfully
 
   # ------------------------------------------------------------------
+  # owner-equity-v2-runner — explicitly owner-authorized V2 queue daemon.
+  # This is the only V2 service with KIS credentials and Raw/artifact write
+  # mounts. It uses the existing protected read-only KIS copies and worker DB
+  # secret under distinct in-container targets; API/Web receive neither.
+  # ------------------------------------------------------------------
+  owner-equity-v2-runner:
+    profiles: ["owner-equity-v2"]
+    image: lagrange-station-owner-equity-v2-runner:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: crates/job-queue/Dockerfile.owner-equity-v2-runner
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    init: true
+    restart: unless-stopped
+    # Work timeout is 15m. Leave a full minute for graceful lease settlement
+    # before Docker sends SIGKILL; the existing WP-4 sweeper then recovers any
+    # claim that cannot be settled.
+    stop_grace_period: 16m
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+      - /run/owner-equity-v2-health:uid=10001,gid=10001,mode=0750
+    logging: *default-logging
+    entrypoint: ["/usr/local/bin/owner-equity-v2-runner"]
+    cpus: "1"
+    mem_limit: 2g
+    environment:
+      APP_ENV: production
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-lagrange}
+      DB_USER: worker
+      DB_PASSWORD_FILE: /run/secrets/db_worker_password
+      OWNER_EQUITY_V2_RAW_ROOT: /data/raw
+      OWNER_EQUITY_V2_ARTIFACT_ROOT: /data/owner-equity-v2-artifacts
+      OWNER_EQUITY_V2_HEALTH_STATE_PATH: /run/owner-equity-v2-health/health.json
+      OWNER_EQUITY_V2_HEALTH_MAX_AGE_SECS: "180"
+      OWNER_EQUITY_V2_POLL_SECS: "2"
+      OWNER_EQUITY_V2_RECOVERY_SECS: "30"
+      OWNER_EQUITY_V2_HEARTBEAT_SECS: "10"
+      OWNER_EQUITY_V2_LEASE_SECS: "60"
+      OWNER_EQUITY_V2_BACKOFF_SECS: "30"
+      OWNER_EQUITY_V2_WORK_TIMEOUT_SECS: "900"
+      OWNER_EQUITY_V2_WORKER_ID: owner-equity-v2-prod
+      OWNER_EQUITY_V2_MAX_ACTIVE: "100"
+      OWNER_EQUITY_V2_INITIAL_GET_CEILING: "7"
+      OWNER_EQUITY_V2_INCREMENTAL_GET_CEILING: "2"
+      OWNER_EQUITY_V2_TOTAL_BACKFILL_GET_CEILING: "700"
+      OWNER_EQUITY_V2_CONCURRENCY: "1"
+      OWNER_EQUITY_V2_ESTIMATED_BYTES_PER_GET: "1048576"
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+      OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE: ${OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE:-}
+      OWNER_EQUITY_V2_ENTITLEMENT_SHA256: ${OWNER_EQUITY_V2_ENTITLEMENT_SHA256:-}
+      KIS_APP_KEY_FILE: /run/secrets/kis_app_key
+      KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret
+    secrets:
+      # These are existing protected, read-only source copies. No new secret
+      # value or account identifier is introduced by the V2 runtime wiring.
+      - source: owner_beta_db_worker_password
+        target: db_worker_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_kis_app_key
+        target: kis_app_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_kis_app_secret
+        target: kis_app_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw:rw
+      - ${LAGRANGE_DATA_DIR:-../data}/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts:rw
+    networks:
+      - owner-equity-v2-egress
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/owner-equity-v2-runner", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+      research-raw-init:
+        condition: service_completed_successfully
+
+  # ------------------------------------------------------------------
   # nt-backtest-worker-1 / nt-backtest-worker-2 — real queue daemons running
   # the checked-in Rust supervisor and pinned NT child image. Design §13.3:
   # NO internet. Attached ONLY to `backtest-iso` (internal: true, no default
@@ -1455,6 +1562,9 @@ secrets:
 #   backtest-iso internal:true — nt-backtest-worker-1/2 + postgres ONLY.
 #               No default route => no internet for backtest workers.
 #   owner-beta-db internal:true — owner-beta-runner + postgres ONLY.
+#   owner-equity-v2-egress — owner-equity-v2-runner + postgres; this is the
+#               only network-capable V2 queue worker and has the read-only KIS
+#               egress plus its dedicated Raw/artifact write roots.
 # ----------------------------------------------------------------------
 networks:
   edge:
@@ -1472,6 +1582,9 @@ networks:
   owner-beta-db:
     driver: bridge
     internal: true
+  owner-equity-v2-egress:
+    driver: bridge
+    internal: false
 
 volumes:
   pgdata:

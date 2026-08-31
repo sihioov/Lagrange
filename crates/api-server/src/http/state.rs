@@ -109,6 +109,14 @@ impl OwnerBetaEquitySignalsMode {
     }
 }
 
+/// Non-secret immutable pins required before a V2 mutation may enqueue work.
+/// Provider credentials are intentionally absent from API state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerEquityV2RuntimePins {
+    pub entitlement_reference: String,
+    pub entitlement_sha256: String,
+}
+
 /// Runtime configuration of the API surface.
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -146,6 +154,8 @@ pub struct ApiConfig {
     pub owner_beta_equity_signals: OwnerBetaEquitySignalsMode,
     /// Absolute root containing content-hash artifact and snapshot directories.
     pub stock_price_beta_artifact_root: std::path::PathBuf,
+    /// Missing pins disable V2 mutations without changing any V1 behavior.
+    pub owner_equity_v2_pins: Option<OwnerEquityV2RuntimePins>,
 }
 
 pub fn system_seoul_today() -> chrono::NaiveDate {
@@ -254,6 +264,7 @@ impl ApiState {
                 owner_beta_price_input,
                 owner_beta_equity_signals,
                 stock_price_beta_artifact_root: std::path::PathBuf::from("/unused"),
+                owner_equity_v2_pins: None,
             }),
             app_pool: pool.clone(),
             admin_pool: pool.clone(),
@@ -337,6 +348,9 @@ impl ApiState {
         &self,
     ) -> crate::repos::owner_beta::OwnerBetaRecommendationRepo {
         crate::repos::owner_beta::OwnerBetaRecommendationRepo::new(self.app_pool.clone())
+    }
+    pub fn owner_equity_v2(&self) -> crate::repos::owner_equity_v2::OwnerEquityV2Repo {
+        crate::repos::owner_equity_v2::OwnerEquityV2Repo::new(self.app_pool.clone())
     }
     pub fn candidates(&self) -> CandidateRepo {
         CandidateRepo::with_close_clock(

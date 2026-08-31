@@ -372,6 +372,7 @@ impl Harness {
             owner_beta_equity_signals:
                 api_server::http::state::OwnerBetaEquitySignalsMode::Disabled,
             stock_price_beta_artifact_root: h.artifact_root.clone(),
+            owner_equity_v2_pins: None,
         };
         let state = ApiState::from_pools(
             cfg,

@@ -14,6 +14,8 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   install-tailscale-tls-renewal.sh tailscale-tls-self-test.sh \
   build-production-images.sh build-production-images-static-check.sh \
   build-production-images-self-test.sh deploy-production-release.sh \
+  owner-equity-v2-verify.sh owner-equity-v2-runtime-static-check.sh \
+  owner-equity-v2-runtime-self-test.sh \
   run-production-backup.sh install-production-backup.sh \
   production-ops-static-check.sh production-ops-self-test.sh \
   kis-range-raw-backfill.sh kis-action-range-raw-backfill.sh \
@@ -229,6 +231,8 @@ bash "$root/scripts/qa/recommendation-runner-smoke.sh" --static-only >/dev/null
 bash "$ops/static-check.sh" >/dev/null
 bash "$ops/tailscale-tls-self-test.sh" >/dev/null
 bash "$ops/build-production-images-self-test.sh" >/dev/null
+bash "$ops/owner-equity-v2-runtime-static-check.sh" >/dev/null
+bash "$ops/owner-equity-v2-runtime-self-test.sh" >/dev/null
 bash "$ops/kis-historical-price-beta-artifact-self-test.sh" >/dev/null
 bash "$ops/kis-historical-price-v3-input-check-self-test.sh" >/dev/null
 bash "$ops/kis-stock-price-beta-raw-self-test.sh" >/dev/null

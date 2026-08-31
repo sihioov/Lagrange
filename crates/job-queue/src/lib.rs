@@ -13,6 +13,7 @@ pub mod candidate;
 pub mod error;
 pub mod factor_series;
 pub mod owner_beta;
+pub mod owner_equity_v2;
 pub mod paper_execution;
 pub mod paper_io;
 pub mod paper_preview;

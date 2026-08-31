@@ -66,6 +66,49 @@ const ROUTES = [
     owner: true,
     ownerBetaEquitySignals: true,
   }],
+  // owner-managed individual-equity universe V2 (separate from sealed V1)
+  ["GET", "/api/v1/research/owner-beta/equity-universe-v2/memberships", {
+    owner: true,
+    ownerEquityV2: true,
+  }],
+  ["POST", "/api/v1/research/owner-beta/equity-universe-v2/memberships", {
+    owner: true,
+    ownerEquityV2: true,
+    mutating: true,
+    idem: true,
+    audit: true,
+  }],
+  ["GET", "/api/v1/research/owner-beta/equity-universe-v2/memberships/{membership_id}", {
+    owner: true,
+    ownerEquityV2: true,
+  }],
+  ["POST", "/api/v1/research/owner-beta/equity-universe-v2/memberships/{membership_id}/retry", {
+    owner: true,
+    ownerEquityV2: true,
+    mutating: true,
+    idem: true,
+    audit: true,
+  }],
+  ["POST", "/api/v1/research/owner-beta/equity-universe-v2/memberships/{membership_id}/disable", {
+    owner: true,
+    ownerEquityV2: true,
+    mutating: true,
+    idem: true,
+    audit: true,
+  }],
+  ["GET", "/api/v1/research/owner-beta/equity-universe-v2/signals/latest", {
+    owner: true,
+    ownerEquityV2: true,
+  }],
+  ["POST", "/api/v1/research/owner-beta/equity-universe-v2/signals/screen", {
+    owner: true,
+    ownerEquityV2: true,
+    body: true,
+  }],
+  ["GET", "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}", {
+    owner: true,
+    ownerEquityV2: true,
+  }],
   // common individual-stock research (separate from ETF recommendations)
   ["GET", "/api/v1/candidates/feed/latest", { entitlement: "candidate" }],
   ["GET", "/api/v1/candidates/feed/{date}", { entitlement: "candidate" }],
@@ -154,6 +197,13 @@ const ERROR_CODES = [
   ["OWNER_BETA_STRATEGY_UNSUPPORTED", 422],
   ["OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE", 503],
   ["OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED", 503],
+  ["OWNER_EQUITY_POLICY_UNAVAILABLE", 503],
+  ["OWNER_EQUITY_CAPACITY_EXCEEDED", 429],
+  ["OWNER_EQUITY_MEMBERSHIP_NOT_FOUND", 404],
+  ["OWNER_EQUITY_INVALID_STATE", 409],
+  ["OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE", 503],
+  ["OWNER_EQUITY_INTEGRITY_FAILED", 503],
+  ["OWNER_EQUITY_SNAPSHOT_UNAVAILABLE", 503],
   ["REBALANCE_PREVIEW_CAPACITY_EXCEEDED", 429],
   ["REBALANCE_PREVIEW_BINDING_REQUIRED", 409],
   ["REBALANCE_PREVIEW_NOT_READY", 409],
@@ -241,6 +291,8 @@ function operation(route) {
           ? "Owner role; approved sealed historical price-only artifact"
           : flags.ownerBetaEquitySignals
           ? "Owner role; sealed fixed-equity price/volume research"
+          : flags.ownerEquityV2
+          ? "Owner role; actor-scoped owner-managed equity universe V2"
           : flags.ownerBetaPrice
           ? "Owner role; sealed historical price-only input"
           : flags.ownerBetaPriceRead
@@ -287,7 +339,12 @@ function operation(route) {
   };
 
   for (const [n, k] of Object.entries(pathParams(path))) {
-    op.parameters.push(param(n, "path", { type: "string" }, true));
+    const schema = n === "membership_id"
+      ? { type: "string", format: "uuid" }
+      : n === "instrument_id" && flags.ownerEquityV2
+        ? { type: "string", pattern: "^[0-9]{6}\\.KRX$" }
+        : { type: "string" };
+    op.parameters.push(param(n, "path", schema, true));
   }
   if (path === "/api/v1/recommendations/latest") {
     op.parameters.push(param("strategy_config_id", "query", { type: "string", format: "uuid" }, false));
@@ -335,6 +392,27 @@ function successResponsesFor(method, path) {
   }
   if (path === "/api/v1/research/owner-beta/equity-price-signals/instruments/{instrument_id}" && method === "get") {
     return { "200": json("Owner-beta equity price/volume signal detail", "#/components/schemas/OwnerBetaEquitySignalsDetail") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/memberships" && method === "get") {
+    return { "200": json("Owner equity memberships and runtime policy", "#/components/schemas/OwnerEquityV2MembershipList") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/memberships" && method === "post") {
+    return { "202": json("Owner equity membership request accepted", "#/components/schemas/OwnerEquityV2Mutation") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/memberships/{membership_id}" && method === "get") {
+    return { "200": json("Owner equity membership lifecycle status", "#/components/schemas/OwnerEquityV2MembershipStatus") };
+  }
+  if (path.endsWith("/{membership_id}/retry") && method === "post" || path.endsWith("/{membership_id}/disable") && method === "post") {
+    return { "202": json("Owner equity lifecycle transition accepted", "#/components/schemas/OwnerEquityV2Mutation") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/signals/latest" && method === "get") {
+    return { "200": json("Latest admitted owner equity signal snapshot", "#/components/schemas/OwnerEquityV2LatestSignals") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/signals/screen" && method === "post") {
+    return { "200": json("Filtered latest admitted owner equity signal snapshot", "#/components/schemas/OwnerEquityV2ScreenSignals") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}" && method === "get") {
+    return { "200": json("Owner equity signal detail from the latest admitted snapshot", "#/components/schemas/OwnerEquityV2SignalDetail") };
   }
   if (path === "/api/v1/recommendations/owner-beta/price-only/runs" && method === "get") {
     return { "200": json("Owner-beta price-only recommendation history", "#/components/schemas/OwnerBetaPriceOnlyReadPage") };
@@ -400,6 +478,12 @@ function bodySchemaRef(path) {
   if (path === "/api/v1/research/owner-beta/equity-price-signals/screen") {
     return "#/components/schemas/OwnerBetaEquitySignalsScreenBody";
   }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/memberships") {
+    return "#/components/schemas/OwnerEquityV2AddBody";
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/signals/screen") {
+    return "#/components/schemas/OwnerEquityV2ScreenBody";
+  }
   if (path === "/api/v1/recommendations/owner-beta/price-only/runs") {
     return "#/components/schemas/OwnerBetaPriceOnlyRunBody";
   }
@@ -435,6 +519,35 @@ function errorCodesFor(route) {
       codes.push("RESOURCE_NOT_FOUND");
     }
     return codes;
+  }
+  if (flags.ownerEquityV2) {
+    const codes = [
+      "SESSION_UNKNOWN",
+      "SESSION_EXPIRED",
+      "FORBIDDEN",
+      "OWNER_EQUITY_INTEGRITY_FAILED",
+      "INTERNAL",
+    ];
+    if (path.includes("/memberships")) codes.push("OWNER_EQUITY_POLICY_UNAVAILABLE");
+    if (path.includes("{membership_id}")) codes.push("OWNER_EQUITY_MEMBERSHIP_NOT_FOUND");
+    if (path.includes("/signals/")) codes.push("OWNER_EQUITY_SNAPSHOT_UNAVAILABLE");
+    if (path.includes("/signals/instruments/")) codes.push("RESOURCE_NOT_FOUND");
+    if (flags.idem) {
+      codes.push(
+        "CSRF_DENIED",
+        "IDEMPOTENCY_KEY_REQUIRED",
+        "IDEMPOTENCY_KEY_MISMATCH",
+        "INVALID_PARAMETER",
+        "PAYLOAD_TOO_LARGE",
+        "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE",
+      );
+      if (path.endsWith("/memberships")) codes.push("OWNER_EQUITY_CAPACITY_EXCEEDED");
+      if (path.endsWith("/retry") || path.endsWith("/disable")) {
+        codes.push("OWNER_EQUITY_INVALID_STATE");
+      }
+    }
+    if (path.endsWith("/signals/screen")) codes.push("INVALID_PARAMETER", "PAYLOAD_TOO_LARGE");
+    return [...new Set(codes)];
   }
   if (flags.ownerBetaSupportedAsOf) {
     return [
@@ -1074,6 +1187,208 @@ const SCHEMAS = {
     properties: {
       min: { type: ["number", "null"] },
       max: { type: ["number", "null"] },
+    },
+  },
+  OwnerEquityV2AddBody: {
+    type: "object",
+    required: ["instrument_code"],
+    additionalProperties: false,
+    properties: {
+      instrument_code: { type: "string", pattern: "^[0-9]{6}$", example: "005930" },
+    },
+  },
+  OwnerEquityV2Lifecycle: {
+    type: "string",
+    enum: [
+      "REQUESTED",
+      "VALIDATING",
+      "BACKFILLING",
+      "MATERIALIZING",
+      "READY",
+      "INSUFFICIENT_HISTORY",
+      "FAILED",
+      "DISABLED",
+    ],
+  },
+  OwnerEquityV2Policy: {
+    type: "object",
+    required: [
+      "max_active_instruments",
+      "active_instruments",
+      "remaining_capacity",
+      "target_observed_sessions",
+      "minimum_observed_sessions",
+    ],
+    additionalProperties: false,
+    properties: {
+      max_active_instruments: { type: "integer", minimum: 1 },
+      active_instruments: { type: "integer", minimum: 0 },
+      remaining_capacity: { type: "integer", minimum: 0 },
+      target_observed_sessions: { type: "integer", minimum: 1 },
+      minimum_observed_sessions: { type: "integer", minimum: 1 },
+    },
+  },
+  OwnerEquityV2Coverage: {
+    type: "object",
+    required: [
+      "observed_sessions",
+      "target_observed_sessions",
+      "minimum_observed_sessions",
+    ],
+    additionalProperties: false,
+    properties: {
+      observed_sessions: { type: "integer", minimum: 0 },
+      target_observed_sessions: { type: "integer", minimum: 1 },
+      minimum_observed_sessions: { type: "integer", minimum: 1 },
+      first_session: dateStr,
+      last_session: dateStr,
+    },
+  },
+  OwnerEquityV2Failure: {
+    type: "object",
+    required: ["code", "retryable"],
+    additionalProperties: false,
+    properties: {
+      code: { type: "string", pattern: "^[A-Z][A-Z0-9_]{0,63}$" },
+      retryable: { type: "boolean" },
+    },
+  },
+  OwnerEquityV2Membership: {
+    type: "object",
+    required: [
+      "id",
+      "instrument_id",
+      "lifecycle",
+      "generation",
+      "coverage",
+      "requested_at",
+      "updated_at",
+    ],
+    additionalProperties: false,
+    properties: {
+      id: uuid,
+      instrument_id: { type: "string", pattern: "^[0-9]{6}\\.KRX$" },
+      lifecycle: { $ref: "#/components/schemas/OwnerEquityV2Lifecycle" },
+      generation: { type: "integer", minimum: 0 },
+      coverage: { $ref: "#/components/schemas/OwnerEquityV2Coverage" },
+      failure: { $ref: "#/components/schemas/OwnerEquityV2Failure" },
+      requested_at: ts,
+      disabled_at: ts,
+      updated_at: ts,
+    },
+  },
+  OwnerEquityV2MembershipList: {
+    type: "object",
+    required: ["policy", "memberships"],
+    additionalProperties: false,
+    properties: {
+      policy: { $ref: "#/components/schemas/OwnerEquityV2Policy" },
+      memberships: { type: "array", items: { $ref: "#/components/schemas/OwnerEquityV2Membership" } },
+    },
+  },
+  OwnerEquityV2MembershipStatus: {
+    type: "object",
+    required: ["policy", "membership"],
+    additionalProperties: false,
+    properties: {
+      policy: { $ref: "#/components/schemas/OwnerEquityV2Policy" },
+      membership: { $ref: "#/components/schemas/OwnerEquityV2Membership" },
+    },
+  },
+  OwnerEquityV2Mutation: {
+    type: "object",
+    required: ["resource", "job_id", "duplicate_active"],
+    additionalProperties: false,
+    properties: {
+      resource: { $ref: "#/components/schemas/OwnerEquityV2Membership" },
+      job_id: uuid,
+      duplicate_active: { type: "boolean" },
+    },
+  },
+  OwnerEquityV2Snapshot: {
+    type: "object",
+    required: ["snapshot_id", "as_of", "universe_sha256", "row_count", "published_at"],
+    additionalProperties: false,
+    properties: {
+      snapshot_id: uuid,
+      as_of: dateStr,
+      universe_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      row_count: { type: "integer", minimum: 0 },
+      published_at: ts,
+    },
+  },
+  OwnerEquityV2Signal: {
+    type: "object",
+    required: [
+      "instrument_id", "generation", "rank", "score", "condition",
+      "return_20", "return_60", "return_120",
+      "volatility_20", "volatility_60", "volatility_120",
+      "max_drawdown_120", "sma_20", "sma_60",
+      "average_volume_20", "volume_ratio_20_60", "average_trading_value_20",
+    ],
+    additionalProperties: false,
+    properties: {
+      instrument_id: { type: "string", pattern: "^[0-9]{6}\\.KRX$" },
+      generation: { type: "integer", minimum: 1 },
+      rank: { type: "integer", minimum: 1 },
+      score: { type: "number" },
+      condition: { $ref: "#/components/schemas/OwnerBetaEquitySignalCondition" },
+      return_20: { type: "number" },
+      return_60: { type: "number" },
+      return_120: { type: "number" },
+      volatility_20: { type: "number" },
+      volatility_60: { type: "number" },
+      volatility_120: { type: "number" },
+      max_drawdown_120: { type: "number" },
+      sma_20: { type: "number" },
+      sma_60: { type: "number" },
+      average_volume_20: { type: "number" },
+      volume_ratio_20_60: { type: "number" },
+      average_trading_value_20: { type: "number" },
+    },
+  },
+  OwnerEquityV2LatestSignals: {
+    type: "object",
+    required: ["snapshot", "rows", "top5"],
+    additionalProperties: false,
+    properties: {
+      snapshot: { $ref: "#/components/schemas/OwnerEquityV2Snapshot" },
+      rows: { type: "array", items: { $ref: "#/components/schemas/OwnerEquityV2Signal" } },
+      top5: { type: "array", maxItems: 5, items: { $ref: "#/components/schemas/OwnerEquityV2Signal" } },
+    },
+  },
+  OwnerEquityV2ScreenSignals: {
+    type: "object",
+    required: ["snapshot", "rows"],
+    additionalProperties: false,
+    properties: {
+      snapshot: { $ref: "#/components/schemas/OwnerEquityV2Snapshot" },
+      rows: { type: "array", items: { $ref: "#/components/schemas/OwnerEquityV2Signal" } },
+    },
+  },
+  OwnerEquityV2SignalDetail: {
+    type: "object",
+    required: ["snapshot", "signal"],
+    additionalProperties: false,
+    properties: {
+      snapshot: { $ref: "#/components/schemas/OwnerEquityV2Snapshot" },
+      signal: { $ref: "#/components/schemas/OwnerEquityV2Signal" },
+    },
+  },
+  OwnerEquityV2ScreenBody: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      instrument_ids: {
+        type: ["array", "null"],
+        uniqueItems: true,
+        items: { type: "string", pattern: "^[0-9]{6}\\.KRX$" },
+      },
+      conditions: {
+        type: ["array", "null"],
+        uniqueItems: true,
+        items: { $ref: "#/components/schemas/OwnerBetaEquitySignalCondition" },
+      },
     },
   },
   CandidateDatasetPins: {

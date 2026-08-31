@@ -2947,6 +2947,61 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 
 ---
 
+### 4.5 Owner-managed equity universe V2 WP-6b provider-free runtime remediation (2026-08-31)
+
+WP-6b의 provider-free runtime/ops 검증만 수행했다. installed-release fake fixture는
+`/tmp` 아래에 만들어지는데 production verifier가 의도적으로 `/tmp`의 01777 ancestor를
+거부해 `release_root_untrusted`로 실패했다. fixture가 fakeroot ownership과 함께 그 private
+parent의 trusted metadata를 모델링하고, 개발 umask가 만든 fixture directory를 0755로 맞추도록
+고쳤다. production verifier의 release-root trust rule은 변경하지 않았다.
+
+재실행한 V2 runtime static/self-test, production image static/self-test, production ops
+static/self-test, 전체 ops static check, `cargo fmt --all -- --check`, `git diff --check`, 그리고
+synthetic placeholder `docker compose config --quiet`은 PASS했다. 이 기록에서 Docker image build,
+Docker container start, installer, deployment, credential read, provider call은 발생하지 않았다.
+fake runtime self-test의 Docker는 local command stub이며 Docker daemon을 호출하지 않는다. V2
+rollout profile은 기본 disabled이고, production deployment/activation은 여전히 별도 owner
+authorization이 필요하다.
+
+### 4.6 Owner-managed equity universe V2 WP-7 independent review (2026-08-31)
+
+독립 read-only 리뷰에서 `OwnerEquitySourcePins`의 prior-generation optional field 2개가
+factor-engine과 API DB test fixture에 전파되지 않아 해당 V2 test target이 `E0063`으로
+컴파일되지 않는 medium finding 1건을 발견했다. 두 fixture는 prior generation이 없는 initial
+source이므로 `prior_candidate_sha256: None`과
+`prior_artifact_manifest_sha256: None`을 명시했고, 전체 initializer를 재검색해 추가 누락이
+없음을 확인했다.
+
+수정 후 factor-engine V2 11개, API V2 all-target 14개, OpenAPI contract 13개,
+job-queue V2 16개, API cargo check, fmt/diff check가 PASS했다. 독립 재리뷰 최종 판정은
+`ACCEPT`이며, high/medium correctness·security finding은 남지 않았다. 앞서 검증한 Web
+typecheck/lint/build와 unit 166개, synthetic Playwright 8개, V2 runtime/image/production-ops
+static/self-test와 synthetic Compose config도 유효하다. disposable PostgreSQL 기반 전체
+migration/RLS/race 실행과 workspace all-target 전체 완료는 각각 로컬 DB 부재와 공유 Cargo
+build lock 때문에 미검증으로 남겼다. production image build/start, deployment, credential read,
+live KIS/provider call은 수행하지 않았고 V2 rollout은 계속 기본 disabled다.
+
+### 4.7 Owner-managed equity universe V2 pre-release remediation and QA (2026-08-31)
+
+배포 전 통합 리뷰에서 발견된 세 운영 차단점을 닫았다. 첫째, 기존 Owner와 이후 Owner 역할
+부여 모두에 기본 `100/261/121` 정책이 자동 생성되도록 migration 0053에 seed와 FORCE-RLS
+호환 trigger를 추가했다. 둘째, 16:30 KST 이전에는 현재 날짜를 사용하지 않고 provenance가
+있는 최신 KRX 거래일만 선택하는 일일 incremental scheduler를 V2 runner에 연결했다. SQL
+security-definer가 READY membership, prior admission, policy, entitlement, release commit과
+idempotency를 다시 검증한 뒤에만 job을 만든다. 셋째, Web membership의 initial generation
+`0`을 허용하고, disable 수락 직후 구 신호 snapshot을 숨긴 채 새 exact snapshot 또는 typed
+unavailable 응답까지 polling하도록 고쳤다. API의 Add/Retry 범위도 현재 세션 종가가 확인되지
+않으면 전일까지만 요청한다.
+
+검증은 `cargo check --workspace --all-targets`, V2 job-queue 18개, runner 7개, API V2 15개,
+Web unit 166개, typecheck/lint/build, synthetic Playwright 8개를 통과했다. 임시 PostgreSQL 18
+컨테이너에서 migration 0053을 실제 적용해 RLS lifecycle, Owner policy trigger, incremental job
+생성/중복 억제를 실행했다. 최초 실제 실행에서 schema-qualified `substring ... FROM` 구문의
+PostgreSQL syntax error를 발견해 2-argument form으로 수정했고 재실행은 PASS했다. V2 runtime,
+production-image, production-ops static/self-test와 전체 ops static check, fmt/diff check도
+PASS했다. 이 단계에서는 production image build/start, release install, production DB migration,
+credential read, live KIS/provider call은 아직 수행하지 않았다.
+
 ## 5. 개발 환경 주의사항 (반복 비용을 치른 것들)
 
 **이 절은 2026-08-14 Linux 이관 이전의 Windows/WSL 환경 기록이다.** 함정 자체는 그 환경에서 실제로 치른 비용이므로 남겨두지만, 현재 Linux 호스트의 절차는 `docs/LINUX_MIGRATION_AND_OPERATIONS.md`를 따른다. Windows 원본은 런북 §12 체크리스트가 끝날 때까지 읽기 전용으로 보존한다.

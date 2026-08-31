@@ -10,15 +10,9 @@ import {
 import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import { type StockBetaDictionary, stockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
+import type { Locale } from "@/lib/i18n/locale";
 import { getLocale } from "@/lib/i18n/server";
-import {
-  InvalidOwnerBetaEquitySignalsFilters,
-  type OwnerBetaEquitySignalsFilters,
-  type OwnerBetaEquitySignalsSearchParams,
-  ownerBetaEquitySignalsFiltersSelected,
-  ownerBetaEquitySignalsScreenBody,
-  parseOwnerBetaEquitySignalsSearchParams,
-} from "@/lib/products/equity-signals-contracts";
+import type { OwnerBetaEquitySignalsSearchParams } from "@/lib/products/equity-signals-contracts";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -29,7 +23,7 @@ export const metadata: Metadata = {
 };
 
 export type StockBetaPageProps = {
-  readonly searchParams?: Promise<OwnerBetaEquitySignalsSearchParams>;
+  readonly searchParams?: Promise<OwnerBetaEquitySignalsSearchParams> | undefined;
 };
 
 function frame(t: StockBetaDictionary, children: React.ReactNode) {
@@ -42,6 +36,7 @@ function frame(t: StockBetaDictionary, children: React.ReactNode) {
 
 function errorPage(
   t: StockBetaDictionary,
+  locale: Locale,
   kind: "blocked" | "error",
   title: string,
   message: string,
@@ -49,58 +44,72 @@ function errorPage(
   return frame(
     t,
     <>
-      <StockBetaPolicyNotice t={t} />
+      <StockBetaPolicyNotice locale={locale} />
       <StatePanel kind={kind} message={message} title={title} />
     </>,
   );
 }
 
-async function renderStockBetaProduct(
-  { searchParams }: StockBetaPageProps,
-  t: StockBetaDictionary,
-) {
-  let filters: OwnerBetaEquitySignalsFilters;
-  try {
-    filters = parseOwnerBetaEquitySignalsSearchParams((await searchParams) ?? {});
-  } catch (error) {
-    if (error instanceof InvalidOwnerBetaEquitySignalsFilters) {
-      return errorPage(t, "error", t.invalidFiltersTitle, t.invalidFiltersMessage);
-    }
-    throw error;
-  }
-
+async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
   try {
     const api = await getProductApi();
-    const data = ownerBetaEquitySignalsFiltersSelected(filters)
-      ? await api.screenOwnerBetaEquitySignals(ownerBetaEquitySignalsScreenBody(filters))
-      : await api.getOwnerBetaEquitySignalsLatest();
-    return frame(t, <StockBetaWorkspace data={data} filters={filters} t={t} />);
+    const memberships = await api.getOwnerEquityV2Memberships();
+    let signals = null;
+    let initialSignalUnavailable = false;
+    try {
+      signals = await api.getOwnerEquityV2LatestSignals();
+    } catch (error) {
+      if (isLoginRequiredError(error)) {
+        redirect("/login");
+      }
+      if (error instanceof ApiProblem && error.code === "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE") {
+        initialSignalUnavailable = true;
+      } else {
+        throw error;
+      }
+    }
+    return frame(
+      t,
+      <StockBetaWorkspace
+        initialMemberships={memberships}
+        initialSignalUnavailable={initialSignalUnavailable}
+        initialSignals={signals}
+        locale={locale}
+      />,
+    );
   } catch (error) {
     if (isLoginRequiredError(error)) {
       redirect("/login");
     }
     if (error instanceof ApiProblem) {
-      if (error.code === "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE") {
-        return errorPage(t, "blocked", t.signalUnavailableTitle, t.signalUnavailableMessage);
+      if (error.code === "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE") {
+        return errorPage(
+          t,
+          locale,
+          "blocked",
+          t.signalUnavailableTitle,
+          t.signalUnavailableMessage,
+        );
       }
-      if (error.code === "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED") {
-        return errorPage(t, "error", t.integrityTitle, t.integrityMessage);
+      if (error.code === "OWNER_EQUITY_INTEGRITY_FAILED") {
+        return errorPage(t, locale, "error", t.integrityTitle, t.integrityMessage);
       }
+      return errorPage(t, locale, "error", t.genericUnavailableTitle, t.requestFailure(error.code));
     }
-    return errorPage(t, "error", t.genericUnavailableTitle, t.genericUnavailableMessage);
+    return errorPage(t, locale, "error", t.genericUnavailableTitle, t.genericUnavailableMessage);
   }
 }
 
-export async function StockBetaProductPage(props: StockBetaPageProps = {}) {
+export async function StockBetaProductPage(_props: StockBetaPageProps = {}) {
   const locale = await getLocale();
-  return renderStockBetaProduct(props, stockBetaDictionary[locale]);
+  return renderStockBetaProduct(stockBetaDictionary[locale], locale);
 }
 
-export default async function StockBetaPage(props: StockBetaPageProps = {}) {
+export default async function StockBetaPage(_props: StockBetaPageProps = {}) {
   const locale = await getLocale();
   return OwnerBetaProductRoute({
     product: "stock-beta",
-    renderProduct: () => renderStockBetaProduct(props, stockBetaDictionary[locale]),
+    renderProduct: () => renderStockBetaProduct(stockBetaDictionary[locale], locale),
     title: stockBetaDictionary[locale].pageTitle,
   });
 }

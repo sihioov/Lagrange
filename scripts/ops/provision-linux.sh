@@ -125,6 +125,7 @@ declare -a required_dirs=(
   "$data_root/raw"
   "$data_root/curated"
   "$data_root/nautilus_catalog"
+  "$data_root/owner-equity-v2-artifacts"
   "$artifacts_root"
   "$artifacts_root/historical-price-beta-root"
   "$artifacts_root/backtest"
@@ -244,6 +245,7 @@ if [ "$mode" = preflight ]; then
   check_mode_owner "$data_root/raw" "$worker_uid" "$worker_gid" 750 raw
   check_mode_owner "$data_root/curated" "$worker_uid" "$worker_gid" 750 curated
   check_mode_owner "$data_root/nautilus_catalog" "$worker_uid" "$worker_gid" 750 nautilus_catalog
+  check_mode_owner "$data_root/owner-equity-v2-artifacts" "$worker_uid" "$worker_gid" 750 owner-equity-v2-artifacts
   check_mode_owner "$artifacts_root" "$service_uid" "$worker_gid" 750 artifacts
   check_mode_owner "$artifacts_root/historical-price-beta-root" "$worker_uid" "$worker_gid" 750 historical-price-beta-root
   check_mode_owner "$artifacts_root/backtest" "$worker_uid" "$worker_gid" 750 backtest-artifacts
@@ -299,6 +301,8 @@ install -d -m 0750 -- "$data_root/curated"
 chown "$worker_uid:$worker_gid" -- "$data_root/curated"
 install -d -m 0750 -- "$data_root/nautilus_catalog"
 chown "$worker_uid:$worker_gid" -- "$data_root/nautilus_catalog"
+install -d -m 0750 -- "$data_root/owner-equity-v2-artifacts"
+chown "$worker_uid:$worker_gid" -- "$data_root/owner-equity-v2-artifacts"
 if [ -e "$artifacts_root" ] || [ -L "$artifacts_root" ]; then
   check_mode_owner "$artifacts_root" "$service_uid" "$worker_gid" 750 artifacts
 else
