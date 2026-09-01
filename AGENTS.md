@@ -211,3 +211,25 @@ key to disk permanently inside an immutable store.
   `opendart.fss.or.kr/guide/`, plus `docs/runbooks/stage6-source-contracts.md` for the recorded
   quotes and gaps.  When sources conflict, choose the narrowest fail-closed behavior and record the
   exact discrepancy in tests or the runbook.
+
+## Architecture diagrams must track structural changes (mandatory)
+
+`docs/diagrams/component_architecture.puml` (static code dependencies) and
+`docs/diagrams/runtime_deployment.puml` (compose runtime/deployment) are
+evidence-bound: every drawn edge carries a `' evidence: <file:line>` comment
+pointing at the concrete code that makes the edge exist, and deliberately
+folded edges are listed with evidence in the component file's header.
+
+- Whenever a change merged to `main` alters the structure, update both the
+  affected `.puml` and its evidence comments in the same change, before or
+  with the merge.  Structural changes include: workspace members or Cargo
+  path dependencies; `nt/` package boundaries or the Rust-to-Python spawn
+  contract; compose services, profiles, networks, or volume mounts; nginx
+  routing; DB roles or table groups; the web-to-API contract surface.
+- An edge without a real, current `file:line` evidence citation must not be
+  drawn.  Do not leave stale citations behind after moving code; fixing the
+  citation is part of the structural change.
+- Re-render the PNGs locally and commit them together with the `.puml`
+  sources (no network rendering service; diagram content stays local):
+  `docker run --rm -v "$PWD/docs/diagrams:/data" plantuml/plantuml -tpng /data/component_architecture.puml /data/runtime_deployment.puml`
+- If a change does not alter the structure, leave the diagrams untouched.

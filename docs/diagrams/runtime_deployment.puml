@@ -1,0 +1,194 @@
+@startuml runtime_deployment
+' =====================================================================
+' Lagrange Station — runtime / deployment view (single-host Compose)
+' Generated 2026-09-01 from deploy/compose/compose.yml, deploy/nginx/nginx.conf,
+' migrations/, and code spawn/publication sites.
+' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
+' NOT compose depends_on (which is startup ordering only).
+' Every arrow carries an evidence comment ("' evidence: <file:line>").
+' <<profile:X>> services are inactive in the default deployment.
+' Live trading is explicitly out of scope: live-node-owner is a
+' credential-free simulator with network_mode: none.
+' =====================================================================
+
+title Lagrange Station — Runtime & Deployment (docker compose, single host)
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam nodesep 35
+skinparam ranksep 50
+skinparam ArrowColor #555555
+left to right direction
+
+actor "Owner / invited user\n(browser)" as user
+
+cloud "Auth0\n(OIDC IdP)" as auth0
+cloud "KIS Open API\n(read-only market data,\ndeny-by-default allowlist)" as kis
+
+' Packages below are presentation tiers, not exact network membership:
+' web and api-server are attached to BOTH the edge and backend networks
+' (compose.yml:121-123 web, compose.yml:257-259 api-server), which is how
+' nginx reaches api-server and web reaches api-server internally.
+package "edge tier" #E8F1FB {
+  node "reverse-proxy\n(nginx, ONLY published port 443->8443)" as nginx
+  node "web\n(Next.js 16 standalone)" as web
+}
+
+package "backend tier" #FDEEDC {
+  node "api-server\n(Axum REST authority :8080)" as api
+  node "research-worker\n(daily KIS EOD ingest,\ncurate, catalog publish)" as research
+  node "recommendation-runner\n(fixed 11-ETF targets)" as reco
+  node "candidate-runner\n(KOSPI200/KOSDAQ150\nscreener & analysis)" as cand
+  node "paper-scheduler\n(paper-runner bin from\ncrates/api-server)" as paper
+  node "metrics <<profile:monitoring>>\n(Prometheus)" as prom
+  node "db-role-bootstrap / db-migrate /\nresearch-raw-init / research-schema-check\n(one-shot gates)" as oneshots
+}
+
+package "backtest-iso network (internal: true, no egress)" #E5F3E7 {
+  node "nt-backtest-worker-1/2\n(Rust backtest-runner supervisor\n+ spawned NT Python child)" as btw
+}
+
+package "profile-gated (inactive by default)" #F2F2F2 {
+  node "owner-beta-runner\n<<profile:owner-beta>>\n(sealed price-beta recommendations)" as obr
+  node "owner-equity-v2-runner\n<<profile:owner-equity-v2>>\n(owner-managed equity universe V2)" as oev2
+  node "research-range-raw /\nresearch-action-range-raw /\nresearch-stock-price-beta-raw\n<<profiles, one-shot KIS capture>>" as rangejobs
+  node "research-stock-price-beta-materialize\n<<profile, network_mode: none>>" as materialize
+  node "research-v3-input-check\n<<profile, network_mode: none>>" as v3check
+  node "research-range-raw-recovery\n<<profile, network_mode: none>>\n(Stage5 recovery from committed Raw)" as recovery
+  node "live-node-owner <<profile:live>>\n(credential-free dry-run simulator,\nnetwork_mode: none, no order path)" as livenode
+}
+
+database "postgres (PG 18)\nroles: app / worker / research_writer /\naudit_writer / admin / migration_owner\ntable groups: identity, strategy,\nmarket_data, research, jobs, backtest,\nportfolio_trading, operations, candidate,\nowner-beta, equity-universe-v2" as pg
+
+folder "Raw zone\n/data/raw (immutable batches\n+ JSONL manifests)" as raw
+folder "Curated zone\n/data/curated (per-instrument\nParquet bars)" as curated
+folder "Artifact tree\n/data/artifacts\n(backtest/runs, paper,\nhistorical-price-beta-root)" as artifacts
+folder "stock-price-beta-artifacts\n(sealed fixed-30 signals)" as spba
+folder "owner-equity-v2-artifacts" as oeva
+
+' ---------------- Edge / web ----------------
+
+' evidence: deploy/compose/compose.yml:58-60 (ports "443:8443")
+user --> nginx : HTTPS :443
+
+' evidence: deploy/nginx/nginx.conf:150-152 (location / -> proxy_pass http://web:3000)
+nginx --> web : catch-all /
+' evidence: deploy/nginx/nginx.conf:84-85 (/api/ -> api-server:8080), 104-126 (= /auth/login, rate-limited), 128-129 (^~ /auth/)
+nginx --> api : /api/*, /auth/*
+' evidence: deploy/nginx/nginx.conf:164-167 (location /internal-artifacts/ { internal; alias /data/artifacts/; }), compose.yml:61-65 (ro mount)
+artifacts --> nginx : X-Accel-Redirect\ndelivery (ro mount)
+
+' evidence: compose.yml:104,117 (API_INTERNAL_URL=http://api-server:8080); apps/web/lib/api/server-client.ts:23-38 (forwards only session cookie)
+web --> api : server-side ky client\n(session cookie only)
+
+' ---------------- api-server ----------------
+
+' evidence: compose.yml:162-176 (DB_USER app + ADMIN_DB_USER admin + AUDIT_DB_USER audit_writer); crates/api-server/src/http/session.rs:1-6 (admin-role session read, app-role + RLS actor GUC for row access)
+api --> pg : SQL (roles: app,\nadmin ro, audit_writer)
+' evidence: compose.yml:184-189 (AUTH0_* + callback), docs/decisions/0002-auth0-oidc-and-sessions.md; apps/api-server/auth/src/lib.rs:160 (router)
+api --> auth0 : OIDC code exchange\n(confidential client)
+' evidence: compose.yml:255 (ro mount); crates/api-server/src/http/artifacts.rs:137-148 (hash verification + X-Accel-Redirect issuance)
+artifacts --> api : ro (hash-verified\nbefore X-Accel)
+' evidence: compose.yml:207-208,256 (OWNER_BETA_EQUITY_SIGNALS_MODE + ro mount)
+spba --> api : ro
+' evidence: compose.yml:1396-1398 (Prometheus scrapes api-server /metrics over backend)
+prom --> api : scrape /metrics
+
+' ---------------- one-shot gates ----------------
+
+' evidence: compose.yml:280-348 (role bootstrap), 357-392 (sqlx migrate as migration_owner, MIGRATIONS_DIR=/opt/lagrange/migrations)
+oneshots --> pg : bootstrap roles,\nrun migrations/
+' evidence: compose.yml:441-472 (research-raw-init chown/chmod raw+curated ownership fence)
+oneshots --> raw : ownership fence
+oneshots --> curated : ownership fence
+
+' ---------------- research ingestion ----------------
+
+' evidence: compose.yml:573-574 (KIS_APP_KEY_FILE/SECRET_FILE secrets); crates/market-data/src/providers/kis.rs:59-63 (DAILY_BARS_PATH, CALENDAR_PATH request paths); AGENTS.md KIS read-only allowlist
+research --> kis : GET daily bars, quotes,\nchk-holiday, KSD actions
+' evidence: compose.yml:592 (raw rw mount); data-pipelines/collectors/src/worker.rs:960 (RawStore::new)
+research --> raw : immutable Raw batches\n(hash-committed)
+' evidence: compose.yml:593 (curated mount); data-pipelines/collectors/src/worker.rs:2635 (CurateStore::new)
+research --> curated : curated Parquet bars
+' evidence: compose.yml:568-572 (DB_USER research_writer); data-pipelines/collectors/src/sink.rs:489,539,702 (INSERT data_batches, trading_calendar_versions, trading_calendars); candidate_sink.rs:389 (SECURITY DEFINER begin_candidate_raw_batch)
+research --> pg : catalog publication\n(research_writer,\nSECURITY DEFINER procs)
+
+' ---------------- recommendation pipeline ----------------
+
+' evidence: compose.yml:879-883 (DB_USER worker); crates/job-queue/src/recommendation/runner.rs:217 (claim_next_for "recommendation"), 914,939 (recommendation_runs)
+reco --> pg : claim jobs, publish\nrecommendation_runs (worker)
+' evidence: compose.yml:921-922 (curated ro + universe manifest ro mounts)
+curated --> reco : ro
+' evidence: compose.yml:898-899 (--uv-bin); crates/job-queue/src/recommendation/child.rs:509-574 (spawn python -m strategies.recommendation_cli); nt/strategies/recommendation_cli.py:394-419
+reco --> reco : spawns uv -> python -m\nstrategies.recommendation_cli\n(JSON request/result files)
+
+' ---------------- candidate pipeline ----------------
+
+' evidence: compose.yml:960-966 (DB_USER worker); crates/job-queue/src/candidate/runner.rs:119 (claim "candidate_compute"), 507 (SELECT public.publish_candidate_analysis)
+cand --> pg : claim jobs, publish via\nSECURITY DEFINER (worker)
+' evidence: compose.yml:983 (curated ro mount); crates/job-queue/src/candidate/runner.rs:7-14 (in-process factor_engine over CurateStore)
+curated --> cand : ro
+
+' ---------------- backtest pipeline ----------------
+
+' evidence: compose.yml:1193-1197,1224-1225 (worker role, backtest-iso; postgres also on backtest-iso per compose.yml:421-423); crates/job-queue/src/runner.rs:733 (claim "backtest")
+btw --> pg : claim backtest jobs,\npublish results (worker)
+' evidence: compose.yml:1221-1222 (curated:ro, nautilus_catalog:ro mounts; DATA_CATALOG_DIR compose.yml:1202)
+curated --> btw : ro
+' evidence: compose.yml:1223 (artifacts/backtest/runs rw); nt/backtest-worker/backtest_worker/worker.py:223-238 (Parquet artifacts + result.json + manifest.json), publish.py:1-9 (Rust publisher consumes manifest)
+btw --> artifacts : backtest/runs\n(Parquet + manifest.json)
+' evidence: compose.yml:1201 (LAGRANGE_UV_BIN); crates/job-queue/src/runner.rs:3465-3527 (spawn python -m backtest_worker run); NT catalog rebuilt per run from curated: nt/backtest-worker/backtest_worker/simulate.py:150-152
+btw --> btw : spawns uv -> python -m\nbacktest_worker run\n(isolated NT child, no egress)
+
+' ---------------- paper ----------------
+
+' evidence: compose.yml:1332-1339 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:26 (cargo build -p api-server --bin paper-runner)
+paper --> pg : SQL (4 role-scoped pools)
+' evidence: compose.yml:1370 (/data ro mount)
+curated --> paper : ro (dataset root)
+' evidence: compose.yml:1371 (artifacts/paper rw mount)
+paper --> artifacts : paper/
+
+' ---------------- profile-gated ----------------
+
+' evidence: compose.yml:1050-1051 (owner-beta-db network), 1029-1033 (worker role); crates/job-queue/src/owner_beta/runner.rs:171 (claim "owner_beta_price_recommendation")
+obr --> pg : claim + publish\n(worker, owner-beta-db net)
+' evidence: compose.yml:1049 (historical-price-beta-root ro mount)
+artifacts --> obr : ro (approved\nartifact leaf only)
+
+' evidence: compose.yml:1123-1124,1146-1147 (KIS secrets, owner-equity-v2-egress net); crates/job-queue/src/bin/owner-equity-v2-runner.rs:17-24 (in-process kis_client LiveTransport)
+oev2 --> kis : read-only equity bars
+' evidence: compose.yml:1098-1102 (worker role); crates/job-queue/src/owner_equity_v2.rs:674,1084 (owner_equity_memberships, owner_equity_signal_snapshots)
+oev2 --> pg : universe V2 state (worker)
+' evidence: compose.yml:1144 (raw rw mount); data-pipelines/collectors/src/owner_equity_v2.rs:45,144 (capture + materialize from raw)
+oev2 --> raw : rw
+' evidence: compose.yml:1145 (owner-equity-v2-artifacts rw mount)
+oev2 --> oeva : rw
+
+' evidence: compose.yml:646-647,693-694,743-744 (KIS secrets), 661-662,708-709,759-760 (range-raw-egress net)
+rangejobs --> kis : one-shot historical\n/ corporate-action capture
+' evidence: compose.yml:660,707,757 (raw rw mounts)
+rangejobs --> raw : rw
+' evidence: compose.yml:779 (raw:ro mount), 773 (network_mode: none)
+raw --> materialize : ro
+' evidence: compose.yml:780 (stock-price-beta-artifacts rw mount)
+materialize --> spba : rw
+' evidence: compose.yml:816-817 (raw:ro mount), 807 (network_mode: none)
+raw --> v3check : ro
+' evidence: compose.yml:852-853 (raw mounted rw), 843 (network_mode: none); worker --existing-source-batch-id path reads committed Raw evidence (compose.yml:819-825 comment)
+recovery --> raw : rw
+
+' live-node-owner: NO edges by design — network_mode: none, no secrets, no DB.
+' evidence: compose.yml:1439-1466; nt/live-node/live_node/runtime.py:185-190 (execution_enabled always rejected)
+
+legend right
+  Arrows = real communication (HTTP / SQL / file / spawn), not depends_on.
+  <<profile:X>> = inactive unless compose --profile X.
+  DB role -> table-group access: migrations/0009_grants.up.sql:5-14,
+  0010_rls.up.sql:5-24 (app = tenant CRUD w/ RLS; worker = engine tables;
+  research_writer = catalog publication; audit_writer = INSERT-only
+  audit_logs; admin = read-only).
+  All edges carry a "' evidence:" comment in this file's source.
+endlegend
+
+@enduml

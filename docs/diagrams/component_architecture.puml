@@ -1,0 +1,235 @@
+@startuml component_architecture
+' =====================================================================
+' Lagrange Station — static component / code-dependency architecture
+' Generated 2026-09-01 from manifest + code-usage evidence.
+' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
+' pointing at the concrete code that makes the edge exist:
+'   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
+'   - Python edges: importlib / NT-config dynamic import sites.
+'   - Cross-language edges: the exact process-spawn site.
+' Edges with no code usage do not appear. Empty placeholder directories
+' (nt/paper-runner, data-pipelines/normalizers, data-pipelines/validators,
+' data-pipelines/nt-catalog-builder) are intentionally NOT components.
+' The workspace member tests/integration/migration-contract is a test-only
+' gate crate (sqlx::migrate! over migrations/) and is likewise omitted.
+'
+' READABILITY: ubiquitous foundation dependencies are FOLDED (not drawn).
+' Nine crates depend on crates/domain and four components consume
+' crates/auth (the leaf crates auth, kis-client, opendart-client and
+' data-go-client have NO local dependencies at all). Drawing the folded
+' edges adds 13 crossing lines and zero information.
+' The folded edges and their code evidence:
+'   api-server      -> domain  ' evidence: crates/api-server/src/live_order.rs:42
+'   factor-engine   -> domain  ' evidence: crates/factor-engine/src/contract.rs:7
+'   selector        -> domain  ' evidence: crates/selector/src/builder.rs:12
+'   portfolio-model -> domain  ' evidence: crates/portfolio-model/src/paper_flow.rs:26
+'   result-model    -> domain  ' evidence: crates/result-model/src/lib.rs:11
+'   risk-gateway    -> domain  ' evidence: crates/risk-gateway/src/snapshot.rs:18
+'   job-queue       -> domain  ' evidence: crates/job-queue/src/paper_valuation.rs:14
+'   market-data     -> domain  ' evidence: crates/market-data/src/contract.rs:27
+'   collectors      -> domain  ' evidence: data-pipelines/collectors/src/stock_price_beta_raw.rs:12
+'   api-server      -> auth    ' evidence: crates/api-server/src/actor_tx.rs:15
+'   api-server-auth -> auth    ' evidence: apps/api-server/auth/src/lib.rs:22-26
+'   market-data     -> auth    ' evidence: crates/market-data/src/entitlement.rs:13
+'   selector        -> auth    ' evidence: crates/selector/src/publish.rs:28
+' =====================================================================
+
+title Lagrange Station — Component Architecture (code dependencies)
+
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 45
+skinparam ArrowColor #555555
+skinparam noteBackgroundColor #FFFFF0
+
+package "Frontend (TypeScript / Node 24)" #E8F1FB {
+  component "apps/web\n(Next.js 16 shell)" as web
+  component "apps/api-server\n(OpenAPI contract pkg:\nopenapi.json + generated/openapi.ts)" as api_contract
+}
+
+package "Rust workspace (edition 2024)" {
+
+  package "HTTP layer" #FDEEDC {
+    component "crates/api-server\n(Axum REST authority,\nActor+RLS repos;\nalso hosts paper-runner bin)" as api_server
+    component "apps/api-server/auth\n(api-server-auth:\nOIDC/session HTTP router)" as api_server_auth
+  }
+
+  package "Orchestration" #FBE4EC {
+    component "crates/job-queue\n(PG job queue + runner bins:\nbacktest / recommendation /\ncandidate / owner-beta /\nowner-equity-v2)" as job_queue
+  }
+
+  package "Research & results" #F1E6F7 {
+    component "crates/factor-engine\n(Polars factor snapshots)" as factor_engine
+    component "crates/selector\n(fixed-universe selection,\ntarget portfolios)" as selector
+    component "crates/portfolio-model\n(sizing, costs, ledger)" as portfolio_model
+    component "crates/result-model\n(common result model,\npaper parity)" as result_model
+  }
+
+  package "Live-trading guard" #FBE5E5 {
+    component "crates/risk-gateway\n(persisted order gate)" as risk_gateway
+  }
+
+  package "Data layer" #E5F3E7 {
+    component "crates/market-data\n(EOD contract, RawStore,\nCurateStore, providers)" as market_data
+    component "data-pipelines/collectors\n(research-worker + raw-capture\n& materialize bins)" as collectors
+  }
+
+  package "External source clients" #FCF8DE {
+    component "crates/kis-client\n(KIS REST, read-only allowlist)" as kis_client
+    component "crates/opendart-client\n(OpenDART, 3 approved paths)" as opendart_client
+    component "crates/data-go-client\n(FSC KRX listed-info)" as data_go_client
+  }
+
+  package "Foundation" #EBEFF2 {
+    component "crates/domain\n(shared primitives:\nIDs, Money, TradingDate)" as domain
+    component "crates/auth\n(OIDC, sessions, RBAC,\nentitlement gate)" as auth
+  }
+}
+
+note bottom of domain
+  Depended on by the 9 service crates
+  (edges folded; evidence in this file's
+  header comment). The leaf client crates
+  and auth have no local dependencies.
+end note
+
+note bottom of auth
+  Consumers (edges folded):
+  sessions/OIDC: api-server, api-server-auth
+  entitlement gate: market-data, selector
+end note
+
+package "Python NT workspace (nt/, NautilusTrader 1.231.0 via uv)" #E0F4F6 {
+  component "nt/backtest-worker\n(isolated NT backtest\nsupervisor + child)" as backtest_worker
+  component "nt/strategies\n(strategy packages +\nrecommendation_cli)" as strategies
+  component "nt/custom-data\n(SessionOpenEvent/DailyBarClosedEvent,\ncatalog_builder)" as custom_data
+  component "nt/live-node\n(credential-free dry-run\nreconciliation simulator)" as live_node
+}
+
+package "Operator tools (Node)" #F2F2F2 {
+  component "data-pipelines/kind-capture\n(Playwright KIND browser capture)" as kind_capture
+}
+
+' ---------------- Frontend edges ----------------
+
+' evidence: apps/web/lib/api/server-client.ts:23-38 (ky transport), apps/web/lib/api/server-session.ts:18-29 (API_INTERNAL_URL)
+web --> api_server : HTTP /api/v1/*, /auth/*\n(session cookie only)
+
+' evidence: apps/web/tsconfig.json:28 (path alias), apps/web/lib/api/contracts.ts:1 (import type only)
+web ..> api_contract : types only
+
+' evidence: apps/api-server/scripts/openapi-spec.mjs:1-9 (mirrors crates/api-server/src/contract.rs CONTRACT_ROUTES 1:1)
+api_contract ..> api_server : generated from\nCONTRACT_ROUTES
+
+' ---------------- api-server edges ----------------
+
+' evidence: crates/api-server/src/runtime.rs:13,1096 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
+api_server --> api_server_auth : mounts /auth
+
+' evidence: crates/api-server/src/repos/owner_equity_v2.rs:10 (use factor_engine::owner_equity_v2::OwnerEquitySignalRow)
+api_server --> factor_engine
+' evidence: crates/api-server/src/live_order.rs:49,143 (risk_gateway::evaluate_and_record)
+api_server --> risk_gateway
+' evidence: crates/api-server/src/live_order.rs:43 (use kis_client::mapping::{OrderRequest,..})
+api_server --> kis_client
+' evidence: crates/api-server/src/actor_tx.rs:16, crates/api-server/src/http/backtests.rs:496 (job_queue::batch::cancel_batch)
+api_server --> job_queue
+' evidence: crates/api-server/src/risk_snapshot.rs:148 (market_data::freshness::applicable_eod_age)
+api_server --> market_data
+' evidence: crates/api-server/src/http/backtests.rs:93 (portfolio_model::cost::CostProfile::resolve)
+api_server --> portfolio_model
+' evidence: crates/api-server/src/paper_session.rs:35 (use result_model::paper_parity::{ParityReport,..})
+api_server --> result_model
+' evidence: crates/api-server/src/http/strategies.rs:17 (selector::baseline::baseline_packages)
+api_server --> selector
+
+' ---------------- job-queue edges ----------------
+
+' evidence: crates/job-queue/src/owner_equity_v2.rs:24 (use factor_engine::owner_equity_v2::{..})
+job_queue --> factor_engine
+' evidence: crates/job-queue/src/recommendation/compute.rs:14-15 (use selector::baseline / selector::registry)
+job_queue --> selector
+' evidence: crates/job-queue/src/paper_valuation.rs:17 (use portfolio_model::cost::CostProfile)
+job_queue --> portfolio_model
+' evidence: crates/job-queue/src/paper_valuation.rs:15 (use market_data::CurateStore)
+job_queue --> market_data
+' evidence: crates/job-queue/src/owner_equity_v2/runtime.rs:11 (use collectors::owner_equity_v2::materialize_owner_equity_from_raw_allow_insufficient)
+job_queue --> collectors
+' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:17-18 (use kis_client::clock::Clock, kis_client::live_transport::LiveTransport)
+job_queue --> kis_client
+
+' ---------------- research / results edges ----------------
+
+' evidence: crates/factor-engine/src/price_only.rs:9-11 (use market_data::{ApprovedHistoricalPriceOnlyArtifact,..})
+factor_engine --> market_data
+
+' evidence: crates/selector/src/publish.rs:32 (use market_data::{DataUse, InstrumentMaster,..})
+selector --> market_data
+' evidence: crates/selector/src/builder.rs:13 (use factor_engine::FactorSnapshot)
+selector --> factor_engine
+
+' evidence: crates/portfolio-model/src/sizing.rs:35 (use selector::TargetPortfolio)
+portfolio_model --> selector
+
+' evidence: crates/result-model/Cargo.toml [dev-dependencies]; crates/result-model/tests/robustness_harness.rs:29
+result_model ..> job_queue : <<dev-only>>
+
+' ---------------- data-layer edges ----------------
+
+' evidence: crates/market-data/src/providers/kis_candidate.rs:16 (use kis_client::{KisError, RequestKind})
+market_data --> kis_client
+' evidence: crates/market-data/src/providers/opendart.rs:121,123 (impl OpenDartRead for opendart_client::OpenDartClient)
+market_data --> opendart_client
+' evidence: crates/market-data/src/providers/fsc_krx_listed.rs:17,36 (use data_go_client::{..})
+market_data --> data_go_client
+
+' evidence: data-pipelines/collectors/src/worker.rs:22 (use market_data::contract), worker.rs:960 (RawStore::new), worker.rs:2635 (CurateStore::new)
+collectors --> market_data
+' evidence: data-pipelines/collectors/src/stock_price_beta_materialize.rs:9 (use factor_engine::{..})
+collectors --> factor_engine
+' evidence: data-pipelines/collectors/src/worker.rs:14 (use kis_client::clock::Clock)
+collectors --> kis_client
+' evidence: data-pipelines/collectors/src/bin/opendart-raw.rs:55 (use opendart_client::{..})
+collectors --> opendart_client
+
+' ---------------- Rust -> Python process boundary ----------------
+
+' evidence: crates/job-queue/src/runner.rs:3465-3527 (Command::new(uv_bin) .. "python -m backtest_worker run --request --output-dir --status-path --scratch")
+job_queue -[#2255CC,bold]-> backtest_worker : spawns\n(-m backtest_worker run)
+
+' evidence: crates/job-queue/src/recommendation/child.rs:509-574 (Command::new(uv_bin) .. "python -m strategies.recommendation_cli --request --result --status")
+job_queue -[#2255CC,bold]-> strategies : spawns\n(-m strategies.recommendation_cli)
+
+' ---------------- Python NT edges (all dynamic imports) ----------------
+
+' evidence: nt/backtest-worker/backtest_worker/simulate.py:43,150 (importlib.import_module("custom-data.catalog_builder"))
+backtest_worker ..> custom_data : importlib
+' evidence: nt/backtest-worker/backtest_worker/simulate.py:156-159,219-224 (strategy_path -> NT ImportableStrategyConfig)
+backtest_worker ..> strategies : config-driven
+' evidence: nt/strategies/_execution.py:56, nt/strategies/ma200_trend.py:45 (importlib.import_module("custom-data.session_events"))
+strategies ..> custom_data : importlib
+
+' live_node is deliberately self-contained: no imports to/from other nt packages,
+' no broker/KIS client, execution_enabled=True always raises.
+' evidence: nt/live-node/live_node/runtime.py:3-8,185-190
+
+' ---------------- Operator capture -> Raw ingest ----------------
+
+' evidence: producer = data-pipelines/kind-capture/capture.mjs:10,259-270 (writes staging capture.json + page HTML); consumer = data-pipelines/collectors/src/bin/kind-raw.rs:1-7,574 (load_staging reads that staging directory)
+kind_capture ..> collectors : staging files\n(kind-raw bin)
+
+legend right
+  |= arrow |= meaning |
+  | solid | Cargo/runtime code dependency (verified use/call site) |
+  | dashed | compile-time types, dev-only, dynamic import, or file handoff |
+  | blue bold | cross-language child-process spawn |
+  Folded (not drawn): 9 service crates -> domain; api-server,
+  api-server-auth, market-data, selector -> auth.
+  Evidence for folded edges is in this file's header comment.
+  All drawn edges carry a "' evidence:" comment in this file's source.
+endlegend
+
+@enduml
