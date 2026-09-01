@@ -2,7 +2,8 @@
 
 **최신 기준 시각: 2026-08-27 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.43(Owner 수용성 보정 release 운영 배포),
+당시의 기록이다. **현재 상태는 §0.44(실제 Owner 추천 사용자 수용성 실패),
+§0.43(Owner 수용성 보정 release 운영 배포),
 §0.42(Owner 사용자 수용성 감사와 후속 보정),
 §0.41(전략 저장 CSRF/RLS 복구·운영 반영),
 §0.40(기준 전략 카탈로그·설정 UI 복구),
@@ -12,13 +13,14 @@
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.43에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.44에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
 `NOT_PUBLISHED`를 유지하며 generic dataset v4의 별도 `READY` 경로와 섞지 않는다.
 owner-beta 서비스와 기준 전략 카탈로그 release 적용은 완료됐고 실제 소유자 config도
-1개 저장됐다. 추천 실행과 전용 결과 확인, Paper/Live는 아직 수행하지 않았다. 검증된 `main`은
+저장됐다. 실제 추천 2건은 모두 `SUCCEEDED`했지만 결과의 사용자 가치와 설명 가능성은
+수용성에 실패했다. Paper/Live는 아직 수행하지 않았다. 검증된 `main`은
 `origin/main`에 push해 원격과 동기화했다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
@@ -2114,6 +2116,50 @@ owner-beta run `0`, migration max `52`다. Funnel backend는 기존 `172.24.0.4`
 한 번 실행해 terminal `SUCCEEDED`와 report/history를 확인하고, 후보·스크리너·종목 상세·
 백테스트의 production 사용자 가치를 확인하는 것이다. 이는 계속
 `USER_ACCEPTANCE_PENDING`이며 Paper/Live 활성화는 이 배포의 범위가 아니다.
+
+### 0.44 실제 Owner 추천 사용자 수용성 실패 (2026-08-27)
+
+실제 Auth0 Owner가 운영 추천을 두 번 실행했고 두 run 모두 `SUCCEEDED`, 실패 run은 0이다.
+따라서 enqueue, owner-beta runner, factor/target snapshot, 원자적 publication, history/report
+읽기 경로는 production에서 end-to-end로 동작한다. 그러나 Owner가 결과를 직접 사용한 판정은
+"무엇을 뜻하는지 이해하기 어렵고 의미 있는 추천으로 보이지 않는다"였으며, 이 판정은 아래
+실측과 일치한다. 현재 상태는 기술 gate PASS와 별개로 `USER_ACCEPTANCE_FAILED` /
+`REMEDIATION_REQUIRED`다.
+
+첫 시도에서 form은 licensing의 오늘 날짜 `2026-08-27`을 기본값으로 사용했지만 승인된
+sealed artifact의 마지막 session은 `2026-08-19`였다. API는 POST를 503으로 막고 run/job을
+만들지 않았으며 artifact에는 08-19 ETF11 행이 정확히 11개, 08-27 행은 0개였다. API UID의
+artifact traverse/read는 정상이라 권한 결함이 아니라 유효하지 않은 기본 날짜 UX 결함이다.
+즉시 우회는 08-19 선택이지만, source 보정은 승인 artifact range에 맞춘 default/max와
+사용자용 오류 설명을 제공해야 한다.
+
+`buy_and_hold@1.0.0` 실행은 `069500.KRX` 100%, cash 0%, 나머지 ETF10 제외,
+factor 없음이었다. 이는 배선과 재현성 확인용 benchmark일 뿐 종목 선택이나 시장 판단을 주는
+추천이 아니다. 이어 `relative_momentum@1.0.0`, `top_n=3`, `lookback_months=12`를
+08-19에 실행한 결과는 TIGER 200 `+153.52%`, KODEX 200 `+151.90%`, TIGER
+미국나스닥100 `+23.17%`의 12-minus-1 momentum 순위와 각 `33.33%`, cash `0.01%`였다.
+factor 값은 `2025-08-29 → 2026-07-31` adjusted close와 기계적으로 일치한다.
+
+그러나 상위 두 ETF가 모두 코스피200을 추종해 portfolio의 약 `66.66%`가 동일 노출이고,
+현재 selector에는 동일 benchmark/exposure 중복 제거가 없다. momentum은 과거 가격 수익률일
+뿐 기대수익률이나 예측이 아니며, 현재 report에는 이를 구분할 benchmark/backtest 성과,
+최대 낙폭, 변동성, 회전율·비용, 현재 보유 대비 변화가 없다. catalog의 5개 기준 전략도
+DB lifecycle상 모두 `Draft`다.
+
+표현 계층도 투자자가 아닌 개발자용 감사 화면에 가깝다. ETF 이름보다 instrument ID,
+퍼센트보다 raw decimal, 한국어 설명보다 `SELECTED_TOP_N` 같은 내부 reason code, 핵심 결론보다
+여러 commitment hash를 앞세운다. 출시 전 최소 remediation은 다음과 같다.
+
+1. 유효한 artifact 기준일을 자동 선택하고 허용 범위를 form에 고정한다.
+2. ETF 이름·추종 지수·자산군과 plain-language 선정/제외 이유를 기본 화면에 표시한다.
+3. factor를 퍼센트와 실제 계산 기간으로 표시하고 과거 수익률임을 명시한다.
+4. 동일 지수/exposure 중복 제거 또는 명시적 concentration 경고를 portfolio 계약에 넣는다.
+5. benchmark 대비 CAGR, 최대 낙폭, 변동성, 회전율·비용을 검증된 backtest와 연결한다.
+6. commitment hash와 원장 정보는 접힌 "감사 상세"로 이동한다.
+
+이 remediation 전에는 다른 전략을 반복 실행한 사실만으로 사용자 가치 gate를 닫지 않는다.
+현재 immutable 운영 revision `2a53c092...`와 healthy 상태, artifact approval, read-only 범위는
+그대로이며 이 수용성 확인 중 Paper/Live/order/provider 경로는 호출하지 않았다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
