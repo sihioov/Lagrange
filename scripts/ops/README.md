@@ -162,7 +162,9 @@ sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
 ```
 
 After Docker/Compose config expansion passes, the explicit root-only apply
-builds exactly the release image list using `--pull=false`:
+builds exactly the release image list sequentially, one Compose service per
+invocation, using `--pull=false`. Production Rust builder stages fix Cargo to
+two parallel jobs so a release build remains within the host memory boundary:
 
 ```sh
 sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \

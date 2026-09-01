@@ -57,6 +57,10 @@ grep -Fq 'does not match the build root HEAD' "$build" || die 'commit mismatch f
 grep -Fq 'docker compose --env-file' "$build" || die 'Compose env-file invocation missing'
 grep -Fq 'config --quiet' "$build" || die 'Compose config preflight missing'
 grep -Fq 'build --pull=false' "$build" || die 'pull=false build contract missing'
+grep -Fq 'for service in "${local_image_services[@]}"; do' "$build" ||
+  die 'local image builds must be sequential by service'
+grep -Fq 'compose build --pull=false "$service"' "$build" ||
+  die 'sequential single-service build command missing'
 grep -Fq 'RESEARCH_APP_ENV=prebuild-disabled' "$build" || die 'research prebuild sentinel missing'
 grep -Fq 'RESEARCH_ENTITLEMENT_REFERENCE=prebuild-disabled' "$build" ||
   die 'entitlement prebuild sentinel missing'
@@ -104,6 +108,20 @@ for service in "${services[@]}"; do
     die "Compose image must use exact commit-specific tag: $service"
   grep -Fq 'LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?' <<<"$block" ||
     die "Compose build arg missing for local image: $service"
+done
+
+for dockerfile in \
+  "$root/deploy/db/Dockerfile" \
+  "$root/crates/api-server/Dockerfile" \
+  "$root/crates/job-queue/Dockerfile" \
+  "$root/crates/job-queue/Dockerfile.backtest-runner" \
+  "$root/crates/job-queue/Dockerfile.owner-beta-runner" \
+  "$root/crates/job-queue/Dockerfile.owner-equity-v2-runner" \
+  "$root/deploy/runtime/Dockerfile.paper-runner" \
+  "$root/data-pipelines/collectors/Dockerfile"
+do
+  grep -Fq 'ENV CARGO_BUILD_JOBS=2' "$dockerfile" ||
+    die "production Rust Dockerfile must cap Cargo parallelism at two jobs: $dockerfile"
 done
 
 declare -A service_dockerfile=(

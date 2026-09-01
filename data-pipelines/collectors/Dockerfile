@@ -1,5 +1,7 @@
 FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS builder
 
+ENV CARGO_BUILD_JOBS=2
+
 # The range/raw, action-range/raw, and ordinary worker binaries must be tied to
 # the exact source revision that produced the image. Compose supplies this
 # immutable CI argument; do not permit an unpinned or mutable-runtime-only image.

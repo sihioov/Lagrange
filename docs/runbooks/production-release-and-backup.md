@@ -43,6 +43,12 @@ the host env supplies no candidate hash. Do not set Paper to `enabled`: no
 trusted three-unattended-session evidence checker exists,
 so production validation rejects it with `owner_beta_paper_evidence_unavailable`.
 
+The image builder invokes Compose once per service in the canonical order; it
+never submits the twelve services as one parallel Bake graph. Every production
+Rust builder also fixes `CARGO_BUILD_JOBS=2`. These limits are required on the
+14 GiB production host so concurrent release compilation cannot starve the
+running control plane or serving containers.
+
 ```bash
 export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
 # Output must be empty or exactly the one allowlisted workbook above.
