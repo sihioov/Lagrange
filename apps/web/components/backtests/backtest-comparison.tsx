@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import { backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
 import {
@@ -34,7 +34,7 @@ export function BacktestComparison({ runs }: BacktestComparisonProps) {
         json: { run_ids: runIds },
         method: "POST",
       });
-      setComparison(await parseApiResponse(response, backtestCompareSchema));
+      setComparison(await parseBrowserApiResponse(response, backtestCompareSchema));
       setMessage("");
     } catch (error) {
       if (error instanceof Error) {

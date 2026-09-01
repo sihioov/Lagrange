@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { StatePanel } from "@/components/states/state-panel";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import {
   type RecommendationsDictionary,
@@ -77,7 +77,7 @@ export function RecommendationRunStatus({
           cache: "no-store",
           credentials: "same-origin",
         });
-        const next = await parseApiResponse(response, recommendationRunSchema);
+        const next = await parseBrowserApiResponse(response, recommendationRunSchema);
         if (cancelled) {
           return;
         }

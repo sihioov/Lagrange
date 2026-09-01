@@ -57,6 +57,10 @@ grep -Fq 'does not match the build root HEAD' "$build" || die 'commit mismatch f
 grep -Fq 'docker compose --env-file' "$build" || die 'Compose env-file invocation missing'
 grep -Fq 'config --quiet' "$build" || die 'Compose config preflight missing'
 grep -Fq 'build --pull=false' "$build" || die 'pull=false build contract missing'
+grep -Fq 'for service in "${local_image_services[@]}"; do' "$build" ||
+  die 'local image builds must be sequential by service'
+grep -Fq 'compose build --pull=false "$service"' "$build" ||
+  die 'sequential single-service build command missing'
 grep -Fq 'RESEARCH_APP_ENV=prebuild-disabled' "$build" || die 'research prebuild sentinel missing'
 grep -Fq 'RESEARCH_ENTITLEMENT_REFERENCE=prebuild-disabled' "$build" ||
   die 'entitlement prebuild sentinel missing'
@@ -79,6 +83,7 @@ services=(
   recommendation-runner
   candidate-runner
   owner-beta-runner
+  owner-equity-v2-runner
   nt-backtest-worker-1
   nt-backtest-worker-2
   paper-scheduler
@@ -105,6 +110,20 @@ for service in "${services[@]}"; do
     die "Compose build arg missing for local image: $service"
 done
 
+for dockerfile in \
+  "$root/deploy/db/Dockerfile" \
+  "$root/crates/api-server/Dockerfile" \
+  "$root/crates/job-queue/Dockerfile" \
+  "$root/crates/job-queue/Dockerfile.backtest-runner" \
+  "$root/crates/job-queue/Dockerfile.owner-beta-runner" \
+  "$root/crates/job-queue/Dockerfile.owner-equity-v2-runner" \
+  "$root/deploy/runtime/Dockerfile.paper-runner" \
+  "$root/data-pipelines/collectors/Dockerfile"
+do
+  grep -Fq 'ENV CARGO_BUILD_JOBS=2' "$dockerfile" ||
+    die "production Rust Dockerfile must cap Cargo parallelism at two jobs: $dockerfile"
+done
+
 declare -A service_dockerfile=(
   [db-role-bootstrap]=deploy/db/Dockerfile
   [db-migrate]=deploy/db/Dockerfile
@@ -114,6 +133,7 @@ declare -A service_dockerfile=(
   [recommendation-runner]=crates/job-queue/Dockerfile
   [candidate-runner]=crates/job-queue/Dockerfile
   [owner-beta-runner]=crates/job-queue/Dockerfile.owner-beta-runner
+  [owner-equity-v2-runner]=crates/job-queue/Dockerfile.owner-equity-v2-runner
   [nt-backtest-worker-1]=crates/job-queue/Dockerfile.backtest-runner
   [nt-backtest-worker-2]=crates/job-queue/Dockerfile.backtest-runner
   [paper-scheduler]=deploy/runtime/Dockerfile.paper-runner
@@ -131,9 +151,16 @@ for service in "${services[@]}"; do
     *)
       grep -Fq 'COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' "$dockerfile" ||
         die "Dockerfile missing embedded historical-price-only approval registry: $service"
+      grep -Fq 'COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json' "$dockerfile" ||
+        die "Dockerfile missing embedded historical-price-only V3 approval registry: $service"
+      grep -Fq 'COPY configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json ./configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json' "$dockerfile" ||
+        die "Dockerfile missing embedded fixed-stock beta approval registry: $service"
       ;;
   esac
 done
+
+grep -Fqx '!configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json' "$root/.dockerignore" ||
+  die 'Docker build context is missing the fixed-stock beta approval registry allowlist entry'
 
 # The profile-gated range service has a deliberately different, operator-gated
 # history-capture contract and may not enter the serving build/manifest scope.

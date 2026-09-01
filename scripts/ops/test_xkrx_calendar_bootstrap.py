@@ -74,7 +74,7 @@ class _FixedCalendarProvider:
 class XkrxCalendarBootstrapTests(unittest.TestCase):
     def test_checked_in_artifact_passes_package_free_check(self) -> None:
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--check", "--end", "2026-08-19"],
+            [sys.executable, str(SCRIPT), "--check", "--end", "2026-08-28"],
             cwd=ROOT,
             check=False,
             capture_output=True,
@@ -97,7 +97,7 @@ class XkrxCalendarBootstrapTests(unittest.TestCase):
         )
         self.assertEqual(artifact["contract"], "historical-session-dates-only")
         self.assertEqual(artifact["representation"], "dates-only")
-        self.assertEqual(artifact["effective_from"], "2020-01-31")
+        self.assertEqual(artifact["effective_from"], "2016-08-29")
         closed = {entry["date"] for entry in artifact["non_sessions"]}
         for date in ("2020-05-01", "2020-08-17", "2020-12-31"):
             self.assertIn(date, closed, date)
@@ -229,9 +229,9 @@ assert {{row["date"] for row in artifact["override_entries"]}} == {{"2026-06-03"
                 str(SCRIPT),
                 "--emit-sessions",
                 "--start",
-                "2026-08-19",
+                "2026-08-28",
                 "--end",
-                "2026-08-20",
+                "2026-08-29",
             ],
             cwd=ROOT,
             check=False,
@@ -279,7 +279,7 @@ assert {{row["date"] for row in artifact["override_entries"]}} == {{"2026-06-03"
                     str(SCRIPT),
                     "--plan",
                     "--end",
-                    "2026-08-19",
+                    "2026-08-28",
                     "--output-dir",
                     str(output),
                 ],
@@ -292,7 +292,7 @@ assert {{row["date"] for row in artifact["override_entries"]}} == {{"2026-06-03"
             self.assertFalse(output.exists())
 
         rejected = subprocess.run(
-            [sys.executable, str(SCRIPT), "--plan", "--start", "2020-01-30", "--end", "2020-02-03"],
+            [sys.executable, str(SCRIPT), "--plan", "--start", "2016-08-28", "--end", "2016-09-01"],
             cwd=ROOT,
             check=False,
             capture_output=True,

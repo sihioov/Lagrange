@@ -137,6 +137,7 @@ struct CalendarSnapshot {
     bytes: Vec<u8>,
     request: RequestMetadata,
     retrieved_at: domain::UtcTimestamp,
+    response_continuation: Option<String>,
     covered_dates: BTreeMap<TradingDate, bool>,
 }
 
@@ -567,14 +568,17 @@ impl<R: KisRead> KisProvider<R> {
         if !snapshot.covered_dates.contains_key(&req.date) {
             return Err(calendar_snapshot_miss(req.date));
         }
-        output.push(RawEnvelope::new(
-            req.batch_id,
-            ResponseKind::Calendar,
-            "calendar-page-01.json",
-            snapshot.bytes.clone(),
-            snapshot.retrieved_at,
-            snapshot.request.clone(),
-        ));
+        output.push(
+            RawEnvelope::new(
+                req.batch_id,
+                ResponseKind::Calendar,
+                "calendar-page-01.json",
+                snapshot.bytes.clone(),
+                snapshot.retrieved_at,
+                snapshot.request.clone(),
+            )
+            .with_response_continuation(snapshot.response_continuation.clone()),
+        );
         Ok(())
     }
 
@@ -639,31 +643,35 @@ impl<R: KisRead> KisProvider<R> {
                 Some(symbol) => format!("{label}-{symbol}-page-{page:02}.json"),
                 None => format!("{label}-page-{page:02}.json"),
             };
-            pages.push(RawEnvelope::new(
-                req.batch_id,
-                kind,
-                file_name,
-                body.clone(),
-                req.now,
-                RequestMetadata {
-                    endpoint: path.to_owned(),
-                    query: sent_query,
-                    headers: vec![
-                        ("authorization".to_owned(), "[REDACTED]".to_owned()),
-                        ("appkey".to_owned(), "[REDACTED]".to_owned()),
-                        ("appsecret".to_owned(), "[REDACTED]".to_owned()),
-                        ("tr_id".to_owned(), tr_id.to_owned()),
-                        (
-                            "tr_cont".to_owned(),
-                            request_continuation.unwrap_or_default(),
-                        ),
-                    ],
-                    mode: FetchMode::Credentialed,
-                },
-            ));
-
             let follows =
                 pagination == PaginationPolicy::KsdGithubSample && marker.as_deref() == Some("M");
+
+            pages.push(
+                RawEnvelope::new(
+                    req.batch_id,
+                    kind,
+                    file_name,
+                    body.clone(),
+                    req.now,
+                    RequestMetadata {
+                        endpoint: path.to_owned(),
+                        query: sent_query,
+                        headers: vec![
+                            ("authorization".to_owned(), "[REDACTED]".to_owned()),
+                            ("appkey".to_owned(), "[REDACTED]".to_owned()),
+                            ("appsecret".to_owned(), "[REDACTED]".to_owned()),
+                            ("tr_id".to_owned(), tr_id.to_owned()),
+                            (
+                                "tr_cont".to_owned(),
+                                request_continuation.unwrap_or_default(),
+                            ),
+                        ],
+                        mode: FetchMode::Credentialed,
+                    },
+                )
+                .with_response_continuation(marker),
+            );
+
             if !follows {
                 output.extend(pages);
                 return Ok(());
@@ -752,6 +760,7 @@ impl CalendarSnapshot {
             bytes: envelope.bytes.clone(),
             request: envelope.request.clone(),
             retrieved_at: envelope.retrieved_at,
+            response_continuation: envelope.response_continuation.clone(),
             covered_dates,
         })
     }
@@ -1783,6 +1792,10 @@ mod tests {
             },
             MarketDataReply {
                 body: br#"{"rt_cd":"0","output1":[{"page":"two"}]}"#.to_vec(),
+                continuation: Some("M".to_owned()),
+            },
+            MarketDataReply {
+                body: br#"{"rt_cd":"0","output1":[{"page":"three"}]}"#.to_vec(),
                 continuation: Some("F".to_owned()),
             },
         ]);
@@ -1815,16 +1828,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "corporate-actions-bonus-page-01.json",
-                "corporate-actions-bonus-page-02.json"
+                "corporate-actions-bonus-page-02.json",
+                "corporate-actions-bonus-page-03.json",
             ]
         );
         let calls = provider.reader.calls.lock().unwrap();
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), 3);
         assert_eq!(calls[0].path, "/uapi/domestic-stock/v1/ksdinfo/bonus-issue");
         assert_eq!(calls[0].tr_id, "HHKDB669101C0");
         assert_eq!(calls[0].continuation, None);
         assert_eq!(calls[1].continuation.as_deref(), Some("N"));
+        assert_eq!(calls[2].continuation.as_deref(), Some("N"));
         assert_eq!(calls[0].query, calls[1].query);
+        assert_eq!(calls[1].query, calls[2].query);
         assert_eq!(
             calls[0].query,
             vec![
@@ -1852,6 +1868,9 @@ mod tests {
                 .map(|(_, value)| value.as_str()),
             Some("N")
         );
+        assert_eq!(output[0].response_continuation.as_deref(), Some("M"));
+        assert_eq!(output[1].response_continuation.as_deref(), Some("M"));
+        assert_eq!(output[2].response_continuation.as_deref(), Some("F"));
     }
 
     #[tokio::test]

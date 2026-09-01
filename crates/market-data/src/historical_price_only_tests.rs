@@ -37,6 +37,7 @@ fn source_file(symbol: &str, window: usize) -> FileEntry {
             headers: Vec::new(),
             mode: FetchMode::Credentialed,
         },
+        response_continuation: None,
     }
 }
 

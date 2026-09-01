@@ -164,7 +164,7 @@ test("browser preserves Owner CSRF order and safely replays the existing beta re
   expect(browserRequests[configPost]?.idempotency).not.toBeNull();
 
   await page.getByRole("link", { name: "Recommendations" }).click();
-  const warnings = page.getByRole("status", { name: "Recommendation warnings" });
+  const warnings = page.getByRole("status", { name: "Recommendation warnings" }).first();
   await expect(warnings).toContainText("Owner-only");
   await expect(warnings).toContainText("Price-return only");
   await expect(warnings).toContainText("Vendor snapshot");
@@ -177,12 +177,12 @@ test("browser preserves Owner CSRF order and safely replays the existing beta re
   await expect(report).toBeVisible();
   await expect(report.getByRole("row")).toHaveCount(12);
   await expect(report).toContainText("Cash allocation: 20.00%");
-  await expect(report).toContainText("0.912300");
-  await expect(report).toContainText("SELECTED_TOP_N");
+  await expect(report).toContainText("+91.23%");
+  await expect(report).toContainText("Selected under the selection criteria");
 
   const runForm = page.getByRole("form", { name: "Generate owner-only recommendation" });
   await expect(runForm.getByLabel("Strategy configuration")).toHaveValue(strategyConfigId);
-  await runForm.getByLabel("As-of date").fill("2026-08-19");
+  await runForm.getByLabel("As-of date").selectOption("2026-08-19");
   await runForm.getByRole("button", { name: "Generate owner-only recommendation" }).click();
   await expect(page.getByRole("status", { name: "Recommendation is in progress" })).toBeVisible();
   await expect(page.getByRole("status", { name: "Recommendation is in progress" })).toHaveCount(0);

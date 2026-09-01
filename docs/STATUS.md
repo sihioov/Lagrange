@@ -1,8 +1,13 @@
 # Lagrange Station — 상태 종합
 
-**최신 기준 시각: 2026-08-27 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
+**최신 기준 시각: 2026-08-30 (Asia/Seoul), 기준 트리: 이 문서가 포함된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.44(실제 Owner 추천 사용자 수용성 실패),
+당시의 기록이다. **현재 상태는 §0.48(고정 30종목 가격·거래량 빠른 베타 운영 배포와 직접 QA),
+§0.47(ETF11 10년 Raw 확장·v3 운영 배포와 직접 QA),
+§0.46(세션 만료 로그인 복구 운영 배포와 직접 QA),
+§0.45(Owner-beta 추천 remediation 운영 배포와 직접 QA),
+§0.44(Owner-beta 추천 remediation source-ready closeout),
+§0.43.1(실제 Owner 추천 사용자 수용성 실패),
 §0.43(Owner 수용성 보정 release 운영 배포),
 §0.42(Owner 사용자 수용성 감사와 후속 보정),
 §0.41(전략 저장 CSRF/RLS 복구·운영 반영),
@@ -13,14 +18,15 @@
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.44에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.48에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/
 `NOT_PUBLISHED`를 유지하며 generic dataset v4의 별도 `READY` 경로와 섞지 않는다.
 owner-beta 서비스와 기준 전략 카탈로그 release 적용은 완료됐고 실제 소유자 config도
-저장됐다. 실제 추천 2건은 모두 `SUCCEEDED`했지만 결과의 사용자 가치와 설명 가능성은
-수용성에 실패했다. Paper/Live는 아직 수행하지 않았다. 검증된 `main`은
+1개 저장됐다. 추천 remediation release도 운영 적용됐고 기존 production run 2건의 durable
+`SUCCEEDED`/ETF11 결과를 비식별로 재확인했다. 다만 새 화면의 실제 Auth0 Owner 세션 수용
+확인과 Paper/Live는 아직 수행하지 않았다. 검증된 `main`은
 `origin/main`에 push해 원격과 동기화했다. §4.2의 남은
 소유자 결정 5건은 2026-08-23~24에 owner-only 베타 범위로 모두 해소됐고,
 착수 가능한 코드 작업은 §4.3과 승인된 실행 계획에 있다. 이후 §1부터는 설계 목표와 08-17 이전 게이트·구현
@@ -29,6 +35,184 @@ owner-beta 서비스와 기준 전략 카탈로그 release 적용은 완료됐�
 보여주듯 **"완료"·"처음" 같은 서사 문장도 나중에 철회된 전례가 있다** — 새 사실을
 쓸 때는 반증이 될 수 있는 가장 가까운 곳을 먼저 열어볼 것(§0.23). 코드가 바뀌면
 게이트와 판정은 다시 실행해 갱신해야 한다.
+
+### 0.48 고정 30종목 가격·거래량 빠른 베타 운영 배포와 직접 QA (2026-08-30)
+
+**제품 경계.** 개인종목 확대는 기존 ETF11 추천과 formal six-source PIT candidate를 수정하지
+않고 별도 `kr-stock-price-beta-v1` owner-only research vertical로 구현했다. universe는 소유자가
+설정한 고정 30종목 목록이며 현재 또는 과거 지수 구성종목이라는 주장을 하지 않는다. 출력은
+가격·거래량 기반 조건 신호뿐이고 목표가, 상승확률, 매수·매도, 종목 비중, 주문·계좌 경로는 없다.
+원가격(`FID_ORG_ADJ_PRC=1`) vendor snapshot이므로 corporate action 미조정 경고를 항상 보이며,
+`OWNER_ONLY`/`PRICE_VOLUME_RESEARCH_ONLY`/`vendor_snapshot=true`/`strict_pit=false`/
+`UNREGISTERED`/`NOT_PUBLISHED`를 유지한다.
+
+**실데이터와 봉인 artifact.** KIS daily-bars 허용 GET/TR `FHKST03010100`만 사용해
+`2025-08-04..2026-08-28`을 종목당 3 windows, 총 90 GET로 1 rps 순차 수집했다. 계좌·잔고·주문
+API는 호출하지 않았다. immutable Raw batch는
+`050dfdf3-6a7e-5beb-a9ca-231d5bd457a3`, payload 90개/2,232,505 bytes이고 `batch.json`은
+`sha256:fc751254a57cc7b73880eea3df8a7e894c5ed4cc884336ff55170e23df38360c`다. exact 30종목 공통
+261 sessions / 7,830 bars artifact는
+`sha256:0f79c6feff67d1668c2bc811d4dcb89b82effc4e5c769c5243b23cec4e8a5dc9`, signal snapshot은
+`sha256:65e99ff5264bc9e2e97f53bcf7c9b72128ceaf878ce6e555c53b475edd1164ec`다. 별도 approval
+registry는 이 batch/source count/range/policy와 두 content pin을 정확히 묶고 설치본의
+provider-free checker가 `approval=verified`로 재검증했다.
+
+**구현과 검증.** 20/60/120-session 수익률·실현변동성, 120-session 최대낙폭, 20/60 SMA,
+20-session 평균 거래량·거래대금과 20/60 거래량 비율을 deterministic score/rank와
+`BULLISH`/`NEUTRAL`/`BEARISH` 조건으로 만든다. 최초 materialization 감사에서 부동소수점
+snapshot을 JSON round-trip 전 hashing해 persisted JSON의 self-hash가 달라지는 결함을 발견했고,
+canonical JSON round-trip 뒤 hash하도록 수정해 회귀 테스트를 추가했다. factor-engine,
+market-data, API 전체 target과 fixed-stock focused 15/15, Web 167 unit/typecheck/lint/production build,
+provider-free Playwright 4/4가 통과했다. collectors 전체에서 남은 6개 실패는 QA
+`DATABASE_URL` 부재로 시작 전에 중단되는 기존 DB integration뿐이며 fixed-stock 경로 실패는 0이다.
+
+**사용자 기능.** Owner는 `/stock-beta`에서 실제 30종목 순위 전체와 Top 5 카드를 보고, 조건,
+수익률·변동성·낙폭 범위, 추세로 필터링하며 종목 상세에서 각 factor 값과 조건 선정 이유,
+source/approval provenance를 확인할 수 있다. 최신 snapshot은 2026-08-28 기준이고 실제 분포는
+Bullish 3 / Neutral 8 / Bearish 19다. Member에게는 내비게이션과 API가 모두 닫혀 있다. 이는
+투자 추천이 아니라 가격·거래량 연구 화면이며, 빠른 베타 범위라 10년 PIT 개인종목 데이터나
+corporate-action 조정은 후속 formal product로 남는다.
+
+**운영 배포와 직접 QA.** source commit
+`69ad55db478e16306c22bbe41affccc2907f8742`를 `origin/main`에 push하고 exact revision production
+image 11개를 순차 빌드했다. root-only `0600` release manifest는 13 lines / 2,374 bytes,
+`sha256:e49a7ee6a6539db68a4888b322f95e063445e21454aa9f82cc22ef3ba6ccc52c`이며 11개 image ID/OCI
+revision을 독립 대조했다. immutable release를
+`/opt/lagrange/releases/69ad55db478e16306c22bbe41affccc2907f8742`에 설치하고 `current`를 원자 전환했다.
+production config, 기존 ETF owner-beta gate, DB role/migration/catalog sync, Raw/schema check,
+stock artifact check와 Compose release가 모두 PASS했다. application container 8개는 exact
+`69ad55d...`, healthy, restart 0, OOM false이고 최근 panic/fatal/OOM match는 0이다. credentialed
+EOD freshness gate도 PASS했다.
+
+공개 Funnel은 유지된 reverse-proxy `172.24.0.4`를 가리킨다. 실제 `:8443`에서 `/healthz` 200,
+`/` 307 → `/login`, `/login` 303 → 승인된 Auth0, 무효 session의 새 equity-signals API 401
+`SESSION_UNKNOWN`, 무효 session으로 `/stock-beta` 새로고침 시 307 → `/login`이며
+`We could not load this workspace` 문구가 없음을 확인했다. `/api/v1/admin/live`는 계속 404다.
+실제 Auth0 Owner credential/cookie를 추출하거나 가장하지 않았으므로 로그인 후 실화면의 마지막
+사용자 수용 확인만 `USER_ACCEPTANCE_PENDING`이고, Paper/Live는 활성화하지 않았다.
+
+**2026-08-30 재QA.** 배포 약 10시간 뒤 설치본 provider-free approval check와 actual artifact의
+30 instruments × 261 sessions 완전 행렬, 7,830 bars, factor numeric/bounds, universe 30/30 매핑,
+deterministic rank와 Top 5를 다시 검산해 모두 PASS했다. 공개 Funnel의 TLS 검증을 켠 상태에서
+health 200, 목록·상세 두 화면의 만료 session 307 → `/login` 303 → Auth0, latest/detail/screen
+세 API의 401 `SESSION_UNKNOWN`, Live 404를 확인했다. 실제 Chromium 두 경로에도 workspace 오류가
+없었다. 첫 단독 Playwright 호출은 synthetic API를 기동하지 않아 화면 assertion 전에 4건 모두
+`ECONNREFUSED`였고, 정식 QA wrapper로 mock과 Next를 함께 소유·기동해 전체 browser regression
+48/48을 통과시켰다. Web unit 167/167와 typecheck도 PASS했고 lint는 기존 direct-cookie 경고 2건만
+남았다. application container 8개는 계속 healthy/restart 0/OOM false, 12시간 severe/integrity
+error 0이며 reverse-proxy access 24건 중 5xx 0, Funnel target `172.24.0.4`, EOD freshness gate가
+모두 PASS했다. 실제 Auth0 Owner 로그인 후 시각적 수용 확인은 계속 `USER_ACCEPTANCE_PENDING`이다.
+
+### 0.47 ETF11 10년 Raw 확장·v3 운영 배포와 직접 QA (2026-08-29)
+
+**원인 판정.** `2020-01-31` 시작일은 KIS나 XKRX의 기술적 한계가 아니었다. 최초
+fixed-universe v1 범위로 선택된 제품 스코프였고, 2026-08-24 소유자 결정은 이미 수집된
+`2020-01-31..2026-08-19` 6.5년 v2를 먼저 owner beta로 출시하면서 설계 SC-02의 10년
+목표를 명시적으로 deferred했다. 2026-08-29 소유자 지시가 그 수집 deferral을 해제했다.
+과거 v2 artifact와 approval은 회귀·기존 작업 재생을 위해 그대로 보존한다.
+
+**10년 가격 Raw 완료.** 새 승인 범위는 최근 완료 XKRX session 기준 정확히
+`2016-08-29..2026-08-28`이다. XKRX calendar를 2,452 sessions로 재생성했고, KIS
+daily-bars source batch `d746ef9f-7eed-5333-97db-cb064331bd06`을 새로 수집했다. ETF11
+각 25 windows, payload 275개이고 source `batch.json`은
+`sha256:1673cdc3f29ecd13cc5117ce15d1d2e26a22db4328fc8b49926608721a67d5e6`다.
+정규화는 2,452 sessions 전부 성공했다. source payload는 7,827,445 bytes이고 새
+normalized leaf는 4,904 files / 435,534,444 logical bytes다. transient unit
+`lagrange-etf11-10y-raw-23a01b49.service`는 `Result=success`; ordinary
+`research-worker`는 같은 컨테이너로 healthy 복구됐다.
+
+이 price batch는 `response_continuation` 저장 필드가 추가되기 전 exact capture commit
+`23a01b49114943f93b3c8b240843d360c7485e94`에서 생성돼 275개 marker key가 모두
+미기록이다. 빈 marker를 사후 생성하지 않는다. 대신 그 capture contract와 당시 focused
+tests가 모든 요청 continuation `None`, nonempty response header `M/N/F/unknown/whitespace`
+및 body cursor의 Raw visibility를 fail-closed했음을 pin하고 evidence를
+`UNRECORDED_CAPTURE_CONTRACT_REJECTED_NONEMPTY_V1`로 명시한다. 현재 collector의 신규
+strict test는 빈 response marker `Some("")` 보존도 검증한다. 동일 범위 재수집을 시도한
+transient unit `lagrange-etf11-10y-price-marker-0b04fee-v2.service`는 provider construction/
+KIS 호출 전에 기존 immutable source 중복 방지 gate의 `KIS_RANGE_BATCH_CONFLICT`로
+종료됐고 새 source batch는 0개다. ordinary worker는 healthy 복구됐으며 기존 Raw는
+변경되지 않았다.
+
+**10년 action Raw 완료.** 사후 verifier가 KSD pagination 종료를 독립 증명할 수 있도록
+`RawEnvelope`/`FileEntry`에 backward-compatible `response_continuation` evidence를
+추가했다. `batch.json`, append-only manifest, committed readback와 orphan recovery를
+검증했고 `market-data` 전체(153 unit + 모든 integration), action CLI 3/3,
+`OPS_STATIC`, `OPS_SELF_TEST`, release build가 통과했다. commit
+`8c42a091cedd1031538cb9f3d97ccfeb3a17905c`는 `origin/main`에 push했다.
+
+격리된 root-owned transient unit `lagrange-etf11-10y-action-8c42a09.service`로 fixed
+ETF11 × 7 KSD classes를 순차 수집했다. unit은 exit 0/`Result=success`, worker pause와
+동일 컨테이너 restore가 모두 PASS다. immutable batch는
+`fbec8b5d-d87a-4d62-86fa-7af8ebce982b`, payload 77개/54,981 bytes,
+`batch.json sha256:73a6c3e18b4cd90ea8aa2daa5a13a6c7572adc6ceed8cbe074e61bc6b5580cf2`,
+manifest-line
+`sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550`다.
+각 symbol은 정확히 7 classes이고 전부 page 1에서 request `tr_cont=""`, response
+`response_continuation="E"`로 terminal이었다. endpoint/TR-ID/range/symbol/redaction/
+hash/size metadata QA가 모두 통과했다. 본문을 출력하지 않은 집계는 dividend 157 rows가
+모두 cash-only(`stk_divi_rate=0`), positive stock dividend와 다른 6 classes는 0 rows였고
+숫자·음수·지급일 모순도 0건이었다.
+
+**v3 Raw replay QA.** 별도 price/action verifier와 `network_mode:none`, Raw read-only,
+no-secrets/no-DB/no-backend combined checker를 추가했다. 실제 production Raw readback은
+price 275 files / 2,452 observed sessions / 26,972 bars,
+`bars_sha256:20c750f0ca415073da37650ae2bb0c942a181b4c86f167defe95895e4499dcf2`;
+action 77 files / cash-only 157 rows / normalized action 0,
+`cash_rows_sha256:b22a5c9808a8a1a2c892aa3ff46d529672c909620a2c45c0e46d48d0538d17e8`로
+통과했다. 두 입력은 `vendor_snapshot=true`, `strict_pit=false`, `PRICE_RETURN_ONLY`로
+일치한다. 이는 Raw admission 증명이며 아직 artifact/approval/publication은 아니다.
+
+**v3 artifact와 독립 승인 완료.** production Raw를 provider/network 없이 다시 읽어
+deterministic candidate
+`sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d`와
+artifact-manifest commitment
+`sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6`를
+생성했다. 전용 artifact directory는 UID/GID `10001:10001`, mode `0700`, 파일은 `0600`이며
+`bars.ndjson`은 7,672,914 bytes / 26,972 rows,
+`sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe`다.
+Raw mount를 제거하고 존재하지 않는 Raw root를 준 `--check`도 같은 candidate/artifact pin으로
+통과해 artifact-only readback임을 확인했다.
+
+별도 canonical one-line v3 approval registry는
+`sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707`이며,
+기존 v2 registry bytes/hash
+`sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380`는
+변경하지 않았다. 기본 resolver는 v3를 선택하고, queue worker는 persisted five-pin의
+registry hash로 v2/v3를 정확히 고른다. unknown registry와 어느 하나라도 다른 pin/source/
+policy/envelope 값은 artifact open 전에 또는 readback 비교에서 fail-closed한다. focused
+approval 9/9, market-data lib 182/182, job-queue compute 2/2, network-none UID 10001 실제
+production artifact approval-check가 11 instruments / 2,452 sessions / 26,972 bars로
+통과했다.
+
+**운영 배포 완료.** v3 registry와 dual v2/v3 resolver, persisted five-pin replay, v3 artifact
+reader를 포함한 source commit `c958c6d277aa5baecdf40577ccc10bb63780a8ca`를
+`origin/main`에 push했다. exact revision production image 11개를 빌드했고 root-only `0600`
+release manifest는 13 lines / 2,374 bytes,
+`sha256:69e404e2b2150a1d2b884db2ca1b8d2960e752689c6f6a006322bd78ee95e0eb`다. 최초 병렬
+빌드는 호스트 OOM으로 Paseo daemon이 종료돼 완료 manifest 없이 image 3개만 남았으며,
+running production release에는 영향을 주지 않았다. 재시도는 11개 서비스를 순차 빌드한 뒤
+공식 manifest builder를 cache-only로 실행해 PASS했다.
+
+릴리스를 `/opt/lagrange/releases/c958c6d277aa5baecdf40577ccc10bb63780a8ca`에
+immutable 설치하고 `current`를 원자 전환했다. 설치본 networkless approval-check는 registry
+`sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707`,
+ETF11 / 2,452 sessions / 26,972 bars를 다시 읽어 PASS했다. production config, owner-beta
+release gate, DB role bootstrap/migration, strategy catalog sync, Raw/schema check, manifest image
+ID/revision 검증과 Compose release가 모두 통과했다. API/Web/research/recommendation/candidate/
+owner-beta/backtest application container 8개는 전부 `healthy`, exact `c958c6d...`, 최근
+panic/fatal/OOM match 0이다. post-backfill health는 credentialed EOD
+`2026-08-28T07:30:00Z`, age 60,642초로 PASS했다.
+
+**현재 사용자 영향과 직접 QA.** 새로 생성하는 owner-beta 추천은 기본 v3 10년 artifact를
+사용하고, 기존 v2 five-pin 작업은 v2 registry로 재생 가능하다. 공개 Funnel backend는 새
+reverse-proxy IP `172.24.0.4`와 일치한다. `:8443`에서 `/healthz` 200, `/` 307 → `/login`,
+`/login` 303 → 승인된 Auth0, 익명 session 및 supported-as-of API 401,
+`/api/v1/admin/live` 404를 확인했다. 무효 session cookie로 `/strategies`를 새로고침하면
+307 → `/login`이고 `We could not load this workspace` 문구는 없었다. 실제 Auth0 Owner
+credential/cookie를 추출하거나 가장하지 않았으므로 로그인 후 새 추천 1회 생성의 브라우저
+수용성만 `USER_ACCEPTANCE_PENDING`이다. 범위는 계속 `OWNER_ONLY`,
+`vendor_snapshot=true`, `strict_pit=false`, `PRICE_RETURN_ONLY`, `UNREGISTERED`,
+`NOT_PUBLISHED`이며 generic READY나 Paper/Live 승격은 아니다.
 
 **2026-08-24 owner-beta execution seam.** The next immutable `research-worker`
 image definition now includes historical price beta materialize/check and exposes
@@ -2117,7 +2301,7 @@ owner-beta run `0`, migration max `52`다. Funnel backend는 기존 `172.24.0.4`
 백테스트의 production 사용자 가치를 확인하는 것이다. 이는 계속
 `USER_ACCEPTANCE_PENDING`이며 Paper/Live 활성화는 이 배포의 범위가 아니다.
 
-### 0.44 실제 Owner 추천 사용자 수용성 실패 (2026-08-27)
+### 0.43.1 실제 Owner 추천 사용자 수용성 실패 (2026-08-27)
 
 실제 Auth0 Owner가 운영 추천을 두 번 실행했고 두 run 모두 `SUCCEEDED`, 실패 run은 0이다.
 따라서 enqueue, owner-beta runner, factor/target snapshot, 원자적 publication, history/report
@@ -2160,6 +2344,107 @@ DB lifecycle상 모두 `Draft`다.
 이 remediation 전에는 다른 전략을 반복 실행한 사실만으로 사용자 가치 gate를 닫지 않는다.
 현재 immutable 운영 revision `2a53c092...`와 healthy 상태, artifact approval, read-only 범위는
 그대로이며 이 수용성 확인 중 Paper/Live/order/provider 경로는 호출하지 않았다.
+
+### 0.44 Owner-beta 추천 remediation source-ready closeout (2026-08-28)
+
+두 차례의 기존 production Owner recommendation run은 기술적으로 `SUCCEEDED`에 도달했지만,
+사용자 수용성은 실패했다. 보고서의 기준일이 licensing status에서 제시됐고, instrument metadata가
+없었으며, factor/reason 표시가 불투명했고, audit hash가 주 보고서를 지배했다. 이 기록은 원래의
+운영 수용성 실패가 해소됐다는 뜻이 아니다.
+
+현재 worktree의 source remediation은 독립 검토에서 `ACCEPT`됐다. 승인 artifact에서
+supported-as-of를 발견하고 기본값으로 사용하며, 정확한 ETF11 POST/discovery semantics를 적용하고,
+`public.instruments`의 name/asset_class는 표시 전용으로 bounded read한다. tracking/exposure 추론은
+하지 않고, 14개 bilingual reason code는 정적 매핑으로 표시하며, producer-compatible raw factor
+percentages와 접힌 audit details를 사용한다. 생성 OpenAPI contract도 동기화됐다.
+
+Web typecheck, targeted Biome, 다섯 개 focused Owner-beta Web suite, API `openapi:check`와 generator
+equality, Rust owner-beta unit tests와 clippy, `git diff --check`가 통과했다. `DATABASE_URL`이 설정되지
+않아 DB-backed integration branch는 실행하지 않았고/skipped 상태다.
+
+이 상태는 `SOURCE_READY`뿐이다. 이 변경은 agent가 commit하지 않았고, 배포·활성화·production 재실행도
+하지 않았다. 따라서 Owner acceptance는 별도 production deployment와 retest가 끝날 때까지
+`USER_ACCEPTANCE_PENDING`이며, 원래 acceptance failure를 operationally closed로 기록하지 않는다.
+일반 recommendation, Owner-beta price-only, backtest는 서로 다른 capability로 유지한다. Paper와
+Live는 기존처럼 disabled/out of scope다.
+
+Owner-beta backtest Phase B는 `docs/superpowers/plans/2026-08-28-owner-beta-backtest-p0-owner-decision.md`
+의 P0 simulation contract fields를 Owner가 명시적으로 승인하기 전까지 deferred/prohibited다. 이
+문서의 권고나 source remediation은 그 선택을 대신하지 않는다. 이번 closeout에서는 migration,
+production network call, deployment, provider expansion, KIS/OpenDART boundary 변경, order/account,
+Paper/Live surface 변경을 수행하거나 승인하지 않았다.
+
+### 0.45 Owner-beta 추천 remediation 운영 배포와 직접 QA (2026-08-28)
+
+source remediation commit `90a793d315cf2565fa46a4ddc7cb026169cd2a80`을 `origin/main`에
+fast-forward push하고, 같은 exact revision으로 로컬 serving image 11개를 빌드해 strict V2
+manifest를 생성했다. `/opt/lagrange/releases/90a793d315cf2565fa46a4ddc7cb026169cd2a80`을
+immutable release로 설치하고 `current`를 전환했다. owner가 승인한 임시 운영 권한은 72시간
+뒤 자동 회수되는 systemd timer로 제한했으며, sudoers 전체 구문 검증이 통과했다.
+
+첫 `compose-release` 호출은 process-local `LAGRANGE_CODE_COMMIT`이 빠져 production validator가
+서비스 변경 전에 `BLOCKED_EXTERNAL`로 거부했다. exact installed commit을 process-local로
+주입해 재실행했고 production config, embedded-registry networkless approval, DB role bootstrap,
+migration/strategy catalog `5`, Raw/schema check와 모든 manifest image ID/revision 검증이 통과했다.
+API, Web, research/recommendation/candidate/owner-beta/backtest worker 전부 새 revision으로 교체됐고
+health `healthy`, restart count `0`을 확인했다. Post-backfill release health는 credentialed EOD
+`2026-08-27T07:30:00Z`, age `82,390`초로 PASS했다.
+
+공개 Funnel `:8443` 직접 QA 결과는 `/healthz` 200, `/` 307, 익명 `/api/v1/auth/session` 401,
+신규 `/api/v1/recommendations/owner-beta/price-only/supported-as-of` 401(경로 설치 및 인증 보호),
+`/api/v1/admin/live` 404다. `/login` 최초 응답은 303이며 승인된
+`lagrange-station.jp.auth0.com`으로 이동했다. networkless artifact check는 `APPROVED`, ETF11,
+1,608 sessions/17,688 bars와 고정 `OWNER_ONLY`/`PRICE_RETURN_ONLY`/`vendor_snapshot=true`/
+`strict_pit=false` envelope를 재확인했다.
+
+운영 PostgreSQL에는 읽기 전용 트랜잭션만 사용했다. Owner-beta run은 2건 모두 `SUCCEEDED`,
+최신 `as_of=2026-08-19`, 최신 item 11개이며 `public.instruments`의 ETF11 name/asset_class도
+각각 11/11 존재한다. 이번 읽기 전용 QA 범위에서는 새 run, session, strategy config,
+dataset/publication이나 주문·계좌 상태 변화를 관찰하지 않았다.
+
+따라서 release와 비인증/운영 경계 QA는 `PASS`다. 그러나 agent는 Auth0 Owner credential,
+cookie 또는 session을 추출·가장하지 않았으므로 authenticated supported-as-of 200 응답과 새
+보고서의 실제 브라우저 체감은 Owner 로그인 재검증 전까지 `USER_ACCEPTANCE_PENDING`이다.
+Paper/Live는 계속 disabled/out of scope이고, backtest Phase B도 §0.44의 P0 승인 전 보류다.
+
+### 0.46 세션 만료 로그인 복구 운영 배포와 직접 QA (2026-08-29)
+
+새로고침 시 만료된 세션이 로그인으로 복구되지 않고 `We could not load this workspace`를
+표시하던 결함을 수정했다. API session lookup이 만료 row를 SQL `WHERE`에서 제거해
+`SESSION_UNKNOWN`으로 뭉개던 부분은, 취소되지 않은 row를 먼저 찾고 만료 여부를 계산해
+`SESSION_EXPIRED`와 실제 unknown을 구분하도록 바꿨다. Web은 두 typed code만 로그인 필요로
+분류한다. Server Component의 모든 인증 제품 page와 공통 session loader는 `/login`으로
+redirect하고, client mutation/polling/CSRF 경계는 full navigation으로 같은 복구를 수행한다.
+DB 장애나 malformed response 같은 내부 오류는 로그인 만료로 오분류하지 않으며, 최후의
+authenticated error 화면에도 명시적인 다시 로그인 링크를 제공한다.
+
+source commit `9ad4bc8b505e70e4a43037d477021b04e64bc452`은 `origin/main`에 push됐다.
+Web unit 148/148, typecheck, lint(기존 `noDocumentCookie` warning만 존재), production build,
+전체 Playwright 44/44와 focused session-recovery 4/4가 통과했다. API는 fmt와 strict clippy,
+격리된 임시 PostgreSQL을 사용한 `http_admin` 6/6을 통과했다. 이 브라우저 QA를 위한 호스트
+의존성은 2026-08-28 APT 이력상 `libasound2t64` 1회와 자동 의존성 `libasound2-data` 1회만
+system-wide 설치됐다. 이전 작업은 패키지를 임시 경로에 추출해 `LD_LIBRARY_PATH`로 쓴
+것이어서 중복 system install이 아니다.
+
+같은 exact revision으로 serving image 11개를 빌드해 root-only strict V2 manifest를 생성하고,
+`/opt/lagrange/releases/9ad4bc8b505e70e4a43037d477021b04e64bc452`에 immutable release로
+설치한 뒤 `current`를 원자적으로 전환했다. production config, owner-beta release gate, DB role
+bootstrap/migration, strategy catalog sync 5, Raw/schema check와 manifest image ID/revision 검증이
+모두 통과했다. API, Web, research/recommendation/candidate/owner-beta/backtest worker는 exact
+revision `9ad4bc8...`, `healthy`, restart count 0이다. Reverse proxy도 healthy/restart 0이며
+별도 content-pinned upstream image를 유지한다. Post-backfill release health는 credentialed EOD
+`2026-08-28T07:30:00Z`, age `37,101`초로 PASS했다. KIS 경계는 read-only이고 Live/order
+profile은 계속 disabled다.
+
+공개 Funnel `:8443` 직접 QA는 `/healthz` 200, `/` 307 → `/login`, `/login` 303 → 승인된
+Auth0, 익명 `/api/v1/auth/session` 401, `/api/v1/admin/live` 404를 확인했다. 무효/오래된 세션
+cookie를 넣은 `/strategies`도 307 → `/login`으로 복구되어 generic workspace error를 표시하지
+않는다. synthetic E2E는 valid 상태에서 페이지를 연 뒤 session을 `SESSION_EXPIRED` 또는
+`SESSION_UNKNOWN`으로 전환하고 reload했을 때 `/auth/login` handoff와 기존 오류 문구 부재를
+검증하며, `INTERNAL`은 로그인으로 잘못 보내지 않음을 별도로 검증한다. 실제 Auth0 Owner
+credential/cookie는 추출하거나 가장하지 않았으므로 실사용 세션의 자연 만료를 24시간 기다리는
+장기 관측은 하지 않았다. 배포와 재현 가능한 만료 복구 QA는 `PASS`이고 Paper/Live는 이번
+변경 범위 밖이다.
 
 ## 1. 목표 — 이 시스템은 무엇인가
 
@@ -2706,6 +2991,61 @@ KIS 개인 단독 사용 권리는 더 이상 외부 조달 항목이 아니다.
 **데이터 권리 없이 앞 셋의 코드를 쓰면 검증 불가능한 코드가 된다** — 착수하지 않은 이유.
 
 ---
+
+### 4.5 Owner-managed equity universe V2 WP-6b provider-free runtime remediation (2026-08-31)
+
+WP-6b의 provider-free runtime/ops 검증만 수행했다. installed-release fake fixture는
+`/tmp` 아래에 만들어지는데 production verifier가 의도적으로 `/tmp`의 01777 ancestor를
+거부해 `release_root_untrusted`로 실패했다. fixture가 fakeroot ownership과 함께 그 private
+parent의 trusted metadata를 모델링하고, 개발 umask가 만든 fixture directory를 0755로 맞추도록
+고쳤다. production verifier의 release-root trust rule은 변경하지 않았다.
+
+재실행한 V2 runtime static/self-test, production image static/self-test, production ops
+static/self-test, 전체 ops static check, `cargo fmt --all -- --check`, `git diff --check`, 그리고
+synthetic placeholder `docker compose config --quiet`은 PASS했다. 이 기록에서 Docker image build,
+Docker container start, installer, deployment, credential read, provider call은 발생하지 않았다.
+fake runtime self-test의 Docker는 local command stub이며 Docker daemon을 호출하지 않는다. V2
+rollout profile은 기본 disabled이고, production deployment/activation은 여전히 별도 owner
+authorization이 필요하다.
+
+### 4.6 Owner-managed equity universe V2 WP-7 independent review (2026-08-31)
+
+독립 read-only 리뷰에서 `OwnerEquitySourcePins`의 prior-generation optional field 2개가
+factor-engine과 API DB test fixture에 전파되지 않아 해당 V2 test target이 `E0063`으로
+컴파일되지 않는 medium finding 1건을 발견했다. 두 fixture는 prior generation이 없는 initial
+source이므로 `prior_candidate_sha256: None`과
+`prior_artifact_manifest_sha256: None`을 명시했고, 전체 initializer를 재검색해 추가 누락이
+없음을 확인했다.
+
+수정 후 factor-engine V2 11개, API V2 all-target 14개, OpenAPI contract 13개,
+job-queue V2 16개, API cargo check, fmt/diff check가 PASS했다. 독립 재리뷰 최종 판정은
+`ACCEPT`이며, high/medium correctness·security finding은 남지 않았다. 앞서 검증한 Web
+typecheck/lint/build와 unit 166개, synthetic Playwright 8개, V2 runtime/image/production-ops
+static/self-test와 synthetic Compose config도 유효하다. disposable PostgreSQL 기반 전체
+migration/RLS/race 실행과 workspace all-target 전체 완료는 각각 로컬 DB 부재와 공유 Cargo
+build lock 때문에 미검증으로 남겼다. production image build/start, deployment, credential read,
+live KIS/provider call은 수행하지 않았고 V2 rollout은 계속 기본 disabled다.
+
+### 4.7 Owner-managed equity universe V2 pre-release remediation and QA (2026-08-31)
+
+배포 전 통합 리뷰에서 발견된 세 운영 차단점을 닫았다. 첫째, 기존 Owner와 이후 Owner 역할
+부여 모두에 기본 `100/261/121` 정책이 자동 생성되도록 migration 0053에 seed와 FORCE-RLS
+호환 trigger를 추가했다. 둘째, 16:30 KST 이전에는 현재 날짜를 사용하지 않고 provenance가
+있는 최신 KRX 거래일만 선택하는 일일 incremental scheduler를 V2 runner에 연결했다. SQL
+security-definer가 READY membership, prior admission, policy, entitlement, release commit과
+idempotency를 다시 검증한 뒤에만 job을 만든다. 셋째, Web membership의 initial generation
+`0`을 허용하고, disable 수락 직후 구 신호 snapshot을 숨긴 채 새 exact snapshot 또는 typed
+unavailable 응답까지 polling하도록 고쳤다. API의 Add/Retry 범위도 현재 세션 종가가 확인되지
+않으면 전일까지만 요청한다.
+
+검증은 `cargo check --workspace --all-targets`, V2 job-queue 18개, runner 7개, API V2 15개,
+Web unit 166개, typecheck/lint/build, synthetic Playwright 8개를 통과했다. 임시 PostgreSQL 18
+컨테이너에서 migration 0053을 실제 적용해 RLS lifecycle, Owner policy trigger, incremental job
+생성/중복 억제를 실행했다. 최초 실제 실행에서 schema-qualified `substring ... FROM` 구문의
+PostgreSQL syntax error를 발견해 2-argument form으로 수정했고 재실행은 PASS했다. V2 runtime,
+production-image, production-ops static/self-test와 전체 ops static check, fmt/diff check도
+PASS했다. 이 단계에서는 production image build/start, release install, production DB migration,
+credential read, live KIS/provider call은 아직 수행하지 않았다.
 
 ## 5. 개발 환경 주의사항 (반복 비용을 치른 것들)
 

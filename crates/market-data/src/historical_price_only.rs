@@ -997,6 +997,7 @@ pub(crate) fn artifact_test_candidate() -> HistoricalPriceOnlyCandidate {
                         headers: vec![("sentinel-header".into(), "sentinel-secret".into())],
                         mode: crate::contract::FetchMode::Credentialed,
                     },
+                    response_continuation: None,
                 }
             })
         })

@@ -7,6 +7,7 @@
 //! bytes            - the provider response/file, stored byte-for-byte, never parsed
 //! retrieved_at     - UTC instant the delivery was retrieved
 //! request          - provider request metadata (endpoint, query, REDACTED headers, mode)
+//! response_continuation - optional provider response `tr_cont` marker
 //! batch_id         - the ingestion batch this response belongs to
 //! content_hash     - sha256 of `bytes` (immutability proof, FR-DATA-001)
 //! ```
@@ -303,6 +304,13 @@ pub struct RawEnvelope {
     pub retrieved_at: UtcTimestamp,
     /// Provider request metadata (redacted).
     pub request: RequestMetadata,
+    /// The response `tr_cont` marker, when the provider returned one.
+    ///
+    /// This is response metadata only; it must never contain a response body,
+    /// provider diagnostic, or credential. `None` means that the response did
+    /// not carry the header. The storage manifest omits this field when it is
+    /// `None` so existing metadata bytes remain stable.
+    pub response_continuation: Option<String>,
 }
 
 impl RawEnvelope {
@@ -324,7 +332,18 @@ impl RawEnvelope {
             content_hash,
             retrieved_at,
             request,
+            response_continuation: None,
         }
+    }
+
+    /// Sets the provider response continuation marker on an envelope.
+    ///
+    /// Keeping this separate from [`Self::new`] preserves the existing
+    /// constructor for providers whose response contract has no continuation
+    /// metadata.
+    pub fn with_response_continuation(mut self, marker: Option<String>) -> Self {
+        self.response_continuation = marker;
+        self
     }
 }
 

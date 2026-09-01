@@ -1,8 +1,9 @@
 import "server-only";
 
 import { createProductApiClient } from "./product-client";
-import { serverApiClientOptions } from "./server-session";
+import { getServerSession, serverApiClientOptions } from "./server-session";
 
 export async function getProductApi() {
+  await getServerSession();
   return createProductApiClient(await serverApiClientOptions());
 }

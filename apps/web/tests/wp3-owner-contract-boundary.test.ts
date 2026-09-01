@@ -58,6 +58,13 @@ function registryBoundRun(record: ApprovalRecord) {
       excluded: index !== 0,
       exclusion_reason: index === 0 ? undefined : "NOT_SELECTED_BY_STRATEGY",
       factors: { momentum_12_1: index === 0 ? "0.912300" : "0.000000" },
+      instrument: {
+        asset_class: null,
+        exposure_group: null,
+        id: instrument_id,
+        name: null,
+        tracking_index: null,
+      },
       instrument_id,
       rank: index === 0 ? 1 : null,
       reason_codes: index === 0 ? ["SELECTED_TOP_N"] : ["NOT_SELECTED_BY_STRATEGY"],
@@ -156,14 +163,20 @@ describe("WP-3 owner-beta contract boundary", () => {
     expect(markup).toContain("SUCCEEDED");
     expect(markup).toContain(t.cashAllocation("80.00%"));
     expect(markup).toContain("20.00%");
-    expect(markup).toContain("momentum 12 1");
-    expect(markup).toContain("0.912300");
-    expect(markup).toContain("0.000000");
-    expect(markup).toContain("SELECTED_TOP_N");
-    expect(markup).toContain("NOT_SELECTED_BY_STRATEGY");
+    expect(markup).toContain("12-month momentum excluding the most recent month");
+    expect(markup).toContain("+91.23%");
+    expect(markup).toContain("+0.00%");
+    expect(markup).toContain("Selected under the selection criteria. Rank is shown separately.");
+    expect(markup).toContain("This fixed-universe instrument was not selected by the strategy.");
+    expect(markup).not.toContain("SELECTED_TOP_N");
+    expect(markup).not.toContain("NOT_SELECTED_BY_STRATEGY");
     expect(markup).toContain(t.ownerBetaAudienceValue);
     expect(markup).toContain(t.ownerBetaCapabilityValue);
     expect(markup).toContain(t.ownerBetaVendorSnapshotValue);
     expect(markup).toContain(t.ownerBetaStrictPitValue);
+    expect(markup).toContain(t.ownerBetaAuditDetails);
+    expect(markup).toContain(t.ownerBetaInstrumentNameMissing);
+    expect(markup).toContain(t.ownerBetaAssetClassMissing);
+    expect(markup).toContain(t.ownerBetaTrackingIndexMissing);
   });
 });

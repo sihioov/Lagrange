@@ -22,8 +22,8 @@ The reviewed upstream inputs are pinned in `nt/pyproject.toml` and
 - wheel SHA-256: `fc5a2ad0d61b5c3a6539a3061cd4cbb55c59f4a903455cec7926e4b798919996`
 - source distribution SHA-256: `a9459425dd64142cd54fbc639847403c7e0c33d60fbc326c94fc1d6bd127f002`
 
-The initial fixed-universe artifact is effective from `2020-01-31` and the
-current checked-in artifact covers `2020-01-31..2026-08-19`:
+The initial fixed-universe artifact is effective from `2016-08-29` and the
+current checked-in artifact covers `2016-08-29..2026-08-28`:
 `data/calendars/xkrx/calendar.json`, with its source and content manifest in
 `data/calendars/xkrx/manifest.json`. The checked-in `overrides.json` is an
 operator-reviewed, source-backed ledger hashed into the artifact and manifest.
@@ -38,7 +38,7 @@ dates-only session/non-session partition applies the reviewed removals.
 
 The upstream XKRX schedule is queried only within its reviewed supported
 bounds `1956-01-01..2050-12-31`; this repository's fixed universe further
-requires `--start >= 2020-01-31`.
+requires `--start >= 2016-08-29`.
 
 ## Operator commands
 
@@ -47,18 +47,18 @@ an account/order endpoint, or a secret source.
 
 ```bash
 # Safe default: validate the requested range and show the pinned inputs.
-python scripts/ops/xkrx-calendar-bootstrap.py --plan --end 2026-08-19
+python scripts/ops/xkrx-calendar-bootstrap.py --plan --end 2026-08-28
 
 # Generate or idempotently confirm the artifact. The command always enters the
 # checked-in uv lockfile environment; it never uses a globally installed
 # exchange_calendars package.
-python scripts/ops/xkrx-calendar-bootstrap.py --apply --end 2026-08-19
+python scripts/ops/xkrx-calendar-bootstrap.py --apply --end 2026-08-28
 
 # Validate only the checked-in files; this needs no Python package.
-python scripts/ops/xkrx-calendar-bootstrap.py --check --end 2026-08-19
+python scripts/ops/xkrx-calendar-bootstrap.py --check --end 2026-08-28
 ```
 
-`--start` defaults to `2020-01-31`, cannot precede that fixed-universe
+`--start` defaults to `2016-08-29`, cannot precede that fixed-universe
 effective date, and `--end` is intentionally required.
 Applying a changed existing artifact is refused unless `--replace` is given
 after reviewing the new manifest.  A range extension is therefore a visible,

@@ -1,11 +1,13 @@
 import ky from "ky";
+import { z } from "zod";
+import type { BrowserResponseOptions } from "./browser-response";
+import { parseBrowserApiResponse } from "./browser-response";
 import type { ApiPath, ProductMutationPath } from "./contracts";
 import { AUTH_API_PATHS, csrfTokenSchema } from "./contracts";
-import { parseApiResponse } from "./response";
 
 export type MutationMethod = "DELETE" | "PATCH" | "POST" | "PUT";
 
-export type BrowserClientOptions = {
+export type BrowserClientOptions = BrowserResponseOptions & {
   readonly fetcher?: typeof fetch;
   readonly origin?: string;
 };
@@ -35,7 +37,8 @@ async function csrfToken(options: BrowserClientOptions): Promise<string> {
       timeout: 10_000,
     },
   );
-  const parsed = await parseApiResponse(response, csrfTokenSchema);
+  const parserOptions = options.navigate === undefined ? {} : { navigate: options.navigate };
+  const parsed = await parseBrowserApiResponse(response, csrfTokenSchema, parserOptions);
   return parsed.csrf_token;
 }
 
@@ -59,10 +62,20 @@ export async function mutateWithCsrf(
   });
 }
 
-export function logout(options: BrowserClientOptions = {}): Promise<Response> {
-  return mutateWithCsrf(AUTH_API_PATHS.logout, {
+export async function logout(options: BrowserClientOptions = {}): Promise<Response> {
+  const response = await mutateWithCsrf(AUTH_API_PATHS.logout, {
     ...options,
     json: {},
     method: "POST",
   });
+  if (!response.ok) {
+    // Logout has no success body (204), so its caller cannot use the normal
+    // generated payload parser. Parse only non-success responses from a
+    // clone, preserving the response for callers while still recovering from
+    // a session that expired between the CSRF preflight and the mutation.
+    await parseBrowserApiResponse(response.clone(), z.unknown(), {
+      ...(options.navigate === undefined ? {} : { navigate: options.navigate }),
+    });
+  }
+  return response;
 }

@@ -170,6 +170,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/recommendations/owner-beta/price-only/supported-as-of": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/recommendations/owner-beta/price-only/supported-as-of */
+        get: operations["get__api_v1_recommendations_owner_beta_price_only_supported_as_of"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/recommendations/owner-beta/price-only/runs": {
         parameters: {
             query?: never;
@@ -231,6 +248,177 @@ export interface paths {
         };
         /** GET /api/v1/recommendations/latest */
         get: operations["get__api_v1_recommendations_latest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-price-signals/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/research/owner-beta/equity-price-signals/latest */
+        get: operations["get__api_v1_research_owner_beta_equity_price_signals_latest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-price-signals/screen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/research/owner-beta/equity-price-signals/screen */
+        post: operations["post__api_v1_research_owner_beta_equity_price_signals_screen"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-price-signals/instruments/{instrument_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/research/owner-beta/equity-price-signals/instruments/{instrument_id} */
+        get: operations["get__api_v1_research_owner_beta_equity_price_signals_instruments__instrument_id_"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-universe-v2/memberships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/research/owner-beta/equity-universe-v2/memberships */
+        get: operations["get__api_v1_research_owner_beta_equity_universe_v2_memberships"];
+        put?: never;
+        /** POST /api/v1/research/owner-beta/equity-universe-v2/memberships */
+        post: operations["post__api_v1_research_owner_beta_equity_universe_v2_memberships"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-universe-v2/memberships/{membership_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/research/owner-beta/equity-universe-v2/memberships/{membership_id} */
+        get: operations["get__api_v1_research_owner_beta_equity_universe_v2_memberships__membership_id_"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-universe-v2/memberships/{membership_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/research/owner-beta/equity-universe-v2/memberships/{membership_id}/retry */
+        post: operations["post__api_v1_research_owner_beta_equity_universe_v2_memberships__membership_id__retry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-universe-v2/memberships/{membership_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/research/owner-beta/equity-universe-v2/memberships/{membership_id}/disable */
+        post: operations["post__api_v1_research_owner_beta_equity_universe_v2_memberships__membership_id__disable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-universe-v2/signals/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/research/owner-beta/equity-universe-v2/signals/latest */
+        get: operations["get__api_v1_research_owner_beta_equity_universe_v2_signals_latest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-universe-v2/signals/screen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/research/owner-beta/equity-universe-v2/signals/screen */
+        post: operations["post__api_v1_research_owner_beta_equity_universe_v2_signals_screen"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id} */
+        get: operations["get__api_v1_research_owner_beta_equity_universe_v2_signals_instruments__instrument_id_"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1096,7 +1284,7 @@ export interface components {
             error: components["schemas"]["Error"];
         };
         /** @enum {string} */
-        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
+        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
         Page: {
             items: Record<string, never>[];
             /** @description opaque signed cursor; null when the last page */
@@ -1211,9 +1399,22 @@ export interface components {
             /** @example 2026-01-31 */
             as_of: string;
         };
+        OwnerBetaPriceOnlySupportedAsOf: {
+            /** @example 2026-08-19 */
+            default_as_of: string;
+            supported_as_of: string[];
+        };
         OwnerBetaPriceOnlyReadItem: {
             /** @enum {string} */
-            instrument_id: "069500.KRX" | "102110.KRX" | "114260.KRX" | "132030.KRX" | "138230.KRX" | "152100.KRX" | "148020.KRX" | "305720.KRX" | "278530.KRX" | "292150.KRX" | "360750.KRX";
+            instrument_id: "069500.KRX" | "102110.KRX" | "229200.KRX" | "143850.KRX" | "133690.KRX" | "195930.KRX" | "192090.KRX" | "148070.KRX" | "114260.KRX" | "153130.KRX" | "132030.KRX";
+            instrument: {
+                /** @enum {string} */
+                id: "069500.KRX" | "102110.KRX" | "229200.KRX" | "143850.KRX" | "133690.KRX" | "195930.KRX" | "192090.KRX" | "148070.KRX" | "114260.KRX" | "153130.KRX" | "132030.KRX";
+                name: string | null;
+                asset_class: string | null;
+                tracking_index: null;
+                exposure_group: null;
+            };
             rank?: number | null;
             target_weight?: string | null;
             excluded: boolean;
@@ -1314,6 +1515,194 @@ export interface components {
             /** @description opaque signed cursor; null when the last page */
             next_cursor: string | null;
             has_more: boolean;
+        };
+        OwnerBetaEquitySignalsLatest: {
+            provenance: components["schemas"]["OwnerBetaEquitySignalsProvenance"];
+            rows: components["schemas"]["OwnerBetaEquitySignalRow"][];
+            top5: components["schemas"]["OwnerBetaEquitySignalRow"][];
+        };
+        OwnerBetaEquitySignalsScreen: {
+            provenance: components["schemas"]["OwnerBetaEquitySignalsProvenance"];
+            rows: components["schemas"]["OwnerBetaEquitySignalRow"][];
+        };
+        OwnerBetaEquitySignalsDetail: {
+            provenance: components["schemas"]["OwnerBetaEquitySignalsProvenance"];
+            signal: components["schemas"]["OwnerBetaEquitySignalRow"];
+            factor_explanations: components["schemas"]["OwnerBetaEquitySignalFactor"][];
+            condition_reasons: components["schemas"]["OwnerBetaEquitySignalReasonClause"][];
+        };
+        OwnerBetaEquitySignalsProvenance: {
+            audience: string;
+            capability: string;
+            selection_basis: string;
+            index_membership: string;
+            redistribution: string;
+            publication_status: string;
+            materialization_status: string;
+            registration_status: string;
+            universe_sha256: string;
+            entitlement_sha256: string;
+            registry_sha256: string;
+            artifact_content_sha256: string;
+            snapshot_content_sha256: string;
+            batch_id: string;
+            as_of: string;
+            factor_version: string;
+            vendor_snapshot: boolean;
+            strict_pit: boolean;
+            original_price: boolean;
+            warning: components["schemas"]["OwnerBetaEquitySignalWarning"];
+            activity_proxy: string;
+        };
+        OwnerBetaEquitySignalRow: {
+            instrument_id: string;
+            instrument_name: string;
+            rank: number;
+            score: number;
+            condition: components["schemas"]["OwnerBetaEquitySignalCondition"];
+            return_20: number;
+            return_60: number;
+            return_120: number;
+            volatility_20: number;
+            volatility_60: number;
+            volatility_120: number;
+            max_drawdown_120: number;
+            sma_20: number;
+            sma_60: number;
+            average_volume_20: number;
+            volume_ratio_20_60: number;
+            average_trading_value_20: number;
+        };
+        OwnerBetaEquitySignalFactor: {
+            factor: string;
+            value: number;
+            interpretation: string;
+        };
+        OwnerBetaEquitySignalWarning: string;
+        OwnerBetaEquitySignalReasonClause: string;
+        /** @enum {string} */
+        OwnerBetaEquitySignalCondition: "BULLISH" | "NEUTRAL" | "BEARISH";
+        OwnerBetaEquitySignalsScreenBody: {
+            instrument_ids?: string[] | null;
+            conditions?: components["schemas"]["OwnerBetaEquitySignalsScreenConditions"];
+            condition?: components["schemas"]["OwnerBetaEquitySignalCondition"][] | null;
+        };
+        OwnerBetaEquitySignalsScreenConditions: {
+            score?: components["schemas"]["OwnerBetaEquitySignalsFiniteRange"] | null;
+            return_20?: components["schemas"]["OwnerBetaEquitySignalsFiniteRange"] | null;
+            return_60?: components["schemas"]["OwnerBetaEquitySignalsFiniteRange"] | null;
+            return_120?: components["schemas"]["OwnerBetaEquitySignalsFiniteRange"] | null;
+            volatility_20?: components["schemas"]["OwnerBetaEquitySignalsFiniteRange"] | null;
+            volatility_60?: components["schemas"]["OwnerBetaEquitySignalsFiniteRange"] | null;
+            volatility_120?: components["schemas"]["OwnerBetaEquitySignalsFiniteRange"] | null;
+            max_drawdown_120?: components["schemas"]["OwnerBetaEquitySignalsFiniteRange"] | null;
+            average_trading_value_20?: components["schemas"]["OwnerBetaEquitySignalsFiniteRange"] | null;
+            trend_up?: boolean | null;
+        };
+        OwnerBetaEquitySignalsFiniteRange: {
+            min?: number | null;
+            max?: number | null;
+        };
+        OwnerEquityV2AddBody: {
+            /** @example 005930 */
+            instrument_code: string;
+        };
+        /** @enum {string} */
+        OwnerEquityV2Lifecycle: "REQUESTED" | "VALIDATING" | "BACKFILLING" | "MATERIALIZING" | "READY" | "INSUFFICIENT_HISTORY" | "FAILED" | "DISABLED";
+        OwnerEquityV2Policy: {
+            max_active_instruments: number;
+            active_instruments: number;
+            remaining_capacity: number;
+            target_observed_sessions: number;
+            minimum_observed_sessions: number;
+        };
+        OwnerEquityV2Coverage: {
+            observed_sessions: number;
+            target_observed_sessions: number;
+            minimum_observed_sessions: number;
+            /** @example 2026-01-31 */
+            first_session?: string;
+            /** @example 2026-01-31 */
+            last_session?: string;
+        };
+        OwnerEquityV2Failure: {
+            code: string;
+            retryable: boolean;
+        };
+        OwnerEquityV2Membership: {
+            /** Format: uuid */
+            id: string;
+            instrument_id: string;
+            lifecycle: components["schemas"]["OwnerEquityV2Lifecycle"];
+            generation: number;
+            coverage: components["schemas"]["OwnerEquityV2Coverage"];
+            failure?: components["schemas"]["OwnerEquityV2Failure"];
+            /** Format: date-time */
+            requested_at: string;
+            /** Format: date-time */
+            disabled_at?: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        OwnerEquityV2MembershipList: {
+            policy: components["schemas"]["OwnerEquityV2Policy"];
+            memberships: components["schemas"]["OwnerEquityV2Membership"][];
+        };
+        OwnerEquityV2MembershipStatus: {
+            policy: components["schemas"]["OwnerEquityV2Policy"];
+            membership: components["schemas"]["OwnerEquityV2Membership"];
+        };
+        OwnerEquityV2Mutation: {
+            resource: components["schemas"]["OwnerEquityV2Membership"];
+            /** Format: uuid */
+            job_id: string;
+            duplicate_active: boolean;
+        };
+        OwnerEquityV2Snapshot: {
+            /** Format: uuid */
+            snapshot_id: string;
+            /** @example 2026-01-31 */
+            as_of: string;
+            universe_sha256: string;
+            row_count: number;
+            /** Format: date-time */
+            published_at: string;
+        };
+        OwnerEquityV2Signal: {
+            instrument_id: string;
+            generation: number;
+            rank: number;
+            score: number;
+            condition: components["schemas"]["OwnerBetaEquitySignalCondition"];
+            return_20: number;
+            return_60: number;
+            return_120: number;
+            volatility_20: number;
+            volatility_60: number;
+            volatility_120: number;
+            max_drawdown_120: number;
+            sma_20: number;
+            sma_60: number;
+            average_volume_20: number;
+            volume_ratio_20_60: number;
+            average_trading_value_20: number;
+        };
+        OwnerEquityV2LatestSignals: {
+            snapshot: components["schemas"]["OwnerEquityV2Snapshot"];
+            rows: components["schemas"]["OwnerEquityV2Signal"][];
+            top5: components["schemas"]["OwnerEquityV2Signal"][];
+        };
+        OwnerEquityV2ScreenSignals: {
+            snapshot: components["schemas"]["OwnerEquityV2Snapshot"];
+            rows: components["schemas"]["OwnerEquityV2Signal"][];
+        };
+        OwnerEquityV2SignalDetail: {
+            snapshot: components["schemas"]["OwnerEquityV2Snapshot"];
+            signal: components["schemas"]["OwnerEquityV2Signal"];
+        };
+        OwnerEquityV2ScreenBody: {
+            instrument_ids?: string[] | null;
+            conditions?: components["schemas"]["OwnerBetaEquitySignalCondition"][] | null;
         };
         CandidateDatasetPins: {
             /** Format: uuid */
@@ -2464,6 +2853,30 @@ export interface operations {
             503: components["responses"]["Error503"];
         };
     };
+    get__api_v1_recommendations_owner_beta_price_only_supported_as_of: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Supported owner-beta price-only artifact sessions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaPriceOnlySupportedAsOf"];
+                };
+            };
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            500: components["responses"]["Error500"];
+            503: components["responses"]["Error503"];
+        };
+    };
     get__api_v1_recommendations_owner_beta_price_only_runs: {
         parameters: {
             query?: {
@@ -2617,6 +3030,377 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecommendationLatest"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_research_owner_beta_equity_price_signals_latest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest owner-beta equity price/volume signals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaEquitySignalsLatest"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    post__api_v1_research_owner_beta_equity_price_signals_screen: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerBetaEquitySignalsScreenBody"];
+            };
+        };
+        responses: {
+            /** @description Owner-beta equity price/volume signal screen */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaEquitySignalsScreen"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_research_owner_beta_equity_price_signals_instruments__instrument_id_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instrument_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner-beta equity price/volume signal detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerBetaEquitySignalsDetail"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_research_owner_beta_equity_universe_v2_memberships: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner equity memberships and runtime policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerEquityV2MembershipList"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    post__api_v1_research_owner_beta_equity_universe_v2_memberships: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerEquityV2AddBody"];
+            };
+        };
+        responses: {
+            /** @description Owner equity membership request accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerEquityV2Mutation"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_research_owner_beta_equity_universe_v2_memberships__membership_id_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                membership_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner equity membership lifecycle status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerEquityV2MembershipStatus"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    post__api_v1_research_owner_beta_equity_universe_v2_memberships__membership_id__retry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                membership_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmptyBody"];
+            };
+        };
+        responses: {
+            /** @description Owner equity lifecycle transition accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerEquityV2Mutation"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    post__api_v1_research_owner_beta_equity_universe_v2_memberships__membership_id__disable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                membership_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmptyBody"];
+            };
+        };
+        responses: {
+            /** @description Owner equity lifecycle transition accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerEquityV2Mutation"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_research_owner_beta_equity_universe_v2_signals_latest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest admitted owner equity signal snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerEquityV2LatestSignals"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    post__api_v1_research_owner_beta_equity_universe_v2_signals_screen: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerEquityV2ScreenBody"];
+            };
+        };
+        responses: {
+            /** @description Filtered latest admitted owner equity signal snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerEquityV2ScreenSignals"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_research_owner_beta_equity_universe_v2_signals_instruments__instrument_id_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instrument_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner equity signal detail from the latest admitted snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerEquityV2SignalDetail"];
                 };
             };
             400: components["responses"]["Error400"];

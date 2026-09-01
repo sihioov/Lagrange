@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import { recommendationsDictionary } from "@/lib/i18n/dictionaries/recommendations";
 import { type RecommendationRunModel, recommendationRunSchema } from "@/lib/products/contracts";
@@ -46,7 +46,7 @@ export function RecommendationRunForm({ configs, defaultAsOf }: RecommendationRu
         json: { as_of: asOf, strategy_config_id: strategyConfigId },
         method: "POST",
       });
-      const run = await parseApiResponse(response, recommendationRunSchema);
+      const run = await parseBrowserApiResponse(response, recommendationRunSchema);
       setState("idle");
       setSubmittedRun(run);
     } catch (error) {

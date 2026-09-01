@@ -23,6 +23,10 @@ export CANDIDATE_APP_ENV=qa
 export RESEARCH_FETCH_MODE=synthetic
 export RESEARCH_CANDIDATE_ENABLED=true
 export RESEARCH_ENTITLEMENT_REFERENCE="${RESEARCH_ENTITLEMENT_REFERENCE:-REPLACE_WITH_EXACT_CONTRACT_REFERENCE}"
+# Compose also resolves the fixed-equity Raw profile during semantic static
+# validation. Supply a deterministic non-secret fixture hash only for QA when
+# the caller has not provided an active contract hash.
+export RESEARCH_ENTITLEMENT_SHA256="${RESEARCH_ENTITLEMENT_SHA256:-0000000000000000000000000000000000000000000000000000000000000000}"
 # The functional smoke resolves the complete Compose model before it starts a
 # service subset. Keep the profile-gated Stage5 range input required in
 # Compose, while supplying a deterministic non-secret UUID for this QA run.
@@ -274,9 +278,12 @@ printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+rust:1\.97\.1-alpine@
 printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+alpine:3\.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d[[:space:]]*$' || fail 'Dockerfile missing the approved digest-pinned Alpine runtime'
 contains "$docker_text" 'cargo build --locked --release --package collectors --bin research-worker' 'Dockerfile'
 contains "$docker_text" 'cargo build --locked --release --package collectors --bin kis-historical-price-beta-approval-check' 'Dockerfile'
+contains "$docker_text" 'cargo build --locked --release --package collectors --bin kis-historical-price-v3-artifact' 'Dockerfile'
 contains "$docker_text" 'COPY --from=builder /build/target/release/kis-historical-price-beta-approval-check /usr/local/bin/kis-historical-price-beta-approval-check' 'Dockerfile'
+contains "$docker_text" 'COPY --from=builder /build/target/release/kis-historical-price-v3-artifact /usr/local/bin/kis-historical-price-v3-artifact' 'Dockerfile'
 contains "$docker_text" 'ENTRYPOINT ["/usr/local/bin/research-worker"]' 'Dockerfile'
 contains "$docker_text" 'COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' 'Dockerfile'
+contains "$docker_text" 'COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json' 'Dockerfile'
 for build_dockerfile in "$dockerfile" "$candidate_dockerfile"; do
   build_text="$(<"$build_dockerfile")"
   for embedded_copy in \
@@ -294,7 +301,7 @@ while IFS= read -r line; do
 done < <(grep -i '^FROM[[:space:]]' "$dockerfile" || true)
 [ "$from_count" -gt 0 ] || fail 'Dockerfile has no FROM instructions'
 
-for pattern in '**' '!Cargo.toml' '!Cargo.lock' '!rust-toolchain.toml' '!crates/**' '!data-pipelines/collectors/**' '!apps/api-server/auth/**' '!configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' '!tests/integration/migration-contract/**' '!tests/fixtures/kr-etf/contract/**' '**/target/**' '**/.git/**' '**/.worktrees/**' '**/.env.*' '**/credentials/**' '**/secrets/**' '**/raw/**' '**/*.pem' '**/*.key' '**/*.p12' '**/*.pfx'; do
+for pattern in '**' '!Cargo.toml' '!Cargo.lock' '!rust-toolchain.toml' '!crates/**' '!data-pipelines/collectors/**' '!apps/api-server/auth/**' '!configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' '!configs/evidence/kis-historical-price-only-v3-approved-artifacts.json' '!tests/integration/migration-contract/**' '!tests/fixtures/kr-etf/contract/**' '**/target/**' '**/.git/**' '**/.worktrees/**' '**/.env.*' '**/credentials/**' '**/secrets/**' '**/raw/**' '**/*.pem' '**/*.key' '**/*.p12' '**/*.pfx'; do
   grep -Fxq -- "$pattern" "$dockerignore" || fail "Docker build-context policy is missing: $pattern"
 done
 if grep -Eq '^!scripts(/|$)' "$dockerignore"; then fail 'QA fsync probe must remain outside the worker build context'; fi

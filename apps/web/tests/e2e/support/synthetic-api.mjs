@@ -8,11 +8,13 @@ import {
   recommendationConfig,
   recommendationResponse,
 } from "./recommendation-fixture.mjs";
+import { resetStockBetaFixture, stockBetaResponse } from "./stock-beta-fixture.mjs";
 
 const port = Number.parseInt(process.env.SYNTHETIC_API_PORT ?? "38180", 10);
 const defaultScenario = Object.freeze({
   backtest: "running",
   candidateState: "ready",
+  authSession: "valid",
   entitlement: "active",
   exclusions: "present",
   notification: "delivered",
@@ -35,6 +37,7 @@ const defaultScenario = Object.freeze({
   user: "u1",
   role: "member",
   ownerBetaAccessMode: "disabled",
+  stockBeta: "available",
 });
 let scenario = { ...defaultScenario };
 
@@ -47,6 +50,46 @@ function userIndex(scenario) {
 function userIdFor(scenario) {
   const idx = userIndex(scenario);
   return `00000000-0000-4000-8000-${"00000000000"}${idx}`;
+}
+
+function authSessionFailure(scenario) {
+  switch (scenario.authSession) {
+    case "unknown":
+      return {
+        status: 401,
+        body: {
+          error: {
+            code: "SESSION_UNKNOWN",
+            message: "no session",
+            request_id: "request-synthetic-session-unknown",
+          },
+        },
+      };
+    case "expired":
+      return {
+        status: 401,
+        body: {
+          error: {
+            code: "SESSION_EXPIRED",
+            message: "session expired",
+            request_id: "request-synthetic-session-expired",
+          },
+        },
+      };
+    case "internal":
+      return {
+        status: 500,
+        body: {
+          error: {
+            code: "INTERNAL",
+            message: "session store unavailable",
+            request_id: "request-synthetic-session-internal",
+          },
+        },
+      };
+    default:
+      return null;
+  }
 }
 
 function json(response, status, body) {
@@ -84,7 +127,17 @@ const server = createServer(async (request, response) => {
     // Every call site is unaffected: each states the keys it varies and wants
     // documented defaults for the rest, which is now what it gets.
     scenario = { ...defaultScenario, ...body };
+    resetStockBetaFixture(scenario);
     json(response, 200, { scenario });
+    return;
+  }
+  const sessionFailure = authSessionFailure(scenario);
+  if (sessionFailure !== null && url.pathname.startsWith("/api/v1/")) {
+    // Keep every protected fixture endpoint behind the same typed session
+    // boundary. This makes page loads, polling, CSRF preflights, and
+    // mutations exercise the browser's auth recovery instead of accidentally
+    // succeeding through a fixture-specific branch.
+    json(response, sessionFailure.status, sessionFailure.body);
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/v1/strategy-configs") {
@@ -119,6 +172,17 @@ const server = createServer(async (request, response) => {
   });
   if (ownerBetaRecommendation !== null) {
     json(response, ownerBetaRecommendation.status, ownerBetaRecommendation.body);
+    return;
+  }
+  const stockBeta = stockBetaResponse({
+    body,
+    headers: request.headers,
+    method: request.method ?? "GET",
+    pathname: url.pathname,
+    scenario,
+  });
+  if (stockBeta !== null) {
+    json(response, stockBeta.status, stockBeta.body);
     return;
   }
   const backtest = backtestResponse({

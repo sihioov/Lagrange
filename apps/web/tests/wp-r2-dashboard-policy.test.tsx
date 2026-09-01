@@ -44,7 +44,12 @@ describe("dashboard owner-beta workspace policy", () => {
   it("keeps recommendations and backtests while hiding disabled Paper for the Owner", async () => {
     const markup = await renderDashboard(OWNER_ONLY_SESSION);
 
-    expect(workspaceHrefs(markup)).toEqual(["/strategies", "/recommendations", "/backtests"]);
+    expect(workspaceHrefs(markup)).toEqual([
+      "/strategies",
+      "/recommendations",
+      "/backtests",
+      "/stock-beta",
+    ]);
   });
 
   it("shows Paper when its separate Owner beta activation is enabled", async () => {
@@ -58,6 +63,7 @@ describe("dashboard owner-beta workspace policy", () => {
       "/recommendations",
       "/backtests",
       "/paper",
+      "/stock-beta",
     ]);
   });
 
@@ -72,6 +78,7 @@ describe("dashboard owner-beta workspace policy", () => {
       "/recommendations",
       "/backtests",
       "/paper",
+      "/stock-beta",
     ]);
   });
 

@@ -553,11 +553,18 @@ pub struct OwnerBetaPriceOnlyRunDto {
     pub status: &'static str,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerBetaPriceOnlySupportedAsOfDto {
+    pub default_as_of: NaiveDate,
+    pub supported_as_of: Vec<NaiveDate>,
+}
+
 /// The owner-beta price-only read model. This is intentionally separate from
 /// [`OwnerBetaPriceOnlyRunDto`], which is the small POST enqueue response.
 /// Read projections contain only the approved public lineage/result fields;
-/// no owner id, request payload, strategy config JSON, provider detail, or
-/// filesystem path is part of this wire type.
+/// the bounded instrument display metadata, and no owner id, request payload,
+/// strategy config JSON, provider detail, or filesystem path is part of this
+/// wire type.
 #[derive(Debug, Clone, Serialize)]
 pub struct OwnerBetaPriceOnlyReadRunDto {
     pub id: String,
@@ -637,6 +644,7 @@ pub struct OwnerBetaPriceOnlyReadListItemDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct OwnerBetaPriceOnlyReadItemDto {
     pub instrument_id: String,
+    pub instrument: OwnerBetaInstrumentDto,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rank: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -646,6 +654,15 @@ pub struct OwnerBetaPriceOnlyReadItemDto {
     pub exclusion_reason: Option<String>,
     pub reason_codes: Vec<String>,
     pub factors: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerBetaInstrumentDto {
+    pub id: String,
+    pub name: Option<String>,
+    pub asset_class: Option<String>,
+    pub tracking_index: Option<String>,
+    pub exposure_group: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

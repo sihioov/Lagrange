@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { StatePanel } from "@/components/states/state-panel";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import {
   type RecommendationsDictionary,
@@ -41,7 +41,7 @@ export async function pollOwnerBetaRun(
     cache: "no-store",
     credentials: "same-origin",
   });
-  const next = await parseApiResponse(response, ownerBetaRunSchema);
+  const next = await parseBrowserApiResponse(response, ownerBetaRunSchema);
   if (next.status === "SUCCEEDED" || next.status === "FAILED" || next.status === "CANCELED") {
     options.refresh?.();
   }

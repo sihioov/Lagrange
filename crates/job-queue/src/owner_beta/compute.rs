@@ -72,8 +72,16 @@ pub fn compute_owner_beta_price_recommendation(
         .validate_strategy_snapshot()
         .map_err(|_| OwnerBetaComputationError::StrategyInvalid)?;
 
-    let approved = market_data::approve_historical_price_only_artifact(artifact_root)
-        .map_err(|_| OwnerBetaComputationError::ArtifactApprovalRejected)?;
+    let pins = input.pins();
+    let approved = market_data::approve_historical_price_only_artifact_for_pin_values(
+        artifact_root,
+        pins.candidate_content_sha256(),
+        pins.artifact_manifest_sha256(),
+        pins.stage5_manifest_sha256(),
+        pins.action_manifest_sha256(),
+        pins.approval_registry_sha256(),
+    )
+    .map_err(|_| OwnerBetaComputationError::ArtifactApprovalRejected)?;
     input
         .validate_approved_artifact(&approved)
         .map_err(|_| OwnerBetaComputationError::ArtifactApprovalRejected)?;
@@ -181,8 +189,9 @@ mod tests {
         let source = include_str!("compute.rs");
         let production = source.split("#[cfg(test)]").next().expect("production");
         let approval = production
-            .find("approve_historical_price_only_artifact(artifact_root)")
+            .find("approve_historical_price_only_artifact_for_pin_values(")
             .expect("approval call");
+        assert!(production.contains("pins.approval_registry_sha256()"));
         let builder = production
             .find("PriceOnlyFactorSnapshotBuilder::new(&approved, input.as_of())")
             .expect("exact factor builder");

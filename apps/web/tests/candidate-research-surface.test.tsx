@@ -159,6 +159,13 @@ function api(
     const request = new Request(input, init);
     calls.push(request);
     const { pathname } = new URL(request.url);
+    if (pathname === "/api/v1/auth/session") {
+      return Response.json({
+        expires_at_secs: 2_000_000_000,
+        role: "member",
+        user_id: "00000000-0000-4000-8000-000000000002",
+      });
+    }
     if (pathname.startsWith("/api/v1/candidates/")) {
       if (options.blocked) {
         return Response.json(

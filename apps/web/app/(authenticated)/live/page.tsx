@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { LiveConnections } from "@/components/live/live-connections";
 import { LiveKillSwitch } from "@/components/live/live-kill-switch";
 import { OwnerRoute } from "@/components/pages/owner-route";
 import { StatePanel } from "@/components/states/state-panel";
-import { ApiProblem } from "@/lib/api/response";
+import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import { type LiveDictionary, liveDictionary } from "@/lib/i18n/dictionaries/live";
 import { getLocale } from "@/lib/i18n/server";
@@ -42,8 +43,8 @@ export default async function LivePage() {
 }
 
 async function LiveWorkspace({ t }: { readonly t: LiveDictionary }) {
+  const api = await getProductApi();
   try {
-    const api = await getProductApi();
     const connections = await api.getLiveConnections();
     // The kill-switch state is not yet a read route; the safe default is
     // ENGAGED, which is also how migration 0016 initialises it.
@@ -54,6 +55,9 @@ async function LiveWorkspace({ t }: { readonly t: LiveDictionary }) {
       </>
     );
   } catch (error) {
+    if (isLoginRequiredError(error)) {
+      redirect("/login");
+    }
     if (error instanceof ApiProblem) {
       // A step-up refusal is actionable and gets its own explanation; anything
       // else is reported without speculating about the cause.

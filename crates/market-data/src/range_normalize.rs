@@ -46,14 +46,14 @@ pub const RANGE_NORMALIZED_SCHEMA_VERSION: u32 = 2;
 const APPROVED_CALENDAR_ID: &str = "xkrx-historical-session-dates";
 const APPROVED_LISTING_SNAPSHOT_ID: &str = "kr-etf-core-v1";
 const APPROVED_LISTING_SNAPSHOT_HASH: &str =
-    "sha256:267dc7aa065c6647ce634218fb8514fa49547a110ffc3d30f3bc00819ef7e992";
+    "sha256:b40406a394990a970a2b3ff29a0aa75d1c38fafe29747e5112c6638c4bd0e5af";
 /// The approved coverage floor of the fixed ETF universe, pinned to
 /// `configs/universes/kr-etf-core-v1.yaml` (`effective_from`) whose bytes are
 /// hashed into `APPROVED_LISTING_SNAPSHOT_HASH`. It is the earliest date this
 /// platform claims coverage for, not an exchange listing date. Exposed so the
 /// candidate instrument catalog persists the same one owner-approved value
 /// instead of a second literal.
-pub const APPROVED_EFFECTIVE_FROM: &str = "2020-01-31";
+pub const APPROVED_EFFECTIVE_FROM: &str = "2016-08-29";
 const APPROVED_CALENDAR_BYTES: &[u8] = include_bytes!("../../../data/calendars/xkrx/calendar.json");
 const APPROVED_CALENDAR_MANIFEST_BYTES: &[u8] =
     include_bytes!("../../../data/calendars/xkrx/manifest.json");
@@ -1344,6 +1344,7 @@ fn expected_entry(
                 content_hash: envelope.content_hash.clone(),
                 size_bytes: envelope.bytes.len() as u64,
                 request: envelope.request.clone(),
+                response_continuation: envelope.response_continuation.clone(),
             })
             .collect(),
     }

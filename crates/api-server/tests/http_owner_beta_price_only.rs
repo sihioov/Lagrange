@@ -91,6 +91,83 @@ async fn owner_beta_price_only_missing_approved_artifact_root_is_static_503_with
 }
 
 #[tokio::test]
+async fn owner_beta_supported_as_of_missing_approved_artifact_is_static_503_without_writes() {
+    let Some(mut h) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    h.restart_api_with_owner_beta_price_input().await;
+
+    let before_runs: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint
+           FROM owner_beta_recommendation_runs
+          WHERE owner_user_id = $1",
+    )
+    .bind(h.owner.user_id)
+    .fetch_one(&h.admin_pool)
+    .await
+    .expect("owner-beta run count before discovery");
+    let before_jobs: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint
+           FROM jobs
+          WHERE owner_user_id = $1",
+    )
+    .bind(h.owner.user_id)
+    .fetch_one(&h.admin_pool)
+    .await
+    .expect("owner-beta job count before discovery");
+    let before_audits: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM audit_logs")
+        .fetch_one(&h.admin_pool)
+        .await
+        .expect("audit count before discovery");
+
+    let response = h
+        .get(
+            "/api/v1/recommendations/owner-beta/price-only/supported-as-of",
+            Some(&h.owner),
+        )
+        .await;
+    assert_eq!(status(&response), StatusCode::SERVICE_UNAVAILABLE);
+    let body = Harness::body_json(response).await;
+    assert_eq!(
+        Harness::error_code(&body),
+        "OWNER_BETA_PRICE_INPUT_UNAVAILABLE"
+    );
+    assert_eq!(
+        body["error"]["message"],
+        "owner-beta price input unavailable"
+    );
+
+    let after_runs: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint
+           FROM owner_beta_recommendation_runs
+          WHERE owner_user_id = $1",
+    )
+    .bind(h.owner.user_id)
+    .fetch_one(&h.admin_pool)
+    .await
+    .expect("owner-beta run count after discovery");
+    let after_jobs: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint
+           FROM jobs
+          WHERE owner_user_id = $1",
+    )
+    .bind(h.owner.user_id)
+    .fetch_one(&h.admin_pool)
+    .await
+    .expect("owner-beta job count after discovery");
+    let after_audits: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM audit_logs")
+        .fetch_one(&h.admin_pool)
+        .await
+        .expect("audit count after discovery");
+    assert_eq!(after_runs, before_runs);
+    assert_eq!(after_jobs, before_jobs);
+    assert_eq!(after_audits, before_audits);
+
+    h.teardown().await;
+}
+
+#[tokio::test]
 async fn owner_beta_price_only_read_routes_are_owner_only_and_do_not_require_price_mode() {
     let Some(mut h) = Harness::new().await else {
         eprintln!("SKIP: DATABASE_URL not set");

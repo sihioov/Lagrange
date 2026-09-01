@@ -227,11 +227,11 @@ uses the existing `LAGRANGE_ARTIFACTS_DIR` setting and adds no required env key.
 the separate `--approval-check` operation. That operation invokes the
 compile-time embedded approval checker with only the dedicated artifact leaf
 mounted read-only; it accepts no caller-supplied registry path and never mounts
-Raw or Curated. One independently reviewed v2 approval record is committed
-locally, but the installed immutable `research-worker` still embeds the old
-empty registry, so real approval-check remains pending a new image/release
-build and install. This runtime seam does not itself approve a pin or publish a
-dataset.
+Raw or Curated. The installed immutable `research-worker` embeds the reviewed
+v2 and v3 records; its default v3 approval-check passed on 2026-08-29 with
+ETF11/2,452 sessions/26,972 bars. Persisted five-pin v2 work remains replayable
+through the exact v2 registry. This runtime seam does not itself approve a pin
+or publish a dataset.
 
 `DB_PASSWORD_FILE`, `KIS_APP_KEY_FILE`, and `KIS_APP_SECRET_FILE` are paths, not
 secret values. The worker reads each file during configuration validation,

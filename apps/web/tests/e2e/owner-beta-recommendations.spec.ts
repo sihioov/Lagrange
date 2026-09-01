@@ -26,7 +26,7 @@ test("owner reads only the sealed price-return recommendation surface", async ({
   await expect(
     page.getByRole("heading", { level: 1, name: "Owner-only recommendations" }),
   ).toBeVisible();
-  const warnings = page.getByRole("status", { name: "Recommendation warnings" });
+  const warnings = page.getByRole("status", { name: "Recommendation warnings" }).first();
   await expect(warnings).toContainText("Owner-only");
   await expect(warnings).toContainText("Price-return only");
   await expect(warnings).toContainText("Vendor snapshot");
@@ -36,7 +36,7 @@ test("owner reads only the sealed price-return recommendation surface", async ({
     exact: true,
   });
   await expect(report.getByText("069500.KRX")).toBeVisible();
-  await expect(report).toContainText("SELECTED_TOP_N");
+  await expect(report).toContainText("Selected under the selection criteria");
   await expect(report).toContainText("Cash allocation: 20.00%");
   await expect(page.getByText("Synthetic QA data")).toHaveCount(0);
 });

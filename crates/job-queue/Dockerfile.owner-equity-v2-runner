@@ -1,0 +1,56 @@
+# Production Owner Equity V2 queue runner.
+#
+# The daemon is the only image in this service boundary that contains the
+# reviewed KIS read-only client.  The runtime stage contains only the compiled
+# daemon and its shared libraries; it never copies Rust source, Cargo, or a
+# compiler into the image.
+FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS builder
+
+ENV CARGO_BUILD_JOBS=2
+
+RUN apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev
+WORKDIR /build
+
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates ./crates
+COPY data-pipelines/collectors ./data-pipelines/collectors
+COPY apps/api-server/auth ./apps/api-server/auth
+COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
+COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json
+COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json
+COPY configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json ./configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json
+COPY configs/universes ./configs/universes
+COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json
+COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json
+COPY data/calendars/xkrx/overrides.json ./data/calendars/xkrx/overrides.json
+COPY tests/integration/migration-contract ./tests/integration/migration-contract
+
+ARG LAGRANGE_CODE_COMMIT
+RUN test -n "$LAGRANGE_CODE_COMMIT" \
+    && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+
+# The compiled binary carries the same process-local release attestation that
+# the Compose image tag and OCI label carry.  It is not supplied as a mutable
+# runtime override.
+ENV LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"
+RUN cargo build --locked --release --package job-queue --bin owner-equity-v2-runner
+
+FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
+
+ARG LAGRANGE_CODE_COMMIT
+RUN test -n "$LAGRANGE_CODE_COMMIT" \
+    && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+LABEL org.opencontainers.image.revision="$LAGRANGE_CODE_COMMIT"
+ENV LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"
+
+RUN apk add --no-cache ca-certificates libgcc libstdc++ libpq libssl3 \
+    && addgroup -S -g 10001 lagrange \
+    && adduser -S -D -H -u 10001 -G lagrange lagrange
+
+COPY --from=builder /build/target/release/owner-equity-v2-runner /usr/local/bin/owner-equity-v2-runner
+
+USER 10001:10001
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD ["/usr/local/bin/owner-equity-v2-runner", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/owner-equity-v2-runner"]

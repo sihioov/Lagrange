@@ -1,6 +1,7 @@
 import {
   BinocularsIcon,
   BroadcastIcon,
+  ChartLineUpIcon,
   CompassIcon,
   FlaskIcon,
   FunnelSimpleIcon,
@@ -88,7 +89,14 @@ function navigationForRole(
   if (session.role === "member") {
     return member;
   }
-  const ownerItems: PrimaryNavigationItem[] = [...member];
+  const ownerItems: PrimaryNavigationItem[] = [
+    ...member,
+    {
+      href: "/stock-beta",
+      icon: <ChartLineUpIcon aria-hidden={true} size={NAV_ICON_SIZE} weight="regular" />,
+      label: t.navStockBeta,
+    },
+  ];
   if (session.owner_beta_access_mode === "disabled") {
     ownerItems.push({
       href: "/admin",

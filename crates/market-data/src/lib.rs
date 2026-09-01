@@ -45,21 +45,28 @@ pub mod candidate_normalize;
 pub mod contract;
 pub mod curate;
 pub mod entitlement;
+pub mod fixed_stock_price_beta;
+pub mod fixed_stock_price_beta_approval;
 pub mod freshness;
 pub mod historical_price_only;
 mod historical_price_only_approval;
 mod historical_price_only_artifact;
+pub mod historical_price_only_v3;
+mod historical_price_only_v3_artifact;
 pub mod ingest;
 pub mod instrument_master;
 pub mod kind_correction_normalize;
 pub mod kind_normalize;
 pub mod normalize;
+pub mod owner_equity_v2;
 pub mod provider;
 pub mod providers;
 pub mod publication;
 pub mod quality;
 pub mod range_normalize;
 pub mod range_to_canonical;
+pub mod range_to_canonical_v3;
+pub mod range_to_canonical_v3_price;
 pub mod redact;
 pub mod storage;
 pub mod validate;
@@ -101,6 +108,23 @@ pub use curate::{
     curate_generation, curation_inputs_from_raw, curation_inputs_from_raw_entries,
     dataset_manifest_hash, price_curation_evidence, price_curation_evidence_for_generation,
 };
+pub use fixed_stock_price_beta::{
+    DailyBar, FIXED_30_ID_LIST_SHA256, FIXED_30_INSTRUMENT_IDS,
+    FIXED_STOCK_PRICE_BETA_MIN_COMMON_SESSIONS, FIXED_STOCK_PRICE_BETA_RANGE_END,
+    FIXED_STOCK_PRICE_BETA_RANGE_START, FIXED_STOCK_PRICE_BETA_RAW_CONTRACT_VERSION,
+    FIXED_STOCK_PRICE_BETA_RAW_PROVIDER_SCOPE, FIXED_STOCK_PRICE_BETA_UNIVERSE_FILE_SHA256,
+    FixedStockPriceBetaArtifact, FixedStockPriceBetaError, FixedStockPriceBetaRawBatchEvidence,
+    FixedStockPriceBetaRawFileEvidence, FixedStockPriceBetaRawSourceFile,
+    FixedStockPriceBetaRawWindow, FixedStockPriceBetaUniverse,
+    FixedStockPriceBetaUniverseInstrument, ORIGINAL_PRICE_WARNING,
+    parse_fixed_stock_price_beta_raw_sources, parse_fixed_stock_price_beta_universe,
+    read_fixed_stock_price_beta_artifact, write_fixed_stock_price_beta_artifact,
+};
+pub use fixed_stock_price_beta_approval::{
+    FixedStockPriceBetaApprovalError, FixedStockPriceBetaApprovalRegistry,
+    FixedStockPriceBetaApprovedArtifact, FixedStockPriceBetaVerifiedBundle,
+    parse_fixed_stock_price_beta_approval_registry, verify_fixed_stock_price_beta_approval,
+};
 pub use historical_price_only::{
     HISTORICAL_PRICE_ONLY_FACTOR_SCALE, HISTORICAL_PRICE_ONLY_MATERIALIZER_VERSION,
     HISTORICAL_PRICE_ONLY_PRICE_SCALE, HistoricalPriceOnlyAudience, HistoricalPriceOnlyBar,
@@ -111,11 +135,30 @@ pub use historical_price_only::{
 pub use historical_price_only_approval::{
     ApprovedHistoricalPriceOnlyArtifact, HistoricalPriceOnlyApprovalError,
     HistoricalPriceOnlyArtifactPins, approve_historical_price_only_artifact,
+    approve_historical_price_only_artifact_for_pin_values,
 };
 pub use historical_price_only_artifact::{
     HistoricalPriceOnlyArtifactApprovalSummary, HistoricalPriceOnlyArtifactError,
     VerifiedHistoricalPriceOnlyArtifact, read_historical_price_only_artifact,
     write_historical_price_only_artifact,
+};
+pub use historical_price_only_v3::{
+    HISTORICAL_PRICE_ONLY_V3_ACTION_FILES, HISTORICAL_PRICE_ONLY_V3_BAR_COUNT,
+    HISTORICAL_PRICE_ONLY_V3_CANDIDATE_SCHEMA_VERSION, HISTORICAL_PRICE_ONLY_V3_CASH_ROW_COUNT,
+    HISTORICAL_PRICE_ONLY_V3_CASH_ROWS_SHA256, HISTORICAL_PRICE_ONLY_V3_CASH_TREATMENT,
+    HISTORICAL_PRICE_ONLY_V3_CONTRACT, HISTORICAL_PRICE_ONLY_V3_INSTRUMENT_COUNT,
+    HISTORICAL_PRICE_ONLY_V3_MATERIALIZER_VERSION, HISTORICAL_PRICE_ONLY_V3_PIT_POLICY,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_FILES, HISTORICAL_PRICE_ONLY_V3_RANGE_END,
+    HISTORICAL_PRICE_ONLY_V3_RANGE_START, HISTORICAL_PRICE_ONLY_V3_SCHEMA_ID,
+    HISTORICAL_PRICE_ONLY_V3_SCHEMA_VERSION, HISTORICAL_PRICE_ONLY_V3_SESSION_COUNT,
+    HistoricalPriceOnlyV3Candidate, HistoricalPriceOnlyV3CashDividendCommitment,
+    HistoricalPriceOnlyV3Error, materialize_historical_price_only_v3,
+};
+pub use historical_price_only_v3_artifact::{
+    HISTORICAL_PRICE_ONLY_V3_ARTIFACT_SCHEMA_ID, HISTORICAL_PRICE_ONLY_V3_ARTIFACT_SCHEMA_VERSION,
+    HistoricalPriceOnlyV3ArtifactApprovalSummary, HistoricalPriceOnlyV3ArtifactError,
+    VerifiedHistoricalPriceOnlyV3Artifact, read_historical_price_only_v3_artifact,
+    write_historical_price_only_v3_artifact,
 };
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,
@@ -216,5 +259,17 @@ pub use range_to_canonical::{
     RangeCanonicalError, VerifiedRangeCanonicalEvidence, build_range_canonical_candidate,
     discover_historical_price_only_beta_pins, load_verified_range_canonical_evidence,
     verify_historical_price_only_beta_input, write_evidence_package,
+};
+pub use range_to_canonical_v3_price::{
+    HISTORICAL_PRICE_ONLY_V3_PRICE_BAR_COUNT, HISTORICAL_PRICE_ONLY_V3_PRICE_BATCH_ID,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_BATCH_JSON_SHA256,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_CAPTURE_COMMIT, HISTORICAL_PRICE_ONLY_V3_PRICE_DATE,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_FILE_COUNT, HISTORICAL_PRICE_ONLY_V3_PRICE_MANIFEST_LINE_SHA256,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_PIT_POLICY, HISTORICAL_PRICE_ONLY_V3_PRICE_RANGE_END,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_RANGE_START,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_RESPONSE_MARKER_EVIDENCE,
+    HISTORICAL_PRICE_ONLY_V3_PRICE_SESSION_COUNT, HISTORICAL_PRICE_ONLY_V3_PRICE_WINDOW_COUNT,
+    HistoricalPriceOnlyV3PriceError, HistoricalPriceOnlyV3PriceEvidence,
+    HistoricalPriceOnlyV3PriceFileEvidence, verify_historical_price_only_v3_price_input,
 };
 pub use storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};

@@ -132,7 +132,7 @@ if [ "${OWNER_BETA_FAKE_APPROVAL_BAD_OUTPUT:-0}" = 1 ]; then
   printf 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_status=APPROVED\n'
   exit 0
 fi
-printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
+printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=2452 bar_count=26972'
 SH
 chmod 0755 "$release_fixture/repo/scripts/ops/"*.sh
 printf '%s\n' 'services: {}' >"$release_fixture/repo/deploy/compose/compose.yml"
@@ -159,7 +159,7 @@ write_image_manifest() {
     printf 'commit|%s\n' "$commit"
     index=0
     for service in db-role-bootstrap db-migrate api-server web research-worker \
-      recommendation-runner candidate-runner owner-beta-runner nt-backtest-worker-1 \
+      recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
       nt-backtest-worker-2 paper-scheduler; do
       index=$((index + 1))
       image_id=$(printf 'sha256:%064d' "$index")
@@ -326,9 +326,10 @@ image_id_for_service() {
     recommendation-runner) index=6 ;;
     candidate-runner) index=7 ;;
     owner-beta-runner) index=8 ;;
-    nt-backtest-worker-1) index=9 ;;
-    nt-backtest-worker-2) index=10 ;;
-    paper-scheduler) index=11 ;;
+    owner-equity-v2-runner) index=9 ;;
+    nt-backtest-worker-1) index=10 ;;
+    nt-backtest-worker-2) index=11 ;;
+    paper-scheduler) index=12 ;;
     *) exit 97 ;;
   esac
   printf 'sha256:%064d' "$index"
@@ -390,14 +391,14 @@ env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$
   bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
   >"$tmp/compose-pass.out"
 grep -Fq 'COMPOSE_RELEASE: PASS' "$tmp/compose-pass.out"
-[ "$(grep -c '^    image: sha256:' "$override_capture")" -eq 11 ]
-[ "$(grep -c '^    build: !reset null$' "$override_capture")" -eq 11 ]
+[ "$(grep -c '^    image: sha256:' "$override_capture")" -eq 12 ]
+[ "$(grep -c '^    build: !reset null$' "$override_capture")" -eq 12 ]
 if grep -Eq '(^| )build( |$)' "$compose_log"; then
   echo 'production-ops-self-test: immutable release tried to rebuild an image' >&2
   exit 1
 fi
 for service in db-role-bootstrap db-migrate api-server web research-worker \
-  recommendation-runner candidate-runner owner-beta-runner nt-backtest-worker-1 \
+  recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
   nt-backtest-worker-2 paper-scheduler; do
   grep -Fq -- "image inspect --format {{.Id}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}} sha256:" \
     "$compose_log"
@@ -411,13 +412,17 @@ if grep -Fq 'owner-beta-runner' "$compose_log"; then
   echo 'production-ops-self-test: disabled release activated owner-beta-runner' >&2
   exit 1
 fi
+if grep -Fq 'owner-equity-v2-runner' "$compose_log"; then
+  echo 'production-ops-self-test: disabled release activated owner-equity-v2-runner' >&2
+  exit 1
+fi
 if grep -Eiq '(^| )(down|stop)( |$)' "$compose_log"; then
   echo 'production-ops-self-test: successful immutable release stopped a service' >&2
   exit 1
 fi
 
 # Switch only the protected fixture policy to owner-only. The release and its
-# eleven-image manifest remain unchanged; the host approval gate must run before
+# twelve-image manifest remains unchanged; the host approval gate must run before
 # the first Compose up, owner-beta-runner must enter the started subset only
 # after that gate, and Paper must remain absent.
 installed_env=$release_fixture/install/releases/$commit_one/deploy/compose/.env
@@ -425,6 +430,7 @@ cp "$installed_env" "$release_fixture/disabled.env.backup"
 printf '%s\n' \
   'OWNER_BETA_ACCESS_MODE=owner_only' \
   'OWNER_BETA_PRICE_INPUT_MODE=sealed_v1' \
+  'OWNER_BETA_EQUITY_SIGNALS_MODE=sealed_v1' \
   'OWNER_BETA_PAPER_MODE=disabled' \
   >>"$installed_env"
 : >"$compose_log"
@@ -484,6 +490,48 @@ for failure_mode in fail bad-output; do
     exit 1
   fi
 done
+cp "$release_fixture/disabled.env.backup" "$installed_env"
+
+# V2 has an independent owner-only release gate. Its profile must remain
+# inactive by default, and a process-local confirmation is required before a
+# release can explicitly target the queue worker.
+printf '%s\n' 'OWNER_EQUITY_V2_RUNTIME_MODE=owner_only' >>"$installed_env"
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" \
+  COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+  PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-v2-missing-confirmation.out" 2>&1; then
+  echo 'production-ops-self-test: V2 release without confirmation unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'owner_equity_v2_rollout_confirmation_required' "$tmp/compose-v2-missing-confirmation.out"
+if grep -Eq 'compose .* up ' "$compose_log"; then
+  echo 'production-ops-self-test: V2 release without confirmation reached Compose up' >&2
+  exit 1
+fi
+
+: >"$compose_log"
+env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" \
+  COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+  OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-v2-pass.out"
+grep -Fxq 'OWNER_EQUITY_V2_RELEASE_GATE: PASS mode=owner_only confirmation=process_local' \
+  "$tmp/compose-v2-pass.out"
+grep -Fq 'up --no-build --no-deps -d research-worker recommendation-runner candidate-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler owner-equity-v2-runner' \
+  "$compose_log" || {
+  echo 'production-ops-self-test: V2 owner-only release did not explicitly start the V2 worker' >&2
+  exit 1
+}
+grep -Fq 'inspect --format {{.Image}}|{{index .Config.Labels "org.opencontainers.image.revision"}} ctr-owner-equity-v2-runner' \
+  "$compose_log" || {
+  echo 'production-ops-self-test: V2 owner-only release did not verify the V2 worker image' >&2
+  exit 1
+}
 cp "$release_fixture/disabled.env.backup" "$installed_env"
 
 : >"$compose_log"

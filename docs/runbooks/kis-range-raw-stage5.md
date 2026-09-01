@@ -70,6 +70,34 @@ conflict is reported, the operator must restore the protected state record or
 review/quarantine the existing Raw batch before retrying; do not delete evidence
 or fetch a replacement batch.
 
+For the owner-approved ten-year ETF11 capture, use the worker-preserving
+wrapper from a root-owned transient service. It discovers exactly one running
+`lagrange-station/research-worker` Compose container by labels, stops that
+container, invokes the same Stage5 wrapper, and starts the identical container
+again through its `EXIT`/signal cleanup path. It never starts a replacement
+image. The exact command is recorded in the transient unit and survives the
+operator terminal closing:
+
+```sh
+commit=$(git rev-parse HEAD)
+release_root=$(readlink -f /opt/lagrange/current)
+[[ "$release_root" =~ ^/opt/lagrange/releases/[0-9a-f]{40}$ ]] || exit 1
+env_file=$release_root/deploy/compose/.env
+sudo systemd-run --unit="lagrange-etf11-10y-raw-${commit%${commit#????????}}" \
+  --collect --property=Type=exec --property=KillMode=control-group \
+  "$(pwd)/scripts/ops/kis-range-raw-with-worker-pause.sh" \
+  --start 2016-08-29 --end 2026-08-28 --commit "$commit" \
+  --env-file "$env_file" \
+  --state-file /var/lib/lagrange/state/range-raw/etf11-10y.tsv
+```
+
+Run the ordinary Stage5 `--plan` and root `--preflight` first. Do not edit the
+build worktree while the unit is active: the exact commit and clean tracked
+tree are part of the Raw identity. Inspect progress with `systemctl status`
+and `journalctl -u UNIT`; neither command should print a credential or response
+body. A completed Raw capture remains non-published and does not replace the
+historical-price-v2 artifact.
+
 For recovery of an already captured immutable Stage3 batch, use a separate
 execute-only state identity and the explicit source ID:
 

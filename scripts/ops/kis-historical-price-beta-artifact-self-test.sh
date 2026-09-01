@@ -51,7 +51,7 @@ action_hash=sha256:6692f7e5dc215ddce145e63e647344f8264724497ef0d6f6c441b06dedd4f
 candidate_hash=sha256:0877d42eab6626de5066c5d38d1c11959b7e2dac005a6c884eff0004c9eab050
 artifact_hash=sha256:afd0735dc41e56a5c07403480d66de7baf89fc638d715d0e90507032fb42fc67
 ignored_dividend_rows_hash=sha256:847315aa05b79b520230f82b504e8bf6cf4ecde2bc44e5e6376fd95ce674bc48
-approval_registry_hash=sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380
+approval_registry_hash=sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707
 {
   printf 'LAGRANGE_DATA_DIR=%s\n' "$data_root"
   printf 'LAGRANGE_ARTIFACTS_DIR=%s\n' "$artifacts_root"
@@ -158,10 +158,10 @@ case "${1:-}" in
     if printf '%s\n' "$*" | grep -Fq -- '/usr/local/bin/kis-historical-price-beta-approval-check'; then
       if [ -f "${HISTORICAL_ARTIFACT_BAD_APPROVAL_OUTPUT_FILE:-}" ]; then
         printf '%s\n' 'approval-secret-sentinel should be discarded by wrapper'
-        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
+        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=2452 bar_count=26972'
       else
         printf '%s\n' 'approval-secret-sentinel should be discarded by wrapper'
-        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:4111f51d945a48a7559b22863cc4ed2eae9c760d5ac9288e554aefe5575e3380 approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=1608 bar_count=17688'
+        printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707 approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=2452 bar_count=26972'
       fi
     elif printf '%s\n' "$*" | grep -Fq -- 'candidate-content-sha256'; then
       artifact_variant=

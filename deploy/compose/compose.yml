@@ -18,13 +18,15 @@
 # Every long-lived service below runs its checked-in production entrypoint.
 # Build contexts point at Dockerfiles with digest-pinned base images; one-shot
 # bootstrap/migration/schema services fail closed before serving workloads.
-# All eleven owner-beta locally-built serving images embed the exact 40-hex Git
+# All twelve locally-built serving images embed the exact 40-hex Git
 # commit in their OCI revision labels. CI must supply LAGRANGE_CODE_COMMIT at
 # build time; Compose intentionally does not override those image-baked values
 # later. Their `image:` names carry the same exact commit tag for build-time
 # lookup only: the installed release workflow replaces them with Docker local
 # image IDs. These are host-local single-platform IDs, never RepoDigest or
 # multi-architecture provenance claims.
+# This remains the owner-beta serving manifest; owner-equity-v2-runner is
+# additionally profile-gated and owner-authorized at release time.
 
 name: lagrange-station
 
@@ -199,6 +201,15 @@ services:
       OWNER_BETA_ACCESS_MODE: ${OWNER_BETA_ACCESS_MODE:-disabled}
       OWNER_BETA_PRICE_INPUT_MODE: ${OWNER_BETA_PRICE_INPUT_MODE:-disabled}
       OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}
+      # Independent fixed-equity price/volume research beta. The mode is
+      # owner-only and the artifact location is a fixed in-container path,
+      # never an operator-selected host path.
+      OWNER_BETA_EQUITY_SIGNALS_MODE: ${OWNER_BETA_EQUITY_SIGNALS_MODE:-disabled}
+      STOCK_PRICE_BETA_ARTIFACT_ROOT: /data/stock-price-beta-artifacts
+      # Typed, non-secret V2 entitlement pins only. API/Web never receive the
+      # KIS credential files or the V2 Raw/artifact write roots.
+      OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE: ${OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE:-}
+      OWNER_EQUITY_V2_ENTITLEMENT_SHA256: ${OWNER_EQUITY_V2_ENTITLEMENT_SHA256:-}
     secrets:
       - source: api_db_app_password
         target: db_app_password
@@ -242,6 +253,7 @@ services:
       # directories; legacy replicas may still write only the old canonical
       # run names without being able to alter a settled generation.
       - ${LAGRANGE_ARTIFACTS_DIR:-../data/artifacts}:/data/artifacts:ro
+      - ${LAGRANGE_DATA_DIR:-../data}/stock-price-beta-artifacts:/data/stock-price-beta-artifacts:ro
     networks:
       - edge
       - backend
@@ -411,6 +423,9 @@ services:
       - backtest-iso
       # The profile-gated owner-beta worker reaches only this database path.
       - owner-beta-db
+      # The profile-gated Owner Equity V2 worker reaches its queue DB and
+      # read-only KIS egress through this separate network.
+      - owner-equity-v2-egress
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lagrange} -d ${POSTGRES_DB:-lagrange}"]
       interval: 10s
@@ -645,6 +660,161 @@ services:
       - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
     networks:
       - range-raw-egress
+
+  # ------------------------------------------------------------------
+  # research-action-range-raw — explicitly invoked KIS KSD corporate-action
+  # Raw-only range job. It is a separate profile and image from both the
+  # ordinary EOD worker and the Stage5 daily-bars range job. The service has
+  # only the two existing KIS read credentials, a Raw write mount, and the
+  # dedicated Raw egress network; it has no DB/catalog/trading surface or
+  # daemon lifecycle.
+  # ------------------------------------------------------------------
+  research-action-range-raw:
+    profiles: ["action-range-raw"]
+    image: lagrange-station-research-action-range-raw:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    entrypoint: ["/usr/local/bin/kis-action-range-raw"]
+    init: true
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging: *default-logging
+    cpus: "2"
+    mem_limit: 4g
+    environment:
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+      RESEARCH_RAW_ROOT: /data
+      RESEARCH_ENTITLEMENT_REFERENCE: ${RESEARCH_ENTITLEMENT_REFERENCE:?RESEARCH_ENTITLEMENT_REFERENCE must identify the exact active data-use contract}
+      KIS_APP_KEY_FILE: /run/secrets/kis_app_key
+      KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret
+    secrets:
+      - source: research_range_raw_kis_app_key
+        target: kis_app_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_range_raw_kis_app_secret
+        target: kis_app_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
+    networks:
+      - range-raw-egress
+
+  # ------------------------------------------------------------------
+  # research-stock-price-beta-raw — explicitly invoked fixed-30 KIS daily
+  # bars Raw-only capture. It has no database, Curated, artifact, or daemon
+  # lifecycle surface; the operator wrapper supplies the exact acknowledgement
+  # only for a one-shot `compose run --no-deps` invocation.
+  # ------------------------------------------------------------------
+  research-stock-price-beta-raw:
+    profiles: ["stock-price-beta-raw"]
+    image: lagrange-station-research-stock-price-beta-raw:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    entrypoint: ["/usr/local/bin/kis-stock-price-beta-raw"]
+    init: true
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging: *default-logging
+    cpus: "2"
+    mem_limit: 4g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+      RESEARCH_RAW_ROOT: /data
+      RESEARCH_ENTITLEMENT_REFERENCE: ${RESEARCH_ENTITLEMENT_REFERENCE:?RESEARCH_ENTITLEMENT_REFERENCE must identify the exact active data-use contract}
+      RESEARCH_ENTITLEMENT_SHA256: ${RESEARCH_ENTITLEMENT_SHA256:?RESEARCH_ENTITLEMENT_SHA256 must identify the exact active data-use contract hash}
+      KIS_APP_KEY_FILE: /run/secrets/kis_app_key
+      KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret
+    secrets:
+      - source: research_range_raw_kis_app_key
+        target: kis_app_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_range_raw_kis_app_secret
+        target: kis_app_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
+      - ../../configs/data-rights/kis.entitlement.json:/opt/lagrange/configs/data-rights/kis.entitlement.json:ro
+    networks:
+      - range-raw-egress
+
+  research-stock-price-beta-materialize:
+    profiles: ["stock-price-beta-materialize"]
+    image: lagrange-station-research-stock-price-beta-materialize:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    entrypoint: ["/usr/local/bin/kis-stock-price-beta-materialize"]
+    init: true
+    user: "10001:10001"
+    network_mode: none
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw:ro
+      - ${LAGRANGE_DATA_DIR:-../data}/stock-price-beta-artifacts:/data/artifacts
+      - ../../configs/universes/kr-stock-price-beta-v1.json:/opt/lagrange/configs/universes/kr-stock-price-beta-v1.json:ro
+      - ../../configs/data-rights/kis.entitlement.json:/opt/lagrange/configs/data-rights/kis.entitlement.json:ro
+      - ../../configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json:/opt/lagrange/configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json:ro
+
+  # ------------------------------------------------------------------
+  # research-v3-input-check — provider-free, one-shot verification of the
+  # owner-approved immutable V3 KIS price and action batches. It has no credentials, DB,
+  # Curated mount, backend dependency, restart/health lifecycle, or network
+  # namespace. The checker receives only a read-only Raw view.
+  # ------------------------------------------------------------------
+  research-v3-input-check:
+    profiles: ["v3-input-check"]
+    image: lagrange-station-research-v3-input-check:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: data-pipelines/collectors/Dockerfile
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    entrypoint: ["/usr/local/bin/kis-historical-price-v3-input-check"]
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging: *default-logging
+    cpus: "2"
+    mem_limit: 4g
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - --raw-root
+      - /data
+      - --check
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw:ro
 
   # ------------------------------------------------------------------
   # research-range-raw-recovery — explicit Stage5 immutable-source recovery.
@@ -889,6 +1059,104 @@ services:
       postgres:
         condition: service_healthy
       db-migrate:
+        condition: service_completed_successfully
+
+  # ------------------------------------------------------------------
+  # owner-equity-v2-runner — explicitly owner-authorized V2 queue daemon.
+  # This is the only V2 service with KIS credentials and Raw/artifact write
+  # mounts. It uses the existing protected read-only KIS copies and worker DB
+  # secret under distinct in-container targets; API/Web receive neither.
+  # ------------------------------------------------------------------
+  owner-equity-v2-runner:
+    profiles: ["owner-equity-v2"]
+    image: lagrange-station-owner-equity-v2-runner:${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    build:
+      context: ../..
+      dockerfile: crates/job-queue/Dockerfile.owner-equity-v2-runner
+      args:
+        LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+    init: true
+    restart: unless-stopped
+    # Work timeout is 15m. Leave a full minute for graceful lease settlement
+    # before Docker sends SIGKILL; the existing WP-4 sweeper then recovers any
+    # claim that cannot be settled.
+    stop_grace_period: 16m
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+      - /run/owner-equity-v2-health:uid=10001,gid=10001,mode=0750
+    logging: *default-logging
+    entrypoint: ["/usr/local/bin/owner-equity-v2-runner"]
+    cpus: "1"
+    mem_limit: 2g
+    environment:
+      APP_ENV: production
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-lagrange}
+      DB_USER: worker
+      DB_PASSWORD_FILE: /run/secrets/db_worker_password
+      OWNER_EQUITY_V2_RAW_ROOT: /data/raw
+      OWNER_EQUITY_V2_ARTIFACT_ROOT: /data/owner-equity-v2-artifacts
+      OWNER_EQUITY_V2_HEALTH_STATE_PATH: /run/owner-equity-v2-health/health.json
+      OWNER_EQUITY_V2_HEALTH_MAX_AGE_SECS: "180"
+      OWNER_EQUITY_V2_POLL_SECS: "2"
+      OWNER_EQUITY_V2_RECOVERY_SECS: "30"
+      OWNER_EQUITY_V2_HEARTBEAT_SECS: "10"
+      OWNER_EQUITY_V2_LEASE_SECS: "60"
+      OWNER_EQUITY_V2_BACKOFF_SECS: "30"
+      OWNER_EQUITY_V2_WORK_TIMEOUT_SECS: "900"
+      OWNER_EQUITY_V2_WORKER_ID: owner-equity-v2-prod
+      OWNER_EQUITY_V2_MAX_ACTIVE: "100"
+      OWNER_EQUITY_V2_INITIAL_GET_CEILING: "7"
+      OWNER_EQUITY_V2_INCREMENTAL_GET_CEILING: "2"
+      OWNER_EQUITY_V2_TOTAL_BACKFILL_GET_CEILING: "700"
+      OWNER_EQUITY_V2_CONCURRENCY: "1"
+      OWNER_EQUITY_V2_ESTIMATED_BYTES_PER_GET: "1048576"
+      LAGRANGE_CODE_COMMIT: ${LAGRANGE_CODE_COMMIT:?LAGRANGE_CODE_COMMIT must be supplied by CI as the exact 40-hex Git commit}
+      OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE: ${OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE:-}
+      OWNER_EQUITY_V2_ENTITLEMENT_SHA256: ${OWNER_EQUITY_V2_ENTITLEMENT_SHA256:-}
+      KIS_APP_KEY_FILE: /run/secrets/kis_app_key
+      KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret
+    secrets:
+      # These are existing protected, read-only source copies. No new secret
+      # value or account identifier is introduced by the V2 runtime wiring.
+      - source: owner_beta_db_worker_password
+        target: db_worker_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_kis_app_key
+        target: kis_app_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+      - source: research_kis_app_secret
+        target: kis_app_secret
+        uid: "10001"
+        gid: "10001"
+        mode: 0440
+    volumes:
+      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw:rw
+      - ${LAGRANGE_DATA_DIR:-../data}/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts:rw
+    networks:
+      - owner-equity-v2-egress
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/owner-equity-v2-runner", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+      research-raw-init:
         condition: service_completed_successfully
 
   # ------------------------------------------------------------------
@@ -1283,16 +1551,20 @@ secrets:
 # ----------------------------------------------------------------------
 # Networks (design §13.3).
 #   edge        internal:true — reverse-proxy/web/api-server only.
-#   backend     has egress — api-server (Auth0), research-worker (KIS),
-#               paper-scheduler (queue). The profile-gated live-node-owner
-#               uses network_mode:none and has no external dependency.
-#   range-raw-egress — dedicated Stage5 KIS-only egress; no PostgreSQL/backend
-#               attachment is possible for the isolated historical job.
+#   backend     has egress — api-server (Auth0), research-worker (KIS), and
+#               paper-scheduler (queue). The profile-gated live-node-owner uses
+#               network_mode:none and has no external dependency.
+#   range-raw-egress — dedicated KIS Raw-only egress for historical price,
+#               action, and fixed-stock beta jobs; no PostgreSQL/backend
+#               attachment is possible.
 #   research-range-raw-recovery uses network_mode:none and is intentionally
 #               not attached to any Compose network.
 #   backtest-iso internal:true — nt-backtest-worker-1/2 + postgres ONLY.
 #               No default route => no internet for backtest workers.
 #   owner-beta-db internal:true — owner-beta-runner + postgres ONLY.
+#   owner-equity-v2-egress — owner-equity-v2-runner + postgres; this is the
+#               only network-capable V2 queue worker and has the read-only KIS
+#               egress plus its dedicated Raw/artifact write roots.
 # ----------------------------------------------------------------------
 networks:
   edge:
@@ -1310,6 +1582,9 @@ networks:
   owner-beta-db:
     driver: bridge
     internal: true
+  owner-equity-v2-egress:
+    driver: bridge
+    internal: false
 
 volumes:
   pgdata:

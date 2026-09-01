@@ -1,7 +1,11 @@
 mod candidate_pipeline;
 mod candidate_sink;
+pub mod owner_equity_v2;
 mod pipeline;
 mod sink;
+pub mod stock_price_beta_materialize;
+pub mod stock_price_beta_raw;
+mod v3_historical_input;
 mod worker;
 
 pub use candidate_pipeline::{
@@ -24,6 +28,10 @@ pub use pipeline::{
 };
 pub use sink::{
     PostgresPublicationSink, PublicationSink, PublicationState, PublishOutcome, SinkError,
+};
+pub use v3_historical_input::{
+    BATCH_JSON_MAX_BYTES, HistoricalPriceOnlyV3Input, HistoricalPriceOnlyV3InputError,
+    MANIFEST_MAX_BYTES, load_historical_price_only_v3_input, verify_historical_price_only_v3_input,
 };
 pub use worker::{
     AppEnvironment, ChildResponseContext, DailyRangeRawSummary, DatabaseConfig, HealthFailure,

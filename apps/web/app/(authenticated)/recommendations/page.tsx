@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { RoutePage } from "@/components/pages/route-page";
 import { OwnerBetaHistory } from "@/components/recommendations/owner-beta-history";
@@ -11,7 +12,7 @@ import { RecommendationRunForm } from "@/components/recommendations/recommendati
 import { RecommendationRunStatus } from "@/components/recommendations/recommendation-run-status";
 import { StatePanel } from "@/components/states/state-panel";
 import type { ApiSession } from "@/lib/api/contracts";
-import { ApiProblem } from "@/lib/api/response";
+import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import {
   type RecommendationsDictionary,
@@ -99,17 +100,21 @@ async function OwnerBetaRecommendationsProductPage(
   if (Array.isArray(requestedRunId)) {
     return ownerBetaUnavailablePage(t);
   }
+  const api = await getProductApi();
   try {
-    const api = await getProductApi();
     const licensing = await api.getLicensingStatus();
     if (!permitsUse(licensing, "recommendation")) {
       return ownerBetaBlockedPage(t.entitlementInactiveMessage, t);
     }
 
-    const [configs, history] = await Promise.all([
+    const [discovery, configs, history] = await Promise.all([
+      api.getOwnerBetaSupportedAsOf(),
       api.getStrategyConfigs(),
       api.getOwnerBetaRecommendationRuns(),
     ]);
+    if (discovery.supported_as_of.length === 0) {
+      return ownerBetaUnavailablePage(t);
+    }
     const selectedRunId =
       requestedRunId === undefined || requestedRunId === "" ? history.items[0]?.id : requestedRunId;
     const selected =
@@ -143,7 +148,8 @@ async function OwnerBetaRecommendationsProductPage(
                 id: config.id,
                 label: configLabel(config),
               }))}
-              defaultAsOf={licensing.as_of}
+              defaultAsOf={discovery.default_as_of}
+              supportedAsOf={discovery.supported_as_of}
             />
           </section>
         )}
@@ -166,6 +172,9 @@ async function OwnerBetaRecommendationsProductPage(
       </RoutePage>
     );
   } catch (error) {
+    if (isLoginRequiredError(error)) {
+      redirect("/login");
+    }
     if (
       error instanceof ApiProblem &&
       ["DATASET_BLOCKED", "DATA_ENTITLEMENT_REQUIRED", "FORBIDDEN"].includes(error.code)
@@ -205,8 +214,8 @@ export async function RecommendationsProductPage(
       </RoutePage>
     );
   }
+  const api = await getProductApi();
   try {
-    const api = await getProductApi();
     const licensing = await api.getLicensingStatus();
     if (!permitsUse(licensing, "recommendation")) {
       return blockedPage(t.entitlementInactiveMessage, t);
@@ -275,6 +284,9 @@ export async function RecommendationsProductPage(
       </RoutePage>
     );
   } catch (error) {
+    if (isLoginRequiredError(error)) {
+      redirect("/login");
+    }
     if (
       error instanceof ApiProblem &&
       ["DATASET_BLOCKED", "DATA_ENTITLEMENT_REQUIRED", "FORBIDDEN"].includes(error.code)

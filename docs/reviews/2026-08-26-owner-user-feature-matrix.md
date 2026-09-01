@@ -119,3 +119,33 @@ contract.
 - The recommendation core remains outside this package. WP-3/WP-R1 fixture evidence is preserved, but real Owner Auth0 creation/poll/report acceptance and production sealed-data review remain `USER_ACCEPTANCE_PENDING`.
 
 Not found or not verified: a Chromium browser run (blocked by missing `libasound.so.2`); an actual Owner Auth0 session; production candidate/screener/stock data; durable production screener save/delete; real Owner backtest lifecycle/cancel/compare/robustness; meaningful Admin data rendering; a production Live/Paper call. No P0 or P1 issue was found in the permitted scope.
+
+## WP-6 remediation/source-state closeout — 2026-08-28
+
+The two prior production Owner recommendation runs technically reached `SUCCEEDED`, but Owner
+acceptance failed: the displayed date came from licensing status, instrument metadata was absent,
+factor/reason rendering was opaque, and audit hashes dominated the primary report. The remediation
+is now implemented in source and independently reviewed `ACCEPT`; this does not close that original
+production acceptance failure.
+
+The current source state discovers and defaults from approved-artifact supported-as-of dates, uses
+the exact ETF11 POST/discovery semantics, and performs bounded display-only reads of
+`public.instruments.name` and `asset_class`. It does not infer tracking or exposure. Fourteen
+bilingual reason codes are static, factors use producer-compatible raw percentages, audit details
+are collapsed, and the generated OpenAPI contract is synchronized. The display contract preserves
+the distinction between ordinary recommendation, Owner-beta price-only, and backtest capabilities.
+
+Verification passed: Web typecheck, targeted Biome, five focused Owner-beta Web suites, API
+`openapi:check`/generator equality, Rust owner-beta unit tests and clippy, and `git diff --check`.
+DB-backed integration branches were not run/skipped because `DATABASE_URL` is unset.
+
+This is `SOURCE_READY` only: the agent did not commit, deploy, activate, or re-run the source in
+production. Owner acceptance remains `USER_ACCEPTANCE_PENDING` pending a separate production
+deployment and retest. Paper and Live remain disabled/out of scope; no order/account surface,
+provider expansion, KIS/OpenDART boundary change, migration, production network call, or deployment
+was authorized or performed.
+
+Owner-beta backtest Phase B remains deferred/prohibited until the Owner explicitly approves every
+P0 simulation-contract field in
+`docs/superpowers/plans/2026-08-28-owner-beta-backtest-p0-owner-decision.md`. No choice is implied
+by this closeout.

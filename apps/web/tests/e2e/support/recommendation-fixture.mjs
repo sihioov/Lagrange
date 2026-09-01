@@ -205,6 +205,13 @@ function ownerBetaRun() {
       excluded: index !== 0,
       exclusion_reason: index === 0 ? undefined : "NOT_SELECTED_BY_STRATEGY",
       factors: { momentum_12_1: index === 0 ? "0.912300" : "0.000000" },
+      instrument: {
+        asset_class: "ETF",
+        exposure_group: null,
+        id: instrument_id,
+        name: index === 0 ? "KODEX 200" : null,
+        tracking_index: null,
+      },
       instrument_id,
       rank: index === 0 ? 1 : null,
       reason_codes: index === 0 ? ["SELECTED_TOP_N"] : ["NOT_SELECTED_BY_STRATEGY"],
@@ -228,9 +235,19 @@ function ownerBetaRun() {
 export function ownerBetaRecommendationResponse(request) {
   const { method, pathname, scenario } = request;
   const runsPath = "/api/v1/recommendations/owner-beta/price-only/runs";
-  if (!pathname.startsWith(runsPath)) return null;
+  const supportedAsOfPath = "/api/v1/recommendations/owner-beta/price-only/supported-as-of";
+  if (pathname !== supportedAsOfPath && !pathname.startsWith(runsPath)) return null;
   if (scenario.ownerBetaAccessMode !== "owner_only" || scenario.role !== "owner") {
     return error(403, "FORBIDDEN", "forbidden");
+  }
+  if (method === "GET" && pathname === supportedAsOfPath) {
+    return {
+      body: {
+        default_as_of: "2026-08-19",
+        supported_as_of: ["2026-08-15", "2026-08-18", "2026-08-19"],
+      },
+      status: 200,
+    };
   }
   if (method === "GET" && pathname === runsPath) {
     const { items: _items, ...listItem } = ownerBetaRun();

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { BacktestComparison } from "@/components/backtests/backtest-comparison";
 import { BacktestCreateForm } from "@/components/backtests/backtest-create-form";
 import { BacktestHistory } from "@/components/backtests/backtest-history";
@@ -7,7 +8,7 @@ import { BacktestReport } from "@/components/backtests/backtest-report";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { RoutePage } from "@/components/pages/route-page";
 import { StatePanel } from "@/components/states/state-panel";
-import { ApiProblem } from "@/lib/api/response";
+import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import { type BacktestsDictionary, backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
 import { getLocale } from "@/lib/i18n/server";
@@ -60,8 +61,8 @@ export default async function BacktestsPage() {
 export async function BacktestsProductPage() {
   const locale = await getLocale();
   const t = backtestsDictionary[locale];
+  const api = await getProductApi();
   try {
-    const api = await getProductApi();
     const licensing = await api.getLicensingStatus();
     if (!permitsUse(licensing, "backtest")) {
       return blockedPage(t, t.entitlementInactiveMessage);
@@ -113,6 +114,9 @@ export async function BacktestsProductPage() {
       </RoutePage>
     );
   } catch (error) {
+    if (isLoginRequiredError(error)) {
+      redirect("/login");
+    }
     if (error instanceof ApiProblem && BLOCKED_CODES.has(error.code)) {
       return blockedPage(t, t.datasetBlockedMessage);
     }

@@ -100,6 +100,8 @@ pub struct OwnerBetaPriceOnlyReadRunRow {
 pub struct OwnerBetaPriceOnlyReadItemRow {
     pub recommendation_run_id: Uuid,
     pub instrument_id: String,
+    pub instrument_name: Option<String>,
+    pub instrument_asset_class: Option<String>,
     pub rank: Option<i32>,
     pub target_weight: Option<String>,
     pub reason_codes: Value,
@@ -475,9 +477,11 @@ impl OwnerBetaRecommendationRepo {
         };
 
         let items = if row.status == "SUCCEEDED" {
+            let item_limit = item_row_limit(1)?;
             sqlx::query_as::<_, OwnerBetaPriceOnlyReadItemRow>(READ_ITEMS_SQL)
                 .bind(row.id)
                 .bind(owner)
+                .bind(item_limit)
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(TenancyError::from_sqlx)?
@@ -547,10 +551,12 @@ impl OwnerBetaRecommendationRepo {
             .collect::<Vec<_>>();
         let mut items_by_run = BTreeMap::<Uuid, Vec<OwnerBetaPriceOnlyReadItemRow>>::new();
         if !successful_ids.is_empty() {
+            let item_limit = item_row_limit(successful_ids.len())?;
             let item_rows =
                 sqlx::query_as::<_, OwnerBetaPriceOnlyReadItemRow>(READ_ITEMS_FOR_RUNS_SQL)
                     .bind(&successful_ids)
                     .bind(owner)
+                    .bind(item_limit)
                     .fetch_all(&mut *tx)
                     .await
                     .map_err(TenancyError::from_sqlx)?;
@@ -640,24 +646,45 @@ const READ_RUNS_AFTER_SQL: &str = "
        ORDER BY run.created_at DESC, run.id DESC
        LIMIT $4";
 const READ_ITEMS_SQL: &str = "
-    SELECT recommendation_run_id, instrument_id, rank,
-           target_weight::text AS target_weight, reason_codes, factors_json,
-           excluded, exclusion_reason
-      FROM owner_beta_recommendation_items
-     WHERE recommendation_run_id = $1
-       AND owner_user_id = $2
-     ORDER BY instrument_id";
+    SELECT item.recommendation_run_id, item.instrument_id,
+           instrument.name AS instrument_name,
+           instrument.asset_class AS instrument_asset_class,
+           item.rank, item.target_weight::text AS target_weight,
+           item.reason_codes, item.factors_json,
+           item.excluded, item.exclusion_reason
+      FROM public.owner_beta_recommendation_items AS item
+      LEFT JOIN public.instruments AS instrument
+        ON instrument.id = item.instrument_id
+     WHERE item.recommendation_run_id = $1
+       AND item.owner_user_id = $2
+     ORDER BY item.instrument_id
+       LIMIT $3";
 const READ_ITEMS_FOR_RUNS_SQL: &str = "
-    SELECT recommendation_run_id, instrument_id, rank,
-           target_weight::text AS target_weight, reason_codes, factors_json,
-           excluded, exclusion_reason
-      FROM owner_beta_recommendation_items
-     WHERE recommendation_run_id = ANY($1::uuid[])
-       AND owner_user_id = $2
-     ORDER BY recommendation_run_id, instrument_id";
+    SELECT item.recommendation_run_id, item.instrument_id,
+           instrument.name AS instrument_name,
+           instrument.asset_class AS instrument_asset_class,
+           item.rank, item.target_weight::text AS target_weight,
+           item.reason_codes, item.factors_json,
+           item.excluded, item.exclusion_reason
+      FROM public.owner_beta_recommendation_items AS item
+      LEFT JOIN public.instruments AS instrument
+        ON instrument.id = item.instrument_id
+     WHERE item.recommendation_run_id = ANY($1::uuid[])
+       AND item.owner_user_id = $2
+     ORDER BY item.recommendation_run_id, item.instrument_id
+       LIMIT $3";
 
 fn integrity_error() -> TenancyError {
     TenancyError::ResultIntegrity("owner-beta recommendation result integrity failed".to_owned())
+}
+
+fn item_row_limit(run_count: usize) -> Result<i64, TenancyError> {
+    let per_run = KR_ETF_CORE_SYMBOLS
+        .len()
+        .checked_add(1)
+        .ok_or_else(integrity_error)?;
+    let total = run_count.checked_mul(per_run).ok_or_else(integrity_error)?;
+    i64::try_from(total).map_err(|_| integrity_error())
 }
 
 /// Validate every durable field that crosses the owner-beta read boundary.
@@ -1310,6 +1337,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn owner_beta_item_reads_join_only_bounded_shared_instrument_metadata() {
+        for query in [READ_ITEMS_SQL, READ_ITEMS_FOR_RUNS_SQL] {
+            assert!(query.contains("LEFT JOIN public.instruments AS instrument"));
+            assert!(query.contains("instrument.name AS instrument_name"));
+            assert!(query.contains("instrument.asset_class AS instrument_asset_class"));
+            assert!(query.contains("LIMIT $3"));
+            assert!(!query.contains("strategy_config"));
+        }
+    }
+
+    #[test]
+    fn owner_beta_item_read_limit_is_checked_and_scaled_for_multi_run_reads() {
+        let per_run = i64::try_from(KR_ETF_CORE_SYMBOLS.len() + 1).unwrap();
+        assert_eq!(item_row_limit(1).expect("detail item limit"), per_run);
+        assert_eq!(
+            item_row_limit(3).expect("multi-run item limit"),
+            per_run * 3
+        );
+        assert!(item_row_limit(usize::MAX).is_err());
+    }
+
     fn read_row(status: &str) -> OwnerBetaPriceOnlyReadRunRow {
         let created_at = chrono::DateTime::parse_from_rfc3339("2026-08-19T00:00:00Z")
             .expect("created timestamp")
@@ -1365,6 +1414,8 @@ mod tests {
         OwnerBetaPriceOnlyReadItemRow {
             recommendation_run_id: Uuid::parse_str("00000000-0000-4000-8000-000000000010").unwrap(),
             instrument_id,
+            instrument_name: None,
+            instrument_asset_class: None,
             rank: selected.then_some((index + 1) as i32),
             target_weight: selected.then(|| "0.500000".to_owned()),
             reason_codes: json!([reason]),

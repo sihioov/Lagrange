@@ -12,10 +12,12 @@
 # forbids leverage and shorting). Benchmark: 069500.KRX (a member).
 # Base currency: KRW. The source_snapshot records the KRX reference the ids
 # were resolved from; metadata/names are resolved from KRX at build time.
+# effective_from is the owner-approved retrospective data-coverage floor, not
+# a claim that this exact fixed basket was selected or knowable on that date.
 universe:
   id: kr-etf-core-v1
   base_currency: KRW
-  effective_from: "2020-01-31"
+  effective_from: "2016-08-29"
   effective_until: null
   benchmark: "069500.KRX"
   eligibility:

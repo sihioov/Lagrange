@@ -18,6 +18,7 @@ pub mod hash;
 pub mod ids;
 pub mod instrument;
 pub mod lifecycle;
+pub mod owner_equity_universe;
 pub mod provenance;
 pub mod stat;
 pub mod time;
@@ -38,6 +39,12 @@ pub use ids::{
 pub use instrument::{AssetClass, InstrumentId};
 pub use lifecycle::{
     AttemptOutcome, DataState, EntitlementState, InstrumentStatus, JobStatus, StrategyState,
+};
+pub use owner_equity_universe::{
+    DEFAULT_TARGET_OBSERVED_SESSIONS, MINIMUM_OBSERVED_SESSIONS, OwnerEquityAdmissionPins,
+    OwnerEquityFailureCode, OwnerEquityGeneration, OwnerEquityMembershipState,
+    OwnerEquityUniverseError, OwnerEquityUniverseHash, OwnerEquityUniversePolicy,
+    RECOMMENDED_MAX_ACTIVE_INSTRUMENTS, RetryDisposition,
 };
 pub use provenance::{Engine, RandomSeed, RunProvenance};
 pub use stat::ReportedStat;

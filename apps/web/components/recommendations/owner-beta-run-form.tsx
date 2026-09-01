@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { type BrowserClientOptions, mutateWithCsrf } from "@/lib/api/browser-client";
-import { parseApiResponse } from "@/lib/api/response";
+import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
 import { recommendationsDictionary } from "@/lib/i18n/dictionaries/recommendations";
 import {
@@ -22,7 +22,12 @@ export type OwnerBetaRunFormProps = {
     readonly label: string;
   }[];
   readonly defaultAsOf: string;
+  readonly supportedAsOf: readonly string[];
 };
+
+export function isOwnerBetaAsOfSupported(asOf: string, supportedAsOf: readonly string[]): boolean {
+  return supportedAsOf.includes(asOf);
+}
 
 /** Submit only the server-owned owner-beta request body and parse its enqueue response. */
 export async function submitOwnerBetaRun(
@@ -34,10 +39,10 @@ export async function submitOwnerBetaRun(
     json: body,
     method: "POST",
   });
-  return parseApiResponse(response, ownerBetaPriceOnlyRunResponseSchema);
+  return parseBrowserApiResponse(response, ownerBetaPriceOnlyRunResponseSchema);
 }
 
-export function OwnerBetaRunForm({ configs, defaultAsOf }: OwnerBetaRunFormProps) {
+export function OwnerBetaRunForm({ configs, defaultAsOf, supportedAsOf }: OwnerBetaRunFormProps) {
   const [state, setState] = useState<RunState>("idle");
   const [message, setMessage] = useState("");
   const [submittedRun, setSubmittedRun] = useState<OwnerBetaPriceOnlyRunResponse | null>(null);
@@ -51,6 +56,11 @@ export function OwnerBetaRunForm({ configs, defaultAsOf }: OwnerBetaRunFormProps
     if (typeof asOf !== "string" || typeof strategyConfigId !== "string") {
       setState("error");
       setMessage(t.asOfDateRequired);
+      return;
+    }
+    if (!isOwnerBetaAsOfSupported(asOf, supportedAsOf)) {
+      setState("error");
+      setMessage(t.ownerBetaUnsupportedAsOf);
       return;
     }
     const body = ownerBetaPriceOnlyRunBodySchema.safeParse({
@@ -80,6 +90,8 @@ export function OwnerBetaRunForm({ configs, defaultAsOf }: OwnerBetaRunFormProps
     }
   }
 
+  const canSubmit = isOwnerBetaAsOfSupported(defaultAsOf, supportedAsOf);
+
   return (
     <>
       <form
@@ -102,10 +114,23 @@ export function OwnerBetaRunForm({ configs, defaultAsOf }: OwnerBetaRunFormProps
           </select>
         </label>
         <label className="form-field">
-          <span>{t.asOfDateLabel}</span>
-          <input defaultValue={defaultAsOf} name="as_of" required type="date" />
+          <span>{t.ownerBetaSealedAsOfLabel}</span>
+          <select defaultValue={defaultAsOf} name="as_of" required>
+            {supportedAsOf.map((asOf) => (
+              <option key={asOf} value={asOf}>
+                {asOf}
+              </option>
+            ))}
+          </select>
+          <small>
+            {t.ownerBetaLatestSupportedAsOfLabel}: {defaultAsOf}
+          </small>
         </label>
-        <button className="primary-action" disabled={state === "submitting"} type="submit">
+        <button
+          className="primary-action"
+          disabled={state === "submitting" || !canSubmit}
+          type="submit"
+        >
           {state === "submitting" ? t.ownerBetaSubmitting : t.ownerBetaSubmit}
         </button>
         {state === "error" ? (

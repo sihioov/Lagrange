@@ -5,6 +5,7 @@
 //! stable error-code table matches the code constants.
 
 use api_server::contract::{CONTRACT_ROUTES, ERROR_CODES, Phase, RouteSpec};
+use market_data::KR_ETF_CORE_SYMBOLS;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -75,6 +76,112 @@ fn openapi_contract_routes_match_router_inventory() {
         spec_ops, inventory,
         "spec routes must equal the router inventory (no drift)"
     );
+}
+
+#[test]
+fn openapi_owner_equity_v2_routes_and_dtos_are_exact() {
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let prefix = "/api/v1/research/owner-beta/equity-universe-v2";
+    let operations = [
+        ("get", format!("{prefix}/memberships"), "200"),
+        ("post", format!("{prefix}/memberships"), "202"),
+        (
+            "get",
+            format!("{prefix}/memberships/{{membership_id}}"),
+            "200",
+        ),
+        (
+            "post",
+            format!("{prefix}/memberships/{{membership_id}}/retry"),
+            "202",
+        ),
+        (
+            "post",
+            format!("{prefix}/memberships/{{membership_id}}/disable"),
+            "202",
+        ),
+        ("get", format!("{prefix}/signals/latest"), "200"),
+        ("post", format!("{prefix}/signals/screen"), "200"),
+        (
+            "get",
+            format!("{prefix}/signals/instruments/{{instrument_id}}"),
+            "200",
+        ),
+    ];
+    for (method, path, success) in operations {
+        let operation = &spec["paths"][&path][method];
+        assert!(operation.is_object(), "missing {method} {path}");
+        assert_eq!(
+            operation["x-lagrange"]["ownership"]["owner_only"], true,
+            "{method} {path} must be Owner-only"
+        );
+        assert!(
+            operation["responses"][success].is_object(),
+            "{method} {path} must document {success}"
+        );
+    }
+
+    let schemas = &spec["components"]["schemas"];
+    assert_eq!(
+        schemas["OwnerEquityV2AddBody"]["properties"]["instrument_code"]["pattern"],
+        "^[0-9]{6}$"
+    );
+    assert_eq!(
+        schemas["OwnerEquityV2Lifecycle"]["enum"],
+        serde_json::json!([
+            "REQUESTED",
+            "VALIDATING",
+            "BACKFILLING",
+            "MATERIALIZING",
+            "READY",
+            "INSUFFICIENT_HISTORY",
+            "FAILED",
+            "DISABLED"
+        ])
+    );
+    for name in [
+        "OwnerEquityV2Policy",
+        "OwnerEquityV2Coverage",
+        "OwnerEquityV2Failure",
+        "OwnerEquityV2Membership",
+        "OwnerEquityV2Mutation",
+        "OwnerEquityV2Snapshot",
+        "OwnerEquityV2Signal",
+    ] {
+        assert_eq!(
+            schemas[name]["additionalProperties"], false,
+            "{name} must reject undeclared fields"
+        );
+    }
+    let signal_fields = schemas["OwnerEquityV2Signal"]["properties"]
+        .as_object()
+        .expect("signal properties")
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let expected = [
+        "instrument_id",
+        "generation",
+        "rank",
+        "score",
+        "condition",
+        "return_20",
+        "return_60",
+        "return_120",
+        "volatility_20",
+        "volatility_60",
+        "volatility_120",
+        "max_drawdown_120",
+        "sma_20",
+        "sma_60",
+        "average_volume_20",
+        "volume_ratio_20_60",
+        "average_trading_value_20",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(signal_fields, expected);
 }
 
 #[test]
@@ -288,9 +395,57 @@ fn openapi_contract_documents_recommendation_success_shapes() {
             .any(|field| field == "items"),
         "owner-beta detail must always carry its complete item array"
     );
+    let supported_as_of = schemas["OwnerBetaPriceOnlySupportedAsOf"]
+        .as_object()
+        .expect("OwnerBetaPriceOnlySupportedAsOf schema");
+    assert_eq!(
+        supported_as_of["required"],
+        serde_json::json!(["default_as_of", "supported_as_of"])
+    );
+    assert_eq!(
+        paths["/api/v1/recommendations/owner-beta/price-only/supported-as-of"]["get"]["responses"]
+            ["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/OwnerBetaPriceOnlySupportedAsOf"
+    );
+    let instrument = schemas["OwnerBetaPriceOnlyReadItem"]["properties"]["instrument"]
+        .as_object()
+        .expect("owner-beta instrument projection");
+    assert_eq!(
+        instrument["required"],
+        serde_json::json!([
+            "id",
+            "name",
+            "asset_class",
+            "tracking_index",
+            "exposure_group"
+        ])
+    );
+    assert_eq!(instrument["properties"]["tracking_index"]["type"], "null");
+    assert_eq!(instrument["properties"]["exposure_group"]["type"], "null");
     assert_eq!(
         schemas["OwnerBetaPriceOnlyReadListItem"]["properties"]["cash_weight"]["pattern"],
         "^(?:0\\.\\d{6}|1\\.000000)$"
+    );
+}
+
+#[test]
+fn openapi_contract_owner_beta_enums_match_runtime_etf11_universe() {
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let item = &spec["components"]["schemas"]["OwnerBetaPriceOnlyReadItem"];
+    let expected_ids = KR_ETF_CORE_SYMBOLS
+        .iter()
+        .map(|symbol| format!("{symbol}.KRX"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        item["properties"]["instrument_id"]["enum"],
+        serde_json::json!(expected_ids),
+        "owner-beta instrument_id enum must match the runtime ETF11 universe"
+    );
+    assert_eq!(
+        item["properties"]["instrument"]["properties"]["id"]["enum"],
+        serde_json::json!(expected_ids),
+        "owner-beta nested instrument.id enum must match the runtime ETF11 universe"
     );
 }
 

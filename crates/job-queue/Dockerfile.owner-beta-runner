@@ -2,6 +2,8 @@
 # child runtime, or broker credentials; approved artifact bytes arrive read-only.
 FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS builder
 
+ENV CARGO_BUILD_JOBS=2
+
 RUN apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev
 WORKDIR /build
 
@@ -9,6 +11,8 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
 COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json
+COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json
+COPY configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json ./configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json
 COPY configs/universes ./configs/universes
 COPY data/calendars/xkrx/calendar.json ./data/calendars/xkrx/calendar.json
 COPY data/calendars/xkrx/manifest.json ./data/calendars/xkrx/manifest.json
