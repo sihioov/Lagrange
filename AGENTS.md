@@ -1,5 +1,23 @@
 # Repository Agent Instructions
 
+## Production build resource policy (mandatory)
+
+- On the 14 GiB production host, divide a release image set into logical batches of two or three
+  services. Finish and verify one batch before advancing to the next batch.
+- A batch is a planning and progress-reporting unit, not permission for parallel Rust builds.
+  Within every batch, invoke Compose for exactly one service at a time. Never submit the full
+  release set, or two Rust-producing services, to one concurrent Compose/Buildx graph.
+- Keep `COMPOSE_PARALLEL_LIMIT=1` and `CARGO_BUILD_JOBS=2` for production release builds. Run long
+  builds in a background systemd service with lowered CPU/I/O priority so a Paseo disconnect does
+  not terminate the build and the running application remains responsive.
+- Between batches, check available memory and swap, the kernel journal for OOM events, the build
+  exit status, and production service health. Do not begin the next batch while any prior build or
+  compiler process remains active.
+- If an OOM event or control-plane/service termination occurs, stop the build, restore affected
+  services, and resume only with the one-service-at-a-time policy. Never retry the all-images
+  parallel command. After all services are cached, use the official image builder to validate
+  every image and write the immutable release manifest.
+
 ## KIS Open API safety boundary (mandatory)
 
 This release uses KIS only to collect read-only Korean market and corporate-action data.  A live
