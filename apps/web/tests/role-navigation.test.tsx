@@ -1,11 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/shell/app-shell";
 import type { ApiSession } from "@/lib/api/contracts";
 
+const navigationState = vi.hoisted(() => ({ pathname: "/recommendations" }));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: () => undefined }),
-  usePathname: () => "/recommendations",
+  usePathname: () => navigationState.pathname,
 }));
 
 const MEMBER_SESSION = {
@@ -29,7 +31,8 @@ const OWNER_SESSION = {
   owner_beta_paper_mode: "disabled",
 } as const satisfies ApiSession;
 
-function renderShell(session: ApiSession): string {
+function renderShell(session: ApiSession, pathname = "/recommendations"): string {
+  navigationState.pathname = pathname;
   return renderToStaticMarkup(
     <AppShell session={session}>
       <h1>Dashboard</h1>
@@ -38,6 +41,10 @@ function renderShell(session: ApiSession): string {
 }
 
 describe("role-aware primary navigation", () => {
+  beforeEach(() => {
+    navigationState.pathname = "/recommendations";
+  });
+
   it("marks only the active destination as the current page", () => {
     // Given
     const session = MEMBER_SESSION;
@@ -126,5 +133,39 @@ describe("role-aware primary navigation", () => {
     expect(markup).toContain('href="/paper"');
     expect(markup).not.toContain('href="/admin"');
     expect(markup).not.toContain('href="/live"');
+  });
+
+  it("mounts only the Stock Beta terminal shell on Stock Beta routes", () => {
+    const markup = renderShell(OWNER_SESSION, "/stock-beta/005930.KRX");
+    const utilityHeader =
+      /<header[^>]*data-terminal-utility-bar="stock-beta"[^>]*>([\s\S]*?)<\/header>/.exec(
+        markup,
+      )?.[1] ?? "";
+
+    expect(markup).toContain('data-shell="stock-beta-terminal"');
+    expect(markup).not.toContain('data-shell="general"');
+    expect(markup).not.toContain('class="app-shell"');
+    expect(markup).not.toContain('class="shell-header"');
+    expect(markup).not.toContain("Switch to dark theme");
+    expect(markup.match(/aria-label="Primary"/g)).toHaveLength(1);
+    expect(markup.match(/<main/g)).toHaveLength(1);
+    expect(utilityHeader).toContain('data-terminal-utility-host="stock-beta"');
+    expect(markup).toContain('href="/stock-beta"');
+    expect(markup).toContain("Sign out");
+  });
+
+  it("keeps the terminal shell contract for a non-Stock-Beta authenticated route", () => {
+    const markup = renderShell(OWNER_SESSION, "/recommendations");
+
+    expect(markup).toContain('data-shell="research-terminal"');
+    expect(markup).not.toContain('data-shell="general"');
+    expect(markup).not.toContain('class="app-shell"');
+    expect(markup).not.toContain('class="shell-header"');
+    expect(markup).not.toContain("Switch to dark theme");
+    expect(markup).not.toContain('data-shell="stock-beta-terminal"');
+    expect(markup).toContain('data-terminal-utility-host="stock-beta"');
+    expect(markup).toContain('data-terminal-utility-bar="research"');
+    expect(markup.match(/aria-label="Primary"/g)).toHaveLength(1);
+    expect(markup.match(/<main/g)).toHaveLength(1);
   });
 });

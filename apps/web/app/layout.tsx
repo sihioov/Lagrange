@@ -2,6 +2,7 @@ import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import type { Metadata } from "next";
 import Script from "next/script";
+import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 import type { ReactNode } from "react";
 import { getLocale } from "@/lib/i18n/server";
 import { getTheme } from "@/lib/theme/server";

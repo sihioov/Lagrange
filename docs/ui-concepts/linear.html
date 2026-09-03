@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lagrange Station Command — Linear-inspired concept</title>
+  <link rel="stylesheet" href="concepts.css">
+  <link rel="stylesheet" href="concepts-more.css">
+</head>
+<body class="linear-app" data-concept="linear">
+  <div class="ln-shell">
+    <aside class="ln-sidebar">
+      <header><a href="/ui-concepts/linear"><span>λ</span><strong>Lagrange Station</strong></a><button type="button">⌄</button></header>
+      <button class="ln-search" type="button" data-ln-command><span>⌕</span> Search <kbd>/</kbd></button>
+      <nav><p>Workspace</p><a class="is-active" href="#"><span>◫</span>Signal inbox <b>6</b></a><a href="#"><span>◉</span>My research</a><a href="#"><span>⌁</span>Runs</a><a href="#"><span>✓</span>Reviewed</a><p>Views</p><a href="#"><span>⊙</span>Needs evidence <b>3</b></a><a href="#"><span>↗</span>Score changed <b>8</b></a><a href="#"><span>⚠</span>Data warnings <b>1</b></a><p>Cycles</p><a href="#"><span class="ln-cycle-dot"></span>September review</a></nav>
+      <footer><div><span>71%</span><i><b></b></i><small>Weekly review</small></div><button type="button">LX</button></footer>
+    </aside>
+    <main class="ln-main">
+      <header class="ln-top"><div><span>CONCEPT G · LINEAR PATTERN</span><b>/</b><strong>Signal inbox</strong></div><div><button type="button">Display</button><button type="button">Filter</button><button type="button">•••</button><button class="ln-new" type="button">＋ New note</button></div></header>
+      <section class="ln-list-head"><div><h1>Signal inbox</h1><p>Review state changes, capture evidence, close the loop.</p></div><div class="ln-view-tabs"><button class="is-active" type="button">All</button><button type="button">Assigned</button><button type="button">Unreviewed</button></div></section>
+      <section class="ln-group"><header><button type="button">⌄</button><span class="ln-status-dot urgent"></span><strong>Needs review</strong><em>3</em><span>Updated today</span></header>
+        <button class="ln-item is-selected" type="button" data-ln-item="hynix"><span class="ln-priority high">◆</span><div><strong>Validate SK하이닉스 volume breakout</strong><small><b>000660</b> Score moved 84 → 91 after EOD materialization</small></div><em class="ln-tag evidence">EVIDENCE</em><span class="ln-id">SIG-142</span><span class="ln-date">Today</span></button>
+        <button class="ln-item" type="button" data-ln-item="kakao"><span class="ln-priority risk">▲</span><div><strong>Investigate 카카오 drawdown acceleration</strong><small><b>035720</b> Risk flag entered threshold</small></div><em class="ln-tag risk">RISK</em><span class="ln-id">SIG-141</span><span class="ln-date">Today</span></button>
+        <button class="ln-item" type="button" data-ln-item="naver"><span class="ln-priority medium">◇</span><div><strong>Check NAVER participation mismatch</strong><small><b>035420</b> Price trend and volume impulse diverged</small></div><em class="ln-tag check">CHECK</em><span class="ln-id">SIG-139</span><span class="ln-date">Today</span></button>
+      </section>
+      <section class="ln-group"><header><button type="button">⌄</button><span class="ln-status-dot progress"></span><strong>In research</strong><em>2</em><span>September review</span></header>
+        <button class="ln-item" type="button" data-ln-item="samsung"><span class="ln-priority medium">◇</span><div><strong>Document 삼성전자 score crossing 85</strong><small><b>005930</b> Add source limitations to thesis note</small></div><em class="ln-tag note">NOTE</em><span class="ln-id">SIG-136</span><span class="ln-date">Aug 28</span></button>
+        <button class="ln-item" type="button" data-ln-item="kodex"><span class="ln-priority low">−</span><div><strong>Compare KODEX 200 trend resume</strong><small><b>069500</b> Benchmark context needed</small></div><em class="ln-tag compare">COMPARE</em><span class="ln-id">SIG-132</span><span class="ln-date">Aug 28</span></button>
+      </section>
+      <section class="ln-group"><header><button type="button">⌄</button><span class="ln-status-dot done"></span><strong>Reviewed</strong><em>1</em><span>Closed this week</span></header>
+        <button class="ln-item is-muted" type="button" data-ln-item="hyundai"><span class="ln-priority done">✓</span><div><strong>Confirm 현대차 trend remains intact</strong><small><b>005380</b> Evidence note completed</small></div><em class="ln-tag done">DONE</em><span class="ln-id">SIG-128</span><span class="ln-date">Aug 27</span></button>
+      </section>
+    </main>
+    <aside class="ln-detail">
+      <header><div><span class="ln-priority high">◆</span><b id="ln-detail-id">SIG-142</b></div><div><button type="button">↗</button><button type="button">•••</button><button type="button">×</button></div></header>
+      <div class="ln-detail-body"><span class="ln-eyebrow">SIGNAL REVIEW</span><h2 id="ln-detail-title">Validate SK하이닉스 volume breakout</h2><div class="ln-properties"><button type="button"><i class="urgent"></i>Needs review</button><button type="button">◆ High priority</button><button type="button">September review</button></div><p id="ln-detail-copy">Score moved from 84 to 91 after the latest EOD materialization. Verify that the participation spike is present in immutable source evidence before accepting the state change.</p><h3>Acceptance checklist</h3><label><input type="checkbox"> Raw daily-bar hash resolves</label><label><input type="checkbox"> Volume ratio recomputes to 1.88×</label><label><input type="checkbox"> Research note states snapshot limitation</label><div class="ln-activity"><h3>Activity</h3><article><span>λ</span><p><strong>Signal engine</strong> changed score <code>84 → 91</code><small>Today at 15:31</small></p></article><article><span>LX</span><p><strong>You</strong> moved this to Needs review<small>Today at 15:34</small></p></article></div></div>
+      <form class="ln-comment"><textarea aria-label="리뷰 코멘트" placeholder="Leave a research note…"></textarea><div><span>Markdown supported</span><button type="submit">Comment</button></div></form>
+    </aside>
+  </div>
+  <div class="ln-command" data-ln-palette hidden><div class="ln-command-box"><header><span>⌕</span><input aria-label="명령 검색" placeholder="Type a command or search…"><kbd>ESC</kbd></header><p>RESEARCH</p><button type="button"><span>＋</span><b>Create research note</b><kbd>C</kbd></button><button type="button"><span>✓</span><b>Mark selected item reviewed</b><kbd>⌘ ↵</kbd></button><button type="button"><span>⌁</span><b>Open latest signal run</b><kbd>R</kbd></button><p>NAVIGATE</p><button type="button"><span>◫</span><b>Go to signal inbox</b><kbd>G then I</kbd></button></div></div>
+  <div class="concept-switch ln-switch"><span>CONCEPT G · LINEAR PATTERN</span><a href="/ui-concepts/quantus">← F</a><a href="/ui-concepts">All 7</a></div>
+  <script src="concepts.js" defer></script>
+</body>
+</html>

@@ -50,7 +50,7 @@
   font-family: var(--font-display);
   font-size: 0.6875rem;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -246,7 +246,7 @@ thead th {
   font-family: var(--font-display);
   font-size: 0.6875rem;
   font-weight: 500;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -273,7 +273,7 @@ thead th {
 .factor-list dd,
 .provenance-grid dd {
   margin: 0;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-data);
   font-variant-numeric: tabular-nums;
 }
 
@@ -295,13 +295,13 @@ thead th {
 
 .data-link small {
   color: var(--text-tertiary);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-data);
   text-decoration: none;
 }
 
 .score-emphasis {
   color: var(--text-primary);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-data);
   font-size: 1rem;
   font-weight: 560;
   font-variant-numeric: tabular-nums;
@@ -447,7 +447,7 @@ thead th {
 }
 
 .score-grid article > strong {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-data);
   font-size: 1.5rem;
   font-variant-numeric: tabular-nums;
 }
@@ -464,7 +464,7 @@ thead th {
 
 .scenario-panel dd {
   overflow-wrap: anywhere;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-data);
   font-size: 0.875rem;
 }
 
@@ -537,7 +537,7 @@ thead th {
 .data-cell {
   max-inline-size: 18rem;
   overflow-wrap: anywhere;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-data);
 }
 
 .report-footer {
@@ -566,305 +566,6 @@ thead th {
   color: var(--status-warning);
 }
 
-.stock-beta-filters {
-  background: var(--surface-panel);
-}
-
-.stock-beta-range-grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
-}
-
-.stock-beta-range-field {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2);
-  min-inline-size: 0;
-  margin: 0;
-  padding: var(--space-3);
-  border: 0.0625rem solid var(--border-subtle);
-  border-radius: var(--radius-control);
-  background: var(--surface-muted);
-}
-
-.stock-beta-range-field legend {
-  grid-column: 1 / -1;
-  max-inline-size: 100%;
-  color: var(--text-secondary);
-  font-size: 0.8125rem;
-  font-weight: 560;
-}
-
-.stock-beta-range-field .form-field {
-  font-size: 0.75rem;
-}
-
-.stock-beta-range-field .form-field input {
-  min-block-size: 2.5rem;
-  padding: var(--space-2);
-}
-
-.stock-beta-trend-field {
-  max-inline-size: 22rem;
-}
-
-.stock-beta-top-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
-  gap: var(--space-3);
-}
-
-.stock-beta-top-card {
-  display: grid;
-  align-content: start;
-  gap: var(--space-3);
-  min-inline-size: 0;
-  padding: var(--space-4);
-  border: 0.0625rem solid var(--border-subtle);
-  border-radius: var(--radius-control);
-  background: var(--surface-muted);
-}
-
-.stock-beta-card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  color: var(--text-secondary);
-  font-family: var(--font-display);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.stock-beta-top-card h3 {
-  font-size: 1.125rem;
-  line-height: 1.3;
-}
-
-.stock-beta-top-card h3 a {
-  color: var(--accent-primary);
-  text-decoration: underline;
-  text-decoration-thickness: 0.0625rem;
-  text-underline-offset: 0.2em;
-}
-
-.stock-beta-instrument-id {
-  color: var(--text-tertiary);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 0.8125rem;
-  overflow-wrap: anywhere;
-}
-
-.stock-beta-card-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2);
-  margin: 0;
-}
-
-.stock-beta-card-metrics div {
-  display: grid;
-  gap: var(--space-1);
-  min-inline-size: 0;
-}
-
-.stock-beta-card-metrics dt,
-.stock-beta-detail-metrics dt {
-  color: var(--text-tertiary);
-  font-size: 0.6875rem;
-}
-
-.stock-beta-card-metrics dd,
-.stock-beta-detail-metrics dd {
-  margin: 0;
-  color: var(--text-primary);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-
-.stock-beta-rank-report {
-  min-inline-size: 0;
-}
-
-.stock-beta-detail-report {
-  min-inline-size: 0;
-}
-
-.stock-beta-detail-metrics {
-  grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
-}
-
-.stock-beta-reason-list {
-  display: grid;
-  gap: var(--space-2);
-  margin: 0;
-  padding-inline-start: var(--space-5);
-  color: var(--text-secondary);
-}
-
-.stock-beta-reason-list li {
-  padding-inline-start: var(--space-1);
-}
-
-.stock-beta-management,
-.stock-beta-memberships,
-.stock-beta-signals {
-  min-inline-size: 0;
-}
-
-.stock-beta-policy-capacity {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 0.0625rem solid var(--border-subtle);
-  border-radius: var(--radius-control);
-  background: var(--surface-muted);
-}
-
-.stock-beta-policy-capacity-heading {
-  display: grid;
-  gap: var(--space-1);
-  color: var(--text-secondary);
-  font-size: 0.875rem;
-}
-
-.stock-beta-policy-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
-  gap: var(--space-3);
-  margin: 0;
-}
-
-.stock-beta-policy-grid div,
-.stock-beta-membership-meta div {
-  display: grid;
-  gap: var(--space-1);
-  min-inline-size: 0;
-}
-
-.stock-beta-policy-grid dt,
-.stock-beta-membership-meta dt {
-  color: var(--text-tertiary);
-  font-size: 0.75rem;
-}
-
-.stock-beta-policy-grid dd,
-.stock-beta-membership-meta dd {
-  margin: 0;
-  color: var(--text-primary);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 0.875rem;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-
-.stock-beta-add-form {
-  display: grid;
-  grid-template-columns: minmax(14rem, 1fr) auto;
-  align-items: end;
-  gap: var(--space-3);
-}
-
-.stock-beta-add-form > button {
-  min-block-size: 2.75rem;
-}
-
-.stock-beta-membership-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
-  gap: var(--space-3);
-}
-
-.stock-beta-membership-card {
-  display: grid;
-  align-content: start;
-  gap: var(--space-4);
-  min-inline-size: 0;
-  padding: var(--space-4);
-  border: 0.0625rem solid var(--border-subtle);
-  border-radius: var(--radius-control);
-  background: var(--surface-muted);
-}
-
-.stock-beta-membership-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-inline-size: 0;
-}
-
-.stock-beta-membership-heading > div {
-  display: grid;
-  gap: var(--space-1);
-  min-inline-size: 0;
-}
-
-.stock-beta-membership-heading h3 {
-  overflow-wrap: anywhere;
-}
-
-.stock-beta-membership-meta {
-  display: grid;
-  gap: var(--space-3);
-  margin: 0;
-}
-
-.stock-beta-membership-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.stock-beta-detail-link {
-  margin-inline-start: auto;
-}
-
-.stock-beta-failure {
-  margin: 0;
-  color: var(--status-error);
-  font-size: 0.875rem;
-}
-
-.stock-beta-failure code {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-weight: 560;
-}
-
-.stock-beta-disable-confirmation {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border-inline-start: var(--space-1) solid var(--status-warning);
-  background: var(--surface-panel);
-}
-
-.stock-beta-disable-confirmation p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 0.875rem;
-}
-
-.stock-beta-snapshot {
-  display: grid;
-  gap: var(--space-5);
-  min-inline-size: 0;
-  padding: var(--space-6);
-  border: 0.0625rem solid var(--border-default);
-  border-radius: var(--radius-panel);
-  background: var(--surface-panel);
-}
-
-.stock-beta-signals {
-  display: grid;
-  gap: var(--space-5);
-}
-
 @container (max-width: 36rem) {
   .section-heading,
   .panel-heading,
@@ -887,17 +588,5 @@ thead th {
   .saved-screen-list li {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .stock-beta-add-form {
-    grid-template-columns: 1fr;
-  }
-
-  .stock-beta-detail-link {
-    margin-inline-start: 0;
-  }
-
-  .stock-beta-snapshot {
-    padding: var(--space-4);
   }
 }

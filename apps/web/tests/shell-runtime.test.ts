@@ -84,6 +84,25 @@ describe("authenticated shell runtime", () => {
     expect(ratios.every((ratio) => ratio >= 4.5)).toBe(true);
   });
 
+  it("uses Pretendard for interface copy and Geist Mono only through the data token", () => {
+    const rootLayout = source("app/layout.tsx");
+    const globalStyles = source("app/globals.css");
+    const productStyles = source("app/product.css");
+    const dashboardStyles = source("components/stock-beta/dashboard/dashboard.module.css");
+    const detailStyles = source("components/stock-beta/detail/detail.module.css");
+
+    expect(rootLayout).toContain(
+      'import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css"',
+    );
+    expect(globalStyles).toContain('"Pretendard Variable", Pretendard');
+    expect(globalStyles).toContain("--font-display: var(--font-body)");
+    expect(globalStyles).toContain("--font-data: var(--font-geist-mono)");
+    expect(globalStyles).toMatch(/body\s*\{[^}]*font-family:\s*var\(--font-body\)/s);
+    expect(productStyles).not.toContain("var(--font-geist-mono)");
+    expect(dashboardStyles).not.toContain("var(--font-geist-mono)");
+    expect(detailStyles).not.toContain("var(--font-geist-mono)");
+  });
+
   it("keeps the skip link hidden until focus when motion is reduced", () => {
     // Given
     const styles = source("app/globals.css");
@@ -149,5 +168,36 @@ describe("authenticated shell runtime", () => {
 
     // Then
     expect(boundaryContract).toEqual({ errorPanel: true, loadingPanel: true });
+  });
+
+  it("uses one terminal shell across authenticated routes without global CSS hiding", () => {
+    const appShell = source("components/shell/app-shell.tsx");
+    const routeShell = source("components/stock-beta/terminal/route-aware-shell.tsx");
+    const stockBetaDetail = source("components/stock-beta/stock-beta-detail.tsx");
+    const stockBetaTheme = source("components/stock-beta/stock-beta-theme.module.css");
+    const stockBetaWorkspace = source("components/stock-beta/stock-beta-workspace.tsx");
+    const terminalPage = source("components/stock-beta/terminal/terminal-page.tsx");
+    const utilitySlot = source("components/shell/terminal-utility-slot.tsx");
+
+    expect(appShell).toContain("<RouteAwareShell");
+    expect(routeShell).toContain("<ResearchTerminalShell");
+    expect(routeShell).toContain('"research-terminal"');
+    expect(routeShell).not.toContain('data-shell="general"');
+    expect(stockBetaTheme).not.toContain(":has(");
+    expect(stockBetaTheme).not.toContain(":global(.app-shell)");
+    expect(terminalPage).toContain("<StockBetaTerminalUtilitySlot>");
+    expect(terminalPage).not.toContain("pageUtility");
+    expect(utilitySlot).toContain("createPortal(children, host)");
+    expect(utilitySlot).not.toContain("querySelector");
+    expect(stockBetaWorkspace.indexOf("<StockBetaSelectionProvider")).toBeLessThan(
+      stockBetaWorkspace.indexOf("<StockBetaTerminalPage"),
+    );
+    const terminalPageStart = stockBetaWorkspace.indexOf("<StockBetaTerminalPage");
+    const terminalPageTitle = stockBetaWorkspace.indexOf("title={t.pageTitle}", terminalPageStart);
+    const terminalPageProps = stockBetaWorkspace.slice(terminalPageStart, terminalPageTitle);
+    expect(terminalPageProps).toMatch(/search\s*=\s*\{[\s\S]*?<StockBetaInstrumentSearch\b/);
+    expect(terminalPageProps).toMatch(/<StockBetaInstrumentSearch\b[\s\S]*?\brows\s*=\s*\{rows\}/);
+    expect(stockBetaDetail).toContain("<StockBetaTerminalPage");
+    expect(stockBetaDetail).toContain("asOf={");
   });
 });

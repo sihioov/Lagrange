@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
-import { RoutePage } from "@/components/pages/route-page";
 import { StatePanel } from "@/components/states/state-panel";
-import { StockBetaDetail } from "@/components/stock-beta/stock-beta-detail";
-import { StockBetaPolicyNotice } from "@/components/stock-beta/stock-beta-workspace";
+import { StockBetaDetailPolicyNotice } from "@/components/stock-beta/detail/widgets/policy-boundary-widget";
+import {
+  StockBetaDetail,
+  StockBetaDetailBackLink,
+} from "@/components/stock-beta/stock-beta-detail";
+import { StockBetaTerminalPage } from "@/components/stock-beta/terminal";
 import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import { type StockBetaDictionary, stockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
@@ -14,38 +17,27 @@ import { getLocale } from "@/lib/i18n/server";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const revalidate = 0;
-
-export const metadata: Metadata = {
-  title: "Stock signal beta detail",
-};
+export const metadata: Metadata = { title: "Stock signal beta detail" };
 
 export type StockBetaDetailPageProps = {
   readonly params: Promise<{ readonly instrument: string }>;
 };
 
-function frame(t: StockBetaDictionary, instrument: string, children: React.ReactNode) {
-  return (
-    <RoutePage description={t.detailDescription} title={t.detailTitle(instrument)}>
-      {children}
-    </RoutePage>
-  );
-}
-
 function detailErrorPage(
   t: StockBetaDictionary,
-  locale: Locale,
   instrument: string,
   kind: "blocked" | "empty" | "error",
   title: string,
   message: string,
 ) {
-  return frame(
-    t,
-    instrument,
-    <>
-      <StockBetaPolicyNotice locale={locale} />
+  return (
+    <StockBetaTerminalPage
+      context={<StockBetaDetailBackLink backHref="/stock-beta" t={t} />}
+      title={t.detailTitle(instrument)}
+    >
+      <StockBetaDetailPolicyNotice t={t} />
       <StatePanel kind={kind} message={message} title={title} />
-    </>,
+    </StockBetaTerminalPage>
   );
 }
 
@@ -57,48 +49,30 @@ async function renderStockBetaDetailProduct(
   try {
     const api = await getProductApi();
     const detail = await api.getOwnerEquityV2SignalDetail(instrument);
-    return frame(t, instrument, <StockBetaDetail detail={detail} locale={locale} t={t} />);
+    return <StockBetaDetail detail={detail} locale={locale} t={t} />;
   } catch (error) {
-    if (isLoginRequiredError(error)) {
-      redirect("/login");
-    }
+    if (isLoginRequiredError(error)) redirect("/login");
     if (error instanceof ApiProblem) {
-      if (error.code === "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE") {
+      if (error.code === "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE")
         return detailErrorPage(
           t,
-          locale,
           instrument,
           "blocked",
           t.signalUnavailableTitle,
           t.signalUnavailableMessage,
         );
-      }
-      if (error.code === "OWNER_EQUITY_INTEGRITY_FAILED") {
+      if (error.code === "OWNER_EQUITY_INTEGRITY_FAILED")
+        return detailErrorPage(t, instrument, "error", t.integrityTitle, t.integrityMessage);
+      if (error.code === "RESOURCE_NOT_FOUND" || error.code === "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND")
         return detailErrorPage(
           t,
-          locale,
-          instrument,
-          "error",
-          t.integrityTitle,
-          t.integrityMessage,
-        );
-      }
-      if (
-        error.code === "RESOURCE_NOT_FOUND" ||
-        error.code === "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND"
-      ) {
-        return detailErrorPage(
-          t,
-          locale,
           instrument,
           "empty",
           t.instrumentNotFoundTitle,
           t.instrumentNotFoundMessage,
         );
-      }
       return detailErrorPage(
         t,
-        locale,
         instrument,
         "error",
         t.genericUnavailableTitle,
@@ -107,7 +81,6 @@ async function renderStockBetaDetailProduct(
     }
     return detailErrorPage(
       t,
-      locale,
       instrument,
       "error",
       t.genericUnavailableTitle,

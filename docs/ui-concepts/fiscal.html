@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lagrange Company Notebook — Fiscal.ai-inspired concept</title>
+  <link rel="stylesheet" href="concepts.css">
+</head>
+<body class="fiscal-app" data-concept="fiscal">
+  <header class="f-topbar">
+    <a class="f-brand" href="/ui-concepts/fiscal"><span>▰</span><strong>Lagrange</strong><em>Fundamentals</em></a>
+    <nav><a class="is-active" href="#">Companies</a><a href="#">Screener</a><a href="#">Compare</a><a href="#">Dashboards</a></nav>
+    <label class="f-search"><span>⌕</span><input type="search" placeholder="Search a company or metric"><kbd>/</kbd></label>
+    <button class="f-ask" type="button">✦ Ask research</button><span class="f-avatar">LX</span>
+  </header>
+
+  <main class="f-main">
+    <div class="f-crumb"><span>Companies</span><b>/</b><span>South Korea</span><b>/</b><strong>Samsung Electronics</strong><em>CONCEPT C · FISCAL PATTERN</em></div>
+    <section class="f-company-head">
+      <div class="f-company-identity"><span class="f-company-logo">S</span><div><p>005930 · KRX · KRW</p><h1>삼성전자</h1><span>Samsung Electronics Co., Ltd.</span></div></div>
+      <div class="f-price"><strong>₩78,400</strong><span>+₩1,850 <b>+2.42%</b></span><small>Aug 28, 2026 · Market closed</small></div>
+      <div class="f-head-actions"><button type="button">☆ Watchlist</button><button type="button">↗ Export</button><button type="button">•••</button></div>
+    </section>
+    <nav class="f-tabs"><a class="is-active" href="#">Overview</a><a href="#">Financials</a><a href="#">KPIs</a><a href="#">Valuation</a><a href="#">Estimates</a><a href="#">Filings & events</a><a href="#">Ownership</a></nav>
+
+    <section class="f-thesis-strip"><div><span>✦ RESEARCH SNAPSHOT</span><p>메모리 업황 회복과 HBM 믹스 개선이 이익 추정치를 끌어올리고 있습니다. 현재 밸류에이션은 5년 중앙값 부근입니다.</p></div><button type="button">Open full brief →</button></section>
+
+    <section class="f-metrics" aria-label="핵심 지표">
+      <article><span>Market cap</span><strong>₩468.0T</strong><small>KR #1</small></article>
+      <article><span>Revenue · TTM</span><strong>₩322.7T</strong><small class="pos">↗ 12.4% YoY</small></article>
+      <article><span>Operating margin</span><strong>19.8%</strong><small class="pos">↗ 420 bps</small></article>
+      <article><span>Forward P/E</span><strong>12.6×</strong><small>5Y median 13.1×</small></article>
+      <article><span>ROIC</span><strong>14.2%</strong><small class="pos">↗ 3.1 pts</small></article>
+    </section>
+
+    <div class="f-grid">
+      <section class="f-card f-performance">
+        <header><div><span>PERFORMANCE</span><h2 id="f-chart-title">Revenue & growth</h2></div><div class="f-periods"><button type="button">Quarterly</button><button class="is-active" type="button">Annual</button><button type="button">TTM</button></div></header>
+        <div class="f-metric-pills"><button class="is-active" type="button" data-f-metric="revenue">Revenue</button><button type="button" data-f-metric="profit">Operating profit</button><button type="button" data-f-metric="fcf">Free cash flow</button></div>
+        <div class="f-bar-chart" id="f-bar-chart" aria-label="재무 막대 차트">
+          <div><i style="--h:45%"></i><b>₩236T</b><span>2022</span></div><div><i style="--h:53%"></i><b>₩258T</b><span>2023</span></div><div><i style="--h:64%"></i><b>₩279T</b><span>2024</span></div><div><i style="--h:78%"></i><b>₩301T</b><span>2025</span></div><div class="estimate"><i style="--h:92%"></i><b>₩323T</b><span>2026E</span></div>
+        </div>
+        <div class="f-chart-foot"><span><i></i>Reported</span><span><i class="est"></i>Consensus estimate</span><button type="button">View source filings ↗</button></div>
+      </section>
+
+      <aside class="f-card f-key-drivers">
+        <header><div><span>BUSINESS DRIVERS</span><h2>What matters now</h2></div><button type="button">Edit</button></header>
+        <div class="f-driver"><div><span>01</span><strong>HBM revenue mix</strong><em class="pos">Positive</em></div><p>AI server demand is lifting premium memory mix faster than base assumptions.</p><footer><span>Latest</span><b>28%</b><i>2027E 36%</i></footer></div>
+        <div class="f-driver"><div><span>02</span><strong>Memory inventory</strong><em class="neutral">Watch</em></div><p>Commodity DRAM inventory normalization remains the key downside checkpoint.</p><footer><span>Days</span><b>8.4w</b><i>−1.2w QoQ</i></footer></div>
+        <div class="f-driver"><div><span>03</span><strong>Foundry utilization</strong><em class="neutral">Watch</em></div><p>Margin recovery depends on advanced-node utilization and yield progression.</p></div>
+      </aside>
+
+      <section class="f-card f-financials">
+        <header><div><span>FINANCIALS</span><h2>Income statement</h2></div><div><button type="button">KRW</button><button type="button">As reported ▾</button></div></header>
+        <div class="f-table-wrap"><table><thead><tr><th>KRW tn</th><th>2023</th><th>2024</th><th>2025</th><th>2026E</th><th>2027E</th></tr></thead><tbody><tr><td>Revenue <button type="button" title="Source">↗</button></td><td>258.9</td><td>279.6</td><td>301.2</td><td class="estimate-cell">322.7</td><td class="estimate-cell">351.4</td></tr><tr><td><span>YoY growth</span></td><td>−14.3%</td><td class="pos">+8.0%</td><td class="pos">+7.7%</td><td class="pos estimate-cell">+7.1%</td><td class="pos estimate-cell">+8.9%</td></tr><tr><td>Gross profit</td><td>78.5</td><td>101.3</td><td>118.7</td><td class="estimate-cell">132.6</td><td class="estimate-cell">148.9</td></tr><tr><td>Operating profit <button type="button" title="Source">↗</button></td><td>6.6</td><td>32.7</td><td>51.8</td><td class="estimate-cell">63.9</td><td class="estimate-cell">73.4</td></tr><tr><td><span>Operating margin</span></td><td>2.5%</td><td>11.7%</td><td>17.2%</td><td class="estimate-cell">19.8%</td><td class="estimate-cell">20.9%</td></tr><tr><td>Net income</td><td>15.5</td><td>27.9</td><td>39.4</td><td class="estimate-cell">47.1</td><td class="estimate-cell">54.8</td></tr></tbody></table></div>
+        <footer><span>Reported through FY 2025</span><button type="button">See full financials →</button></footer>
+      </section>
+
+      <aside class="f-card f-valuation">
+        <header><div><span>VALUATION</span><h2>History vs. today</h2></div><button type="button">Forward ▾</button></header>
+        <div class="f-value-head"><span>P/E</span><strong>12.6×</strong><em>44th percentile</em></div>
+        <div class="f-range"><i></i><b style="left:44%"></b><span style="left:0">8.2×</span><span style="left:45%">13.1× median</span><span style="right:0">20.4×</span></div>
+        <div class="f-value-rows"><p><span>EV / EBITDA</span><b>5.1×</b><em>38th %ile</em></p><p><span>Price / book</span><b>1.34×</b><em>49th %ile</em></p><p><span>FCF yield</span><b>5.8%</b><em>62nd %ile</em></p></div>
+        <button class="f-compare" type="button">Compare with peers</button>
+      </aside>
+    </div>
+  </main>
+  <div class="concept-switch f-switch"><span>CONCEPT C · FISCAL PATTERN</span><a href="/ui-concepts/quartr">← B</a><a href="/ui-concepts">All 7</a><a href="/ui-concepts/tradingview">D →</a></div>
+  <script src="concepts.js" defer></script>
+</body>
+</html>

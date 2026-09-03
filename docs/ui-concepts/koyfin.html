@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lagrange Market Desk — Koyfin-inspired concept</title>
+  <link rel="stylesheet" href="concepts.css">
+</head>
+<body class="koyfin-app" data-concept="koyfin">
+  <header class="k-topbar">
+    <a class="k-brand" href="/ui-concepts/koyfin" aria-label="Lagrange Market Desk"><span class="k-mark">L</span><strong>LAGRANGE</strong><small>MARKET DESK</small></a>
+    <button class="k-menu" type="button" aria-label="메뉴 접기">☰</button>
+    <label class="k-search"><span>⌕</span><input type="search" placeholder="종목, 지표 또는 기능 검색"><kbd>/</kbd></label>
+    <div class="k-market-state"><i></i> KRX CLOSED <strong>15:30</strong></div>
+    <div class="k-top-actions"><button type="button">ALERTS <b>3</b></button><button type="button">EXPORT</button><span class="k-avatar">LX</span></div>
+  </header>
+
+  <div class="k-shell">
+    <aside class="k-sidebar" aria-label="마켓 터미널 메뉴">
+      <nav>
+        <p>WORKSPACE</p>
+        <a class="is-active" href="#"><span>▦</span> Market pulse <kbd>MP</kbd></a>
+        <a href="#"><span>★</span> My watchlists <kbd>MW</kbd></a>
+        <a href="#"><span>⌁</span> Signal monitor <kbd>SM</kbd></a>
+        <a href="#"><span>◫</span> Screens <kbd>SC</kbd></a>
+        <p>RESEARCH</p>
+        <a href="#"><span>⌇</span> Price charts</a>
+        <a href="#"><span>▤</span> Fundamentals</a>
+        <a href="#"><span>◉</span> Relative value</a>
+        <a href="#"><span>◌</span> Event calendar</a>
+      </nav>
+      <div class="k-concept-label"><span>CONCEPT A</span><strong>Dense market terminal</strong><small>Benchmark pattern: Koyfin</small></div>
+    </aside>
+
+    <main class="k-main">
+      <section class="k-tape" aria-label="시장 지수">
+        <div><span>KOSPI</span><strong>2,731.48</strong><em class="up">+0.84%</em><svg viewBox="0 0 76 22"><path d="M1 18L10 15L19 17L28 9L37 11L46 6L55 8L64 3L75 5"/></svg></div>
+        <div><span>KOSDAQ</span><strong>797.62</strong><em class="down">−0.31%</em><svg class="downline" viewBox="0 0 76 22"><path d="M1 4L10 7L19 5L28 12L37 9L46 15L55 12L64 18L75 16"/></svg></div>
+        <div><span>USD/KRW</span><strong>1,338.20</strong><em class="down">−0.18%</em><svg class="downline" viewBox="0 0 76 22"><path d="M1 5L10 8L19 7L28 11L37 10L46 14L55 12L64 17L75 15"/></svg></div>
+        <div><span>WON 3Y</span><strong>3.124</strong><em class="up">+2.1bp</em><svg viewBox="0 0 76 22"><path d="M1 17L10 13L19 15L28 10L37 12L46 6L55 9L64 4L75 6"/></svg></div>
+        <div><span>KRX BREADTH</span><strong>61.8</strong><em class="up">RISK ON</em><svg viewBox="0 0 76 22"><path d="M1 19L10 18L19 14L28 16L37 9L46 11L55 7L64 5L75 2"/></svg></div>
+      </section>
+
+      <div class="k-titlebar"><div><p>MY DASHBOARDS /</p><h1>KR Equity Signal Board</h1></div><div class="k-layout-actions"><button type="button">＋ ADD WIDGET</button><button type="button">⚙ LAYOUT</button><button type="button">•••</button></div></div>
+
+      <div class="k-grid">
+        <section class="k-panel k-watch">
+          <header><div><strong>Owner beta · 30</strong><span>Price & volume universe</span></div><button type="button">VIEW ▾</button></header>
+          <div class="k-table-scroll">
+            <table>
+              <thead><tr><th>종목</th><th>현재가</th><th>1D</th><th>Signal</th><th>Vol</th></tr></thead>
+              <tbody>
+                <tr class="is-selected" tabindex="0" data-k-stock="samsung"><td><b>005930</b><span>삼성전자</span></td><td>78,400</td><td class="up">+2.4%</td><td><i class="score s-high">87</i></td><td>1.42x</td></tr>
+                <tr tabindex="0" data-k-stock="hynix"><td><b>000660</b><span>SK하이닉스</span></td><td>214,500</td><td class="up">+4.8%</td><td><i class="score s-high">91</i></td><td>1.88x</td></tr>
+                <tr tabindex="0" data-k-stock="hyundai"><td><b>005380</b><span>현대차</span></td><td>263,000</td><td class="up">+0.6%</td><td><i class="score s-mid">79</i></td><td>1.11x</td></tr>
+                <tr tabindex="0" data-k-stock="naver"><td><b>035420</b><span>NAVER</span></td><td>204,000</td><td class="down">−0.4%</td><td><i class="score s-mid">72</i></td><td>0.96x</td></tr>
+                <tr tabindex="0" data-k-stock="kakao"><td><b>035720</b><span>카카오</span></td><td>43,250</td><td class="down">−2.1%</td><td><i class="score s-low">48</i></td><td>1.37x</td></tr>
+                <tr tabindex="0" data-k-stock="kodex"><td><b>069500</b><span>KODEX 200</span></td><td>41,880</td><td class="up">+1.1%</td><td><i class="score s-high">82</i></td><td>1.08x</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <footer><span>6 of 30 rows</span><button type="button">Open watchlist →</button></footer>
+        </section>
+
+        <section class="k-panel k-chart-panel">
+          <header><div><strong id="k-symbol">005930 · 삼성전자</strong><span id="k-sector">KRX · 반도체</span></div><div class="k-quote"><b id="k-price">78,400</b><em id="k-change" class="up">+2.4%</em></div></header>
+          <div class="k-chart-tools"><div><button type="button">Price</button><button type="button">Volume</button><button type="button">Signal</button></div><div class="k-ranges"><button type="button">1M</button><button class="is-active" type="button">3M</button><button type="button">1Y</button><button type="button">3Y</button></div></div>
+          <svg class="k-main-chart" viewBox="0 0 720 280" role="img" aria-label="가격 추세 목업 차트">
+            <defs><linearGradient id="kArea" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#34a8ff" stop-opacity=".28"/><stop offset="1" stop-color="#34a8ff" stop-opacity="0"/></linearGradient></defs>
+            <g class="grid"><path d="M50 20V245M180 20V245M310 20V245M440 20V245M570 20V245M700 20V245M50 25H700M50 80H700M50 135H700M50 190H700M50 245H700"/></g>
+            <path id="k-area" class="area" d="M50 214L76 199L102 205L128 178L154 186L180 157L206 166L232 142L258 151L284 125L310 134L336 100L362 115L388 83L414 92L440 70L466 79L492 52L518 66L544 42L570 56L596 32L622 48L648 27L674 36L700 19V245H50Z"/>
+            <path id="k-line" class="line" d="M50 214L76 199L102 205L128 178L154 186L180 157L206 166L232 142L258 151L284 125L310 134L336 100L362 115L388 83L414 92L440 70L466 79L492 52L518 66L544 42L570 56L596 32L622 48L648 27L674 36L700 19"/>
+            <path class="average" d="M50 190C180 185 235 160 330 150S520 100 700 89"/>
+            <g class="axis"><text x="12" y="30">82K</text><text x="12" y="85">78K</text><text x="12" y="140">74K</text><text x="12" y="195">70K</text><text x="12" y="250">66K</text><text x="50" y="272">JUN</text><text x="270" y="272">JUL</text><text x="490" y="272">AUG</text><text x="670" y="272">SEP</text></g>
+          </svg>
+          <div class="k-chart-legend"><span><i class="blue"></i>Close</span><span><i class="dash"></i>20D average</span><span class="push">As of 2026-08-28 · EOD</span></div>
+        </section>
+
+        <section class="k-panel k-signal-panel">
+          <header><div><strong>Signal decomposition</strong><span id="k-signal-name">005930 · score 87</span></div><span class="k-live">BETA</span></header>
+          <div class="k-score-ring"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="48"/><circle id="k-score-arc" class="arc" cx="60" cy="60" r="48"/></svg><div><strong id="k-score">87</strong><span>COMPOSITE</span></div></div>
+          <div class="k-factors">
+            <div><span>12M momentum</span><i><b style="width:92%"></b></i><em>92</em></div>
+            <div><span>Volume impulse</span><i><b style="width:81%"></b></i><em>81</em></div>
+            <div><span>Trend quality</span><i><b style="width:84%"></b></i><em>84</em></div>
+            <div><span>Drawdown risk</span><i><b class="amber" style="width:41%"></b></i><em>41</em></div>
+          </div>
+          <div class="k-signal-callout"><span>MODEL READ</span><strong id="k-model-read">Momentum confirmed</strong><p>Price strength is supported by above-baseline participation.</p></div>
+        </section>
+
+        <section class="k-panel k-heat-panel">
+          <header><div><strong>Factor heatmap</strong><span>Cross-sectional rank</span></div><button type="button">1D ▾</button></header>
+          <div class="k-heatmap"><span class="h5">반도체<strong>+2.8%</strong></span><span class="h4">자동차<strong>+1.4%</strong></span><span class="h2 neg">플랫폼<strong>−1.1%</strong></span><span class="h3">금융<strong>+0.9%</strong></span><span class="h1 neg">바이오<strong>−0.6%</strong></span><span class="h3">ETF<strong>+1.1%</strong></span></div>
+        </section>
+
+        <section class="k-panel k-news-panel">
+          <header><div><strong>Signal tape</strong><span>New state changes</span></div><button type="button">FILTER</button></header>
+          <ul><li><time>15:31</time><b>000660</b><span>Volume impulse entered top decile</span><em class="up">NEW</em></li><li><time>15:31</time><b>005930</b><span>Composite score crossed 85</span><em class="up">UP</em></li><li><time>15:30</time><b>035720</b><span>Risk flag: drawdown acceleration</span><em class="down">RISK</em></li><li><time>15:30</time><b>069500</b><span>Trend resumed above 20D mean</span><em class="up">UP</em></li></ul>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div class="concept-switch"><span>CONCEPT A · KOYFIN PATTERN</span><a href="/ui-concepts">All 7</a><a href="/ui-concepts/quartr">B · Quartr →</a></div>
+  <script src="concepts.js" defer></script>
+</body>
+</html>
