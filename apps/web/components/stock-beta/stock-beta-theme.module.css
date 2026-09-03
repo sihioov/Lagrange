@@ -1,0 +1,97 @@
+.terminalTheme,
+.theme {
+  color-scheme: dark;
+  --stock-beta-canvas: #080b0e;
+  --stock-beta-sidebar: #0a0e12;
+  --stock-beta-panel: #11161b;
+  --stock-beta-panel-muted: #0c1115;
+  --stock-beta-panel-header: #12181d;
+  --stock-beta-border: #252c33;
+  --stock-beta-text: #dce3e9;
+  --stock-beta-secondary: #9aa6b2;
+  --stock-beta-muted: #7c8792;
+  --stock-beta-accent: #35a8ff;
+  --stock-beta-accent-soft: #10283a;
+  --stock-beta-positive: #20b486;
+  --stock-beta-negative: #ec5f67;
+  --stock-beta-warning: #e6b85d;
+  --stock-beta-frame-radius: 4px;
+  --stock-beta-control-radius: 4px;
+  --surface-canvas: var(--stock-beta-canvas);
+  --surface-panel: var(--stock-beta-panel);
+  --surface-muted: var(--stock-beta-panel-muted);
+  --surface-strong: var(--stock-beta-panel-header);
+  --text-primary: var(--stock-beta-text);
+  --text-secondary: var(--stock-beta-secondary);
+  --text-tertiary: var(--stock-beta-muted);
+  --border-default: var(--stock-beta-border);
+  --border-subtle: var(--stock-beta-border);
+  --accent-soft: var(--stock-beta-accent-soft);
+  --accent-primary: var(--stock-beta-accent);
+  --accent-hover: #70c1ff;
+  --accent-on: #061019;
+  --signature: var(--stock-beta-warning);
+  --status-success: var(--stock-beta-positive);
+  --status-warning: var(--stock-beta-warning);
+  --status-error: var(--stock-beta-negative);
+  --status-info: var(--stock-beta-accent);
+  --focus-ring: var(--stock-beta-accent);
+  --radius-control: var(--stock-beta-control-radius);
+  --radius-panel: var(--stock-beta-frame-radius);
+}
+
+.theme {
+  gap: 0.5rem;
+  max-inline-size: none;
+  min-block-size: 100%;
+  padding: 0.5rem;
+  background: var(--stock-beta-canvas);
+  color: var(--stock-beta-text);
+}
+
+.theme :global(.route-page-header) {
+  gap: 0.125rem;
+  max-inline-size: none;
+  min-block-size: 3.5rem;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--stock-beta-border);
+  border-radius: var(--stock-beta-frame-radius);
+  background: var(--stock-beta-panel-header);
+}
+
+.theme :global(.route-page-header h1) {
+  color: var(--stock-beta-text);
+  font-size: clamp(0.9375rem, 2vw, 1.125rem);
+  letter-spacing: 0;
+}
+
+.theme :global(.route-page-header p) {
+  color: var(--stock-beta-secondary);
+  font-size: 0.75rem;
+}
+
+.theme :global(.route-page-content) {
+  gap: 0.5rem;
+}
+
+.theme :global(.state-panel) {
+  border-color: var(--stock-beta-border);
+  border-radius: var(--stock-beta-frame-radius);
+  background: var(--stock-beta-panel);
+}
+
+@media (max-width: 51.25rem) {
+  .theme {
+    padding: 0.375rem;
+  }
+}
+
+@media (forced-colors: active) {
+  .theme,
+  .theme :global(.route-page-header),
+  .theme :global(.state-panel) {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+}

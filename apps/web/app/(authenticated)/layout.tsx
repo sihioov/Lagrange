@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { getServerSession } from "@/lib/api/server-session";
 import { getLocale } from "@/lib/i18n/server";
-import { getTheme } from "@/lib/theme/server";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -13,9 +12,9 @@ export type AuthenticatedLayoutProps = {
 };
 
 export default async function AuthenticatedLayout({ children }: AuthenticatedLayoutProps) {
-  const [session, locale, theme] = await Promise.all([getServerSession(), getLocale(), getTheme()]);
+  const [session, locale] = await Promise.all([getServerSession(), getLocale()]);
   return (
-    <AppShell locale={locale} session={session} theme={theme}>
+    <AppShell locale={locale} session={session}>
       {children}
     </AppShell>
   );

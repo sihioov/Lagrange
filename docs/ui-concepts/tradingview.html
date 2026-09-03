@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lagrange Signal Matrix — TradingView-inspired concept</title>
+  <link rel="stylesheet" href="concepts.css">
+  <link rel="stylesheet" href="concepts-more.css">
+</head>
+<body class="tradingview-app" data-concept="tradingview">
+  <header class="tv-topbar">
+    <a class="tv-brand" href="/ui-concepts/tradingview"><span>◩</span><strong>Lagrange</strong></a>
+    <button type="button">Signals</button><button type="button">Screens</button><button type="button">Alerts</button>
+    <label class="tv-search"><span>⌕</span><input type="search" placeholder="Search symbol"><kbd>⌘ K</kbd></label>
+    <span class="tv-market"><i></i> KRX closed</span><button class="tv-publish" type="button">Save screen</button><span class="tv-user">LX</span>
+  </header>
+  <div class="tv-shell">
+    <aside class="tv-tools" aria-label="차트 도구"><button type="button">＋</button><button class="is-active" type="button">↗</button><button type="button">╱</button><button type="button">T</button><button type="button">⌁</button><button type="button">□</button><i></i><button type="button">⌫</button></aside>
+    <main class="tv-main">
+      <section class="tv-chart-area">
+        <header class="tv-symbolbar"><div><button type="button">005930</button><button type="button">1D</button><button type="button">Candles</button><button type="button">Indicators</button><button type="button">Alert</button></div><div><button type="button">Replay</button><button type="button">⚙</button><button type="button">⛶</button></div></header>
+        <div class="tv-quote"><div><span class="tv-symbol-logo">S</span><p><strong id="tv-name">삼성전자 · 1D · KRX</strong><small>O 76,900&nbsp;&nbsp; H 78,900&nbsp;&nbsp; L 76,600&nbsp;&nbsp; C 78,400&nbsp;&nbsp; <b>+2.42%</b></small></p></div><div><span>Signal score</span><strong id="tv-score">87</strong><em>Strong</em></div></div>
+        <svg class="tv-chart" viewBox="0 0 1000 440" role="img" aria-label="캔들 차트 목업">
+          <g class="tv-grid"><path d="M40 20V395M200 20V395M360 20V395M520 20V395M680 20V395M840 20V395M980 20V395M40 30H980M40 100H980M40 170H980M40 240H980M40 310H980M40 380H980"/></g>
+          <g class="tv-volume"><rect x="60" y="355" width="16" height="25"/><rect x="92" y="346" width="16" height="34"/><rect x="124" y="361" width="16" height="19"/><rect x="156" y="337" width="16" height="43"/><rect x="188" y="350" width="16" height="30"/><rect x="220" y="329" width="16" height="51"/><rect x="252" y="343" width="16" height="37"/><rect x="284" y="322" width="16" height="58"/><rect x="316" y="338" width="16" height="42"/><rect x="348" y="313" width="16" height="67"/><rect x="380" y="331" width="16" height="49"/><rect x="412" y="300" width="16" height="80"/><rect x="444" y="320" width="16" height="60"/><rect x="476" y="294" width="16" height="86"/><rect x="508" y="318" width="16" height="62"/><rect x="540" y="286" width="16" height="94"/><rect x="572" y="310" width="16" height="70"/><rect x="604" y="280" width="16" height="100"/><rect x="636" y="304" width="16" height="76"/><rect x="668" y="274" width="16" height="106"/><rect x="700" y="296" width="16" height="84"/><rect x="732" y="265" width="16" height="115"/><rect x="764" y="289" width="16" height="91"/><rect x="796" y="258" width="16" height="122"/><rect x="828" y="279" width="16" height="101"/><rect x="860" y="246" width="16" height="134"/><rect x="892" y="270" width="16" height="110"/><rect x="924" y="236" width="16" height="144"/></g>
+          <g class="tv-candles"><path d="M68 300V260M100 310V270M132 286V244M164 270V225M196 278V238M228 250V202M260 262V214M292 225V182M324 240V195M356 205V165M388 220V176M420 188V142M452 204V158M484 170V125M516 186V140M548 153V108M580 170V127M612 138V92M644 155V113M676 120V78M708 138V96M740 103V62M772 119V78M804 88V47M836 106V66M868 72V32M900 91V49M932 58V21"/><rect x="61" y="272" width="14" height="22"/><rect class="red" x="93" y="278" width="14" height="24"/><rect x="125" y="254" width="14" height="24"/><rect x="157" y="235" width="14" height="27"/><rect class="red" x="189" y="247" width="14" height="22"/><rect x="221" y="212" width="14" height="31"/><rect class="red" x="253" y="224" width="14" height="29"/><rect x="285" y="191" width="14" height="26"/><rect class="red" x="317" y="203" width="14" height="29"/><rect x="349" y="175" width="14" height="24"/><rect class="red" x="381" y="184" width="14" height="28"/><rect x="413" y="152" width="14" height="27"/><rect class="red" x="445" y="168" width="14" height="29"/><rect x="477" y="135" width="14" height="27"/><rect class="red" x="509" y="148" width="14" height="30"/><rect x="541" y="118" width="14" height="27"/><rect class="red" x="573" y="137" width="14" height="25"/><rect x="605" y="101" width="14" height="29"/><rect class="red" x="637" y="121" width="14" height="25"/><rect x="669" y="87" width="14" height="25"/><rect class="red" x="701" y="105" width="14" height="25"/><rect x="733" y="72" width="14" height="24"/><rect class="red" x="765" y="86" width="14" height="28"/><rect x="797" y="56" width="14" height="25"/><rect class="red" x="829" y="75" width="14" height="24"/><rect x="861" y="42" width="14" height="23"/><rect class="red" x="893" y="58" width="14" height="25"/><rect x="925" y="30" width="14" height="23"/></g>
+          <path class="tv-ma" d="M50 285C150 270 220 230 310 218S465 160 550 150S720 92 810 83S920 50 970 44"/>
+          <g class="tv-axis"><text x="940" y="32">82,000</text><text x="940" y="102">78,000</text><text x="940" y="172">74,000</text><text x="940" y="242">70,000</text><text x="940" y="312">66,000</text><text x="70" y="424">APR</text><text x="310" y="424">MAY</text><text x="550" y="424">JUN</text><text x="790" y="424">AUG</text></g>
+        </svg>
+      </section>
+      <aside class="tv-sidepanel">
+        <header><button class="is-active" type="button">Watchlist</button><button type="button">Details</button><button type="button">News</button></header>
+        <div class="tv-list-head"><strong>Owner beta</strong><button type="button">＋</button></div>
+        <button class="tv-watch-row is-active" type="button" data-tv-symbol="samsung"><span>S</span><b>005930<small>삼성전자</small></b><em>78,400<i>+2.42%</i></em></button>
+        <button class="tv-watch-row" type="button" data-tv-symbol="hynix"><span>H</span><b>000660<small>SK하이닉스</small></b><em>214,500<i>+4.80%</i></em></button>
+        <button class="tv-watch-row" type="button" data-tv-symbol="hyundai"><span>H</span><b>005380<small>현대차</small></b><em>263,000<i>+0.61%</i></em></button>
+        <button class="tv-watch-row" type="button" data-tv-symbol="naver"><span>N</span><b>035420<small>NAVER</small></b><em>204,000<i class="neg">−0.40%</i></em></button>
+        <div class="tv-gauge"><span>TECHNICAL RATING</span><div><i></i><i></i><i></i><i class="on"></i><i class="on"></i></div><strong>BUY</strong><small>12 bullish · 4 neutral · 2 bearish</small></div>
+      </aside>
+      <section class="tv-screener">
+        <header><div><strong>Stock Screener</strong><button type="button">KRX</button><button type="button">Common stocks</button></div><div><button type="button">▦ Table</button><button type="button">▥ Charts</button><button type="button">⚙</button></div></header>
+        <div class="tv-filters"><button class="is-active" type="button">Signal score ≥ 70</button><button type="button">Rel volume ≥ 1.0</button><button type="button">Price above SMA20</button><button type="button">＋ Add filter</button><span>18 matches</span></div>
+        <div class="tv-table-wrap"><table><thead><tr><th>Symbol</th><th>Price</th><th>Change %</th><th>Rel volume</th><th>Signal</th><th>1M perf</th><th>3M perf</th><th>Trend</th></tr></thead><tbody><tr><td><b>000660</b><span>SK하이닉스</span></td><td>214,500</td><td class="pos">+4.80%</td><td>1.88</td><td><em class="tv-buy">91 · Strong</em></td><td class="pos">+13.2%</td><td class="pos">+27.4%</td><td><i class="tv-spark up"></i></td></tr><tr><td><b>005930</b><span>삼성전자</span></td><td>78,400</td><td class="pos">+2.42%</td><td>1.42</td><td><em class="tv-buy">87 · Strong</em></td><td class="pos">+9.8%</td><td class="pos">+18.6%</td><td><i class="tv-spark up"></i></td></tr><tr><td><b>069500</b><span>KODEX 200</span></td><td>41,880</td><td class="pos">+1.10%</td><td>1.08</td><td><em class="tv-buy">82 · Buy</em></td><td class="pos">+4.1%</td><td class="pos">+8.4%</td><td><i class="tv-spark up"></i></td></tr><tr><td><b>005380</b><span>현대차</span></td><td>263,000</td><td class="pos">+0.61%</td><td>1.11</td><td><em class="tv-neutral">79 · Buy</em></td><td class="pos">+2.8%</td><td class="neg">−1.4%</td><td><i class="tv-spark flat"></i></td></tr></tbody></table></div>
+      </section>
+    </main>
+  </div>
+  <div class="concept-switch tv-switch"><span>CONCEPT D · TRADINGVIEW PATTERN</span><a href="/ui-concepts/fiscal">← C</a><a href="/ui-concepts">All 7</a><a href="/ui-concepts/openbb">E →</a></div>
+  <script src="concepts.js" defer></script>
+</body>
+</html>

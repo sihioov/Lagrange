@@ -10,16 +10,9 @@ import {
   TargetIcon,
   WalletIcon,
 } from "@phosphor-icons/react/ssr";
-import Link from "next/link";
 import type { ReactNode } from "react";
-import { LogoutForm } from "@/components/auth/logout-form";
-import { EquilibriumMark } from "@/components/shell/equilibrium-mark";
-import { LanguageToggle } from "@/components/shell/language-toggle";
-import {
-  PrimaryNavigation,
-  type PrimaryNavigationItem,
-} from "@/components/shell/primary-navigation";
-import { ThemeToggle } from "@/components/shell/theme-toggle";
+import type { PrimaryNavigationItem } from "@/components/shell/primary-navigation";
+import { RouteAwareShell } from "@/components/stock-beta/terminal";
 import {
   type ApiSession,
   type OwnerBetaProduct,
@@ -27,8 +20,8 @@ import {
 } from "@/lib/api/contracts";
 import { LocaleProvider } from "@/lib/i18n/client";
 import { type ShellDictionary, shellDictionary } from "@/lib/i18n/dictionaries/shell";
+import { stockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
 import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n/locale";
-import type { Theme } from "@/lib/theme/theme";
 
 const NAV_ICON_SIZE = 20;
 
@@ -116,42 +109,25 @@ export type AppShellProps = {
   readonly children: ReactNode;
   readonly locale?: Locale;
   readonly session: ApiSession;
-  readonly theme?: Theme | undefined;
 };
 
-export function AppShell({ children, locale = DEFAULT_LOCALE, session, theme }: AppShellProps) {
+export function AppShell({ children, locale = DEFAULT_LOCALE, session }: AppShellProps) {
   const t = shellDictionary[locale];
   const roleLabel = session.role === "owner" ? t.roleOwner : t.roleMember;
+  const navigation = navigationForRole(session, t);
   return (
     <LocaleProvider initialLocale={locale}>
-      <div className="app-shell">
-        <a className="skip-link" href="#main-content">
-          {t.skipToMain}
-        </a>
-        <header className="shell-header">
-          <Link className="shell-brand" href="/">
-            <EquilibriumMark size={26} />
-            <span className="shell-brand-text">
-              <strong>{t.brandName}</strong>
-              <span>{t.brandTagline}</span>
-            </span>
-          </Link>
-          <div className="shell-controls">
-            <p className="shell-role-pill">{roleLabel}</p>
-            <ThemeToggle
-              initialTheme={theme}
-              labelToDark={t.themeToggleToDark}
-              labelToLight={t.themeToggleToLight}
-            />
-            <LanguageToggle label={t.languageToggleLabel} />
-          </div>
-        </header>
-        <PrimaryNavigation items={navigationForRole(session, t)} />
-        <main className="shell-main" id="main-content">
-          {children}
-        </main>
-        <LogoutForm />
-      </div>
+      <RouteAwareShell
+        languageLabel={t.languageToggleLabel}
+        navigation={navigation}
+        privateSessionLabel={t.privateSession}
+        productLabel={t.navStockBeta}
+        readOnlyLabel={stockBetaDictionary[locale].filtersEyebrow}
+        roleLabel={roleLabel}
+        skipToMainLabel={t.skipToMain}
+      >
+        {children}
+      </RouteAwareShell>
     </LocaleProvider>
   );
 }

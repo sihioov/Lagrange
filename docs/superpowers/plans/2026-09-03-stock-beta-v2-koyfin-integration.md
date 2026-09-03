@@ -174,6 +174,21 @@ Wave 2의 WP-2와 WP-3는 생산 코드가 고정된 동일 integration base에�
 - **Required report:** 변경 파일·라인 범위; brief와 다르게 처리한 부분과 이유; 실행한 검사와 결과;
   미해결/후속 작업; 찾지 못했거나 확인하지 못한 것. 비어 있으면 각 항목에 `none`을 명시한다.
 
+### WP-1A — 데스크톱 정보 구조 보정
+
+- **Depends on:** WP-1 coordinator review.
+- **Complexity:** intermediate. 기존 registry/layout과 CSS grid 배치만 좁게 보정한다.
+- **Owned scope:** `apps/web/components/stock-beta/dashboard/dashboard-layout.ts`,
+  `apps/web/components/stock-beta/dashboard/dashboard.module.css` 및 이 변경에 직접 필요한 dashboard
+  production 파일만.
+- **Required correction:** 1280×720 이상 데스크톱에서 첫 행을 `ranked-signals / signal-profile /
+  signal-decomposition`, 둘째 행을 `condition-matrix / snapshot-tape`로 만든다. compact
+  `universe-management / membership-status`는 그 아래 작업 행에 배치한다. empty/no-snapshot 상태에서
+  관리 workflow가 먼저 노출되는 예외와 tablet/mobile reflow는 유지한다.
+- **Prohibited:** API/DTO/backend/test 파일 변경, V1 fallback, 합성 데이터, 다른 route 또는 shell 수정.
+- **Verification:** production-only typecheck, owned Biome, scoped build 가능 여부, CSS/registry 정적 확인.
+- **Required report:** 변경 파일·라인 범위, 명세 차이, 검증, 미해결, 확인하지 못한 것.
+
 ### WP-2 — V2 unit·surface·architecture 테스트 통합
 
 - **Target working directory:** accepted WP-1 commit을 기반으로 한 Paseo workspace
@@ -226,6 +241,28 @@ Wave 2의 WP-2와 WP-3는 생산 코드가 고정된 동일 integration base에�
   process가 정리됐는지 확인한다.
 - **Required report:** 변경 파일·라인 범위; brief 편차와 이유; 각 E2E 실행의 pass/fail 수와 시간;
   미해결/후속; 찾지 못했거나 미검증한 항목. 없으면 `none`.
+
+### WP-2A — shell runtime 회귀 assertion 보정
+
+- **Depends on:** WP-2 coordinator full-unit rerun.
+- **Complexity:** simple. 실제 terminal shell 계약은 유지하고 JSX formatting에 의존하는 assertion만
+  의미 기반으로 좁게 보정한다.
+- **Owned scope:** `apps/web/tests/shell-runtime.test.ts`만.
+- **Required correction:** `StockBetaTerminalPage`에 `StockBetaInstrumentSearch`가 `search` prop으로
+  전달되는 계약을 줄바꿈과 formatter 출력에 독립적으로 검증한다. assertion을 삭제하거나 완화해
+  잘못된 컴포넌트 연결도 통과시키면 안 된다.
+- **Verification:** focused shell-runtime Vitest, full Web Vitest, owned Biome.
+
+### WP-3A — E2E typecheck·lint 보정
+
+- **Depends on:** WP-3 coordinator typecheck/lint rerun.
+- **Complexity:** simple. 검증 의미를 유지한 채 TypeScript narrowing과 formatter/import 규칙을 맞춘다.
+- **Owned scope:** `apps/web/tests/e2e/stock-beta.spec.ts`,
+  `apps/web/tests/e2e/support/stock-beta-fixture.mjs`, `apps/web/tests/e2e/typography.spec.ts`만.
+- **Required correction:** optional access TS2532와 non-null assertion을 안전한 narrowing으로 바꾸고,
+  import/order/format 오류를 정리한다. 16개 Stock Beta 시나리오, loopback-only guard, full-page 증거,
+  fixture 동작을 약화하거나 삭제하지 않는다.
+- **Verification:** `node --check`, Playwright `--list`, typecheck, owned Biome, focused Stock Beta E2E.
 
 ### WP-4 — 독립 semantic·security·accessibility 리뷰
 
