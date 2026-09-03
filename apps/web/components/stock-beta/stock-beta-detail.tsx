@@ -1,142 +1,161 @@
 import Link from "next/link";
-import { StatusPill } from "@/components/states/status-pill";
+import type { ReactNode } from "react";
 import type { StockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
+import type { Locale } from "@/lib/i18n/locale";
 import type { OwnerBetaEquitySignalsDetailModel } from "@/lib/products/equity-signals-contracts";
-import {
-  StockBetaPolicyNotice,
-  StockBetaProvenance,
-  stockBetaConditionLabel,
-  stockBetaConditionTone,
-  stockBetaFormatNumber,
-  stockBetaFormatPercent,
-} from "./stock-beta-workspace";
+import styles from "./detail/detail.module.css";
+import { safeStockBetaDetailBackHref } from "./detail/filter-context";
+import { StockBetaDetailLayout } from "./detail/stock-beta-detail-layout";
+import type { StockBetaDetailViewModel } from "./detail/types";
+import { StockBetaTerminalPage } from "./terminal";
 
-function DetailMetrics({
-  detail,
+export function StockBetaDetailBackLink({
+  backHref,
   t,
 }: {
-  readonly detail: OwnerBetaEquitySignalsDetailModel;
+  readonly backHref: string;
   readonly t: StockBetaDictionary;
 }) {
-  const signal = detail.signal;
-  const metrics = [
-    [t.scoreLabel, stockBetaFormatNumber(signal.score)],
-    [t.return20Label, stockBetaFormatPercent(signal.return_20)],
-    [t.return60Label, stockBetaFormatPercent(signal.return_60)],
-    [t.return120Label, stockBetaFormatPercent(signal.return_120)],
-    [t.volatility20Label, stockBetaFormatPercent(signal.volatility_20)],
-    [t.volatility60Label, stockBetaFormatPercent(signal.volatility_60)],
-    [t.volatility120Label, stockBetaFormatPercent(signal.volatility_120)],
-    [t.drawdown120Label, stockBetaFormatPercent(signal.max_drawdown_120)],
-    [t.sma20Label, stockBetaFormatNumber(signal.sma_20)],
-    [t.sma60Label, stockBetaFormatNumber(signal.sma_60)],
-    [t.averageVolumeLabel, stockBetaFormatNumber(signal.average_volume_20)],
-    [t.volumeRatioLabel, stockBetaFormatNumber(signal.volume_ratio_20_60)],
-    [t.activityProxyLabel, stockBetaFormatNumber(signal.average_trading_value_20)],
-  ] as const;
   return (
-    <section aria-labelledby="stock-beta-metrics-title" className="report-section">
-      <h3 id="stock-beta-metrics-title">{t.signalMetricsHeading}</h3>
-      <dl className="provenance-grid stock-beta-detail-metrics">
-        {metrics.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </section>
+    <nav
+      aria-label={t.backToWorkspace}
+      className={styles["contextNavigation"]}
+      data-testid="stock-beta-detail-context"
+    >
+      <Link
+        className={styles["contextLink"]}
+        href={safeStockBetaDetailBackHref(backHref)}
+        prefetch={false}
+      >
+        {t.backToWorkspace}
+      </Link>
+    </nav>
   );
 }
 
-export function StockBetaDetail({
+function DetailFact({ children, label }: { readonly children: ReactNode; readonly label: string }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{children}</dd>
+    </div>
+  );
+}
+
+export function StockBetaDetailContextBar({
+  backHref,
   detail,
   t,
 }: {
+  readonly backHref: string;
   readonly detail: OwnerBetaEquitySignalsDetailModel;
   readonly t: StockBetaDictionary;
 }) {
   const { signal } = detail;
+  const score = String(signal.score);
+
   return (
-    <>
-      <StockBetaPolicyNotice t={t} />
-      <nav aria-label="Research context" className="context-navigation">
-        <Link href="/stock-beta">{t.backToWorkspace}</Link>
-      </nav>
-      <section
-        aria-labelledby="stock-beta-detail-heading"
-        className="data-report stock-beta-detail-report"
-      >
-        <header className="report-heading">
-          <div>
-            <p className="eyebrow">{t.detailEyebrow}</p>
-            <h2 id="stock-beta-detail-heading">{signal.instrument_name}</h2>
-            <p className="stock-beta-instrument-id">{signal.instrument_id}</p>
-          </div>
-          <div className="status-cluster">
-            <span>
-              {t.rankLabel} {signal.rank}
-            </span>
-            <StatusPill
-              label={`${signal.condition} · ${stockBetaConditionLabel(signal.condition, t)}`}
-              tone={stockBetaConditionTone(signal.condition)}
-            />
-            <span>
-              {t.scoreLabel} {stockBetaFormatNumber(signal.score)}
-            </span>
-            <span>
-              {t.asOfLabel} {detail.provenance.as_of}
-            </span>
-          </div>
-        </header>
-        <p className="supporting-copy">{t.detailDescription}</p>
+    <div className={styles["detailContextBar"]} data-testid="stock-beta-detail-context-bar">
+      <div className={styles["detailIdentity"]} data-testid="stock-beta-instrument-header">
+        <StockBetaDetailBackLink backHref={backHref} t={t} />
+        <div className={styles["detailIdentityText"]}>
+          <p className={styles["eyebrow"]}>{t.detailEyebrow}</p>
+          <strong>{signal.instrument_name}</strong>
+          <span>{signal.instrument_id}</span>
+        </div>
+      </div>
+      <dl className={styles["detailContextFacts"]}>
+        <DetailFact label={t.rankLabel}>{String(signal.rank)}</DetailFact>
+        <DetailFact label={t.scoreLabel}>
+          <data data-raw-value={score} value={score}>
+            {score}
+          </data>
+        </DetailFact>
+        <DetailFact label={t.conditionLabel}>
+          <span className={styles["conditionValue"]} data-condition={signal.condition}>
+            {signal.condition}
+          </span>
+        </DetailFact>
+        <DetailFact label={t.asOfLabel}>{detail.provenance.as_of}</DetailFact>
+      </dl>
+    </div>
+  );
+}
 
-        <section aria-labelledby="stock-beta-factor-title" className="report-section">
-          <h3 id="stock-beta-factor-title">{t.factorLabel} evidence</h3>
-          <div className="data-table-wrap">
-            <table data-testid="stock-beta-factor-table">
-              <caption>{t.factorLabel} evidence returned by the API</caption>
-              <thead>
-                <tr>
-                  <th scope="col">{t.factorLabel}</th>
-                  <th scope="col">{t.interpretationLabel}</th>
-                  <th scope="col">{t.valueLabel}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detail.factor_explanations.map((factor) => (
-                  <tr key={factor.factor}>
-                    <th scope="row">{factor.factor}</th>
-                    <td>{factor.interpretation}</td>
-                    <td>{String(factor.value)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+export function StockBetaDetailSnapshotStrip({
+  detail,
+  t,
+}: {
+  readonly detail: OwnerBetaEquitySignalsDetailModel;
+  readonly t: StockBetaDictionary;
+}) {
+  const { signal, provenance } = detail;
+  const fields = [
+    { key: "as-of", label: t.asOfLabel, value: provenance.as_of },
+    { key: "rank", label: t.rankLabel, value: String(signal.rank) },
+    { key: "condition", label: t.conditionLabel, value: signal.condition },
+    {
+      key: "registration-status",
+      label: t.registrationStatusLabel,
+      value: provenance.registration_status,
+    },
+    {
+      key: "publication-status",
+      label: t.publicationStatusLabel,
+      value: provenance.publication_status,
+    },
+    {
+      key: "materialization-status",
+      label: t.materializationStatusLabel,
+      value: provenance.materialization_status,
+    },
+    { key: "read-only", label: t.modeLabel, value: t.readOnlyBadgeLabel },
+  ] as const;
 
-        <DetailMetrics detail={detail} t={t} />
-
-        <section aria-labelledby="stock-beta-reasons-title" className="report-section">
-          <div className="section-heading">
-            <div>
-              <h3 id="stock-beta-reasons-title">{t.conditionReasonsHeading}</h3>
-              <p>{t.conditionReasonsDescription}</p>
-            </div>
+  return (
+    <div className={styles["detailSnapshotScroll"]}>
+      <dl className={styles["detailSnapshot"]} data-testid="stock-beta-detail-strip">
+        {fields.map((field) => (
+          <div data-status-key={field.key} key={field.key}>
+            <dt>{field.label}</dt>
+            <dd>{field.value}</dd>
           </div>
-          {detail.condition_reasons.length === 0 ? (
-            <p className="empty-copy">{t.noReasons}</p>
-          ) : (
-            <ul className="stock-beta-reason-list">
-              {detail.condition_reasons.map((reason) => (
-                <li key={reason}>{reason}</li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </section>
-      <StockBetaProvenance provenance={detail.provenance} t={t} />
-    </>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+export function StockBetaDetail({
+  backHref = "/stock-beta",
+  detail,
+  locale = "en",
+  t,
+}: {
+  readonly backHref?: string;
+  readonly detail: OwnerBetaEquitySignalsDetailModel;
+  readonly locale?: Locale;
+  readonly t: StockBetaDictionary;
+}) {
+  const viewModel: StockBetaDetailViewModel = {
+    backHref: safeStockBetaDetailBackHref(backHref),
+    copy: t,
+    detail,
+    locale,
+  };
+
+  return (
+    <StockBetaTerminalPage
+      asOf={
+        <span className={styles["detailAsOf"]}>
+          {t.asOfLabel} {detail.provenance.as_of}
+        </span>
+      }
+      context={<StockBetaDetailContextBar backHref={viewModel.backHref} detail={detail} t={t} />}
+      snapshot={<StockBetaDetailSnapshotStrip detail={detail} t={t} />}
+      title={t.detailTitle(detail.signal.instrument_id)}
+    >
+      <StockBetaDetailLayout viewModel={viewModel} />
+    </StockBetaTerminalPage>
   );
 }

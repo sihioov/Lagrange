@@ -11,20 +11,22 @@ export type PrimaryNavigationItem = {
 };
 
 export type PrimaryNavigationProps = {
+  readonly className?: string | undefined;
   readonly items: readonly PrimaryNavigationItem[];
+  readonly labelClassName?: string | undefined;
 };
 
-export function PrimaryNavigation({ items }: PrimaryNavigationProps) {
+export function PrimaryNavigation({ className, items, labelClassName }: PrimaryNavigationProps) {
   const pathname = usePathname() ?? "";
   return (
-    <nav aria-label="Primary" className="shell-navigation">
+    <nav aria-label="Primary" className={className ?? "shell-navigation"}>
       {items.map((item) => {
         const isCurrent =
           pathname === item.href || (item.href !== "/" && pathname.startsWith(`${item.href}/`));
         return (
           <Link aria-current={isCurrent ? "page" : undefined} href={item.href} key={item.href}>
             {item.icon}
-            {item.label}
+            <span className={labelClassName}>{item.label}</span>
           </Link>
         );
       })}

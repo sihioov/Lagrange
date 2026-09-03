@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatePanel } from "@/components/states/state-panel";
+import { StockBetaTerminalShell } from "@/components/stock-beta/terminal/stock-beta-terminal-shell";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: () => undefined }),
@@ -57,5 +58,34 @@ describe("application shell accessibility", () => {
     expect(markup).toContain(`<h2 id="${headingId}">We could not load this view</h2>`);
     expect(markup).toContain("We could not load this view");
     expect(markup).toContain("Try again");
+  });
+
+  it("keeps the Stock Beta terminal landmarks named without a non-functional theme control", () => {
+    // Given
+    const shell = (
+      <StockBetaTerminalShell
+        languageLabel="Change language"
+        navigation={[
+          { href: "/stock-beta", icon: <span aria-hidden={true}>S</span>, label: "Stock beta" },
+        ]}
+        productLabel="Market research"
+        readOnlyLabel="Read only"
+        roleLabel="Owner"
+        skipToMainLabel="Skip to main content"
+      >
+        <h1>Stock signal beta</h1>
+      </StockBetaTerminalShell>
+    );
+
+    // When
+    const markup = renderToStaticMarkup(shell);
+
+    // Then
+    expect(markup).toContain('data-shell="stock-beta-terminal"');
+    expect(markup).toContain('<nav aria-label="Primary"');
+    expect(markup.match(/<main/g)).toHaveLength(1);
+    expect(markup).toContain("<main class=");
+    expect(markup).not.toContain("Switch to dark theme");
+    expect(markup).not.toContain("Switch to light theme");
   });
 });

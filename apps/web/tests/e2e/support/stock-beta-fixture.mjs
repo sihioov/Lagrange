@@ -53,6 +53,18 @@ function row(index) {
 
 const rows = Object.freeze(instrumentIds.map((_, index) => row(index)));
 
+const screenRangeKeys = Object.freeze([
+  "score",
+  "return_20",
+  "return_60",
+  "return_120",
+  "volatility_20",
+  "volatility_60",
+  "volatility_120",
+  "max_drawdown_120",
+  "average_trading_value_20",
+]);
+
 const factorExplanations = Object.freeze([
   { factor: "return_20", interpretation: "20-session price return", value: 0.1 },
   { factor: "return_60", interpretation: "60-session price return", value: 0.2 },
@@ -82,6 +94,27 @@ function error(status, code) {
   };
 }
 
+function matchesRange(value, range) {
+  if (range === undefined || range === null) return true;
+  return (
+    (range.min === undefined || range.min === null || value >= range.min) &&
+    (range.max === undefined || range.max === null || value <= range.max)
+  );
+}
+
+function matchesScreenConditions(signal, conditions) {
+  if (conditions === undefined || conditions === null) return true;
+  const trendUp = signal.sma_20 >= signal.sma_60;
+  if (
+    conditions.trend_up !== undefined &&
+    conditions.trend_up !== null &&
+    conditions.trend_up !== trendUp
+  ) {
+    return false;
+  }
+  return screenRangeKeys.every((key) => matchesRange(signal[key], conditions[key]));
+}
+
 export function stockBetaResponse(request) {
   const { body, method, pathname, scenario } = request;
   if (pathname !== SIGNAL_PATH && !pathname.startsWith(`${SIGNAL_PATH}/`)) return null;
@@ -92,19 +125,28 @@ export function stockBetaResponse(request) {
   if (scenario.stockBeta === "integrity") {
     return error(503, "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED");
   }
+  if (scenario.stockBeta === "generic") {
+    return error(500, "INTERNAL");
+  }
   if (method === "GET" && pathname === `${SIGNAL_PATH}/latest`) {
     return { body: { provenance, rows, top5: rows.slice(0, 5) }, status: 200 };
   }
   if (method === "POST" && pathname === `${SIGNAL_PATH}/screen`) {
     const conditions = Array.isArray(body?.condition) ? new Set(body.condition) : null;
-    const screened =
-      conditions === null ? rows : rows.filter((item) => conditions.has(item.condition));
+    if (scenario.stockBeta === "empty") return { body: { provenance, rows: [] }, status: 200 };
+    const instrumentIds = Array.isArray(body?.instrument_ids) ? new Set(body.instrument_ids) : null;
+    const screened = rows.filter(
+      (item) =>
+        (instrumentIds === null || instrumentIds.has(item.instrument_id)) &&
+        (conditions === null || conditions.has(item.condition)) &&
+        matchesScreenConditions(item, body?.conditions),
+    );
     return { body: { provenance, rows: screened }, status: 200 };
   }
   if (method === "GET" && pathname.startsWith(`${SIGNAL_PATH}/instruments/`)) {
     const instrumentId = decodeURIComponent(pathname.slice(`${SIGNAL_PATH}/instruments/`.length));
     const signal = rows.find((item) => item.instrument_id === instrumentId);
-    if (signal === undefined) return error(404, "NOT_FOUND");
+    if (signal === undefined) return error(404, "RESOURCE_NOT_FOUND");
     return {
       body: {
         condition_reasons: [

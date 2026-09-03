@@ -1,0 +1,727 @@
+.detail {
+  display: grid;
+  gap: 7px;
+  min-inline-size: 0;
+  color: var(--stock-beta-text);
+  font-size: 0.75rem;
+}
+
+.contextNavigation {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  min-inline-size: 0;
+}
+
+.contextLink {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  max-inline-size: 100%;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--stock-beta-border);
+  border-radius: var(--stock-beta-control-radius);
+  background: var(--stock-beta-panel);
+  color: var(--stock-beta-accent);
+  font: 600 0.625rem / 1.2 var(--font-display);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.contextLink:hover {
+  border-color: var(--stock-beta-accent);
+  background: var(--stock-beta-accent-soft);
+  color: var(--stock-beta-accent);
+}
+
+.contextLink:focus-visible {
+  outline: 2px solid var(--stock-beta-accent);
+  outline-offset: 2px;
+}
+
+.detailContextBar {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(18rem, 2fr);
+  align-items: center;
+  gap: 0.5rem;
+  min-inline-size: 0;
+  color: var(--stock-beta-text);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.detailIdentity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  min-inline-size: 0;
+}
+
+.detailIdentityText {
+  display: grid;
+  gap: 0.0625rem;
+  min-inline-size: 0;
+}
+
+.detailIdentityText strong {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  color: var(--stock-beta-text);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.detailIdentityText > span {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  color: var(--stock-beta-muted);
+  font:
+    0.625rem / 1.25 var(--font-data),
+    ui-monospace,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.eyebrow {
+  color: var(--stock-beta-warning);
+  font: 600 0.5625rem / 1.2 var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.detailContextFacts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.25rem;
+  min-inline-size: 0;
+  margin: 0;
+}
+
+.detailContextFacts > div {
+  min-inline-size: 0;
+  padding-inline: 0.375rem;
+  border-inline-start: 1px solid var(--stock-beta-border);
+}
+
+.detailContextFacts dt,
+.detailSnapshot dt,
+.instrumentFacts dt,
+.provenanceGrid dt,
+.metricCard dt {
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--stock-beta-muted);
+  font: 0.5625rem / 1.2 var(--font-display);
+  letter-spacing: 0.05em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.detailContextFacts dd {
+  min-inline-size: 0;
+  margin: 0.125rem 0 0;
+  overflow-wrap: anywhere;
+  color: var(--stock-beta-text);
+  font:
+    600 0.6875rem / 1.25 var(--font-data),
+    ui-monospace,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.conditionValue {
+  color: var(--stock-beta-secondary);
+}
+
+.conditionValue[data-condition="BULLISH"] {
+  color: var(--stock-beta-positive);
+}
+
+.conditionValue[data-condition="BEARISH"] {
+  color: var(--stock-beta-negative);
+}
+
+.detailAsOf {
+  color: var(--stock-beta-secondary);
+  font:
+    0.6875rem / 1.2 var(--font-data),
+    ui-monospace,
+    monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.detailSnapshotScroll {
+  min-inline-size: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.detailSnapshot {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(7rem, 1fr)) repeat(3, minmax(10rem, 1.25fr)) minmax(
+      8rem,
+      0.8fr
+    );
+  min-inline-size: 62rem;
+  block-size: 2.75rem;
+  margin: 0;
+}
+
+.detailSnapshot > div {
+  display: grid;
+  align-content: center;
+  gap: 0.125rem;
+  min-inline-size: 0;
+  padding: 0.25rem 0.625rem;
+  border-inline-end: 1px solid var(--stock-beta-border);
+}
+
+.detailSnapshot dd {
+  min-inline-size: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--stock-beta-text);
+  font:
+    600 0.6875rem / 1.2 var(--font-data),
+    ui-monospace,
+    monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.detailSnapshot > div[data-status-key="condition"] dd {
+  color: var(--stock-beta-secondary);
+}
+
+.detailSnapshot > div[data-status-key="read-only"] dd {
+  color: var(--stock-beta-accent);
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-rows: minmax(360px, min(52vh, 470px)) auto auto;
+  gap: 7px;
+  min-inline-size: 0;
+}
+
+.detailWidget {
+  display: flex;
+  min-inline-size: 0;
+  min-block-size: 0;
+  order: var(--desktop-order);
+}
+
+.detailWidget > section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-block-size: 0;
+}
+
+.detailWidget > section > header {
+  flex: none;
+}
+
+.detailWidget > section > :last-child {
+  flex: 1;
+  min-block-size: 0;
+  overflow: auto;
+}
+
+.detailWidget[data-desktop-visible="false"] {
+  display: none;
+}
+
+.detailWidget[data-widget-id="returns"] {
+  grid-column: 1 / span 4;
+  grid-row: 1;
+}
+
+.detailWidget[data-widget-id="activity"] {
+  grid-column: 5 / span 4;
+  grid-row: 1;
+}
+
+.detailWidget[data-widget-id="factor-evidence"] {
+  grid-column: 9 / -1;
+  grid-row: 1;
+}
+
+.detailWidget[data-widget-id="policy-boundary"] {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.detailWidget[data-widget-id="provenance"] {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+.policyBoundary {
+  display: grid;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  border-inline-start: 3px solid var(--stock-beta-warning);
+  background: var(--stock-beta-panel-muted);
+}
+
+.policySummary {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  min-inline-size: 0;
+}
+
+.policySummary strong {
+  display: block;
+  color: var(--stock-beta-warning);
+  font: 600 0.625rem / 1.2 var(--font-display);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.policySummary p,
+.policyDetailsContent p,
+.evidenceSectionHeading p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--stock-beta-secondary);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+.policyMarker {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--stock-beta-warning);
+  font: 700 0.6875rem / 1 var(--font-display);
+}
+
+.policyDetails,
+.provenanceDetails {
+  min-inline-size: 0;
+  border-block-start: 1px solid var(--stock-beta-border);
+}
+
+.policyDetails summary,
+.provenanceDetails summary {
+  display: flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  padding-block: 0.25rem;
+  color: var(--stock-beta-text);
+  cursor: pointer;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.policyDetails summary::marker,
+.provenanceDetails summary::marker {
+  color: var(--stock-beta-accent);
+}
+
+.policyDetailsContent {
+  display: grid;
+  gap: 0.375rem;
+  padding-block: 0.375rem 0.125rem;
+  border-block-start: 1px solid var(--stock-beta-border);
+}
+
+.instrumentHeader {
+  display: grid;
+  gap: 0.25rem;
+  min-inline-size: 0;
+}
+
+.instrumentId {
+  color: var(--stock-beta-secondary);
+  font:
+    0.6875rem / 1.25 var(--font-data),
+    ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+}
+
+.instrumentFacts,
+.provenanceGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.375rem;
+  min-inline-size: 0;
+  margin: 0.375rem 0 0;
+}
+
+.instrumentFacts div,
+.provenanceGrid div {
+  min-inline-size: 0;
+  padding: 0.375rem;
+  border: 1px solid var(--stock-beta-border);
+  border-radius: 2px;
+  background: var(--stock-beta-panel-muted);
+}
+
+.instrumentFacts dd,
+.provenanceGrid dd {
+  min-inline-size: 0;
+  margin: 0.125rem 0 0;
+  overflow-wrap: anywhere;
+  color: var(--stock-beta-text);
+}
+
+.metricSection {
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+  min-inline-size: 0;
+}
+
+.metricSubgroup {
+  display: grid;
+  gap: 0.375rem;
+  min-inline-size: 0;
+}
+
+.metricSubgroup + .metricSubgroup {
+  padding-block-start: 0.5rem;
+  border-block-start: 1px solid var(--stock-beta-border);
+}
+
+.metricSubgroupHeading {
+  margin: 0;
+  color: var(--stock-beta-secondary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.375rem;
+  min-inline-size: 0;
+  margin: 0;
+}
+
+.metricCard {
+  min-inline-size: 0;
+  padding: 0.375rem;
+  border: 1px solid var(--stock-beta-border);
+  border-radius: 2px;
+  background: var(--stock-beta-panel-muted);
+}
+
+.metricCard dd {
+  min-inline-size: 0;
+  margin: 0.125rem 0 0;
+  overflow-wrap: anywhere;
+  color: var(--stock-beta-text);
+  font:
+    600 0.75rem / 1.25 var(--font-data),
+    ui-monospace,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.metricCard data {
+  overflow-wrap: anywhere;
+}
+
+.metricRawValue {
+  display: block;
+  margin-block-start: 0.25rem;
+  overflow-wrap: anywhere;
+  color: var(--stock-beta-muted);
+  font:
+    0.5625rem / 1.25 var(--font-data),
+    ui-monospace,
+    monospace;
+}
+
+.evidenceContent {
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+  min-inline-size: 0;
+}
+
+.factorTableWrap {
+  max-inline-size: 100%;
+  overflow: auto;
+  border: 1px solid var(--stock-beta-border);
+  border-radius: 2px;
+}
+
+.factorTable {
+  inline-size: 100%;
+  min-inline-size: 30rem;
+  border-collapse: collapse;
+  color: var(--stock-beta-text);
+  font-size: 0.6875rem;
+}
+
+.factorTable caption {
+  padding: 0.375rem 0.5rem;
+  color: var(--stock-beta-secondary);
+  font-size: 0.625rem;
+  text-align: start;
+}
+
+.factorTable th,
+.factorTable td {
+  min-inline-size: 0;
+  padding: 0.375rem 0.5rem;
+  border-block-start: 1px solid var(--stock-beta-border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.factorTable thead th {
+  color: var(--stock-beta-muted);
+  font: 0.5625rem / 1.2 var(--font-display);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.factorTable tbody th {
+  color: var(--stock-beta-text);
+  font:
+    600 0.625rem / 1.25 var(--font-data),
+    ui-monospace,
+    monospace;
+  white-space: nowrap;
+}
+
+.factorTable tbody td:nth-child(2) {
+  min-inline-size: 13rem;
+  color: var(--stock-beta-secondary);
+  overflow-wrap: anywhere;
+}
+
+.factorTable tbody td:last-child {
+  color: var(--stock-beta-text);
+  font:
+    600 0.6875rem / 1.25 var(--font-data),
+    ui-monospace,
+    monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.evidenceReasons {
+  display: grid;
+  gap: 0.375rem;
+  min-inline-size: 0;
+  padding-block-start: 0.5rem;
+  border-block-start: 1px solid var(--stock-beta-border);
+}
+
+.evidenceSectionHeading {
+  display: grid;
+  gap: 0.125rem;
+}
+
+.evidenceSectionHeading h3 {
+  margin: 0;
+  color: var(--stock-beta-text);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.reasonList {
+  display: grid;
+  gap: 0.375rem;
+  min-inline-size: 0;
+  margin: 0;
+  padding-inline-start: 1.25rem;
+  color: var(--stock-beta-text);
+}
+
+.reasonList li {
+  min-inline-size: 0;
+  padding-inline-start: 0.125rem;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.emptyCopy {
+  margin: 0;
+  color: var(--stock-beta-secondary);
+}
+
+.provenanceDetails summary {
+  padding-inline: 0.125rem;
+}
+
+.provenanceDetailsContent {
+  min-inline-size: 0;
+  padding-block-start: 0.375rem;
+  border-block-start: 1px solid var(--stock-beta-border);
+}
+
+.provenanceGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+.provenanceValue {
+  font-size: 0.6875rem;
+}
+
+@media (max-width: 64rem) {
+  .detailContextBar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .detailGrid {
+    grid-template-rows: minmax(340px, auto) auto auto auto;
+  }
+
+  .detailWidget {
+    order: var(--tablet-order);
+  }
+
+  .detailWidget[data-tablet-visible="false"] {
+    display: none;
+  }
+
+  .detailWidget[data-widget-id="returns"] {
+    grid-column: 1 / span 6;
+    grid-row: 1;
+  }
+
+  .detailWidget[data-widget-id="activity"] {
+    grid-column: 7 / -1;
+    grid-row: 1;
+  }
+
+  .detailWidget[data-widget-id="factor-evidence"] {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .detailWidget[data-widget-id="policy-boundary"] {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
+  .detailWidget[data-widget-id="provenance"] {
+    grid-column: 1 / -1;
+    grid-row: 4;
+  }
+
+  .instrumentFacts,
+  .provenanceGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 51.25rem) {
+  .detailSnapshot {
+    min-inline-size: 58rem;
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .detailGrid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+
+  .detailWidget,
+  .detailWidget[data-mobile-size="small"],
+  .detailWidget[data-mobile-size="medium"],
+  .detailWidget[data-mobile-size="large"],
+  .detailWidget[data-mobile-size="full"] {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    order: var(--mobile-order);
+  }
+
+  .detailWidget[data-mobile-visible="false"] {
+    display: none;
+  }
+
+  .detailWidget > section {
+    block-size: auto;
+  }
+
+  .detailWidget > section > :last-child {
+    overflow: visible;
+  }
+
+  .metricGrid,
+  .instrumentFacts,
+  .provenanceGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 30rem) {
+  .detailContextBar {
+    gap: 0.375rem;
+  }
+
+  .detailIdentity {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .detailContextFacts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detailContextFacts > div:nth-child(3) {
+    border-inline-start: 0;
+  }
+
+  .metricGrid,
+  .instrumentFacts,
+  .provenanceGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .contextLink,
+  .policyDetails summary,
+  .provenanceDetails summary {
+    transition: none;
+    scroll-behavior: auto;
+  }
+}
+
+@media (forced-colors: active) {
+  .contextLink,
+  .detailContextFacts > div,
+  .detailSnapshot > div,
+  .policyBoundary,
+  .instrumentFacts div,
+  .provenanceGrid div,
+  .metricCard,
+  .factorTableWrap,
+  .evidenceReasons,
+  .policyDetails,
+  .provenanceDetails {
+    border-color: CanvasText;
+  }
+
+  .contextLink,
+  .detailSnapshot > div[data-status-key="read-only"] dd,
+  .conditionValue[data-condition="BULLISH"],
+  .conditionValue[data-condition="BEARISH"] {
+    color: LinkText;
+  }
+}
