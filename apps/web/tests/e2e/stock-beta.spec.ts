@@ -85,21 +85,6 @@ async function box(locator: Locator) {
   return result;
 }
 
-async function fillInvalidCode(input: Locator, value: string) {
-  await input.fill(value);
-  if ((await input.inputValue()) !== value) {
-    const maxLength = await input.getAttribute("maxlength");
-    if (maxLength !== "6") {
-      throw new Error(`Unexpected maxlength behavior for invalid value ${value}`);
-    }
-    // Chromium enforces maxlength during fill(). Remove that browser constraint only after
-    // detecting truncation, then refill through the real UI control and event path.
-    await input.evaluate((element) => element.removeAttribute("maxlength"));
-    await input.fill(value);
-  }
-  await expect(input).toHaveValue(value);
-}
-
 test.describe("provider-free Stock Beta V2", () => {
   test.beforeEach(async ({ page }) => {
     await installProviderFreeNetworkGuard(page);
@@ -223,7 +208,8 @@ test.describe("provider-free Stock Beta V2", () => {
       const validationMessage = page.locator('[role="alert"]').filter({ hasText: locale.message });
 
       for (const invalidCode of invalidCodes) {
-        await fillInvalidCode(input, invalidCode.value);
+        await input.fill(invalidCode.value);
+        await expect(input).toHaveValue(invalidCode.value);
         await addButton.click();
         await expect(validationMessage).toBeVisible();
         await expect(input).toHaveValue(invalidCode.value);

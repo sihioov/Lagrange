@@ -359,6 +359,42 @@ Wave 2의 WP-2와 WP-3는 생산 코드가 고정된 동일 integration base에�
   사용한다. lint/typecheck/unit/build/full provider-free E2E와 375/768/1280/1440/200%-equivalent를
   재검증하고, internal scroll의 initial viewport와 management region을 각각 캡처한다.
 
+### WP-8A — optional widget add/remove renderer 증명
+
+- **Triggered by:** WP-7 medium finding.
+- **Complexity:** intermediate. 생산 구조는 유지하고 실제 renderer 계약의 누락된 회귀 증명만 보강한다.
+- **Owned scope:** `apps/web/tests/stock-beta-dashboard.test.tsx`와 꼭 필요한 경우에만
+  `apps/web/tests/stock-beta-widget-architecture.test.tsx`.
+- **Required correction:** central architecture clone에서 optional widget 하나를 제거했을 때 DOM에서
+  사라지고, lightweight optional definition과 breakpoint layout을 추가했을 때 DOM에 나타나며
+  desktop/tablet placement CSS variables가 metadata와 일치함을 실제 `StockBetaDashboard` 렌더로
+  증명한다. configuration serialization만 검사해서는 안 된다.
+- **Prohibited:** production/CSS/E2E/API/DTO/backend/docs 변경, 외부 호출, 기존 test 완화.
+- **Verification:** focused dashboard/architecture unit, full Web unit, typecheck, owned Biome.
+
+### WP-8B — maxlength truncation 없는 실제 invalid-input 계약
+
+- **Triggered by:** WP-7 low finding.
+- **Complexity:** intermediate. 브라우저가 잘못된 값을 유효한 6자리로 바꾸지 않도록 UI 입력 계약과
+  provider-free E2E를 함께 고정한다.
+- **Owned scope:** `apps/web/components/stock-beta/dashboard/widgets/universe-management-widget.tsx`,
+  `apps/web/tests/e2e/stock-beta.spec.ts`, 그리고 직접 필요한 focused unit test만.
+- **Required correction:** production input이 7자리와 접미사 값을 자동 절단하지 않게 하고 기존 exact
+  six ASCII digits validator가 그대로 typed validation을 표시하게 한다. E2E는 DOM attribute를
+  `evaluate`로 변경하지 않고 실제 locator 입력/제출로 short, long, suffixed, non-digit 각각을 검증하며
+  membership POST 0회를 증명한다. `inputMode` 등 모바일 입력 힌트는 유지한다.
+- **Prohibited:** fixture/synthetic API/API/DTO/backend/다른 widget/docs 변경, V1 fallback, 외부 호출.
+- **Verification:** typecheck, owned Biome, Playwright discovery, focused Stock Beta E2E 2회 fresh ports.
+
+### WP-9 — second remediation 재리뷰와 최종 QA
+
+- **Depends on:** accepted WP-8A/WP-8B commit.
+- **Complexity:** hard review + intermediate QA.
+- 동일 WP-4 reviewer가 WP-7의 두 잔여 finding과 기존 세 finding의 회귀를 read-only로 재검증하고
+  `ACCEPT` 또는 잔여 finding을 보고한다.
+- 최종 QA는 lint/typecheck/unit/build/full provider-free E2E와 모든 필수 viewport를 새 커밋에서 다시
+  실행하며 initial viewport와 management region 캡처를 모두 검사한다.
+
 ## Coordinator gates
 
 ### 1. Pre-launch

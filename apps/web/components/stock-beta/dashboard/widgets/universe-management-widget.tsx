@@ -42,7 +42,6 @@ export function UniverseManagementWidget({
               disabled={viewModel.mutationPending}
               id="stock-beta-instrument-code"
               inputMode="numeric"
-              maxLength={6}
               onChange={(event) => viewModel.onInstrumentCodeChange(event.target.value)}
               pattern="[0-9]{6}"
               value={viewModel.instrumentCode}

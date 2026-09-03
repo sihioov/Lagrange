@@ -17,6 +17,7 @@ import {
 } from "@/components/stock-beta/dashboard/widget-registry";
 import { stockBetaDetailArchitecture } from "@/components/stock-beta/detail/widget-registry";
 import {
+  defineStockBetaWidget,
   defineStockBetaWidgetArchitecture,
   stockBetaWidgetConfiguration,
   validateStockBetaWidgetArchitecture,
@@ -186,6 +187,41 @@ function renderedWidgetTag(markup: string, widgetId: string): string {
   )?.[0];
   if (tag === undefined) throw new Error(`widget ${widgetId} was not rendered`);
   return tag;
+}
+
+type RuntimeDashboardArchitecture = {
+  readonly definitions: readonly unknown[];
+  readonly layout: unknown;
+  readonly requiredWidgetIds: readonly string[];
+};
+
+function renderDashboardWithArchitecture(
+  architecture: RuntimeDashboardArchitecture,
+  viewModel: StockBetaDashboardViewModel,
+): string {
+  const centralArchitecture = stockBetaDashboardArchitecture as unknown as {
+    definitions: readonly unknown[];
+    layout: unknown;
+    requiredWidgetIds: readonly string[];
+  };
+  const original = {
+    definitions: centralArchitecture.definitions,
+    layout: centralArchitecture.layout,
+    requiredWidgetIds: centralArchitecture.requiredWidgetIds,
+  };
+
+  try {
+    Object.assign(centralArchitecture, architecture);
+    return renderToStaticMarkup(<StockBetaDashboard viewModel={viewModel} />);
+  } finally {
+    Object.assign(centralArchitecture, original);
+  }
+}
+
+function OptionalRendererProbe({ viewModel }: { readonly viewModel: StockBetaDashboardViewModel }) {
+  return (
+    <p data-testid="stock-beta-optional-renderer-probe">{viewModel.policy.remaining_capacity}</p>
+  );
 }
 
 describe("stock-beta V2 dashboard composition", () => {
@@ -471,6 +507,111 @@ describe("stock-beta V2 dashboard composition", () => {
     expect(reorderedSignalState).toContain("--desktop-grid-row:1");
     expect(reorderedSignalState).toContain("--desktop-order:1");
     expect(reorderedSignalState).not.toBe(defaultSignalState);
+  });
+
+  it("removes an optional widget from the real StockBetaDashboard render via architecture only", () => {
+    const viewModel = dashboardViewModel(null);
+    const baselineMarkup = renderToStaticMarkup(<StockBetaDashboard viewModel={viewModel} />);
+    const architectureWithoutSignalState = defineStockBetaWidgetArchitecture({
+      definitions: stockBetaDashboardArchitecture.definitions.filter(
+        (definition) => definition.id !== "signal-state",
+      ),
+      requiredWidgetIds: [...stockBetaDashboardArchitecture.requiredWidgetIds],
+      layout: {
+        desktop: stockBetaDashboardArchitecture.layout.desktop.filter(
+          (placement) => placement.id !== "signal-state",
+        ),
+        tablet: stockBetaDashboardArchitecture.layout.tablet.filter(
+          (placement) => placement.id !== "signal-state",
+        ),
+        mobile: stockBetaDashboardArchitecture.layout.mobile.filter(
+          (placement) => placement.id !== "signal-state",
+        ),
+      },
+    });
+    const removedMarkup = renderDashboardWithArchitecture(
+      architectureWithoutSignalState,
+      viewModel,
+    );
+
+    expect(baselineMarkup).toContain('data-testid="stock-beta-widget-signal-state"');
+    expect(removedMarkup).not.toContain('data-testid="stock-beta-widget-signal-state"');
+    expect(removedMarkup).not.toContain(stockBetaDictionary.en.notReadyMessage);
+  });
+
+  it("adds an optional widget to the real StockBetaDashboard with metadata-driven placement", () => {
+    const definitionOrder =
+      Math.max(
+        ...stockBetaDashboardArchitecture.definitions.map((definition) => definition.order),
+      ) + 1;
+    const desktopOrder =
+      Math.max(
+        ...stockBetaDashboardArchitecture.layout.desktop.map((placement) => placement.order),
+      ) + 1;
+    const tabletOrder =
+      Math.max(
+        ...stockBetaDashboardArchitecture.layout.tablet.map((placement) => placement.order),
+      ) + 1;
+    const desktopRow =
+      Math.max(...stockBetaDashboardArchitecture.layout.desktop.map((placement) => placement.row)) +
+      1;
+    const tabletRow =
+      Math.max(...stockBetaDashboardArchitecture.layout.tablet.map((placement) => placement.row)) +
+      1;
+    const optionalDefinition = defineStockBetaWidget({
+      id: "optional-renderer-probe",
+      component: OptionalRendererProbe,
+      defaultSize: "full",
+      required: false,
+      defaultVisible: true,
+      order: definitionOrder,
+    });
+    const desktopPlacement = {
+      id: optionalDefinition.id,
+      size: "full",
+      column: 2,
+      columnSpan: 10,
+      row: desktopRow,
+      visible: true,
+      order: desktopOrder,
+      empty: { column: 1, columnSpan: 12, row: desktopRow, visible: false, order: desktopOrder },
+    } as const;
+    const tabletPlacement = {
+      id: optionalDefinition.id,
+      size: "large",
+      column: 3,
+      columnSpan: 8,
+      row: tabletRow,
+      visible: true,
+      order: tabletOrder,
+      empty: { column: 1, columnSpan: 12, row: tabletRow, visible: false, order: tabletOrder },
+    } as const;
+    const architectureWithOptionalWidget = defineStockBetaWidgetArchitecture({
+      definitions: [...stockBetaDashboardArchitecture.definitions, optionalDefinition],
+      requiredWidgetIds: [...stockBetaDashboardArchitecture.requiredWidgetIds],
+      layout: {
+        desktop: [...stockBetaDashboardArchitecture.layout.desktop, desktopPlacement],
+        tablet: [...stockBetaDashboardArchitecture.layout.tablet, tabletPlacement],
+        mobile: [...stockBetaDashboardArchitecture.layout.mobile],
+      },
+    });
+    const markup = renderDashboardWithArchitecture(
+      architectureWithOptionalWidget,
+      dashboardViewModel(latestFor(1)),
+    );
+    const optionalWidgetTag = renderedWidgetTag(markup, optionalDefinition.id);
+
+    expect(markup).toContain('data-testid="stock-beta-optional-renderer-probe"');
+    expect(optionalWidgetTag).toContain(`--desktop-grid-column:${desktopPlacement.column}`);
+    expect(optionalWidgetTag).toContain(
+      `--desktop-grid-column-span:${desktopPlacement.columnSpan}`,
+    );
+    expect(optionalWidgetTag).toContain(`--desktop-grid-row:${desktopPlacement.row}`);
+    expect(optionalWidgetTag).toContain(`--desktop-order:${desktopPlacement.order}`);
+    expect(optionalWidgetTag).toContain(`--tablet-grid-column:${tabletPlacement.column}`);
+    expect(optionalWidgetTag).toContain(`--tablet-grid-column-span:${tabletPlacement.columnSpan}`);
+    expect(optionalWidgetTag).toContain(`--tablet-grid-row:${tabletPlacement.row}`);
+    expect(optionalWidgetTag).toContain(`--tablet-order:${tabletPlacement.order}`);
   });
 
   it("keeps widget-specific CSS free of grid placement rules", () => {
