@@ -2,6 +2,7 @@ import { type APIRequestContext, expect, type Locator, type Page, test } from "@
 
 const appOrigin = process.env["PLAYWRIGHT_BASE_URL"] ?? "http://127.0.0.1:33000";
 const syntheticOrigin = process.env["SYNTHETIC_API_ORIGIN"] ?? "http://127.0.0.1:38180";
+const membershipsPath = "/api/v1/research/owner-beta/equity-universe-v2/memberships";
 
 async function resetScenario(request: APIRequestContext, scenario: Record<string, unknown>) {
   const response = await request.post(`${syntheticOrigin}/__test/scenario`, { data: scenario });
@@ -36,6 +37,15 @@ async function installProviderFreeNetworkGuard(page: Page) {
 function expectProviderFree(requests: URL[]) {
   const localRequests = requests.filter(isLocalTestUrl);
   expect(localRequests.some((url) => url.pathname.includes("equity-price-signals"))).toBeFalsy();
+}
+
+function observeMembershipPostCount(page: Page) {
+  let count = 0;
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (request.method() === "POST" && url.pathname === membershipsPath) count += 1;
+  });
+  return () => count;
 }
 
 function membershipCard(page: Page, instrumentId: string) {
@@ -73,6 +83,21 @@ async function box(locator: Locator) {
     throw new Error("Expected the locator to have a bounding box");
   }
   return result;
+}
+
+async function fillInvalidCode(input: Locator, value: string) {
+  await input.fill(value);
+  if ((await input.inputValue()) !== value) {
+    const maxLength = await input.getAttribute("maxlength");
+    if (maxLength !== "6") {
+      throw new Error(`Unexpected maxlength behavior for invalid value ${value}`);
+    }
+    // Chromium enforces maxlength during fill(). Remove that browser constraint only after
+    // detecting truncation, then refill through the real UI control and event path.
+    await input.evaluate((element) => element.removeAttribute("maxlength"));
+    await input.fill(value);
+  }
+  await expect(input).toHaveValue(value);
 }
 
 test.describe("provider-free Stock Beta V2", () => {
@@ -156,6 +181,56 @@ test.describe("provider-free Stock Beta V2", () => {
     await expect(page.getByTestId("stock-beta-row-000100.KRX")).toBeVisible();
     await expect(page.getByTestId("stock-beta-snapshot-universe")).toContainText("100");
     await expect(page.getByRole("button", { name: "Add instrument" })).toBeDisabled();
+  });
+
+  test("rejects every invalid six-digit shape without a membership POST", async ({
+    page,
+    request,
+  }) => {
+    const getMembershipPostCount = observeMembershipPostCount(page);
+    const invalidCodes = [
+      { name: "short five-digit input", value: "12345" },
+      { name: "long seven-digit input", value: "1234567" },
+      { name: "six digits plus a suffix", value: "123456X" },
+      { name: "non-digit input", value: "ABCDEF" },
+    ];
+    const locales = [
+      {
+        addButton: "Add instrument",
+        codeLabel: "KRX code",
+        cookie: "en",
+        message: "Enter exactly six ASCII digits.",
+      },
+      {
+        addButton: "종목 추가",
+        codeLabel: "KRX 코드",
+        cookie: "ko",
+        message: "ASCII 숫자 6자리를 정확히 입력하세요.",
+      },
+    ];
+
+    for (const locale of locales) {
+      await resetScenario(request, {
+        authSession: "valid",
+        role: "owner",
+        stockBetaRows: 0,
+        stockBetaSeed: "empty",
+      });
+      await page.context().addCookies([{ name: "locale", value: locale.cookie, url: appOrigin }]);
+      await page.goto("/stock-beta");
+      const input = page.getByLabel(locale.codeLabel);
+      const addButton = page.getByRole("button", { name: locale.addButton });
+      const validationMessage = page.locator('[role="alert"]').filter({ hasText: locale.message });
+
+      for (const invalidCode of invalidCodes) {
+        await fillInvalidCode(input, invalidCode.value);
+        await addButton.click();
+        await expect(validationMessage).toBeVisible();
+        await expect(input).toHaveValue(invalidCode.value);
+        expect(getMembershipPostCount(), invalidCode.name).toBe(0);
+        await input.fill("");
+      }
+    }
   });
 
   test("adds, polls to READY, refreshes the rank, and opens V2 detail", async ({

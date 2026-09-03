@@ -28,8 +28,25 @@ export type StockBetaWidgetPlacement<Id extends string> = {
   readonly order: number;
 };
 
+export type StockBetaWidgetGridState = {
+  readonly column: number;
+  readonly columnSpan: number;
+  readonly row: number;
+  readonly visible: boolean;
+  readonly order: number;
+};
+
+export type StockBetaWidgetGridPlacement<Id extends string> = StockBetaWidgetPlacement<Id> &
+  Omit<StockBetaWidgetGridState, "visible" | "order"> & {
+    readonly empty: StockBetaWidgetGridState;
+  };
+
 export type StockBetaWidgetLayout<Id extends string> = Readonly<
   Record<StockBetaWidgetBreakpoint, readonly StockBetaWidgetPlacement<Id>[]>
+>;
+
+export type StockBetaWidgetGridLayout<Id extends string> = Readonly<
+  Record<StockBetaWidgetBreakpoint, readonly StockBetaWidgetGridPlacement<Id>[]>
 >;
 
 export type StockBetaWidgetDefinitionMetadata = {
@@ -43,10 +60,13 @@ export type StockBetaWidgetDefinitionMetadata = {
 
 export type StockBetaWidgetArchitecture<
   Definitions extends readonly StockBetaWidgetDefinitionMetadata[],
+  Layout extends StockBetaWidgetLayout<Definitions[number]["id"]> = StockBetaWidgetLayout<
+    Definitions[number]["id"]
+  >,
 > = {
   readonly definitions: Definitions;
   readonly requiredWidgetIds: readonly Definitions[number]["id"][];
-  readonly layout: StockBetaWidgetLayout<Definitions[number]["id"]>;
+  readonly layout: Layout;
 };
 
 export type StockBetaWidgetDefinitionConfiguration<Id extends string = string> = {
@@ -57,10 +77,13 @@ export type StockBetaWidgetDefinitionConfiguration<Id extends string = string> =
   readonly order: number;
 };
 
-export type StockBetaWidgetConfiguration<Id extends string = string> = {
+export type StockBetaWidgetConfiguration<
+  Id extends string = string,
+  Layout extends StockBetaWidgetLayout<Id> = StockBetaWidgetLayout<Id>,
+> = {
   readonly definitions: readonly StockBetaWidgetDefinitionConfiguration<Id>[];
   readonly requiredWidgetIds: readonly Id[];
-  readonly layout: StockBetaWidgetLayout<Id>;
+  readonly layout: Layout;
 };
 
 export type StockBetaWidgetArchitectureIssue = {
@@ -73,9 +96,13 @@ export type StockBetaWidgetArchitectureIssue = {
     | "invalid-architecture"
     | "invalid-definition"
     | "invalid-layout"
+    | "invalid-grid-column"
+    | "invalid-grid-column-span"
+    | "invalid-grid-row"
     | "invalid-order"
     | "invalid-size"
     | "missing-required-widget"
+    | "overlapping-layout-placement"
     | "required-widget-hidden"
     | "required-widget-not-required"
     | "unlisted-required-widget"
@@ -106,6 +133,18 @@ function isWidgetSize(value: unknown): value is StockBetaWidgetSize {
 function isOrder(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+}
+
+const GRID_COLUMNS: Readonly<Record<StockBetaWidgetBreakpoint, number>> = {
+  desktop: 12,
+  tablet: 12,
+  mobile: 1,
+};
+
+const GRID_PLACEMENT_KEYS = ["column", "columnSpan", "row", "empty"] as const;
 
 function issue(
   code: StockBetaWidgetArchitectureIssue["code"],
@@ -235,7 +274,66 @@ export function validateStockBetaWidgetArchitecture(
 
     const placementIds: string[] = [];
     const placementOrders: number[] = [];
+    const emptyPlacementOrders: number[] = [];
     const visibleIds = new Set<string>();
+    const usesGridPlacement = placements.some(
+      (placement) => isRecord(placement) && GRID_PLACEMENT_KEYS.some((key) => key in placement),
+    );
+    const occupiedCells = new Map<string, string>();
+
+    const validateGridState = (
+      state: Record<string, unknown>,
+      path: string,
+      stateName: "populated" | "empty",
+    ): void => {
+      const column = state["column"];
+      const columnSpan = state["columnSpan"];
+      const row = state["row"];
+      const maxColumns = GRID_COLUMNS[breakpoint];
+
+      if (!isPositiveInteger(column) || column > maxColumns) {
+        issues.push(issue("invalid-grid-column", `${path}.column`));
+      }
+      if (
+        !isPositiveInteger(columnSpan) ||
+        (isPositiveInteger(column) && column + columnSpan - 1 > maxColumns)
+      ) {
+        issues.push(issue("invalid-grid-column-span", `${path}.columnSpan`));
+      }
+      if (!isPositiveInteger(row)) issues.push(issue("invalid-grid-row", `${path}.row`));
+      if (stateName === "empty") {
+        if (typeof state["visible"] !== "boolean") {
+          issues.push(issue("invalid-layout", `${path}.visible`));
+        }
+        if (!isOrder(state["order"])) {
+          issues.push(issue("invalid-order", `${path}.order`));
+        } else {
+          emptyPlacementOrders.push(state["order"]);
+        }
+      }
+
+      if (
+        state["visible"] === true &&
+        isPositiveInteger(column) &&
+        isPositiveInteger(columnSpan) &&
+        column + columnSpan - 1 <= maxColumns &&
+        isPositiveInteger(row)
+      ) {
+        for (
+          let occupiedColumn = column;
+          occupiedColumn < column + columnSpan;
+          occupiedColumn += 1
+        ) {
+          const cell = `${stateName}:${row}:${occupiedColumn}`;
+          if (occupiedCells.has(cell)) {
+            issues.push(issue("overlapping-layout-placement", `layout.${breakpoint}.${stateName}`));
+            break;
+          }
+          occupiedCells.set(cell, path);
+        }
+      }
+    };
+
     placements.forEach((placement, index) => {
       const path = `layout.${breakpoint}[${index}]`;
       if (!isRecord(placement)) {
@@ -260,6 +358,16 @@ export function validateStockBetaWidgetArchitecture(
       } else {
         placementOrders.push(placement["order"]);
       }
+
+      if (usesGridPlacement) {
+        validateGridState(placement, path, "populated");
+        const empty = placement["empty"];
+        if (!isRecord(empty)) {
+          issues.push(issue("invalid-layout", `${path}.empty`));
+        } else {
+          validateGridState(empty, `${path}.empty`, "empty");
+        }
+      }
     });
 
     if (duplicateValues(placementIds).size > 0) {
@@ -267,6 +375,9 @@ export function validateStockBetaWidgetArchitecture(
     }
     if (duplicateValues(placementOrders).size > 0) {
       issues.push(issue("duplicate-layout-order", `layout.${breakpoint}`));
+    }
+    if (usesGridPlacement && duplicateValues(emptyPlacementOrders).size > 0) {
+      issues.push(issue("duplicate-layout-order", `layout.${breakpoint}.empty`));
     }
     for (const id of requiredIdSet) {
       if (!placementIds.includes(id)) {
@@ -293,9 +404,10 @@ export function defineStockBetaWidget<Id extends string, ViewModel>(
 
 export function defineStockBetaWidgetArchitecture<
   const Definitions extends readonly StockBetaWidgetDefinitionMetadata[],
+  const Layout extends StockBetaWidgetLayout<Definitions[number]["id"]>,
 >(
-  architecture: StockBetaWidgetArchitecture<Definitions>,
-): StockBetaWidgetArchitecture<Definitions> {
+  architecture: StockBetaWidgetArchitecture<Definitions, Layout>,
+): StockBetaWidgetArchitecture<Definitions, Layout> {
   assertValidStockBetaWidgetArchitecture(architecture);
   return architecture;
 }
@@ -306,9 +418,10 @@ export function defineStockBetaWidgetArchitecture<
  */
 export function stockBetaWidgetConfiguration<
   const Definitions extends readonly StockBetaWidgetDefinitionMetadata[],
+  const Layout extends StockBetaWidgetLayout<Definitions[number]["id"]>,
 >(
-  architecture: StockBetaWidgetArchitecture<Definitions>,
-): StockBetaWidgetConfiguration<Definitions[number]["id"]> {
+  architecture: StockBetaWidgetArchitecture<Definitions, Layout>,
+): StockBetaWidgetConfiguration<Definitions[number]["id"], Layout> {
   assertValidStockBetaWidgetArchitecture(architecture);
   return {
     definitions: architecture.definitions.map((definition) => ({

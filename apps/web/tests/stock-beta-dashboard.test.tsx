@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { stockBetaDashboardLayout } from "@/components/stock-beta/dashboard/dashboard-layout";
-import { StockBetaDashboard } from "@/components/stock-beta/dashboard/stock-beta-dashboard";
+import {
+  renderStockBetaDashboardGrid,
+  StockBetaDashboard,
+} from "@/components/stock-beta/dashboard/stock-beta-dashboard";
 import {
   STOCK_BETA_DASHBOARD_WIDGET_IDS,
   type StockBetaDashboardViewModel,
@@ -14,6 +17,7 @@ import {
 } from "@/components/stock-beta/dashboard/widget-registry";
 import { stockBetaDetailArchitecture } from "@/components/stock-beta/detail/widget-registry";
 import {
+  defineStockBetaWidgetArchitecture,
   stockBetaWidgetConfiguration,
   validateStockBetaWidgetArchitecture,
 } from "@/components/stock-beta/shared/widget-types";
@@ -176,6 +180,14 @@ function expectNoLegacyEvidence(markup: string): void {
   }
 }
 
+function renderedWidgetTag(markup: string, widgetId: string): string {
+  const tag = new RegExp(`<div(?=[^>]*data-testid="stock-beta-widget-${widgetId}")[^>]*>`).exec(
+    markup,
+  )?.[0];
+  if (tag === undefined) throw new Error(`widget ${widgetId} was not rendered`);
+  return tag;
+}
+
 describe("stock-beta V2 dashboard composition", () => {
   it("keeps the V2 registry, required regions, and responsive order explicit", () => {
     expect(validateStockBetaWidgetArchitecture(stockBetaDashboardArchitecture)).toEqual([]);
@@ -205,6 +217,19 @@ describe("stock-beta V2 dashboard composition", () => {
       "policy-boundary",
       "provenance",
     ]);
+    expect(stockBetaDashboardLayout.desktop.slice(0, 5)).toMatchObject([
+      { id: "ranked-signals", column: 1, columnSpan: 3, row: 1 },
+      { id: "signal-profile", column: 4, columnSpan: 6, row: 1 },
+      { id: "signal-decomposition", column: 10, columnSpan: 3, row: 1 },
+      { id: "condition-matrix", column: 1, columnSpan: 3, row: 2 },
+      { id: "snapshot-tape", column: 4, columnSpan: 9, row: 2 },
+    ]);
+    expect(
+      stockBetaDashboardLayout.desktop
+        .filter((placement) => placement.empty.visible)
+        .sort((left, right) => left.empty.order - right.empty.order)
+        .map((placement) => placement.id),
+    ).toEqual(["universe-management", "membership-status", "signal-state", "policy-boundary"]);
   });
 
   it.each([0, 31, 100])(
@@ -405,6 +430,62 @@ describe("stock-beta V2 dashboard composition", () => {
       false,
     );
     expect(JSON.parse(JSON.stringify(configuration))).toEqual(configuration);
+  });
+
+  it("applies reordered optional-widget placement metadata in the actual dashboard renderer", () => {
+    const reorderedDesktop = stockBetaDashboardArchitecture.layout.desktop.map((placement) => {
+      if (placement.id === "signal-state") {
+        return {
+          ...placement,
+          empty: { ...placement.empty, column: 8, columnSpan: 5, row: 1, order: 1 },
+        };
+      }
+      if (placement.id === "membership-status") {
+        return {
+          ...placement,
+          empty: { ...placement.empty, column: 1, columnSpan: 12, row: 2, order: 2 },
+        };
+      }
+      return placement;
+    });
+    const reorderedArchitecture = defineStockBetaWidgetArchitecture({
+      ...stockBetaDashboardArchitecture,
+      layout: { ...stockBetaDashboardArchitecture.layout, desktop: reorderedDesktop },
+    });
+    const viewModel = dashboardViewModel(null);
+    const defaultMarkup = renderToStaticMarkup(
+      renderStockBetaDashboardGrid(stockBetaDashboardArchitecture, viewModel),
+    );
+    const reorderedMarkup = renderToStaticMarkup(
+      renderStockBetaDashboardGrid(reorderedArchitecture, viewModel),
+    );
+    const defaultSignalState = renderedWidgetTag(defaultMarkup, "signal-state");
+    const reorderedSignalState = renderedWidgetTag(reorderedMarkup, "signal-state");
+
+    expect(defaultSignalState).toContain("--desktop-grid-column:1");
+    expect(defaultSignalState).toContain("--desktop-grid-column-span:12");
+    expect(defaultSignalState).toContain("--desktop-grid-row:2");
+    expect(defaultSignalState).toContain("--desktop-order:2");
+    expect(reorderedSignalState).toContain("--desktop-grid-column:8");
+    expect(reorderedSignalState).toContain("--desktop-grid-column-span:5");
+    expect(reorderedSignalState).toContain("--desktop-grid-row:1");
+    expect(reorderedSignalState).toContain("--desktop-order:1");
+    expect(reorderedSignalState).not.toBe(defaultSignalState);
+  });
+
+  it("keeps widget-specific CSS free of grid placement rules", () => {
+    const css = readFileSync(
+      join(process.cwd(), "components/stock-beta/dashboard/dashboard.module.css"),
+      "utf8",
+    );
+    const widgetSpecificBlocks =
+      css.match(/\.dashboardWidget\[data-widget-id=[^\]]+\][^{]*\{[^}]*\}/g) ?? [];
+
+    expect(css).toContain("grid-column: var(--desktop-grid-column)");
+    expect(css).toContain("grid-column: var(--tablet-grid-column)");
+    expect(widgetSpecificBlocks.some((block) => /grid-(?:column|row)|\border:/.test(block))).toBe(
+      false,
+    );
   });
 
   it("keeps V2 dashboard/detail configuration serializable and widgets free of direct fetches", () => {

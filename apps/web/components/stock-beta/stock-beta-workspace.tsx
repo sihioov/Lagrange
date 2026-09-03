@@ -28,6 +28,7 @@ import { StockBetaDashboard } from "./dashboard/stock-beta-dashboard";
 import type { StockBetaSignalState } from "./dashboard/types";
 import { StockBetaPolicyNotice } from "./dashboard/widgets/policy-boundary-widget";
 import { formatStockBetaNumber, formatStockBetaPercent } from "./shared/formatters";
+import { StockBetaSignalRefreshCoordinator } from "./signal-refresh-coordinator";
 import { StockBetaTerminalPage } from "./terminal";
 
 const OWNER_EQUITY_V2_POLL_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000] as const;
@@ -97,24 +98,34 @@ export function StockBetaWorkspace({
   const previousMembershipsRef = useRef(initialMemberships.memberships);
   const pollAttemptRef = useRef(0);
   const signalPollAttemptRef = useRef(0);
+  const signalRefreshCoordinatorRef = useRef<
+    StockBetaSignalRefreshCoordinator<OwnerEquityV2LatestSignalsModel> | undefined
+  >(undefined);
+  if (signalRefreshCoordinatorRef.current === undefined) {
+    signalRefreshCoordinatorRef.current =
+      new StockBetaSignalRefreshCoordinator<OwnerEquityV2LatestSignalsModel>();
+  }
+  const signalRefreshCoordinator = signalRefreshCoordinatorRef.current;
 
   const refreshSignals = useCallback(async (): Promise<void> => {
-    try {
-      const next = await getOwnerEquityV2LatestSignals();
-      setSignals(next);
-      setSignalUnavailable(false);
-      setSignalError(null);
-    } catch (error) {
-      setSignals(null);
-      if (error instanceof ApiProblem && error.code === "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE") {
-        setSignalUnavailable(true);
-        setSignalError(null);
-      } else {
+    await signalRefreshCoordinator.run(getOwnerEquityV2LatestSignals, {
+      onFailure: (error) => {
+        setSignals(null);
+        if (error instanceof ApiProblem && error.code === "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE") {
+          setSignalUnavailable(true);
+          setSignalError(null);
+        } else {
+          setSignalUnavailable(false);
+          setSignalError(failureCode(error));
+        }
+      },
+      onSuccess: (next) => {
+        setSignals(next);
         setSignalUnavailable(false);
-        setSignalError(failureCode(error));
-      }
-    }
-  }, []);
+        setSignalError(null);
+      },
+    });
+  }, [signalRefreshCoordinator]);
 
   const refreshMemberships = useCallback(async (): Promise<OwnerEquityV2MembershipListModel> => {
     const next = await getOwnerEquityV2Memberships();
@@ -124,13 +135,18 @@ export function StockBetaWorkspace({
   }, []);
 
   useEffect(() => {
+    signalRefreshCoordinator.invalidate();
     setPolicy(initialMemberships.policy);
     setMemberships(initialMemberships.memberships);
-    setSignals(initialSignals);
-    setSignalUnavailable(initialSignals === null && initialSignalUnavailable);
+    const acceptedInitialSignals =
+      initialSignals === null || signalRefreshCoordinator.acceptsSnapshot(initialSignals)
+        ? initialSignals
+        : null;
+    setSignals(acceptedInitialSignals);
+    setSignalUnavailable(acceptedInitialSignals === null && initialSignalUnavailable);
     setSignalError(null);
     previousMembershipsRef.current = initialMemberships.memberships;
-  }, [initialMemberships, initialSignalUnavailable, initialSignals]);
+  }, [initialMemberships, initialSignalUnavailable, initialSignals, signalRefreshCoordinator]);
 
   useEffect(() => {
     const previous = previousMembershipsRef.current;
@@ -190,31 +206,39 @@ export function StockBetaWorkspace({
       );
     };
     const poll = async (): Promise<void> => {
-      try {
-        const next = await getOwnerEquityV2LatestSignals();
-        if (cancelled) return;
-        if (next.rows.some((row) => row.instrument_id === pendingSignalRemovalInstrument)) {
-          schedule(poll);
-          return;
-        }
-        setSignals(next);
-        setSignalUnavailable(false);
-        setSignalError(null);
-        setPollError(false);
-        setPendingSignalRemovalInstrument(null);
-        router.refresh();
-      } catch (error) {
-        if (cancelled) return;
-        if (error instanceof ApiProblem && error.code === "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE") {
-          setSignals(null);
-          setSignalUnavailable(true);
+      let shouldSchedule = false;
+      const outcome = await signalRefreshCoordinator.run(getOwnerEquityV2LatestSignals, {
+        onFailure: (error) => {
+          if (cancelled) return;
+          if (error instanceof ApiProblem && error.code === "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE") {
+            setSignals(null);
+            setSignalUnavailable(true);
+            setSignalError(null);
+            setPollError(false);
+            signalRefreshCoordinator.releaseInstrument(pendingSignalRemovalInstrument);
+            setPendingSignalRemovalInstrument(null);
+            router.refresh();
+            return;
+          }
+          setPollError(true);
+          shouldSchedule = true;
+        },
+        onSuccess: (next) => {
+          if (cancelled) return;
+          if (next.rows.some((row) => row.instrument_id === pendingSignalRemovalInstrument)) {
+            shouldSchedule = true;
+            return;
+          }
+          setSignals(next);
+          setSignalUnavailable(false);
           setSignalError(null);
           setPollError(false);
+          signalRefreshCoordinator.releaseInstrument(pendingSignalRemovalInstrument);
           setPendingSignalRemovalInstrument(null);
           router.refresh();
-          return;
-        }
-        setPollError(true);
+        },
+      });
+      if (!cancelled && (outcome === "blocked" || outcome === "stale" || shouldSchedule)) {
         schedule(poll);
       }
     };
@@ -223,7 +247,7 @@ export function StockBetaWorkspace({
       cancelled = true;
       if (timeout !== undefined) clearTimeout(timeout);
     };
-  }, [pendingSignalRemovalInstrument, router]);
+  }, [pendingSignalRemovalInstrument, router, signalRefreshCoordinator]);
 
   async function addMembership(): Promise<void> {
     if (mutationPendingRef.current) return;
@@ -282,6 +306,7 @@ export function StockBetaWorkspace({
       const result = await disableOwnerEquityV2Membership(disableId);
       setDisableId(null);
       setActionMessage(t.disableSuccess);
+      signalRefreshCoordinator.blockInstrument(result.resource.instrument_id);
       setPendingSignalRemovalInstrument(result.resource.instrument_id);
       setSignals(null);
       setSignalUnavailable(false);

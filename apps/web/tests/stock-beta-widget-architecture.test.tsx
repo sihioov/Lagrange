@@ -15,6 +15,7 @@ import {
   defineStockBetaWidgetArchitecture,
   InvalidStockBetaWidgetArchitecture,
   type StockBetaWidgetArchitecture,
+  type StockBetaWidgetGridPlacement,
   type StockBetaWidgetPlacement,
   stockBetaWidgetConfiguration,
   validateStockBetaWidgetArchitecture,
@@ -65,6 +66,51 @@ const validArchitecture = {
 } as const satisfies StockBetaWidgetArchitecture<
   readonly [typeof requiredDefinition, typeof optionalDefinition]
 >;
+
+const desktopGridPlacements = [
+  {
+    ...basePlacements[0],
+    column: 1,
+    columnSpan: 8,
+    row: 1,
+    empty: { column: 1, columnSpan: 12, row: 1, visible: true, order: 0 },
+  },
+  {
+    ...basePlacements[1],
+    column: 9,
+    columnSpan: 4,
+    row: 1,
+    empty: { column: 1, columnSpan: 12, row: 2, visible: true, order: 1 },
+  },
+] as const satisfies readonly StockBetaWidgetGridPlacement<"ranked-signals" | "top-five">[];
+
+const tabletGridPlacements = desktopGridPlacements;
+
+const mobileGridPlacements = [
+  {
+    ...basePlacements[0],
+    column: 1,
+    columnSpan: 1,
+    row: 1,
+    empty: { column: 1, columnSpan: 1, row: 1, visible: true, order: 0 },
+  },
+  {
+    ...basePlacements[1],
+    column: 1,
+    columnSpan: 1,
+    row: 2,
+    empty: { column: 1, columnSpan: 1, row: 2, visible: true, order: 1 },
+  },
+] as const satisfies readonly StockBetaWidgetGridPlacement<"ranked-signals" | "top-five">[];
+
+const validGridArchitecture = {
+  ...validArchitecture,
+  layout: {
+    desktop: desktopGridPlacements,
+    tablet: tabletGridPlacements,
+    mobile: mobileGridPlacements,
+  },
+} as const;
 
 describe("stock-beta widget architecture", () => {
   it("accepts typed definitions and complete breakpoint layouts", () => {
@@ -159,6 +205,97 @@ describe("stock-beta widget architecture", () => {
       code: "duplicate-layout-order",
       path: "layout.desktop",
     });
+  });
+
+  it("accepts complete grid placement metadata for populated and empty states", () => {
+    expect(defineStockBetaWidgetArchitecture(validGridArchitecture)).toBe(validGridArchitecture);
+    expect(validateStockBetaWidgetArchitecture(validGridArchitecture)).toEqual([]);
+  });
+
+  it("rejects incomplete grid placement metadata", () => {
+    const invalid = {
+      ...validGridArchitecture,
+      layout: {
+        ...validGridArchitecture.layout,
+        desktop: [desktopGridPlacements[0], { ...desktopGridPlacements[1], empty: undefined }],
+      },
+    };
+
+    expect(validateStockBetaWidgetArchitecture(invalid)).toContainEqual({
+      code: "invalid-layout",
+      path: "layout.desktop[1].empty",
+    });
+    expect(() => defineStockBetaWidgetArchitecture(invalid)).toThrow(
+      InvalidStockBetaWidgetArchitecture,
+    );
+  });
+
+  it("rejects out-of-range grid coordinates and spans", () => {
+    const invalid = {
+      ...validGridArchitecture,
+      layout: {
+        desktop: [
+          desktopGridPlacements[0],
+          { ...desktopGridPlacements[1], column: 12, columnSpan: 2 },
+        ],
+        tablet: [{ ...tabletGridPlacements[0], column: 0 }, tabletGridPlacements[1]],
+        mobile: [
+          {
+            ...mobileGridPlacements[0],
+            empty: { ...mobileGridPlacements[0].empty, row: 0 },
+          },
+          mobileGridPlacements[1],
+        ],
+      },
+    };
+    const issues = validateStockBetaWidgetArchitecture(invalid);
+
+    expect(issues).toContainEqual({
+      code: "invalid-grid-column-span",
+      path: "layout.desktop[1].columnSpan",
+    });
+    expect(issues).toContainEqual({
+      code: "invalid-grid-column",
+      path: "layout.tablet[0].column",
+    });
+    expect(issues).toContainEqual({
+      code: "invalid-grid-row",
+      path: "layout.mobile[0].empty.row",
+    });
+    expect(() => defineStockBetaWidgetArchitecture(invalid)).toThrow(
+      InvalidStockBetaWidgetArchitecture,
+    );
+  });
+
+  it("rejects duplicate empty-state order and overlapping visible grid cells", () => {
+    const invalid = {
+      ...validGridArchitecture,
+      layout: {
+        ...validGridArchitecture.layout,
+        desktop: [
+          desktopGridPlacements[0],
+          {
+            ...desktopGridPlacements[1],
+            column: 1,
+            columnSpan: 4,
+            empty: { ...desktopGridPlacements[1].empty, order: 0 },
+          },
+        ],
+      },
+    };
+    const issues = validateStockBetaWidgetArchitecture(invalid);
+
+    expect(issues).toContainEqual({
+      code: "duplicate-layout-order",
+      path: "layout.desktop.empty",
+    });
+    expect(issues).toContainEqual({
+      code: "overlapping-layout-placement",
+      path: "layout.desktop.populated",
+    });
+    expect(() => defineStockBetaWidgetArchitecture(invalid)).toThrow(
+      InvalidStockBetaWidgetArchitecture,
+    );
   });
 
   it("keeps the accepted V2 dashboard and detail registries valid", () => {

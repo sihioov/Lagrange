@@ -13,6 +13,8 @@
 }
 
 .dashboardWidget {
+  grid-column: var(--desktop-grid-column) / span var(--desktop-grid-column-span);
+  grid-row: var(--desktop-grid-row);
   min-inline-size: 0;
   min-block-size: 0;
   order: var(--desktop-order);
@@ -35,104 +37,13 @@
   overflow: hidden;
 }
 
-.dashboardWidget[data-widget-id="universe-management"] {
-  grid-column: 1 / span 7;
-  grid-row: 3;
-}
-
-.dashboardWidget[data-widget-id="membership-status"] {
-  grid-column: 8 / -1;
-  grid-row: 3;
-}
-
-.dashboardWidget[data-widget-id="signal-state"] {
-  grid-column: 1 / -1;
-  grid-row: 2;
-}
-
-.dashboardWidget[data-widget-id="ranked-signals"] {
-  grid-column: 1 / span 3;
-  grid-row: 1;
-}
-
-.dashboardWidget[data-widget-id="signal-profile"] {
-  grid-column: 4 / span 6;
-  grid-row: 1;
-}
-
-.dashboardWidget[data-widget-id="signal-decomposition"] {
-  grid-column: 10 / -1;
-  grid-row: 1;
-}
-
-.dashboardWidget[data-widget-id="condition-matrix"] {
-  grid-column: 1 / span 3;
-  grid-row: 2;
-}
-
-.dashboardWidget[data-widget-id="snapshot-tape"] {
-  grid-column: 4 / -1;
-  grid-row: 2;
-}
-
-.dashboardWidget[data-widget-id="provenance"] {
-  grid-column: 1 / -1;
-  grid-row: 5;
-}
-
-.dashboardWidget[data-widget-id="policy-boundary"] {
-  grid-column: 1 / -1;
-  grid-row: 4;
-}
-
 .dashboardWidget[data-desktop-visible="false"] {
   display: none;
-}
-
-.dashboardWidget[data-desktop-size="small"] {
-  grid-column: span 3;
-}
-
-.dashboardWidget[data-desktop-size="medium"] {
-  grid-column: span 4;
-}
-
-.dashboardWidget[data-desktop-size="large"] {
-  grid-column: span 6;
-}
-
-.dashboardWidget[data-desktop-size="full"] {
-  grid-column: 1 / -1;
-}
-
-.dashboardWidget[data-widget-id="universe-management"] {
-  grid-column: 1 / span 7;
-}
-
-.dashboardWidget[data-widget-id="membership-status"] {
-  grid-column: 8 / -1;
-}
-
-.dashboardWidget[data-widget-id="snapshot-tape"] {
-  grid-column: 4 / -1;
 }
 
 @media (min-width: 80rem) {
   .dashboard[data-has-snapshot="false"] .dashboardGrid {
     grid-template-rows: minmax(110px, auto) minmax(240px, auto) auto;
-  }
-
-  .dashboard[data-has-snapshot="false"] .dashboardWidget[data-widget-id="universe-management"],
-  .dashboard[data-has-snapshot="false"] .dashboardWidget[data-widget-id="membership-status"] {
-    grid-row: 1;
-  }
-
-  .dashboard[data-has-snapshot="false"] .dashboardWidget[data-widget-id="signal-state"] {
-    grid-row: 2;
-  }
-
-  .dashboard[data-has-snapshot="false"] .dashboardWidget[data-widget-id="policy-boundary"] {
-    grid-row: 3;
   }
 }
 
@@ -1794,52 +1705,13 @@
   }
 
   .dashboardWidget {
+    grid-column: var(--tablet-grid-column) / span var(--tablet-grid-column-span);
+    grid-row: var(--tablet-grid-row);
     order: var(--tablet-order);
   }
 
   .dashboardWidget[data-tablet-visible="false"] {
     display: none;
-  }
-
-  .dashboardWidget[data-widget-id="universe-management"],
-  .dashboardWidget[data-widget-id="membership-status"] {
-    grid-column: 1 / -1;
-    grid-row: auto;
-  }
-
-  .dashboardWidget[data-widget-id="ranked-signals"] {
-    grid-column: 1 / span 6;
-    grid-row: 3;
-  }
-
-  .dashboardWidget[data-widget-id="signal-profile"] {
-    grid-column: 7 / -1;
-    grid-row: 3;
-  }
-
-  .dashboardWidget[data-widget-id="signal-decomposition"] {
-    grid-column: 1 / -1;
-    grid-row: 4;
-  }
-
-  .dashboardWidget[data-widget-id="condition-matrix"] {
-    grid-column: 1 / span 6;
-    grid-row: 5;
-  }
-
-  .dashboardWidget[data-widget-id="snapshot-tape"] {
-    grid-column: 7 / -1;
-    grid-row: 5;
-  }
-
-  .dashboardWidget[data-widget-id="policy-boundary"] {
-    grid-column: 1 / -1;
-    grid-row: 6;
-  }
-
-  .dashboardWidget[data-widget-id="provenance"] {
-    grid-column: 1 / -1;
-    grid-row: 7;
   }
 
   .snapshotCells dd.snapshotStatuses {
@@ -1863,19 +1735,9 @@
     grid-template-rows: none;
   }
 
-  .dashboardWidget,
-  .dashboardWidget[data-widget-id="universe-management"],
-  .dashboardWidget[data-widget-id="membership-status"],
-  .dashboardWidget[data-widget-id="signal-state"],
-  .dashboardWidget[data-widget-id="policy-boundary"],
-  .dashboardWidget[data-widget-id="ranked-signals"],
-  .dashboardWidget[data-widget-id="signal-profile"],
-  .dashboardWidget[data-widget-id="signal-decomposition"],
-  .dashboardWidget[data-widget-id="condition-matrix"],
-  .dashboardWidget[data-widget-id="snapshot-tape"],
-  .dashboardWidget[data-widget-id="provenance"] {
-    grid-column: 1 / -1;
-    grid-row: auto;
+  .dashboardWidget {
+    grid-column: var(--mobile-grid-column) / span var(--mobile-grid-column-span);
+    grid-row: var(--mobile-grid-row);
     order: var(--mobile-order);
   }
 

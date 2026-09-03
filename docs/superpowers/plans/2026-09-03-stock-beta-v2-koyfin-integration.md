@@ -306,6 +306,59 @@ Wave 2의 WP-2와 WP-3는 생산 코드가 고정된 동일 integration base에�
 - **Required report:** 변경 파일은 `none`; brief 편차와 이유; 모든 검사 결과; 미해결/후속; 찾지
   못했거나 미검증한 항목. 없으면 `none`.
 
+### WP-6A — disable stale-signal race 보정
+
+- **Triggered by:** WP-4 high finding.
+- **Complexity:** hard. 여러 V2 latest refresh와 disable/pending-removal 상태의 시간 순서를 fail-closed로
+  조정해야 한다.
+- **Owned scope:** `apps/web/components/stock-beta/stock-beta-workspace.tsx`, 이 동시성 guard에 직접 필요한
+  새 Stock Beta production helper, 그리고 전용 deterministic unit test만.
+- **Required correction:** disable 성공 전에 시작된 latest refresh가 늦게 완료돼도 signals를 복구하지
+  못하게 epoch/abort 또는 동등한 latest-wins guard를 둔다. pending-disabled instrument가 포함된 응답은
+  표시하지 않는다. 정상 READY refresh, typed errors, pending-removal poll은 유지한다.
+- **Required test:** deferred promise의 완료 순서를 제어해 stale success와 stale failure 모두 현재 상태를
+  덮지 못함을 재현한다. source-text 순서 검사만으로 대체하지 않는다.
+- **Prohibited:** dashboard layout/E2E/API/DTO/backend 변경, V1 fallback, 외부 호출.
+- **Verification:** focused concurrency/lifecycle unit, full Web unit, typecheck, lint, production build.
+
+### WP-6B — registry-driven 실제 grid placement 보정
+
+- **Triggered by:** WP-4 medium finding.
+- **Complexity:** hard. breakpoint와 empty-state 배치를 central metadata로 옮기면서 고정 Koyfin 구조를
+  보존해야 한다.
+- **Owned scope:** dashboard의 `dashboard-layout.ts`, `stock-beta-dashboard.tsx`,
+  `dashboard.module.css`, 필요한 `shared/widget-types.ts`/validator/registry, 그리고 dashboard/widget
+  architecture unit tests만.
+- **Required correction:** desktop/tablet의 widget ID별 `grid-row/grid-column` CSS selector를 제거하고
+  row/column/span/visibility/order를 registry/layout metadata에서 CSS variables 또는 동등한 방식으로
+  렌더링한다. add/remove/reorder가 page JSX/CSS 수정 없이 실제 위치를 바꿔야 한다. populated desktop
+  1행 rank/profile/decomposition, 2행 matrix/tape, 그 아래 management와 empty management-first를 유지한다.
+- **Required test:** optional widget의 metadata 순서/위치를 바꾼 architecture를 실제 렌더해 style/placement가
+  바뀜을 검증한다. 설정 serialization 검사만으로 대체하지 않는다.
+- **Prohibited:** workspace lifecycle/E2E/API/DTO/backend/공통 shell 변경.
+- **Verification:** focused dashboard/architecture unit, full Web unit, typecheck, lint, production build.
+
+### WP-6C — exact six-digit invalid-input E2E
+
+- **Triggered by:** WP-4 low finding.
+- **Depends on:** accepted WP-6A/WP-6B.
+- **Complexity:** simple.
+- **Owned scope:** `apps/web/tests/e2e/stock-beta.spec.ts`와 꼭 필요한 경우에만
+  `apps/web/tests/e2e/support/stock-beta-fixture.mjs`.
+- **Required correction:** short, long, suffixed, non-digit 입력 각각에서 typed validation message를
+  확인하고 membership POST가 0회임을 browser request 관찰로 증명한다. 기존 16개 시나리오와
+  loopback-only guard를 보존한다.
+- **Verification:** typecheck, owned Biome, Playwright discovery, focused Stock Beta E2E 2회.
+
+### WP-7 — remediation 독립 재리뷰와 상향 시각 QA
+
+- **Depends on:** accepted WP-6A/WP-6B/WP-6C commit.
+- **Complexity:** hard review + intermediate QA.
+- WP-4 reviewer가 세 finding을 read-only로 재검증하고 `ACCEPT` 또는 잔여 finding을 보고한다.
+- 이전 WP-5 visual harness가 quoting으로 두 번 실패했으므로 최종 QA worker는 한 단계 높은 모델을
+  사용한다. lint/typecheck/unit/build/full provider-free E2E와 375/768/1280/1440/200%-equivalent를
+  재검증하고, internal scroll의 initial viewport와 management region을 각각 캡처한다.
+
 ## Coordinator gates
 
 ### 1. Pre-launch
