@@ -373,6 +373,7 @@ impl Harness {
                 api_server::http::state::OwnerBetaEquitySignalsMode::Disabled,
             stock_price_beta_artifact_root: h.artifact_root.clone(),
             owner_equity_v2_pins: None,
+            owner_equity_v2_api_artifact_root: None,
         };
         let state = ApiState::from_pools(
             cfg,
@@ -477,6 +478,17 @@ impl Harness {
         let mut cfg = (*self.state().cfg).clone();
         cfg.seoul_today = seoul_today;
         cfg.candidate_eod_ready = candidate_eod_ready;
+        self.restart_api_with_config(cfg).await;
+    }
+
+    /// Configure only the chart route's read-only V2 artifact root. Existing
+    /// V2 lifecycle and signal routes deliberately ignore this optional path.
+    pub async fn restart_api_with_owner_equity_v2_artifact_root(
+        &mut self,
+        root: Option<std::path::PathBuf>,
+    ) {
+        let mut cfg = (*self.state().cfg).clone();
+        cfg.owner_equity_v2_api_artifact_root = root;
         self.restart_api_with_config(cfg).await;
     }
 

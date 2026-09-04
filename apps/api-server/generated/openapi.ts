@@ -427,6 +427,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}/chart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}/chart */
+        get: operations["get__api_v1_research_owner_beta_equity_universe_v2_signals_instruments__instrument_id__chart"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/candidates/feed/latest": {
         parameters: {
             query?: never;
@@ -1284,7 +1301,7 @@ export interface components {
             error: components["schemas"]["Error"];
         };
         /** @enum {string} */
-        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
+        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_CHART_UNAVAILABLE" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
         Page: {
             items: Record<string, never>[];
             /** @description opaque signed cursor; null when the last page */
@@ -1699,6 +1716,47 @@ export interface components {
         OwnerEquityV2SignalDetail: {
             snapshot: components["schemas"]["OwnerEquityV2Snapshot"];
             signal: components["schemas"]["OwnerEquityV2Signal"];
+        };
+        /** @enum {string} */
+        OwnerEquityV2ChartRange: "1m" | "3m" | "6m" | "1y";
+        /** @enum {string} */
+        OwnerEquityV2ChartFreshness: "CURRENT" | "STALE" | "UNVERIFIABLE";
+        /** @enum {string} */
+        OwnerEquityV2ChartPriceSemantics: "ORIGINAL_UNADJUSTED";
+        OwnerEquityV2ChartLatest: {
+            /** @example 2026-01-31 */
+            session_date: string;
+            close: number;
+            change: number;
+            change_rate: number;
+            volume: number;
+        };
+        OwnerEquityV2ChartBar: {
+            /** @example 2026-01-31 */
+            session_date: string;
+            open: number;
+            high: number;
+            low: number;
+            close: number;
+            volume: number;
+            sma_20: number | null;
+            sma_60: number | null;
+        };
+        OwnerEquityV2Chart: {
+            /** Format: uuid */
+            snapshot_id: string;
+            instrument_id: string;
+            generation: number;
+            range: components["schemas"]["OwnerEquityV2ChartRange"];
+            /** @example 2026-01-31 */
+            as_of: string;
+            freshness: components["schemas"]["OwnerEquityV2ChartFreshness"];
+            /** Format: date */
+            expected_as_of: string | null;
+            price_semantics: components["schemas"]["OwnerEquityV2ChartPriceSemantics"];
+            latest: components["schemas"]["OwnerEquityV2ChartLatest"];
+            bars: components["schemas"]["OwnerEquityV2ChartBar"][];
+            warnings: ("NOT_REALTIME" | "CORPORATE_ACTIONS_NOT_ADJUSTED" | "RESEARCH_ONLY")[];
         };
         OwnerEquityV2ScreenBody: {
             instrument_ids?: string[] | null;
@@ -3401,6 +3459,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OwnerEquityV2SignalDetail"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_research_owner_beta_equity_universe_v2_signals_instruments__instrument_id__chart: {
+        parameters: {
+            query: {
+                snapshot_id: string;
+                range: components["schemas"]["OwnerEquityV2ChartRange"];
+            };
+            header?: never;
+            path: {
+                instrument_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Snapshot-pinned owner equity EOD chart from a verified admitted artifact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerEquityV2Chart"];
                 };
             };
             400: components["responses"]["Error400"];

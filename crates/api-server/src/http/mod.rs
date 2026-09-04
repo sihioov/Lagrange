@@ -351,6 +351,10 @@ pub fn api_router(state: ApiState) -> Router {
             "/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}",
             get(owner_equity_v2::signal_detail),
         )
+        .route(
+            "/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}/chart",
+            get(owner_equity_v2::chart),
+        )
         // common individual-stock research (separate from ETF recommendations)
         .route("/candidates/feed/latest", get(candidates::latest_feed))
         .route("/candidates/feed/{date}", get(candidates::feed_on_date))

@@ -474,6 +474,7 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
                 api_server::http::state::OwnerBetaEquitySignalsMode::Disabled,
             stock_price_beta_artifact_root: repo_root.join("artifacts"),
             owner_equity_v2_pins: None,
+            owner_equity_v2_api_artifact_root: None,
         },
         app_pool,
         admin_pool,

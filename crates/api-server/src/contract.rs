@@ -266,6 +266,11 @@ pub const ERROR_CODES: &[ErrorCodeDef] = &[
         "owner equity evidence or snapshot failed verification",
     ),
     ErrorCodeDef::new(
+        "OWNER_EQUITY_CHART_UNAVAILABLE",
+        StatusCode::SERVICE_UNAVAILABLE,
+        "owner equity chart artifact is unavailable",
+    ),
+    ErrorCodeDef::new(
         "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE",
         StatusCode::SERVICE_UNAVAILABLE,
         "no admitted owner equity snapshot is available",
@@ -1341,6 +1346,17 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
     route(
         "GET",
         "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}",
+        Phase::Current,
+        false,
+        false,
+        false,
+        true,
+        None,
+        false,
+    ),
+    route(
+        "GET",
+        "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}/chart",
         Phase::Current,
         false,
         false,

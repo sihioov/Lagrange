@@ -156,6 +156,9 @@ pub struct ApiConfig {
     pub stock_price_beta_artifact_root: std::path::PathBuf,
     /// Missing pins disable V2 mutations without changing any V1 behavior.
     pub owner_equity_v2_pins: Option<OwnerEquityV2RuntimePins>,
+    /// Optional, read-only root for V2 admitted candidate artifacts. Its
+    /// absence deliberately disables only the chart read route.
+    pub owner_equity_v2_api_artifact_root: Option<std::path::PathBuf>,
 }
 
 pub fn system_seoul_today() -> chrono::NaiveDate {
@@ -183,6 +186,9 @@ pub struct ApiState {
     /// Bounds concurrent filesystem approval reads. Approval is intentionally
     /// uncached and must run before each enqueue/replay transaction.
     pub(crate) owner_beta_approval: Arc<Semaphore>,
+    /// Bounds independent V2 candidate artifact verification. The chart
+    /// handler never performs blocking filesystem I/O on an async worker.
+    pub(crate) owner_equity_v2_artifact: Arc<Semaphore>,
     actor_pools: Arc<Mutex<HashMap<String, sqlx::PgPool>>>,
 }
 
@@ -265,6 +271,7 @@ impl ApiState {
                 owner_beta_equity_signals,
                 stock_price_beta_artifact_root: std::path::PathBuf::from("/unused"),
                 owner_equity_v2_pins: None,
+                owner_equity_v2_api_artifact_root: None,
             }),
             app_pool: pool.clone(),
             admin_pool: pool.clone(),
@@ -272,6 +279,7 @@ impl ApiState {
             entitlements: Arc::new(EntitlementService::new(Vec::new())),
             idempotency: Arc::new(InMemoryIdempotencyStore::default()),
             owner_beta_approval: Arc::new(Semaphore::new(1)),
+            owner_equity_v2_artifact: Arc::new(Semaphore::new(1)),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -293,6 +301,7 @@ impl ApiState {
             entitlements: Arc::new(EntitlementService::new(entitlements)),
             idempotency: Arc::new(InMemoryIdempotencyStore::default()),
             owner_beta_approval: Arc::new(Semaphore::new(1)),
+            owner_equity_v2_artifact: Arc::new(Semaphore::new(1)),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
         })
     }

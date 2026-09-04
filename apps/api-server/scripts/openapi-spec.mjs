@@ -109,6 +109,11 @@ const ROUTES = [
     owner: true,
     ownerEquityV2: true,
   }],
+  ["GET", "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}/chart", {
+    owner: true,
+    ownerEquityV2: true,
+    ownerEquityV2Chart: true,
+  }],
   // common individual-stock research (separate from ETF recommendations)
   ["GET", "/api/v1/candidates/feed/latest", { entitlement: "candidate" }],
   ["GET", "/api/v1/candidates/feed/{date}", { entitlement: "candidate" }],
@@ -203,6 +208,7 @@ const ERROR_CODES = [
   ["OWNER_EQUITY_INVALID_STATE", 409],
   ["OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE", 503],
   ["OWNER_EQUITY_INTEGRITY_FAILED", 503],
+  ["OWNER_EQUITY_CHART_UNAVAILABLE", 503],
   ["OWNER_EQUITY_SNAPSHOT_UNAVAILABLE", 503],
   ["REBALANCE_PREVIEW_CAPACITY_EXCEEDED", 429],
   ["REBALANCE_PREVIEW_BINDING_REQUIRED", 409],
@@ -291,6 +297,8 @@ function operation(route) {
           ? "Owner role; approved sealed historical price-only artifact"
           : flags.ownerBetaEquitySignals
           ? "Owner role; sealed fixed-equity price/volume research"
+          : flags.ownerEquityV2Chart
+          ? "Owner role; exact published V2 snapshot and verified read-only candidate artifact"
           : flags.ownerEquityV2
           ? "Owner role; actor-scoped owner-managed equity universe V2"
           : flags.ownerBetaPrice
@@ -360,6 +368,10 @@ function operation(route) {
     op.parameters.push(param("cursor", "query", { type: "string" }, false));
     op.parameters.push(param("limit", "query", { type: "integer", minimum: 1, maximum: 100 }, false));
   }
+  if (flags.ownerEquityV2Chart) {
+    op.parameters.push(param("snapshot_id", "query", { type: "string", format: "uuid" }, true));
+    op.parameters.push(param("range", "query", { $ref: "#/components/schemas/OwnerEquityV2ChartRange" }, true));
+  }
 
   if ((mutating && flags.noBody !== true) || flags.body === true) {
     op.requestBody = {
@@ -413,6 +425,9 @@ function successResponsesFor(method, path) {
   }
   if (path === "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}" && method === "get") {
     return { "200": json("Owner equity signal detail from the latest admitted snapshot", "#/components/schemas/OwnerEquityV2SignalDetail") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}/chart" && method === "get") {
+    return { "200": json("Snapshot-pinned owner equity EOD chart from a verified admitted artifact", "#/components/schemas/OwnerEquityV2Chart") };
   }
   if (path === "/api/v1/recommendations/owner-beta/price-only/runs" && method === "get") {
     return { "200": json("Owner-beta price-only recommendation history", "#/components/schemas/OwnerBetaPriceOnlyReadPage") };
@@ -519,6 +534,18 @@ function errorCodesFor(route) {
       codes.push("RESOURCE_NOT_FOUND");
     }
     return codes;
+  }
+  if (flags.ownerEquityV2Chart) {
+    return [
+      "SESSION_UNKNOWN",
+      "SESSION_EXPIRED",
+      "FORBIDDEN",
+      "INVALID_PARAMETER",
+      "RESOURCE_NOT_FOUND",
+      "OWNER_EQUITY_CHART_UNAVAILABLE",
+      "OWNER_EQUITY_INTEGRITY_FAILED",
+      "INTERNAL",
+    ];
   }
   if (flags.ownerEquityV2) {
     const codes = [
@@ -1373,6 +1400,79 @@ const SCHEMAS = {
     properties: {
       snapshot: { $ref: "#/components/schemas/OwnerEquityV2Snapshot" },
       signal: { $ref: "#/components/schemas/OwnerEquityV2Signal" },
+    },
+  },
+  OwnerEquityV2ChartRange: {
+    type: "string",
+    enum: ["1m", "3m", "6m", "1y"],
+  },
+  OwnerEquityV2ChartFreshness: {
+    type: "string",
+    enum: ["CURRENT", "STALE", "UNVERIFIABLE"],
+  },
+  OwnerEquityV2ChartPriceSemantics: {
+    type: "string",
+    enum: ["ORIGINAL_UNADJUSTED"],
+  },
+  OwnerEquityV2ChartLatest: {
+    type: "object",
+    required: ["session_date", "close", "change", "change_rate", "volume"],
+    additionalProperties: false,
+    properties: {
+      session_date: dateStr,
+      close: { type: "integer", minimum: 1 },
+      change: { type: "integer" },
+      change_rate: { type: "number" },
+      volume: { type: "integer", minimum: 0 },
+    },
+  },
+  OwnerEquityV2ChartBar: {
+    type: "object",
+    required: ["session_date", "open", "high", "low", "close", "volume", "sma_20", "sma_60"],
+    additionalProperties: false,
+    properties: {
+      session_date: dateStr,
+      open: { type: "integer", minimum: 1 },
+      high: { type: "integer", minimum: 1 },
+      low: { type: "integer", minimum: 1 },
+      close: { type: "integer", minimum: 1 },
+      volume: { type: "integer", minimum: 0 },
+      sma_20: { type: ["number", "null"] },
+      sma_60: { type: ["number", "null"] },
+    },
+  },
+  OwnerEquityV2Chart: {
+    type: "object",
+    required: [
+      "snapshot_id", "instrument_id", "generation", "range", "as_of",
+      "freshness", "expected_as_of", "price_semantics", "latest", "bars", "warnings",
+    ],
+    additionalProperties: false,
+    properties: {
+      snapshot_id: uuid,
+      instrument_id: { type: "string", pattern: "^[0-9]{6}\\.KRX$" },
+      generation: { type: "integer", minimum: 1 },
+      range: { $ref: "#/components/schemas/OwnerEquityV2ChartRange" },
+      as_of: dateStr,
+      freshness: { $ref: "#/components/schemas/OwnerEquityV2ChartFreshness" },
+      expected_as_of: { type: ["string", "null"], format: "date" },
+      price_semantics: { $ref: "#/components/schemas/OwnerEquityV2ChartPriceSemantics" },
+      latest: { $ref: "#/components/schemas/OwnerEquityV2ChartLatest" },
+      bars: {
+        type: "array",
+        minItems: 1,
+        maxItems: 261,
+        items: { $ref: "#/components/schemas/OwnerEquityV2ChartBar" },
+      },
+      warnings: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: {
+          type: "string",
+          enum: ["NOT_REALTIME", "CORPORATE_ACTIONS_NOT_ADJUSTED", "RESEARCH_ONLY"],
+        },
+      },
     },
   },
   OwnerEquityV2ScreenBody: {
