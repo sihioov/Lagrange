@@ -1087,6 +1087,110 @@
   overflow: auto;
 }
 
+.priceTab {
+  display: grid;
+  flex: 1;
+  grid-template-rows: auto auto auto minmax(12rem, 1fr);
+  gap: 0.375rem;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
+.latestPriceStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: var(--stock-beta-border);
+}
+
+.latestPriceStrip > div {
+  display: grid;
+  gap: 0.125rem;
+  min-inline-size: 0;
+  padding: 0.3125rem 0.375rem;
+  background: var(--stock-beta-panel-muted);
+}
+
+.latestPriceStrip dt,
+.eodStatus,
+.chartRangeControl,
+.chartState,
+.chartWarning {
+  color: var(--stock-beta-muted);
+  font: 0.5625rem var(--font-display);
+  letter-spacing: 0.04em;
+}
+
+.latestPriceStrip dd {
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--stock-beta-text);
+  font: 0.6875rem var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+.latestPriceStrip [data-direction="positive"] dd {
+  color: var(--stock-beta-accent);
+}
+.latestPriceStrip [data-direction="negative"] dd {
+  color: var(--stock-beta-negative);
+}
+.latestPriceStrip dd small {
+  display: block;
+  color: var(--stock-beta-muted);
+  font-size: 0.5625rem;
+}
+
+.eodStatus,
+.chartState,
+.chartWarning {
+  margin: 0;
+  line-height: 1.4;
+}
+.eodStatus strong {
+  color: var(--stock-beta-secondary);
+}
+.chartWarning {
+  color: var(--stock-beta-warning);
+}
+
+.chartRangeControl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.chartRangeButton {
+  min-block-size: 2.75rem;
+  min-inline-size: 2.75rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--stock-beta-border);
+  border-radius: 2px;
+  background: var(--stock-beta-panel-muted);
+  color: var(--stock-beta-secondary);
+  font: 600 0.625rem var(--font-display);
+  cursor: pointer;
+}
+
+.chartRangeButton[aria-pressed="true"] {
+  border-color: var(--stock-beta-accent);
+  color: var(--stock-beta-accent);
+}
+.chartRangeButton:focus-visible {
+  outline: 2px solid var(--stock-beta-accent);
+  outline-offset: 1px;
+}
+.chartUpdating {
+  margin-inline-start: auto;
+  color: var(--stock-beta-accent);
+}
+.priceChart {
+  min-block-size: 12rem;
+  min-inline-size: 0;
+}
+
 .profilePlot {
   display: flex;
   flex: 1;
@@ -1188,6 +1292,12 @@
 .exactMetric small {
   color: var(--stock-beta-muted);
   font-size: 0.5625rem;
+}
+
+.latestPriceStrip dd .exactMetric {
+  justify-items: start;
+  min-inline-size: 0;
+  text-align: start;
 }
 
 .activityMetrics,
@@ -1844,6 +1954,10 @@
   .activityMetrics,
   .profileMetricStrip {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .latestPriceStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .plotRow {

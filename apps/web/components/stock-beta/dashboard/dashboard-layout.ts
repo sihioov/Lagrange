@@ -279,6 +279,7 @@ const mobile = [
 ] as const;
 
 export const stockBetaDashboardLayout = {
+  // Desktop preserves the ranked signals / chart profile / decomposition three-column analysis row.
   desktop,
   tablet,
   mobile,

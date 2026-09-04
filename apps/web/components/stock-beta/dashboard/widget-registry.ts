@@ -39,6 +39,7 @@ export const stockBetaDashboardDefinitions = [
   widget("membership-status", MembershipStatusWidget, 1, "medium"),
   widget("signal-state", SignalStateWidget, 2, "full", false),
   widget("ranked-signals", RankedSignalsWidget, 3, "small"),
+  // The profile widget is a chart-capable primary analysis surface.
   widget("signal-profile", SignalPreviewWidget, 4, "large"),
   widget("signal-decomposition", SignalDecompositionWidget, 5, "small"),
   widget("condition-matrix", ConditionMatrixWidget, 6, "small"),

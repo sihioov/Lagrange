@@ -32,6 +32,19 @@ fetch once, parse with the existing strict equity-signal contract, and pass a ty
 each registered widget. Widgets render those values; they do not call `fetch`, product clients, or
 route handlers.
 
+## Extend the selected profile tabs
+
+`dashboard/profile-tab-registry.ts` is the sole ordered registry for the selected profile tabs.
+Add, remove, or reorder an entry there; `SignalPreviewWidget` renders the registry without a
+tab-specific control-flow branch. A tab renderer receives the selected V2 row and the already-loaded
+dashboard view model only. The Price renderer may use `chartData`, `chartState`, `chartRange`, and
+`onChartRangeChange`, plus the presentation-only `PriceChart`; it must not import a fetcher, URL
+builder, product/API client, Zod schema, or `AbortController`.
+
+Price data is the latest completed EOD close, not a real-time quote. It is explicitly original /
+unadjusted and must always retain the corporate-action caveat. Integrity and unavailable/error
+states fail closed: do not leave a previous chart or inferred price visible.
+
 ## Add an optional widget
 
 1. Add a widget component under `dashboard/widgets` or `detail/widgets`. Accept only

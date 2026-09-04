@@ -1,27 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { type CSSProperties, useState } from "react";
+import { useState } from "react";
 import { StatusPill } from "@/components/states/status-pill";
 import { formatStockBetaNumber, formatStockBetaPercent } from "../../shared/formatters";
 import { WidgetFrame } from "../../shared/widget-frame";
 import styles from "../dashboard.module.css";
 import { stockBetaConditionLabel, stockBetaConditionTone } from "../labels";
+import { type StockBetaProfileTabId, stockBetaProfileTabs } from "../profile-tab-registry";
 import { useStockBetaSelection } from "../selection-provider";
 import type { StockBetaDashboardWidgetViewModel } from "../types";
-
-const PROFILE_TABS = ["returns", "volatility", "activity"] as const;
-type ProfileTab = (typeof PROFILE_TABS)[number];
-
-function exactPercent(value: number, locale: StockBetaDashboardWidgetViewModel["locale"]) {
-  const presentation = formatStockBetaPercent(value, locale);
-  return (
-    <span className={styles["exactMetric"]} data-raw-value={String(presentation.rawValue)}>
-      <data value={String(presentation.rawValue)}>{presentation.text}</data>
-      <small>{String(presentation.rawValue)}</small>
-    </span>
-  );
-}
 
 function exactNumber(value: number, locale: StockBetaDashboardWidgetViewModel["locale"]) {
   const presentation = formatStockBetaNumber(value, locale);
@@ -33,52 +21,13 @@ function exactNumber(value: number, locale: StockBetaDashboardWidgetViewModel["l
   );
 }
 
-function tabLabel(tab: ProfileTab, t: StockBetaDashboardWidgetViewModel["copy"]): string {
-  switch (tab) {
-    case "returns":
-      return t.returnsTabLabel;
-    case "volatility":
-      return t.volatilityTabLabel;
-    case "activity":
-      return t.activityTabLabel;
-  }
-}
-
-function ProfilePlot({
-  locale,
-  metrics,
-  title,
-  zeroAxisLabel,
-}: {
-  readonly locale: StockBetaDashboardWidgetViewModel["locale"];
-  readonly metrics: readonly { readonly label: string; readonly value: number }[];
-  readonly title: string;
-  readonly zeroAxisLabel: string;
-}) {
-  const maxAbs = Math.max(...metrics.map((metric) => Math.abs(metric.value)), 0);
+function exactPercent(value: number, locale: StockBetaDashboardWidgetViewModel["locale"]) {
+  const presentation = formatStockBetaPercent(value, locale);
   return (
-    <figure aria-label={title} className={styles["profilePlot"]}>
-      <div className={styles["plotAxisLabel"]}>
-        <span>{title}</span>
-        <small>{zeroAxisLabel}</small>
-      </div>
-      <div className={styles["plotRows"]}>
-        {metrics.map((metric) => {
-          const barSize = maxAbs === 0 ? 0 : (Math.abs(metric.value) / maxAbs) * 42;
-          const direction = metric.value < 0 ? "negative" : metric.value > 0 ? "positive" : "zero";
-          const style = { "--bar-size": `${barSize}%` } as CSSProperties;
-          return (
-            <div className={styles["plotRow"]} key={metric.label}>
-              <span className={styles["plotLabel"]}>{metric.label}</span>
-              <span aria-hidden="true" className={styles["plotTrack"]}>
-                <span className={styles["plotBar"]} data-direction={direction} style={style} />
-              </span>
-              {exactPercent(metric.value, locale)}
-            </div>
-          );
-        })}
-      </div>
-    </figure>
+    <span className={styles["exactMetric"]} data-raw-value={String(presentation.rawValue)}>
+      <data value={String(presentation.rawValue)}>{presentation.text}</data>
+      <small>{String(presentation.rawValue)}</small>
+    </span>
   );
 }
 
@@ -89,7 +38,7 @@ export function SignalPreviewWidget({
 }) {
   const { copy: t, locale } = viewModel;
   const { selectedRow } = useStockBetaSelection();
-  const [tab, setTab] = useState<ProfileTab>("returns");
+  const [tab, setTab] = useState<StockBetaProfileTabId>("price");
 
   if (selectedRow === undefined) {
     return (
@@ -104,20 +53,9 @@ export function SignalPreviewWidget({
 
   const tabId = `stock-beta-profile-tab-${selectedRow.instrument_id}`;
   const panelId = `stock-beta-profile-panel-${selectedRow.instrument_id}`;
-  const metrics =
-    tab === "returns"
-      ? [
-          { label: t.return20Label, value: selectedRow.return_20 },
-          { label: t.return60Label, value: selectedRow.return_60 },
-          { label: t.return120Label, value: selectedRow.return_120 },
-        ]
-      : tab === "volatility"
-        ? [
-            { label: t.volatility20Label, value: selectedRow.volatility_20 },
-            { label: t.volatility60Label, value: selectedRow.volatility_60 },
-            { label: t.volatility120Label, value: selectedRow.volatility_120 },
-          ]
-        : [];
+  const activeTab = stockBetaProfileTabs.find((item) => item.id === tab) ?? stockBetaProfileTabs[0];
+  if (activeTab === undefined) return null;
+  const ActiveTab = activeTab.renderer;
 
   return (
     <WidgetFrame
@@ -158,20 +96,20 @@ export function SignalPreviewWidget({
           </dl>
         </header>
         <div className={styles["profileTabs"]} role="tablist" aria-label={t.signalMetricsHeading}>
-          {PROFILE_TABS.map((item) => {
-            const selected = tab === item;
+          {stockBetaProfileTabs.map((item) => {
+            const selected = tab === item.id;
             return (
               <button
                 aria-controls={panelId}
                 aria-selected={selected}
                 className={styles["profileTab"]}
-                id={`${tabId}-${item}`}
-                key={item}
-                onClick={() => setTab(item)}
+                id={`${tabId}-${item.id}`}
+                key={item.id}
+                onClick={() => setTab(item.id)}
                 role="tab"
                 type="button"
               >
-                {tabLabel(item, t)}
+                {item.label(t)}
               </button>
             );
           })}
@@ -183,29 +121,7 @@ export function SignalPreviewWidget({
           id={panelId}
           role="tabpanel"
         >
-          {tab === "activity" ? (
-            <dl className={styles["activityMetrics"]}>
-              <div>
-                <dt>{t.averageVolumeLabel}</dt>
-                <dd>{exactNumber(selectedRow.average_volume_20, locale)}</dd>
-              </div>
-              <div>
-                <dt>{t.volumeRatioLabel}</dt>
-                <dd>{exactNumber(selectedRow.volume_ratio_20_60, locale)}</dd>
-              </div>
-              <div>
-                <dt>{t.activityProxyLabel}</dt>
-                <dd>{exactNumber(selectedRow.average_trading_value_20, locale)}</dd>
-              </div>
-            </dl>
-          ) : (
-            <ProfilePlot
-              locale={locale}
-              metrics={metrics}
-              title={tabLabel(tab, t)}
-              zeroAxisLabel={t.zeroAxisLabel}
-            />
-          )}
+          <ActiveTab selectedRow={selectedRow} viewModel={viewModel} />
         </div>
         <dl className={styles["profileMetricStrip"]} data-testid="stock-beta-signal-metric-strip">
           <div>
