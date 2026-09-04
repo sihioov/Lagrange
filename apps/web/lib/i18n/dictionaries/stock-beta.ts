@@ -25,6 +25,7 @@ export type StockBetaDictionary = {
   readonly changeLabel: string;
   readonly chartIntegrityMessage: string;
   readonly chartKeyboardInstructions: string;
+  readonly chartLoadingMessage: string;
   readonly chartNetworkMessage: string;
   readonly chartNoDataLabel: string;
   readonly chartNotReadyMessage: string;
@@ -78,6 +79,7 @@ export type StockBetaDictionary = {
   readonly invalidInstrumentCode: string;
   readonly lastSessionLabel: string;
   readonly latestCloseLabel: string;
+  readonly lowLabel: string;
   readonly lifecycleLabel: string;
   readonly lifecycleBackfilling: string;
   readonly lifecycleDisabled: string;
@@ -218,6 +220,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     chartIntegrityMessage: "Chart integrity could not be verified. No price data is shown.",
     chartKeyboardInstructions:
       "Focus the chart, then use ArrowLeft or ArrowRight to move one observation, or Home and End to jump.",
+    chartLoadingMessage: "Loading EOD chart data…",
     chartNetworkMessage: "The EOD chart could not be loaded. No previous price data is shown.",
     chartNoDataLabel: "No valid EOD price observations are available.",
     chartNotReadyMessage: "EOD chart data is not ready for this selected instrument.",
@@ -279,6 +282,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     invalidInstrumentCode: "Enter exactly six ASCII digits.",
     lastSessionLabel: "Last session",
     latestCloseLabel: "Latest EOD close",
+    lowLabel: "Low",
     lifecycleLabel: "Lifecycle",
     lifecycleBackfilling: "Backfilling",
     lifecycleDisabled: "Disabled",
@@ -421,6 +425,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     chartIntegrityMessage: "차트 무결성을 확인할 수 없습니다. 가격 데이터는 표시하지 않습니다.",
     chartKeyboardInstructions:
       "차트에 초점을 둔 뒤 왼쪽/오른쪽 화살표로 관측치를 이동하거나 Home/End로 처음과 끝으로 이동하세요.",
+    chartLoadingMessage: "EOD 차트 데이터를 불러오는 중…",
     chartNetworkMessage: "EOD 차트를 불러올 수 없습니다. 이전 가격 데이터는 표시하지 않습니다.",
     chartNoDataLabel: "유효한 EOD 가격 관측치가 없습니다.",
     chartNotReadyMessage: "선택한 종목의 EOD 차트 데이터가 아직 준비되지 않았습니다.",
@@ -479,6 +484,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     invalidInstrumentCode: "ASCII 숫자 6자리를 정확히 입력하세요.",
     lastSessionLabel: "마지막 세션",
     latestCloseLabel: "최신 EOD 종가",
+    lowLabel: "저가",
     lifecycleLabel: "수명주기",
     lifecycleBackfilling: "백필 중",
     lifecycleDisabled: "비활성",

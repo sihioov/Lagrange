@@ -105,6 +105,8 @@ function PriceTab({ selectedRow, viewModel }: ProfileTabProps) {
     return createElement(ChartState, { message: t.chartPreparingMessage });
   if (chartState?.kind === "error")
     return createElement(ChartState, { alert: true, message: t.chartNetworkMessage });
+  if (chartState?.kind === "loading" && chart?.instrument_id !== selectedRow.instrument_id)
+    return createElement(ChartState, { message: t.chartLoadingMessage });
   if (chart?.instrument_id !== selectedRow.instrument_id)
     return createElement(ChartState, { message: t.chartNotReadyMessage });
   const isUpdating = chartState?.kind === "loading";
@@ -115,6 +117,7 @@ function PriceTab({ selectedRow, viewModel }: ProfileTabProps) {
     downLabel: t.downLabel,
     highLabel: t.highLabel,
     instructions: t.chartKeyboardInstructions,
+    lowLabel: t.lowLabel,
     noDataLabel: t.chartNoDataLabel,
     openLabel: t.openLabel,
     priceAxisLabel: t.priceAxisLabel,
