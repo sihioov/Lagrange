@@ -1,0 +1,404 @@
+.chartRoot {
+  --chart-up: var(--stock-beta-positive, #20b486);
+  --chart-down: var(--stock-beta-negative, #ec5f67);
+  --chart-flat: var(--stock-beta-muted, #7c8792);
+  --chart-accent: var(--stock-beta-accent, #35a8ff);
+  --chart-panel: var(--stock-beta-panel, var(--surface-panel, #11161b));
+  --chart-muted: var(--stock-beta-muted, var(--text-tertiary, #7c8792));
+  --chart-secondary: var(--stock-beta-secondary, var(--text-secondary, #9aa6b2));
+  --chart-text: var(--stock-beta-text, var(--text-primary, #dce3e9));
+  --chart-border: var(--stock-beta-border, var(--border-subtle, #252c33));
+  display: grid;
+  gap: 0.5rem;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  color: var(--chart-text);
+  font-size: 0.6875rem;
+}
+
+.chartSurface {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--chart-border);
+  border-radius: var(--stock-beta-control-radius, var(--radius-control, 4px));
+  background: var(--chart-panel);
+  color: inherit;
+  cursor: crosshair;
+  font: inherit;
+  text-align: start;
+  touch-action: none;
+}
+
+.chartSurface:focus-visible {
+  outline: 2px solid var(--chart-accent);
+  outline-offset: 2px;
+}
+
+.chartSvg {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  block-size: auto;
+  aspect-ratio: 960 / 440;
+  overflow: hidden;
+  color: var(--chart-text);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.gridLine {
+  stroke: color-mix(in srgb, var(--chart-border) 74%, transparent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.volumeDivider {
+  stroke: var(--chart-border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.axisLabel,
+.axisTitle {
+  fill: var(--chart-secondary);
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.axisTitle {
+  fill: var(--chart-muted);
+  font-family: var(--font-display, sans-serif);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.candleWick {
+  stroke: var(--chart-secondary);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.candleBody {
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.candleBody[data-direction="up"] {
+  fill: var(--chart-up);
+  stroke: var(--chart-up);
+}
+
+.candleBody[data-direction="down"] {
+  fill: var(--chart-panel);
+  stroke: var(--chart-down);
+  stroke-width: 1.5;
+}
+
+.candleBody[data-direction="flat"] {
+  fill: var(--chart-flat);
+  stroke: var(--chart-flat);
+  stroke-dasharray: 2 1;
+}
+
+.candleSelected .candleWick {
+  stroke: var(--chart-accent);
+  stroke-width: 1.5;
+}
+
+.candleSelected .candleBody {
+  stroke-width: 2;
+}
+
+.volumeBar {
+  opacity: 0.72;
+  vector-effect: non-scaling-stroke;
+}
+
+.volumeBar[data-direction="up"] {
+  fill: var(--chart-up);
+}
+
+.volumeBar[data-direction="down"] {
+  fill: var(--chart-down);
+  stroke: var(--chart-down);
+  stroke-dasharray: 2 1;
+}
+
+.volumeBar[data-direction="flat"] {
+  fill: var(--chart-flat);
+}
+
+.sma20,
+.sma60 {
+  stroke-width: 1.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.sma20 {
+  stroke: var(--chart-accent);
+}
+
+.sma60 {
+  stroke: var(--chart-secondary);
+  stroke-dasharray: 5 3;
+}
+
+.crosshair {
+  pointer-events: none;
+}
+
+.crosshair line {
+  stroke: color-mix(in srgb, var(--chart-accent) 72%, transparent);
+  stroke-dasharray: 4 3;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.crosshair circle {
+  fill: var(--chart-accent);
+  stroke: var(--chart-panel);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.tooltip {
+  pointer-events: none;
+}
+
+.tooltipSurface {
+  fill: color-mix(in srgb, var(--chart-panel) 94%, var(--chart-accent));
+  stroke: var(--chart-accent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.tooltipText {
+  fill: var(--chart-text);
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary {
+  min-inline-size: 0;
+  padding: 0.4rem 0.5rem;
+  border-block-start: 1px solid var(--chart-border);
+  color: var(--chart-text);
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.summary[data-direction="up"] {
+  border-inline-start: 3px solid var(--chart-up);
+}
+
+.summary[data-direction="down"] {
+  border-inline-start: 3px dashed var(--chart-down);
+}
+
+.summary[data-direction="flat"] {
+  border-inline-start: 3px dotted var(--chart-flat);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.75rem;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  color: var(--chart-secondary);
+  font-size: 0.625rem;
+  line-height: 1.4;
+  list-style: none;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-block-size: 1.25rem;
+  white-space: nowrap;
+}
+
+.directionMarker {
+  display: inline-block;
+  min-inline-size: 0.75rem;
+  color: var(--chart-flat);
+  font-size: 0.75rem;
+  line-height: 1;
+  text-align: center;
+}
+
+.directionMarker[data-direction="up"] {
+  color: var(--chart-up);
+}
+
+.directionMarker[data-direction="down"] {
+  color: var(--chart-down);
+}
+
+.smaMarker {
+  display: inline-block;
+  inline-size: 0.9rem;
+  border-block-start: 2px solid var(--chart-accent);
+}
+
+.smaMarker[data-sma="60"] {
+  border-block-start-style: dashed;
+  border-block-start-color: var(--chart-secondary);
+}
+
+.emptyLabel {
+  fill: var(--chart-muted);
+  font-family: var(--font-display, sans-serif);
+  font-size: 14px;
+}
+
+.srOnly {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 32rem) {
+  .axisLabel {
+    font-size: 10px;
+  }
+
+  .axisTitle {
+    font-size: 9px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chartSvg,
+  .chartSvg * {
+    animation: none;
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .chartSurface {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .gridLine,
+  .volumeDivider,
+  .candleWick,
+  .candleBody,
+  .volumeBar,
+  .sma20,
+  .sma60 {
+    stroke: CanvasText;
+  }
+
+  .gridLine,
+  .volumeDivider {
+    opacity: 0.55;
+  }
+
+  .axisLabel,
+  .axisTitle,
+  .emptyLabel,
+  .tooltipText {
+    fill: CanvasText;
+  }
+
+  .candleBody[data-direction="up"],
+  .candleBody[data-direction="down"],
+  .candleBody[data-direction="flat"] {
+    fill: Canvas;
+    stroke: CanvasText;
+  }
+
+  .candleBody[data-direction="up"] {
+    stroke-width: 2;
+  }
+
+  .candleBody[data-direction="down"] {
+    stroke-dasharray: 4 2;
+  }
+
+  .candleBody[data-direction="flat"] {
+    stroke-dasharray: 1 2;
+  }
+
+  .volumeBar[data-direction="up"] {
+    fill: CanvasText;
+  }
+
+  .volumeBar[data-direction="down"] {
+    fill: Canvas;
+  }
+
+  .volumeBar[data-direction="flat"] {
+    fill: CanvasText;
+    opacity: 0.55;
+  }
+
+  .sma20,
+  .sma60 {
+    stroke: CanvasText;
+  }
+
+  .sma60 {
+    stroke-dasharray: 5 3;
+  }
+
+  .crosshair line,
+  .crosshair circle,
+  .tooltipSurface {
+    stroke: CanvasText;
+  }
+
+  .crosshair circle {
+    fill: CanvasText;
+  }
+
+  .tooltipSurface {
+    fill: Canvas;
+  }
+
+  .summary,
+  .legend {
+    color: CanvasText;
+  }
+
+  .summary[data-direction="up"],
+  .summary[data-direction="down"],
+  .summary[data-direction="flat"] {
+    border-inline-start-color: CanvasText;
+  }
+
+  .directionMarker,
+  .directionMarker[data-direction="up"],
+  .directionMarker[data-direction="down"],
+  .smaMarker,
+  .smaMarker[data-sma="60"] {
+    color: CanvasText;
+    border-block-start-color: CanvasText;
+  }
+}
