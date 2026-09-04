@@ -3,7 +3,7 @@ Native subagents: prohibited for worker packages
 
 # Stock Beta Koyfin형 EOD 시세·주가 차트 실행 계획
 
-작성일: 2026-09-04  
+작성일: 2026-09-04
 상태: 계획만 작성됨, 실행 미시작
 
 ## Goal and boundaries
