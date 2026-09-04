@@ -416,6 +416,9 @@ export type OwnerEquityV2LatestSignalsContract =
 export type OwnerEquityV2ScreenSignalsContract =
   components["schemas"]["OwnerEquityV2ScreenSignals"];
 export type OwnerEquityV2SignalDetailContract = components["schemas"]["OwnerEquityV2SignalDetail"];
+export type OwnerEquityV2ChartContract = components["schemas"]["OwnerEquityV2Chart"];
+export type OwnerEquityV2ChartBarContract = components["schemas"]["OwnerEquityV2ChartBar"];
+export type OwnerEquityV2ChartLatestContract = components["schemas"]["OwnerEquityV2ChartLatest"];
 export type OwnerEquityV2ScreenBodyContract = components["schemas"]["OwnerEquityV2ScreenBody"];
 
 export const OWNER_EQUITY_V2_MEMBERSHIPS_PATH =
@@ -426,6 +429,30 @@ export const OWNER_EQUITY_V2_SIGNALS_SCREEN_PATH =
   "/api/v1/research/owner-beta/equity-universe-v2/signals/screen" as const;
 export const OWNER_EQUITY_V2_SIGNALS_DETAIL_PATH =
   "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments" as const;
+
+export const OWNER_EQUITY_V2_CHART_RANGE_VALUES = ["1m", "3m", "6m", "1y"] as const;
+export const ownerEquityV2ChartRangeSchema = z.enum(OWNER_EQUITY_V2_CHART_RANGE_VALUES);
+export type OwnerEquityV2ChartRange = z.infer<typeof ownerEquityV2ChartRangeSchema>;
+
+export const OWNER_EQUITY_V2_CHART_FRESHNESS_VALUES = ["CURRENT", "STALE", "UNVERIFIABLE"] as const;
+export const ownerEquityV2ChartFreshnessSchema = z.enum(OWNER_EQUITY_V2_CHART_FRESHNESS_VALUES);
+export type OwnerEquityV2ChartFreshness = z.infer<typeof ownerEquityV2ChartFreshnessSchema>;
+
+export const OWNER_EQUITY_V2_CHART_PRICE_SEMANTICS_VALUES = ["ORIGINAL_UNADJUSTED"] as const;
+export const ownerEquityV2ChartPriceSemanticsSchema = z.enum(
+  OWNER_EQUITY_V2_CHART_PRICE_SEMANTICS_VALUES,
+);
+export type OwnerEquityV2ChartPriceSemantics = z.infer<
+  typeof ownerEquityV2ChartPriceSemanticsSchema
+>;
+
+export const OWNER_EQUITY_V2_CHART_WARNING_VALUES = [
+  "NOT_REALTIME",
+  "CORPORATE_ACTIONS_NOT_ADJUSTED",
+  "RESEARCH_ONLY",
+] as const;
+export const ownerEquityV2ChartWarningSchema = z.enum(OWNER_EQUITY_V2_CHART_WARNING_VALUES);
+export type OwnerEquityV2ChartWarning = z.infer<typeof ownerEquityV2ChartWarningSchema>;
 
 export const OWNER_EQUITY_V2_LIFECYCLE_VALUES = [
   "REQUESTED",
@@ -607,6 +634,185 @@ export const ownerEquityV2SignalDetailSchema = z
 
 export type OwnerEquityV2SignalDetailModel = z.infer<typeof ownerEquityV2SignalDetailSchema>;
 
+const ownerEquityV2ChartSafeIntegerSchema = z.number().int().safe();
+const ownerEquityV2ChartPriceSchema = ownerEquityV2ChartSafeIntegerSchema.min(1);
+const ownerEquityV2ChartVolumeSchema = ownerEquityV2ChartSafeIntegerSchema.nonnegative();
+
+const ownerEquityV2ChartLatestSchema = z
+  .object({
+    session_date: z.iso.date(),
+    close: ownerEquityV2ChartPriceSchema,
+    change: ownerEquityV2ChartSafeIntegerSchema,
+    change_rate: finiteNumberSchema,
+    volume: ownerEquityV2ChartVolumeSchema,
+  })
+  .strict();
+
+const ownerEquityV2ChartBarSchema = z
+  .object({
+    session_date: z.iso.date(),
+    open: ownerEquityV2ChartPriceSchema,
+    high: ownerEquityV2ChartPriceSchema,
+    low: ownerEquityV2ChartPriceSchema,
+    close: ownerEquityV2ChartPriceSchema,
+    volume: ownerEquityV2ChartVolumeSchema,
+    sma_20: finiteNumberSchema.nullable(),
+    sma_60: finiteNumberSchema.nullable(),
+  })
+  .strict()
+  .superRefine((bar, context) => {
+    if (bar.low > bar.open || bar.open > bar.high) {
+      context.addIssue({ code: "custom", message: "bar open must be within low and high" });
+    }
+    if (bar.low > bar.close || bar.close > bar.high) {
+      context.addIssue({ code: "custom", message: "bar close must be within low and high" });
+    }
+  });
+
+const ownerEquityV2ChartWarningsSchema = z
+  .array(ownerEquityV2ChartWarningSchema)
+  .length(OWNER_EQUITY_V2_CHART_WARNING_VALUES.length);
+
+export const ownerEquityV2ChartSchema = z
+  .object({
+    snapshot_id: z.uuid(),
+    instrument_id: instrumentIdSchema,
+    generation: ownerEquityV2ChartSafeIntegerSchema.positive(),
+    range: ownerEquityV2ChartRangeSchema,
+    as_of: z.iso.date(),
+    freshness: ownerEquityV2ChartFreshnessSchema,
+    expected_as_of: z.iso.date().nullable(),
+    price_semantics: ownerEquityV2ChartPriceSemanticsSchema,
+    latest: ownerEquityV2ChartLatestSchema,
+    bars: z
+      .array(ownerEquityV2ChartBarSchema)
+      .min(1)
+      .max(261)
+      .superRefine((bars, context) => {
+        for (let index = 1; index < bars.length; index += 1) {
+          const previous = bars[index - 1];
+          const current = bars[index];
+          if (
+            previous !== undefined &&
+            current !== undefined &&
+            current.session_date <= previous.session_date
+          ) {
+            context.addIssue({
+              code: "custom",
+              message: "chart bars must have unique ascending session dates",
+              path: [index, "session_date"],
+            });
+          }
+        }
+      }),
+    warnings: ownerEquityV2ChartWarningsSchema,
+  })
+  .strict()
+  .superRefine((chart, context) => {
+    const lastBar = chart.bars[chart.bars.length - 1];
+    if (lastBar === undefined) return;
+    if (lastBar.session_date !== chart.as_of) {
+      context.addIssue({
+        code: "custom",
+        message: "chart must include a bar for the snapshot as-of date",
+        path: ["bars", chart.bars.length - 1, "session_date"],
+      });
+    }
+    if (chart.latest.session_date !== chart.as_of) {
+      context.addIssue({
+        code: "custom",
+        message: "latest observation must use the snapshot as-of date",
+        path: ["latest", "session_date"],
+      });
+    }
+    if (chart.latest.close !== lastBar.close || chart.latest.volume !== lastBar.volume) {
+      context.addIssue({
+        code: "custom",
+        message: "latest observation must match the final chart bar",
+        path: ["latest"],
+      });
+    }
+  });
+
+export type OwnerEquityV2ChartModel = z.infer<typeof ownerEquityV2ChartSchema>;
+
+export type OwnerEquityV2ChartExpectation = {
+  readonly snapshotId: string;
+  readonly instrumentId: string;
+  readonly generation: number;
+  readonly range: OwnerEquityV2ChartRange;
+  readonly asOf: string;
+};
+
+export const OWNER_EQUITY_V2_CHART_FAILURE_CODES = [
+  "OWNER_EQUITY_CHART_UNAVAILABLE",
+  "OWNER_EQUITY_INTEGRITY_FAILED",
+] as const;
+export const ownerEquityV2ChartFailureCodeSchema = z.enum(OWNER_EQUITY_V2_CHART_FAILURE_CODES);
+export type OwnerEquityV2ChartFailureCode = z.infer<typeof ownerEquityV2ChartFailureCodeSchema>;
+
+export const ownerEquityV2ChartErrorEnvelopeSchema = z
+  .object({
+    error: z
+      .object({
+        code: ownerEquityV2ChartFailureCodeSchema,
+        message: z.string(),
+        request_id: z.string(),
+        details: z.record(z.string(), z.unknown()).exactOptional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export function isOwnerEquityV2ChartFailureCode(
+  code: string,
+): code is OwnerEquityV2ChartFailureCode {
+  return (OWNER_EQUITY_V2_CHART_FAILURE_CODES as readonly string[]).includes(code);
+}
+
+export class OwnerEquityV2ChartIntegrityError extends Error {
+  override readonly name = "OwnerEquityV2ChartIntegrityError";
+  readonly code = "OWNER_EQUITY_INTEGRITY_FAILED" as const;
+
+  constructor() {
+    super("Owner equity chart failed snapshot integrity validation");
+  }
+}
+
+export function ownerEquityV2ChartMatchesExpectation(
+  chart: OwnerEquityV2ChartModel,
+  expectation: OwnerEquityV2ChartExpectation,
+): boolean {
+  return (
+    chart.snapshot_id === expectation.snapshotId &&
+    chart.instrument_id === expectation.instrumentId &&
+    chart.generation === expectation.generation &&
+    chart.range === expectation.range &&
+    chart.as_of === expectation.asOf
+  );
+}
+
+export function assertOwnerEquityV2ChartMatchesExpectation(
+  chart: OwnerEquityV2ChartModel,
+  expectation: OwnerEquityV2ChartExpectation,
+): OwnerEquityV2ChartModel {
+  if (!ownerEquityV2ChartMatchesExpectation(chart, expectation)) {
+    throw new OwnerEquityV2ChartIntegrityError();
+  }
+  return chart;
+}
+
+export function ownerEquityV2ChartRequestMatches(
+  chart: OwnerEquityV2ChartModel,
+  request: Pick<OwnerEquityV2ChartExpectation, "snapshotId" | "instrumentId" | "range">,
+): boolean {
+  return (
+    chart.snapshot_id === request.snapshotId &&
+    chart.instrument_id === request.instrumentId &&
+    chart.range === request.range
+  );
+}
+
 const uniqueOwnerEquityV2InstrumentIdsSchema = z
   .array(instrumentIdSchema)
   .superRefine((ids, context) => {
@@ -646,4 +852,12 @@ export function ownerEquityV2DisablePath(membershipId: string): string {
 
 export function ownerEquityV2SignalDetailPath(instrumentId: string): string {
   return `${OWNER_EQUITY_V2_SIGNALS_DETAIL_PATH}/${encodeURIComponent(instrumentId)}`;
+}
+
+export function ownerEquityV2ChartPath(
+  instrumentId: string,
+  snapshotId: string,
+  range: OwnerEquityV2ChartRange,
+): string {
+  return `${OWNER_EQUITY_V2_SIGNALS_DETAIL_PATH}/${encodeURIComponent(instrumentId)}/chart?snapshot_id=${encodeURIComponent(snapshotId)}&range=${encodeURIComponent(range)}`;
 }

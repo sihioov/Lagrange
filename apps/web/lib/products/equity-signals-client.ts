@@ -2,11 +2,15 @@ import type { z } from "zod";
 import { type BrowserClientOptions, mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import type { ProductMutationPath } from "@/lib/api/contracts";
+import { ApiProblem } from "@/lib/api/response";
 import {
   OWNER_EQUITY_V2_MEMBERSHIPS_PATH,
   OWNER_EQUITY_V2_SIGNALS_LATEST_PATH,
   OWNER_EQUITY_V2_SIGNALS_SCREEN_PATH,
   type OwnerEquityV2AddBody,
+  OwnerEquityV2ChartIntegrityError,
+  type OwnerEquityV2ChartModel,
+  type OwnerEquityV2ChartRange,
   type OwnerEquityV2LatestSignalsModel,
   type OwnerEquityV2MembershipListModel,
   type OwnerEquityV2MembershipStatusModel,
@@ -15,6 +19,10 @@ import {
   type OwnerEquityV2ScreenSignalsModel,
   type OwnerEquityV2SignalDetailModel,
   ownerEquityV2AddBodySchema,
+  ownerEquityV2ChartErrorEnvelopeSchema,
+  ownerEquityV2ChartPath,
+  ownerEquityV2ChartRequestMatches,
+  ownerEquityV2ChartSchema,
   ownerEquityV2DisablePath,
   ownerEquityV2LatestSignalsSchema,
   ownerEquityV2MembershipListSchema,
@@ -31,6 +39,7 @@ import {
 export type EquitySignalsBrowserOptions = BrowserClientOptions & {
   readonly fetcher?: typeof fetch;
   readonly origin?: string;
+  readonly signal?: AbortSignal;
 };
 
 function requestUrl(path: string, origin: string | undefined): string {
@@ -42,11 +51,30 @@ async function getParsed<Output>(
   schema: z.ZodType<Output>,
   options: EquitySignalsBrowserOptions,
 ): Promise<Output> {
-  const response = await (options.fetcher ?? fetch)(requestUrl(path, options.origin), {
+  const requestInit: RequestInit = {
     cache: "no-store",
     credentials: "same-origin",
+  };
+  if (options.signal !== undefined) requestInit.signal = options.signal;
+  const response = await (options.fetcher ?? fetch)(requestUrl(path, options.origin), {
+    ...requestInit,
   });
   return parseBrowserApiResponse(response, schema, options);
+}
+
+async function parseChartResponse(
+  response: Response,
+  options: EquitySignalsBrowserOptions,
+): Promise<OwnerEquityV2ChartModel> {
+  if (!response.ok) {
+    const body = await response
+      .clone()
+      .json()
+      .catch(() => undefined);
+    const envelope = ownerEquityV2ChartErrorEnvelopeSchema.safeParse(body);
+    if (envelope.success) throw new ApiProblem(response.status, envelope.data);
+  }
+  return parseBrowserApiResponse(response, ownerEquityV2ChartSchema, options);
 }
 
 export function getOwnerEquityV2Memberships(
@@ -70,6 +98,27 @@ export function getOwnerEquityV2LatestSignals(
   options: EquitySignalsBrowserOptions = {},
 ): Promise<OwnerEquityV2LatestSignalsModel> {
   return getParsed(OWNER_EQUITY_V2_SIGNALS_LATEST_PATH, ownerEquityV2LatestSignalsSchema, options);
+}
+
+export async function getOwnerEquityV2Chart(
+  instrumentId: string,
+  snapshotId: string,
+  range: OwnerEquityV2ChartRange,
+  options: EquitySignalsBrowserOptions = {},
+): Promise<OwnerEquityV2ChartModel> {
+  const requestInit: RequestInit = {
+    cache: "no-store",
+    credentials: "same-origin",
+  };
+  if (options.signal !== undefined) requestInit.signal = options.signal;
+  const response = await (options.fetcher ?? fetch)(
+    requestUrl(ownerEquityV2ChartPath(instrumentId, snapshotId, range), options.origin),
+    requestInit,
+  );
+  const chart = await parseChartResponse(response, options);
+  if (!ownerEquityV2ChartRequestMatches(chart, { instrumentId, snapshotId, range }))
+    throw new OwnerEquityV2ChartIntegrityError();
+  return chart;
 }
 
 export async function screenOwnerEquityV2Signals(
