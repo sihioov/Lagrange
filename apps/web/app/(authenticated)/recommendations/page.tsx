@@ -194,7 +194,7 @@ export default async function RecommendationsPage(props: RecommendationsPageProp
   });
 }
 
-export async function RecommendationsProductPage(
+async function RecommendationsProductPage(
   { searchParams }: RecommendationsPageProps = {},
   session?: ApiSession,
 ) {

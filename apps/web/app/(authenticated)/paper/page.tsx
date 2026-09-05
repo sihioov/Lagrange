@@ -70,7 +70,7 @@ export default async function PaperPage(props: PaperPageProps = {}) {
   });
 }
 
-export async function PaperProductPage(
+async function PaperProductPage(
   { searchParams }: PaperPageProps = {},
   apiSession?: ApiSession,
 ) {

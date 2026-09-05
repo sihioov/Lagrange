@@ -89,7 +89,7 @@ async function renderStockBetaDetailProduct(
   }
 }
 
-export async function StockBetaDetailProductPage(instrument: string) {
+async function StockBetaDetailProductPage(instrument: string) {
   const locale = await getLocale();
   return renderStockBetaDetailProduct(instrument, stockBetaDictionary[locale], locale);
 }
