@@ -674,7 +674,7 @@ test.describe("provider-free Stock Beta V2", () => {
     expect(observed.some((url) => url.pathname.includes("000001.KRX/chart"))).toBeTruthy();
   });
 
-  test("keeps the previous range during delayed loading and selects the new range after completion", async ({
+  test("keeps the previous range visible during delayed loading and rejects a stale response after a rapid change", async ({
     page,
     request,
   }) => {
@@ -684,7 +684,7 @@ test.describe("provider-free Stock Beta V2", () => {
       role: "owner",
       stockBetaRows: 1,
       stockBetaSeed: "ready",
-      stockBetaChartDelays: { "000001.KRX:1m": 350 },
+      stockBetaChartDelays: { "000001.KRX:1m": 2_000 },
     });
 
     await page.goto("/stock-beta");
@@ -692,19 +692,16 @@ test.describe("provider-free Stock Beta V2", () => {
     const chart = priceChart(page);
     const candles = chart.locator("g[data-candle-index]");
     const oneMonthRangeButton = profile.getByRole("button", { name: "1M", exact: true });
+    const threeMonthRangeButton = profile.getByRole("button", { name: "3M", exact: true });
     const oneYearRangeButton = profile.getByRole("button", { name: "1Y", exact: true });
     await expect(chart).toBeVisible();
     await expect(candles).toHaveCount(261);
+    await expect(oneYearRangeButton).toHaveAttribute("aria-pressed", "true");
     const lateOneMonth = page.waitForRequest(
       (request) =>
         request.url().endsWith("/chart?range=1m") ||
         (request.url().includes("/chart?") &&
           new URL(request.url()).searchParams.get("range") === "1m"),
-    );
-    const lateOneMonthResponse = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname.includes(chartPathFragment) &&
-        new URL(response.url()).searchParams.get("range") === "1m",
     );
     await oneMonthRangeButton.click();
     await lateOneMonth;
@@ -715,12 +712,20 @@ test.describe("provider-free Stock Beta V2", () => {
     await expect(oneMonthRangeButton).toHaveAttribute("aria-pressed", "false");
     await expect(profile.getByText("Updating EOD chart…", { exact: true })).toBeVisible();
 
-    const delayedResponse = await lateOneMonthResponse;
-    expect(delayedResponse.ok()).toBeTruthy();
-    await expect(oneMonthRangeButton).toHaveAttribute("aria-pressed", "true");
+    const threeMonth = page.waitForRequest(
+      (request) =>
+        request.url().includes("/chart?") &&
+        new URL(request.url()).searchParams.get("range") === "3m",
+    );
+    await threeMonthRangeButton.click();
+    await threeMonth;
+
+    await expect(threeMonthRangeButton).toHaveAttribute("aria-pressed", "true");
+    await expect(oneMonthRangeButton).toHaveAttribute("aria-pressed", "false");
     await expect(oneYearRangeButton).toHaveAttribute("aria-pressed", "false");
-    await expect(candles).toHaveCount(24);
+    await expect(candles).toHaveCount(67);
     expect(chartRequests(observed, "000001.KRX", "1m").length).toBeGreaterThan(0);
+    expect(chartRequests(observed, "000001.KRX", "3m").length).toBeGreaterThan(0);
   });
 
   test("pins each chart request to the newly displayed snapshot after refresh", async ({
