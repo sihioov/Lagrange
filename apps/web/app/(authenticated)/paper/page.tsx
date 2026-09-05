@@ -70,10 +70,7 @@ export default async function PaperPage(props: PaperPageProps) {
   });
 }
 
-async function PaperProductPage(
-  { searchParams }: PaperPageProps = {},
-  apiSession?: ApiSession,
-) {
+async function PaperProductPage({ searchParams }: PaperPageProps = {}, apiSession?: ApiSession) {
   const locale = await getLocale();
   const t = paperDictionary[locale];
   const api = await getProductApi();

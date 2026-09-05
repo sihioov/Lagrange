@@ -114,6 +114,7 @@ const POLICY = {
 
 type PreviewOptions = {
   readonly chartData?: OwnerEquityV2ChartModel | null;
+  readonly chartRange?: OwnerEquityV2ChartRange;
   readonly chartState?: StockBetaChartState;
   readonly locale?: "en" | "ko";
   readonly rows?: readonly OwnerEquityV2SignalModel[];
@@ -125,6 +126,7 @@ function chartFor(overrides: Partial<OwnerEquityV2ChartModel> = {}): OwnerEquity
 
 function viewModel({
   chartData = CHART,
+  chartRange = "1y",
   chartState = { kind: "ready" },
   locale = "en",
 }: Omit<PreviewOptions, "rows"> = {}): StockBetaDashboardViewModel {
@@ -134,7 +136,7 @@ function viewModel({
     busy: false,
     chartData,
     chartError: null,
-    chartRange: "1y",
+    chartRange,
     chartState,
     copy: stockBetaDictionary[locale],
     disableId: null,
@@ -161,13 +163,14 @@ function viewModel({
 
 function renderPreview({
   chartData = CHART,
+  chartRange = "1y",
   chartState = { kind: "ready" },
   locale = "en",
   rows = [ROW],
 }: PreviewOptions = {}): string {
   return renderToStaticMarkup(
     <StockBetaSelectionProvider initialSelectedInstrumentId={INSTRUMENT_ID} rows={rows}>
-      <SignalPreviewWidget viewModel={viewModel({ chartData, chartState, locale })} />
+      <SignalPreviewWidget viewModel={viewModel({ chartData, chartRange, chartState, locale })} />
     </StockBetaSelectionProvider>,
   );
 }
@@ -369,6 +372,20 @@ describe("Stock Beta chart-capable signal profile", () => {
     expect(loadingWithData).toContain('aria-busy="true"');
     expect(loadingWithData).toContain(stockBetaDictionary.en.chartUpdatingLabel);
     expect(loadingWithData).toContain("72100");
+  });
+
+  it("keeps the previous chart range selected while a cross-range update is loading", () => {
+    const markup = renderPreview({
+      chartRange: "1m",
+      chartState: { kind: "loading", request: { ...CHART_REQUEST, range: "1m" } },
+    });
+
+    expect(markup).toContain('data-testid="stock-beta-price-chart"');
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).toContain(stockBetaDictionary.en.chartUpdatingLabel);
+    expect(markup).toContain("72,100.00");
+    expect(markup).toMatch(/<button[^>]*aria-pressed="true"[^>]*>1Y<\/button>/);
+    expect(markup).toMatch(/<button[^>]*aria-pressed="false"[^>]*>1M<\/button>/);
   });
 
   it("distinguishes an empty selection from chart not-ready state", () => {

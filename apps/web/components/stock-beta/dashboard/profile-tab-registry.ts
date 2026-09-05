@@ -110,6 +110,8 @@ function PriceTab({ selectedRow, viewModel }: ProfileTabProps) {
   if (chart?.instrument_id !== selectedRow.instrument_id)
     return createElement(ChartState, { message: t.chartNotReadyMessage });
   const isUpdating = chartState?.kind === "loading";
+  const displayedChartRange =
+    isUpdating && chart !== null && chart !== undefined ? chart.range : chartRange;
   const chartCopy: Partial<PriceChartCopy> = {
     chartLabel: t.priceChartLabel,
     closeLabel: t.closeLabel,
@@ -204,7 +206,7 @@ function PriceTab({ selectedRow, viewModel }: ProfileTabProps) {
         createElement(
           "button",
           {
-            "aria-pressed": chartRange === range,
+            "aria-pressed": displayedChartRange === range,
             className: css("chartRangeButton"),
             key: range,
             onClick: () => onChartRangeChange?.(range),
