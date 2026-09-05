@@ -58,7 +58,7 @@ export default async function BacktestsPage() {
   });
 }
 
-export async function BacktestsProductPage() {
+async function BacktestsProductPage() {
   const locale = await getLocale();
   const t = backtestsDictionary[locale];
   const api = await getProductApi();
