@@ -61,7 +61,7 @@ export type PaperPageProps = {
   readonly searchParams?: Promise<{ readonly account?: string }>;
 };
 
-export default async function PaperPage(props: PaperPageProps = {}) {
+export default async function PaperPage(props: PaperPageProps) {
   const locale = await getLocale();
   return OwnerBetaProductRoute({
     product: "paper",

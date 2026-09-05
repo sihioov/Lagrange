@@ -129,7 +129,7 @@ function frame(children: React.ReactNode) {
   );
 }
 
-export default async function ScreenerPage({ searchParams }: ScreenerPageProps = {}) {
+export default async function ScreenerPage({ searchParams }: ScreenerPageProps) {
   const api = await getProductApi();
   try {
     const params = (await searchParams) ?? {};

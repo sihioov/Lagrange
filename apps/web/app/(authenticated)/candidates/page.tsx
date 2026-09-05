@@ -57,7 +57,7 @@ function frame(children: React.ReactNode) {
   );
 }
 
-export default async function CandidatesPage({ searchParams }: CandidatesPageProps = {}) {
+export default async function CandidatesPage({ searchParams }: CandidatesPageProps) {
   const api = await getProductApi();
   try {
     const params = (await searchParams) ?? {};
