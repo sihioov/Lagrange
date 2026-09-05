@@ -26,6 +26,8 @@ use sha2::{Digest, Sha256};
 use sqlx::ConnectOptions;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgPool, Row};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
@@ -238,6 +240,9 @@ impl Harness {
             db_name
         ));
         std::fs::create_dir_all(&artifact_root).expect("artifact root creates");
+        #[cfg(unix)]
+        std::fs::set_permissions(&artifact_root, std::fs::Permissions::from_mode(0o700))
+            .expect("artifact root permissions set to 0700");
 
         let mut h = Harness {
             db_name,
