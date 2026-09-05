@@ -179,10 +179,13 @@ const server = createServer(async (request, response) => {
     headers: request.headers,
     method: request.method ?? "GET",
     pathname: url.pathname,
+    query: url.search,
     scenario,
   });
   if (stockBeta !== null) {
-    json(response, stockBeta.status, stockBeta.body);
+    const { delayMs = 0, ...stockBetaResponseData } = stockBeta;
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    json(response, stockBetaResponseData.status, stockBetaResponseData.body);
     return;
   }
   const backtest = backtestResponse({

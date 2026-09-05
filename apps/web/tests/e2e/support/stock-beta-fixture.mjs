@@ -5,6 +5,10 @@ const LATEST_PATH = "/api/v1/research/owner-beta/equity-universe-v2/signals/late
 const SCREEN_PATH = "/api/v1/research/owner-beta/equity-universe-v2/signals/screen";
 const DETAIL_PATH = "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments";
 const BASE_TIME = "2026-08-30T06:00:00Z";
+const AS_OF = "2026-08-28";
+const SESSION_COUNT = 261;
+const CHART_RANGES = ["1m", "3m", "6m", "1y"];
+const CHART_CHANGES = [80, -50, 0, 120, -90, 45, -35, 0, 60, -70, 25];
 const JOB_ID = "00000000-0000-4000-8000-000000000701";
 const REQUEST_ID = "request-synthetic-stock-beta-v2";
 
@@ -49,7 +53,7 @@ function lifecycleCoverage(lifecycle) {
     DISABLED: 261,
   }[lifecycle];
   return {
-    ...(observed >= 261 ? { first_session: "2025-08-01", last_session: "2026-08-29" } : {}),
+    ...(observed >= SESSION_COUNT ? { first_session: "2025-08-29", last_session: AS_OF } : {}),
     minimum_observed_sessions: 121,
     observed_sessions: observed,
     target_observed_sessions: 261,
@@ -183,6 +187,128 @@ function signalRows() {
     .map((item, index) => signal(index, item.instrument_id));
 }
 
+function isChartPath(pathname) {
+  return new RegExp(`^${DETAIL_PATH}/[^/]+/chart$`).test(pathname);
+}
+
+function chartInstrumentId(pathname) {
+  const prefix = `${DETAIL_PATH}/`;
+  const encoded = pathname.slice(prefix.length, -"/chart".length);
+  return decodeURIComponent(encoded);
+}
+
+function chartQuery(request) {
+  return new URLSearchParams(request.query ?? "");
+}
+
+function sessionDates() {
+  const dates = [];
+  const cursor = new Date(`${AS_OF}T00:00:00Z`);
+  while (dates.length < SESSION_COUNT) {
+    const day = cursor.getUTCDay();
+    if (day !== 0 && day !== 6) dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  return dates.reverse();
+}
+
+const SESSION_DATES = sessionDates();
+
+function fullChartBars(instrumentId) {
+  const code = Number.parseInt(instrumentId.slice(0, 6), 10);
+  let previousClose = 10_000 + code * 100;
+  const bars = [];
+
+  for (let index = 0; index < SESSION_COUNT; index += 1) {
+    const open = previousClose;
+    const change =
+      index === 0
+        ? 0
+        : index === SESSION_COUNT - 1
+          ? 75
+          : (CHART_CHANGES[index % CHART_CHANGES.length] ?? 0);
+    const close = Math.max(1, open + change);
+    const wick = 20 + (index % 4) * 10;
+    const volume = index % 47 === 0 ? 0 : 100_000 + code * 1_000 + (index % 17) * 1_000;
+    bars.push({
+      close,
+      high: Math.max(open, close) + wick,
+      low: Math.max(1, Math.min(open, close) - wick),
+      open,
+      session_date: SESSION_DATES[index],
+      sma_20: null,
+      sma_60: null,
+      volume,
+    });
+    previousClose = close;
+  }
+
+  return bars.map((bar, index) => ({
+    ...bar,
+    sma_20:
+      index < 19
+        ? null
+        : Number(
+            (
+              bars.slice(index - 19, index + 1).reduce((sum, item) => sum + item.close, 0) / 20
+            ).toFixed(2),
+          ),
+    sma_60:
+      index < 59
+        ? null
+        : Number(
+            (
+              bars.slice(index - 59, index + 1).reduce((sum, item) => sum + item.close, 0) / 60
+            ).toFixed(2),
+          ),
+  }));
+}
+
+function chartBarsForRange(bars, range) {
+  const months = { "1m": 1, "3m": 3, "6m": 6, "1y": 12 }[range];
+  const boundary = new Date(`${AS_OF}T00:00:00Z`);
+  boundary.setUTCMonth(boundary.getUTCMonth() - months);
+  const boundaryDate = boundary.toISOString().slice(0, 10);
+  return bars.filter((bar) => bar.session_date >= boundaryDate);
+}
+
+function chartDelayFor(scenario, instrumentId, range) {
+  const configured = scenario.stockBetaChartDelays;
+  if (configured === null || typeof configured !== "object" || Array.isArray(configured)) return 0;
+  const value = configured[`${instrumentId}:${range}`] ?? configured[instrumentId] ?? 0;
+  return Number.isInteger(value) && value > 0 && value <= 2_000 ? value : 0;
+}
+
+function chartPayload(signalRow, snapshotData, range, scenario) {
+  const allBars = fullChartBars(signalRow.instrument_id);
+  const bars = chartBarsForRange(allBars, range);
+  const latestBar = allBars[allBars.length - 1];
+  const previousBar = allBars[allBars.length - 2];
+  const freshness = ["CURRENT", "STALE", "UNVERIFIABLE"].includes(scenario.stockBetaChartFreshness)
+    ? scenario.stockBetaChartFreshness
+    : "CURRENT";
+  return {
+    as_of: AS_OF,
+    bars,
+    expected_as_of:
+      freshness === "UNVERIFIABLE" ? null : freshness === "STALE" ? "2026-08-31" : AS_OF,
+    freshness,
+    generation: signalRow.generation,
+    instrument_id: signalRow.instrument_id,
+    latest: {
+      change: latestBar.close - previousBar.close,
+      change_rate: (latestBar.close - previousBar.close) / previousBar.close,
+      close: latestBar.close,
+      session_date: AS_OF,
+      volume: latestBar.volume,
+    },
+    price_semantics: "ORIGINAL_UNADJUSTED",
+    range,
+    snapshot_id: snapshotData.snapshot_id,
+    warnings: ["NOT_REALTIME", "CORPORATE_ACTIONS_NOT_ADJUSTED", "RESEARCH_ONLY"],
+  };
+}
+
 function universeHash(rows) {
   const bytes = rows.map((row) => row.instrument_id).join("\n");
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -191,7 +317,7 @@ function universeHash(rows) {
 function snapshot(rows) {
   const hash = universeHash(rows);
   return {
-    as_of: "2026-08-29",
+    as_of: AS_OF,
     published_at: BASE_TIME,
     row_count: rows.length,
     snapshot_id: `00000000-0000-4000-8000-${hash.slice(-12)}`,
@@ -219,6 +345,20 @@ function scenarioSignalError(scenario, pathname) {
     return responseError(503, "OWNER_EQUITY_INTEGRITY_FAILED");
   }
   if (scenario.stockBeta === "generic") return responseError(500, "INTERNAL");
+  if (isChartPath(pathname)) {
+    if (scenario.stockBetaChartState === "unavailable") {
+      return responseError(503, "OWNER_EQUITY_CHART_UNAVAILABLE");
+    }
+    if (scenario.stockBetaChartState === "integrity") {
+      return responseError(503, "OWNER_EQUITY_INTEGRITY_FAILED");
+    }
+    if (scenario.stockBetaChartState === "forbidden") {
+      return responseError(403, "FORBIDDEN");
+    }
+    if (scenario.stockBetaChartState === "not_found") {
+      return responseError(404, "RESOURCE_NOT_FOUND");
+    }
+  }
   return null;
 }
 
@@ -312,6 +452,31 @@ export function stockBetaResponse(request) {
     const unavailable = snapshotUnavailableIfNeeded(scenario);
     if (unavailable !== null) return unavailable;
     return { body: signalPayload(), status: 200 };
+  }
+
+  if (method === "GET" && isChartPath(pathname)) {
+    const unavailable = snapshotUnavailableIfNeeded(scenario);
+    if (unavailable !== null) return unavailable;
+    const instrumentId = chartInstrumentId(pathname);
+    const payload = signalPayload();
+    const signalRow = payload.rows.find((row) => row.instrument_id === instrumentId);
+    if (signalRow === undefined) return responseError(404, "RESOURCE_NOT_FOUND");
+
+    const query = chartQuery(request);
+    const snapshotId = query.get("snapshot_id");
+    const range = query.get("range");
+    if (snapshotId === null || !CHART_RANGES.includes(range)) {
+      return responseError(400, "INVALID_PARAMETER");
+    }
+    if (snapshotId !== payload.snapshot.snapshot_id) {
+      return responseError(503, "OWNER_EQUITY_INTEGRITY_FAILED");
+    }
+    const result = {
+      body: chartPayload(signalRow, payload.snapshot, range, scenario),
+      status: 200,
+    };
+    const delayMs = chartDelayFor(scenario, instrumentId, range);
+    return delayMs === 0 ? result : { ...result, delayMs };
   }
 
   if (method === "POST" && pathname === SCREEN_PATH) {
