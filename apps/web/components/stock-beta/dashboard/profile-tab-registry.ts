@@ -132,7 +132,7 @@ function PriceTab({ selectedRow, viewModel }: ProfileTabProps) {
   const direction =
     chart.latest.change < 0 ? "negative" : chart.latest.change > 0 ? "positive" : "zero";
   const signedChange = `${chart.latest.change > 0 ? "+" : ""}${formatStockBetaNumber(chart.latest.change, viewModel.locale).text}`;
-  const signedRate = `${chart.latest.change > 0 ? "+" : ""}${formatStockBetaPercent(chart.latest.change_rate, viewModel.locale).text}`;
+  const signedRate = formatStockBetaPercent(chart.latest.change_rate, viewModel.locale).text;
   const freshness =
     chart.freshness === "STALE"
       ? createElement(
