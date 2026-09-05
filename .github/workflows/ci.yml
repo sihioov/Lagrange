@@ -114,6 +114,8 @@ jobs:
       - run: uv sync --project nt --locked
       - run: python scripts/ci/prepare_phase0.py --root data/phase0
       - run: docker compose -f deploy/qa/qa-db.compose.yml up -d --wait
+      - name: Run Owner Equity V2 chart HTTP acceptance tests
+        run: cargo test -p api-server --test http_owner_equity_v2_chart --locked
       - run: cargo test --workspace --locked --no-fail-fast
       - if: always()
         run: docker compose -f deploy/qa/qa-db.compose.yml down -v --remove-orphans

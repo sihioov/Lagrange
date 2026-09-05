@@ -311,6 +311,14 @@ fn chart_path_for(snapshot_id: Uuid, instrument_id: &str, range: &str) -> String
     )
 }
 
+async fn required_harness() -> Harness {
+    Harness::new().await.unwrap_or_else(|| {
+        panic!(
+            "Owner Equity V2 chart HTTP acceptance tests require DATABASE_URL; start the isolated QA DB with `docker compose -f deploy/qa/qa-db.compose.yml up -d --wait` or run the workspace-tests CI workflow job"
+        )
+    })
+}
+
 async fn assert_lineage_mismatch(harness: &Harness, sequence: usize, mismatch: LineageMismatch) {
     let owner = harness
         .seed_user(
@@ -392,10 +400,7 @@ async fn assert_lineage_mismatch(harness: &Harness, sequence: usize, mismatch: L
 
 #[tokio::test]
 async fn chart_enforces_owner_and_exact_query_contract_before_artifact_io() {
-    let Some(mut harness) = Harness::new().await else {
-        eprintln!("SKIP: DATABASE_URL not set");
-        return;
-    };
+    let mut harness = required_harness().await;
     let valid_snapshot = Uuid::new_v4();
     let base = format!(
         "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{INSTRUMENT_ID}/chart?snapshot_id={valid_snapshot}&range=1m"
@@ -478,10 +483,7 @@ async fn chart_enforces_owner_and_exact_query_contract_before_artifact_io() {
 
 #[tokio::test]
 async fn chart_rejects_every_artifact_visible_lineage_mismatch() {
-    let Some(mut harness) = Harness::new().await else {
-        eprintln!("SKIP: DATABASE_URL not set");
-        return;
-    };
+    let mut harness = required_harness().await;
     harness
         .restart_api_with_owner_equity_v2_artifact_root(Some(harness.artifact_root.clone()))
         .await;
@@ -505,10 +507,7 @@ async fn chart_rejects_every_artifact_visible_lineage_mismatch() {
 
 #[tokio::test]
 async fn chart_returns_only_verified_snapshot_pinned_eod_projection() {
-    let Some(mut harness) = Harness::new().await else {
-        eprintln!("SKIP: DATABASE_URL not set");
-        return;
-    };
+    let mut harness = required_harness().await;
     let candidate = candidate(aug_13());
     let membership_id = Uuid::new_v4();
     let generation_id = Uuid::new_v4();
@@ -648,10 +647,7 @@ async fn chart_returns_only_verified_snapshot_pinned_eod_projection() {
 
 #[tokio::test]
 async fn chart_fails_closed_for_tampered_artifacts() {
-    let Some(mut harness) = Harness::new().await else {
-        eprintln!("SKIP: DATABASE_URL not set");
-        return;
-    };
+    let mut harness = required_harness().await;
     let candidate = candidate(aug_13());
     let membership_id = Uuid::new_v4();
     let artifact = write_candidate_artifact(
