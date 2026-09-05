@@ -359,7 +359,7 @@ afterEach(() => {
 describe("paper product surface", () => {
   it("renders ledger-derived equity, the disclaimer, and full lineage", async () => {
     // Given / When
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     // Then
     expect(markup).toContain("10042180.0000");
@@ -374,7 +374,7 @@ describe("paper product surface", () => {
 
   it("states the fill-model difference even when parity matches", async () => {
     // Given / When
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     // Then — a match must never read as "the two are interchangeable".
     expect(markup).toContain("Fill model difference");
@@ -387,7 +387,7 @@ describe("paper product surface", () => {
     vi.stubGlobal("fetch", syntheticPaperApi({ parity: divergentParity() }));
 
     // When
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     // Then
     expect(markup).toContain('role="alert"');
@@ -415,7 +415,7 @@ describe("paper product surface", () => {
     );
 
     // When
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     // Then
     expect(markup).toContain("email: FAILED");
@@ -428,7 +428,7 @@ describe("paper product surface", () => {
     vi.stubGlobal("fetch", syntheticPaperApi({ accounts: [] }));
 
     // When
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     // Then
     expect(markup).toContain("No paper account selected");
@@ -458,7 +458,7 @@ describe("paper product surface", () => {
       }),
     );
 
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     expect(markup).toContain("Shared account · 00000000");
     expect(markup).not.toContain("Bind strategy");
@@ -475,7 +475,7 @@ describe("paper product surface", () => {
     );
 
     // When
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     // Then — only the preview section degrades; nothing else is withheld.
     expect(markup).not.toContain("Paper data is blocked");
@@ -489,7 +489,7 @@ describe("paper product surface", () => {
 
   it("renders the rebalance preview section for an owner with a completed run", async () => {
     // Given / When
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     // Then — the option names the strategy the run was produced under.
     expect(markup).toContain("Rebalancing preview");
@@ -502,7 +502,7 @@ describe("paper product surface", () => {
     vi.stubGlobal("fetch", syntheticPaperApi({ role: "member" }));
 
     // When
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     // Then — every action in that section would 403, so it is not offered.
     expect(markup).not.toContain("Rebalancing preview");
@@ -523,7 +523,7 @@ describe("paper product surface", () => {
     );
 
     // When
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     // Then
     expect(markup).toContain("Rebalancing preview");
@@ -541,7 +541,7 @@ describe("paper product surface", () => {
     );
 
     // When
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     // Then
     expect(markup).toContain("No completed recommendation run is available to preview yet.");

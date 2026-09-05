@@ -253,7 +253,7 @@ describe("owner-beta recommendation surface", () => {
     vi.stubGlobal("fetch", api.fetcher);
     vi.stubEnv("API_INTERNAL_URL", "https://api.internal");
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain("Owner-only");
     expect(markup).toContain("Price-return only");
@@ -338,7 +338,7 @@ describe("owner-beta recommendation surface", () => {
     vi.stubGlobal("fetch", api.fetcher);
     vi.stubEnv("API_INTERNAL_URL", "https://api.internal");
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain("Owner-only");
     expect(markup).toContain("Price-return only");
@@ -352,7 +352,7 @@ describe("owner-beta recommendation surface", () => {
     vi.stubGlobal("fetch", api.fetcher);
     vi.stubEnv("API_INTERNAL_URL", "https://api.internal");
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain('value="2026-08-19" selected=""');
     expect(markup).toContain("Latest supported as-of date: 2026-08-19");
@@ -378,7 +378,7 @@ describe("owner-beta recommendation surface", () => {
       vi.stubGlobal("fetch", api.fetcher);
       vi.stubEnv("API_INTERNAL_URL", "https://api.internal");
 
-      const markup = renderToStaticMarkup(await RecommendationsPage());
+      const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
       expect(markup).toContain("Recommendations unavailable");
       expect(markup).not.toContain("Generate owner-only recommendation");
@@ -472,7 +472,7 @@ describe("owner-beta recommendation surface", () => {
     vi.stubGlobal("fetch", api.fetcher);
     vi.stubEnv("API_INTERNAL_URL", "https://api.internal");
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain("Generate strategy proposal");
     expect(markup).toContain("069500.KRX");

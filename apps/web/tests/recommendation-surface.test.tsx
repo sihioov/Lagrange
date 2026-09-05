@@ -175,7 +175,7 @@ describe("recommendation workflow", () => {
   it("explains that no governed configuration is available", async () => {
     vi.stubGlobal("fetch", syntheticRecommendationApi({ configs: [], history: [] }));
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain("No strategy configuration is available");
     expect(markup).not.toContain('aria-label="Generate recommendation"');
@@ -189,7 +189,7 @@ describe("recommendation workflow", () => {
       }),
     );
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain('aria-label="Generate recommendation"');
     expect(markup).toContain("Strategy configuration");
@@ -204,7 +204,7 @@ describe("recommendation workflow", () => {
       syntheticRecommendationApi({ configs: [config(CONFIG_A, "2026-01-31T06:00:00Z", false)] }),
     );
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain("No strategy configuration is available");
     expect(markup).not.toContain('aria-label="Generate recommendation"');
@@ -218,7 +218,7 @@ describe("recommendation workflow", () => {
       }),
     );
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain(`value="${CONFIG_A}"`);
     expect(markup).not.toContain(`value="${CONFIG_B}"`);
@@ -243,7 +243,7 @@ describe("recommendation workflow", () => {
       }),
     );
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain("069500.KRX");
   });
@@ -265,7 +265,7 @@ describe("recommendation workflow", () => {
       }),
     );
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain("Recommendation is in progress");
     expect(markup).toContain("069500.KRX");
@@ -301,7 +301,7 @@ describe("recommendation workflow", () => {
       }),
     );
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain("Recommendation failed");
     expect(markup).toContain("069500.KRX");
@@ -319,7 +319,7 @@ describe("recommendation workflow", () => {
       }),
     );
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain("All-cash allocation");
     expect(markup).not.toContain("Selected instruments and target weights</caption><thead><tr><th");
@@ -335,7 +335,7 @@ describe("recommendation workflow", () => {
       }),
     );
 
-    const markup = renderToStaticMarkup(await RecommendationsPage());
+    const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
     expect(markup).toContain("Recommendation data is blocked");
     expect(markup).not.toContain("069500.KRX");
