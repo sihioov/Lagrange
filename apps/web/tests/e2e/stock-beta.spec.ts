@@ -193,6 +193,21 @@ async function box(locator: Locator) {
   return result;
 }
 
+function expectBoxInside(
+  inner: { x: number; y: number; width: number; height: number },
+  outer: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  },
+) {
+  expect(inner.x).toBeGreaterThanOrEqual(outer.x);
+  expect(inner.y).toBeGreaterThanOrEqual(outer.y);
+  expect(inner.x + inner.width).toBeLessThanOrEqual(outer.x + outer.width);
+  expect(inner.y + inner.height).toBeLessThanOrEqual(outer.y + outer.height);
+}
+
 test.describe("provider-free Stock Beta V2", () => {
   test.beforeEach(async ({ page }) => {
     observeBrowserRequests(page);
@@ -914,6 +929,23 @@ test.describe("provider-free Stock Beta V2", () => {
     expect(matrix.x).toBeLessThan(tape.x);
     expect(Math.abs(matrix.y - tape.y)).toBeLessThan(2);
     expect(management.y).toBeGreaterThan(matrix.y);
+    const membership = membershipRegion(page);
+    const firstCard = membershipCard(page, "000001.KRX");
+    const detailAction = firstCard.getByRole("link", { name: "Open detail" });
+    const disableAction = firstCard.getByRole("button", { name: "Disable" });
+    await detailAction.focus();
+    await page.keyboard.press("Tab");
+    await expect(disableAction).toBeFocused();
+    const disableBounds = await box(disableAction);
+    const disableFocusOutline = {
+      height: disableBounds.height + 6,
+      width: disableBounds.width + 6,
+      x: disableBounds.x - 3,
+      y: disableBounds.y - 3,
+    };
+    expectBoxInside(disableFocusOutline, await box(firstCard));
+    expectBoxInside(disableFocusOutline, { x: 0, y: 0, width: 1280, height: 720 });
+    expectBoxInside(disableFocusOutline, await box(membership));
     await expectNoHorizontalOverflow(page);
     await page.screenshot({
       animations: "disabled",
@@ -944,6 +976,17 @@ test.describe("provider-free Stock Beta V2", () => {
       await page.goto("/stock-beta");
       await expect(rankedSignalsTable(page)).toBeVisible();
       await expect(signalPreview(page)).toBeVisible();
+      const activeNavigationLink = page
+        .getByRole("navigation", { name: "Primary" })
+        .getByRole("link", { name: "Stock signal beta" });
+      const navigation = page.getByRole("navigation", { name: "Primary" });
+      const bodyScrollY = await page.evaluate(() => window.scrollY);
+      expectBoxInside(await box(activeNavigationLink), await box(navigation));
+      expect(await page.evaluate(() => window.scrollY)).toBe(bodyScrollY);
+      await expect(page.locator("body")).toBeFocused();
+      await activeNavigationLink.focus();
+      await expect(activeNavigationLink).toBeFocused();
+      expectBoxInside(await box(activeNavigationLink), await box(navigation));
       await expectNoHorizontalOverflow(page);
     }
   });
