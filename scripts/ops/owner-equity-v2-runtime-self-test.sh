@@ -23,6 +23,227 @@ for path in "$compose_file" "$runner_source" "$runtime_source" "$runner_logic" \
   [ -f "$path" ] || die "required file missing: $path"
 done
 bash -n "$verify" "$static" || die 'runtime scripts have shell syntax errors'
+bash "$static" >/dev/null || die 'runtime static check failed'
+
+static_fixture_files=(
+  deploy/compose/compose.yml
+  crates/job-queue/Dockerfile.owner-equity-v2-runner
+  data-pipelines/collectors/Dockerfile
+  crates/job-queue/src/bin/owner-equity-v2-runner.rs
+  crates/job-queue/src/owner_equity_v2/runtime.rs
+  crates/job-queue/src/owner_equity_v2/runner.rs
+  scripts/ops/lib/release-image-manifest.sh
+  scripts/ops/compose-release.sh
+  scripts/ops/build-production-images.sh
+  scripts/ops/build-production-images-static-check.sh
+  scripts/ops/provision-linux.sh
+  scripts/ops/owner-equity-v2-verify.sh
+  scripts/ops/owner-equity-v2-runtime-static-check.sh
+  scripts/ops/lib/dotenv.sh
+  scripts/ops/validate-production-config.sh
+)
+static_fixture_parent=$tmp/static-fixtures
+
+copy_static_fixture() {
+  local fixture=$1
+  local relative_path
+  for relative_path in "${static_fixture_files[@]}"; do
+    [ -f "$root/$relative_path" ] || die "fixture source is missing: $relative_path"
+    mkdir -p "$fixture/${relative_path%/*}"
+    cp "$root/$relative_path" "$fixture/$relative_path"
+  done
+}
+
+replace_exact_line() {
+  local file=$1
+  local needle=$2
+  local replacement=$3
+  local rewritten=${file}.rewrite
+  awk -v needle="$needle" -v replacement="$replacement" '
+    $0 == needle && !found { print replacement; found=1; next }
+    { print }
+    END { if (!found) exit 1 }
+  ' "$file" >"$rewritten" || die "fixture replacement target is missing: $needle"
+  mv -- "$rewritten" "$file"
+}
+
+remove_exact_line() {
+  local file=$1
+  local needle=$2
+  local rewritten=${file}.rewrite
+  awk -v needle="$needle" '
+    $0 == needle { removed++; next }
+    { print }
+    END { if (removed != 1) exit 1 }
+  ' "$file" >"$rewritten" || die "fixture removal target is not unique: $needle"
+  mv -- "$rewritten" "$file"
+}
+
+insert_after_exact_line() {
+  local file=$1
+  local needle=$2
+  local insertion=$3
+  local rewritten=${file}.rewrite
+  awk -v needle="$needle" -v insertion="$insertion" '
+    $0 == needle && !inserted { print; print insertion; inserted=1; next }
+    { print }
+    END { if (!inserted) exit 1 }
+  ' "$file" >"$rewritten" || die "fixture insertion target is missing: $needle"
+  mv -- "$rewritten" "$file"
+}
+
+insert_after_service_line() {
+  local file=$1
+  local service=$2
+  local needle=$3
+  local insertion=$4
+  local rewritten=${file}.rewrite
+  awk -v service="$service" -v needle="$needle" -v insertion="$insertion" '
+    $0 == "  " service ":" { in_service=1 }
+    in_service && $0 ~ /^  [^[:space:]][^:]*:/ && $0 != "  " service ":" { in_service=0 }
+    in_service && $0 == needle && !inserted {
+      print
+      print insertion
+      inserted=1
+      next
+    }
+    { print }
+    END { if (!inserted) exit 1 }
+  ' "$file" >"$rewritten" || die "fixture service insertion target is missing: $service / $needle"
+  mv -- "$rewritten" "$file"
+}
+
+expect_static_failure() {
+  local name=$1
+  local fixture=$static_fixture_parent/$name
+  local output=$tmp/$name.out
+  if bash "$fixture/scripts/ops/owner-equity-v2-runtime-static-check.sh" >"$output" 2>&1; then
+    sed -n '1,40p' "$output" >&2
+    die "unsafe Compose mutation unexpectedly passed: $name"
+  fi
+}
+
+api_artifact_root_line='      OWNER_EQUITY_V2_API_ARTIFACT_ROOT: /data/owner-equity-v2-artifacts'
+api_artifact_mount_line='      - ${LAGRANGE_DATA_DIR:-../data}/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts:ro'
+api_artifact_rw_mount_line='      - ${LAGRANGE_DATA_DIR:-../data}/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts:rw'
+api_artifact_wrong_source_line='      - ${LAGRANGE_DATA_DIR:-../data}/other:/data/owner-equity-v2-artifacts:ro'
+api_artifact_other_destination_line='      - ${LAGRANGE_DATA_DIR:-../data}/owner-equity-v2-artifacts:/data/other:ro'
+api_raw_mount_line='      - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw:ro'
+
+sanctioned_fixture=$static_fixture_parent/sanctioned
+copy_static_fixture "$sanctioned_fixture"
+sanctioned_output=$tmp/sanctioned.out
+bash "$sanctioned_fixture/scripts/ops/owner-equity-v2-runtime-static-check.sh" >"$sanctioned_output" 2>&1 || {
+  sed -n '1,80p' "$sanctioned_output" >&2
+  die 'sanctioned API read-only artifact mount did not pass the static checker'
+}
+grep -Fq 'OWNER_EQUITY_V2_RUNTIME_STATIC: PASS' "$sanctioned_output" ||
+  die 'sanctioned fixture omitted the static-check pass marker'
+
+case_fixture=$static_fixture_parent/api-missing-artifact-root
+copy_static_fixture "$case_fixture"
+remove_exact_line "$case_fixture/deploy/compose/compose.yml" "$api_artifact_root_line"
+expect_static_failure api-missing-artifact-root
+
+case_fixture=$static_fixture_parent/api-duplicate-artifact-root
+copy_static_fixture "$case_fixture"
+insert_after_exact_line "$case_fixture/deploy/compose/compose.yml" \
+  "$api_artifact_root_line" "$api_artifact_root_line"
+expect_static_failure api-duplicate-artifact-root
+
+case_fixture=$static_fixture_parent/api-wrong-artifact-root
+copy_static_fixture "$case_fixture"
+replace_exact_line "$case_fixture/deploy/compose/compose.yml" "$api_artifact_root_line" \
+  '      OWNER_EQUITY_V2_API_ARTIFACT_ROOT: /data/other'
+expect_static_failure api-wrong-artifact-root
+
+case_fixture=$static_fixture_parent/api-duplicate-artifact-mount
+copy_static_fixture "$case_fixture"
+insert_after_exact_line "$case_fixture/deploy/compose/compose.yml" \
+  "$api_artifact_mount_line" "$api_artifact_mount_line"
+expect_static_failure api-duplicate-artifact-mount
+
+case_fixture=$static_fixture_parent/api-rw-duplicate-artifact-mount
+copy_static_fixture "$case_fixture"
+insert_after_exact_line "$case_fixture/deploy/compose/compose.yml" \
+  "$api_artifact_mount_line" "$api_artifact_rw_mount_line"
+expect_static_failure api-rw-duplicate-artifact-mount
+
+case_fixture=$static_fixture_parent/api-rw-artifact-mount
+copy_static_fixture "$case_fixture"
+replace_exact_line "$case_fixture/deploy/compose/compose.yml" "$api_artifact_mount_line" \
+  "$api_artifact_rw_mount_line"
+expect_static_failure api-rw-artifact-mount
+
+case_fixture=$static_fixture_parent/api-artifact-mount-omits-read-only
+copy_static_fixture "$case_fixture"
+replace_exact_line "$case_fixture/deploy/compose/compose.yml" "$api_artifact_mount_line" \
+  '      - ${LAGRANGE_DATA_DIR:-../data}/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts'
+expect_static_failure api-artifact-mount-omits-read-only
+
+case_fixture=$static_fixture_parent/api-wrong-artifact-mount-source
+copy_static_fixture "$case_fixture"
+replace_exact_line "$case_fixture/deploy/compose/compose.yml" "$api_artifact_mount_line" \
+  "$api_artifact_wrong_source_line"
+expect_static_failure api-wrong-artifact-mount-source
+
+case_fixture=$static_fixture_parent/api-additional-artifact-destination
+copy_static_fixture "$case_fixture"
+insert_after_exact_line "$case_fixture/deploy/compose/compose.yml" \
+  "$api_artifact_mount_line" "$api_artifact_other_destination_line"
+expect_static_failure api-additional-artifact-destination
+
+case_fixture=$static_fixture_parent/api-worker-artifact-root
+copy_static_fixture "$case_fixture"
+insert_after_exact_line "$case_fixture/deploy/compose/compose.yml" "$api_artifact_root_line" \
+  '      OWNER_EQUITY_V2_ARTIFACT_ROOT: /data/owner-equity-v2-artifacts'
+expect_static_failure api-worker-artifact-root
+
+case_fixture=$static_fixture_parent/api-raw-mount
+copy_static_fixture "$case_fixture"
+insert_after_exact_line "$case_fixture/deploy/compose/compose.yml" "$api_artifact_root_line" \
+  "$api_raw_mount_line"
+expect_static_failure api-raw-mount
+
+case_fixture=$static_fixture_parent/api-kis-credential-env
+copy_static_fixture "$case_fixture"
+insert_after_exact_line "$case_fixture/deploy/compose/compose.yml" "$api_artifact_root_line" \
+  '      KIS_APP_KEY_FILE: /run/secrets/kis_app_key'
+expect_static_failure api-kis-credential-env
+
+case_fixture=$static_fixture_parent/api-kis-secret-alias
+copy_static_fixture "$case_fixture"
+insert_after_service_line "$case_fixture/deploy/compose/compose.yml" api-server \
+  '    secrets:' '      - source: research_kis_app_key'
+expect_static_failure api-kis-secret-alias
+
+case_fixture=$static_fixture_parent/web-artifact-env
+copy_static_fixture "$case_fixture"
+insert_after_service_line "$case_fixture/deploy/compose/compose.yml" web \
+  '      AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID:-}' "$api_artifact_root_line"
+expect_static_failure web-artifact-env
+
+case_fixture=$static_fixture_parent/web-artifact-mount
+copy_static_fixture "$case_fixture"
+insert_after_service_line "$case_fixture/deploy/compose/compose.yml" web \
+  '      - /tmp' '    volumes:'
+insert_after_service_line "$case_fixture/deploy/compose/compose.yml" web \
+  '    volumes:' "${api_artifact_mount_line}"
+expect_static_failure web-artifact-mount
+
+case_fixture=$static_fixture_parent/web-raw-mount
+copy_static_fixture "$case_fixture"
+insert_after_service_line "$case_fixture/deploy/compose/compose.yml" web \
+  '      - /tmp' '    volumes:'
+insert_after_service_line "$case_fixture/deploy/compose/compose.yml" web \
+  '    volumes:' "$api_raw_mount_line"
+expect_static_failure web-raw-mount
+
+case_fixture=$static_fixture_parent/web-kis-credential-env
+copy_static_fixture "$case_fixture"
+insert_after_service_line "$case_fixture/deploy/compose/compose.yml" web \
+  '      AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID:-}' '      KIS_APP_SECRET_FILE: /run/secrets/kis_app_secret'
+expect_static_failure web-kis-credential-env
 
 service_block() {
   local name=$1
@@ -55,13 +276,6 @@ for expected in \
   '/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts:rw' \
   'test: ["CMD", "/usr/local/bin/owner-equity-v2-runner", "healthcheck"]'; do
   grep -Fq -- "$expected" <<<"$v2_block" || die "V2 boundary missing: $expected"
-done
-
-for service in api-server web; do
-  block=$(service_block "$service")
-  if grep -Eiq 'KIS_APP_KEY|KIS_APP_SECRET|OWNER_EQUITY_V2_RAW_ROOT|/data/owner-equity-v2-artifacts' <<<"$block"; then
-    die "$service has a V2 credential or Raw/artifact write root"
-  fi
 done
 
 for expected in \

@@ -20,11 +20,16 @@ ticket, manifest, or runbook.
 
 Only `owner-equity-v2-runner` receives the V2 KIS credential file references,
 the worker DB password file, and the dedicated Raw/artifact read-write
-mounts. API and Web receive neither the V2 credential files nor the V2 Raw or
-artifact roots; they receive only the typed entitlement reference/hash pins
-already required by the application contract. The provider-free verifier has
-no DB setting, KIS secret, account identifier, or network access, and mounts
-Raw and the V2 artifact root read-only.
+mounts. API receives neither the V2 credential files, the V2 Raw root, nor the
+worker artifact write root; in addition to the typed entitlement reference/hash
+pins already required by the application contract, it receives exactly
+`OWNER_EQUITY_V2_API_ARTIFACT_ROOT=/data/owner-equity-v2-artifacts` and one
+`${LAGRANGE_DATA_DIR:-../data}/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts:ro`
+mount for the admitted V2 artifact tree. No other V2 artifact reference or
+mount is permitted. Web receives none of the V2 credential files, Raw roots, or
+artifact-root references/mounts. The provider-free verifier has no DB setting,
+KIS secret, account identifier, or network access, and mounts Raw and the V2
+artifact root read-only.
 
 KIS remains read-only. This runbook grants no account, balance, buying-power,
 execution, order, correction, cancellation, or trading API access.

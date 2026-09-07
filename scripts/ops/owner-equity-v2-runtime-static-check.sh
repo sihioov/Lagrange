@@ -67,6 +67,22 @@ service_block() {
   ' "$compose_file"
 }
 
+line_count() {
+  local needle=$1
+  local block=$2
+  grep -Fxc -- "$needle" <<<"$block" || true
+}
+
+reject_consumer_v2_channels() {
+  local service=$1
+  local block=$2
+  if grep -Eiq \
+    'KIS_APP_(KEY|SECRET)|OWNER_EQUITY_V2_[A-Z0-9_]*RAW[A-Z0-9_]*|/raw:|/data/raw' \
+    <<<"$block"; then
+    die "$service receives a KIS credential/alias or V2 Raw channel"
+  fi
+}
+
 v2_block=$(service_block owner-equity-v2-runner)
 [ -n "$v2_block" ] || die 'V2 queue service block is missing'
 for line in \
@@ -111,13 +127,30 @@ grep -Fq 'owner-equity-v2-egress:' "$compose_file" || die 'V2 egress network is 
 grep -A2 -F 'owner-equity-v2-egress:' "$compose_file" | grep -Fq 'internal: false' ||
   die 'V2 egress network must permit only the reviewed worker network path'
 
-for service in api-server web; do
-  block=$(service_block "$service")
-  if grep -Eiq 'KIS_APP_KEY|KIS_APP_SECRET|OWNER_EQUITY_V2_RAW_ROOT|/data/owner-equity-v2-artifacts' <<<"$block"; then
-    die "$service receives a V2 credential or Raw/artifact root"
-  fi
-done
 api_block=$(service_block api-server)
+[ -n "$api_block" ] || die 'API service block is missing'
+web_block=$(service_block web)
+[ -n "$web_block" ] || die 'Web service block is missing'
+reject_consumer_v2_channels api-server "$api_block"
+reject_consumer_v2_channels web "$web_block"
+
+artifact_ref_pattern='OWNER_EQUITY_V2_[A-Z0-9_]*ARTIFACT[A-Z0-9_]*|owner-equity-v2-artifact'
+api_artifact_root_line='      OWNER_EQUITY_V2_API_ARTIFACT_ROOT: /data/owner-equity-v2-artifacts'
+api_artifact_mount_line='      - ${LAGRANGE_DATA_DIR:-../data}/owner-equity-v2-artifacts:/data/owner-equity-v2-artifacts:ro'
+[ "$(line_count "$api_artifact_root_line" "$api_block")" -eq 1 ] ||
+  die 'API must have exactly one approved V2 artifact-root environment line'
+[ "$(line_count "$api_artifact_mount_line" "$api_block")" -eq 1 ] ||
+  die 'API must have exactly one approved read-only V2 artifact mount'
+api_artifact_refs=$(grep -Eic "$artifact_ref_pattern" <<<"$api_block" || true)
+expected_api_artifact_refs=$(printf '%s\n%s' "$api_artifact_root_line" "$api_artifact_mount_line")
+[ "$api_artifact_refs" -eq 2 ] ||
+  die 'API has an unexpected number of V2 artifact-root references'
+if [ "$(grep -Ei "$artifact_ref_pattern" <<<"$api_block" || true)" != "$expected_api_artifact_refs" ]; then
+  die 'API V2 artifact access is not limited to the approved env and mount'
+fi
+if grep -Eiq "$artifact_ref_pattern" <<<"$web_block"; then
+  die 'Web receives a V2 artifact-root reference or mount'
+fi
 grep -Fq 'OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE: ${OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE:-}' <<<"$api_block" ||
   die 'API typed V2 entitlement reference pin is missing'
 grep -Fq 'OWNER_EQUITY_V2_ENTITLEMENT_SHA256: ${OWNER_EQUITY_V2_ENTITLEMENT_SHA256:-}' <<<"$api_block" ||
