@@ -9,12 +9,3 @@ export type StockBetaDetailViewModel = {
   readonly locale: Locale;
 };
 export type StockBetaDetailWidgetViewModel = StockBetaDetailViewModel;
-export const STOCK_BETA_DETAIL_WIDGET_IDS = [
-  "instrument-header",
-  "returns",
-  "risk",
-  "activity",
-  "snapshot",
-  "policy-boundary",
-] as const;
-export type StockBetaDetailWidgetId = (typeof STOCK_BETA_DETAIL_WIDGET_IDS)[number];

@@ -174,7 +174,7 @@ describe("authenticated shell runtime", () => {
     const appShell = source("components/shell/app-shell.tsx");
     const routeShell = source("components/stock-beta/terminal/route-aware-shell.tsx");
     const stockBetaDetail = source("components/stock-beta/stock-beta-detail.tsx");
-    const stockBetaTheme = source("components/stock-beta/stock-beta-theme.module.css");
+    const sharedShellStyles = source("components/shell/research-terminal-shell.module.css");
     const stockBetaWorkspace = source("components/stock-beta/stock-beta-workspace.tsx");
     const terminalPage = source("components/stock-beta/terminal/terminal-page.tsx");
     const utilitySlot = source("components/shell/terminal-utility-slot.tsx");
@@ -183,8 +183,8 @@ describe("authenticated shell runtime", () => {
     expect(routeShell).toContain("<ResearchTerminalShell");
     expect(routeShell).toContain('"research-terminal"');
     expect(routeShell).not.toContain('data-shell="general"');
-    expect(stockBetaTheme).not.toContain(":has(");
-    expect(stockBetaTheme).not.toContain(":global(.app-shell)");
+    expect(sharedShellStyles).not.toContain(":has(");
+    expect(sharedShellStyles).not.toContain(":global(.app-shell)");
     expect(terminalPage).toContain("<StockBetaTerminalUtilitySlot>");
     expect(terminalPage).not.toContain("pageUtility");
     expect(utilitySlot).toContain("createPortal(children, host)");

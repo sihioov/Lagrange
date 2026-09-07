@@ -1,8 +1,13 @@
-import type { CSSProperties } from "react";
-import type { StockBetaWidgetBreakpoint, StockBetaWidgetSize } from "../shared/widget-types";
+import type { CSSProperties, ReactNode } from "react";
+import type {
+  StockBetaWidgetArchitecture,
+  StockBetaWidgetBreakpoint,
+  StockBetaWidgetCatalogEntry,
+  StockBetaWidgetPlacementState,
+} from "../shared/widget-types";
 import styles from "./detail.module.css";
-import type { StockBetaDetailViewModel } from "./types";
-import { stockBetaDetailArchitecture, stockBetaDetailDefinitions } from "./widget-registry";
+import type { StockBetaDetailViewModel, StockBetaDetailWidgetViewModel } from "./types";
+import { stockBetaDetailArchitecture } from "./widget-registry";
 
 type LayoutOrderStyle = CSSProperties & {
   readonly "--desktop-order": number;
@@ -11,44 +16,47 @@ type LayoutOrderStyle = CSSProperties & {
 };
 
 type WidgetPlacement = {
-  readonly size: StockBetaWidgetSize;
-  readonly visible: boolean;
-  readonly order: number;
+  readonly size: StockBetaWidgetPlacementState["size"];
+  readonly visible: StockBetaWidgetPlacementState["visible"];
 };
 
+type DetailArchitecture = StockBetaWidgetArchitecture<
+  readonly StockBetaWidgetCatalogEntry<
+    string,
+    StockBetaDetailWidgetViewModel,
+    StockBetaWidgetPlacementState
+  >[]
+>;
+
 function placementFor(
+  architecture: DetailArchitecture,
   id: string,
   breakpoint: StockBetaWidgetBreakpoint,
 ): WidgetPlacement | undefined {
-  return stockBetaDetailArchitecture.layout[breakpoint].find((placement) => placement.id === id);
+  return architecture.layout[breakpoint].find((placement) => placement.id === id);
 }
 
-function layoutStyle(
-  desktop: WidgetPlacement | undefined,
-  tablet: WidgetPlacement | undefined,
-  mobile: WidgetPlacement | undefined,
-): LayoutOrderStyle {
+function layoutStyle(catalogIndex: number): LayoutOrderStyle {
   return {
-    "--desktop-order": desktop?.order ?? 99,
-    "--tablet-order": tablet?.order ?? 99,
-    "--mobile-order": mobile?.order ?? 99,
+    "--desktop-order": catalogIndex,
+    "--tablet-order": catalogIndex,
+    "--mobile-order": catalogIndex,
   };
 }
 
-export function StockBetaDetailLayout({
-  viewModel,
-}: {
-  readonly viewModel: StockBetaDetailViewModel;
-}) {
+export function renderStockBetaDetailGrid(
+  architecture: DetailArchitecture,
+  viewModel: StockBetaDetailViewModel,
+): ReactNode {
   return (
     <div className={styles["detail"]} data-testid="stock-beta-detail-board">
       <div className={styles["detailGrid"]}>
-        {stockBetaDetailDefinitions.map((definition) => {
-          const desktop = placementFor(definition.id, "desktop");
-          const tablet = placementFor(definition.id, "tablet");
-          const mobile = placementFor(definition.id, "mobile");
+        {architecture.catalog.map((entry, catalogIndex) => {
+          const desktop = placementFor(architecture, entry.id, "desktop");
+          const tablet = placementFor(architecture, entry.id, "tablet");
+          const mobile = placementFor(architecture, entry.id, "mobile");
           if (desktop === undefined && tablet === undefined && mobile === undefined) return null;
-          const Widget = definition.component;
+          const Widget = entry.component;
           return (
             <div
               className={styles["detailWidget"]}
@@ -58,10 +66,10 @@ export function StockBetaDetailLayout({
               data-mobile-visible={mobile?.visible === true ? "true" : "false"}
               data-tablet-size={tablet?.size ?? "full"}
               data-tablet-visible={tablet?.visible === true ? "true" : "false"}
-              data-testid={`stock-beta-detail-widget-${definition.id}`}
-              data-widget-id={definition.id}
-              key={definition.id}
-              style={layoutStyle(desktop, tablet, mobile)}
+              data-testid={`stock-beta-detail-widget-${entry.id}`}
+              data-widget-id={entry.id}
+              key={entry.id}
+              style={layoutStyle(catalogIndex)}
             >
               <Widget viewModel={viewModel} />
             </div>
@@ -70,4 +78,12 @@ export function StockBetaDetailLayout({
       </div>
     </div>
   );
+}
+
+export function StockBetaDetailLayout({
+  viewModel,
+}: {
+  readonly viewModel: StockBetaDetailViewModel;
+}) {
+  return renderStockBetaDetailGrid(stockBetaDetailArchitecture, viewModel);
 }

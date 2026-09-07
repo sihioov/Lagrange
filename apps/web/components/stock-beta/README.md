@@ -32,35 +32,54 @@ fetch once, parse with the existing strict equity-signal contract, and pass a ty
 each registered widget. Widgets render those values; they do not call `fetch`, product clients, or
 route handlers.
 
+## Extend the selected profile tabs
+
+`dashboard/profile-tab-registry.ts` is the sole ordered registry for the selected profile tabs.
+Add, remove, or reorder an entry there; `SignalPreviewWidget` renders the registry without a
+tab-specific control-flow branch. A tab renderer receives the selected V2 row and the already-loaded
+dashboard view model only. The Price renderer may use `chartData`, `chartState`, `chartRange`, and
+`onChartRangeChange`, plus the presentation-only `PriceChart`; it must not import a fetcher, URL
+builder, product/API client, Zod schema, or `AbortController`.
+
+Price data is the latest completed EOD close, not a real-time quote. It is explicitly original /
+unadjusted and must always retain the corporate-action caveat. Integrity and unavailable/error
+states fail closed: do not leave a previous chart or inferred price visible.
+
 ## Add an optional widget
 
 1. Add a widget component under `dashboard/widgets` or `detail/widgets`. Accept only
    `StockBetaWidgetProps<YourViewModel>` and keep the view model explicit.
-2. Register it with `defineStockBetaWidget`. Supply a unique `id`, supported `defaultSize`, a
-   non-negative unique `order`, `required: false`, and its default visibility.
-3. Add a placement to each breakpoint where it should appear. A placement owns responsive
-   `size`, `visible`, and `order`; omitting an optional widget from one breakpoint removes it there.
-4. Assemble the registry, required-ID policy, and all three layouts with
-   `defineStockBetaWidgetArchitecture`. Validation runs before rendering and rejects ambiguous or
-   unsupported configuration.
-5. Add an isolated render test for the widget and update the architecture test when layout policy
-   changes.
+2. Add one entry to the screen's catalog with its unique `id`, component, `required: false`, and
+   `placements`. Each breakpoint placement owns its responsive size and visibility; dashboard
+   placements also own populated and empty grid coordinates. Omitting an optional breakpoint
+   placement removes the widget there.
+3. Keep the entry at its intended reading position. Catalog array order is the canonical DOM and
+   accessibility order; grid coordinates express visual placement only. The existing CSS order
+   custom properties are compatibility outputs derived from catalog index, never authoring
+   metadata.
+4. Let `defineStockBetaWidgetArchitecture` derive the required IDs and breakpoint layout. The
+   catalog validator rejects duplicate IDs, invalid or overlapping grids, and incomplete required
+   placements before rendering.
+5. Add an isolated render test for the widget and update the architecture test when placement
+   policy changes.
 
 The runtime registry includes React component functions and remains module-local. When layout
 metadata must cross a Server/Client boundary or be persisted, derive it with
-`stockBetaWidgetConfiguration()`. That projection contains only IDs, booleans, numbers, size
-strings, and breakpoint placements and is JSON-serializable. Never pass the runtime registry as a
-Client Component prop.
+`stockBetaWidgetConfiguration()`. That deterministic projection contains component-free widget
+policy, derived required IDs, and breakpoint placements made only from IDs, booleans, numbers, and
+size strings. Never pass the runtime catalog as a Client Component prop.
 
 ## Remove or reorder a widget
 
-An optional widget can be removed from layout placements and then from the registry. Reordering is
-only an `order` change in the applicable layouts; orders must remain unique and non-negative.
+An optional widget is removed by deleting its catalog entry. Reorder widgets by moving entries in
+the catalog array; the renderer follows that order in the DOM and derives compatibility CSS order
+values from the same array index. No layout or ID list is synchronized separately.
 
-Required widgets are different. Their IDs must remain in the explicit `requiredWidgetIds` policy,
-their definitions must have both `required: true` and `defaultVisible: true`, and every desktop,
-tablet, and mobile layout must include them visibly. The validator fails closed if any of these
-conditions diverge. Removing a required widget is a product-policy change, not a layout edit.
+Required widgets are different. Set `required: true` on the catalog entry and provide a visible
+populated placement at desktop, tablet, and mobile. Dashboard required entries must also provide a
+complete empty-state placement at every breakpoint; its empty visibility may remain false when the
+accepted fail-closed UI hides that widget. `requiredWidgetIds` is derived from these entries.
+Removing a required widget is a product-policy change, not a layout edit.
 
 ## Numeric values and states
 

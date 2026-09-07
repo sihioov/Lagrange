@@ -1,5 +1,9 @@
-import { defineStockBetaWidget, defineStockBetaWidgetArchitecture } from "../shared/widget-types";
-import { stockBetaDetailLayout } from "./detail-layout";
+import {
+  defineStockBetaWidgetArchitecture,
+  defineStockBetaWidgetCatalog,
+  type StockBetaWidgetPlacementState,
+  type StockBetaWidgetSize,
+} from "../shared/widget-types";
 import type { StockBetaDetailWidgetViewModel } from "./types";
 import { ActivityWidget } from "./widgets/activity-widget";
 import { InstrumentHeaderWidget } from "./widgets/instrument-header-widget";
@@ -8,74 +12,78 @@ import { ProvenanceWidget } from "./widgets/provenance-widget";
 import { ReturnsWidget } from "./widgets/returns-widget";
 import { RiskWidget } from "./widgets/risk-widget";
 
-const instrumentHeader = defineStockBetaWidget<"instrument-header", StockBetaDetailWidgetViewModel>(
+function visible(size: StockBetaWidgetSize): StockBetaWidgetPlacementState {
+  return { size, visible: true };
+}
+
+export const defineStockBetaDetailCatalog =
+  defineStockBetaWidgetCatalog<StockBetaDetailWidgetViewModel>();
+
+/** Array order is the canonical detail DOM and accessibility reading order. */
+export const stockBetaDetailCatalog = defineStockBetaDetailCatalog([
   {
     id: "instrument-header",
     component: InstrumentHeaderWidget,
-    defaultSize: "full",
     required: true,
-    defaultVisible: true,
-    order: 0,
+    placements: {
+      desktop: visible("full"),
+      tablet: visible("full"),
+      mobile: visible("full"),
+    },
   },
-);
-const returns = defineStockBetaWidget<"returns", StockBetaDetailWidgetViewModel>({
-  id: "returns",
-  component: ReturnsWidget,
-  defaultSize: "medium",
-  required: true,
-  defaultVisible: true,
-  order: 1,
-});
-const risk = defineStockBetaWidget<"risk", StockBetaDetailWidgetViewModel>({
-  id: "risk",
-  component: RiskWidget,
-  defaultSize: "medium",
-  required: true,
-  defaultVisible: true,
-  order: 2,
-});
-const activity = defineStockBetaWidget<"activity", StockBetaDetailWidgetViewModel>({
-  id: "activity",
-  component: ActivityWidget,
-  defaultSize: "medium",
-  required: true,
-  defaultVisible: true,
-  order: 3,
-});
-const snapshot = defineStockBetaWidget<"snapshot", StockBetaDetailWidgetViewModel>({
-  id: "snapshot",
-  component: ProvenanceWidget,
-  defaultSize: "full",
-  required: true,
-  defaultVisible: true,
-  order: 4,
-});
-const policyBoundary = defineStockBetaWidget<"policy-boundary", StockBetaDetailWidgetViewModel>({
-  id: "policy-boundary",
-  component: PolicyBoundaryWidget,
-  defaultSize: "full",
-  required: true,
-  defaultVisible: true,
-  order: 5,
-});
+  {
+    id: "returns",
+    component: ReturnsWidget,
+    required: true,
+    placements: {
+      desktop: visible("medium"),
+      tablet: visible("medium"),
+      mobile: visible("full"),
+    },
+  },
+  {
+    id: "risk",
+    component: RiskWidget,
+    required: true,
+    placements: {
+      desktop: visible("medium"),
+      tablet: visible("medium"),
+      mobile: visible("full"),
+    },
+  },
+  {
+    id: "activity",
+    component: ActivityWidget,
+    required: true,
+    placements: {
+      desktop: visible("medium"),
+      tablet: visible("medium"),
+      mobile: visible("full"),
+    },
+  },
+  {
+    id: "snapshot",
+    component: ProvenanceWidget,
+    required: true,
+    placements: {
+      desktop: visible("full"),
+      tablet: visible("full"),
+      mobile: visible("full"),
+    },
+  },
+  {
+    id: "policy-boundary",
+    component: PolicyBoundaryWidget,
+    required: true,
+    placements: {
+      desktop: visible("full"),
+      tablet: visible("full"),
+      mobile: visible("full"),
+    },
+  },
+]);
 
-export const stockBetaDetailDefinitions = [
-  instrumentHeader,
-  returns,
-  risk,
-  activity,
-  snapshot,
-  policyBoundary,
-] as const;
-export const stockBetaDetailArchitecture = defineStockBetaWidgetArchitecture({
-  definitions: stockBetaDetailDefinitions,
-  requiredWidgetIds: [
-    "instrument-header",
-    "returns",
-    "risk",
-    "activity",
-    "snapshot",
-    "policy-boundary",
-  ],
-  layout: stockBetaDetailLayout,
-});
+export type StockBetaDetailWidgetId = (typeof stockBetaDetailCatalog)[number]["id"];
+
+export const stockBetaDetailArchitecture =
+  defineStockBetaWidgetArchitecture(stockBetaDetailCatalog);

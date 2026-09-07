@@ -89,11 +89,6 @@ async function renderStockBetaDetailProduct(
   }
 }
 
-export async function StockBetaDetailProductPage(instrument: string) {
-  const locale = await getLocale();
-  return renderStockBetaDetailProduct(instrument, stockBetaDictionary[locale], locale);
-}
-
 export default async function StockBetaDetailPage({ params }: StockBetaDetailPageProps) {
   const { instrument } = await params;
   const locale = await getLocale();

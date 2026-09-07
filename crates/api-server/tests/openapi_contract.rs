@@ -107,6 +107,11 @@ fn openapi_owner_equity_v2_routes_and_dtos_are_exact() {
             format!("{prefix}/signals/instruments/{{instrument_id}}"),
             "200",
         ),
+        (
+            "get",
+            format!("{prefix}/signals/instruments/{{instrument_id}}/chart"),
+            "200",
+        ),
     ];
     for (method, path, success) in operations {
         let operation = &spec["paths"][&path][method];
@@ -147,6 +152,9 @@ fn openapi_owner_equity_v2_routes_and_dtos_are_exact() {
         "OwnerEquityV2Mutation",
         "OwnerEquityV2Snapshot",
         "OwnerEquityV2Signal",
+        "OwnerEquityV2ChartLatest",
+        "OwnerEquityV2ChartBar",
+        "OwnerEquityV2Chart",
     ] {
         assert_eq!(
             schemas[name]["additionalProperties"], false,
@@ -182,6 +190,86 @@ fn openapi_owner_equity_v2_routes_and_dtos_are_exact() {
     .map(str::to_owned)
     .collect::<BTreeSet<_>>();
     assert_eq!(signal_fields, expected);
+
+    let chart_path = format!("{prefix}/signals/instruments/{{instrument_id}}/chart");
+    let chart = &spec["paths"][&chart_path]["get"];
+    assert_eq!(chart["x-lagrange"]["cache"]["policy"], "no-store");
+    assert_eq!(
+        chart["x-lagrange"]["errors"],
+        serde_json::json!([
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "INVALID_PARAMETER",
+            "RESOURCE_NOT_FOUND",
+            "OWNER_EQUITY_CHART_UNAVAILABLE",
+            "OWNER_EQUITY_INTEGRITY_FAILED",
+            "INTERNAL"
+        ])
+    );
+    let parameters = chart["parameters"].as_array().expect("chart parameters");
+    assert_eq!(parameters.len(), 3);
+    assert_eq!(parameters[0]["name"], "instrument_id");
+    assert_eq!(parameters[0]["in"], "path");
+    assert_eq!(parameters[0]["schema"]["pattern"], "^[0-9]{6}\\.KRX$");
+    assert_eq!(parameters[1]["name"], "snapshot_id");
+    assert_eq!(parameters[1]["in"], "query");
+    assert_eq!(parameters[1]["required"], true);
+    assert_eq!(parameters[1]["schema"]["format"], "uuid");
+    assert_eq!(parameters[2]["name"], "range");
+    assert_eq!(parameters[2]["in"], "query");
+    assert_eq!(parameters[2]["required"], true);
+    assert_eq!(
+        parameters[2]["schema"]["$ref"],
+        "#/components/schemas/OwnerEquityV2ChartRange"
+    );
+    assert_eq!(
+        schemas["OwnerEquityV2ChartRange"]["enum"],
+        serde_json::json!(["1m", "3m", "6m", "1y"])
+    );
+    assert_eq!(
+        schemas["OwnerEquityV2ChartFreshness"]["enum"],
+        serde_json::json!(["CURRENT", "STALE", "UNVERIFIABLE"])
+    );
+    assert_eq!(
+        schemas["OwnerEquityV2ChartPriceSemantics"]["enum"],
+        serde_json::json!(["ORIGINAL_UNADJUSTED"])
+    );
+    let chart_fields = schemas["OwnerEquityV2Chart"]["properties"]
+        .as_object()
+        .expect("chart properties")
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let expected_chart_fields = [
+        "snapshot_id",
+        "instrument_id",
+        "generation",
+        "range",
+        "as_of",
+        "freshness",
+        "expected_as_of",
+        "price_semantics",
+        "latest",
+        "bars",
+        "warnings",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(chart_fields, expected_chart_fields);
+    assert_eq!(
+        schemas["OwnerEquityV2Chart"]["properties"]["bars"]["maxItems"],
+        261
+    );
+    assert_eq!(
+        schemas["OwnerEquityV2Chart"]["properties"]["warnings"]["items"]["enum"],
+        serde_json::json!([
+            "NOT_REALTIME",
+            "CORPORATE_ACTIONS_NOT_ADJUSTED",
+            "RESEARCH_ONLY"
+        ])
+    );
 }
 
 #[test]

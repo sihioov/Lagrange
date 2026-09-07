@@ -41,7 +41,7 @@ describe("owner-beta product page boundary", () => {
       throw new Error("product API must not be constructed for a refused Member");
     });
 
-    for (const page of [RecommendationsPage, BacktestsPage, PaperPage]) {
+    for (const page of [() => RecommendationsPage({}), BacktestsPage, () => PaperPage({})]) {
       const markup = renderToStaticMarkup(await page());
       expect(markup).toContain("Owner access required");
       expect(markup).toContain("This area is restricted to the Owner.");
@@ -60,7 +60,7 @@ describe("owner-beta product page boundary", () => {
       throw new Error("locked Paper must not construct its product API");
     });
 
-    const markup = renderToStaticMarkup(await PaperPage());
+    const markup = renderToStaticMarkup(await PaperPage({}));
 
     expect(markup).toContain("Paper beta is not enabled");
     expect(markup).toContain(

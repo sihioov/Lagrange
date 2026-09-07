@@ -44,6 +44,9 @@ import {
   type OwnerBetaEquitySignalsLatestModel,
   type OwnerBetaEquitySignalsScreenBody,
   type OwnerBetaEquitySignalsScreenModel,
+  OwnerEquityV2ChartIntegrityError,
+  type OwnerEquityV2ChartModel,
+  type OwnerEquityV2ChartRange,
   type OwnerEquityV2LatestSignalsModel,
   type OwnerEquityV2MembershipListModel,
   type OwnerEquityV2MembershipStatusModel,
@@ -55,6 +58,10 @@ import {
   ownerBetaEquitySignalsLatestSchema,
   ownerBetaEquitySignalsScreenBodySchema,
   ownerBetaEquitySignalsScreenSchema,
+  ownerEquityV2ChartErrorEnvelopeSchema,
+  ownerEquityV2ChartPath,
+  ownerEquityV2ChartRequestMatches,
+  ownerEquityV2ChartSchema,
   ownerEquityV2LatestSignalsSchema,
   ownerEquityV2MembershipListSchema,
   ownerEquityV2MembershipStatusSchema,
@@ -93,7 +100,7 @@ import {
   type StrategyConfigModel,
   strategyConfigSchema,
 } from "@/lib/products/paper-contracts";
-import { parseApiResponse } from "./response";
+import { ApiProblem, parseApiResponse } from "./response";
 import { createServerTransport, type ServerApiClientOptions } from "./server-client";
 
 export type ProductApiClient = {
@@ -124,6 +131,11 @@ export type ProductApiClient = {
   readonly getOwnerEquityV2SignalDetail: (
     instrumentId: string,
   ) => Promise<OwnerEquityV2SignalDetailModel>;
+  readonly getOwnerEquityV2Chart: (
+    instrumentId: string,
+    snapshotId: string,
+    range: OwnerEquityV2ChartRange,
+  ) => Promise<OwnerEquityV2ChartModel>;
   readonly getStrategies: () => Promise<PageResult<StrategyCatalogItem>>;
   readonly getPaperAccounts: () => Promise<PageResult<PaperAccountModel>>;
   readonly getPaperAccount: (accountId: string) => Promise<PaperAccountModel>;
@@ -170,6 +182,29 @@ async function getParsed<Output>(
 ): Promise<Output> {
   const response = await client.get(path.slice(1));
   return parseApiResponse(response, schema);
+}
+
+async function getOwnerEquityV2ChartParsed(
+  client: KyInstance,
+  instrumentId: string,
+  snapshotId: string,
+  range: OwnerEquityV2ChartRange,
+): Promise<OwnerEquityV2ChartModel> {
+  const response = await client.get(
+    ownerEquityV2ChartPath(instrumentId, snapshotId, range).slice(1),
+  );
+  if (!response.ok) {
+    const body = await response
+      .clone()
+      .json()
+      .catch(() => undefined);
+    const envelope = ownerEquityV2ChartErrorEnvelopeSchema.safeParse(body);
+    if (envelope.success) throw new ApiProblem(response.status, envelope.data);
+  }
+  const chart = await parseApiResponse(response, ownerEquityV2ChartSchema);
+  if (!ownerEquityV2ChartRequestMatches(chart, { instrumentId, snapshotId, range }))
+    throw new OwnerEquityV2ChartIntegrityError();
+  return chart;
 }
 
 export function createProductApiClient(options: ServerApiClientOptions): ProductApiClient {
@@ -242,6 +277,8 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
         ownerEquityV2SignalDetailPath(instrumentId),
         ownerEquityV2SignalDetailSchema,
       ),
+    getOwnerEquityV2Chart: (instrumentId, snapshotId, range) =>
+      getOwnerEquityV2ChartParsed(client, instrumentId, snapshotId, range),
     getRecommendationRun: (runId) =>
       getParsed(
         client,

@@ -1,7 +1,7 @@
 @startuml component_architecture
 ' =====================================================================
 ' Lagrange Station — static component / code-dependency architecture
-' Generated 2026-09-01 from manifest + code-usage evidence.
+' Generated 2026-09-04 from manifest + code-usage evidence.
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
@@ -14,10 +14,11 @@
 ' gate crate (sqlx::migrate! over migrations/) and is likewise omitted.
 '
 ' READABILITY: ubiquitous foundation dependencies are FOLDED (not drawn).
-' Nine crates depend on crates/domain and four components consume
+' Nine crates directly depend on crates/domain and four components consume
 ' crates/auth (the leaf crates auth, kis-client, opendart-client and
-' data-go-client have NO local dependencies at all). Drawing the folded
-' edges adds 13 crossing lines and zero information.
+' data-go-client have NO local dependencies at all). Drawing these folded
+' edges adds 13 crossing lines and zero information; the production
+' api-server -> collectors chart-verifier edge is drawn below.
 ' The folded edges and their code evidence:
 '   api-server      -> domain  ' evidence: crates/api-server/src/live_order.rs:42
 '   factor-engine   -> domain  ' evidence: crates/factor-engine/src/contract.rs:7
@@ -90,7 +91,7 @@ package "Rust workspace (edition 2024)" {
 }
 
 note bottom of domain
-  Depended on by the 9 service crates
+  Depended on directly by the 9 service crates
   (edges folded; evidence in this file's
   header comment). The leaf client crates
   and auth have no local dependencies.
@@ -126,8 +127,11 @@ api_contract ..> api_server : generated from\nCONTRACT_ROUTES
 
 ' ---------------- api-server edges ----------------
 
-' evidence: crates/api-server/src/runtime.rs:13,1096 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
+' evidence: crates/api-server/src/runtime.rs:13,1119-1121 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
 api_server --> api_server_auth : mounts /auth
+
+' evidence: crates/api-server/Cargo.toml:27 (production path dependency); crates/api-server/src/http/owner_equity_v2.rs:16-18,691-735 (imports and invokes read_owner_equity_artifact)
+api_server --> collectors : reads and verifies V2 artifacts
 
 ' evidence: crates/api-server/src/repos/owner_equity_v2.rs:10 (use factor_engine::owner_equity_v2::OwnerEquitySignalRow)
 api_server --> factor_engine

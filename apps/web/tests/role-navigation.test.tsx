@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/shell/app-shell";
+import { revealCurrentPrimaryNavigationItem } from "@/components/shell/primary-navigation";
 import type { ApiSession } from "@/lib/api/contracts";
 
 const navigationState = vi.hoisted(() => ({ pathname: "/recommendations" }));
@@ -167,5 +168,24 @@ describe("role-aware primary navigation", () => {
     expect(markup).toContain('data-terminal-utility-bar="research"');
     expect(markup.match(/aria-label="Primary"/g)).toHaveLength(1);
     expect(markup.match(/<main/g)).toHaveLength(1);
+  });
+});
+
+describe("primary navigation active destination visibility", () => {
+  it("scrolls only its horizontal container to reveal the current destination", () => {
+    const activeLink = {
+      getBoundingClientRect: () => ({ left: 120, right: 200 }),
+    } as unknown as HTMLAnchorElement;
+    const scrollTo = vi.fn();
+    const navigation = {
+      getBoundingClientRect: () => ({ left: 0, right: 100 }),
+      querySelector: () => activeLink,
+      scrollLeft: 12,
+      scrollTo,
+    } as unknown as HTMLElement;
+
+    revealCurrentPrimaryNavigationItem(navigation);
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", left: 112 });
   });
 });

@@ -185,7 +185,7 @@ async function OwnerBetaRecommendationsProductPage(
   }
 }
 
-export default async function RecommendationsPage(props: RecommendationsPageProps = {}) {
+export default async function RecommendationsPage(props: RecommendationsPageProps) {
   const locale = await getLocale();
   return OwnerBetaProductRoute({
     product: "recommendations",
@@ -194,7 +194,7 @@ export default async function RecommendationsPage(props: RecommendationsPageProp
   });
 }
 
-export async function RecommendationsProductPage(
+async function RecommendationsProductPage(
   { searchParams }: RecommendationsPageProps = {},
   session?: ApiSession,
 ) {

@@ -94,6 +94,26 @@ pub struct OwnerEquityLatestSnapshot {
     pub rows: Vec<OwnerEquitySnapshotRowRecord>,
 }
 
+/// Non-serializable binding between one published signal row and the exact
+/// immutable candidate artifact it admitted. HTTP code may use this only to
+/// verify the filesystem artifact; none of these lineage fields belong in a
+/// chart response.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub(crate) struct OwnerEquityChartDescriptor {
+    pub owner_user_id: Uuid,
+    pub membership_id: Uuid,
+    pub generation_id: Uuid,
+    pub generation: i64,
+    pub instrument_id: String,
+    pub snapshot_id: Uuid,
+    pub as_of_session: NaiveDate,
+    pub artifact_manifest_sha256: String,
+    pub raw_manifest_sha256: String,
+    pub entitlement_sha256: String,
+    pub capture_code_commit: String,
+    pub materializer_code_commit: String,
+}
+
 #[derive(Debug, Error)]
 pub enum OwnerEquityRepoError {
     #[error("invalid owner equity request")]
@@ -459,6 +479,70 @@ impl OwnerEquityV2Repo {
         tx.commit().await?;
         Ok(Some(OwnerEquityLatestSnapshot { snapshot, rows }))
     }
+
+    /// Resolve exactly one actor-owned, published snapshot row together with
+    /// its admission, generation, and membership lineage. This deliberately
+    /// does not fall back to the latest snapshot: callers pin the snapshot
+    /// rendered by the page so a refresh can never mix signal and chart data.
+    pub(crate) async fn chart_descriptor(
+        &self,
+        actor: &Actor,
+        snapshot_id: Uuid,
+        instrument_id: &str,
+    ) -> Result<Option<OwnerEquityChartDescriptor>, OwnerEquityRepoError> {
+        if !canonical_instrument(instrument_id) {
+            return Err(OwnerEquityRepoError::InvalidRequest);
+        }
+        let owner = owner_actor_uuid(actor)?;
+        let mut tx = begin_actor_tx(&self.pool, actor)
+            .await
+            .map_err(map_tenancy)?;
+        let descriptor = sqlx::query_as::<_, OwnerEquityChartDescriptor>(
+            "SELECT snapshot.owner_user_id,
+                    snapshot_row.membership_id,
+                    snapshot_row.generation_id,
+                    snapshot_row.generation,
+                    snapshot_row.instrument_id,
+                    snapshot.id AS snapshot_id,
+                    snapshot.as_of_session,
+                    admission.artifact_manifest_sha256,
+                    admission.raw_manifest_sha256,
+                    admission.entitlement_sha256,
+                    admission.capture_code_commit,
+                    admission.materializer_code_commit
+               FROM public.owner_equity_signal_snapshots AS snapshot
+               JOIN public.owner_equity_signal_snapshot_rows AS snapshot_row
+                 ON snapshot_row.snapshot_id = snapshot.id
+                AND snapshot_row.owner_user_id = snapshot.owner_user_id
+               JOIN public.owner_equity_generation_admissions AS admission
+                 ON admission.generation_id = snapshot_row.generation_id
+                AND admission.owner_user_id = snapshot_row.owner_user_id
+                AND admission.membership_id = snapshot_row.membership_id
+                AND admission.instrument_id = snapshot_row.instrument_id
+                AND admission.generation = snapshot_row.generation
+               JOIN public.owner_equity_instrument_generations AS generation
+                 ON generation.id = admission.generation_id
+                AND generation.owner_user_id = admission.owner_user_id
+                AND generation.membership_id = admission.membership_id
+                AND generation.instrument_id = admission.instrument_id
+                AND generation.generation = admission.generation
+               JOIN public.owner_equity_memberships AS membership
+                 ON membership.id = generation.membership_id
+                AND membership.owner_user_id = generation.owner_user_id
+                AND membership.instrument_id = generation.instrument_id
+              WHERE snapshot.owner_user_id = $1
+                AND snapshot.id = $2
+                AND snapshot.published_at IS NOT NULL
+                AND snapshot_row.instrument_id = $3",
+        )
+        .bind(owner)
+        .bind(snapshot_id)
+        .bind(instrument_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(descriptor)
+    }
 }
 
 fn membership_select(where_clause: &str) -> sqlx::AssertSqlSafe<String> {
@@ -689,6 +773,14 @@ fn canonical_code(value: &str) -> bool {
     value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+fn canonical_instrument(value: &str) -> bool {
+    value.len() == 10
+        && value.ends_with(".KRX")
+        && value.as_bytes()[..6]
+            .iter()
+            .all(|byte| byte.is_ascii_digit())
+}
+
 fn owner_actor_uuid(actor: &Actor) -> Result<Uuid, OwnerEquityRepoError> {
     if !actor.is_owner() {
         return Err(OwnerEquityRepoError::NotFound);
@@ -821,6 +913,21 @@ mod tests {
         assert!(source.contains("published_at IS NOT NULL"));
         assert!(source.contains("ORDER BY published_at DESC, id DESC LIMIT 1"));
         assert!(source.contains("serde_json::from_value(value)"));
+    }
+
+    #[test]
+    fn chart_descriptor_is_exact_snapshot_pinned_and_joins_every_lineage_layer() {
+        let source = include_str!("owner_equity_v2.rs");
+        assert!(source.contains("pub(crate) async fn chart_descriptor"));
+        assert!(source.contains("snapshot.id = $2"));
+        assert!(source.contains("snapshot_row.instrument_id = $3"));
+        assert!(source.contains("snapshot.published_at IS NOT NULL"));
+        assert!(source.contains("owner_equity_generation_admissions AS admission"));
+        assert!(source.contains("owner_equity_instrument_generations AS generation"));
+        assert!(source.contains("owner_equity_memberships AS membership"));
+        assert!(source.contains("admission.artifact_manifest_sha256"));
+        assert!(source.contains("admission.raw_manifest_sha256"));
+        assert!(source.contains("admission.entitlement_sha256"));
     }
 
     #[test]

@@ -10,22 +10,36 @@ import type { Locale } from "@/lib/i18n/locale";
 import {
   addOwnerEquityV2Membership,
   disableOwnerEquityV2Membership,
+  getOwnerEquityV2Chart,
   getOwnerEquityV2LatestSignals,
   getOwnerEquityV2Memberships,
   retryOwnerEquityV2Membership,
 } from "@/lib/products/equity-signals-client";
 import {
+  assertOwnerEquityV2ChartMatchesExpectation,
+  OwnerEquityV2ChartIntegrityError,
+  type OwnerEquityV2ChartModel,
+  type OwnerEquityV2ChartRange,
   type OwnerEquityV2LatestSignalsModel,
   type OwnerEquityV2Lifecycle,
   type OwnerEquityV2MembershipListModel,
   type OwnerEquityV2SignalModel,
   ownerEquityV2AddBodySchema,
+  ownerEquityV2ChartRangeSchema,
 } from "@/lib/products/equity-signals-contracts";
+import {
+  StockBetaChartLoadCoordinator,
+  type StockBetaChartLoadRequest,
+} from "./chart-load-coordinator";
 import { StockBetaInstrumentSearch } from "./dashboard/instrument-search";
 import { StockBetaSelectionProvider } from "./dashboard/selection-provider";
 import { StockBetaSnapshotStrip } from "./dashboard/snapshot-strip";
 import { StockBetaDashboard } from "./dashboard/stock-beta-dashboard";
-import type { StockBetaSignalState } from "./dashboard/types";
+import type {
+  StockBetaChartError,
+  StockBetaChartState,
+  StockBetaSignalState,
+} from "./dashboard/types";
 import { StockBetaPolicyNotice } from "./dashboard/widgets/policy-boundary-widget";
 import { formatStockBetaNumber, formatStockBetaPercent } from "./shared/formatters";
 import { StockBetaSignalRefreshCoordinator } from "./signal-refresh-coordinator";
@@ -38,6 +52,57 @@ const NON_TERMINAL_LIFECYCLES = new Set<OwnerEquityV2Lifecycle>([
   "BACKFILLING",
   "MATERIALIZING",
 ]);
+const DEFAULT_CHART_RANGE: OwnerEquityV2ChartRange = "1y";
+
+type StockBetaChartSeed = {
+  readonly chart: OwnerEquityV2ChartModel | null;
+  readonly error: StockBetaChartError | null;
+  readonly key: string;
+};
+
+function defaultSignal(
+  signals: OwnerEquityV2LatestSignalsModel | null,
+): OwnerEquityV2SignalModel | undefined {
+  return signals?.top5[0] ?? signals?.rows[0];
+}
+
+function chartRequestKey(request: StockBetaChartLoadRequest): string {
+  return [
+    request.instrumentId,
+    request.snapshotId,
+    String(request.generation),
+    request.range,
+    request.asOf,
+  ].join("\u0000");
+}
+
+function chartErrorFor(error: unknown): StockBetaChartError {
+  if (error instanceof ApiProblem && error.code === "OWNER_EQUITY_CHART_UNAVAILABLE") {
+    return { code: "OWNER_EQUITY_CHART_UNAVAILABLE", kind: "unavailable" };
+  }
+  if (error instanceof ApiProblem && error.code === "OWNER_EQUITY_INTEGRITY_FAILED") {
+    return { code: "OWNER_EQUITY_INTEGRITY_FAILED", kind: "integrity" };
+  }
+  if (error instanceof OwnerEquityV2ChartIntegrityError) {
+    return { code: "CHART_CONTEXT_MISMATCH", kind: "integrity" };
+  }
+  if (error instanceof ApiContractError) {
+    return { code: "CHART_CONTRACT_INVALID", kind: "integrity" };
+  }
+  return { code: failureCode(error), kind: "error" };
+}
+
+function sameChartContext(
+  chart: OwnerEquityV2ChartModel,
+  request: StockBetaChartLoadRequest,
+): boolean {
+  return (
+    chart.snapshot_id === request.snapshotId &&
+    chart.instrument_id === request.instrumentId &&
+    chart.generation === request.generation &&
+    chart.as_of === request.asOf
+  );
+}
 
 export function ownerEquityV2PollDelay(attempt: number): number {
   return (
@@ -60,6 +125,8 @@ function failureCode(error: unknown): string {
 }
 
 export type StockBetaWorkspaceProps = {
+  readonly initialChart?: OwnerEquityV2ChartModel | null;
+  readonly initialChartError?: StockBetaChartError | null;
   readonly initialMemberships: OwnerEquityV2MembershipListModel;
   readonly initialSignals: OwnerEquityV2LatestSignalsModel | null;
   readonly initialSignalUnavailable?: boolean;
@@ -67,6 +134,8 @@ export type StockBetaWorkspaceProps = {
 };
 
 export function StockBetaWorkspace({
+  initialChart = null,
+  initialChartError = null,
   initialMemberships,
   initialSignals,
   initialSignalUnavailable = false,
@@ -79,6 +148,15 @@ export function StockBetaWorkspace({
   const [policy, setPolicy] = useState(initialMemberships.policy);
   const [memberships, setMemberships] = useState(initialMemberships.memberships);
   const [signals, setSignals] = useState<OwnerEquityV2LatestSignalsModel | null>(initialSignals);
+  const [selectedInstrumentId, setSelectedInstrumentId] = useState<string | null>(
+    defaultSignal(initialSignals)?.instrument_id ?? null,
+  );
+  const [chartRange, setChartRange] = useState<OwnerEquityV2ChartRange>(DEFAULT_CHART_RANGE);
+  const [chartData, setChartData] = useState<OwnerEquityV2ChartModel | null>(initialChart);
+  const [chartError, setChartError] = useState<StockBetaChartError | null>(initialChartError);
+  const [chartState, setChartState] = useState<StockBetaChartState>(
+    initialChart !== null ? { kind: "ready" } : (initialChartError ?? { kind: "idle" }),
+  );
   const [signalUnavailable, setSignalUnavailable] = useState(
     initialSignals === null && initialSignalUnavailable,
   );
@@ -106,6 +184,31 @@ export function StockBetaWorkspace({
       new StockBetaSignalRefreshCoordinator<OwnerEquityV2LatestSignalsModel>();
   }
   const signalRefreshCoordinator = signalRefreshCoordinatorRef.current;
+  const chartLoadCoordinatorRef = useRef<StockBetaChartLoadCoordinator | undefined>(undefined);
+  if (chartLoadCoordinatorRef.current === undefined) {
+    chartLoadCoordinatorRef.current = new StockBetaChartLoadCoordinator();
+  }
+  const chartLoadCoordinator = chartLoadCoordinatorRef.current;
+  const chartSeedRef = useRef<StockBetaChartSeed | null>(null);
+  if (chartSeedRef.current === null) {
+    const initialSignal = defaultSignal(initialSignals);
+    if (initialSignal !== undefined && (initialChart !== null || initialChartError !== null)) {
+      chartSeedRef.current = {
+        chart: initialChart,
+        error: initialChartError,
+        key: chartRequestKey({
+          asOf: initialSignals?.snapshot.as_of ?? "",
+          generation: initialSignal.generation,
+          instrumentId: initialSignal.instrument_id,
+          range: DEFAULT_CHART_RANGE,
+          snapshotId: initialSignals?.snapshot.snapshot_id ?? "",
+        }),
+      };
+    }
+  }
+  const rows = signals?.rows ?? [];
+  const selectedSignal = rows.find((row) => row.instrument_id === selectedInstrumentId) ?? rows[0];
+  const effectiveSelectedInstrumentId = selectedSignal?.instrument_id ?? null;
 
   const refreshSignals = useCallback(async (): Promise<void> => {
     await signalRefreshCoordinator.run(getOwnerEquityV2LatestSignals, {
@@ -142,11 +245,129 @@ export function StockBetaWorkspace({
       initialSignals === null || signalRefreshCoordinator.acceptsSnapshot(initialSignals)
         ? initialSignals
         : null;
+    const initialSignal = defaultSignal(acceptedInitialSignals);
+    let acceptedInitialChart = initialChart;
+    let acceptedInitialChartError = initialChartError;
+    let initialChartSeed: StockBetaChartSeed | null = null;
+    if (initialSignal === undefined) {
+      acceptedInitialChart = null;
+      acceptedInitialChartError = null;
+    } else {
+      const initialChartRequest: StockBetaChartLoadRequest = {
+        asOf: acceptedInitialSignals?.snapshot.as_of ?? "",
+        generation: initialSignal.generation,
+        instrumentId: initialSignal.instrument_id,
+        range: DEFAULT_CHART_RANGE,
+        snapshotId: acceptedInitialSignals?.snapshot.snapshot_id ?? "",
+      };
+      if (acceptedInitialChart !== null) {
+        try {
+          acceptedInitialChart = assertOwnerEquityV2ChartMatchesExpectation(
+            acceptedInitialChart,
+            initialChartRequest,
+          );
+        } catch {
+          acceptedInitialChart = null;
+          acceptedInitialChartError = {
+            code: "CHART_CONTEXT_MISMATCH",
+            kind: "integrity",
+          };
+        }
+      }
+      if (acceptedInitialChart !== null || acceptedInitialChartError !== null) {
+        initialChartSeed = {
+          chart: acceptedInitialChart,
+          error: acceptedInitialChartError,
+          key: chartRequestKey(initialChartRequest),
+        };
+      }
+    }
     setSignals(acceptedInitialSignals);
     setSignalUnavailable(acceptedInitialSignals === null && initialSignalUnavailable);
     setSignalError(null);
+    setSelectedInstrumentId((current) => {
+      const rows = acceptedInitialSignals?.rows ?? [];
+      return current !== null && rows.some((row) => row.instrument_id === current)
+        ? current
+        : (initialSignal?.instrument_id ?? null);
+    });
+    setChartData(acceptedInitialChart);
+    setChartError(acceptedInitialChartError);
+    setChartState(
+      acceptedInitialChart !== null
+        ? { kind: "ready" }
+        : (acceptedInitialChartError ?? { kind: "idle" }),
+    );
+    chartSeedRef.current = initialChartSeed;
     previousMembershipsRef.current = initialMemberships.memberships;
-  }, [initialMemberships, initialSignalUnavailable, initialSignals, signalRefreshCoordinator]);
+  }, [
+    initialChart,
+    initialChartError,
+    initialMemberships,
+    initialSignalUnavailable,
+    initialSignals,
+    signalRefreshCoordinator,
+  ]);
+
+  useEffect(() => {
+    if (selectedInstrumentId !== effectiveSelectedInstrumentId) {
+      setSelectedInstrumentId(effectiveSelectedInstrumentId);
+    }
+  }, [effectiveSelectedInstrumentId, selectedInstrumentId]);
+
+  useEffect(() => {
+    if (signals === null || selectedSignal === undefined) {
+      chartLoadCoordinator.invalidate();
+      chartSeedRef.current = null;
+      setChartData(null);
+      setChartError(null);
+      setChartState({ kind: "idle" });
+      return;
+    }
+
+    const request: StockBetaChartLoadRequest = {
+      asOf: signals.snapshot.as_of,
+      generation: selectedSignal.generation,
+      instrumentId: selectedSignal.instrument_id,
+      range: chartRange,
+      snapshotId: signals.snapshot.snapshot_id,
+    };
+    const requestKey = chartRequestKey(request);
+    const seed = chartSeedRef.current;
+    if (seed?.key === requestKey) {
+      setChartData(seed.chart);
+      setChartError(seed.error);
+      setChartState(seed.chart !== null ? { kind: "ready" } : (seed.error ?? { kind: "idle" }));
+      return;
+    }
+    chartSeedRef.current = null;
+    setChartError(null);
+    setChartState({ kind: "loading", request });
+    setChartData((current) =>
+      current !== null && sameChartContext(current, request) ? current : null,
+    );
+    void chartLoadCoordinator.run(
+      request,
+      (nextRequest, signal) =>
+        getOwnerEquityV2Chart(nextRequest.instrumentId, nextRequest.snapshotId, nextRequest.range, {
+          signal,
+        }),
+      {
+        onFailure: (error) => {
+          const nextError = chartErrorFor(error);
+          setChartData(null);
+          setChartError(nextError);
+          setChartState(nextError);
+        },
+        onSuccess: (chart) => {
+          setChartData(chart);
+          setChartError(null);
+          setChartState({ kind: "ready" });
+        },
+      },
+    );
+    return () => chartLoadCoordinator.invalidate();
+  }, [chartLoadCoordinator, chartRange, selectedSignal, signals]);
 
   useEffect(() => {
     const previous = previousMembershipsRef.current;
@@ -321,6 +542,11 @@ export function StockBetaWorkspace({
     }
   }
 
+  const onChartRangeChange = useCallback((nextRange: OwnerEquityV2ChartRange): void => {
+    const parsed = ownerEquityV2ChartRangeSchema.safeParse(nextRange);
+    if (parsed.success) setChartRange(parsed.data);
+  }, []);
+
   const signalState: StockBetaSignalState =
     signals !== null
       ? { kind: "ready" }
@@ -329,14 +555,16 @@ export function StockBetaWorkspace({
         : signalError === null
           ? { kind: "not-ready" }
           : { code: signalError, kind: "error" };
-  const rows = signals?.rows ?? [];
-  const defaultSelectionId = signals?.top5[0]?.instrument_id ?? rows[0]?.instrument_id;
   const busy =
     mutationPending || hasNonTerminalMembership || pendingSignalRemovalInstrument !== null;
   const viewModel = {
     actionError,
     actionMessage,
     busy,
+    chartData,
+    chartError,
+    chartRange,
+    chartState,
     copy: t,
     disableId,
     inputError,
@@ -357,19 +585,20 @@ export function StockBetaWorkspace({
       setDisableId(membershipId);
     },
     onRetry: retryMembership,
+    onChartRangeChange,
     pendingMembershipId,
     policy,
     pollError,
     signalState,
     signals,
+    selectedInstrumentId: effectiveSelectedInstrumentId,
   } as const;
 
   return (
     <StockBetaSelectionProvider
-      {...(defaultSelectionId === undefined
-        ? {}
-        : { initialSelectedInstrumentId: defaultSelectionId })}
+      onSelectionChange={setSelectedInstrumentId}
       rows={rows}
+      selectedInstrumentId={selectedInstrumentId}
     >
       <StockBetaTerminalPage
         asOf={

@@ -68,6 +68,7 @@ pub struct RuntimeConfig {
     pub owner_beta_equity_signals: OwnerBetaEquitySignalsMode,
     pub stock_price_beta_artifact_root: PathBuf,
     pub owner_equity_v2_pins: Option<OwnerEquityV2RuntimePins>,
+    pub owner_equity_v2_api_artifact_root: Option<PathBuf>,
     pub acquire_timeout: Duration,
 }
 
@@ -127,6 +128,7 @@ impl RuntimeConfig {
             owner_beta_equity_signals: self.owner_beta_equity_signals,
             stock_price_beta_artifact_root: self.stock_price_beta_artifact_root.clone(),
             owner_equity_v2_pins: self.owner_equity_v2_pins.clone(),
+            owner_equity_v2_api_artifact_root: self.owner_equity_v2_api_artifact_root.clone(),
         }
     }
 }
@@ -160,6 +162,7 @@ where
     let owner_beta_price_input = owner_beta_price_input_from(&get, owner_beta_access)?;
     let owner_beta_equity_signals = owner_beta_equity_signals_from(&get, owner_beta_access)?;
     let owner_equity_v2_pins = owner_equity_v2_pins_from(&get)?;
+    let owner_equity_v2_api_artifact_root = owner_equity_v2_api_artifact_root_from(&get)?;
 
     let listen_addr = listen_addr_from(&get)?;
     let database = DatabaseConfig {
@@ -216,6 +219,7 @@ where
         owner_beta_equity_signals,
         stock_price_beta_artifact_root,
         owner_equity_v2_pins,
+        owner_equity_v2_api_artifact_root,
         acquire_timeout: Duration::from_secs(acquire_timeout_secs),
     })
 }
@@ -241,6 +245,27 @@ where
         }
         _ => Err(invalid("OWNER_EQUITY_V2_ENTITLEMENT_PINS")),
     }
+}
+
+/// This optional read-only mount is intentionally distinct from every Raw
+/// and generic artifact root. Only the V2 chart handler consumes it.
+fn owner_equity_v2_api_artifact_root_from<F>(get: &F) -> Result<Option<PathBuf>, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    if get("OWNER_EQUITY_V2_API_ARTIFACT_ROOT_FILE").is_some() {
+        return Err(invalid("OWNER_EQUITY_V2_API_ARTIFACT_ROOT_FILE"));
+    }
+    let Some(value) = optional_text(get, "OWNER_EQUITY_V2_API_ARTIFACT_ROOT")? else {
+        return Ok(None);
+    };
+    let root = PathBuf::from(value);
+    if !root.is_absolute() {
+        return Err(ConfigError::InvalidPath {
+            key: "OWNER_EQUITY_V2_API_ARTIFACT_ROOT".to_owned(),
+        });
+    }
+    Ok(Some(root))
 }
 
 /// Parse the deliberately narrow, non-secret owner-beta access mode.  This is
@@ -1761,6 +1786,47 @@ mod tests {
             loaded.stock_price_beta_artifact_root,
             PathBuf::from("/sealed/equity-signals")
         );
+    }
+
+    #[test]
+    fn owner_equity_v2_chart_artifact_root_is_optional_absolute_and_not_a_secret_channel() {
+        let mut env = base_env();
+        assert_eq!(
+            config(&env)
+                .expect("chart root may be absent")
+                .owner_equity_v2_api_artifact_root,
+            None
+        );
+
+        env.insert(
+            "OWNER_EQUITY_V2_API_ARTIFACT_ROOT".to_owned(),
+            "/sealed/owner-equity-v2".into(),
+        );
+        assert_eq!(
+            config(&env)
+                .expect("absolute chart root")
+                .owner_equity_v2_api_artifact_root,
+            Some(PathBuf::from("/sealed/owner-equity-v2"))
+        );
+
+        env.insert(
+            "OWNER_EQUITY_V2_API_ARTIFACT_ROOT".to_owned(),
+            "relative/owner-equity-v2".into(),
+        );
+        assert!(matches!(
+            config(&env),
+            Err(ConfigError::InvalidPath { ref key }) if key == "OWNER_EQUITY_V2_API_ARTIFACT_ROOT"
+        ));
+
+        env.remove("OWNER_EQUITY_V2_API_ARTIFACT_ROOT");
+        env.insert(
+            "OWNER_EQUITY_V2_API_ARTIFACT_ROOT_FILE".to_owned(),
+            "/not/a/secret".into(),
+        );
+        assert!(matches!(
+            config(&env),
+            Err(ConfigError::Invalid { ref key }) if key == "OWNER_EQUITY_V2_API_ARTIFACT_ROOT_FILE"
+        ));
     }
 
     #[test]

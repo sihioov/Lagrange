@@ -295,7 +295,7 @@ describe("candidate research surfaces", () => {
     const server = api();
     vi.stubGlobal("fetch", server.fetcher);
 
-    const markup = renderToStaticMarkup(await CandidatesPage());
+    const markup = renderToStaticMarkup(await CandidatesPage({}));
 
     expect(markup.match(/Synthetic \d/g)).toHaveLength(5);
     expect(markup).toContain("Common daily Top 5");
@@ -416,7 +416,7 @@ describe("candidate research surfaces", () => {
   it("fails closed without leaking candidate rows when one source is blocked", async () => {
     vi.stubGlobal("fetch", api({ blocked: true }).fetcher);
 
-    const markup = renderToStaticMarkup(await CandidatesPage());
+    const markup = renderToStaticMarkup(await CandidatesPage({}));
 
     expect(markup).toContain("Candidate research is blocked");
     expect(markup).not.toContain("Synthetic 1");
@@ -425,13 +425,13 @@ describe("candidate research surfaces", () => {
 
   it("keeps stale and not-found errors distinct from blocked access", async () => {
     vi.stubGlobal("fetch", api({ stale: true }).fetcher);
-    const stale = renderToStaticMarkup(await CandidatesPage());
+    const stale = renderToStaticMarkup(await CandidatesPage({}));
     expect(stale).toContain("Stale research snapshot");
     expect(stale).not.toContain("Candidate research is blocked");
     expect(stale).toContain("Synthetic 1");
 
     vi.stubGlobal("fetch", api({ notFound: true }).fetcher);
-    const notFound = renderToStaticMarkup(await CandidatesPage());
+    const notFound = renderToStaticMarkup(await CandidatesPage({}));
     expect(notFound).toContain("No candidate snapshot");
     expect(notFound).not.toContain("Candidate research is blocked");
   });

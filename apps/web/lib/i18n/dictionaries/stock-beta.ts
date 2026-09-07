@@ -1,4 +1,5 @@
 import type { LocaleDictionary } from "@/lib/i18n/locale";
+import type { OwnerEquityV2ChartRange } from "@/lib/products/equity-signals-contracts";
 
 export type StockBetaDictionary = {
   readonly activityDescription: string;
@@ -22,6 +23,18 @@ export type StockBetaDictionary = {
   readonly bullishLabel: string;
   readonly cancel: string;
   readonly capacityLabel: string;
+  readonly changeLabel: string;
+  readonly chartIntegrityMessage: string;
+  readonly chartKeyboardInstructions: string;
+  readonly chartLoadingMessage: string;
+  readonly chartNetworkMessage: string;
+  readonly chartNoDataLabel: string;
+  readonly chartNotReadyMessage: string;
+  readonly chartPreparingMessage: string;
+  readonly chartRangeLabel: string;
+  readonly chartRangeOption: (range: OwnerEquityV2ChartRange) => string;
+  readonly chartUpdatingLabel: string;
+  readonly closeLabel: string;
   readonly conditionLabel: string;
   readonly conditionMatrixDescription: string;
   readonly conditionMatrixHeading: string;
@@ -32,6 +45,8 @@ export type StockBetaDictionary = {
   readonly coverageTargetLabel: string;
   readonly currentResultsDescription: string;
   readonly currentSnapshotLabel: string;
+  readonly corporateActionCaveat: string;
+  readonly dateLabel: string;
   readonly detailLinkLabel: string;
   readonly filtersEyebrow: string;
   readonly detailDescription: string;
@@ -43,11 +58,14 @@ export type StockBetaDictionary = {
   readonly disableSuccess: string;
   readonly disabling: string;
   readonly drawdown120Label: string;
+  readonly downLabel: string;
+  readonly eodCloseLabel: string;
   readonly emptyMembershipsMessage: string;
   readonly emptyMembershipsTitle: string;
   readonly failureCodeLabel: string;
   readonly firstSessionLabel: string;
   readonly generationLabel: string;
+  readonly highLabel: string;
   readonly genericUnavailableMessage: string;
   readonly genericUnavailableTitle: string;
   readonly instrumentCodeHint: string;
@@ -61,6 +79,8 @@ export type StockBetaDictionary = {
   readonly integrityTitle: string;
   readonly invalidInstrumentCode: string;
   readonly lastSessionLabel: string;
+  readonly latestCloseLabel: string;
+  readonly lowLabel: string;
   readonly lifecycleLabel: string;
   readonly lifecycleBackfilling: string;
   readonly lifecycleDisabled: string;
@@ -76,12 +96,15 @@ export type StockBetaDictionary = {
   readonly nonPitPolicy: string;
   readonly noResultsMessage: string;
   readonly noSearchResultsMessage: string;
+  readonly notAvailableLabel: string;
   readonly notReadyMessage: string;
   readonly notReadyTitle: string;
   readonly previewEmptyMessage: string;
   readonly observedCoverageLabel: string;
   readonly openDetailLabel: string;
   readonly originalPricePolicy: string;
+  readonly originalUnadjustedLabel: string;
+  readonly openLabel: string;
   readonly ownerOnlyPolicy: string;
   readonly pageDescription: string;
   readonly pageTitle: string;
@@ -91,6 +114,9 @@ export type StockBetaDictionary = {
   readonly policyBoundaryHeading: string;
   readonly policyBoundarySummary: string;
   readonly policyMaxActiveLabel: string;
+  readonly priceAxisLabel: string;
+  readonly priceChartLabel: string;
+  readonly priceTabLabel: string;
   readonly pollErrorMessage: string;
   readonly pollingMessage: string;
   readonly provenanceDescription: string;
@@ -122,6 +148,7 @@ export type StockBetaDictionary = {
   readonly searchMatchesLabel: string;
   readonly searchPlaceholder: string;
   readonly selectForPreview: string;
+  readonly selectedObservationLabel: string;
   readonly signalDecompositionDescription: string;
   readonly signalDecompositionHeading: string;
   readonly signalMetricsHeading: string;
@@ -132,6 +159,7 @@ export type StockBetaDictionary = {
   readonly signalsHeading: string;
   readonly sma20Label: string;
   readonly sma60Label: string;
+  readonly staleChartMessage: (asOf: string, expectedAsOf: string) => string;
   readonly snapshotDescription: string;
   readonly snapshotHeading: string;
   readonly snapshotIdLabel: string;
@@ -144,8 +172,11 @@ export type StockBetaDictionary = {
   readonly topFiveHeading: string;
   readonly topFiveInTableLabel: string;
   readonly totalMembershipsLabel: string;
+  readonly unchangedLabel: string;
   readonly universeHashLabel: string;
   readonly universeLabel: string;
+  readonly unverifiableChartMessage: string;
+  readonly upLabel: string;
   readonly trendGroupHeading: string;
   readonly volatility120Label: string;
   readonly volatility20Label: string;
@@ -153,6 +184,8 @@ export type StockBetaDictionary = {
   readonly volatilityGroupHeading: string;
   readonly volatilityTabLabel: string;
   readonly volumeRatioLabel: string;
+  readonly volumeAxisLabel: string;
+  readonly volumeLabel: string;
   readonly vendorSnapshotPolicy: string;
   readonly warningLabel: string;
   readonly zeroAxisLabel: string;
@@ -184,6 +217,19 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     bullishLabel: "Bullish",
     cancel: "Cancel",
     capacityLabel: "Policy capacity",
+    changeLabel: "Change",
+    chartIntegrityMessage: "Chart integrity could not be verified. No price data is shown.",
+    chartKeyboardInstructions:
+      "Focus the chart, then use ArrowLeft or ArrowRight to move one observation, or Home and End to jump.",
+    chartLoadingMessage: "Loading EOD chart data…",
+    chartNetworkMessage: "The EOD chart could not be loaded. No previous price data is shown.",
+    chartNoDataLabel: "No valid EOD price observations are available.",
+    chartNotReadyMessage: "EOD chart data is not ready for this selected instrument.",
+    chartPreparingMessage: "The EOD chart is being prepared or is unavailable.",
+    chartRangeLabel: "EOD chart range",
+    chartRangeOption: (range) => range.toUpperCase(),
+    chartUpdatingLabel: "Updating EOD chart…",
+    closeLabel: "Close",
     conditionLabel: "Condition",
     conditionMatrixDescription:
       "Equal-area tiles preserve server order and the returned condition.",
@@ -197,6 +243,9 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     coverageTargetLabel: "target",
     currentResultsDescription: "Current V2 rows in server order.",
     currentSnapshotLabel: "Current snapshot",
+    corporateActionCaveat:
+      "Corporate actions are not adjusted and can create discontinuities or distort returns.",
+    dateLabel: "Date",
     detailLinkLabel: "Detail",
     filtersEyebrow: "V2 universe",
     detailDescription: "Inspect one V2 price-and-volume signal without V1 fallback data.",
@@ -209,12 +258,15 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     disableSuccess: "The membership was disabled.",
     disabling: "Disabling…",
     drawdown120Label: "120-session maximum drawdown",
+    downLabel: "Down",
+    eodCloseLabel: "Completed EOD close",
     emptyMembershipsMessage:
       "No research instruments are configured. Add an exact six-digit KRX code.",
     emptyMembershipsTitle: "No configured instruments",
     failureCodeLabel: "Typed failure",
     firstSessionLabel: "First session",
     generationLabel: "Generation",
+    highLabel: "High",
     genericUnavailableMessage:
       "Stock signal beta is unavailable. No stale, synthetic, or V1 fallback data is shown.",
     genericUnavailableTitle: "Stock signal beta unavailable",
@@ -230,6 +282,8 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     integrityTitle: "Signal snapshot integrity failed",
     invalidInstrumentCode: "Enter exactly six ASCII digits.",
     lastSessionLabel: "Last session",
+    latestCloseLabel: "Latest EOD close",
+    lowLabel: "Low",
     lifecycleLabel: "Lifecycle",
     lifecycleBackfilling: "Backfilling",
     lifecycleDisabled: "Disabled",
@@ -245,12 +299,15 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     nonPitPolicy: "This is not strict point-in-time evidence; dates identify the current snapshot.",
     noResultsMessage: "The current V2 snapshot has no signal rows.",
     noSearchResultsMessage: "No instrument ID in this response matches the search.",
+    notAvailableLabel: "not available",
     notReadyMessage: "Manage memberships while the first READY universe snapshot is prepared.",
     notReadyTitle: "Signals are not ready",
     observedCoverageLabel: "observed",
     openDetailLabel: "Open detail",
     originalPricePolicy:
       "Original/unadjusted prices are used; corporate actions can distort returns and drawdowns.",
+    originalUnadjustedLabel: "Original / unadjusted price",
+    openLabel: "Open",
     ownerOnlyPolicy:
       "Owner-only managed KRX research instruments; this is not index membership or the whole market.",
     previewEmptyMessage: "Select a V2 signal row to inspect its returned metrics.",
@@ -262,6 +319,9 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     policyBoundaryHeading: "Research policy boundary",
     policyBoundarySummary: "Owner only · Read only · Original price · No account or order actions",
     policyMaxActiveLabel: "Maximum",
+    priceAxisLabel: "Price",
+    priceChartLabel: "EOD price chart",
+    priceTabLabel: "Price",
     pollErrorMessage: "Status refresh failed; the last validated membership state remains visible.",
     pollingMessage: "Refreshing lifecycle and snapshot state…",
     provenanceDescription: "Only the actual V2 snapshot identifiers returned by the API.",
@@ -293,6 +353,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     searchMatchesLabel: "matches",
     searchPlaceholder: "Instrument ID",
     selectForPreview: "Select signal",
+    selectedObservationLabel: "Selected observation",
     signalDecompositionDescription:
       "Returned score, condition, generation, and numeric row fields—without inferred factors.",
     signalDecompositionHeading: "Signal decomposition",
@@ -305,6 +366,8 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     signalsHeading: "Latest V2 signals",
     sma20Label: "20-session moving average",
     sma60Label: "60-session moving average",
+    staleChartMessage: (asOf, expectedAsOf) =>
+      `EOD data is stale: as of ${asOf}; expected ${expectedAsOf}.`,
     snapshotDescription: "Actual V2 snapshot identity and publication fields.",
     snapshotHeading: "Snapshot",
     snapshotIdLabel: "Snapshot ID",
@@ -317,15 +380,21 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     topFiveHeading: "Top 5",
     topFiveInTableLabel: "API top-five rows are emphasized without reranking.",
     totalMembershipsLabel: "Memberships",
+    unchangedLabel: "Unchanged",
     trendGroupHeading: "Drawdown and moving averages",
     universeHashLabel: "Universe SHA-256",
     universeLabel: "Universe",
+    unverifiableChartMessage:
+      "The latest EOD close cannot be verified against the expected market date.",
+    upLabel: "Up",
     volatility120Label: "120-session volatility",
     volatility20Label: "20-session volatility",
     volatility60Label: "60-session volatility",
     volatilityGroupHeading: "Volatility",
     volatilityTabLabel: "Volatility",
     volumeRatioLabel: "20/60 volume ratio",
+    volumeAxisLabel: "Volume",
+    volumeLabel: "Volume",
     vendorSnapshotPolicy: "Signals are shown only from the current published V2 snapshot.",
     warningLabel: "Boundary",
     zeroAxisLabel: "Zero axis",
@@ -353,6 +422,19 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     bullishLabel: "상승",
     cancel: "취소",
     capacityLabel: "정책 용량",
+    changeLabel: "등락",
+    chartIntegrityMessage: "차트 무결성을 확인할 수 없습니다. 가격 데이터는 표시하지 않습니다.",
+    chartKeyboardInstructions:
+      "차트에 초점을 둔 뒤 왼쪽/오른쪽 화살표로 관측치를 이동하거나 Home/End로 처음과 끝으로 이동하세요.",
+    chartLoadingMessage: "EOD 차트 데이터를 불러오는 중…",
+    chartNetworkMessage: "EOD 차트를 불러올 수 없습니다. 이전 가격 데이터는 표시하지 않습니다.",
+    chartNoDataLabel: "유효한 EOD 가격 관측치가 없습니다.",
+    chartNotReadyMessage: "선택한 종목의 EOD 차트 데이터가 아직 준비되지 않았습니다.",
+    chartPreparingMessage: "EOD 차트를 준비 중이거나 사용할 수 없습니다.",
+    chartRangeLabel: "EOD 차트 기간",
+    chartRangeOption: (range) => range.toUpperCase(),
+    chartUpdatingLabel: "EOD 차트 갱신 중…",
+    closeLabel: "종가",
     conditionLabel: "조건",
     conditionMatrixDescription: "동일 면적 타일이 서버 순서와 반환 조건을 보존합니다.",
     conditionMatrixHeading: "조건 매트릭스",
@@ -365,6 +447,9 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     coverageTargetLabel: "목표",
     currentResultsDescription: "서버 순서를 보존한 현재 V2 행입니다.",
     currentSnapshotLabel: "현재 스냅샷",
+    corporateActionCaveat:
+      "기업행동은 조정하지 않아 차트 단절 또는 수익률 왜곡이 생길 수 있습니다.",
+    dateLabel: "날짜",
     detailLinkLabel: "상세",
     filtersEyebrow: "V2 유니버스",
     detailDescription: "V1 대체 데이터 없이 한 V2 가격·거래량 신호를 확인합니다.",
@@ -376,11 +461,14 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     disableSuccess: "멤버십을 비활성화했습니다.",
     disabling: "비활성화 중…",
     drawdown120Label: "120거래일 최대 낙폭",
+    downLabel: "하락",
+    eodCloseLabel: "완료 EOD 종가",
     emptyMembershipsMessage: "구성된 연구 종목이 없습니다. 정확한 KRX 코드 6자리를 추가하세요.",
     emptyMembershipsTitle: "구성 종목 없음",
     failureCodeLabel: "유형화된 실패",
     firstSessionLabel: "첫 세션",
     generationLabel: "세대",
+    highLabel: "고가",
     genericUnavailableMessage:
       "종목 신호 베타를 사용할 수 없습니다. 오래된·합성·V1 대체 데이터는 표시하지 않습니다.",
     genericUnavailableTitle: "종목 신호 베타 사용 불가",
@@ -396,6 +484,8 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     integrityTitle: "신호 스냅샷 무결성 실패",
     invalidInstrumentCode: "ASCII 숫자 6자리를 정확히 입력하세요.",
     lastSessionLabel: "마지막 세션",
+    latestCloseLabel: "최신 EOD 종가",
+    lowLabel: "저가",
     lifecycleLabel: "수명주기",
     lifecycleBackfilling: "백필 중",
     lifecycleDisabled: "비활성",
@@ -411,12 +501,15 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     nonPitPolicy: "엄격한 PIT 근거가 아니며 날짜는 현재 스냅샷을 식별합니다.",
     noResultsMessage: "현재 V2 스냅샷에 신호 행이 없습니다.",
     noSearchResultsMessage: "현재 응답에서 검색어와 일치하는 종목 ID가 없습니다.",
+    notAvailableLabel: "확인 불가",
     notReadyMessage: "첫 READY 유니버스 스냅샷이 준비되는 동안 멤버십을 관리하세요.",
     notReadyTitle: "신호 준비 중",
     observedCoverageLabel: "관측",
     openDetailLabel: "상세 열기",
     originalPricePolicy:
       "원주가(비조정 가격)를 사용하며 기업행사로 수익률과 낙폭이 왜곡될 수 있습니다.",
+    originalUnadjustedLabel: "원주가 / 비조정 가격",
+    openLabel: "시가",
     ownerOnlyPolicy:
       "오너 전용 관리형 KRX 연구 종목이며 지수 편입이나 전체 시장을 뜻하지 않습니다.",
     previewEmptyMessage: "반환 지표를 보려면 V2 신호 행을 선택하세요.",
@@ -428,6 +521,9 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     policyBoundaryHeading: "연구 정책 경계",
     policyBoundarySummary: "오너 전용 · 읽기 전용 · 원주가 · 계좌/주문 없음",
     policyMaxActiveLabel: "최대",
+    priceAxisLabel: "가격",
+    priceChartLabel: "EOD 가격 차트",
+    priceTabLabel: "가격",
     pollErrorMessage: "상태 갱신에 실패해 마지막으로 검증된 멤버십 상태를 표시합니다.",
     pollingMessage: "수명주기와 스냅샷 상태 갱신 중…",
     provenanceDescription: "API가 반환한 실제 V2 스냅샷 식별자만 표시합니다.",
@@ -459,6 +555,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     searchMatchesLabel: "개 일치",
     searchPlaceholder: "종목 ID",
     selectForPreview: "신호 선택",
+    selectedObservationLabel: "선택한 관측치",
     signalDecompositionDescription: "추론 팩터 없이 반환된 점수, 조건, 세대 및 숫자 행 필드입니다.",
     signalDecompositionHeading: "신호 분해",
     signalMetricsHeading: "신호 지표",
@@ -470,6 +567,8 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     signalsHeading: "최신 V2 신호",
     sma20Label: "20거래일 이동평균",
     sma60Label: "60거래일 이동평균",
+    staleChartMessage: (asOf, expectedAsOf) =>
+      `EOD 데이터가 오래되었습니다: 기준일 ${asOf}; 예상 기준일 ${expectedAsOf}.`,
     snapshotDescription: "실제 V2 스냅샷 식별 및 발행 필드입니다.",
     snapshotHeading: "스냅샷",
     snapshotIdLabel: "스냅샷 ID",
@@ -482,15 +581,20 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     topFiveHeading: "Top 5",
     topFiveInTableLabel: "API Top 5 행을 재순위 없이 강조합니다.",
     totalMembershipsLabel: "멤버십",
+    unchangedLabel: "보합",
     trendGroupHeading: "낙폭과 이동평균",
     universeHashLabel: "유니버스 SHA-256",
     universeLabel: "유니버스",
+    unverifiableChartMessage: "최신 EOD 종가의 예상 시장 기준일을 확인할 수 없습니다.",
+    upLabel: "상승",
     volatility120Label: "120거래일 변동성",
     volatility20Label: "20거래일 변동성",
     volatility60Label: "60거래일 변동성",
     volatilityGroupHeading: "변동성",
     volatilityTabLabel: "변동성",
     volumeRatioLabel: "20/60 거래량 비율",
+    volumeAxisLabel: "거래량",
+    volumeLabel: "거래량",
     vendorSnapshotPolicy: "현재 발행된 V2 스냅샷의 신호만 표시합니다.",
     warningLabel: "경계",
     zeroAxisLabel: "0축",

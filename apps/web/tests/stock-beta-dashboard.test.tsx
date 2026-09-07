@@ -2,22 +2,19 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { stockBetaDashboardLayout } from "@/components/stock-beta/dashboard/dashboard-layout";
+import { StockBetaSelectionProvider } from "@/components/stock-beta/dashboard/selection-provider";
 import {
   renderStockBetaDashboardGrid,
   StockBetaDashboard,
 } from "@/components/stock-beta/dashboard/stock-beta-dashboard";
+import type { StockBetaDashboardViewModel } from "@/components/stock-beta/dashboard/types";
 import {
-  STOCK_BETA_DASHBOARD_WIDGET_IDS,
-  type StockBetaDashboardViewModel,
-} from "@/components/stock-beta/dashboard/types";
-import {
+  defineStockBetaDashboardCatalog,
   stockBetaDashboardArchitecture,
-  stockBetaDashboardDefinitions,
+  stockBetaDashboardCatalog,
 } from "@/components/stock-beta/dashboard/widget-registry";
 import { stockBetaDetailArchitecture } from "@/components/stock-beta/detail/widget-registry";
 import {
-  defineStockBetaWidget,
   defineStockBetaWidgetArchitecture,
   stockBetaWidgetConfiguration,
   validateStockBetaWidgetArchitecture,
@@ -189,33 +186,10 @@ function renderedWidgetTag(markup: string, widgetId: string): string {
   return tag;
 }
 
-type RuntimeDashboardArchitecture = {
-  readonly definitions: readonly unknown[];
-  readonly layout: unknown;
-  readonly requiredWidgetIds: readonly string[];
-};
-
-function renderDashboardWithArchitecture(
-  architecture: RuntimeDashboardArchitecture,
-  viewModel: StockBetaDashboardViewModel,
-): string {
-  const centralArchitecture = stockBetaDashboardArchitecture as unknown as {
-    definitions: readonly unknown[];
-    layout: unknown;
-    requiredWidgetIds: readonly string[];
-  };
-  const original = {
-    definitions: centralArchitecture.definitions,
-    layout: centralArchitecture.layout,
-    requiredWidgetIds: centralArchitecture.requiredWidgetIds,
-  };
-
-  try {
-    Object.assign(centralArchitecture, architecture);
-    return renderToStaticMarkup(<StockBetaDashboard viewModel={viewModel} />);
-  } finally {
-    Object.assign(centralArchitecture, original);
-  }
+function renderedWidgetIds(markup: string): string[] {
+  return [...markup.matchAll(/data-widget-id="([^"]+)"/g)].flatMap((match) =>
+    match[1] === undefined ? [] : [match[1]],
+  );
 }
 
 function OptionalRendererProbe({ viewModel }: { readonly viewModel: StockBetaDashboardViewModel }) {
@@ -225,11 +199,20 @@ function OptionalRendererProbe({ viewModel }: { readonly viewModel: StockBetaDas
 }
 
 describe("stock-beta V2 dashboard composition", () => {
-  it("keeps the V2 registry, required regions, and responsive order explicit", () => {
+  it("derives V2 IDs, required regions, and responsive placements from catalog order", () => {
     expect(validateStockBetaWidgetArchitecture(stockBetaDashboardArchitecture)).toEqual([]);
-    expect(stockBetaDashboardDefinitions.map((definition) => definition.id)).toEqual(
-      STOCK_BETA_DASHBOARD_WIDGET_IDS,
-    );
+    expect(stockBetaDashboardCatalog.map((entry) => entry.id)).toEqual([
+      "universe-management",
+      "membership-status",
+      "signal-state",
+      "ranked-signals",
+      "signal-profile",
+      "signal-decomposition",
+      "condition-matrix",
+      "snapshot-tape",
+      "policy-boundary",
+      "provenance",
+    ]);
     expect(stockBetaDashboardArchitecture.requiredWidgetIds).toEqual([
       "universe-management",
       "membership-status",
@@ -241,19 +224,29 @@ describe("stock-beta V2 dashboard composition", () => {
       "policy-boundary",
       "provenance",
     ]);
-    expect(stockBetaDashboardLayout.desktop.map((placement) => placement.id)).toEqual([
+    expect(stockBetaDashboardArchitecture.layout.desktop.map((placement) => placement.id)).toEqual([
+      "universe-management",
+      "membership-status",
+      "signal-state",
       "ranked-signals",
       "signal-profile",
       "signal-decomposition",
       "condition-matrix",
       "snapshot-tape",
-      "universe-management",
-      "membership-status",
-      "signal-state",
       "policy-boundary",
       "provenance",
     ]);
-    expect(stockBetaDashboardLayout.desktop.slice(0, 5)).toMatchObject([
+    expect(
+      stockBetaDashboardArchitecture.layout.desktop.filter((placement) =>
+        [
+          "ranked-signals",
+          "signal-profile",
+          "signal-decomposition",
+          "condition-matrix",
+          "snapshot-tape",
+        ].includes(placement.id),
+      ),
+    ).toMatchObject([
       { id: "ranked-signals", column: 1, columnSpan: 3, row: 1 },
       { id: "signal-profile", column: 4, columnSpan: 6, row: 1 },
       { id: "signal-decomposition", column: 10, columnSpan: 3, row: 1 },
@@ -261,9 +254,8 @@ describe("stock-beta V2 dashboard composition", () => {
       { id: "snapshot-tape", column: 4, columnSpan: 9, row: 2 },
     ]);
     expect(
-      stockBetaDashboardLayout.desktop
+      stockBetaDashboardArchitecture.layout.desktop
         .filter((placement) => placement.empty.visible)
-        .sort((left, right) => left.empty.order - right.empty.order)
         .map((placement) => placement.id),
     ).toEqual(["universe-management", "membership-status", "signal-state", "policy-boundary"]);
   });
@@ -426,68 +418,45 @@ describe("stock-beta V2 dashboard composition", () => {
     }
   });
 
-  it("accepts registry-driven optional removal and reordering while retaining required widgets", () => {
-    const desktop = stockBetaDashboardArchitecture.layout.desktop;
-    const tablet = stockBetaDashboardArchitecture.layout.tablet;
-    const mobile = stockBetaDashboardArchitecture.layout.mobile;
-    const reorder = <T extends { readonly order: number }>(
-      placements: readonly T[],
-      predicate: (placement: T) => boolean,
-      offset = 0,
-    ) =>
-      placements
-        .filter(predicate)
-        .map((placement, order) => ({ ...placement, order: order + offset }));
-    const candidate = {
-      definitions: stockBetaDashboardArchitecture.definitions,
-      requiredWidgetIds: stockBetaDashboardArchitecture.requiredWidgetIds,
-      layout: {
-        desktop: [
-          ...reorder(desktop, (placement) => placement.id === "universe-management", 0),
-          ...reorder(desktop, (placement) => placement.id === "ranked-signals", 1),
-          ...reorder(
-            desktop,
-            (placement) =>
-              placement.id !== "universe-management" && placement.id !== "ranked-signals",
-          ).map((placement, order) => ({ ...placement, order: order + 2 })),
-        ],
-        tablet: reorder(tablet, (placement) => placement.id !== "signal-state"),
-        mobile: reorder(mobile, (placement) => placement.id !== "signal-state"),
+  it("uses catalog reorder for DOM order and derives compatibility placement variables", () => {
+    const universe = stockBetaDashboardCatalog[0];
+    const membership = stockBetaDashboardCatalog[1];
+    const signalState = stockBetaDashboardCatalog[2];
+    const reorderedCatalog = defineStockBetaDashboardCatalog([
+      universe,
+      {
+        ...signalState,
+        placements: {
+          ...signalState.placements,
+          desktop: {
+            ...signalState.placements.desktop,
+            empty: {
+              ...signalState.placements.desktop.empty,
+              column: 8,
+              columnSpan: 5,
+              row: 1,
+            },
+          },
+        },
       },
-    };
-
-    expect(validateStockBetaWidgetArchitecture(candidate)).toEqual([]);
-    const configuration = stockBetaWidgetConfiguration(candidate);
-    expect(configuration.layout.desktop.slice(0, 2).map((placement) => placement.id)).toEqual([
-      "universe-management",
-      "ranked-signals",
+      {
+        ...membership,
+        placements: {
+          ...membership.placements,
+          desktop: {
+            ...membership.placements.desktop,
+            empty: {
+              ...membership.placements.desktop.empty,
+              column: 1,
+              columnSpan: 12,
+              row: 2,
+            },
+          },
+        },
+      },
+      ...stockBetaDashboardCatalog.slice(3),
     ]);
-    expect(configuration.layout.tablet.some((placement) => placement.id === "signal-state")).toBe(
-      false,
-    );
-    expect(JSON.parse(JSON.stringify(configuration))).toEqual(configuration);
-  });
-
-  it("applies reordered optional-widget placement metadata in the actual dashboard renderer", () => {
-    const reorderedDesktop = stockBetaDashboardArchitecture.layout.desktop.map((placement) => {
-      if (placement.id === "signal-state") {
-        return {
-          ...placement,
-          empty: { ...placement.empty, column: 8, columnSpan: 5, row: 1, order: 1 },
-        };
-      }
-      if (placement.id === "membership-status") {
-        return {
-          ...placement,
-          empty: { ...placement.empty, column: 1, columnSpan: 12, row: 2, order: 2 },
-        };
-      }
-      return placement;
-    });
-    const reorderedArchitecture = defineStockBetaWidgetArchitecture({
-      ...stockBetaDashboardArchitecture,
-      layout: { ...stockBetaDashboardArchitecture.layout, desktop: reorderedDesktop },
-    });
+    const reorderedArchitecture = defineStockBetaWidgetArchitecture(reorderedCatalog);
     const viewModel = dashboardViewModel(null);
     const defaultMarkup = renderToStaticMarkup(
       renderStockBetaDashboardGrid(stockBetaDashboardArchitecture, viewModel),
@@ -498,6 +467,16 @@ describe("stock-beta V2 dashboard composition", () => {
     const defaultSignalState = renderedWidgetTag(defaultMarkup, "signal-state");
     const reorderedSignalState = renderedWidgetTag(reorderedMarkup, "signal-state");
 
+    expect(renderedWidgetIds(defaultMarkup).slice(0, 3)).toEqual([
+      "universe-management",
+      "membership-status",
+      "signal-state",
+    ]);
+    expect(renderedWidgetIds(reorderedMarkup).slice(0, 3)).toEqual([
+      "universe-management",
+      "signal-state",
+      "membership-status",
+    ]);
     expect(defaultSignalState).toContain("--desktop-grid-column:1");
     expect(defaultSignalState).toContain("--desktop-grid-column-span:12");
     expect(defaultSignalState).toContain("--desktop-grid-row:2");
@@ -512,106 +491,86 @@ describe("stock-beta V2 dashboard composition", () => {
   it("removes an optional widget from the real StockBetaDashboard render via architecture only", () => {
     const viewModel = dashboardViewModel(null);
     const baselineMarkup = renderToStaticMarkup(<StockBetaDashboard viewModel={viewModel} />);
-    const architectureWithoutSignalState = defineStockBetaWidgetArchitecture({
-      definitions: stockBetaDashboardArchitecture.definitions.filter(
-        (definition) => definition.id !== "signal-state",
-      ),
-      requiredWidgetIds: [...stockBetaDashboardArchitecture.requiredWidgetIds],
-      layout: {
-        desktop: stockBetaDashboardArchitecture.layout.desktop.filter(
-          (placement) => placement.id !== "signal-state",
-        ),
-        tablet: stockBetaDashboardArchitecture.layout.tablet.filter(
-          (placement) => placement.id !== "signal-state",
-        ),
-        mobile: stockBetaDashboardArchitecture.layout.mobile.filter(
-          (placement) => placement.id !== "signal-state",
-        ),
-      },
-    });
-    const removedMarkup = renderDashboardWithArchitecture(
-      architectureWithoutSignalState,
-      viewModel,
+    const catalogWithoutSignalState = defineStockBetaDashboardCatalog(
+      stockBetaDashboardCatalog.filter((entry) => entry.id !== "signal-state"),
+    );
+    const architectureWithoutSignalState =
+      defineStockBetaWidgetArchitecture(catalogWithoutSignalState);
+    const removedMarkup = renderToStaticMarkup(
+      renderStockBetaDashboardGrid(architectureWithoutSignalState, viewModel),
     );
 
+    expect(architectureWithoutSignalState.requiredWidgetIds).toEqual(
+      stockBetaDashboardArchitecture.requiredWidgetIds,
+    );
     expect(baselineMarkup).toContain('data-testid="stock-beta-widget-signal-state"');
     expect(removedMarkup).not.toContain('data-testid="stock-beta-widget-signal-state"');
     expect(removedMarkup).not.toContain(stockBetaDictionary.en.notReadyMessage);
   });
 
   it("adds an optional widget to the real StockBetaDashboard with metadata-driven placement", () => {
-    const definitionOrder =
-      Math.max(
-        ...stockBetaDashboardArchitecture.definitions.map((definition) => definition.order),
-      ) + 1;
-    const desktopOrder =
-      Math.max(
-        ...stockBetaDashboardArchitecture.layout.desktop.map((placement) => placement.order),
-      ) + 1;
-    const tabletOrder =
-      Math.max(
-        ...stockBetaDashboardArchitecture.layout.tablet.map((placement) => placement.order),
-      ) + 1;
     const desktopRow =
       Math.max(...stockBetaDashboardArchitecture.layout.desktop.map((placement) => placement.row)) +
       1;
     const tabletRow =
       Math.max(...stockBetaDashboardArchitecture.layout.tablet.map((placement) => placement.row)) +
       1;
-    const optionalDefinition = defineStockBetaWidget({
+    const optionalEntry = {
       id: "optional-renderer-probe",
       component: OptionalRendererProbe,
-      defaultSize: "full",
       required: false,
-      defaultVisible: true,
-      order: definitionOrder,
-    });
-    const desktopPlacement = {
-      id: optionalDefinition.id,
-      size: "full",
-      column: 2,
-      columnSpan: 10,
-      row: desktopRow,
-      visible: true,
-      order: desktopOrder,
-      empty: { column: 1, columnSpan: 12, row: desktopRow, visible: false, order: desktopOrder },
-    } as const;
-    const tabletPlacement = {
-      id: optionalDefinition.id,
-      size: "large",
-      column: 3,
-      columnSpan: 8,
-      row: tabletRow,
-      visible: true,
-      order: tabletOrder,
-      empty: { column: 1, columnSpan: 12, row: tabletRow, visible: false, order: tabletOrder },
-    } as const;
-    const architectureWithOptionalWidget = defineStockBetaWidgetArchitecture({
-      definitions: [...stockBetaDashboardArchitecture.definitions, optionalDefinition],
-      requiredWidgetIds: [...stockBetaDashboardArchitecture.requiredWidgetIds],
-      layout: {
-        desktop: [...stockBetaDashboardArchitecture.layout.desktop, desktopPlacement],
-        tablet: [...stockBetaDashboardArchitecture.layout.tablet, tabletPlacement],
-        mobile: [...stockBetaDashboardArchitecture.layout.mobile],
+      placements: {
+        desktop: {
+          size: "full",
+          column: 2,
+          columnSpan: 10,
+          row: desktopRow,
+          visible: true,
+          empty: { column: 1, columnSpan: 12, row: desktopRow, visible: true },
+        },
+        tablet: {
+          size: "large",
+          column: 3,
+          columnSpan: 8,
+          row: tabletRow,
+          visible: true,
+          empty: { column: 1, columnSpan: 12, row: tabletRow, visible: true },
+        },
       },
-    });
-    const markup = renderDashboardWithArchitecture(
-      architectureWithOptionalWidget,
-      dashboardViewModel(latestFor(1)),
+    } as const;
+    const catalogWithOptionalWidget = defineStockBetaDashboardCatalog([
+      ...stockBetaDashboardCatalog,
+      optionalEntry,
+    ]);
+    const architectureWithOptionalWidget =
+      defineStockBetaWidgetArchitecture(catalogWithOptionalWidget);
+    const data = latestFor(1);
+    const initialSelectedInstrumentId = data.rows[0]?.instrument_id;
+    if (initialSelectedInstrumentId === undefined) throw new Error("fixture selection missing");
+    const markup = renderToStaticMarkup(
+      <StockBetaSelectionProvider
+        initialSelectedInstrumentId={initialSelectedInstrumentId}
+        rows={data.rows}
+      >
+        {renderStockBetaDashboardGrid(architectureWithOptionalWidget, dashboardViewModel(data))}
+      </StockBetaSelectionProvider>,
     );
-    const optionalWidgetTag = renderedWidgetTag(markup, optionalDefinition.id);
+    const optionalWidgetTag = renderedWidgetTag(markup, optionalEntry.id);
 
-    expect(markup).toContain('data-testid="stock-beta-optional-renderer-probe"');
-    expect(optionalWidgetTag).toContain(`--desktop-grid-column:${desktopPlacement.column}`);
-    expect(optionalWidgetTag).toContain(
-      `--desktop-grid-column-span:${desktopPlacement.columnSpan}`,
+    expect(architectureWithOptionalWidget.requiredWidgetIds).toEqual(
+      stockBetaDashboardArchitecture.requiredWidgetIds,
     );
-    expect(optionalWidgetTag).toContain(`--desktop-grid-row:${desktopPlacement.row}`);
-    expect(optionalWidgetTag).toContain(`--desktop-order:${desktopPlacement.order}`);
-    expect(optionalWidgetTag).toContain(`--tablet-grid-column:${tabletPlacement.column}`);
-    expect(optionalWidgetTag).toContain(`--tablet-grid-column-span:${tabletPlacement.columnSpan}`);
-    expect(optionalWidgetTag).toContain(`--tablet-grid-row:${tabletPlacement.row}`);
-    expect(optionalWidgetTag).toContain(`--tablet-order:${tabletPlacement.order}`);
+    expect(renderedWidgetIds(markup).at(-1)).toBe(optionalEntry.id);
+    expect(markup).toContain('data-testid="stock-beta-optional-renderer-probe"');
+    expect(optionalWidgetTag).toContain("--desktop-grid-column:2");
+    expect(optionalWidgetTag).toContain("--desktop-grid-column-span:10");
+    expect(optionalWidgetTag).toContain(`--desktop-grid-row:${desktopRow}`);
+    expect(optionalWidgetTag).toContain(`--desktop-order:${stockBetaDashboardCatalog.length}`);
+    expect(optionalWidgetTag).toContain("--tablet-grid-column:3");
+    expect(optionalWidgetTag).toContain("--tablet-grid-column-span:8");
+    expect(optionalWidgetTag).toContain(`--tablet-grid-row:${tabletRow}`);
+    expect(optionalWidgetTag).toContain(`--tablet-order:${stockBetaDashboardCatalog.length}`);
+    expect(optionalWidgetTag).toContain('data-mobile-visible="false"');
   });
 
   it("keeps widget-specific CSS free of grid placement rules", () => {

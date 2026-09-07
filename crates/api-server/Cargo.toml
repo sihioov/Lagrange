@@ -24,6 +24,7 @@ auth = { path = "../auth" }
 axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+collectors = { path = "../../data-pipelines/collectors" }
 domain = { path = "../domain" }
 factor-engine = { path = "../factor-engine" }
 risk-gateway = { path = "../risk-gateway" }
@@ -51,7 +52,6 @@ tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-collectors = { path = "../../data-pipelines/collectors" }
 http-body-util = "0.1"
 # The Paper execution seam uses a tiny temporary Phase0 v2 curated store for
 # fast deterministic tests while exercising the production schema.

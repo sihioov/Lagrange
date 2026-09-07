@@ -2,14 +2,20 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { StatePanel } from "@/components/states/state-panel";
+import type { StockBetaChartError } from "@/components/stock-beta/dashboard/types";
 import { StockBetaPolicyNotice } from "@/components/stock-beta/dashboard/widgets/policy-boundary-widget";
 import { StockBetaWorkspace } from "@/components/stock-beta/stock-beta-workspace";
 import { StockBetaTerminalPage } from "@/components/stock-beta/terminal";
-import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
+import { ApiContractError, ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import { type StockBetaDictionary, stockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
 import type { Locale } from "@/lib/i18n/locale";
 import { getLocale } from "@/lib/i18n/server";
+import {
+  assertOwnerEquityV2ChartMatchesExpectation,
+  OwnerEquityV2ChartIntegrityError,
+  type OwnerEquityV2ChartModel,
+} from "@/lib/products/equity-signals-contracts";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -31,6 +37,24 @@ function errorPage(
   );
 }
 
+function chartFailure(error: unknown): StockBetaChartError | undefined {
+  if (error instanceof ApiProblem) {
+    if (error.code === "OWNER_EQUITY_CHART_UNAVAILABLE") {
+      return { code: "OWNER_EQUITY_CHART_UNAVAILABLE", kind: "unavailable" };
+    }
+    if (error.code === "OWNER_EQUITY_INTEGRITY_FAILED") {
+      return { code: "OWNER_EQUITY_INTEGRITY_FAILED", kind: "integrity" };
+    }
+  }
+  if (error instanceof OwnerEquityV2ChartIntegrityError) {
+    return { code: "OWNER_EQUITY_INTEGRITY_FAILED", kind: "integrity" };
+  }
+  if (error instanceof ApiContractError) {
+    return { code: "CHART_CONTRACT_INVALID", kind: "integrity" };
+  }
+  return undefined;
+}
+
 async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
   try {
     const api = await getProductApi();
@@ -45,8 +69,38 @@ async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
         initialSignalUnavailable = true;
       else throw error;
     }
+    let initialChart: OwnerEquityV2ChartModel | null = null;
+    let initialChartError: StockBetaChartError | null = null;
+    const defaultSignal = signals?.top5[0] ?? signals?.rows[0];
+    if (
+      signals !== null &&
+      defaultSignal !== undefined &&
+      typeof api.getOwnerEquityV2Chart === "function"
+    ) {
+      try {
+        const chart = await api.getOwnerEquityV2Chart(
+          defaultSignal.instrument_id,
+          signals.snapshot.snapshot_id,
+          "1y",
+        );
+        initialChart = assertOwnerEquityV2ChartMatchesExpectation(chart, {
+          asOf: signals.snapshot.as_of,
+          generation: defaultSignal.generation,
+          instrumentId: defaultSignal.instrument_id,
+          range: "1y",
+          snapshotId: signals.snapshot.snapshot_id,
+        });
+      } catch (error) {
+        if (isLoginRequiredError(error)) redirect("/login");
+        const failure = chartFailure(error);
+        if (failure === undefined) throw error;
+        initialChartError = failure;
+      }
+    }
     return (
       <StockBetaWorkspace
+        initialChart={initialChart}
+        initialChartError={initialChartError}
         initialMemberships={memberships}
         initialSignalUnavailable={initialSignalUnavailable}
         initialSignals={signals}
@@ -64,11 +118,6 @@ async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
     }
     return errorPage(t, "error", t.genericUnavailableTitle, t.genericUnavailableMessage);
   }
-}
-
-export async function StockBetaProductPage() {
-  const locale = await getLocale();
-  return renderStockBetaProduct(stockBetaDictionary[locale], locale);
 }
 
 export default async function StockBetaPage() {

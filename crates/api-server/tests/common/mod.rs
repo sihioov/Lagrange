@@ -26,6 +26,8 @@ use sha2::{Digest, Sha256};
 use sqlx::ConnectOptions;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgPool, Row};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
@@ -238,6 +240,9 @@ impl Harness {
             db_name
         ));
         std::fs::create_dir_all(&artifact_root).expect("artifact root creates");
+        #[cfg(unix)]
+        std::fs::set_permissions(&artifact_root, std::fs::Permissions::from_mode(0o700))
+            .expect("artifact root permissions set to 0700");
 
         let mut h = Harness {
             db_name,
@@ -373,6 +378,7 @@ impl Harness {
                 api_server::http::state::OwnerBetaEquitySignalsMode::Disabled,
             stock_price_beta_artifact_root: h.artifact_root.clone(),
             owner_equity_v2_pins: None,
+            owner_equity_v2_api_artifact_root: None,
         };
         let state = ApiState::from_pools(
             cfg,
@@ -477,6 +483,17 @@ impl Harness {
         let mut cfg = (*self.state().cfg).clone();
         cfg.seoul_today = seoul_today;
         cfg.candidate_eod_ready = candidate_eod_ready;
+        self.restart_api_with_config(cfg).await;
+    }
+
+    /// Configure only the chart route's read-only V2 artifact root. Existing
+    /// V2 lifecycle and signal routes deliberately ignore this optional path.
+    pub async fn restart_api_with_owner_equity_v2_artifact_root(
+        &mut self,
+        root: Option<std::path::PathBuf>,
+    ) {
+        let mut cfg = (*self.state().cfg).clone();
+        cfg.owner_equity_v2_api_artifact_root = root;
         self.restart_api_with_config(cfg).await;
     }
 
