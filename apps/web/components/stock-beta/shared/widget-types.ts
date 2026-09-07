@@ -411,6 +411,11 @@ export function validateStockBetaWidgetArchitecture(
     issues.push(issue("invalid-layout", "layout"));
     return issues;
   }
+  for (const key of Object.keys(input["layout"])) {
+    if (!STOCK_BETA_WIDGET_BREAKPOINTS.some((breakpoint) => breakpoint === key)) {
+      issues.push(issue("invalid-layout", `layout.${key}`));
+    }
+  }
   const expectedLayout = derivedLayout(catalog);
   for (const breakpoint of STOCK_BETA_WIDGET_BREAKPOINTS) {
     if (

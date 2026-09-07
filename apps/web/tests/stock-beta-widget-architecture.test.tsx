@@ -146,6 +146,21 @@ describe("stock-beta widget architecture", () => {
     ]);
   });
 
+  it("rejects unknown derived layout keys and fails closed before projection", () => {
+    const invalidArchitecture = {
+      ...validArchitecture,
+      layout: { ...validArchitecture.layout, future: [] },
+    };
+
+    expect(validateStockBetaWidgetArchitecture(invalidArchitecture)).toContainEqual({
+      code: "invalid-layout",
+      path: "layout.future",
+    });
+    expect(() => stockBetaWidgetConfiguration(invalidArchitecture)).toThrow(
+      InvalidStockBetaWidgetArchitecture,
+    );
+  });
+
   it("projects validated layout configuration without runtime component functions", () => {
     const configuration = stockBetaWidgetConfiguration(validArchitecture);
     const roundTrip = JSON.parse(JSON.stringify(configuration)) as typeof configuration;
