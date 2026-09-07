@@ -303,6 +303,91 @@ describe("Stock Beta chart-capable signal profile", () => {
     expect(emptyMarkup).toBe("");
   });
 
+  it("renders a new unique profile tab and panel through the public registry path", () => {
+    const injected: StockBetaProfileTabDefinition = {
+      id: "registry-probe",
+      label: () => "Registry probe",
+      renderer: () => createElement("p", { "data-testid": "registry-probe-panel" }, "registry"),
+    };
+    mutableProfileTabs.splice(0, mutableProfileTabs.length, injected, ...originalProfileTabs);
+
+    const markup = renderPreview();
+    const tabId = `stock-beta-profile-tab-${INSTRUMENT_ID}-registry-probe`;
+    const panelId = `stock-beta-profile-panel-${INSTRUMENT_ID}`;
+
+    expect(markup.match(/role="tab"/g)).toHaveLength(originalProfileTabs.length + 1);
+    expect(markup).toContain(">Registry probe<");
+    expect(markup).toContain('data-testid="registry-probe-panel"');
+    expect(markup).toContain(`id="${tabId}"`);
+    expect(markup).toContain(`aria-controls="${panelId}"`);
+    expect(markup).toContain(`aria-labelledby="${tabId}"`);
+    expect(markup.match(/aria-selected="true"/g)).toHaveLength(1);
+    expectSingleProfileTabTarget(markup, tabId);
+  });
+
+  it("normalizes a stale selected tab ID when its registry entry is absent", async () => {
+    vi.resetModules();
+    vi.doMock("react", async () => {
+      const actual = await vi.importActual<typeof import("react")>("react");
+      return {
+        ...actual,
+        useState: <T,>(initialState: T) => {
+          const staleState = initialState === "activity" ? ("price" as T) : initialState;
+          return [staleState, vi.fn()];
+        },
+      };
+    });
+
+    try {
+      const registry = await import("@/components/stock-beta/dashboard/profile-tab-registry");
+      const isolatedProfileTabs =
+        registry.stockBetaProfileTabs as unknown as StockBetaProfileTabDefinition[];
+      const isolatedActivity = isolatedProfileTabs[3];
+      if (isolatedActivity === undefined) throw new Error("Activity profile tab is missing");
+      isolatedProfileTabs.splice(0, isolatedProfileTabs.length, isolatedActivity);
+
+      const [
+        { SignalPreviewWidget: MockedSignalPreviewWidget },
+        { StockBetaSelectionProvider: MockedSelectionProvider },
+      ] = await Promise.all([
+        import("@/components/stock-beta/dashboard/widgets/signal-preview-widget"),
+        import("@/components/stock-beta/dashboard/selection-provider"),
+      ]);
+      const markup = renderToStaticMarkup(
+        <MockedSelectionProvider initialSelectedInstrumentId={INSTRUMENT_ID} rows={[ROW]}>
+          <MockedSignalPreviewWidget viewModel={viewModel()} />
+        </MockedSelectionProvider>,
+      );
+
+      expect(markup.match(/role="tab"/g)).toHaveLength(1);
+      expect(markup).toContain(">Activity<");
+      expect(markup).toContain('aria-selected="true"');
+      expectSingleProfileTabTarget(markup, "stock-beta-profile-tab-005930.KRX-activity");
+    } finally {
+      vi.doUnmock("react");
+      vi.resetModules();
+    }
+  });
+
+  it("ignores whitespace-only profile tab IDs before selecting and labelling the fallback", () => {
+    const activity = originalProfileTabs[3];
+    if (activity === undefined) throw new Error("Activity profile tab is missing");
+    const whitespace: StockBetaProfileTabDefinition = {
+      id: " \t ",
+      label: () => "Whitespace probe",
+      renderer: () => createElement("p", { "data-testid": "whitespace-probe-panel" }, "invalid"),
+    };
+    mutableProfileTabs.splice(0, mutableProfileTabs.length, whitespace, activity);
+
+    const markup = renderPreview();
+
+    expect(markup.match(/role="tab"/g)).toHaveLength(1);
+    expect(markup).toContain(">Activity<");
+    expect(markup).not.toContain(">Whitespace probe<");
+    expect(markup).not.toContain('data-testid="whitespace-probe-panel"');
+    expectSingleProfileTabTarget(markup, "stock-beta-profile-tab-005930.KRX-activity");
+  });
+
   it("invokes the range callback once for each ordered canonical range button", () => {
     const onChartRangeChange = vi.fn<(range: OwnerEquityV2ChartRange) => void>();
     const model = viewModel({ chartData: CHART, chartState: { kind: "ready" } });
