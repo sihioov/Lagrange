@@ -14,6 +14,7 @@ import type {
 import { SignalPreviewWidget } from "@/components/stock-beta/dashboard/widgets/signal-preview-widget";
 import { stockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
 import {
+  OWNER_EQUITY_V2_CHART_RANGE_VALUES,
   type OwnerEquityV2ChartModel,
   type OwnerEquityV2ChartRange,
   type OwnerEquityV2SignalModel,
@@ -187,6 +188,11 @@ function descendantElements(node: ReactNode): readonly ReactElement<TestElementP
   return [element, ...descendantElements(element.props.children)];
 }
 
+function expectSingleProfileTabTarget(markup: string, tabId: string): void {
+  expect(markup.split(`id="${tabId}"`).length - 1).toBe(1);
+  expect(markup.split(`aria-labelledby="${tabId}"`).length - 1).toBe(1);
+}
+
 const mutableProfileTabs = stockBetaProfileTabs as unknown as StockBetaProfileTabDefinition[];
 const originalProfileTabs = [...stockBetaProfileTabs];
 
@@ -233,7 +239,7 @@ describe("Stock Beta chart-capable signal profile", () => {
     expect(markup).toContain('role="tablist"');
     expect(markup).toContain('aria-label="Signal metrics"');
     expect(markup).toContain('role="tabpanel"');
-    expect(markup).toContain('aria-labelledby="stock-beta-profile-tab-005930.KRX-price"');
+    expectSingleProfileTabTarget(markup, "stock-beta-profile-tab-005930.KRX-price");
     for (const label of ["Price", "Returns", "Volatility", "Activity"]) {
       expect(markup).toContain(`>${label}<`);
     }
@@ -254,7 +260,30 @@ describe("Stock Beta chart-capable signal profile", () => {
     ]);
   });
 
-  it("derives profile controls and the fallback panel from the central registry when tabs are added, removed, or reordered", () => {
+  it("normalizes fallback selection and ARIA references when tabs are reordered, removed, duplicated, or empty", () => {
+    const activity = originalProfileTabs[3];
+    if (activity === undefined) throw new Error("Activity profile tab is missing");
+
+    mutableProfileTabs.splice(
+      0,
+      mutableProfileTabs.length,
+      activity,
+      ...originalProfileTabs.filter((tab) => tab.id !== activity.id),
+    );
+    const reorderedMarkup = renderPreview();
+    expect(reorderedMarkup.indexOf(">Activity<")).toBeLessThan(reorderedMarkup.indexOf(">Price<"));
+    expect(reorderedMarkup.match(/aria-selected="true"/g)).toHaveLength(1);
+    expectSingleProfileTabTarget(reorderedMarkup, "stock-beta-profile-tab-005930.KRX-activity");
+
+    mutableProfileTabs.splice(0, mutableProfileTabs.length, activity);
+    const removedMarkup = renderPreview();
+    expect(removedMarkup.match(/role="tab"/g)).toHaveLength(1);
+    expect(removedMarkup).toContain(">Activity<");
+    expect(removedMarkup.match(/aria-selected="true"/g)).toHaveLength(1);
+    expectSingleProfileTabTarget(removedMarkup, "stock-beta-profile-tab-005930.KRX-activity");
+    expect(removedMarkup).toContain(stockBetaDictionary.en.averageVolumeLabel);
+    expect(removedMarkup).not.toContain('data-testid="stock-beta-price-chart"');
+
     const injected: StockBetaProfileTabDefinition = {
       id: "price",
       label: () => "Registry probe",
@@ -262,22 +291,19 @@ describe("Stock Beta chart-capable signal profile", () => {
     };
     mutableProfileTabs.splice(0, mutableProfileTabs.length, injected, ...originalProfileTabs);
 
-    const addedMarkup = renderPreview();
-    expect(addedMarkup.match(/role="tab"/g)).toHaveLength(5);
-    expect(addedMarkup).toContain(">Registry probe<");
-    expect(addedMarkup).toContain('data-testid="registry-panel-probe"');
+    const duplicateMarkup = renderPreview();
+    expect(duplicateMarkup.match(/role="tab"/g)).toHaveLength(originalProfileTabs.length);
+    expect(duplicateMarkup).toContain(">Registry probe<");
+    expect(duplicateMarkup).toContain('data-testid="registry-panel-probe"');
+    expect(duplicateMarkup.match(/aria-selected="true"/g)).toHaveLength(1);
+    expectSingleProfileTabTarget(duplicateMarkup, "stock-beta-profile-tab-005930.KRX-price");
 
-    const activity = originalProfileTabs[3];
-    if (activity === undefined) throw new Error("Activity profile tab is missing");
-    mutableProfileTabs.splice(0, mutableProfileTabs.length, activity);
-    const removedAndReorderedMarkup = renderPreview();
-    expect(removedAndReorderedMarkup.match(/role="tab"/g)).toHaveLength(1);
-    expect(removedAndReorderedMarkup).toContain(">Activity<");
-    expect(removedAndReorderedMarkup).toContain(stockBetaDictionary.en.averageVolumeLabel);
-    expect(removedAndReorderedMarkup).not.toContain('data-testid="stock-beta-price-chart"');
+    mutableProfileTabs.splice(0, mutableProfileTabs.length);
+    const emptyMarkup = renderPreview();
+    expect(emptyMarkup).toBe("");
   });
 
-  it("invokes the range callback once for each ordered 1M/3M/6M/1Y range button", () => {
+  it("invokes the range callback once for each ordered canonical range button", () => {
     const onChartRangeChange = vi.fn<(range: OwnerEquityV2ChartRange) => void>();
     const model = viewModel({ chartData: CHART, chartState: { kind: "ready" } });
     const profile = stockBetaProfileTabs[0];
@@ -294,14 +320,15 @@ describe("Stock Beta chart-capable signal profile", () => {
         typeof element.props["onClick"] === "function",
     );
 
-    expect(rangeButtons).toHaveLength(4);
-    expect(rangeButtons.map((button) => button.props.children)).toEqual(["1M", "3M", "6M", "1Y"]);
-    expect(rangeButtons.map((button) => button.props["aria-pressed"])).toEqual([
-      false,
-      false,
-      false,
-      true,
-    ]);
+    expect(rangeButtons).toHaveLength(OWNER_EQUITY_V2_CHART_RANGE_VALUES.length);
+    expect(rangeButtons.map((button) => button.props.children)).toEqual(
+      OWNER_EQUITY_V2_CHART_RANGE_VALUES.map((range) =>
+        stockBetaDictionary.en.chartRangeOption(range),
+      ),
+    );
+    expect(rangeButtons.map((button) => button.props["aria-pressed"])).toEqual(
+      OWNER_EQUITY_V2_CHART_RANGE_VALUES.map((range) => range === CHART.range),
+    );
 
     for (const button of rangeButtons) {
       const onClick = button.props["onClick"];
@@ -309,8 +336,10 @@ describe("Stock Beta chart-capable signal profile", () => {
       onClick();
     }
 
-    expect(onChartRangeChange).toHaveBeenCalledTimes(4);
-    expect(onChartRangeChange.mock.calls.map(([range]) => range)).toEqual(["1m", "3m", "6m", "1y"]);
+    expect(onChartRangeChange).toHaveBeenCalledTimes(OWNER_EQUITY_V2_CHART_RANGE_VALUES.length);
+    expect(onChartRangeChange.mock.calls.map(([range]) => range)).toEqual(
+      OWNER_EQUITY_V2_CHART_RANGE_VALUES,
+    );
   });
 
   it.each([

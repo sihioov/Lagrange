@@ -7,7 +7,11 @@ import { formatStockBetaNumber, formatStockBetaPercent } from "../../shared/form
 import { WidgetFrame } from "../../shared/widget-frame";
 import styles from "../dashboard.module.css";
 import { stockBetaConditionLabel, stockBetaConditionTone } from "../labels";
-import { type StockBetaProfileTabId, stockBetaProfileTabs } from "../profile-tab-registry";
+import {
+  normalizeStockBetaProfileTabs,
+  type StockBetaProfileTabId,
+  stockBetaProfileTabs,
+} from "../profile-tab-registry";
 import { useStockBetaSelection } from "../selection-provider";
 import type { StockBetaDashboardWidgetViewModel } from "../types";
 
@@ -38,7 +42,8 @@ export function SignalPreviewWidget({
 }) {
   const { copy: t, locale } = viewModel;
   const { selectedRow } = useStockBetaSelection();
-  const [tab, setTab] = useState<StockBetaProfileTabId>("price");
+  const profileTabs = normalizeStockBetaProfileTabs(stockBetaProfileTabs);
+  const [tab, setTab] = useState<StockBetaProfileTabId | undefined>(profileTabs[0]?.id);
 
   if (selectedRow === undefined) {
     return (
@@ -53,8 +58,9 @@ export function SignalPreviewWidget({
 
   const tabId = `stock-beta-profile-tab-${selectedRow.instrument_id}`;
   const panelId = `stock-beta-profile-panel-${selectedRow.instrument_id}`;
-  const activeTab = stockBetaProfileTabs.find((item) => item.id === tab) ?? stockBetaProfileTabs[0];
+  const activeTab = profileTabs.find((item) => item.id === tab) ?? profileTabs[0];
   if (activeTab === undefined) return null;
+  const activeTabId = activeTab.id;
   const ActiveTab = activeTab.renderer;
 
   return (
@@ -96,8 +102,8 @@ export function SignalPreviewWidget({
           </dl>
         </header>
         <div className={styles["profileTabs"]} role="tablist" aria-label={t.signalMetricsHeading}>
-          {stockBetaProfileTabs.map((item) => {
-            const selected = tab === item.id;
+          {profileTabs.map((item) => {
+            const selected = activeTabId === item.id;
             return (
               <button
                 aria-controls={panelId}
@@ -115,7 +121,7 @@ export function SignalPreviewWidget({
           })}
         </div>
         <div
-          aria-labelledby={`${tabId}-${tab}`}
+          aria-labelledby={`${tabId}-${activeTabId}`}
           className={styles["profilePanel"]}
           data-testid="stock-beta-signal-profile"
           id={panelId}

@@ -1,5 +1,8 @@
 import { type ComponentType, type CSSProperties, createElement } from "react";
-import type { OwnerEquityV2SignalModel } from "@/lib/products/equity-signals-contracts";
+import {
+  OWNER_EQUITY_V2_CHART_RANGE_VALUES,
+  type OwnerEquityV2SignalModel,
+} from "@/lib/products/equity-signals-contracts";
 import { PriceChart, type PriceChartCopy } from "../chart";
 import { formatStockBetaNumber, formatStockBetaPercent } from "../shared/formatters";
 import styles from "./dashboard.module.css";
@@ -7,13 +10,12 @@ import type { StockBetaDashboardWidgetViewModel } from "./types";
 
 const css = (name: string): string => styles[name] ?? "";
 
-export type StockBetaProfileTabId = "price" | "returns" | "volatility" | "activity";
 type ProfileTabProps = {
   readonly selectedRow: OwnerEquityV2SignalModel;
   readonly viewModel: StockBetaDashboardWidgetViewModel;
 };
-export type StockBetaProfileTabDefinition = {
-  readonly id: StockBetaProfileTabId;
+export type StockBetaProfileTabDefinition<Id extends string = string> = {
+  readonly id: Id;
   readonly label: (copy: StockBetaDashboardWidgetViewModel["copy"]) => string;
   readonly renderer: ComponentType<ProfileTabProps>;
 };
@@ -202,7 +204,7 @@ function PriceTab({ selectedRow, viewModel }: ProfileTabProps) {
     createElement(
       "div",
       { "aria-label": t.chartRangeLabel, className: css("chartRangeControl"), role: "group" },
-      (["1m", "3m", "6m", "1y"] as const).map((range) =>
+      OWNER_EQUITY_V2_CHART_RANGE_VALUES.map((range) =>
         createElement(
           "button",
           {
@@ -277,3 +279,20 @@ export const stockBetaProfileTabs = [
   { id: "volatility", label: (t) => t.volatilityTabLabel, renderer: VolatilityTab },
   { id: "activity", label: (t) => t.activityTabLabel, renderer: ActivityTab },
 ] as const satisfies readonly StockBetaProfileTabDefinition[];
+
+export type StockBetaProfileTabId = (typeof stockBetaProfileTabs)[number]["id"];
+
+/**
+ * Normalize runtime registry changes so every rendered tab ID is unique and non-empty.
+ * The first definition wins; an empty result is handled as an invalid registry by the widget.
+ */
+export function normalizeStockBetaProfileTabs<Id extends string>(
+  tabs: readonly StockBetaProfileTabDefinition<Id>[],
+): readonly StockBetaProfileTabDefinition<Id>[] {
+  const seen = new Set<Id>();
+  return tabs.filter((tab) => {
+    if (tab.id.trim().length === 0 || seen.has(tab.id)) return false;
+    seen.add(tab.id);
+    return true;
+  });
+}

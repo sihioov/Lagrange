@@ -1,4 +1,5 @@
 import type { LocaleDictionary } from "@/lib/i18n/locale";
+import type { OwnerEquityV2ChartRange } from "@/lib/products/equity-signals-contracts";
 
 export type StockBetaDictionary = {
   readonly activityDescription: string;
@@ -31,7 +32,7 @@ export type StockBetaDictionary = {
   readonly chartNotReadyMessage: string;
   readonly chartPreparingMessage: string;
   readonly chartRangeLabel: string;
-  readonly chartRangeOption: (range: "1m" | "3m" | "6m" | "1y") => string;
+  readonly chartRangeOption: (range: OwnerEquityV2ChartRange) => string;
   readonly chartUpdatingLabel: string;
   readonly closeLabel: string;
   readonly conditionLabel: string;
