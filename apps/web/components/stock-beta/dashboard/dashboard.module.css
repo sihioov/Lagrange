@@ -199,7 +199,16 @@
   padding: 0.125rem 0.35rem;
 }
 
-@media (max-width: 85rem) and (min-width: 51.3125rem) {
+.dashboardWidget[data-widget-id="membership-status"] > section {
+  container-name: membership-widget;
+  container-type: inline-size;
+}
+
+@container membership-widget (max-width: 32rem) {
+  .membershipList {
+    max-block-size: 9rem;
+  }
+
   .membershipRow {
     grid-template-columns: minmax(7rem, 1fr) auto;
   }

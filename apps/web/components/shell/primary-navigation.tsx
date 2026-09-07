@@ -33,10 +33,11 @@ export function revealCurrentPrimaryNavigationItem(navigation: HTMLElement): voi
 
 export function PrimaryNavigation({ className, items, labelClassName }: PrimaryNavigationProps) {
   const pathname = usePathname() ?? "";
+  const navigationItemsKey = items.map(({ href, label }) => `${href}:${label}`).join("|");
   const navigationRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    if (pathname.length === 0) return;
+    if (pathname.length === 0 || navigationItemsKey.length === 0) return;
     const navigation = navigationRef.current;
     if (navigation === null) return;
 
@@ -50,7 +51,7 @@ export function PrimaryNavigation({ className, items, labelClassName }: PrimaryN
       window.removeEventListener("resize", revealCurrentDestination);
       resizeObserver.disconnect();
     };
-  }, [pathname]);
+  }, [navigationItemsKey, pathname]);
 
   return (
     <nav aria-label="Primary" className={className ?? "shell-navigation"} ref={navigationRef}>

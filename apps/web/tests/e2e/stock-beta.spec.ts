@@ -208,6 +208,72 @@ function expectBoxInside(
   expect(inner.y + inner.height).toBeLessThanOrEqual(outer.y + outer.height);
 }
 
+async function clippingAncestorBoxes(locator: Locator) {
+  return locator.evaluate((element) => {
+    const clippingValues = new Set(["auto", "clip", "hidden", "scroll"]);
+    const ancestors: Array<{
+      readonly box: { height: number; width: number; x: number; y: number };
+      readonly overflowX: string;
+      readonly overflowY: string;
+      readonly tagName: string;
+    }> = [];
+    for (
+      let ancestor = element.parentElement;
+      ancestor !== null;
+      ancestor = ancestor.parentElement
+    ) {
+      const style = getComputedStyle(ancestor);
+      if (!clippingValues.has(style.overflowX) && !clippingValues.has(style.overflowY)) continue;
+      const bounds = ancestor.getBoundingClientRect();
+      ancestors.push({
+        box: { height: bounds.height, width: bounds.width, x: bounds.x, y: bounds.y },
+        overflowX: style.overflowX,
+        overflowY: style.overflowY,
+        tagName: ancestor.tagName,
+      });
+    }
+    return ancestors;
+  });
+}
+
+async function installPrimaryNavigationRevealInstrumentation(page: Page) {
+  await page.addInitScript({
+    content: `
+      window.__stockBetaPrimaryNavigationRevealEvents = [];
+      const nativeScrollTo = HTMLElement.prototype.scrollTo;
+      HTMLElement.prototype.scrollTo = function (...args) {
+        if (this.getAttribute("aria-label") !== "Primary") {
+          return nativeScrollTo.apply(this, args);
+        }
+        const focusedBefore = document.activeElement;
+        const bodyScrollYBefore = window.scrollY;
+        const result = nativeScrollTo.apply(this, args);
+        window.__stockBetaPrimaryNavigationRevealEvents.push({
+          bodyScrollYAfter: window.scrollY,
+          bodyScrollYBefore,
+          focusedAfter: document.activeElement === null ? null : document.activeElement.getAttribute("href"),
+          focusedBefore: focusedBefore === null ? null : focusedBefore.getAttribute("href"),
+        });
+        return result;
+      };
+    `,
+  });
+}
+
+async function primaryNavigationRevealEvents(page: Page) {
+  return page.evaluate(() => {
+    const instrumentedWindow = window as Window & {
+      __stockBetaPrimaryNavigationRevealEvents?: Array<{
+        readonly bodyScrollYAfter: number;
+        readonly bodyScrollYBefore: number;
+        readonly focusedAfter: string | null;
+        readonly focusedBefore: string | null;
+      }>;
+    };
+    return instrumentedWindow.__stockBetaPrimaryNavigationRevealEvents ?? [];
+  });
+}
+
 test.describe("provider-free Stock Beta V2", () => {
   test.beforeEach(async ({ page }) => {
     observeBrowserRequests(page);
@@ -943,15 +1009,61 @@ test.describe("provider-free Stock Beta V2", () => {
       x: disableBounds.x - 3,
       y: disableBounds.y - 3,
     };
+    const membershipList = membership.getByTestId("stock-beta-memberships");
+    const membershipContent = membership.locator(":scope > div").first();
     expectBoxInside(disableFocusOutline, await box(firstCard));
     expectBoxInside(disableFocusOutline, { x: 0, y: 0, width: 1280, height: 720 });
-    expectBoxInside(disableFocusOutline, await box(membership));
+    expectBoxInside(disableFocusOutline, await box(membershipList));
+    expectBoxInside(disableFocusOutline, await box(membershipContent));
+    for (const ancestor of await clippingAncestorBoxes(disableAction)) {
+      expectBoxInside(disableFocusOutline, ancestor.box);
+    }
     await expectNoHorizontalOverflow(page);
     await page.screenshot({
       animations: "disabled",
       fullPage: true,
       path: testInfo.outputPath("stock-beta-1280x720.png"),
     });
+  });
+
+  test("reveals active navigation initially and after a client transition without stealing focus or scrolling the page", async ({
+    page,
+    request,
+  }) => {
+    await resetScenario(request, {
+      authSession: "valid",
+      role: "owner",
+      stockBetaRows: 1,
+      stockBetaSeed: "ready",
+    });
+    await installPrimaryNavigationRevealInstrumentation(page);
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto("/stock-beta");
+
+    const navigation = page.getByRole("navigation", { name: "Primary" });
+    const activeNavigationLink = navigation.getByRole("link", { name: "Stock signal beta" });
+    await expect
+      .poll(() => primaryNavigationRevealEvents(page).then((events) => events.length))
+      .toBeGreaterThan(0);
+    const initialReveal = (await primaryNavigationRevealEvents(page)).at(-1);
+    expect(initialReveal).toBeDefined();
+    expect(initialReveal?.bodyScrollYAfter).toBe(initialReveal?.bodyScrollYBefore);
+    expect(initialReveal?.focusedAfter).toBe(initialReveal?.focusedBefore);
+    expectBoxInside(await box(activeNavigationLink), await box(navigation));
+
+    await navigation.evaluate((element) => {
+      element.scrollLeft = 0;
+    });
+    const revealCountBeforeTransition = (await primaryNavigationRevealEvents(page)).length;
+    await membershipCard(page, "000001.KRX").getByRole("link", { name: "Open detail" }).click();
+    await expect(page).toHaveURL(/\/stock-beta\/000001\.KRX$/);
+    await expect
+      .poll(() => primaryNavigationRevealEvents(page).then((events) => events.length))
+      .toBeGreaterThan(revealCountBeforeTransition);
+    const transitionReveal = (await primaryNavigationRevealEvents(page)).at(-1);
+    expect(transitionReveal?.bodyScrollYAfter).toBe(transitionReveal?.bodyScrollYBefore);
+    expect(transitionReveal?.focusedAfter).toBe(transitionReveal?.focusedBefore);
+    expectBoxInside(await box(activeNavigationLink), await box(navigation));
   });
 
   test("reflows at mobile, tablet, desktop, and 200% zoom-equivalent viewports", async ({
@@ -976,18 +1088,79 @@ test.describe("provider-free Stock Beta V2", () => {
       await page.goto("/stock-beta");
       await expect(rankedSignalsTable(page)).toBeVisible();
       await expect(signalPreview(page)).toBeVisible();
-      const activeNavigationLink = page
-        .getByRole("navigation", { name: "Primary" })
-        .getByRole("link", { name: "Stock signal beta" });
-      const navigation = page.getByRole("navigation", { name: "Primary" });
-      const bodyScrollY = await page.evaluate(() => window.scrollY);
-      expectBoxInside(await box(activeNavigationLink), await box(navigation));
-      expect(await page.evaluate(() => window.scrollY)).toBe(bodyScrollY);
-      await expect(page.locator("body")).toBeFocused();
-      await activeNavigationLink.focus();
-      await expect(activeNavigationLink).toBeFocused();
-      expectBoxInside(await box(activeNavigationLink), await box(navigation));
       await expectNoHorizontalOverflow(page);
+    }
+  });
+
+  test("reveals the active destination again when its locale label changes on the same pathname", async ({
+    page,
+    request,
+  }) => {
+    await resetScenario(request, {
+      authSession: "valid",
+      role: "owner",
+      stockBetaRows: 1,
+      stockBetaSeed: "ready",
+    });
+    await page.context().addCookies([{ name: "locale", value: "ko", url: appOrigin }]);
+    await installPrimaryNavigationRevealInstrumentation(page);
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto("/stock-beta");
+
+    const navigation = page.getByRole("navigation", { name: "Primary" });
+    await expect(navigation.getByRole("link", { name: "종목 신호 베타" })).toBeVisible();
+    await navigation.evaluate((element) => {
+      element.scrollLeft = 0;
+    });
+    const revealCountBeforeLocaleChange = (await primaryNavigationRevealEvents(page)).length;
+    await page.getByRole("button", { name: "EN", exact: true }).click();
+    const activeNavigationLink = navigation.getByRole("link", { name: "Stock signal beta" });
+    await expect(activeNavigationLink).toBeVisible();
+    await expect
+      .poll(() => primaryNavigationRevealEvents(page).then((events) => events.length))
+      .toBeGreaterThan(revealCountBeforeLocaleChange);
+    const localeReveal = (await primaryNavigationRevealEvents(page)).at(-1);
+    expect(localeReveal?.bodyScrollYAfter).toBe(localeReveal?.bodyScrollYBefore);
+    expect(localeReveal?.focusedAfter).toBe(localeReveal?.focusedBefore);
+    expectBoxInside(await box(activeNavigationLink), await box(navigation));
+  });
+
+  test("keeps membership actions unclipped around the container-width reflow boundary", async ({
+    page,
+    request,
+  }) => {
+    await resetScenario(request, {
+      authSession: "valid",
+      role: "owner",
+      stockBetaRows: 1,
+      stockBetaSeed: "ready",
+    });
+
+    for (const width of [1280, 1360, 1361, 1400]) {
+      await page.setViewportSize({ width, height: 720 });
+      await page.goto("/stock-beta");
+      const card = membershipCard(page, "000001.KRX");
+      const detail = card.getByRole("link", { name: "Open detail" });
+      const disable = card.getByRole("button", { name: "Disable" });
+      await detail.focus();
+      await page.keyboard.press("Tab");
+      await expect(disable).toBeFocused();
+      const bounds = await box(disable);
+      const focusOutline = {
+        height: bounds.height + 6,
+        width: bounds.width + 6,
+        x: bounds.x - 3,
+        y: bounds.y - 3,
+      };
+      expectBoxInside(focusOutline, await box(card));
+      expectBoxInside(
+        focusOutline,
+        await box(membershipRegion(page).getByTestId("stock-beta-memberships")),
+      );
+      expectBoxInside(focusOutline, { x: 0, y: 0, width, height: 720 });
+      for (const ancestor of await clippingAncestorBoxes(disable)) {
+        expectBoxInside(focusOutline, ancestor.box);
+      }
     }
   });
 
