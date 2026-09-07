@@ -66,18 +66,3 @@ export type StockBetaDashboardViewModel = {
 };
 
 export type StockBetaDashboardWidgetViewModel = StockBetaDashboardViewModel;
-
-export const STOCK_BETA_DASHBOARD_WIDGET_IDS = [
-  "universe-management",
-  "membership-status",
-  "signal-state",
-  "ranked-signals",
-  "signal-profile",
-  "signal-decomposition",
-  "condition-matrix",
-  "snapshot-tape",
-  "policy-boundary",
-  "provenance",
-] as const;
-
-export type StockBetaDashboardWidgetId = (typeof STOCK_BETA_DASHBOARD_WIDGET_IDS)[number];

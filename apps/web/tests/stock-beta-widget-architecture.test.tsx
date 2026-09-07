@@ -11,14 +11,12 @@ import {
 } from "@/components/stock-beta/shared/formatters";
 import { WidgetFrame } from "@/components/stock-beta/shared/widget-frame";
 import {
-  defineStockBetaWidget,
   defineStockBetaWidgetArchitecture,
+  defineStockBetaWidgetCatalog,
   InvalidStockBetaWidgetArchitecture,
-  type StockBetaWidgetArchitecture,
-  type StockBetaWidgetGridPlacement,
-  type StockBetaWidgetPlacement,
   stockBetaWidgetConfiguration,
   validateStockBetaWidgetArchitecture,
+  validateStockBetaWidgetCatalog,
 } from "@/components/stock-beta/shared/widget-types";
 import {
   StockBetaTerminalPage,
@@ -32,90 +30,120 @@ function ExampleWidget({ viewModel }: { readonly viewModel: ExampleViewModel }) 
   return <p>{viewModel.value}</p>;
 }
 
-const requiredDefinition = defineStockBetaWidget({
-  id: "ranked-signals",
-  component: ExampleWidget,
-  defaultSize: "full",
-  required: true,
-  defaultVisible: true,
-  order: 0,
-});
-
-const optionalDefinition = defineStockBetaWidget({
-  id: "top-five",
-  component: ExampleWidget,
-  defaultSize: "small",
-  required: false,
-  defaultVisible: true,
-  order: 1,
-});
-
-const basePlacements = [
-  { id: "ranked-signals", size: "full", visible: true, order: 0 },
-  { id: "top-five", size: "small", visible: true, order: 1 },
-] as const satisfies readonly StockBetaWidgetPlacement<"ranked-signals" | "top-five">[];
-
-const validArchitecture = {
-  definitions: [requiredDefinition, optionalDefinition],
-  requiredWidgetIds: ["ranked-signals"],
-  layout: {
-    desktop: basePlacements,
-    tablet: basePlacements,
-    mobile: basePlacements,
-  },
-} as const satisfies StockBetaWidgetArchitecture<
-  readonly [typeof requiredDefinition, typeof optionalDefinition]
->;
-
-const desktopGridPlacements = [
-  {
-    ...basePlacements[0],
-    column: 1,
-    columnSpan: 8,
-    row: 1,
-    empty: { column: 1, columnSpan: 12, row: 1, visible: true, order: 0 },
-  },
-  {
-    ...basePlacements[1],
-    column: 9,
-    columnSpan: 4,
-    row: 1,
-    empty: { column: 1, columnSpan: 12, row: 2, visible: true, order: 1 },
-  },
-] as const satisfies readonly StockBetaWidgetGridPlacement<"ranked-signals" | "top-five">[];
-
-const tabletGridPlacements = desktopGridPlacements;
-
-const mobileGridPlacements = [
-  {
-    ...basePlacements[0],
-    column: 1,
-    columnSpan: 1,
-    row: 1,
-    empty: { column: 1, columnSpan: 1, row: 1, visible: true, order: 0 },
-  },
-  {
-    ...basePlacements[1],
-    column: 1,
-    columnSpan: 1,
-    row: 2,
-    empty: { column: 1, columnSpan: 1, row: 2, visible: true, order: 1 },
-  },
-] as const satisfies readonly StockBetaWidgetGridPlacement<"ranked-signals" | "top-five">[];
-
-const validGridArchitecture = {
-  ...validArchitecture,
-  layout: {
-    desktop: desktopGridPlacements,
-    tablet: tabletGridPlacements,
-    mobile: mobileGridPlacements,
-  },
+const defineExampleCatalog = defineStockBetaWidgetCatalog<ExampleViewModel>();
+const requiredPlacements = {
+  desktop: { size: "full", visible: true },
+  tablet: { size: "full", visible: true },
+  mobile: { size: "full", visible: true },
 } as const;
+const optionalPlacements = {
+  desktop: { size: "small", visible: true },
+  tablet: { size: "small", visible: true },
+  mobile: { size: "small", visible: true },
+} as const;
+const validCatalog = defineExampleCatalog([
+  {
+    id: "ranked-signals",
+    component: ExampleWidget,
+    required: true,
+    placements: requiredPlacements,
+  },
+  {
+    id: "top-five",
+    component: ExampleWidget,
+    required: false,
+    placements: optionalPlacements,
+  },
+]);
+const validArchitecture = defineStockBetaWidgetArchitecture(validCatalog);
+
+const validGridCatalog = defineExampleCatalog([
+  {
+    id: "ranked-signals",
+    component: ExampleWidget,
+    required: true,
+    placements: {
+      desktop: {
+        size: "full",
+        visible: true,
+        column: 1,
+        columnSpan: 8,
+        row: 1,
+        empty: { column: 1, columnSpan: 12, row: 1, visible: true },
+      },
+      tablet: {
+        size: "full",
+        visible: true,
+        column: 1,
+        columnSpan: 8,
+        row: 1,
+        empty: { column: 1, columnSpan: 12, row: 1, visible: true },
+      },
+      mobile: {
+        size: "full",
+        visible: true,
+        column: 1,
+        columnSpan: 1,
+        row: 1,
+        empty: { column: 1, columnSpan: 1, row: 1, visible: true },
+      },
+    },
+  },
+  {
+    id: "top-five",
+    component: ExampleWidget,
+    required: false,
+    placements: {
+      desktop: {
+        size: "small",
+        visible: true,
+        column: 9,
+        columnSpan: 4,
+        row: 1,
+        empty: { column: 1, columnSpan: 12, row: 2, visible: true },
+      },
+      tablet: {
+        size: "small",
+        visible: true,
+        column: 9,
+        columnSpan: 4,
+        row: 1,
+        empty: { column: 1, columnSpan: 12, row: 2, visible: true },
+      },
+      mobile: {
+        size: "small",
+        visible: true,
+        column: 1,
+        columnSpan: 1,
+        row: 2,
+        empty: { column: 1, columnSpan: 1, row: 2, visible: true },
+      },
+    },
+  },
+]);
+const validGridArchitecture = defineStockBetaWidgetArchitecture(validGridCatalog);
 
 describe("stock-beta widget architecture", () => {
-  it("accepts typed definitions and complete breakpoint layouts", () => {
-    expect(defineStockBetaWidgetArchitecture(validArchitecture)).toBe(validArchitecture);
+  it("derives required IDs and breakpoint layouts from typed catalog entries", () => {
     expect(validateStockBetaWidgetArchitecture(validArchitecture)).toEqual([]);
+    expect(validArchitecture.requiredWidgetIds).toEqual(["ranked-signals"]);
+    expect(validArchitecture.layout.desktop).toEqual([
+      { id: "ranked-signals", size: "full", visible: true },
+      { id: "top-five", size: "small", visible: true },
+    ]);
+  });
+
+  it("rejects architecture views that drift from their catalog", () => {
+    expect(
+      validateStockBetaWidgetArchitecture({
+        ...validArchitecture,
+        requiredWidgetIds: [],
+        layout: { ...validArchitecture.layout, mobile: [] },
+      }),
+    ).toEqual([
+      { code: "invalid-architecture", path: "requiredWidgetIds" },
+      { code: "invalid-layout", path: "layout.mobile" },
+    ]);
   });
 
   it("projects validated layout configuration without runtime component functions", () => {
@@ -123,179 +151,155 @@ describe("stock-beta widget architecture", () => {
     const roundTrip = JSON.parse(JSON.stringify(configuration)) as typeof configuration;
 
     expect(roundTrip).toEqual(configuration);
-    expect(roundTrip.definitions[0]).not.toHaveProperty("component");
-    expect(roundTrip.layout.desktop).toEqual(basePlacements);
+    expect(roundTrip.widgets).toEqual([
+      { id: "ranked-signals", required: true },
+      { id: "top-five", required: false },
+    ]);
+    expect(JSON.stringify(configuration)).not.toContain("component");
   });
 
   it("rejects duplicate widget IDs", () => {
-    const invalid = {
-      ...validArchitecture,
-      definitions: [requiredDefinition, { ...optionalDefinition, id: "ranked-signals" }],
-    };
+    const invalid = [validCatalog[0], { ...validCatalog[1], id: "ranked-signals" }];
 
-    expect(validateStockBetaWidgetArchitecture(invalid)).toContainEqual({
+    expect(validateStockBetaWidgetCatalog(invalid)).toContainEqual({
       code: "duplicate-definition-id",
-      path: "definitions",
+      path: "catalog",
     });
   });
 
-  it("rejects a required widget missing from any layout", () => {
-    const invalid = {
-      ...validArchitecture,
-      layout: { ...validArchitecture.layout, mobile: [basePlacements[1]] },
-    };
-
-    expect(validateStockBetaWidgetArchitecture(invalid)).toContainEqual({
-      code: "missing-required-widget",
-      path: "layout.mobile.ranked-signals",
-    });
-    expect(() => defineStockBetaWidgetArchitecture(invalid)).toThrow(
-      InvalidStockBetaWidgetArchitecture,
-    );
-  });
-
-  it("rejects a required policy ID missing from the registry", () => {
-    const invalid = {
-      ...validArchitecture,
-      definitions: [optionalDefinition],
-    };
-
-    expect(validateStockBetaWidgetArchitecture(invalid)).toContainEqual({
-      code: "missing-required-widget",
-      path: "requiredWidgetIds.ranked-signals",
-    });
-  });
-
-  it("rejects required-policy drift and hidden required widgets", () => {
-    const invalid = {
-      ...validArchitecture,
-      definitions: [{ ...requiredDefinition, required: false }, optionalDefinition],
-      layout: {
-        ...validArchitecture.layout,
-        tablet: [{ ...basePlacements[0], visible: false }, basePlacements[1]],
+  it("rejects a required widget missing from any breakpoint", () => {
+    const invalid = [
+      {
+        ...validCatalog[0],
+        placements: { desktop: requiredPlacements.desktop, tablet: requiredPlacements.tablet },
       },
-    };
-    const issues = validateStockBetaWidgetArchitecture(invalid);
+      validCatalog[1],
+    ];
 
-    expect(issues).toContainEqual({
-      code: "required-widget-not-required",
-      path: "definitions.ranked-signals.required",
+    expect(validateStockBetaWidgetCatalog(invalid)).toContainEqual({
+      code: "missing-required-widget",
+      path: "catalog[0].placements.mobile",
     });
+    expect(() => defineExampleCatalog(invalid)).toThrow(InvalidStockBetaWidgetArchitecture);
+  });
+
+  it("rejects hidden required widgets", () => {
+    const invalid = [
+      {
+        ...validCatalog[0],
+        placements: {
+          ...validCatalog[0].placements,
+          tablet: { ...validCatalog[0].placements.tablet, visible: false },
+        },
+      },
+      validCatalog[1],
+    ];
+    const issues = validateStockBetaWidgetCatalog(invalid);
+
     expect(issues).toContainEqual({
       code: "required-widget-hidden",
-      path: "layout.tablet.ranked-signals",
+      path: "catalog[0].placements.tablet",
     });
   });
 
-  it("rejects unsupported sizes and ambiguous layout order", () => {
-    const invalid = {
-      ...validArchitecture,
-      layout: {
-        ...validArchitecture.layout,
-        desktop: [basePlacements[0], { ...basePlacements[1], order: 0, size: "enormous" }],
+  it("rejects unsupported sizes", () => {
+    const invalid = [
+      validCatalog[0],
+      {
+        ...validCatalog[1],
+        placements: {
+          ...validCatalog[1].placements,
+          desktop: { size: "enormous", visible: true },
+        },
       },
-    };
-    const issues = validateStockBetaWidgetArchitecture(invalid);
+    ];
+    const issues = validateStockBetaWidgetCatalog(invalid);
 
     expect(issues).toContainEqual({
       code: "invalid-size",
-      path: "layout.desktop[1].size",
-    });
-    expect(issues).toContainEqual({
-      code: "duplicate-layout-order",
-      path: "layout.desktop",
+      path: "catalog[1].placements.desktop.size",
     });
   });
 
   it("accepts complete grid placement metadata for populated and empty states", () => {
-    expect(defineStockBetaWidgetArchitecture(validGridArchitecture)).toBe(validGridArchitecture);
     expect(validateStockBetaWidgetArchitecture(validGridArchitecture)).toEqual([]);
   });
 
   it("rejects incomplete grid placement metadata", () => {
-    const invalid = {
-      ...validGridArchitecture,
-      layout: {
-        ...validGridArchitecture.layout,
-        desktop: [desktopGridPlacements[0], { ...desktopGridPlacements[1], empty: undefined }],
-      },
-    };
-
-    expect(validateStockBetaWidgetArchitecture(invalid)).toContainEqual({
-      code: "invalid-layout",
-      path: "layout.desktop[1].empty",
-    });
-    expect(() => defineStockBetaWidgetArchitecture(invalid)).toThrow(
-      InvalidStockBetaWidgetArchitecture,
+    const invalid = validGridCatalog.map((entry, index) =>
+      index === 0
+        ? {
+            ...entry,
+            placements: {
+              ...entry.placements,
+              desktop: { ...entry.placements.desktop, empty: undefined },
+            },
+          }
+        : entry,
     );
+
+    expect(validateStockBetaWidgetCatalog(invalid)).toContainEqual({
+      code: "invalid-layout",
+      path: "catalog[0].placements.desktop.empty",
+    });
   });
 
   it("rejects out-of-range grid coordinates and spans", () => {
-    const invalid = {
-      ...validGridArchitecture,
-      layout: {
-        desktop: [
-          desktopGridPlacements[0],
-          { ...desktopGridPlacements[1], column: 12, columnSpan: 2 },
-        ],
-        tablet: [{ ...tabletGridPlacements[0], column: 0 }, tabletGridPlacements[1]],
-        mobile: [
-          {
-            ...mobileGridPlacements[0],
-            empty: { ...mobileGridPlacements[0].empty, row: 0 },
+    const invalid = validGridCatalog.map((entry, index) => {
+      if (index === 0) {
+        return {
+          ...entry,
+          placements: {
+            ...entry.placements,
+            tablet: { ...entry.placements.tablet, column: 0 },
+            mobile: {
+              ...entry.placements.mobile,
+              empty: { ...entry.placements.mobile.empty, row: 0 },
+            },
           },
-          mobileGridPlacements[1],
-        ],
-      },
-    };
-    const issues = validateStockBetaWidgetArchitecture(invalid);
+        };
+      }
+      return {
+        ...entry,
+        placements: {
+          ...entry.placements,
+          desktop: { ...entry.placements.desktop, column: 12, columnSpan: 2 },
+        },
+      };
+    });
+    const issues = validateStockBetaWidgetCatalog(invalid);
 
     expect(issues).toContainEqual({
       code: "invalid-grid-column-span",
-      path: "layout.desktop[1].columnSpan",
+      path: "catalog[1].placements.desktop.columnSpan",
     });
     expect(issues).toContainEqual({
       code: "invalid-grid-column",
-      path: "layout.tablet[0].column",
+      path: "catalog[0].placements.tablet.column",
     });
     expect(issues).toContainEqual({
       code: "invalid-grid-row",
-      path: "layout.mobile[0].empty.row",
+      path: "catalog[0].placements.mobile.empty.row",
     });
-    expect(() => defineStockBetaWidgetArchitecture(invalid)).toThrow(
-      InvalidStockBetaWidgetArchitecture,
-    );
   });
 
-  it("rejects duplicate empty-state order and overlapping visible grid cells", () => {
-    const invalid = {
-      ...validGridArchitecture,
-      layout: {
-        ...validGridArchitecture.layout,
-        desktop: [
-          desktopGridPlacements[0],
-          {
-            ...desktopGridPlacements[1],
-            column: 1,
-            columnSpan: 4,
-            empty: { ...desktopGridPlacements[1].empty, order: 0 },
-          },
-        ],
+  it("rejects overlapping visible grid cells", () => {
+    const invalid = [
+      validGridCatalog[0],
+      {
+        ...validGridCatalog[1],
+        placements: {
+          ...validGridCatalog[1].placements,
+          desktop: { ...validGridCatalog[1].placements.desktop, column: 1, columnSpan: 4 },
+        },
       },
-    };
-    const issues = validateStockBetaWidgetArchitecture(invalid);
+    ];
+    const issues = validateStockBetaWidgetCatalog(invalid);
 
-    expect(issues).toContainEqual({
-      code: "duplicate-layout-order",
-      path: "layout.desktop.empty",
-    });
     expect(issues).toContainEqual({
       code: "overlapping-layout-placement",
       path: "layout.desktop.populated",
     });
-    expect(() => defineStockBetaWidgetArchitecture(invalid)).toThrow(
-      InvalidStockBetaWidgetArchitecture,
-    );
   });
 
   it("keeps the accepted V2 dashboard and detail registries valid", () => {
@@ -303,6 +307,13 @@ describe("stock-beta widget architecture", () => {
     expect(validateStockBetaWidgetArchitecture(stockBetaDetailArchitecture)).toEqual([]);
     expect(stockBetaDashboardArchitecture.requiredWidgetIds).not.toContain("signal-state");
     expect(stockBetaDetailArchitecture.requiredWidgetIds).toContain("snapshot");
+    const detailCatalogIds = stockBetaDetailArchitecture.catalog.map((entry) => entry.id);
+    expect(stockBetaDetailArchitecture.requiredWidgetIds).toEqual(detailCatalogIds);
+    for (const breakpoint of ["desktop", "tablet", "mobile"] as const) {
+      expect(
+        stockBetaDetailArchitecture.layout[breakpoint].map((placement) => placement.id),
+      ).toEqual(detailCatalogIds);
+    }
   });
 
   it("projects the production registries to configuration without component functions", () => {
@@ -311,9 +322,7 @@ describe("stock-beta widget architecture", () => {
     for (const configuration of [dashboardConfiguration, detailConfiguration]) {
       expect(JSON.parse(JSON.stringify(configuration))).toEqual(configuration);
       expect(JSON.stringify(configuration)).not.toContain("component");
-      expect(configuration.definitions.every((definition) => !("component" in definition))).toBe(
-        true,
-      );
+      expect(configuration.widgets.every((widget) => !("component" in widget))).toBe(true);
     }
   });
 

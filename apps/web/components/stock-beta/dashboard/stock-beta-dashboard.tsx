@@ -2,18 +2,13 @@ import type { CSSProperties, ReactNode } from "react";
 import type {
   StockBetaWidgetArchitecture,
   StockBetaWidgetBreakpoint,
-  StockBetaWidgetDefinition,
-  StockBetaWidgetGridLayout,
+  StockBetaWidgetCatalogEntry,
+  StockBetaWidgetGridPlacementState,
   StockBetaWidgetGridState,
-  StockBetaWidgetSize,
 } from "../shared/widget-types";
 import styles from "./dashboard.module.css";
 import { StockBetaSelectionProvider } from "./selection-provider";
-import type {
-  StockBetaDashboardViewModel,
-  StockBetaDashboardWidgetId,
-  StockBetaDashboardWidgetViewModel,
-} from "./types";
+import type { StockBetaDashboardViewModel, StockBetaDashboardWidgetViewModel } from "./types";
 import { stockBetaDashboardArchitecture } from "./widget-registry";
 
 type DashboardLayoutStyle = CSSProperties & {
@@ -32,20 +27,20 @@ type DashboardLayoutStyle = CSSProperties & {
 };
 
 type DashboardArchitecture = StockBetaWidgetArchitecture<
-  readonly StockBetaWidgetDefinition<
-    StockBetaDashboardWidgetId,
-    StockBetaDashboardWidgetViewModel
-  >[],
-  StockBetaWidgetGridLayout<StockBetaDashboardWidgetId>
+  readonly StockBetaWidgetCatalogEntry<
+    string,
+    StockBetaDashboardWidgetViewModel,
+    StockBetaWidgetGridPlacementState
+  >[]
 >;
 
 type ResolvedWidgetPlacement = StockBetaWidgetGridState & {
-  readonly size: StockBetaWidgetSize;
+  readonly size: StockBetaWidgetGridPlacementState["size"];
 };
 
 function placementFor(
   architecture: DashboardArchitecture,
-  id: StockBetaDashboardWidgetId,
+  id: string,
   breakpoint: StockBetaWidgetBreakpoint,
   hasSnapshot: boolean,
 ): ResolvedWidgetPlacement | undefined {
@@ -59,20 +54,21 @@ function layoutStyle(
   desktop: ResolvedWidgetPlacement | undefined,
   tablet: ResolvedWidgetPlacement | undefined,
   mobile: ResolvedWidgetPlacement | undefined,
+  catalogIndex: number,
 ): DashboardLayoutStyle {
   return {
     "--desktop-grid-column": desktop?.column ?? 1,
     "--desktop-grid-column-span": desktop?.columnSpan ?? 12,
     "--desktop-grid-row": desktop?.row ?? 1,
-    "--desktop-order": desktop?.order ?? 99,
+    "--desktop-order": catalogIndex,
     "--tablet-grid-column": tablet?.column ?? 1,
     "--tablet-grid-column-span": tablet?.columnSpan ?? 12,
     "--tablet-grid-row": tablet?.row ?? 1,
-    "--tablet-order": tablet?.order ?? 99,
+    "--tablet-order": catalogIndex,
     "--mobile-grid-column": mobile?.column ?? 1,
     "--mobile-grid-column-span": mobile?.columnSpan ?? 1,
     "--mobile-grid-row": mobile?.row ?? 1,
-    "--mobile-order": mobile?.order ?? 99,
+    "--mobile-order": catalogIndex,
   };
 }
 
@@ -88,14 +84,14 @@ export function renderStockBetaDashboardGrid(
       data-testid="stock-beta-dashboard"
     >
       <div className={styles["dashboardGrid"]}>
-        {architecture.definitions.map((definition) => {
-          const desktop = placementFor(architecture, definition.id, "desktop", hasSnapshot);
-          const tablet = placementFor(architecture, definition.id, "tablet", hasSnapshot);
-          const mobile = placementFor(architecture, definition.id, "mobile", hasSnapshot);
+        {architecture.catalog.map((entry, catalogIndex) => {
+          const desktop = placementFor(architecture, entry.id, "desktop", hasSnapshot);
+          const tablet = placementFor(architecture, entry.id, "tablet", hasSnapshot);
+          const mobile = placementFor(architecture, entry.id, "mobile", hasSnapshot);
           if (desktop === undefined && tablet === undefined && mobile === undefined) return null;
           if (![desktop, tablet, mobile].some((placement) => placement?.visible === true))
             return null;
-          const Widget = definition.component;
+          const Widget = entry.component;
           return (
             <div
               className={styles["dashboardWidget"]}
@@ -105,10 +101,10 @@ export function renderStockBetaDashboardGrid(
               data-mobile-visible={mobile?.visible === true ? "true" : "false"}
               data-tablet-size={tablet?.size ?? "full"}
               data-tablet-visible={tablet?.visible === true ? "true" : "false"}
-              data-testid={`stock-beta-widget-${definition.id}`}
-              data-widget-id={definition.id}
-              key={definition.id}
-              style={layoutStyle(desktop, tablet, mobile)}
+              data-testid={`stock-beta-widget-${entry.id}`}
+              data-widget-id={entry.id}
+              key={entry.id}
+              style={layoutStyle(desktop, tablet, mobile, catalogIndex)}
             >
               <Widget viewModel={viewModel} />
             </div>
