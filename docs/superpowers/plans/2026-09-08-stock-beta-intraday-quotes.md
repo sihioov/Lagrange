@@ -1393,3 +1393,20 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   producer/quotes 회귀, scoped strict clippy/fmt/diff를 검증한다. 명령·결과, 실제 capture/return
   관찰, 수정 전 재현, 파일·라인, full commit/parent, 차이·미해결·미확인(없으면 없음)을 보고한다.
   source defect 발견 시 별도 재현으로 보고하고 임의 수정하지 않는다. reviewer 재검토 전 미통합.
+
+### B2b-C2b evidence 보완 완료 및 독립 재검토
+
+- writer는 `18f96a6b2faf9892a4403769e603f9e0654306ac` (parent `31ab97f`)로 완료했고
+  idle/clean이다. coordinator는 허용된 두 test 파일의 전체 delta +544/-62 및 demand 사례를
+  읽었다. 실제 first-good/held-success와 raw cache fingerprint, callback false/CallerIneligible,
+  blocker PID 관찰, await 동안 handle 소유 및 두 outer-cancellation 회귀가 추가됐다.
+- worker 보고: 최종 lifecycle9/9 (60.51초), pipeline9/9 (41.16초), scheduling5/5 (123.06초),
+  producer6/6 (8.87초), quotes24/24 (30.93초), strict scoped clippy/fmt/diff 통과.
+  이전 handle-taking 코드에서 두 새 cleanup 회귀 실패 후 수정본 2/2 통과를 보고했다.
+  이는 아직 독립 수락 전 보고다.
+- 유휴 reviewer `f9652834-45af-425c-8be0-fdfbe2753984` (Codex terra/high)에 두 파일과
+  이전 High 2건/Medium 1건의 bounded read-only 재검토를 맡겼다. callback/SQL barrier의
+  실제 상관관계, 다른 expiry로 인해 fence 단언이 무의미해지지 않는지, child drop 신호와
+  실패 cleanup을 확인/반박한다. 기존 EOD 단일 fingerprint의 Low 범위 한계는 유지한다.
+- C3 behavioral runner 및 window maxage 계약 gap은 남는다. 전체 B2b는 미통합이며
+  독립 재검토/전체 gate 전 수락 또는 실제 provider 활성화를 주장하지 않는다.
