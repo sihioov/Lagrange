@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use collectors::intraday_quotes::{INTRADAY_QUOTE_PATH, INTRADAY_QUOTE_TR_ID};
 use intraday_producer_lifecycle_support::{
-    EligibilityBarrier, EligibilityHoldingReader, LifecycleTask, OutcomeBarrier,
-    OutcomeHoldingReader, ResponseTask, add_new_generation, durable_signal_row_fingerprint,
-    run_lifecycle_body, seed_published_signal_row, wait_for_blocked_backend,
+    AttemptOutcomeClass, CacheRowFingerprint, ChildDropSignal, EligibilityBarrier,
+    EligibilityHoldingReader, EligibilityObservation, EligibilityReturn, LifecycleTask,
+    OutcomeBarrier, OutcomeHoldingReader, ResponseTask, add_new_generation,
+    durable_signal_row_fingerprint, raw_cache_row_fingerprint, run_lifecycle_body,
+    seed_published_signal_row, wait_for_blocked_backend, wait_for_blocked_backend_with_blocker,
     wait_for_database_time, wait_for_heartbeat_advance, wait_for_quote_version,
     wait_for_request_count,
 };
@@ -27,7 +29,7 @@ use job_queue::owner_equity_v2::{
 };
 use kis_client::error::KisError;
 use serde_json::Value;
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 use uuid::Uuid;
 
 const EOD_QUERY_PATH: &str = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice";
@@ -97,6 +99,7 @@ async fn setup_outcome_holding(
         ClientHarness,
         Arc<IntradayProducer<OutcomeHoldingReader>>,
         OutcomeBarrier,
+        CacheRowFingerprint,
     ),
     String,
 > {
@@ -114,8 +117,49 @@ async fn setup_outcome_holding(
     let windows = install_current_window_contract(db, close_after_seconds).await?;
     let harness = ClientHarness::new(
         suffix,
-        [TransportStep::Response(valid_quote_response(symbol))],
+        [
+            TransportStep::Response(valid_quote_response(symbol)),
+            TransportStep::Response(valid_quote_response(symbol)),
+        ],
     );
+    let first_config = IntradayProducerConfig::for_worker(&format!("b2b-c2b-{suffix}"))
+        .map_err(|error| format!("lifecycle producer configuration failed: {error}"))?;
+    let first_producer = Arc::new(IntradayProducer::new(
+        db.repository_as_worker(),
+        harness.client.clone(),
+        windows.clone(),
+        first_config,
+    ));
+    let (_first_shutdown_tx, mut first_shutdown_rx) = watch::channel(false);
+    let first_report = first_producer
+        .run_cycle(&mut first_shutdown_rx)
+        .await
+        .map_err(|error| format!("first-good producer cycle failed: {error}"))?;
+    require_report_success(first_report, 1, 1)?;
+    let first_request = wait_for_request_count(&harness.transport, 1, Duration::from_secs(2))
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "first-good request was not recorded".to_owned())?;
+    assert_exact_quote_request(&first_request, symbol)?;
+    let initial_cache =
+        raw_cache_row_fingerprint(&db.superuser, fixture.owner_user_id, fixture.membership_id)
+            .await?;
+    require(
+        initial_cache.quote_version == 1
+            && initial_cache.price.is_some()
+            && initial_cache.received_at.is_some()
+            && initial_cache.last_success_at.is_some()
+            && initial_cache.last_failure_code.is_none()
+            && initial_cache.last_failure_at.is_none(),
+        "first-good lifecycle cycle did not leave a successful raw cache row",
+    )?;
+    wait_for_database_time(
+        &db.superuser,
+        initial_cache.last_attempt_at + chrono::Duration::seconds(5),
+        Duration::from_secs(8),
+    )
+    .await?;
     let outcome_barrier = OutcomeBarrier::new();
     let reader = OutcomeHoldingReader::new(harness.client.clone(), outcome_barrier.clone());
     let config = IntradayProducerConfig::for_worker(&format!("b2b-c2b-{suffix}"))
@@ -126,7 +170,7 @@ async fn setup_outcome_holding(
         windows,
         config,
     ));
-    Ok((fixture, harness, producer, outcome_barrier))
+    Ok((fixture, harness, producer, outcome_barrier, initial_cache))
 }
 
 fn spawn_cycle<R>(
@@ -204,6 +248,22 @@ fn assert_exact_quote_request(record: &RequestRecord, symbol: &str) -> Result<()
     require(
         !record.headers.contains_key("tr_cont"),
         "lifecycle quote sent a continuation header",
+    )
+}
+
+fn require_second_real_quote(harness: &ClientHarness, symbol: &str) -> Result<(), String> {
+    let requests = harness.transport.requests();
+    require(
+        requests.len() == 2,
+        "lifecycle did not record exactly the first-good and held-outcome GETs",
+    )?;
+    assert_exact_quote_request(&requests[1], symbol)?;
+    require(
+        requests[1]
+            .dispatched_at
+            .duration_since(requests[0].dispatched_at)
+            >= Duration::from_secs(5),
+        "held-outcome GET did not preserve the real five-second spacing",
     )
 }
 
@@ -370,13 +430,17 @@ async fn lifecycle_inflight_shutdown_discards_publication_and_retains_real_debt(
 #[tokio::test]
 async fn lifecycle_delayed_real_outcome_receives_independent_heartbeat_then_publishes() {
     run_lifecycle_body(|mut db| async move {
-        let (fixture, harness, producer, outcome_barrier) =
+        let (fixture, harness, producer, outcome_barrier, _initial_cache) =
             setup_outcome_holding(&mut db, "heartbeat-delayed-outcome", "005932", 30).await?;
         let task = spawn_cycle(producer, Some(outcome_barrier.clone()));
         wait_for_request_count(&harness.transport, 1, Duration::from_secs(2)).await?;
-        tokio::time::timeout(Duration::from_secs(2), outcome_barrier.wait_for_capture())
+        tokio::time::timeout(Duration::from_secs(3), outcome_barrier.wait_for_capture())
             .await
             .map_err(|_| "post-capture outcome barrier was not reached".to_owned())?;
+        require(
+            outcome_barrier.outcome() == Some(AttemptOutcomeClass::Success),
+            "held delayed outcome was not a successful actual client outcome",
+        )?;
         let (_, _, _, heartbeat_before) = producer_row(&db, fixture.owner_user_id).await?;
         let heartbeat_after = wait_for_heartbeat_advance(
             &db.superuser,
@@ -409,11 +473,12 @@ async fn lifecycle_delayed_real_outcome_receives_independent_heartbeat_then_publ
             &db.superuser,
             fixture.owner_user_id,
             fixture.membership_id,
-            1,
+            2,
             Duration::from_secs(2),
         )
         .await?;
-        state_attempts(&harness, 1)
+        require_second_real_quote(&harness, "005932")?;
+        state_attempts(&harness, 2)
     })
     .await;
 }
@@ -421,13 +486,17 @@ async fn lifecycle_delayed_real_outcome_receives_independent_heartbeat_then_publ
 #[tokio::test]
 async fn lifecycle_blocked_heartbeat_expires_then_takeover_fences_old_outcome() {
     run_lifecycle_body(|mut db| async move {
-        let (fixture, harness, producer, outcome_barrier) =
+        let (fixture, harness, producer, outcome_barrier, initial_cache) =
             setup_outcome_holding(&mut db, "heartbeat-takeover", "005933", 40).await?;
         let task = spawn_cycle(producer, Some(outcome_barrier.clone()));
         wait_for_request_count(&harness.transport, 1, Duration::from_secs(2)).await?;
-        tokio::time::timeout(Duration::from_secs(2), outcome_barrier.wait_for_capture())
+        tokio::time::timeout(Duration::from_secs(3), outcome_barrier.wait_for_capture())
             .await
             .map_err(|_| "takeover outcome barrier was not reached".to_owned())?;
+        require(
+            outcome_barrier.outcome() == Some(AttemptOutcomeClass::Success),
+            "held takeover outcome was not a successful actual client outcome",
+        )?;
 
         let mut blocker = db
             .superuser
@@ -522,14 +591,13 @@ async fn lifecycle_blocked_heartbeat_expires_then_takeover_fences_old_outcome() 
             "old delayed outcome was reported as a publication or failure after takeover",
         )?;
         require(
-            cache_count(&db, &fixture).await? == 0,
-            "old outcome crossed the takeover fence",
+            raw_cache_row_fingerprint(&db.superuser, fixture.owner_user_id, fixture.membership_id)
+                .await?
+                == initial_cache,
+            "old outcome changed the last-good cache row across the takeover fence",
         )?;
-        require(
-            harness.transport.request_count() == 1,
-            "takeover lifecycle dispatched an additional quote",
-        )?;
-        state_attempts(&harness, 1)
+        require_second_real_quote(&harness, "005933")?;
+        state_attempts(&harness, 2)
     })
     .await;
 }
@@ -537,13 +605,17 @@ async fn lifecycle_blocked_heartbeat_expires_then_takeover_fences_old_outcome() 
 #[tokio::test]
 async fn lifecycle_generation_change_and_disable_discard_late_real_results() {
     run_lifecycle_body(|mut db| async move {
-        let (fixture, harness, producer, outcome_barrier) =
+        let (fixture, harness, producer, outcome_barrier, initial_cache) =
             setup_outcome_holding(&mut db, "generation-late-result", "005934", 30).await?;
         let task = spawn_cycle(producer, Some(outcome_barrier.clone()));
         wait_for_request_count(&harness.transport, 1, Duration::from_secs(2)).await?;
-        tokio::time::timeout(Duration::from_secs(2), outcome_barrier.wait_for_capture())
+        tokio::time::timeout(Duration::from_secs(3), outcome_barrier.wait_for_capture())
             .await
             .map_err(|_| "generation late-result barrier was not reached".to_owned())?;
+        require(
+            outcome_barrier.outcome() == Some(AttemptOutcomeClass::Success),
+            "held generation outcome was not a successful actual client outcome",
+        )?;
         add_new_generation(&db, &fixture).await?;
         let task_result = task
             .join(Duration::from_secs(5))
@@ -555,24 +627,28 @@ async fn lifecycle_generation_change_and_disable_discard_late_real_results() {
             "late generation-one result was reported instead of discarded",
         )?;
         require(
-            cache_count(&db, &fixture).await? == 0,
-            "generation fence allowed late publication",
+            raw_cache_row_fingerprint(&db.superuser, fixture.owner_user_id, fixture.membership_id)
+                .await?
+                == initial_cache,
+            "generation fence changed the last-good cache row",
         )?;
-        require(
-            harness.transport.request_count() == 1,
-            "generation fence caused another GET",
-        )
+        require_second_real_quote(&harness, "005934")?;
+        state_attempts(&harness, 2)
     })
     .await;
 
     run_lifecycle_body(|mut db| async move {
-        let (fixture, harness, producer, outcome_barrier) =
+        let (fixture, harness, producer, outcome_barrier, initial_cache) =
             setup_outcome_holding(&mut db, "disable-late-result", "005935", 30).await?;
         let task = spawn_cycle(producer, Some(outcome_barrier.clone()));
         wait_for_request_count(&harness.transport, 1, Duration::from_secs(2)).await?;
-        tokio::time::timeout(Duration::from_secs(2), outcome_barrier.wait_for_capture())
+        tokio::time::timeout(Duration::from_secs(3), outcome_barrier.wait_for_capture())
             .await
             .map_err(|_| "disable late-result barrier was not reached".to_owned())?;
+        require(
+            outcome_barrier.outcome() == Some(AttemptOutcomeClass::Success),
+            "held disabled-membership outcome was not a successful actual client outcome",
+        )?;
         sqlx::query(
             "UPDATE public.owner_equity_memberships
                 SET state = 'DISABLED', disabled_at = pg_catalog.clock_timestamp(),
@@ -593,13 +669,13 @@ async fn lifecycle_generation_change_and_disable_discard_late_real_results() {
             "late disabled-membership result was reported instead of discarded",
         )?;
         require(
-            cache_count(&db, &fixture).await? == 0,
-            "disable fence allowed late publication",
+            raw_cache_row_fingerprint(&db.superuser, fixture.owner_user_id, fixture.membership_id)
+                .await?
+                == initial_cache,
+            "disable fence changed the last-good cache row",
         )?;
-        require(
-            harness.transport.request_count() == 1,
-            "disable fence caused another GET",
-        )
+        require_second_real_quote(&harness, "005935")?;
+        state_attempts(&harness, 2)
     })
     .await;
 }
@@ -622,8 +698,12 @@ async fn lifecycle_demand_only_expiry_across_sql_barrier_denies_final_dispatch()
             [TransportStep::Response(valid_quote_response("005936"))],
         );
         let eligibility_barrier = EligibilityBarrier::new();
-        let reader =
-            EligibilityHoldingReader::new(harness.client.clone(), eligibility_barrier.clone());
+        let eligibility_observation = EligibilityObservation::new();
+        let reader = EligibilityHoldingReader::new(
+            harness.client.clone(),
+            eligibility_barrier.clone(),
+            eligibility_observation.clone(),
+        );
         let config = IntradayProducerConfig::for_worker("b2b-c2b-demand-only-expiry")
             .map_err(|error| format!("demand-only producer configuration failed: {error}"))?;
         let producer = Arc::new(IntradayProducer::new(
@@ -642,6 +722,10 @@ async fn lifecycle_demand_only_expiry_across_sql_barrier_denies_final_dispatch()
             .begin()
             .await
             .map_err(|_| "could not begin demand-only blocker".to_owned())?;
+        let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *blocker)
+            .await
+            .map_err(|_| "could not identify demand-only blocker".to_owned())?;
         sqlx::query(
             "SELECT owner_user_id
                FROM public.owner_intraday_quote_producers
@@ -674,13 +758,25 @@ async fn lifecycle_demand_only_expiry_across_sql_barrier_denies_final_dispatch()
         .await
         .map_err(|_| "could not record demand-only expiry".to_owned())?;
         eligibility_barrier.release();
-        wait_for_blocked_backend(
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            eligibility_observation.wait_for_callback_entry(),
+        )
+        .await
+        .map_err(|_| "final eligibility callback entry was not observed".to_owned())?;
+        eligibility_observation.release_callback();
+        let (waiter_pid, blockers) = wait_for_blocked_backend_with_blocker(
             &db.superuser,
             "worker",
             "owner_intraday_quote_producers",
-            Duration::from_secs(3),
+            blocker_pid,
+            Duration::from_secs(1),
         )
         .await?;
+        let blocker_message = format!(
+            "final eligibility SQL waiter {waiter_pid} did not retain blocker {blocker_pid}: {blockers:?}"
+        );
+        require(blockers.contains(&blocker_pid), &blocker_message)?;
         wait_for_database_time(
             &db.superuser,
             demand_expires_at + chrono::Duration::milliseconds(100),
@@ -719,6 +815,20 @@ async fn lifecycle_demand_only_expiry_across_sql_barrier_denies_final_dispatch()
             .await
             .map_err(|error| format!("demand-only task cleanup failed: {error}"))?;
         let report = task_result.map_err(|error| format!("demand-only cycle failed: {error}"))?;
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            eligibility_observation.wait_for_callback_return(),
+        )
+        .await
+        .map_err(|_| "final eligibility callback return was not observed".to_owned())?;
+        require(
+            eligibility_observation.returned() == Some(EligibilityReturn::False),
+            "final eligibility callback did not return the observed false result",
+        )?;
+        require(
+            eligibility_observation.outcome() == Some(AttemptOutcomeClass::CallerIneligible),
+            "actual guarded client did not classify the callback result as CallerIneligible",
+        )?;
         require(
             report.successful_quotes == 0,
             "expired demand published a quote",
@@ -865,4 +975,94 @@ async fn lifecycle_shared_eod_arbitration_then_quote_success_preserves_durable_e
         )
     })
     .await;
+}
+
+fn spawn_pending_child() -> (
+    tokio::task::JoinHandle<()>,
+    oneshot::Receiver<()>,
+    oneshot::Receiver<()>,
+    tokio::task::AbortHandle,
+) {
+    let (started_tx, started_rx) = oneshot::channel();
+    let (dropped_tx, dropped_rx) = oneshot::channel();
+    let handle = tokio::spawn(async move {
+        let _ = started_tx.send(());
+        let _drop_signal = ChildDropSignal::new(dropped_tx);
+        std::future::pending::<()>().await;
+    });
+    let abort_handle = handle.abort_handle();
+    (handle, started_rx, dropped_rx, abort_handle)
+}
+
+#[tokio::test]
+async fn lifecycle_task_outer_join_cancellation_aborts_owned_child() {
+    let (mut handle, started, dropped, abort_handle) = spawn_pending_child();
+    let started = tokio::time::timeout(Duration::from_secs(1), started).await;
+    if !matches!(started, Ok(Ok(()))) {
+        handle.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(1), &mut handle).await;
+        panic!("lifecycle child did not start");
+    }
+    let (shutdown_tx, _shutdown_rx) = watch::channel(false);
+    let task = LifecycleTask::new(shutdown_tx, handle, None);
+    let outer = tokio::time::timeout(
+        Duration::from_millis(50),
+        task.join(Duration::from_secs(30)),
+    )
+    .await;
+    assert!(outer.is_err(), "outer lifecycle join did not time out");
+    let mut dropped = dropped;
+    let observed = tokio::time::timeout(Duration::from_secs(1), &mut dropped)
+        .await
+        .is_ok();
+    if !observed {
+        abort_handle.abort();
+        let cleaned = tokio::time::timeout(Duration::from_secs(1), &mut dropped)
+            .await
+            .is_ok();
+        assert!(
+            cleaned,
+            "lifecycle child did not clean up after forced abort"
+        );
+    }
+    assert!(
+        observed,
+        "outer lifecycle join cancellation detached its pending child"
+    );
+}
+
+#[tokio::test]
+async fn response_task_outer_join_cancellation_aborts_owned_child() {
+    let (mut handle, started, dropped, abort_handle) = spawn_pending_child();
+    let started = tokio::time::timeout(Duration::from_secs(1), started).await;
+    if !matches!(started, Ok(Ok(()))) {
+        handle.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(1), &mut handle).await;
+        panic!("response child did not start");
+    }
+    let task = ResponseTask::new(handle, ResponseBarrier::new());
+    let outer = tokio::time::timeout(
+        Duration::from_millis(50),
+        task.join(Duration::from_secs(30)),
+    )
+    .await;
+    assert!(outer.is_err(), "outer response join did not time out");
+    let mut dropped = dropped;
+    let observed = tokio::time::timeout(Duration::from_secs(1), &mut dropped)
+        .await
+        .is_ok();
+    if !observed {
+        abort_handle.abort();
+        let cleaned = tokio::time::timeout(Duration::from_secs(1), &mut dropped)
+            .await
+            .is_ok();
+        assert!(
+            cleaned,
+            "response child did not clean up after forced abort"
+        );
+    }
+    assert!(
+        observed,
+        "outer response join cancellation detached its pending child"
+    );
 }
