@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2A 보완 검토·통합 완료, WP-2B 기존 reader 연결 준비; 운영 활성화 미실행
+상태: WP-2A 보완 검토·통합 완료, WP-2B 기존 reader 연결 실행 중; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -533,3 +533,7 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   read_coordination 및 lib export와 해당 focused test를 순차 소유한다. parser/DB/Web/Compose
   변경과 실제 provider 호출은 제외한다. config parser가 필요하면 kis-client 신규
   `read_coordination_config.rs`에 한정한다. Cargo 의존성 추가는 이번 연결 범위에서 제외한다.
+- WP-2B worker: `1a321ba4-6ac2-46c2-a7c1-01ccbc0cf049`, Codex sol/high,
+  workspace `wks_9348f3ca1a30ddb5`, cwd
+  `/data/worktrees/3puw275b/stock-beta-intraday-read-wiring`, base `2c4b9a0`.
+  기존 WP-2A heartbeat를 종료하고 WP-2B용 5분 간격, 최대 2시간 heartbeat로 교체했다.
