@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B·WP-5·WP-3A·WP-3B1 통합 완료; WP-3B2 호출 증거 연결 선행 작업 준비; 운영 활성화 미실행
+상태: WP-2B·WP-5·WP-3A·WP-3B1·WP-3B2a 통합 완료; WP-3B2b 수집 루프 연결 진행; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -965,3 +965,61 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   기존 테스트를 유지하면서 NEW public API의 한도 거부/다음날 reset/zero extra GET와
   concrete timeout/no retry/redaction을 검증한다. source 전체 재설계·다른 파일 변경은 없다.
   51cd791은 보완 검증 전 미통합으로 유지하고 B2b는 이후 시작한다.
+
+### WP-3B2a 통합 및 B2b 실행 경계
+
+- coordinator가 보완 `5b393bc134fc78a11d871793efb95706c0b7822c`의 두 파일 전체 diff를
+  읽었다. source는 transport-local 504 분류 세 줄뿐이며 새 public API의 5000번째 예약,
+  5001번째 거부/eligibility 0회/다음날 reset/rollback과 timeout/raw-504 구별을 추가했다.
+  이전 coordinator budget 테스트도 유지됐다. worker 재현은 수정 전 9 pass/1 fail,
+  수정 후 11 pass였다. package all-targets 최종 보고는 215 pass이나 중간 로그에 225가
+  있어 그 합계를 독립 수락 증거로 쓰지 않는다.
+- 수락 원본 `51cd791` → `416e51f`, 보완 `5b393bc` → `06b5092`를 기능 브랜치에 통합했다.
+  네 파일 모두 worker HEAD와 동일함을 확인했고 coordinator가 통합 트리에서
+  `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true cargo test --locked --offline -p kis-client
+  --test intraday_attempt -- --test-threads=1`을 실행해 11/11 pass(5.10s)를 확인했다.
+- B2b는 기존 intermediate/medium 분류, Codex luna/max를 유지한다. 동결된 session,
+  fairness, producer, retry 정책의 연결이며 가짜 clock/transport와 격리 DB로 검증 가능하다.
+  EOD lifecycle 변경, 새 외부 계약/권한/schema/dependency 또는 반복 검증 실패는 재분류·상향
+  신호다. 아래에서 명시하지 않은 요구가 빠졌거나 모순이면 만들지 말고 보고한다.
+- 소유: 신규 `data-pipelines/collectors/src/intraday_quotes.rs`와 lib module 등록;
+  신규 `crates/job-queue/src/owner_equity_v2/intraday_producer.rs`와 상위 module 등록;
+  B1 `intraday.rs`의 필요한 typed integration/query; runner quote-loop wiring;
+  `runtime.rs`는 기존 adapter가 이미 소유한 Arc reader를 clone하는 accessor만 허용한다.
+  EOD 실행/lease/Raw 로직 변경은 금지한다. 신규 collectors/tests/intraday_quotes.rs,
+  job-queue/tests/intraday_producer.rs 및 기존 신규 intraday DB support 확장만 허용한다.
+- pre-launch 확인: B2a 성공 metadata만으로는 B1 record_failure의 실제 reservation 입력을
+  만들 수 없다. 이 연결에 한해 kis-client read_coordination.rs/market_data.rs 및 lib exports,
+  신규 intraday_attempt.rs 테스트를 순차 소유 범위에 포함한다. 별도 outcome API로 실패에도
+  실제 persist된 reservation(date/count/fence)만 전달하고 아직 예약되지 않은 실패는 None으로
+  구분한다. 기존 get/get_intraday/get_intraday_attempt 동작은 wrapper로 보존한다. 완료된
+  bytes가 없는 오류에 receipt를 만들지 않는다. 성공·실패 모두 임의 reservation/별도 quota 금지.
+- 검증된 reservation을 DB context의 non-nil UUID로 연결할 때는 고정 UUIDv5 namespace와
+  명시적 owner/producer-holder/실제 reservation fence/date tuple로 상관 ID를 구성한다.
+  ID 자체가 권한 증거라는 주장은 금지하며 실제 private metadata가 없는 provider 실패에
+  임의 숫자를 넣어 record_failure를 호출하지 않는다. non-attempt skip은 cache success를
+  갱신하지 않으며 API의 상태 도출 경계와 분리한다.
+- collector는 closed-schema/hash-pinned session-window bytes 검증과 기존 calendar lineage
+  조회, 승인 parser/새 guarded attempt를 연결한다. job-queue dependency를 collectors에
+  추가하지 않는다. 런타임 파일은 spec의 고정 경로만 사용하며 fixture는 주입된 bytes만 쓴다.
+  실제 날짜 entry/운영 config는 생성하지 않는다. calendar/version/batch/current KST/36h,
+  half-open window를 호출 직전과 DB publication 직전에 재확인한다. publication은 기존
+  blocking locks 이후 fresh DB clock으로 window 종료도 검증하며 기존 fencing을 약화하지 않는다.
+- daemon+owner_only에만 독립 task, 기본 off/--once 0 quote task. 동일 Arc reader를 사용하고
+  EOD 15분 작업/lease와 독립된 20s producer lease/5s heartbeat/cancellation을 유지한다.
+  worker-role active-demand owner enumeration은 기존 세 테이블 범위에서만 수행한다.
+  중복 consumer merge, last-attempt/instrument 순서, 5s target/halt60s, busy skip,
+  최대3회 GET/매회 guarded eligibility/공유 budget/Retry-After/401 한 번을 준수한다.
+- 테스트: fake clock/transport로 no-demand/defaultoff/once/unknown/closed 0 calls,
+  regular/special/open-close/rollover/lineage/hash invalid, 1/5 fairness/duplicate/halt,
+  retry accounting/deadline/429/401/EOD contention; 실제 QA DB로 demand expiry,
+  producer takeover/disable/generation/session-close 중 inflight discard, 실패 last-good 보존,
+  기본 B1 24개 회귀. 운영 main/binary를 실제 credentials로 실행하지 않는다.
+- 격리 QA 컨테이너 `lagrange-intraday-qa-20260908-qa-db-1`가 running/healthy이며
+  127.0.0.1:55438 및 tmpfs임을 다시 read-only 확인했다. synthetic URL은
+  `postgres://postgres:lagrange@127.0.0.1:55438/postgres`; worker는 자신이 만든 임시 DB만
+  생성/삭제한다. Docker lifecycle은 coordinator만 관리한다. 모든 이전 worker는 idle이다.
+- 소유 파일만 commit하고 파일/라인, deviations, 명령/결과, 미해결/미검증(없으면 없음)을
+  보고한다. 하나의 compiler/CARGO_BUILD_JOBS=2/locked/offline; 별도 independent review와
+  coordinator scope/tree 검증 후 통합한다. migration/Cargo/Compose/API/Web/ops/실제 provider,
+  운영DB/root/deploy/main merge/push는 범위 밖이다. 추가 파일 필요 시 먼저 보고한다.
