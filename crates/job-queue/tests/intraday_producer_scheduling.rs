@@ -4,6 +4,7 @@ mod intraday_producer_pipeline_support;
 mod intraday_quotes_support;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -70,7 +71,7 @@ async fn add_demand(
 
 struct DemandRenewalTask {
     stop_tx: watch::Sender<bool>,
-    join: tokio::task::JoinHandle<Result<(), String>>,
+    join: Option<tokio::task::JoinHandle<Result<(), String>>>,
 }
 
 fn start_demand_renewals(db: &IntradayTestDb, demands: Vec<DemandHandle>) -> DemandRenewalTask {
@@ -108,15 +109,37 @@ fn start_demand_renewals(db: &IntradayTestDb, demands: Vec<DemandHandle>) -> Dem
             }
         }
     });
-    DemandRenewalTask { stop_tx, join }
+    DemandRenewalTask {
+        stop_tx,
+        join: Some(join),
+    }
 }
 
 impl DemandRenewalTask {
-    async fn stop(self) -> Result<(), String> {
+    async fn stop(mut self) -> Result<(), String> {
         let _ = self.stop_tx.send(true);
         self.join
+            .take()
+            .ok_or_else(|| "synthetic demand renewal task was already stopped".to_owned())?
             .await
             .map_err(|_| "synthetic demand renewal task failed".to_owned())?
+    }
+}
+
+impl Drop for DemandRenewalTask {
+    fn drop(&mut self) {
+        let _ = self.stop_tx.send(true);
+        if let Some(join) = self.join.as_ref() {
+            join.abort();
+        }
+    }
+}
+
+struct TaskDropSignal(Arc<AtomicBool>);
+
+impl Drop for TaskDropSignal {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
     }
 }
 
@@ -172,6 +195,21 @@ fn assert_request_sequence(harness: &ClientHarness, symbols: &[&str]) {
     }
 }
 
+fn reservation_ledger(harness: &ClientHarness) -> Value {
+    let state = harness.state();
+    Value::Array(
+        [
+            "intraday_kst_date",
+            "intraday_attempts",
+            "next_fence",
+            "in_flight",
+        ]
+        .into_iter()
+        .map(|key| state.get(key).cloned().unwrap_or(Value::Null))
+        .collect(),
+    )
+}
+
 fn assert_ledger(
     harness: &ClientHarness,
     session_date: chrono::NaiveDate,
@@ -212,6 +250,32 @@ fn state_i64(state: &Value, key: &str) -> Result<i64, String> {
         .get(key)
         .and_then(Value::as_i64)
         .ok_or_else(|| "synthetic coordinator state field missing".to_owned())
+}
+
+async fn sample_database_time(observer: &PgPool) -> Result<DateTime<Utc>, String> {
+    sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+        .fetch_one(observer)
+        .await
+        .map_err(|_| "could not sample the disposable database clock".to_owned())
+}
+
+fn require_database_bracket(
+    observed: DateTime<Utc>,
+    lower: DateTime<Utc>,
+    upper: DateTime<Utc>,
+    label: &str,
+) -> Result<(), String> {
+    if observed < lower {
+        return Err(format!(
+            "{label} negative timing evidence started before its lower bound"
+        ));
+    }
+    if observed >= upper {
+        return Err(format!(
+            "{label} negative timing evidence missed its upper bound"
+        ));
+    }
+    Ok(())
 }
 
 async fn wait_until_database_time_bounded(
@@ -329,6 +393,38 @@ async fn renewal_sequence(
 }
 
 #[tokio::test]
+async fn dropped_demand_renewal_guard_aborts_its_owned_task() {
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let dropped = Arc::new(AtomicBool::new(false));
+    let task_dropped = Arc::clone(&dropped);
+    let join = tokio::spawn(async move {
+        let _drop_signal = TaskDropSignal(task_dropped);
+        started_tx
+            .send(())
+            .expect("renewal guard handshake receiver is alive");
+        std::future::pending::<()>().await;
+        Ok(())
+    });
+    let (stop_tx, stop_rx) = watch::channel(false);
+    let guard = DemandRenewalTask {
+        stop_tx,
+        join: Some(join),
+    };
+    started_rx
+        .await
+        .expect("renewal task reached deterministic handshake");
+    drop(guard);
+    assert!(*stop_rx.borrow());
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !dropped.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("dropped renewal guard did not abort its owned task");
+}
+
+#[tokio::test]
 async fn one_identity_dispatches_again_on_the_next_due_cycle() {
     run_body(|mut db| async move {
         let owner = db.seed_owner("c2a-one-identity").await?;
@@ -355,12 +451,25 @@ async fn one_identity_dispatches_again_on_the_next_due_cycle() {
         assert_eq!(first.attempts_started, 1);
         assert_eq!(first.successful_quotes, 1);
         let first_cache = read_cache(&db, &fixture).await?;
-        wait_until_database_time_bounded(
-            &db.superuser,
-            first_cache.last_attempt_at + chrono::Duration::seconds(5),
-            Duration::from_secs(7),
-        )
-        .await?;
+        let pre_due_at = first_cache.last_attempt_at + chrono::Duration::seconds(2);
+        let due_at = first_cache.last_attempt_at + chrono::Duration::seconds(5);
+        wait_until_database_time_bounded(&db.superuser, pre_due_at, Duration::from_secs(4)).await?;
+        let early_before = sample_database_time(&db.superuser).await?;
+        require_database_bracket(early_before, pre_due_at, due_at, "ordinary")?;
+        let requests_before_early = harness.transport.request_count();
+        let ledger_before_early = reservation_ledger(&harness);
+
+        let early = run_cycle(&producer).await?;
+        let early_after = sample_database_time(&db.superuser).await?;
+        require_database_bracket(early_after, pre_due_at, due_at, "ordinary")?;
+        assert_eq!(early.attempts_started, 0);
+        assert_eq!(early.successful_quotes, 0);
+        assert_eq!(early.failures_recorded, 0);
+        assert_eq!(harness.transport.request_count(), requests_before_early);
+        assert_eq!(read_cache(&db, &fixture).await?, first_cache);
+        assert_eq!(reservation_ledger(&harness), ledger_before_early);
+
+        wait_until_database_time_bounded(&db.superuser, due_at, Duration::from_secs(4)).await?;
         wait_for_dispatch_spacing(&harness, Duration::from_secs(5), Duration::from_secs(7)).await?;
 
         let second = run_cycle(&producer).await?;
@@ -463,9 +572,10 @@ async fn five_identities_run_two_sorted_rounds_and_duplicate_consumer_adds_no_tu
             Ok::<(), String>(())
         })
         .await
-        .map_err(|_| "five-identity scheduling exceeded its bounded test timeout".to_owned())?;
+        .map_err(|_| "five-identity scheduling exceeded its bounded test timeout".to_owned());
         renewals.stop().await?;
-        result
+        result??;
+        Ok(())
     })
     .await;
 }
@@ -624,12 +734,23 @@ async fn halted_identity_waits_sixty_seconds_then_reprobes_after_real_demand_ren
             assert_eq!(before_reprobe.attempts_started, 0);
             assert_eq!(before_reprobe.successful_quotes, 0);
             assert_eq!(harness.transport.request_count(), 1);
-            let database_now: DateTime<Utc> =
-                sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
-                    .fetch_one(&db.superuser)
-                    .await
-                    .map_err(|_| "could not sample halt cadence clock".to_owned())?;
-            assert!(database_now < reprobe_at);
+            let negative_at = halted.last_attempt_at + chrono::Duration::seconds(7);
+            let requests_before_negative = harness.transport.request_count();
+            let ledger_before_negative = reservation_ledger(&harness);
+            wait_until_database_time_bounded(&db.superuser, negative_at, Duration::from_secs(9))
+                .await?;
+            let negative_before = sample_database_time(&db.superuser).await?;
+            require_database_bracket(negative_before, negative_at, reprobe_at, "halt")?;
+
+            let early = run_cycle(producer.as_ref()).await?;
+            let negative_after = sample_database_time(&db.superuser).await?;
+            require_database_bracket(negative_after, negative_at, reprobe_at, "halt")?;
+            assert_eq!(early.attempts_started, 0);
+            assert_eq!(early.successful_quotes, 0);
+            assert_eq!(early.failures_recorded, 0);
+            assert_eq!(harness.transport.request_count(), requests_before_negative);
+            assert_eq!(read_cache(&db, &fixture).await?, halted);
+            assert_eq!(reservation_ledger(&harness), ledger_before_negative);
 
             wait_until_database_time_bounded(&db.superuser, reprobe_at, Duration::from_secs(68))
                 .await?;
@@ -657,12 +778,13 @@ async fn halted_identity_waits_sixty_seconds_then_reprobes_after_real_demand_ren
             Ok::<(), String>(())
         })
         .await
-        .map_err(|_| "halt scheduling exceeded its bounded test timeout".to_owned())?;
+        .map_err(|_| "halt scheduling exceeded its bounded test timeout".to_owned());
         renewals.stop().await?;
+        result??;
         let sequence =
             renewal_sequence(&db.superuser, fixture.owner_user_id, demand.consumer_id).await?;
         assert!(sequence >= 3);
-        result
+        Ok(())
     })
     .await;
 }
