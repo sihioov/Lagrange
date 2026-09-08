@@ -1147,3 +1147,53 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   cooldown 증거, receipt byte-arrival 경계, EOD row count의 UPDATE 탐지 한계를 전달했다.
   기존 하위 계층 증거로 충분한지 또는 C1 보완이 필요한지 독립 판단하도록 한다.
 - C2/C3 및 window evidence age 판단은 여전히 남아 있으며 전체 B2b 수락/통합을 뜻하지 않는다.
+
+### B2b-C1 ACCEPT 및 C2 실행 경계 확정
+
+- 독립 reviewer는 C1 test evidence에 한정해 ACCEPT했다. 전체 실행 출력 일부가 잘렸지만
+  나머지 사례를 개별 재실행하여 9개 모두 확인했고 strict scoped clippy/fmt/diff도 통과했다.
+  coordinator는 실제 client/영속 reservation/parser/DB 연결과 두 파일 scope를 채택한다.
+  원본 B2b, blocker 수정, C1 커밋은 전체 gate 전까지 미통합으로 유지한다.
+- 시각 단언과 positive/cross-cycle Retry-After 증거는 C2a에서 보완한다. receipt arrival
+  bracket과 EOD UPDATE 탐지 한계는 기록하되 기존 lower-layer receipt 수락을 취소하지 않는다.
+  EOD contention 및 no-write fingerprint는 C2b에서 다룬다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| B2b-C2a | intermediate | C1의 실제 client fixture를 재사용하는 명세 확정 시각·순환 테스트 | medium | public seam 부족/DB clock 불일치/실패 재현 발견 시 보고; 반복 실패 시 모델 한 tier 상향 |
+| B2b-C2b | intermediate | 실제 SQL barrier와 daemon lifecycle/fencing 검증 | medium | 재현 불가 경합이나 source 설계 변경 필요 시 별도 bounded diagnosis |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| B2b-C2a | 2a | intermediate | 5초 retry, persisted 429, 1/5 identity fairness, halt60 | 새 tests/intraday_producer_scheduling.rs; C1 pipeline support; 기존 C1 pipeline의 시각 단언; 최소 기존 quote support | C1 ACCEPT | 유휴 C1 worker Codex luna/max | test-only commit 또는 정확한 source bug 재현 | actual guarded client+QA DB, monotonic request timestamps, 기존 C1/producer/B1 회귀 및 scoped clippy/fmt |
+| B2b-C2b | 2b | intermediate | 취소/heartbeat/takeover/generation/disable/demand-only expiry/EOD contention | 기존 producer tests와 test support, 상세 brief는 C2a 후 확정 | C2a 검토 | Codex luna/max, 관찰된 반복 실패 시 상향 | 별도 테스트 commit | 실제 barrier, 늦은 결과 폐기, EOD 공유 arbitration/no-write 증거 |
+
+#### B2b-C2a worker brief / gates
+
+- target `/data/worktrees/3puw275b/stock-beta-intraday-producer`, workspace `wks_7ee1494fc4f22bcc`,
+  base `18b8b33cff461b3d66c957802b93ddd9cf33aaba`. 유휴 C1 writer
+  `de50de28-cfb0-4e02-a236-d91dd2b8d775`를 동일 luna/max 설정으로 재사용한다.
+  다른 worker/reviewer는 idle이며 파일 소유가 겹치는 동시 작업은 없다.
+- ScriptedTransport에서 실제 dispatch의 monotonic 시각을 기록하고 기존 503 retry 각각의
+  간격이 적어도 5초임을 단언한다. wall-clock receipt는 실제 client에 맡긴다. 가능하면
+  response-complete 전후 UTC bracket을 추가하지만 receipt/영속 metadata를 조립하지 않는다.
+- long-window 429/9s 뒤 실제 persisted cooldown이 다음 독립 cycle에도 적용되어 만료 전
+  추가 GET은 0이고 만료 후 성공함을 검증한다. 관찰 barrier로 첫 cycle을 취소하거나 정상
+  중단시키며, cooldown/debt를 지우거나 시계를 조작하여 성공을 강제하지 않는다.
+- 1 identity 반복 및 5 distinct identities 두 순환 이상의 실제 query 순서/시각을 검증한다.
+  duplicate consumer는 순환을 늘리지 않아야 한다. last-attempt/instrument-ID 정렬을 확인한다.
+  5초/약25초는 target이지 엄격한 latency SLA가 아니며 completion guard와 polling 여유를
+  반영한 bounded timeout을 사용한다. 반대로 5초 minimum을 느슨하게 바꾸지 않는다.
+- halt 응답 후 같은 identity는 60초 전 재조회되지 않고 이후 재조회되어 해제 응답이
+  반영됨을 검증한다. 30초 demand는 공개 repository renew API/다음 sequence로 유지하고
+  fake 장기 lease/paused Tokio clock/DB clock 덮어쓰기를 사용하지 않는다.
+- 소유는 위 test 파일만이며 production/Cargo/migration/runner 변경은 금지한다. 결함을
+  발견하면 failing test와 관찰 evidence를 보고하고 source fix는 별도 assignment로 넘긴다.
+  새로운 계약이나 maxage/36h를 추정하지 않는다. C2b/C3를 이번 작업에 섞지 않는다.
+- 한 compiler로 `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true cargo test --locked --offline
+  -p job-queue --test intraday_producer_scheduling -- --test-threads=1`, C1/producer/B1 회귀,
+  두 test target strict clippy 및 fmt/diff를 실행한다. 합성 QA URL/own per-test DB만 사용하며
+  기존 Docker lifecycle/provider/운영/Next/browser 금지는 그대로 유지한다.
+- 보고는 full commit/parent, 파일·라인, 명세 차이/이유, 명령·결과, 재현 evidence,
+  미해결/후속 및 미확인(없으면 없음)을 포함한다. 완료 후 독립 검토를 거쳐 C2b 상세 brief를
+  확정한다. C2b/C3/window maxage 판단 및 전체 B2b acceptance는 여전히 남는다.
