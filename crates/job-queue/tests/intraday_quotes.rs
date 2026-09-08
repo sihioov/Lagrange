@@ -956,6 +956,254 @@ async fn delayed_demand_renewal_extends_from_post_lock_database_time() {
 }
 
 #[tokio::test]
+async fn demand_renewal_samples_its_clock_after_a_publication_share_lock() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("renewal-share-lock").await?;
+        let fixture = db.seed_ready_membership(owner, "000062.KRX").await?;
+        let app = db.repository_as_app();
+        let consumer = Uuid::new_v4();
+        let demand = app
+            .create_or_renew_demand(
+                owner,
+                &demand_request(
+                    fixture.membership_id,
+                    consumer,
+                    1,
+                    0,
+                    "renewal-share-lock-zero",
+                ),
+            )
+            .await
+            .map_err(|error| format!("renewal share-lock setup failed: {error}"))?;
+
+        let mut observer_tx =
+            db.superuser.begin().await.map_err(|_| {
+                "could not begin renewal share-lock observer transaction".to_owned()
+            })?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify renewal share-lock observer backend".to_owned())?;
+        sqlx::query(
+            "SELECT id
+               FROM public.owner_intraday_quote_demands
+              WHERE id = $1
+              FOR SHARE",
+        )
+        .bind(demand.lease.demand_id)
+        .fetch_one(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not hold publication-equivalent demand share lock".to_owned())?;
+        let hold_started: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample renewal share-lock start time".to_owned())?;
+
+        let renewal_task = tokio::spawn({
+            let app = app.clone();
+            async move {
+                app.create_or_renew_demand(
+                    owner,
+                    &demand_request(
+                        fixture.membership_id,
+                        consumer,
+                        1,
+                        1,
+                        "renewal-share-lock-one",
+                    ),
+                )
+                .await
+            }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "app", "owner_intraday_quote_demands").await?;
+        if !blockers.contains(&observer_pid) {
+            return Err(
+                "renewal was not blocked by the publication-equivalent share lock".to_owned(),
+            );
+        }
+        wait_until_database_time(&db.superuser, hold_started + Duration::seconds(2)).await?;
+        observer_tx
+            .commit()
+            .await
+            .map_err(|_| "could not release publication-equivalent demand share lock".to_owned())?;
+
+        let renewed = renewal_task
+            .await
+            .map_err(|_| "renewal share-lock task did not finish".to_owned())?
+            .map_err(|error| format!("renewal failed after share-lock release: {error}"))?;
+        if renewed.kind != DemandMutationKind::Renewed {
+            return Err("share-lock-delayed demand mutation was not a renewal".to_owned());
+        }
+        let after: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample post-renewal database time".to_owned())?;
+        if renewed.lease.lease_expires_at <= after + Duration::seconds(29) {
+            return Err(
+                "renewal lease was sampled before its publication share-lock wait".to_owned(),
+            );
+        }
+        let exact_expiry: bool = sqlx::query_scalar(
+            "SELECT lease_expires_at = updated_at + INTERVAL '30 seconds'
+               FROM public.owner_intraday_quote_demands
+              WHERE id = $1",
+        )
+        .bind(demand.lease.demand_id)
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not verify exact renewed demand expiry".to_owned())?;
+        if !exact_expiry {
+            return Err(
+                "renewal did not store an exact 30-second lease from its fresh clock".to_owned(),
+            );
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn demand_release_samples_its_clock_after_a_publication_share_lock_and_replays() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("release-share-lock").await?;
+        let fixture = db.seed_ready_membership(owner, "000063.KRX").await?;
+        let app = db.repository_as_app();
+        let consumer = Uuid::new_v4();
+        let demand = app
+            .create_or_renew_demand(
+                owner,
+                &demand_request(
+                    fixture.membership_id,
+                    consumer,
+                    1,
+                    0,
+                    "release-share-lock-zero",
+                ),
+            )
+            .await
+            .map_err(|error| format!("release share-lock setup failed: {error}"))?;
+        let demand_id = demand.lease.demand_id;
+
+        let mut observer_tx =
+            db.superuser.begin().await.map_err(|_| {
+                "could not begin release share-lock observer transaction".to_owned()
+            })?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify release share-lock observer backend".to_owned())?;
+        sqlx::query(
+            "SELECT id
+               FROM public.owner_intraday_quote_demands
+              WHERE id = $1
+              FOR SHARE",
+        )
+        .bind(demand_id)
+        .fetch_one(&mut *observer_tx)
+        .await
+        .map_err(|_| {
+            "could not hold release publication-equivalent demand share lock".to_owned()
+        })?;
+        let hold_started: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample release share-lock start time".to_owned())?;
+
+        let release_task = tokio::spawn({
+            let app = app.clone();
+            async move {
+                app.release_demand(
+                    owner,
+                    demand_id,
+                    &release_request(consumer, 0, "release-share-lock"),
+                )
+                .await
+            }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "app", "owner_intraday_quote_demands").await?;
+        if !blockers.contains(&observer_pid) {
+            return Err(
+                "release was not blocked by the publication-equivalent share lock".to_owned(),
+            );
+        }
+        let post_wait_target = hold_started + Duration::seconds(2);
+        wait_until_database_time(&db.superuser, post_wait_target).await?;
+        observer_tx.commit().await.map_err(|_| {
+            "could not release publication-equivalent release share lock".to_owned()
+        })?;
+
+        let released = release_task
+            .await
+            .map_err(|_| "release share-lock task did not finish".to_owned())?
+            .map_err(|error| format!("release failed after share-lock release: {error}"))?;
+        if released.kind != DemandReleaseKind::Released {
+            return Err("share-lock-delayed demand mutation was not a release".to_owned());
+        }
+        let released_at: Option<chrono::DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT released_at
+               FROM public.owner_intraday_quote_demands
+              WHERE id = $1",
+        )
+        .bind(demand_id)
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not read released demand timestamp".to_owned())?;
+        let released_at =
+            released_at.ok_or_else(|| "release did not store released_at".to_owned())?;
+        if released_at < post_wait_target {
+            return Err(
+                "release timestamp was sampled before its publication share-lock wait".to_owned(),
+            );
+        }
+        let exact_release_time: bool = sqlx::query_scalar(
+            "SELECT released_at = updated_at
+               FROM public.owner_intraday_quote_demands
+              WHERE id = $1",
+        )
+        .bind(demand_id)
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not verify exact release timestamp".to_owned())?;
+        if !exact_release_time {
+            return Err("release did not store one fresh timestamp consistently".to_owned());
+        }
+
+        let replay = app
+            .release_demand(
+                owner,
+                demand_id,
+                &release_request(consumer, 0, "release-share-lock"),
+            )
+            .await
+            .map_err(|error| format!("exact release replay failed: {error}"))?;
+        if replay.kind != DemandReleaseKind::Replayed {
+            return Err(
+                "share-lock-delayed release did not preserve exact replay semantics".to_owned(),
+            );
+        }
+        let replayed_at: Option<chrono::DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT released_at
+               FROM public.owner_intraday_quote_demands
+              WHERE id = $1",
+        )
+        .bind(demand_id)
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not read replayed release timestamp".to_owned())?;
+        if replayed_at != Some(released_at) {
+            return Err("exact release replay changed the stored terminal timestamp".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn delayed_heartbeat_extends_from_post_lock_database_time() {
     run_body(|db| async move {
         let owner = db.seed_owner("delayed-heartbeat").await?;
@@ -1102,6 +1350,107 @@ async fn delayed_claim_takes_over_after_post_lock_expiry_recheck() {
             || takeover.lease.fencing_token != first.lease.fencing_token + 1
         {
             return Err("claim did not recheck expiry after its real row-lock wait".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn initial_producer_claim_refreshes_after_unique_index_wait_and_rollback() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("initial-claim-unique-wait").await?;
+        let competing_holder = Uuid::new_v4();
+        let claimant = Uuid::new_v4();
+        let mut observer_tx = db
+            .superuser
+            .begin()
+            .await
+            .map_err(|_| "could not begin unique-index observer transaction".to_owned())?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify unique-index observer backend".to_owned())?;
+        sqlx::query(
+            "INSERT INTO public.owner_intraday_quote_producers
+                (owner_user_id, holder_id, fencing_token,
+                 lease_expires_at, heartbeat_at, updated_at)
+             VALUES ($1, $2, 1,
+                     pg_catalog.clock_timestamp() + INTERVAL '20 seconds',
+                     pg_catalog.clock_timestamp(), pg_catalog.clock_timestamp())",
+        )
+        .bind(owner)
+        .bind(competing_holder)
+        .execute(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not stage uncommitted competing producer claim".to_owned())?;
+        let hold_started: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample unique-index wait start time".to_owned())?;
+
+        let worker = db.repository_as_worker();
+        let claim_task = tokio::spawn({
+            let worker = worker.clone();
+            async move { worker.claim_producer(owner, claimant).await }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "worker", "owner_intraday_quote_producers")
+                .await?;
+        if !blockers.contains(&observer_pid) {
+            return Err(
+                "initial claim was not blocked by the uncommitted unique index entry".to_owned(),
+            );
+        }
+        wait_until_database_time(&db.superuser, hold_started + Duration::seconds(2)).await?;
+        observer_tx
+            .rollback()
+            .await
+            .map_err(|_| "could not roll back uncommitted competing producer claim".to_owned())?;
+
+        let acquired = claim_task
+            .await
+            .map_err(|_| "initial unique-index-wait claim task did not finish".to_owned())?
+            .map_err(|error| {
+                format!("initial claim failed after unique-index rollback: {error}")
+            })?;
+        if acquired.kind != ProducerClaimKind::Acquired
+            || acquired.lease.holder_id != claimant
+            || acquired.lease.fencing_token != 1
+        {
+            return Err(
+                "rollback-released initial claim did not retain first-claim fence semantics"
+                    .to_owned(),
+            );
+        }
+        let after: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample post-rollback claim database time".to_owned())?;
+        if acquired.lease.lease_expires_at <= after + Duration::seconds(19) {
+            return Err(
+                "initial producer lease was sampled before its unique-index wait".to_owned(),
+            );
+        }
+        let exact_lease: bool = sqlx::query_scalar(
+            "SELECT holder_id = $2
+                    AND fencing_token = 1
+                    AND heartbeat_at = updated_at
+                    AND lease_expires_at = heartbeat_at + INTERVAL '20 seconds'
+               FROM public.owner_intraday_quote_producers
+              WHERE owner_user_id = $1",
+        )
+        .bind(owner)
+        .bind(claimant)
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not verify exact initial producer lease".to_owned())?;
+        if !exact_lease {
+            return Err(
+                "initial claim did not store an exact 20-second post-wait lease".to_owned(),
+            );
         }
         Ok(())
     })

@@ -721,6 +721,7 @@ impl OwnerIntradayQuoteRepository {
                     lease_expires_at, idempotency_key_sha256, request_sha256
              FROM public.owner_intraday_quote_demands
              WHERE owner_user_id = $1 AND consumer_id = $2
+             FOR UPDATE
              ",
         )
         .bind(owner_user_id)
@@ -889,6 +890,7 @@ impl OwnerIntradayQuoteRepository {
                     lease_expires_at, idempotency_key_sha256, request_sha256
              FROM public.owner_intraday_quote_demands
              WHERE id = $1 AND owner_user_id = $2
+             FOR UPDATE
              ",
         )
         .bind(demand_id)
@@ -1049,6 +1051,39 @@ impl OwnerIntradayQuoteRepository {
         .map_err(map_database_error)?
         .ok_or(IntradayStorageError::DatabaseIntegrity)?;
         let fresh_now = fresh_database_time(&mut tx).await?;
+
+        if was_created {
+            // The unique-index insert can have waited for an uncommitted
+            // competitor. Refresh our own placeholder from the post-lock
+            // clock without treating a delayed first claim as a takeover.
+            if row.holder_id != holder_id || row.fencing_token != 1 {
+                return Err(IntradayStorageError::DatabaseIntegrity);
+            }
+            let mut refreshed: ProducerDbRow = sqlx::query_as(
+                "UPDATE public.owner_intraday_quote_producers
+                    SET lease_expires_at = $3 + INTERVAL '20 seconds',
+                        heartbeat_at = $3, updated_at = $3
+                  WHERE owner_user_id = $1 AND holder_id = $2
+                    AND fencing_token = 1
+                  RETURNING owner_user_id, holder_id, fencing_token,
+                            lease_expires_at, heartbeat_at, FALSE AS live",
+            )
+            .bind(owner_user_id)
+            .bind(holder_id)
+            .bind(fresh_now)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_database_error)?;
+            refreshed.live = refreshed.lease_expires_at > fresh_now;
+            let lease = refreshed.to_lease()?;
+            tx.commit()
+                .await
+                .map_err(|_| IntradayStorageError::CommitUnknown)?;
+            return Ok(ProducerClaimOutcome {
+                kind: ProducerClaimKind::Acquired,
+                lease,
+            });
+        }
         row.live = row.lease_expires_at > fresh_now;
 
         if row.live && row.holder_id != holder_id {
@@ -1060,11 +1095,7 @@ impl OwnerIntradayQuoteRepository {
                 .await
                 .map_err(|_| IntradayStorageError::CommitUnknown)?;
             return Ok(ProducerClaimOutcome {
-                kind: if was_created {
-                    ProducerClaimKind::Acquired
-                } else {
-                    ProducerClaimKind::AlreadyHeld
-                },
+                kind: ProducerClaimKind::AlreadyHeld,
                 lease,
             });
         }
