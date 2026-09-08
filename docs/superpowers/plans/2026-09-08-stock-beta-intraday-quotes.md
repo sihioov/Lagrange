@@ -679,3 +679,6 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - 반복 미해결에 따라 기존 luna implementer는 idle로 유지하고 새 Codex terra/max 담당에게
   세 항목만 재배정한다(모델만 한 단계 상향, effort max 유지). 소유 범위는 quote coordinator/
   view, application client, 신규 intraday tests, 필요한 최소 locale이며 다른 변경은 금지한다.
+- 새 담당자 `f148b96b-96fc-4f98-ba90-11c3baf8872a`의 terra/max running을 확인했다.
+  동일 WP-5 workspace의 `4d39adb`에서 순차 소유하며, coordinator의 `40df089` 문서에
+  확정한 복구 계약을 읽도록 지시했다. 재검토 담당자는 구현에 참여하지 않는다.
