@@ -1028,3 +1028,21 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   branch `work/stock-beta-intraday-producer-20260908`, base `372cb42`에서 시작했다.
   초기 inspect에서 running 및 pending permission 없음으로 확인했다. 이전 B2a 담당자와
   reviewer는 idle이며 새 작업자의 완료 후 실제 소유 diff/tests를 검토한다.
+
+### WP-3B2b 완료 및 독립 수락 검토
+
+- 구현 작업자는 `7dd9483aadfdbbf29b00394247f14a9a0ab184ef` (parent `372cb42`)로 완료했고
+  idle/clean이다. coordinator가 실제 14파일 +2904/-95 범위와 clean tree를 확인했다.
+  아직 기능 브랜치에 통합하지 않았다.
+- worker 보고: KIS lib133/신규12, collectors3, job-queue lib132, producer DB4,
+  보존 B1 DB24, runner7, fmt/diff 및 scoped clippy 통과. collectors의 기존 경고 예외는
+  독립 검토에서 원인/기존 여부를 확인해야 하며 무조건적인 lint 통과로 간주하지 않는다.
+- coordinator는 runner/runtime accessor diff 전체, session parser 앞부분 및 producer
+  실행/재시도 경로를 읽었다. 런타임 quote task 실패는 EOD와 분리됐으나 시작 시
+  missing/malformed window가 process FAILURE를 반환하는 경로는 검토 대상으로 남겼다.
+  4개 DB 테스트의 제목만으로 실제 fairness/retry/취소 경합 전체가 입증되지는 않는다.
+- 독립 read-only reviewer `f9652834-45af-425c-8be0-fdfbe2753984` (Codex terra/high)를
+  동일 producer workspace에서 시작했고 running을 확인했다. 전체 14파일/증거와 계약을
+  검토하며 source는 수정하지 않는다. ACCEPT와 coordinator 확인 전에는 통합하지 않는다.
+- worker가 window evidence staleness의 구체적 임계값 누락을 보고했다. calendar 36h와
+  동일하다고 추정하지 않는다. 검토 후 별도 계약 판단이 필요하며 운영 활성화 승인은 없다.
