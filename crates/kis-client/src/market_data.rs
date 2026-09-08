@@ -5,6 +5,7 @@
 //! belong to the market-data provider adapter, while immutable Raw can retain
 //! the exact KIS JSON response and continuation headers.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,11 +53,134 @@ fn coordination_error(path: &str, error: ReadCoordinationError) -> KisError {
     }
 }
 
+fn map_intraday_coordination_error(error: ReadCoordinationError) -> IntradayAttemptError {
+    match error {
+        ReadCoordinationError::UnsupportedChannel { .. } => {
+            IntradayAttemptError::UnsupportedEndpoint
+        }
+        ReadCoordinationError::CallerIneligible => IntradayAttemptError::CallerIneligible,
+        ReadCoordinationError::CallerEligibilityFailed => {
+            IntradayAttemptError::CallerEligibilityFailed
+        }
+        ReadCoordinationError::CallbackStartMissed => IntradayAttemptError::DispatchWindowMissed,
+        ReadCoordinationError::LockBusy => IntradayAttemptError::Busy,
+        ReadCoordinationError::CallbackTimedOut => IntradayAttemptError::Timeout,
+        ReadCoordinationError::Unauthorized => IntradayAttemptError::Unauthorized,
+        ReadCoordinationError::CallbackRateLimited { retry_after_ms } => {
+            IntradayAttemptError::RateLimited { retry_after_ms }
+        }
+        ReadCoordinationError::CallbackFailed { kind } => match kind {
+            ReadFailureKind::Transport => IntradayAttemptError::Transport,
+            ReadFailureKind::Timeout => IntradayAttemptError::Timeout,
+            ReadFailureKind::ProviderUnavailable => IntradayAttemptError::ProviderUnavailable,
+            ReadFailureKind::ResponseInvalid => IntradayAttemptError::ResponseInvalid,
+        },
+        other => IntradayAttemptError::Coordination(other),
+    }
+}
+
 /// One successful KIS read, before provider-specific parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarketDataReply {
     pub body: Vec<u8>,
     pub continuation: Option<String>,
+}
+
+/// Redacted evidence for the one durable intraday reservation that produced a
+/// successful reply. The fields are private so a caller cannot fabricate a
+/// successful fence, daily ordinal, or receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntradayAttemptMetadata {
+    kst_date: String,
+    daily_attempt_ordinal: u32,
+    reservation_fence: u64,
+    received_at_ms: i64,
+}
+
+impl IntradayAttemptMetadata {
+    pub fn kst_date(&self) -> &str {
+        &self.kst_date
+    }
+
+    pub fn daily_attempt_ordinal(&self) -> u32 {
+        self.daily_attempt_ordinal
+    }
+
+    pub fn reservation_fence(&self) -> u64 {
+        self.reservation_fence
+    }
+
+    pub fn received_at_ms(&self) -> i64 {
+        self.received_at_ms
+    }
+}
+
+/// A successful single intraday read and the metadata of its real persisted
+/// reservation. Construction is private and the reply is intentionally not
+/// rendered by `Debug`, because it contains the provider body.
+pub struct IntradayAttemptReply {
+    reply: MarketDataReply,
+    metadata: IntradayAttemptMetadata,
+}
+
+impl IntradayAttemptReply {
+    pub fn reply(&self) -> &MarketDataReply {
+        &self.reply
+    }
+
+    pub fn metadata(&self) -> &IntradayAttemptMetadata {
+        &self.metadata
+    }
+
+    pub fn into_parts(self) -> (MarketDataReply, IntradayAttemptMetadata) {
+        (self.reply, self.metadata)
+    }
+}
+
+impl std::fmt::Debug for IntradayAttemptReply {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IntradayAttemptReply")
+            .field("reply", &"<redacted>")
+            .field("metadata", &self.metadata)
+            .finish()
+    }
+}
+
+/// Bounded, provider-body-free failures for the one-shot intraday seam.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum IntradayAttemptError {
+    #[error("intraday endpoint is not allowed")]
+    UnsupportedEndpoint,
+    #[error("intraday attempts require shared read coordination")]
+    SharedReadRequired,
+    #[error("caller eligibility declined the intraday attempt")]
+    CallerIneligible,
+    #[error("caller eligibility check failed")]
+    CallerEligibilityFailed,
+    #[error("intraday dispatch window was missed")]
+    DispatchWindowMissed,
+    #[error("shared read coordination is busy")]
+    Busy,
+    #[error("intraday attempt timed out")]
+    Timeout,
+    #[error("intraday transport failed")]
+    Transport,
+    #[error("intraday provider is unavailable")]
+    ProviderUnavailable,
+    #[error("intraday response was invalid")]
+    ResponseInvalid,
+    #[error("intraday read was unauthorized")]
+    Unauthorized,
+    #[error("intraday read was rate limited (retry after {retry_after_ms}ms)")]
+    RateLimited { retry_after_ms: u64 },
+    #[error("intraday coordination failed: {0}")]
+    Coordination(#[source] ReadCoordinationError),
+}
+
+struct ReceivedMarketData {
+    reply: MarketDataReply,
+    received_at_ms: i64,
 }
 
 /// Opaque shared authentication bundle. The coordinator verifier and token
@@ -197,6 +321,139 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
             });
         }
         self.get_shared(path, tr_id, query, None, true).await
+    }
+
+    /// Perform one guarded current-price GET.
+    ///
+    /// The caller owns any retry cycle around this method. The eligibility
+    /// future runs inside the coordinator's final callback and its result is
+    /// intentionally reduced to a bounded outcome; caller/database/provider
+    /// error text never crosses this boundary. A returned `Err` or a dropped
+    /// eligibility future sends no GET but retains the already-persisted
+    /// reservation debt.
+    pub async fn get_intraday_attempt<F, Fut, E>(
+        &self,
+        path: &str,
+        tr_id: &str,
+        query: &[(String, String)],
+        eligibility_check: F,
+    ) -> Result<IntradayAttemptReply, IntradayAttemptError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<bool, E>>,
+    {
+        if ReadChannel::from_pair(path, tr_id).ok() != Some(ReadChannel::InquirePrice) {
+            return Err(IntradayAttemptError::UnsupportedEndpoint);
+        }
+        let Some(coordinated) = self.coordinated.as_ref() else {
+            return Err(IntradayAttemptError::SharedReadRequired);
+        };
+        let Some(transport) = self.intraday_transport.as_ref() else {
+            return Err(IntradayAttemptError::Coordination(
+                ReadCoordinationError::CorruptState,
+            ));
+        };
+
+        let credentials = coordinated.credentials.clone();
+        let receipt_clock = Arc::clone(&coordinated.coordinator);
+        let execute = |token, dispatch: ReadDispatchGuard| async move {
+            match eligibility_check().await {
+                Ok(true) => {}
+                Ok(false) => return ReadCallbackResult::CallerIneligible,
+                Err(_) => return ReadCallbackResult::CallerEligibilityFailed,
+            }
+
+            let request = match self.build_request(&credentials, token, path, tr_id, query, None) {
+                Ok(request) => request,
+                Err(_) => return ReadCallbackResult::CompletedFailure(ReadFailureKind::Transport),
+            };
+
+            // This is the only cooperative final dispatch boundary. The
+            // eligibility check above is inside the coordinator timeout and
+            // this guard is immediately adjacent to the transport send.
+            if dispatch.begin_dispatch().is_err() {
+                return ReadCallbackResult::CompletedFailure(ReadFailureKind::Timeout);
+            }
+            let response = match transport.send(request).await {
+                Ok(response) => response,
+                Err(error) => {
+                    return match error {
+                        KisError::Broker { status: 401, .. } => ReadCallbackResult::Unauthorized,
+                        KisError::RateLimited { retry_after_ms, .. } => {
+                            ReadCallbackResult::RateLimited {
+                                retry_after: Duration::from_millis(retry_after_ms),
+                            }
+                        }
+                        KisError::Ambiguous { .. } => ReadCallbackResult::Ambiguous,
+                        KisError::Broker {
+                            status: 500..=599, ..
+                        } => ReadCallbackResult::CompletedFailure(
+                            ReadFailureKind::ProviderUnavailable,
+                        ),
+                        KisError::SchemaDrift { .. } | KisError::Broker { .. } => {
+                            ReadCallbackResult::CompletedFailure(ReadFailureKind::ResponseInvalid)
+                        }
+                        _ => ReadCallbackResult::CompletedFailure(ReadFailureKind::Transport),
+                    };
+                }
+            };
+
+            // `send` has returned all response bytes. Capture receipt time
+            // before any HTTP/JSON/rt_cd validation occurs.
+            let received_at_ms = receipt_clock.now_ms();
+            match self.validate_response(path, response) {
+                Ok(reply) => ReadCallbackResult::Success(ReceivedMarketData {
+                    reply,
+                    received_at_ms,
+                }),
+                Err(error) => match error {
+                    KisError::Broker { status: 401, .. } => ReadCallbackResult::Unauthorized,
+                    KisError::RateLimited { retry_after_ms, .. } => {
+                        ReadCallbackResult::RateLimited {
+                            retry_after: Duration::from_millis(retry_after_ms),
+                        }
+                    }
+                    KisError::Broker {
+                        status: 500..=599, ..
+                    } => ReadCallbackResult::CompletedFailure(ReadFailureKind::ProviderUnavailable),
+                    KisError::SchemaDrift { .. } | KisError::Broker { .. } => {
+                        ReadCallbackResult::CompletedFailure(ReadFailureKind::ResponseInvalid)
+                    }
+                    _ => ReadCallbackResult::CompletedFailure(ReadFailureKind::Transport),
+                },
+            }
+        };
+
+        let outcome = coordinated
+            .coordinator
+            .execute_intraday_attempt(
+                path,
+                tr_id,
+                coordinated.issuer.as_ref(),
+                LockAcquisition::NonBlocking,
+                INTRADAY_REQUEST_TIMEOUT,
+                execute,
+            )
+            .await;
+
+        match outcome {
+            Ok(success) => {
+                let ReceivedMarketData {
+                    reply,
+                    received_at_ms,
+                } = success.value;
+                Ok(IntradayAttemptReply {
+                    reply,
+                    metadata: IntradayAttemptMetadata {
+                        kst_date: success.reservation.kst_date,
+                        daily_attempt_ordinal: success.reservation.daily_attempt_ordinal,
+                        reservation_fence: success.reservation.reservation_fence,
+                        received_at_ms,
+                    },
+                })
+            }
+            Err(error) => Err(map_intraday_coordination_error(error)),
+        }
     }
 
     async fn get_legacy(
@@ -472,6 +729,14 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
         path: &str,
     ) -> Result<MarketDataReply, KisError> {
         let response = transport.send(request).await?;
+        self.validate_response(path, response)
+    }
+
+    fn validate_response(
+        &self,
+        path: &str,
+        response: crate::transport::HttpResponse,
+    ) -> Result<MarketDataReply, KisError> {
         if response.status == 429 {
             let retry_after_ms = response
                 .headers

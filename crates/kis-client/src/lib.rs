@@ -42,7 +42,10 @@ pub use error::{KisError, RequestKind};
 pub use execution::{Applied, ExecutionReport, ExecutionTracker};
 pub use idempotency::{Claim, InMemoryIntentStore, IntentState, IntentStore, guard_submission};
 pub use mapping::{InstrumentMapper, OrderAck, OrderRequest, OrderSide, OrderType};
-pub use market_data::{CoordinatedReadAuth, KisMarketDataClient, MarketDataReply};
+pub use market_data::{
+    CoordinatedReadAuth, IntradayAttemptError, IntradayAttemptMetadata, IntradayAttemptReply,
+    KisMarketDataClient, MarketDataReply,
+};
 pub use rate_limit::{BucketKey, Permit, Quota, RateLimiter};
 pub use read_coordination::ReadCredentialSnapshot;
 pub use read_coordination_config::{
