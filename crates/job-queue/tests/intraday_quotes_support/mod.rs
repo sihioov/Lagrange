@@ -4,12 +4,13 @@
 //! skip when `DATABASE_URL` is absent and its URL is configurable.  Intraday
 //! acceptance is required to use the coordinator-owned QA cluster only.
 
-use chrono::{Days, NaiveDate};
+use chrono::{DateTime, Days, NaiveDate, Utc};
 use job_queue::owner_equity_v2::{IntradaySessionProof, OwnerIntradayQuoteRepository};
 use sqlx::migrate::Migrator;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 pub const QA_DATABASE_URL: &str = "postgres://postgres:lagrange@127.0.0.1:55438/postgres";
@@ -463,5 +464,86 @@ fn database_error_code(error: &sqlx::Error) -> String {
         ),
         sqlx::Error::PoolTimedOut => "pool-timeout".to_owned(),
         _ => "non-database-error".to_owned(),
+    }
+}
+
+/// Observe a real worker/app backend waiting on a database lock.  The
+/// superuser connection is only the disposable-fixture observer; mutation
+/// calls still use their real role login.
+pub async fn wait_for_blocked_session(
+    observer: &PgPool,
+    role: &str,
+    query_fragment: &str,
+) -> Result<(i32, Vec<i32>), String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let pid: Option<i32> = sqlx::query_scalar(
+            "SELECT activity.pid
+               FROM pg_catalog.pg_stat_activity AS activity
+              WHERE activity.datname = pg_catalog.current_database()
+                AND activity.usename = $1
+                AND activity.state = 'active'
+                AND activity.wait_event_type = 'Lock'
+                AND activity.query LIKE '%' || $2 || '%'
+                AND activity.pid <> pg_catalog.pg_backend_pid()
+              ORDER BY activity.pid
+              LIMIT 1",
+        )
+        .bind(role)
+        .bind(query_fragment)
+        .fetch_optional(observer)
+        .await
+        .map_err(|_| "could not observe a blocked intraday backend".to_owned())?;
+        if let Some(pid) = pid {
+            let waiting_lock: bool = sqlx::query_scalar(
+                "SELECT EXISTS (
+                       SELECT 1
+                         FROM pg_catalog.pg_locks
+                        WHERE pid = $1 AND NOT granted
+                   )",
+            )
+            .bind(pid)
+            .fetch_one(observer)
+            .await
+            .map_err(|_| "could not inspect the blocked intraday lock".to_owned())?;
+            let blockers: Vec<i32> = sqlx::query_scalar("SELECT pg_catalog.pg_blocking_pids($1)")
+                .bind(pid)
+                .fetch_one(observer)
+                .await
+                .map_err(|_| "could not inspect the intraday blocking pid".to_owned())?;
+            if waiting_lock && !blockers.is_empty() {
+                return Ok((pid, blockers));
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out observing role {role} waiting for query fragment {query_fragment}"
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Wait on a database clock condition, so delayed-lock tests are bounded by
+/// an observed PostgreSQL timestamp rather than a sleeps-only race.
+pub async fn wait_until_database_time(
+    observer: &PgPool,
+    target: DateTime<Utc>,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let reached: bool =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp() >= $1::timestamptz")
+                .bind(target)
+                .fetch_one(observer)
+                .await
+                .map_err(|_| "could not observe the disposable database clock".to_owned())?;
+        if reached {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("timed out waiting for the disposable database clock".to_owned());
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }

@@ -71,6 +71,8 @@ pub enum IntradayStorageError {
     ReceiptInvalid,
     #[error("INTRADAY_QUOTE_INVALID")]
     QuoteInvalid,
+    #[error("INTRADAY_QUOTE_RECEIPT_STALE")]
+    QuoteReceiptStale,
     #[error("INTRADAY_CACHE_NOT_FOUND")]
     CacheNotFound,
     #[error("INTRADAY_QUOTE_VERSION_EXHAUSTED")]
@@ -108,6 +110,7 @@ impl IntradayStorageError {
             Self::BudgetProofInvalid => "INTRADAY_BUDGET_PROOF_INVALID",
             Self::ReceiptInvalid => "INTRADAY_RECEIPT_INVALID",
             Self::QuoteInvalid => "INTRADAY_QUOTE_INVALID",
+            Self::QuoteReceiptStale => "INTRADAY_QUOTE_RECEIPT_STALE",
             Self::CacheNotFound => "INTRADAY_CACHE_NOT_FOUND",
             Self::QuoteVersionExhausted => "INTRADAY_QUOTE_VERSION_EXHAUSTED",
             Self::ProducerFenceExhausted => "INTRADAY_PRODUCER_FENCE_EXHAUSTED",
@@ -139,6 +142,7 @@ impl IntradayStorageError {
             | Self::BudgetProofInvalid
             | Self::ReceiptInvalid
             | Self::QuoteInvalid
+            | Self::QuoteReceiptStale
             | Self::CacheNotFound
             | Self::QuoteVersionExhausted
             | Self::ProducerFenceExhausted
@@ -777,23 +781,20 @@ impl OwnerIntradayQuoteRepository {
                 return Err(IntradayStorageError::SequenceConflict);
             }
 
-            let still_active: bool =
-                sqlx::query_scalar("SELECT $1::timestamptz > pg_catalog.now()")
-                    .bind(row.lease_expires_at)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(map_database_error)?;
+            let fresh_now = fresh_database_time(&mut tx).await?;
+            let still_active = row.lease_expires_at > fresh_now;
             if !still_active {
-                ensure_active_capacity(&mut tx, owner_user_id, Some(row.id)).await?;
+                ensure_active_capacity(&mut tx, owner_user_id, Some(row.id), &admission, fresh_now)
+                    .await?;
             }
 
             let updated: DemandDbRow = sqlx::query_as(
                 "UPDATE public.owner_intraday_quote_demands
                     SET renewal_sequence = $3,
-                        lease_expires_at = pg_catalog.now() + INTERVAL '30 seconds',
+                        lease_expires_at = $6 + INTERVAL '30 seconds',
                         idempotency_key_sha256 = $4,
                         request_sha256 = $5,
-                        updated_at = pg_catalog.now()
+                        updated_at = $6
                   WHERE id = $1 AND owner_user_id = $2 AND state = 'ACTIVE'
                   RETURNING id, owner_user_id, consumer_id, membership_id,
                             generation_id, instrument_id, generation, state,
@@ -805,6 +806,7 @@ impl OwnerIntradayQuoteRepository {
             .bind(request.sequence_i64())
             .bind(&key_digest)
             .bind(&body_digest)
+            .bind(fresh_now)
             .fetch_one(&mut *tx)
             .await
             .map_err(map_database_error)?;
@@ -828,7 +830,8 @@ impl OwnerIntradayQuoteRepository {
             request.generation_i64(),
         )
         .await?;
-        ensure_active_capacity(&mut tx, owner_user_id, None).await?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
+        ensure_active_capacity(&mut tx, owner_user_id, None, &admission, fresh_now).await?;
 
         let inserted: DemandDbRow = sqlx::query_as(
             "INSERT INTO public.owner_intraday_quote_demands
@@ -836,7 +839,7 @@ impl OwnerIntradayQuoteRepository {
                  instrument_id, generation, state, renewal_sequence,
                  lease_expires_at, idempotency_key_sha256, request_sha256)
              VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', 0,
-                     pg_catalog.now() + INTERVAL '30 seconds', $7, $8)
+                     $9 + INTERVAL '30 seconds', $7, $8)
              RETURNING id, owner_user_id, consumer_id, membership_id,
                        generation_id, instrument_id, generation, state,
                        renewal_sequence, lease_expires_at,
@@ -850,6 +853,7 @@ impl OwnerIntradayQuoteRepository {
         .bind(admission.generation)
         .bind(&key_digest)
         .bind(&body_digest)
+        .bind(fresh_now)
         .fetch_one(&mut *tx)
         .await
         .map_err(map_database_error)?;
@@ -922,17 +926,19 @@ impl OwnerIntradayQuoteRepository {
             return Err(IntradayStorageError::SequenceConflict);
         }
 
+        let fresh_now = fresh_database_time(&mut tx).await?;
         sqlx::query(
             "UPDATE public.owner_intraday_quote_demands
-                SET state = 'RELEASED', released_at = pg_catalog.now(),
+                SET state = 'RELEASED', released_at = $5,
                     idempotency_key_sha256 = $3, request_sha256 = $4,
-                    updated_at = pg_catalog.now()
+                    updated_at = $5
               WHERE id = $1 AND owner_user_id = $2 AND state = 'ACTIVE'",
         )
         .bind(demand_id)
         .bind(owner_user_id)
         .bind(&key_digest)
         .bind(&body_digest)
+        .bind(fresh_now)
         .execute(&mut *tx)
         .await
         .map_err(map_database_error)?;
@@ -956,6 +962,7 @@ impl OwnerIntradayQuoteRepository {
             return Err(IntradayStorageError::InvalidInput);
         }
         let mut tx = self.begin_actor_transaction(owner_user_id).await?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
         let rows: Vec<ActiveDemandIdentityDbRow> = sqlx::query_as(
             "SELECT DISTINCT demand.owner_user_id, demand.membership_id,
                     demand.generation_id, demand.instrument_id, demand.generation
@@ -973,7 +980,7 @@ impl OwnerIntradayQuoteRepository {
                 AND admission.generation = demand.generation
               WHERE demand.owner_user_id = $1
                 AND demand.state = 'ACTIVE'
-                AND demand.lease_expires_at > pg_catalog.now()
+                AND demand.lease_expires_at > $2
                 AND NOT EXISTS (
                     SELECT 1
                       FROM public.owner_equity_generation_admissions AS newer
@@ -986,6 +993,7 @@ impl OwnerIntradayQuoteRepository {
                        demand.generation",
         )
         .bind(owner_user_id)
+        .bind(fresh_now)
         .fetch_all(&mut *tx)
         .await
         .map_err(map_database_error)?;
@@ -1010,26 +1018,27 @@ impl OwnerIntradayQuoteRepository {
             return Err(IntradayStorageError::InvalidInput);
         }
         let mut tx = self.begin_actor_transaction(owner_user_id).await?;
+        let insert_now = fresh_database_time(&mut tx).await?;
         let inserted = sqlx::query(
             "INSERT INTO public.owner_intraday_quote_producers
                 (owner_user_id, holder_id, fencing_token,
                  lease_expires_at, heartbeat_at, updated_at)
              VALUES ($1, $2, 1,
-                     pg_catalog.now() + INTERVAL '20 seconds',
-                     pg_catalog.now(), pg_catalog.now())
+                     $3 + INTERVAL '20 seconds', $3, $3)
              ON CONFLICT (owner_user_id) DO NOTHING",
         )
         .bind(owner_user_id)
         .bind(holder_id)
+        .bind(insert_now)
         .execute(&mut *tx)
         .await
         .map_err(map_database_error)?;
         let was_created = inserted.rows_affected() == 1;
 
-        let row: ProducerDbRow = sqlx::query_as(
+        let mut row: ProducerDbRow = sqlx::query_as(
             "SELECT owner_user_id, holder_id, fencing_token,
                     lease_expires_at, heartbeat_at,
-                    lease_expires_at > pg_catalog.now() AS live
+                    FALSE AS live
              FROM public.owner_intraday_quote_producers
              WHERE owner_user_id = $1
              FOR UPDATE",
@@ -1039,6 +1048,8 @@ impl OwnerIntradayQuoteRepository {
         .await
         .map_err(map_database_error)?
         .ok_or(IntradayStorageError::DatabaseIntegrity)?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
+        row.live = row.lease_expires_at > fresh_now;
 
         if row.live && row.holder_id != holder_id {
             return Err(IntradayStorageError::ProducerLeaseHeld);
@@ -1060,21 +1071,22 @@ impl OwnerIntradayQuoteRepository {
         if row.fencing_token == i64::MAX {
             return Err(IntradayStorageError::ProducerFenceExhausted);
         }
-        let updated: ProducerDbRow = sqlx::query_as(
+        let mut updated: ProducerDbRow = sqlx::query_as(
             "UPDATE public.owner_intraday_quote_producers
                 SET holder_id = $2, fencing_token = fencing_token + 1,
-                    lease_expires_at = pg_catalog.now() + INTERVAL '20 seconds',
-                    heartbeat_at = pg_catalog.now(), updated_at = pg_catalog.now()
+                    lease_expires_at = $3 + INTERVAL '20 seconds',
+                    heartbeat_at = $3, updated_at = $3
               WHERE owner_user_id = $1
               RETURNING owner_user_id, holder_id, fencing_token,
-                        lease_expires_at, heartbeat_at,
-                        lease_expires_at > pg_catalog.now() AS live",
+                        lease_expires_at, heartbeat_at, FALSE AS live",
         )
         .bind(owner_user_id)
         .bind(holder_id)
+        .bind(fresh_now)
         .fetch_one(&mut *tx)
         .await
         .map_err(map_database_error)?;
+        updated.live = updated.lease_expires_at > fresh_now;
         let lease = updated.to_lease()?;
         tx.commit()
             .await
@@ -1086,30 +1098,52 @@ impl OwnerIntradayQuoteRepository {
     }
 
     /// Extend a lease only when holder and fence still match and the lease has
-    /// not expired according to the database transaction clock.
+    /// not expired according to a fresh post-lock database clock.
     pub async fn heartbeat_producer(
         &self,
         lease: &ProducerLease,
     ) -> Result<ProducerLease, IntradayStorageError> {
         validate_lease(lease)?;
         let mut tx = self.begin_actor_transaction(lease.owner_user_id).await?;
-        let updated: Option<ProducerDbRow> = sqlx::query_as(
+        let row: Option<ProducerDbRow> = sqlx::query_as(
+            "SELECT owner_user_id, holder_id, fencing_token,
+                    lease_expires_at, heartbeat_at, FALSE AS live
+               FROM public.owner_intraday_quote_producers
+              WHERE owner_user_id = $1
+              FOR UPDATE",
+        )
+        .bind(lease.owner_user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        let mut row = row.ok_or(IntradayStorageError::ProducerLeaseLost)?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
+        row.live = row.lease_expires_at > fresh_now;
+        if !row.live
+            || row.holder_id != lease.holder_id
+            || row.fencing_token
+                != i64::try_from(lease.fencing_token)
+                    .map_err(|_| IntradayStorageError::InvalidInput)?
+        {
+            return Err(IntradayStorageError::ProducerLeaseLost);
+        }
+        let mut updated: ProducerDbRow = sqlx::query_as(
             "UPDATE public.owner_intraday_quote_producers
-                SET lease_expires_at = pg_catalog.now() + INTERVAL '20 seconds',
-                    heartbeat_at = pg_catalog.now(), updated_at = pg_catalog.now()
+                SET lease_expires_at = $4 + INTERVAL '20 seconds',
+                    heartbeat_at = $4, updated_at = $4
               WHERE owner_user_id = $1 AND holder_id = $2
-                AND fencing_token = $3 AND lease_expires_at > pg_catalog.now()
+                AND fencing_token = $3 AND lease_expires_at > $4
               RETURNING owner_user_id, holder_id, fencing_token,
-                        lease_expires_at, heartbeat_at,
-                        lease_expires_at > pg_catalog.now() AS live",
+                        lease_expires_at, heartbeat_at, FALSE AS live",
         )
         .bind(lease.owner_user_id)
         .bind(lease.holder_id)
         .bind(i64::try_from(lease.fencing_token).map_err(|_| IntradayStorageError::InvalidInput)?)
-        .fetch_optional(&mut *tx)
+        .bind(fresh_now)
+        .fetch_one(&mut *tx)
         .await
         .map_err(map_database_error)?;
-        let updated = updated.ok_or(IntradayStorageError::ProducerLeaseLost)?;
+        updated.live = updated.lease_expires_at > fresh_now;
         let result = updated.to_lease()?;
         tx.commit()
             .await
@@ -1131,14 +1165,26 @@ impl OwnerIntradayQuoteRepository {
         let mut tx = self
             .begin_actor_transaction(context.identity.owner_user_id)
             .await?;
-        lock_publication_inputs(&mut tx, context).await?;
-        validate_receipt(&mut tx, receipt.received_at, context.session.session_date).await?;
-        ensure_quote_version_available(
+        let locked = lock_publication_inputs(&mut tx, context).await?;
+        validate_receipt(
             &mut tx,
-            context.identity.owner_user_id,
-            context.identity.membership_id,
+            receipt.received_at,
+            context.session.session_date,
+            locked.fresh_now,
         )
         .await?;
+        if let Some(prior) = locked.prior_cache.as_ref() {
+            if prior.quote_version == i64::MAX {
+                return Err(IntradayStorageError::QuoteVersionExhausted);
+            }
+            if prior.matches_context(context)
+                && prior
+                    .received_at
+                    .is_some_and(|previous| previous > receipt.received_at)
+            {
+                return Err(IntradayStorageError::QuoteReceiptStale);
+            }
+        }
 
         let cache: CacheDbRow = sqlx::query_as(
             "INSERT INTO public.owner_intraday_quote_cache
@@ -1152,7 +1198,7 @@ impl OwnerIntradayQuoteRepository {
                  last_failure_at, producer_fence)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
                      $12::numeric, $13::numeric, $14::numeric, $15::numeric,
-                     $16, $17, $18, $18, 1, pg_catalog.now(), NULL, NULL, $19)
+                     $16, $17, $18, $18, 1, $20, NULL, NULL, $19)
              ON CONFLICT (owner_user_id, membership_id) DO UPDATE
                 SET generation_id = EXCLUDED.generation_id,
                     instrument_id = EXCLUDED.instrument_id,
@@ -1176,7 +1222,7 @@ impl OwnerIntradayQuoteRepository {
                     last_failure_code = NULL,
                     last_failure_at = NULL,
                     producer_fence = EXCLUDED.producer_fence,
-                    updated_at = pg_catalog.now()
+                    updated_at = EXCLUDED.last_attempt_at
              RETURNING owner_user_id, membership_id, generation_id,
                        instrument_id, generation, session_date,
                        calendar_source, calendar_source_version,
@@ -1211,6 +1257,7 @@ impl OwnerIntradayQuoteRepository {
             i64::try_from(context.producer.fencing_token)
                 .map_err(|_| IntradayStorageError::InvalidInput)?,
         )
+        .bind(locked.fresh_now)
         .fetch_one(&mut *tx)
         .await
         .map_err(map_database_error)?;
@@ -1232,22 +1279,8 @@ impl OwnerIntradayQuoteRepository {
         let mut tx = self
             .begin_actor_transaction(context.identity.owner_user_id)
             .await?;
-        lock_publication_inputs(&mut tx, context).await?;
-
-        let prior: Option<CacheIdentityDbRow> = sqlx::query_as(
-            "SELECT generation_id, instrument_id, generation, session_date,
-                    calendar_source, calendar_source_version,
-                    calendar_source_batch_id, calendar_content_sha256,
-                    window_contract_sha256
-             FROM public.owner_intraday_quote_cache
-             WHERE owner_user_id = $1 AND membership_id = $2
-             FOR UPDATE",
-        )
-        .bind(context.identity.owner_user_id)
-        .bind(context.identity.membership_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(map_database_error)?;
+        let locked = lock_publication_inputs(&mut tx, context).await?;
+        let prior = locked.prior_cache;
 
         let same_identity = prior
             .as_ref()
@@ -1255,9 +1288,9 @@ impl OwnerIntradayQuoteRepository {
         let cache: CacheDbRow = if same_identity {
             sqlx::query_as(
                 "UPDATE public.owner_intraday_quote_cache
-                    SET last_attempt_at = pg_catalog.now(),
-                        last_failure_code = $3, last_failure_at = pg_catalog.now(),
-                        producer_fence = $4, updated_at = pg_catalog.now()
+                    SET last_attempt_at = $5,
+                        last_failure_code = $3, last_failure_at = $5,
+                        producer_fence = $4, updated_at = $5
                   WHERE owner_user_id = $1 AND membership_id = $2
                   RETURNING owner_user_id, membership_id, generation_id,
                             instrument_id, generation, session_date,
@@ -1278,6 +1311,7 @@ impl OwnerIntradayQuoteRepository {
                 i64::try_from(context.producer.fencing_token)
                     .map_err(|_| IntradayStorageError::InvalidInput)?,
             )
+            .bind(locked.fresh_now)
             .fetch_one(&mut *tx)
             .await
             .map_err(map_database_error)?
@@ -1291,7 +1325,7 @@ impl OwnerIntradayQuoteRepository {
                      quote_version, last_attempt_at, last_failure_code,
                      last_failure_at, producer_fence)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                         0, pg_catalog.now(), $12, pg_catalog.now(), $13)
+                         0, $14, $12, $14, $13)
                  ON CONFLICT (owner_user_id, membership_id) DO UPDATE
                     SET generation_id = EXCLUDED.generation_id,
                         instrument_id = EXCLUDED.instrument_id,
@@ -1311,7 +1345,7 @@ impl OwnerIntradayQuoteRepository {
                         last_failure_code = EXCLUDED.last_failure_code,
                         last_failure_at = EXCLUDED.last_failure_at,
                         producer_fence = EXCLUDED.producer_fence,
-                        updated_at = pg_catalog.now()
+                        updated_at = EXCLUDED.last_attempt_at
                  RETURNING owner_user_id, membership_id, generation_id,
                            instrument_id, generation, session_date,
                            calendar_source, calendar_source_version,
@@ -1340,6 +1374,7 @@ impl OwnerIntradayQuoteRepository {
                 i64::try_from(context.producer.fencing_token)
                     .map_err(|_| IntradayStorageError::InvalidInput)?,
             )
+            .bind(locked.fresh_now)
             .fetch_one(&mut *tx)
             .await
             .map_err(map_database_error)?
@@ -1367,7 +1402,8 @@ impl OwnerIntradayQuoteRepository {
         let generation =
             i64::try_from(generation).map_err(|_| IntradayStorageError::InvalidInput)?;
         let mut tx = self.begin_actor_transaction(owner_user_id).await?;
-        validate_session_lineage(&mut tx, session).await?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
+        validate_session_lineage(&mut tx, session, fresh_now).await?;
         let row: Option<CacheDbRow> = sqlx::query_as(
             "SELECT cache.owner_user_id, cache.membership_id, cache.generation_id,
                     cache.instrument_id, cache.generation, cache.session_date,
@@ -1411,12 +1447,12 @@ impl OwnerIntradayQuoteRepository {
                AND cache.calendar_source_batch_id = $7
                AND cache.calendar_content_sha256 = $8
                AND cache.window_contract_sha256 = $9
-               AND cache.last_attempt_at <= pg_catalog.now()
-               AND cache.last_attempt_at >= pg_catalog.now()
+               AND cache.last_attempt_at <= $10
+               AND cache.last_attempt_at >= $10
                     - INTERVAL '24 hours'
                AND (cache.last_success_at IS NULL OR (
-                    cache.last_success_at <= pg_catalog.now()
-                AND cache.last_success_at >= pg_catalog.now()
+                    cache.last_success_at <= $10
+                AND cache.last_success_at >= $10
                     - INTERVAL '24 hours'))",
         )
         .bind(owner_user_id)
@@ -1428,6 +1464,7 @@ impl OwnerIntradayQuoteRepository {
         .bind(session.calendar_source_batch_id)
         .bind(&session.calendar_content_sha256)
         .bind(&session.window_contract_sha256)
+        .bind(fresh_now)
         .fetch_optional(&mut *tx)
         .await
         .map_err(map_database_error)?;
@@ -1450,27 +1487,30 @@ impl OwnerIntradayQuoteRepository {
         }
         let mut tx = self.begin_actor_transaction(owner_user_id).await?;
         lock_owner_policy_for_demand(&mut tx, owner_user_id).await?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
         let demands = sqlx::query(
             "DELETE FROM public.owner_intraday_quote_demands
               WHERE owner_user_id = $1
                 AND ((state = 'RELEASED'
-                      AND released_at < pg_catalog.now() - INTERVAL '24 hours')
+                      AND released_at < $2 - INTERVAL '24 hours')
                   OR (state = 'ACTIVE'
-                      AND lease_expires_at < pg_catalog.now()
+                      AND lease_expires_at < $2
                           - INTERVAL '24 hours'))",
         )
         .bind(owner_user_id)
+        .bind(fresh_now)
         .execute(&mut *tx)
         .await
         .map_err(map_database_error)?;
         let cache = sqlx::query(
             "DELETE FROM public.owner_intraday_quote_cache
               WHERE owner_user_id = $1
-                AND last_attempt_at < pg_catalog.now() - INTERVAL '24 hours'
+                AND last_attempt_at < $2 - INTERVAL '24 hours'
                 AND (last_success_at IS NULL
-                  OR last_success_at < pg_catalog.now() - INTERVAL '24 hours')",
+                  OR last_success_at < $2 - INTERVAL '24 hours')",
         )
         .bind(owner_user_id)
+        .bind(fresh_now)
         .execute(&mut *tx)
         .await
         .map_err(map_database_error)?;
@@ -1503,6 +1543,15 @@ impl OwnerIntradayQuoteRepository {
             .map_err(map_database_error)?;
         Ok(tx)
     }
+}
+
+async fn fresh_database_time(
+    tx: &mut Transaction<'_, Postgres>,
+) -> Result<DateTime<Utc>, IntradayStorageError> {
+    sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(map_database_error)
 }
 
 #[derive(Debug, FromRow)]
@@ -1623,6 +1672,8 @@ struct CacheIdentityDbRow {
     calendar_source_batch_id: Option<Uuid>,
     calendar_content_sha256: Option<String>,
     window_contract_sha256: Option<String>,
+    received_at: Option<DateTime<Utc>>,
+    quote_version: i64,
 }
 
 impl CacheIdentityDbRow {
@@ -1640,6 +1691,11 @@ impl CacheIdentityDbRow {
             && self.window_contract_sha256.as_deref()
                 == Some(context.session.window_contract_sha256.as_str())
     }
+}
+
+struct LockedPublicationInputs {
+    fresh_now: DateTime<Utc>,
+    prior_cache: Option<CacheIdentityDbRow>,
 }
 
 #[derive(Debug, FromRow)]
@@ -1731,12 +1787,9 @@ async fn lock_owner_policy_for_demand(
     owner_user_id: Uuid,
 ) -> Result<(), IntradayStorageError> {
     // 0053 grants app/worker SELECT, not UPDATE, on the policy row.  The
-    // frozen 0054 grant matrix therefore cannot perform PostgreSQL's row lock
-    // from an app connection: even FOR SHARE is rejected without a lock-capable
-    // privilege.  Keep the owner-scoped transaction advisory lock as the
-    // repository mutation fence and verify that the policy row exists.  A
-    // future privilege amendment must replace this with FOR SHARE; this code
-    // does not invent one or use a SECURITY DEFINER bypass.
+    // owner-scoped transaction advisory lock is therefore the frozen capacity
+    // mutex; this SELECT is only the policy-existence anchor.  It does not
+    // lock policy administration and does not use a privilege bypass.
     sqlx::query(
         "SELECT pg_catalog.pg_advisory_xact_lock(
                     pg_catalog.hashtextextended($1, 0))",
@@ -1765,17 +1818,20 @@ async fn ensure_active_capacity(
     tx: &mut Transaction<'_, Postgres>,
     owner_user_id: Uuid,
     excluded_demand_id: Option<Uuid>,
+    requested_identity: &AdmissionDbRow,
+    fresh_now: DateTime<Utc>,
 ) -> Result<(), IntradayStorageError> {
     let consumers: i64 = sqlx::query_scalar(
         "SELECT count(*)
            FROM public.owner_intraday_quote_demands
           WHERE owner_user_id = $1
             AND state = 'ACTIVE'
-            AND lease_expires_at > pg_catalog.now()
+            AND lease_expires_at > $3::timestamptz
             AND ($2::uuid IS NULL OR id <> $2)",
     )
     .bind(owner_user_id)
     .bind(excluded_demand_id)
+    .bind(fresh_now)
     .fetch_one(&mut **tx)
     .await
     .map_err(map_database_error)?;
@@ -1790,17 +1846,44 @@ async fn ensure_active_capacity(
                   FROM public.owner_intraday_quote_demands
                  WHERE owner_user_id = $1
                    AND state = 'ACTIVE'
-                   AND lease_expires_at > pg_catalog.now()
+                   AND lease_expires_at > $3::timestamptz
                    AND ($2::uuid IS NULL OR id <> $2)
            ) AS active_identities",
     )
     .bind(owner_user_id)
     .bind(excluded_demand_id)
+    .bind(fresh_now)
     .fetch_one(&mut **tx)
     .await
     .map_err(map_database_error)?;
     if identities >= MAX_ACTIVE_IDENTITIES {
-        return Err(IntradayStorageError::IdentityCapacity);
+        let requested_identity_is_active: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                    SELECT 1
+                      FROM public.owner_intraday_quote_demands
+                     WHERE owner_user_id = $1
+                       AND membership_id = $2
+                       AND generation_id = $3
+                       AND instrument_id = $4
+                       AND generation = $5
+                       AND state = 'ACTIVE'
+                       AND lease_expires_at > $6::timestamptz
+                       AND ($7::uuid IS NULL OR id <> $7)
+                )",
+        )
+        .bind(owner_user_id)
+        .bind(requested_identity.membership_id)
+        .bind(requested_identity.generation_id)
+        .bind(&requested_identity.instrument_id)
+        .bind(requested_identity.generation)
+        .bind(fresh_now)
+        .bind(excluded_demand_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(map_database_error)?;
+        if !requested_identity_is_active {
+            return Err(IntradayStorageError::IdentityCapacity);
+        }
     }
     Ok(())
 }
@@ -1850,11 +1933,11 @@ async fn lock_ready_admission(
 async fn lock_publication_inputs(
     tx: &mut Transaction<'_, Postgres>,
     context: &IntradayPublicationContext,
-) -> Result<(), IntradayStorageError> {
+) -> Result<LockedPublicationInputs, IntradayStorageError> {
     let fence: Option<ProducerDbRow> = sqlx::query_as(
         "SELECT owner_user_id, holder_id, fencing_token,
                 lease_expires_at, heartbeat_at,
-                lease_expires_at > pg_catalog.now() AS live
+                FALSE AS live
            FROM public.owner_intraday_quote_producers
           WHERE owner_user_id = $1
           FOR UPDATE",
@@ -1863,7 +1946,47 @@ async fn lock_publication_inputs(
     .fetch_optional(&mut **tx)
     .await
     .map_err(map_database_error)?;
-    let fence = fence.ok_or(IntradayStorageError::ProducerLeaseLost)?;
+    let mut fence = fence.ok_or(IntradayStorageError::ProducerLeaseLost)?;
+    let admission = lock_ready_admission_by_identity(tx, &context.identity).await?;
+    if admission.generation_id != context.identity.generation_id {
+        return Err(IntradayStorageError::IdentityMismatch);
+    }
+    let active_demand_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id
+           FROM public.owner_intraday_quote_demands
+          WHERE owner_user_id = $1 AND membership_id = $2
+            AND generation_id = $3 AND instrument_id = $4
+            AND generation = $5 AND state = 'ACTIVE'
+          FOR SHARE",
+    )
+    .bind(context.identity.owner_user_id)
+    .bind(context.identity.membership_id)
+    .bind(context.identity.generation_id)
+    .bind(&context.identity.instrument_id)
+    .bind(context.identity.generation_i64())
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(map_database_error)?;
+    if active_demand_ids.is_empty() {
+        return Err(IntradayStorageError::ActiveDemandRequired);
+    }
+    let prior_cache: Option<CacheIdentityDbRow> = sqlx::query_as(
+        "SELECT generation_id, instrument_id, generation, session_date,
+                calendar_source, calendar_source_version,
+                calendar_source_batch_id, calendar_content_sha256,
+                window_contract_sha256, received_at, quote_version
+           FROM public.owner_intraday_quote_cache
+          WHERE owner_user_id = $1 AND membership_id = $2
+          FOR UPDATE",
+    )
+    .bind(context.identity.owner_user_id)
+    .bind(context.identity.membership_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_database_error)?;
+
+    let fresh_now = fresh_database_time(tx).await?;
+    fence.live = fence.lease_expires_at > fresh_now;
     if !fence.live
         || fence.holder_id != context.producer.holder_id
         || fence.fencing_token
@@ -1872,33 +1995,33 @@ async fn lock_publication_inputs(
     {
         return Err(IntradayStorageError::ProducerLeaseLost);
     }
-
-    let admission = lock_ready_admission_by_identity(tx, &context.identity).await?;
-    if admission.generation_id != context.identity.generation_id {
-        return Err(IntradayStorageError::IdentityMismatch);
-    }
-    let active_demand: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id
-           FROM public.owner_intraday_quote_demands
-          WHERE owner_user_id = $1 AND membership_id = $2
-            AND generation_id = $3 AND instrument_id = $4
-            AND generation = $5 AND state = 'ACTIVE'
-            AND lease_expires_at > pg_catalog.now()
-          LIMIT 1
-          FOR SHARE",
+    let active_demand: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+                SELECT 1
+                  FROM public.owner_intraday_quote_demands
+                 WHERE owner_user_id = $1 AND membership_id = $2
+                   AND generation_id = $3 AND instrument_id = $4
+                   AND generation = $5 AND state = 'ACTIVE'
+                   AND lease_expires_at > $6::timestamptz
+            )",
     )
     .bind(context.identity.owner_user_id)
     .bind(context.identity.membership_id)
     .bind(context.identity.generation_id)
     .bind(&context.identity.instrument_id)
     .bind(context.identity.generation_i64())
-    .fetch_optional(&mut **tx)
+    .bind(fresh_now)
+    .fetch_one(&mut **tx)
     .await
     .map_err(map_database_error)?;
-    if active_demand.is_none() {
+    if !active_demand {
         return Err(IntradayStorageError::ActiveDemandRequired);
     }
-    validate_session_lineage(tx, &context.session).await
+    validate_session_lineage(tx, &context.session, fresh_now).await?;
+    Ok(LockedPublicationInputs {
+        fresh_now,
+        prior_cache,
+    })
 }
 
 async fn lock_ready_admission_by_identity(
@@ -1947,6 +2070,7 @@ async fn lock_ready_admission_by_identity(
 async fn validate_session_lineage(
     tx: &mut Transaction<'_, Postgres>,
     session: &IntradaySessionProof,
+    fresh_now: DateTime<Utc>,
 ) -> Result<(), IntradayStorageError> {
     session.validate()?;
     let row: Option<(Uuid, i64)> = sqlx::query_as(
@@ -1976,14 +2100,14 @@ async fn validate_session_lineage(
             AND calendar.source_version = $3
             AND calendar.source_batch_id = $4
             AND calendar.content_sha256 = $5
-            AND calendar.retrieved_at <= pg_catalog.now()
-            AND calendar.retrieved_at >= pg_catalog.now()
+            AND calendar.retrieved_at <= $6
+            AND calendar.retrieved_at >= $6
                 - INTERVAL '36 hours'
-            AND version.retrieved_at <= pg_catalog.now()
-            AND version.retrieved_at >= pg_catalog.now()
+            AND version.retrieved_at <= $6
+            AND version.retrieved_at >= $6
                 - INTERVAL '36 hours'
-            AND batch.retrieved_at <= pg_catalog.now()
-            AND batch.retrieved_at >= pg_catalog.now()
+            AND batch.retrieved_at <= $6
+            AND batch.retrieved_at >= $6
                 - INTERVAL '36 hours'
           ",
     )
@@ -1992,6 +2116,7 @@ async fn validate_session_lineage(
     .bind(session.calendar_source_version())
     .bind(session.calendar_source_batch_id)
     .bind(&session.calendar_content_sha256)
+    .bind(fresh_now)
     .fetch_optional(&mut **tx)
     .await
     .map_err(map_database_error)?;
@@ -1999,7 +2124,8 @@ async fn validate_session_lineage(
         return Err(IntradayStorageError::CalendarProofUnavailable);
     }
     let current_date: NaiveDate =
-        sqlx::query_scalar("SELECT (pg_catalog.now() AT TIME ZONE 'Asia/Seoul')::date")
+        sqlx::query_scalar("SELECT ($1::timestamptz AT TIME ZONE 'Asia/Seoul')::date")
+            .bind(fresh_now)
             .fetch_one(&mut **tx)
             .await
             .map_err(map_database_error)?;
@@ -2013,13 +2139,15 @@ async fn validate_receipt(
     tx: &mut Transaction<'_, Postgres>,
     received_at: DateTime<Utc>,
     session_date: NaiveDate,
+    fresh_now: DateTime<Utc>,
 ) -> Result<(), IntradayStorageError> {
     let valid: bool = sqlx::query_scalar(
-        "SELECT $1::timestamptz <= pg_catalog.now()
+        "SELECT $1::timestamptz <= $3::timestamptz
              AND ($1::timestamptz AT TIME ZONE 'Asia/Seoul')::date = $2",
     )
     .bind(received_at)
     .bind(session_date)
+    .bind(fresh_now)
     .fetch_one(&mut **tx)
     .await
     .map_err(map_database_error)?;
@@ -2028,28 +2156,6 @@ async fn validate_receipt(
     } else {
         Err(IntradayStorageError::ReceiptInvalid)
     }
-}
-
-async fn ensure_quote_version_available(
-    tx: &mut Transaction<'_, Postgres>,
-    owner_user_id: Uuid,
-    membership_id: Uuid,
-) -> Result<(), IntradayStorageError> {
-    let version: Option<i64> = sqlx::query_scalar(
-        "SELECT quote_version
-           FROM public.owner_intraday_quote_cache
-          WHERE owner_user_id = $1 AND membership_id = $2
-          FOR UPDATE",
-    )
-    .bind(owner_user_id)
-    .bind(membership_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(map_database_error)?;
-    if version == Some(i64::MAX) {
-        return Err(IntradayStorageError::QuoteVersionExhausted);
-    }
-    Ok(())
 }
 
 fn validate_lease(lease: &ProducerLease) -> Result<(), IntradayStorageError> {

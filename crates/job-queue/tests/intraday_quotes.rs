@@ -1,7 +1,9 @@
 mod intraday_quotes_support;
 
 use chrono::{Duration, Utc};
-use intraday_quotes_support::{MembershipFixture, run_body};
+use intraday_quotes_support::{
+    MembershipFixture, run_body, wait_for_blocked_session, wait_until_database_time,
+};
 use job_queue::owner_equity_v2::{
     DemandMutationKind, DemandReleaseKind, IntradayAttemptReservation, IntradayPublicationContext,
     IntradayQuoteDemandRequest, IntradayQuoteFailureCode, IntradayQuoteIdentity,
@@ -475,6 +477,638 @@ async fn concurrent_demand_edges_are_serialized_at_both_caps() {
 }
 
 #[tokio::test]
+async fn existing_identity_can_add_a_consumer_at_the_five_identity_cap() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("same-identity-cap").await?;
+        let app = db.repository_as_app();
+        let mut memberships = Vec::new();
+        for symbol in [
+            "000001.KRX",
+            "000002.KRX",
+            "000003.KRX",
+            "000004.KRX",
+            "000005.KRX",
+        ] {
+            memberships.push(db.seed_ready_membership(owner, symbol).await?);
+        }
+        for (index, membership) in memberships.iter().enumerate() {
+            app.create_or_renew_demand(
+                owner,
+                &demand_request(
+                    membership.membership_id,
+                    Uuid::new_v4(),
+                    1,
+                    0,
+                    &format!("five-identity-{index}"),
+                ),
+            )
+            .await
+            .map_err(|error| format!("five-identity setup failed: {error}"))?;
+        }
+        let duplicate = app
+            .create_or_renew_demand(
+                owner,
+                &demand_request(
+                    memberships[0].membership_id,
+                    Uuid::new_v4(),
+                    1,
+                    0,
+                    "same-identity-at-cap",
+                ),
+            )
+            .await
+            .map_err(|error| format!("existing identity was incorrectly denied: {error}"))?;
+        if duplicate.kind != DemandMutationKind::Created {
+            return Err(
+                "existing identity did not admit a sixth consumer at the identity cap".to_owned(),
+            );
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn expired_demand_reactivates_with_an_active_sibling_at_identity_cap() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("expired-sibling").await?;
+        let app = db.repository_as_app();
+        let mut memberships = Vec::new();
+        for symbol in [
+            "000011.KRX",
+            "000012.KRX",
+            "000013.KRX",
+            "000014.KRX",
+            "000015.KRX",
+        ] {
+            memberships.push(db.seed_ready_membership(owner, symbol).await?);
+        }
+        let first_consumer = Uuid::new_v4();
+        let first = app
+            .create_or_renew_demand(
+                owner,
+                &demand_request(
+                    memberships[0].membership_id,
+                    first_consumer,
+                    1,
+                    0,
+                    "expired-sibling-first",
+                ),
+            )
+            .await
+            .map_err(|error| format!("expired-sibling first demand failed: {error}"))?;
+        for (index, membership) in memberships.iter().enumerate().skip(1) {
+            app.create_or_renew_demand(
+                owner,
+                &demand_request(
+                    membership.membership_id,
+                    Uuid::new_v4(),
+                    1,
+                    0,
+                    &format!("expired-sibling-other-{index}"),
+                ),
+            )
+            .await
+            .map_err(|error| format!("expired-sibling setup failed: {error}"))?;
+        }
+        app.create_or_renew_demand(
+            owner,
+            &demand_request(
+                memberships[0].membership_id,
+                Uuid::new_v4(),
+                1,
+                0,
+                "expired-sibling-active",
+            ),
+        )
+        .await
+        .map_err(|error| format!("expired-sibling active sibling failed: {error}"))?;
+        sqlx::query(
+            "UPDATE public.owner_intraday_quote_demands
+                SET created_at = pg_catalog.clock_timestamp() - INTERVAL '2 seconds',
+                    lease_expires_at = pg_catalog.clock_timestamp() - INTERVAL '1 second'
+              WHERE id = $1",
+        )
+        .bind(first.lease.demand_id)
+        .execute(&db.superuser)
+        .await
+        .map_err(|_| "could not expire demand beside its active sibling".to_owned())?;
+
+        let renewed = app
+            .create_or_renew_demand(
+                owner,
+                &demand_request(
+                    memberships[0].membership_id,
+                    first_consumer,
+                    1,
+                    1,
+                    "expired-sibling-renewal",
+                ),
+            )
+            .await
+            .map_err(|error| format!("expired demand with active sibling was denied: {error}"))?;
+        if renewed.kind != DemandMutationKind::Renewed || renewed.lease.renewal_sequence != 1 {
+            return Err("expired demand did not renew at the exact next sequence".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn sixth_distinct_identity_is_denied_at_the_identity_cap() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("sixth-identity").await?;
+        let app = db.repository_as_app();
+        let mut memberships = Vec::new();
+        for symbol in [
+            "000021.KRX",
+            "000022.KRX",
+            "000023.KRX",
+            "000024.KRX",
+            "000025.KRX",
+            "000026.KRX",
+        ] {
+            memberships.push(db.seed_ready_membership(owner, symbol).await?);
+        }
+        for (index, membership) in memberships.iter().take(5).enumerate() {
+            app.create_or_renew_demand(
+                owner,
+                &demand_request(
+                    membership.membership_id,
+                    Uuid::new_v4(),
+                    1,
+                    0,
+                    &format!("five-distinct-{index}"),
+                ),
+            )
+            .await
+            .map_err(|error| format!("five-distinct setup failed: {error}"))?;
+        }
+        let denied = app
+            .create_or_renew_demand(
+                owner,
+                &demand_request(
+                    memberships[5].membership_id,
+                    Uuid::new_v4(),
+                    1,
+                    0,
+                    "sixth-distinct",
+                ),
+            )
+            .await;
+        if denied != Err(IntradayStorageError::IdentityCapacity) {
+            return Err("sixth distinct identity did not return identity capacity".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn twentieth_consumer_cap_is_checked_independently_of_identity_cap() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("twentieth-consumer").await?;
+        let app = db.repository_as_app();
+        let mut memberships = Vec::new();
+        for symbol in [
+            "000031.KRX",
+            "000032.KRX",
+            "000033.KRX",
+            "000034.KRX",
+            "000035.KRX",
+        ] {
+            memberships.push(db.seed_ready_membership(owner, symbol).await?);
+        }
+        for membership in &memberships {
+            for _ in 0..4 {
+                app.create_or_renew_demand(
+                    owner,
+                    &demand_request(
+                        membership.membership_id,
+                        Uuid::new_v4(),
+                        1,
+                        0,
+                        &format!("twentieth-{}", Uuid::new_v4()),
+                    ),
+                )
+                .await
+                .map_err(|error| format!("twentieth-consumer setup failed: {error}"))?;
+            }
+        }
+        let denied = app
+            .create_or_renew_demand(
+                owner,
+                &demand_request(
+                    memberships[0].membership_id,
+                    Uuid::new_v4(),
+                    1,
+                    0,
+                    "twenty-one-same-identity",
+                ),
+            )
+            .await;
+        if denied != Err(IntradayStorageError::DemandCapacity) {
+            return Err("the 20-consumer cap was not reported independently".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn demand_advisory_capacity_mutex_has_observable_real_lock_contention() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("advisory-lock").await?;
+        let fixture = db.seed_ready_membership(owner, "000041.KRX").await?;
+        let mut observer_tx = db
+            .superuser
+            .begin()
+            .await
+            .map_err(|_| "could not begin advisory-lock observer transaction".to_owned())?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify advisory-lock observer backend".to_owned())?;
+        sqlx::query(
+            "SELECT pg_catalog.pg_advisory_xact_lock(
+                        pg_catalog.hashtextextended($1, 0))",
+        )
+        .bind(format!("owner-intraday-demand-cap|{owner}"))
+        .execute(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not hold owner demand advisory mutex".to_owned())?;
+
+        let repository = db.repository_as_app();
+        let task = tokio::spawn(async move {
+            repository
+                .create_or_renew_demand(
+                    owner,
+                    &demand_request(
+                        fixture.membership_id,
+                        Uuid::new_v4(),
+                        1,
+                        0,
+                        "advisory-blocked-demand",
+                    ),
+                )
+                .await
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "app", "pg_advisory_xact_lock").await?;
+        if !blockers.contains(&observer_pid) {
+            return Err(
+                "app demand mutation was not blocked by the observer advisory lock".to_owned(),
+            );
+        }
+        observer_tx
+            .commit()
+            .await
+            .map_err(|_| "could not release owner demand advisory mutex".to_owned())?;
+        let outcome = task
+            .await
+            .map_err(|_| "advisory-blocked demand task did not finish".to_owned())?
+            .map_err(|error| format!("advisory-blocked demand failed after release: {error}"))?;
+        if outcome.kind != DemandMutationKind::Created {
+            return Err("advisory-blocked demand did not create after mutex release".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn publication_rechecks_expired_producer_after_observed_row_lock_wait() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("publication-lock-wait").await?;
+        let fixture = db.seed_ready_membership(owner, "000051.KRX").await?;
+        let app = db.repository_as_app();
+        app.create_or_renew_demand(
+            owner,
+            &demand_request(
+                fixture.membership_id,
+                Uuid::new_v4(),
+                1,
+                0,
+                "publication-lock-wait-demand",
+            ),
+        )
+        .await
+        .map_err(|error| format!("publication lock-wait demand setup failed: {error}"))?;
+        let worker = db.repository_as_worker();
+        let claim = worker
+            .claim_producer(owner, Uuid::new_v4())
+            .await
+            .map_err(|error| format!("publication lock-wait producer setup failed: {error}"))?;
+        let publication_context = context(&db, &fixture, claim.lease);
+        let mut observer_tx = db
+            .superuser
+            .begin()
+            .await
+            .map_err(|_| "could not begin producer-lock observer transaction".to_owned())?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify producer-lock observer backend".to_owned())?;
+        let hold_started: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample producer-lock start time".to_owned())?;
+        sqlx::query(
+            "UPDATE public.owner_intraday_quote_producers
+                SET lease_expires_at = pg_catalog.clock_timestamp() + INTERVAL '1 second',
+                    heartbeat_at = pg_catalog.clock_timestamp(),
+                    updated_at = pg_catalog.clock_timestamp()
+              WHERE owner_user_id = $1",
+        )
+        .bind(owner)
+        .execute(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not age producer lease inside lock observer".to_owned())?;
+        sqlx::query(
+            "SELECT owner_user_id
+               FROM public.owner_intraday_quote_producers
+              WHERE owner_user_id = $1
+              FOR UPDATE",
+        )
+        .bind(owner)
+        .fetch_one(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not hold producer row lock".to_owned())?;
+
+        let receipt = IntradayQuoteReceipt::captured(Utc::now());
+        let publish_task = tokio::spawn({
+            let worker = worker.clone();
+            let publication_context = publication_context.clone();
+            async move {
+                worker
+                    .publish_success(
+                        &publication_context,
+                        &quote("000051", "72500", "1500", "2.11"),
+                        receipt,
+                    )
+                    .await
+            }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "worker", "owner_intraday_quote_producers")
+                .await?;
+        if !blockers.contains(&observer_pid) {
+            return Err("publication was not blocked by the held producer row".to_owned());
+        }
+        wait_until_database_time(&db.superuser, hold_started + Duration::seconds(2)).await?;
+        observer_tx
+            .commit()
+            .await
+            .map_err(|_| "could not release producer row lock".to_owned())?;
+        let publication = publish_task
+            .await
+            .map_err(|_| "publication lock-wait task did not finish".to_owned())?;
+        if publication != Err(IntradayStorageError::ProducerLeaseLost) {
+            return Err(
+                "expired producer lease was accepted after a real producer-row lock wait"
+                    .to_owned(),
+            );
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn delayed_demand_renewal_extends_from_post_lock_database_time() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("delayed-renewal").await?;
+        let fixture = db.seed_ready_membership(owner, "000061.KRX").await?;
+        let app = db.repository_as_app();
+        let consumer = Uuid::new_v4();
+        app.create_or_renew_demand(
+            owner,
+            &demand_request(
+                fixture.membership_id,
+                consumer,
+                1,
+                0,
+                "delayed-renewal-zero",
+            ),
+        )
+        .await
+        .map_err(|error| format!("delayed renewal setup failed: {error}"))?;
+        let mut observer_tx = db
+            .superuser
+            .begin()
+            .await
+            .map_err(|_| "could not begin demand-lock observer transaction".to_owned())?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify demand-lock observer backend".to_owned())?;
+        let hold_started: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample demand-lock start time".to_owned())?;
+        sqlx::query(
+            "SELECT pg_catalog.pg_advisory_xact_lock(
+                        pg_catalog.hashtextextended($1, 0))",
+        )
+        .bind(format!("owner-intraday-demand-cap|{owner}"))
+        .execute(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not hold demand renewal advisory mutex".to_owned())?;
+
+        let renewal_task = tokio::spawn({
+            let app = app.clone();
+            async move {
+                app.create_or_renew_demand(
+                    owner,
+                    &demand_request(fixture.membership_id, consumer, 1, 1, "delayed-renewal-one"),
+                )
+                .await
+            }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "app", "pg_advisory_xact_lock").await?;
+        if !blockers.contains(&observer_pid) {
+            return Err("renewal was not blocked by the held demand advisory mutex".to_owned());
+        }
+        wait_until_database_time(&db.superuser, hold_started + Duration::seconds(2)).await?;
+        observer_tx
+            .commit()
+            .await
+            .map_err(|_| "could not release demand renewal advisory mutex".to_owned())?;
+        let renewed = renewal_task
+            .await
+            .map_err(|_| "delayed renewal task did not finish".to_owned())?
+            .map_err(|error| format!("delayed demand renewal failed: {error}"))?;
+        let after: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample post-renewal database time".to_owned())?;
+        if renewed.lease.lease_expires_at <= after + Duration::seconds(29) {
+            return Err("demand renewal lease was based on transaction-start time".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn delayed_heartbeat_extends_from_post_lock_database_time() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("delayed-heartbeat").await?;
+        let worker = db.repository_as_worker();
+        let claim = worker
+            .claim_producer(owner, Uuid::new_v4())
+            .await
+            .map_err(|error| format!("delayed heartbeat setup failed: {error}"))?;
+        let mut observer_tx = db
+            .superuser
+            .begin()
+            .await
+            .map_err(|_| "could not begin heartbeat-lock observer transaction".to_owned())?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify heartbeat-lock observer backend".to_owned())?;
+        let hold_started: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample heartbeat-lock start time".to_owned())?;
+        sqlx::query(
+            "UPDATE public.owner_intraday_quote_producers
+                SET lease_expires_at = pg_catalog.clock_timestamp() + INTERVAL '10 seconds',
+                    heartbeat_at = pg_catalog.clock_timestamp(),
+                    updated_at = pg_catalog.clock_timestamp()
+              WHERE owner_user_id = $1",
+        )
+        .bind(owner)
+        .execute(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not prepare delayed heartbeat producer row".to_owned())?;
+        sqlx::query(
+            "SELECT owner_user_id
+               FROM public.owner_intraday_quote_producers
+              WHERE owner_user_id = $1
+              FOR UPDATE",
+        )
+        .bind(owner)
+        .fetch_one(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not hold heartbeat producer row lock".to_owned())?;
+
+        let heartbeat_task = tokio::spawn({
+            let worker = worker.clone();
+            let lease = claim.lease.clone();
+            async move { worker.heartbeat_producer(&lease).await }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "worker", "owner_intraday_quote_producers")
+                .await?;
+        if !blockers.contains(&observer_pid) {
+            return Err("heartbeat was not blocked by the held producer row".to_owned());
+        }
+        wait_until_database_time(&db.superuser, hold_started + Duration::seconds(2)).await?;
+        observer_tx
+            .commit()
+            .await
+            .map_err(|_| "could not release heartbeat producer row lock".to_owned())?;
+        let heartbeat = heartbeat_task
+            .await
+            .map_err(|_| "delayed heartbeat task did not finish".to_owned())?
+            .map_err(|error| format!("delayed heartbeat failed: {error}"))?;
+        let after: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample post-heartbeat database time".to_owned())?;
+        if heartbeat.lease_expires_at <= after + Duration::seconds(19) {
+            return Err("heartbeat lease was based on transaction-start time".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn delayed_claim_takes_over_after_post_lock_expiry_recheck() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("delayed-claim").await?;
+        let worker = db.repository_as_worker();
+        let first = worker
+            .claim_producer(owner, Uuid::new_v4())
+            .await
+            .map_err(|error| format!("delayed claim setup failed: {error}"))?;
+        let mut observer_tx = db
+            .superuser
+            .begin()
+            .await
+            .map_err(|_| "could not begin claim-lock observer transaction".to_owned())?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify claim-lock observer backend".to_owned())?;
+        let hold_started: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample claim-lock start time".to_owned())?;
+        sqlx::query(
+            "UPDATE public.owner_intraday_quote_producers
+                SET lease_expires_at = pg_catalog.clock_timestamp() + INTERVAL '1 second',
+                    heartbeat_at = pg_catalog.clock_timestamp(),
+                    updated_at = pg_catalog.clock_timestamp()
+              WHERE owner_user_id = $1",
+        )
+        .bind(owner)
+        .execute(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not prepare delayed claim producer row".to_owned())?;
+        sqlx::query(
+            "SELECT owner_user_id
+               FROM public.owner_intraday_quote_producers
+              WHERE owner_user_id = $1
+              FOR UPDATE",
+        )
+        .bind(owner)
+        .fetch_one(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not hold claim producer row lock".to_owned())?;
+
+        let second_holder = Uuid::new_v4();
+        let claim_task = tokio::spawn({
+            let worker = worker.clone();
+            async move { worker.claim_producer(owner, second_holder).await }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "worker", "owner_intraday_quote_producers")
+                .await?;
+        if !blockers.contains(&observer_pid) {
+            return Err("claim was not blocked by the held producer row".to_owned());
+        }
+        wait_until_database_time(&db.superuser, hold_started + Duration::seconds(2)).await?;
+        observer_tx
+            .commit()
+            .await
+            .map_err(|_| "could not release claim producer row lock".to_owned())?;
+        let takeover = claim_task
+            .await
+            .map_err(|_| "delayed claim task did not finish".to_owned())?
+            .map_err(|error| format!("delayed claim failed: {error}"))?;
+        if takeover.kind != ProducerClaimKind::TakenOver
+            || takeover.lease.fencing_token != first.lease.fencing_token + 1
+        {
+            return Err("claim did not recheck expiry after its real row-lock wait".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn producer_lease_heartbeat_takeover_and_stale_fence_are_enforced() {
     run_body(|db| async move {
         let owner = db.seed_owner("producer").await?;
@@ -676,6 +1310,275 @@ async fn fenced_success_failure_read_gate_and_gc_preserve_last_good() {
         .map_err(|_| "could not verify EOD/V2 durable fixture".to_owned())?;
         if durable != 1 {
             return Err("quote GC touched durable 0053 lineage".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn older_same_identity_receipt_is_rejected_without_changing_last_good() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("stale-receipt").await?;
+        let fixture = db.seed_ready_membership(owner, "000071.KRX").await?;
+        let app = db.repository_as_app();
+        app.create_or_renew_demand(
+            owner,
+            &demand_request(
+                fixture.membership_id,
+                Uuid::new_v4(),
+                1,
+                0,
+                "stale-receipt-demand",
+            ),
+        )
+        .await
+        .map_err(|error| format!("stale receipt demand setup failed: {error}"))?;
+        let worker = db.repository_as_worker();
+        let claim = worker
+            .claim_producer(owner, Uuid::new_v4())
+            .await
+            .map_err(|error| format!("stale receipt producer setup failed: {error}"))?;
+        let publication_context = context(&db, &fixture, claim.lease);
+        let newer_receipt = Utc::now();
+        let first = worker
+            .publish_success(
+                &publication_context,
+                &quote("000071", "72500", "1500", "2.11"),
+                IntradayQuoteReceipt::captured(newer_receipt),
+            )
+            .await
+            .map_err(|error| format!("newer receipt setup failed: {error}"))?;
+        let older = worker
+            .publish_success(
+                &publication_context,
+                &quote("000071", "72000", "1000", "1.41"),
+                IntradayQuoteReceipt::captured(newer_receipt - Duration::seconds(1)),
+            )
+            .await;
+        if older != Err(IntradayStorageError::QuoteReceiptStale) {
+            return Err("an older same-fence receipt did not return typed stale error".to_owned());
+        }
+        let after = app
+            .read_current_cache(owner, fixture.membership_id, 1, &db.session_proof())
+            .await
+            .map_err(|error| format!("stale receipt cache read failed: {error}"))?
+            .ok_or_else(|| "stale receipt removed the last-good cache".to_owned())?;
+        if after != first {
+            return Err("stale receipt changed a last-good cache field".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn serialized_concurrent_receipts_keep_newest_arrival_and_reject_late_older_one() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("concurrent-receipts").await?;
+        let fixture = db.seed_ready_membership(owner, "000081.KRX").await?;
+        let app = db.repository_as_app();
+        app.create_or_renew_demand(
+            owner,
+            &demand_request(
+                fixture.membership_id,
+                Uuid::new_v4(),
+                1,
+                0,
+                "concurrent-receipts-demand",
+            ),
+        )
+        .await
+        .map_err(|error| format!("concurrent receipt demand setup failed: {error}"))?;
+        let worker = db.repository_as_worker();
+        let claim = worker
+            .claim_producer(owner, Uuid::new_v4())
+            .await
+            .map_err(|error| format!("concurrent receipt producer setup failed: {error}"))?;
+        let publication_context = context(&db, &fixture, claim.lease);
+        let base_receipt = Utc::now() - Duration::seconds(2);
+        worker
+            .publish_success(
+                &publication_context,
+                &quote("000081", "71000", "1000", "1.41"),
+                IntradayQuoteReceipt::captured(base_receipt),
+            )
+            .await
+            .map_err(|error| format!("concurrent receipt base setup failed: {error}"))?;
+
+        let mut observer_tx = db
+            .superuser
+            .begin()
+            .await
+            .map_err(|_| "could not begin cache-lock observer transaction".to_owned())?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify cache-lock observer backend".to_owned())?;
+        sqlx::query(
+            "SELECT owner_user_id
+               FROM public.owner_intraday_quote_cache
+              WHERE owner_user_id = $1 AND membership_id = $2
+              FOR UPDATE",
+        )
+        .bind(owner)
+        .bind(fixture.membership_id)
+        .fetch_one(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not hold cache row lock for concurrent receipts".to_owned())?;
+
+        let newer_receipt = Utc::now();
+        let newer_task = tokio::spawn({
+            let worker = worker.clone();
+            let publication_context = publication_context.clone();
+            async move {
+                worker
+                    .publish_success(
+                        &publication_context,
+                        &quote("000081", "72500", "1500", "2.11"),
+                        IntradayQuoteReceipt::captured(newer_receipt),
+                    )
+                    .await
+            }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "worker", "owner_intraday_quote_cache").await?;
+        if !blockers.contains(&observer_pid) {
+            return Err("newer receipt was not blocked by the held cache row".to_owned());
+        }
+
+        let older_task = tokio::spawn({
+            let worker = worker.clone();
+            let publication_context = publication_context.clone();
+            async move {
+                worker
+                    .publish_success(
+                        &publication_context,
+                        &quote("000081", "72000", "1000", "1.41"),
+                        IntradayQuoteReceipt::captured(newer_receipt - Duration::seconds(1)),
+                    )
+                    .await
+            }
+        });
+        observer_tx
+            .commit()
+            .await
+            .map_err(|_| "could not release cache row lock".to_owned())?;
+        let newer = newer_task
+            .await
+            .map_err(|_| "newer concurrent receipt task did not finish".to_owned())?
+            .map_err(|error| format!("newer concurrent receipt failed: {error}"))?;
+        let older = older_task
+            .await
+            .map_err(|_| "older concurrent receipt task did not finish".to_owned())?;
+        if older != Err(IntradayStorageError::QuoteReceiptStale) {
+            return Err("serialized older receipt did not return typed stale error".to_owned());
+        }
+        let after = app
+            .read_current_cache(owner, fixture.membership_id, 1, &db.session_proof())
+            .await
+            .map_err(|error| format!("concurrent receipt cache read failed: {error}"))?
+            .ok_or_else(|| "concurrent receipt cache disappeared".to_owned())?;
+        if after.price != newer.price
+            || after.quote_version != newer.quote_version
+            || after.received_at != newer.received_at
+        {
+            return Err("serialized concurrent receipt did not retain the newer quote".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn publication_rechecks_expired_last_demand_after_observed_row_lock_wait() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("expired-last-demand-lock").await?;
+        let fixture = db.seed_ready_membership(owner, "000091.KRX").await?;
+        let app = db.repository_as_app();
+        let demand = app
+            .create_or_renew_demand(
+                owner,
+                &demand_request(
+                    fixture.membership_id,
+                    Uuid::new_v4(),
+                    1,
+                    0,
+                    "expired-last-demand",
+                ),
+            )
+            .await
+            .map_err(|error| format!("expired-last-demand setup failed: {error}"))?;
+        let worker = db.repository_as_worker();
+        let claim = worker
+            .claim_producer(owner, Uuid::new_v4())
+            .await
+            .map_err(|error| format!("expired-last-demand producer setup failed: {error}"))?;
+        let publication_context = context(&db, &fixture, claim.lease);
+        let mut observer_tx = db
+            .superuser
+            .begin()
+            .await
+            .map_err(|_| "could not begin demand-row observer transaction".to_owned())?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify demand-row observer backend".to_owned())?;
+        let hold_started: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+                .fetch_one(&db.superuser)
+                .await
+                .map_err(|_| "could not sample demand-row lock start time".to_owned())?;
+        sqlx::query(
+            "UPDATE public.owner_intraday_quote_demands
+                SET lease_expires_at = pg_catalog.clock_timestamp() + INTERVAL '1 second'
+              WHERE id = $1",
+        )
+        .bind(demand.lease.demand_id)
+        .execute(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not prepare an expiring last demand".to_owned())?;
+        sqlx::query(
+            "SELECT id
+               FROM public.owner_intraday_quote_demands
+              WHERE id = $1
+              FOR UPDATE",
+        )
+        .bind(demand.lease.demand_id)
+        .fetch_one(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not hold last demand row lock".to_owned())?;
+
+        let failure_task = tokio::spawn({
+            let worker = worker.clone();
+            let publication_context = publication_context.clone();
+            async move {
+                worker
+                    .record_failure(
+                        &publication_context,
+                        IntradayQuoteFailureCode::ProviderTimeout,
+                    )
+                    .await
+            }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "worker", "owner_intraday_quote_demands")
+                .await?;
+        if !blockers.contains(&observer_pid) {
+            return Err("publication was not blocked by the held last-demand row".to_owned());
+        }
+        wait_until_database_time(&db.superuser, hold_started + Duration::seconds(2)).await?;
+        observer_tx
+            .commit()
+            .await
+            .map_err(|_| "could not release last-demand row lock".to_owned())?;
+        let failure = failure_task
+            .await
+            .map_err(|_| "expired last-demand task did not finish".to_owned())?;
+        if failure != Err(IntradayStorageError::ActiveDemandRequired) {
+            return Err(
+                "expired last demand was accepted after a real demand-row lock wait".to_owned(),
+            );
         }
         Ok(())
     })
