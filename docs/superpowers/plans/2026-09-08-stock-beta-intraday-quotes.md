@@ -950,3 +950,18 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   read-only 검토로 시작했다. 새 API의 budget exhaustion 테스트가 기존 coordinator
   API만 실행한다는 coverage caveat와 실제 transport timeout 분류도 확인·반박 대상이다.
   임의 결함으로 확정하지 않는다. ACCEPT 및 검증 후에만 통합하고 B2b를 시작한다.
+
+### WP-3B2a 수락 검토 후 마지막 범위 한정 보완
+
+- reviewer는 51cd791에 Critical/High/Medium 구현 결함 없음으로 scoped ACCEPT했다.
+  신규9/coordination36/market-data13/transport-agreement5 tests 및 scoped clippy/fmt/diff를
+  독립 통과했다. runtime 수락은 아니며 신규 API 직접 budget exhaustion 증거와 concrete
+  transport timeout fixture는 미검증으로 남겼다. reviewer는 idle/clean이다.
+- coordinator가 live_transport.rs:96의 GET timeout → Broker status504와 새 API의
+  transport Err 500..=599 → ProviderUnavailable를 대조했다. 따라서 로컬 timeout이
+  Timeout 대신 일반 서버 장애로 분류되는 경로가 있다. fake live-shaped 오류로 먼저
+  재현한 뒤 transport Err 504만 Timeout으로 교정한다. HTTP 응답 504 정책은 바꾸지 않는다.
+- 유휴 구현 담당자에게 tests/intraday_attempt.rs와 위 market_data.rs 최소 수정만 맡겼다.
+  기존 테스트를 유지하면서 NEW public API의 한도 거부/다음날 reset/zero extra GET와
+  concrete timeout/no retry/redaction을 검증한다. source 전체 재설계·다른 파일 변경은 없다.
+  51cd791은 보완 검증 전 미통합으로 유지하고 B2b는 이후 시작한다.
