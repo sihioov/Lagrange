@@ -1503,3 +1503,24 @@ Native subagents: prohibited for worker packages
   read-only C3 검토를 맡겼다. main 연결 및 watch/async 이동을 포함한 EOD 의미 보존과 실제
   behavior matrix를 독립 검증한다. DB/provider/실제 main 실행은 이 검토 범위가 아니다.
 - C3 독립 수락 전 미통합. 전체 coverage/window maxage 계약 판단과 실제 활성화는 별개로 남는다.
+
+### B2b-C3 scoped ACCEPT 및 통합 전 사용자 결정 대기
+
+- 독립 reviewer는 `60bebf09c274e65b14c7a409e9cf9eefc099899f`를 scoped ACCEPT했다.
+  runner11/11, strict runner clippy, fmt/diff 및 clean을 직접 확인했다. main/tests가 같은
+  helper를 사용하고 EOD loop/cleanup의 기계적 이동과 추가 watch clone이 기존 동작을
+  바꾸지 않는다는 판단을 coordinator가 수락한다. C3 미해결 결함은 없다.
+- B2b 두 source blocker, C1 실제 guarded pipeline, C2a scheduling/early negative probes,
+  C2b lifecycle/last-good/취소 cleanup, C3 behavioral startup의 scoped 검토가 완료됐다.
+  각 절에 기록된 Low 증거 한계는 유지하며 전체 API/Web/운영 acceptance까지 주장하지 않는다.
+  producer branch의 `7dd9483`부터 `60bebf0`까지 8개 commit은 여전히 미통합이다.
+- 통합 전 남은 명세 결정: spec 7.1은 session-window evidence가 stale이면 UNKNOWN/zero GET을
+  요구하지만 `evidence_retrieved_at`의 최대 허용 나이를 정의하지 않는다. 36시간은 별개인
+  KIS trading-day proof에만 명시돼 있다. 현재 collector `state_at`은 미래 evidence 시각은
+  거부하지만 오래된 evidence의 상한을 검사하지 않는다. 임의의 36시간 적용 또는 무기한
+  유효 해석 모두 수락하지 않는다.
+- 따라서 owner에게 장 운영시간 증빙 조회 후 최대 허용 시간을 요청한다. 결정 후 명세를
+  명확히 하고 bounded 구현/경계 회귀 및 독립 검토를 거쳐 B2b 통합 gate를 다시 판단한다.
+  이 결정은 실제 provider 활성화 권한을 추가하지 않는다. C3까지 모든 담당자는 idle이며
+  사용자 결정 대기 동안 반복 heartbeat를 종료한다. QA는 후속 DB 작업을 위해 기존 정확한
+  tmpfs project만 유지하고, 운영 DB/provider에는 접근하지 않는다.
