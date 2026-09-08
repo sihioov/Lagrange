@@ -879,3 +879,5 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   미커밋 row의 시간을 다시 설정한다. 새 회귀는 실제 demand-row/unique-index 대기를
   관찰하고 먼저 실패를 재현한다. grant/migration/0053/B2/API/Web/운영 변경은 없다.
 - reviewer는 수정 후 다시 독립 수락 판단을 한다. B2는 B1 ACCEPT 이후로 유지한다.
+- 새 담당자 `1d21676d-0284-43db-a1e3-2936dcaafc19` (Codex terra/max)를 storage
+  workspace `wks_cb50f59b1dc645f6`에서 시작했으며 running/권한 요청 없음 확인했다.
